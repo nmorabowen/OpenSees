@@ -48,8 +48,23 @@ run_one() {   # $1=tag  $2=script  $3=OPS_SYSTEM  $4=MKL_NUM_THREADS  $5=round
   local rc=$?
   # NEVER grep the log away -- a silent ProfileSPDLinSOE fallback hides in the lines
   # you would have dropped (banked P1d trap). The full log is kept; we only PEEK here.
-  if grep -qiE "unknown system|WARNING.*fall|FAILED" "$HERE/l3a_${tag}_r${r}.log"; then
-      echo "    !! suspicious log for $tag r$r -- inspect l3a_${tag}_r${r}.log"
+  #
+  # Adversarial review (N6): the ORIGINAL guard here matched "unknown system|WARNING.*fall|FAILED",
+  # and VERIFIED BY EXECUTION it matches NONE of the three real fallback sites -- OpenSees emits
+  #   "WARNING analysis Static - no LinearSOE specified, " / " ProfileSPDLinSOE default will be used"
+  # (OpenSeesCommands.cpp:689-690, :863-864, :941-942), which contains none of those tokens. The one
+  # guard written against the banked trap fired on ZERO of its targets. It also fired SPURIOUSLY on
+  # every Lane-A run ("FAILED at step 86"), training the operator to ignore it -- the worst outcome.
+  local log="$HERE/l3a_${tag}_r${r}.log"
+  if grep -qiE "ProfileSPDLinSOE default|no LinearSOE specified|unknown system" "$log"; then
+      echo "    !! SILENT SOLVER FALLBACK for $tag r$r -- the requested system was NOT used"
+  fi
+  # Positive assertion beats pattern-matching a warning: the h5 records the solver that actually ran.
+  if [ -n "$sysopt" ]; then
+      local want; want="$(echo "$sysopt" | awk '{print $1}')"
+      if ! grep -qE "^system: \['${want}'" "$log"; then
+          echo "    !! $tag r$r did not report 'system: ['${want}'...]' -- check $log"
+      fi
   fi
   local wall
   wall="$(grep -oE 'wall[= ]+[0-9.]+' "$HERE/l3a_${tag}_r${r}.log" | tail -1)"

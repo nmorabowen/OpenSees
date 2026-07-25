@@ -96,7 +96,13 @@ ops.numberer("Plain")
 ops.system("Diagonal")
 ops.test("NormDispIncr", 1e-12, 1)
 ops.algorithm("Linear")
-ops.integrator("CentralDifferenceLadruno", "-cfl")
+# Ladruno ADR-75b (L3-0, review M2): CDL_FLAGS lets the SAME deck run with ADR-67 P-NEW-2
+# `-commitSolveState`, which skips the SECOND constitutive pass. Without it lane D books the
+# rate-independent double pass twice and loop A reads 54% instead of 38% -- the Lane-3 gate
+# then passes on redundant work a shipped, bit-identical flag deletes.
+_cdl = (os.environ.get("CDL_FLAGS") or "").split()
+ops.integrator("CentralDifferenceLadruno", "-cfl", *_cdl)
+print("integrator flags:", ["-cfl"] + _cdl)
 ops.analysis("Transient")
 
 # --- critical dt: estimate c = sqrt((K+4G/3)/rho) (dilatational), dt = 0.5 h/c ---

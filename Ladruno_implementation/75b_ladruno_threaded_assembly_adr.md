@@ -1,7 +1,7 @@
 ---
 title: ADR-75b — Lane 3, threaded element assembly (shared-memory OpenMP)
 project: Ladruno
-status: proposed — policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED (gate passes on lanes A/D, and on lane B only under PARDISO); no threading code authorized yet
+status: proposed — policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized as first stage, work-removal L3-0b promoted); no threading code authorized
 priority: medium
 owner: nmora
 amends: 75_ladruno_sparse_direct_strategy_adr
@@ -85,17 +85,38 @@ today is MKL's threaded BLAS *inside* a solver.
 
 ---
 
-## 2. The three loops — a code-verified taxonomy (the structural contribution)
+## 2. The FIVE assembly loops — a code-verified taxonomy (the structural contribution)
 
-"Threaded assembly" is not one loop. There are exactly **three** element loops in the implicit path,
-and **they have different determinism, different race structure, and different payoff.** Conflating
-them is what makes Lane 3 look uniformly terrifying. Separated, one of them is easy.
+"Threaded assembly" is not one loop. There are **five** assembly loops, and **they have different
+determinism, different race structure, and different payoff.** Conflating them is what makes Lane 3
+look uniformly terrifying. Separated, one of them is easy.
 
-| # | Loop | Site | Per-element work | Writes to shared state? | FP reduction? |
+> **Corrected by the max-effort review (M1).** The first version of this table listed **three** loops
+> and gave `IncrementalIntegrator.cpp` as the sole implementation point. Both were wrong: the
+> **transient** path (which is Lane D — this ADR's own recommended first target) assembles in
+> `TransientIntegrator.cpp`, and **both** paths carry *DOF_Group* loops that this taxonomy omitted.
+> An earlier review pass had explicitly cleared this ("`formTangent` has ONLY the FE_Element loop");
+> that clearance read the static path only and is **withdrawn**. Consequences in §4.2 — a gather keyed
+> on element matrices alone silently drops nodal mass and nodal loads.
+
+| # | Loop | Site | Per-iteration work | Shared writes? | FP reduction? |
 |---|---|---|---|---|---|
-| **A** | `Domain::update()` | `Domain.cpp:2396-2406` | `theEle->update()` | the `ops_TheActiveElement` global (§5.3) + **node trial state, for a named minority of elements** (§2.1b) | **NO — none** |
-| **B** | `IncrementalIntegrator::formTangent()` | `IncrementalIntegrator.cpp:112-125` | `getTangent` → `theSOE->addA` | yes — `A[]` | **yes** |
-| **C** | `IncrementalIntegrator::formElementResidual()` | `IncrementalIntegrator.cpp:323-337` | `getResidual` → `theSOE->addB` | yes — `B[]` | **yes** |
+| **A** | `Domain::update()` | `Domain.cpp:2396-2406` | `theEle->update()` | `ops_TheActiveElement` (§5.3); node trial state for 2 elements (§2.1b); the shared **iterator cursor** (§5.4) | **NO — none** |
+| **B** | element tangent — **two implementations** | static: `IncrementalIntegrator.cpp:112-125`  ·  **transient: `TransientIntegrator.cpp:111-125`** | `getTangent` → `addA` | `A[]`, **and `FE_Element::theTangent`, a class-wide pool (§5.4)** | **yes** |
+| **C** | `IncrementalIntegrator::formElementResidual()` | `:323-337` | `getResidual` → `addB` | `B[]`, same pool | **yes** |
+| **D** | **DOF_Group tangent** (nodal mass/damping) | `TransientIntegrator.cpp:99-107`, preceded by `addModalDampingMatrix` `:90-95` | `dofPtr->getTangent` → `addA` | `A[]` | **yes** |
+| **E** | **DOF_Group unbalance** (nodal loads) | `IncrementalIntegrator::formNodalUnbalance` `:290-309` — runs on **both** paths | `dofPtr->getUnbalance` → `addB` | `B[]` | **yes** |
+
+Loops **D** and **E** are small in wall terms (measured from the committed data: 192.0 ms on lane D
+= 0.65% of step; 12.6 ms lane B/UmfPack) so they do not move any §1 fraction — but they are **not
+optional for correctness**. `DOF_Group::addMtoTang` (`DOF_Group.cpp:351-358`) adds
+`myNode->getMass()`, so on any deck using `ops.mass(...)` the **entire nodal mass reaches `A` only
+through loop D**. The fork's own profiler comment at `TransientIntegrator.cpp:108-110` says as much
+("the DOF_Group mass/damping loop above is not element-keyed and is left untimed here") — the
+information was in the tree and this ADR still missed it.
+
+**Serial composition order**, which any ordered/gather mode must reproduce:
+`A` ← (modal damping → all DOF_Groups → all FE_Elements); `B` ← (all FE_Elements → all DOF_Groups).
 
 ### 2.1 Loop A has no floating-point reduction — so threading it is bit-identical (for allowlisted elements, §2.1b)
 
@@ -186,7 +207,7 @@ precedent survey implied. Checked in `PARDISOGenLinSOE`:
 
 - `colA[]` / `rowStartA[]` are built **once** in `setSize()` from the DOF graph
   (`PARDISOGenLinSOE.cpp:221-297`) and are not written again anywhere in the assembly path.
-- `zeroA()` (`:~305`) zeros **only** `A[]` and clears `factored`. It does **not** touch `colA` /
+- `zeroA()` (`PARDISOGenLinSOE.cpp:554-568`) zeros **only** `A[]` and clears `factored`. It does **not** touch `colA` /
   `rowStartA`.
 - `addA` (`:370-478`) locates each target with a **read-only** linear search over the frozen row
   (`for k in [rowStartA[row]-1, rowStartA[row+1]-1) if colA[k] == col+1`) and then does exactly one
@@ -319,16 +340,51 @@ modes turn out to map cleanly onto the two classical assembly algorithms:
 | **fast** | **scatter** + `atomic` (Kratos) | elements | atomics on `A[k]` | order-dependent | low memory; atomic contention |
 | **ordered** | **gather** over the same frozen CSR | **matrix rows / nonzeros** | **none — each entry has exactly one writer** | **bit-identical to serial** | Σ(idSize²) storage for element matrices |
 
-Gather is race-free *without atomics* (a thread owns entries, not elements) **and** exact (it sums each
-entry's contributions in ascending element order, i.e. serial order). Its price is that all element
-matrices must be live simultaneously, since each is read by every row it touches.
+Gather is race-free *without atomics* (a thread owns entries, not elements) **and** exact. Its price
+is that all contributions must be live simultaneously, since each is read by every row it touches.
 
-**And that price is largely already being paid by the fix for §5.** De-statication done *correctly* —
-giving each element **its own** tangent/residual buffer rather than a `thread_local` static — is
-simultaneously (i) the re-entrancy fix, and (ii) exactly the per-element storage gather needs. A
-`thread_local` static fixes the race but yields only `nthreads` buffers, which does **not** enable
-gather. **This is a real design constraint on stage L3-2 and the reason to prefer per-element buffers
-over thread-local ones**, even though thread-local is the smaller diff.
+> **Three corrections from the max-effort review — the first draft's exactness argument was
+> under-specified and its "storage is free" claim was simply false.**
+
+**(i) The ordering key is a triple, not "element order" (H8).** `addA` issues one independent
+`A[k] += m(i,j)` per `(i,j)` pair with **no dedup**, so a single FE_Element can contribute to the
+same `A[k]` **more than once** whenever its `ID` repeats an equation number — reachable through
+`TransformationFE::setID` + `TransformationDOF_Group::getID` returning the *retained* node's
+equations, i.e. any `rigidDiaphragm`/`equalDOF`/`rigidLink` with two element nodes slaved to one
+master. So the serial order to replay is **(FE-iteration index, i, j)**, and a gather that
+precomputes "element e's total contribution to k" is **not** bit-identical. Also, the loop iterates
+**FE_Element** tags, not element tags, and includes constraint FE_Elements (`PenaltySP_FE`,
+`PenaltyMP_FE`, `LagrangeMP_FE`) that have **no Element at all** — so the store must be keyed on
+FE_Element, not Element. The P-3 acceptance deck must include `rigidDiaphragm` under
+`constraints Transformation`, or this case never gets exercised.
+
+**(ii) Element matrices are not the whole of `A` or `B` (M1).** Per §2, loops **D** and **E**
+contribute nodal mass, modal damping and nodal loads. A gather that zeroes `A` and reconstructs it
+from stored *element* matrices produces a **wrong answer**, not a last-bits difference. Ordered mode
+must compose the DOF_Group contributions in their serial position (before the FE contributions for
+`A`, after them for `B`).
+
+**(iii) The storage is NOT already paid for by §5's de-statication (H1) — this was the draft's worst
+error.** The buffer `addA` actually consumes is **not the element's**: `FE_Element::theMatrices` is a
+`static Matrix **` class-wide pool (`FE_Element.cpp:51`, `.h:132`), and
+`theTangent = theMatrices[numDOF]` (`:127`, `:137`) hands **one shared 24×24 Matrix to every
+same-numDOF FE_Element** — all 3375 bricks of the Lane-B mesh. `IncrementalIntegrator.cpp:118-120`
+passes that address straight to `addA`. So de-staticating `LadrunoBrick` gives gather **zero** live
+storage, and threading loops B/C is a **100% collision** on that pool that a per-classTag *element*
+allowlist cannot mitigate. Under `constraints Transformation` the same holds one level up
+(`TransformationFE.cpp`: `modMatrices`, `dataBuffer`, `localKbuffer`, `dofData`).
+
+**Revised conclusion.** Ordered/gather mode requires **FE_Element/DOF_Group de-statication as a hard
+prerequisite** — that is ADR-40's rank-7 item, which §5.1 previously mis-cited (see §5.4). The
+per-element-vs-`thread_local` preference for *element kernels* still stands for re-entrancy reasons,
+but the claim that it comes for free with gather storage is withdrawn; and note that per-element
+buffers carry their own **serial** memory cost (§11 q9).
+
+Order-of-magnitude for the gather storage, so the gate is concrete: Σ(idSize²) doubles. For Lane B
+(3375 `LadrunoBrick`, idSize 24) that is ≈**15.5 MB** — trivial. Deriving from the deck's actual N³
+hex topology, a ~1M-DOF mesh is ~325k elements ⇒ ≈**1.5 GB**, the same order as the factorization
+itself and therefore **not** obviously affordable. Hence the L3-4 memory gate and §11's open
+question. (Projection from element geometry, not a measurement.)
 
 Order-of-magnitude for the gather storage, so the gate is concrete: Σ(idSize²) doubles. For Lane B
 (3375 `LadrunoBrick`, idSize 24) that is 3375 × 576 × 8 B ≈ **15.5 MB** — trivial. The scaling is
@@ -352,10 +408,13 @@ in the family. This section puts numbers on it. All counts are `grep` over the c
   in `SRC/element/` + `SRC/material/` (≈1,690 `static Matrix`, ≈3,530 `static Vector`, ≈370
   `static ID`).
 - **711** class-level `static Matrix|Vector|ID` members declared in `SRC/element/*.h`.
-- `Element` itself owns **static pools shared by every element instance** —
-  `Element::theMatrices`, `Element::theVectors1`, `Element::theVectors2`, `Element::numMatrices`
-  (`Element.cpp:49-52`). These are the "FE_Element/DOF_Group pools" ADR-40b already flagged as
-  blocking rank 7.
+- `Element` owns **static pools shared by every element instance** — `Element::theMatrices`,
+  `theVectors1`, `theVectors2`, `numMatrices` (`Element.cpp:49-52`). ⚠ **These are NOT the
+  "FE_Element/DOF_Group pools" of ADR-40's rank 7** — the first draft said they were, which is wrong
+  and pointed the reader away from the pool that actually matters. `Element::theMatrices` is a
+  *third*, distinct pool, reached only from `getDamp`/`getMass`/`getResistingForceIncInertia`, i.e.
+  **off the loop-A path**. ADR-40 (`40_ladruno_performance_adr.md:99-102`) names `FE_Element.h:132-133`
+  and `DOF_Group.h:150-151` — see **§5.4**, which is the one that races.
 
 **This is not an occasional bug — it is the standard OpenSees idiom.** `getTangentStiff()` returns
 `const Matrix &`, so the conventional implementation returns a reference to a function-scope
@@ -390,7 +449,7 @@ work").
 ### 5.3 `ops_TheActiveElement` — a shared global *inside* the loop we most want to thread
 
 Not a `static` in a kernel, so a "de-static the kernels" audit would miss it: `ops_TheActiveElement`
-is a **file-scope global** (`SRC/element/Element.cpp:47`, declared `extern` in `SRC/G3Globals.h:45`)
+is a **file-scope global** (`SRC/element/Element.cpp:47`, declared `extern` in **both** `SRC/OPS_Globals.h:71` and `SRC/G3Globals.h:45` — the *former* is the one every reader and `Domain.cpp` actually includes, 329 including files vs 71; best fix is to delete the duplicate declaration)
 written **per element inside loop A** at `Domain.cpp:2401`, and also in `Element`'s constructor
 (`Element.cpp:65`), `Domain.cpp:461`, `OpenSeesCommands.cpp:2865`, and several Ladruno elements
 (`LadrunoDispBeamColumn2d.cpp:528`, `3d.cpp:651`).
@@ -409,6 +468,31 @@ prerequisite for L3-1, and it is the concrete proof that stage L3-2 is broader t
 `static`".
 
 ---
+
+### 5.4 The hazards the inventory's SCOPE structurally could not see (max-effort review)
+
+§5.1 counted statics under `SRC/element/` + `SRC/material/`, and §2.1b grepped for node-trial-state
+**setters**. Both scopes are wrong in the same way: the loop-A/B/C call graph leaves those
+directories and the write can be a *getter*. Every hazard below produces a **silent,
+thread-count-dependent wrong answer with no node write and no FP-order change** — i.e. it is
+invisible to §2.1b's allowlist criterion *and* to §3's determinism policy, and it will not reproduce
+on every schedule.
+
+| # | Hazard | Where | Why the inventory missed it |
+|---|---|---|---|
+| **H1** | **`FE_Element::theTangent` is a class-wide pool** — `static Matrix **theMatrices` (`FE_Element.cpp:51`, `.h:132`), `theTangent = theMatrices[numDOF]` (`:127`, `:137`) ⇒ **one 24×24 Matrix shared by all 3375 bricks**, handed straight to `addA` (`IncrementalIntegrator.cpp:118-120`). Same one level up under `constraints Transformation` (`TransformationFE.cpp`: `modMatrices`, `dataBuffer`, `localKbuffer`, `dofData`) | loops B/C | `SRC/analysis/fe_ele/` — outside the scanned dirs. **100% collision**, not mitigated by an element allowlist, by L3-2, or by atomic `A[k] +=` |
+| **H2** | **`LadrunoBrick::update()` runs on 16 shared function-scope statics** (`:854 strainE`, `:882 Bbar`, `:883 strainG`, `:909 strainC`, `:910 Bc`, `:911/:965 ulj`, `:930-936 dvol/gaussPoint/strain/shp/Shape/shpBar/BJ`, `:873/:906 shpC`) and `computeLocalDisp()` (`:1202-1206`) returns a static buffer. Corpus scan: **63 of 215** `Element::update()` bodies contain non-const function-scope statics (473 declarations) | loop A | it WAS in scope — but §2.1b's *node-write* list was mis-promoted into a *threadability* list. **This is L3-1's own named first target** |
+| **H3** | **The loop cursor is shared and mutable.** `Domain::getElements()` (`Domain.cpp:1564-1569`) resets and returns the single member `theEleIter` (`Domain.h:313`) over `ArrayOfTaggedObjects::myIter`, whose `operator()` does `numDone++; currIndex++`. Same for `AnalysisModel::getFEs()` | A, B, C | the ADR never says how the loop *becomes* a parallel-for. It is **not index-addressable**, so L3-1 needs a snapshot (unbudgeted allocation) or a new random-access accessor on `SRC/tagged/storage/`. A naive shared-cursor pull **skips and duplicates elements** |
+| **H4** | **`Node`'s trial-state GETTERS mutate the node** — `getTrialVel/getTrialAccel/getVel/getAccel/getIncrDisp/…` (`Node.cpp:590-706`) lazily `createVel()/createDisp()/createAccel()` on first touch, heap-allocating and assigning members. 41 of 215 `update()` bodies read one | loop A | the grep was over **setters**. Two elements sharing a node both see `trialVel==0`, both allocate ⇒ last-writer-wins, leak, and a live `const Vector&` into a freed buffer |
+| **H5** | **`SRC/coordTransformation/` is on loop A's path for every beam-column element** — `LinearCrdTransf2d::getBasicTrialDisp()` (`:311`, `:327`) builds `static double ug[6]` / `static Vector ub(3)` and returns `ub` by reference; called inside `update()` at `LadrunoDispBeamColumn2d.cpp:534`. 434 declarations / 18 files, entirely uncounted | loop A | directory scope. Per-**class** buffer, so the per-element-copy argument does not protect it |
+| **H6** | **The profiler instrument inside the loop is itself an unsynchronized shared write.** The named scope is constructed by one thread *outside* the loop (`Domain.cpp:2394`); every `~ElemScope` calls `ProfileNodeLive::addElem` (`Profiler.cpp:115-124`) which lazily builds a `std::map` and does counter RMWs on the master thread's node. `Profiler.h:59-63` states the precondition being violated ("each thread owns its own tree") | A, B, C | it is instrumentation, not physics — so nobody looked. Concurrent `std::map` insertion is UB. **Aggravator: proving L3-1's payoff requires the deep gate armed, i.e. the only configuration where the win is measurable is the UB one** |
+| **H7** | **`ops_TheActiveElement` is not a first-touch latch** — `LadrunoJ2.cpp:347-356` (inside `integrate()`, called unconditionally) and `LadrunoConcrete3D.cpp:344-351` read it on **every** call, not just the first. Two readers are missing from §5.3 entirely: `ASDConcrete1DMaterial.cpp:998` and `ASDSteel1DMaterial.cpp:2150` — **uniaxial fiber materials, i.e. the lane-A path**. And the global **persists after the loop**; `thread_local` silently changes that residual from "last element in iteration order" to "last element on the master thread" | loop A | §5.3 characterised it from the guarded readers only. A per-call read is live cross-talk every iteration, not a benign first-touch race |
+
+**Consequences.** (1) **L3-2 becomes a hard prerequisite of L3-1**, not its successor (§7). (2) The
+allowlist criterion is **strictly stronger than the node-write list** — an element qualifies only if
+its whole `update()` call graph is re-entrant, transitively and across directories. (3) `§10`'s
+vanilla-ledger plan grows (see §10). (4) ThreadSanitizer must run **with the deep profiler gate on**,
+because that is the configuration the payoff is measured in.
 
 ## 6. Decision summary
 
@@ -443,9 +527,14 @@ fork-join overhead) applies throughout and is refined per stage.
   **80.8%** of lane A and **54.4%** of lane D, with non-kernel overhead of 0.63%/4.6% and no scatter.
   Kernel time is solver-invariant to 2.3% (validity check). `ForceBeamColumn2d::getTangent` measured
   at **0.12 µs/ele**, confirming ADR-75 §3's regression hazard — though the decisive reason not to
-  thread lane A's loops B/C is that they are **0.45%/0.79% of step**. Instrumentation tax measured
-  (deep vs coarse, 6 rounds): **+3% to +8%**, moving every kernel fraction by ≤1.1 pp. Two defects
-  found and fixed by the adversarial review (§2.1b; the F3 re-attribution).
+  thread lane A's loops B/C is that they are **0.45%/0.79% of step**. Kernel time is solver-invariant to **5.8%**, which is
+  this box's stated noise floor. Instrumentation tax measured (deep vs coarse, 6 rounds): **+8.0% on
+  lane D**, the only lane where a paired sign test establishes it (6/6, p=0.016; lanes A/B are 4/6 and
+  5/6, not separable from noise); it moves every kernel fraction by ≤1.1 pp. **⚠ Lane D's loop-A
+  fraction is superseded — see §7 L3-1 and `RESULTS` F9: with the shipped `-commitSolveState` it is
+  38.95% and FAILS the gate.** Three adversarial passes found **12** defects in this work
+  (§2.1b, §2's missing DOF_Group loops, §4.2's storage claim, §5.4's seven hazards, the F3
+  re-attribution, and F9).
   *(Original scoping:)*
   Use the shipped `elem.update` / `elem.tangent` / `elem.residual` instruments to produce, per lane:
   (i) wall fraction inside **each** of the three loops of §2, separately — never a phase total;
@@ -459,22 +548,44 @@ fork-join overhead) applies throughout and is refined per stage.
   **Deliverable:** `Ladruno_files/testbed/perf/lane3/RESULTS_l3a_update_scope.md`.
   **Gate: none — this is the gate for everything else.**
 
+- **L3-0b — WORK REMOVAL FIRST, before any threading stage. ⚠ NEW, and it outranks everything below.**
+  Two shipped, zero-code, zero-risk items that the L3-0 measurement surfaced:
+  (i) **`-commitSolveState` on explicit decks** — ADR-67 P-NEW-2, bit-identical on rate-independent
+  materials, measured here at **−29.6% wall on Lane D** (24 555 → 17 278 ms, `disp_z` identical to
+  all digits in 6 runs); (ii) **replace the `addA` O(idSize²×rowlen) search** — ~14% of wall, on
+  **both** desktop solvers (§11 q5). ADR-40's standing order is work-removal before parallelism, and
+  both of these are strictly cheaper than any threading stage. Neither is Lane-3 work.
+
 - **L3-1 — thread loop A (`Domain::update`) for an allowlisted set of fork-owned classTags.**
-  Highest payoff, **zero determinism cost** (§2.1). **Target Lane D first** — L3-0 makes it the
-  cleanest entry: loop A is 54.4% of step on the fork-owned `LadrunoBrick`, `system Diagonal` removes
-  the SOE from the picture entirely (`linearSolve` 0.03%), and de-statication there is already
-  authorized (ADR-40a C16 / ADR-68 T3). Needs: `ops_TheActiveElement` → `thread_local` (§5.3), an
-  integer reduction on `ok`, a per-classTag **opt-in allowlist** (default empty) that **excludes the
-  §2.1b node-writing classTags**, and `find_package(OpenMP)` + a build flag.
-  **Gate: ✅ the fraction half is PASSED** — L3-0 measures loop A at 54.4% (lane D) and 80.8%
-  (lane A) with per-element update cost 3.20 and 20.53 µs/ele. **Still open:** the barrier cost is
-  unmeasured (no OpenMP in the build yet — §11 q3), and the allowlisted classTags must pass §7's
-  correctness protocol.
+  Still the only **reduction-free** loop, so still the cheapest determinism story and the right place
+  to prove the machinery — but **no longer the largest fraction, and its prerequisites are heavier
+  than the first draft assumed.**
+  > **⚠ GATE RE-EVALUATED — the first draft declared this PASSED on a number that does not survive
+  > correct configuration.** It read loop A at 54.4% on Lane D. That figure is the sum of *two*
+  > `elem.update` sites — the double constitutive pass — and L3-0b(i) deletes the second one. Measured
+  > with `-commitSolveState`: **loop A = 38.95%, which FAILS the >40% gate**, while **loop C rises to
+  > 46.33%** and becomes Lane D's dominant loop (`RESULTS` F9). Lane A's 80.79% still passes but is
+  > vanilla `ForceBeamColumn2d` (§5.2). **So: no lane currently passes the >40% gate for loop A on a
+  > correctly-configured, fork-owned deck.** L3-1 is therefore *not* authorized as the first threading
+  > stage; it is authorized only as the machinery-proving stage, and its payoff must be re-argued
+  > against the gate rather than assumed.
+
+  **Hard prerequisites (all were previously later stages or absent — §5.4):** de-static
+  `FE_Element`/`DOF_Group` pools (P-a); de-static the element kernel — **L3-2 must precede L3-1, not
+  follow it** (P-b); an index-addressable element accessor, since the loop is driven by a shared
+  mutable cursor and cannot be a `#pragma omp for` (P-c); eager `createDisp/createVel/createAccel`
+  at `domainChanged` (P-d); per-thread profiler scopes (P-e). Plus `ops_TheActiveElement` →
+  `thread_local` (§5.3, and note §5.4-H7: it is a per-call read for two materials, not a latch), an
+  integer reduction on `ok`, the per-classTag opt-in allowlist (default empty), and
+  `find_package(OpenMP)` + a build flag.
+  **Still open:** barrier cost (§11 q3 — measured ~19.5 µs at 4T against 3.3–11.5 ms of work per
+  region, so ~0.2–0.6%, i.e. not the binding constraint).
   **Acceptance: bit-identical to serial at 1/2/4/8 threads.** Anything less means a re-entrancy miss,
   not a rounding difference — this is the stage where that gate is free, so it must be enforced
   absolutely.
 
-- **L3-2 — de-static the allowlisted fork-owned kernels into per-element buffers.**
+- **L3-2 — de-static the allowlisted fork-owned kernels into per-element buffers. ⚠ MOVED AHEAD OF L3-1** (§5.4-H2: `LadrunoBrick::update()` — L3-1's own named target — runs on 16 shared function-scope statics, and 63 of 215 `update()` bodies do).
+  Also covers P-a (`FE_Element`/`DOF_Group` pools), which is ADR-40's rank 7 and is a **100% collision** in loops B/C independent of any element allowlist.
   `LadrunoBrick` first (ADR-40b already authorized "de-static the brick scratch" independent of
   threading, as the ADR-40a C16 carve-out), then `LadrunoJ2`/`LadrunoConcrete3D`. **Per-element, not
   `thread_local`** (§4.2). Explicitly **not** `ForceBeamColumn2d` (§5.2).
@@ -530,8 +641,9 @@ Lane-3-specific additions:
 2. **`ops_TheActiveElement` cross-latch** (§5.3) — a shared global inside loop A, read by 5+ materials
    for regularization length. Failure mode is a converged, plausible, wrong softening response. A
    `static`-only audit misses it entirely.
-2b. **Elements that write shared node trial state inside loop A** (§2.1b) — `LadrunoRigidBody` and ≥12
-   others. This is an **ordering** race, so unlike everything else in this register it cannot be fixed
+2b. **Elements that write shared node trial state inside loop A** (§2.1b) — **exactly two**,
+   `LadrunoRigidBody` and `ZeroLengthVG_HG` (the other 11 grep hits resolve to loop C / `commitState` /
+   `setDomain` / non-`Element` classes; "13" is the grep-hit count, not the exclusion list). This is an **ordering** race, so unlike everything else in this register it cannot be fixed
    by any reduction policy; only exclusion or redesign works. It is also the finding that makes the
    §7 allowlist load-bearing rather than belt-and-braces. Caught only by the adversarial review, after
    the first draft asserted loop A had no shared writes at all.
@@ -564,9 +676,15 @@ Lane-3-specific additions:
 - `banner_features.txt` — **not now.** Only once a threading feature is user-visible and `shipped`.
 
 When stages land:
-- `LEDGER_vanilla_files.md` — `Domain.cpp` (loop A), `Element.cpp` + `G3Globals.h`
-  (`ops_TheActiveElement` → `thread_local`), `IncrementalIntegrator.cpp` (loops B/C), `CMakeLists.txt`
-  (`find_package(OpenMP)`), each with a `// Ladruno` marker.
+- `LEDGER_vanilla_files.md` — `Domain.cpp` (loop A), `Element.cpp` + **`OPS_Globals.h`** (and
+  `G3Globals.h`; `ops_TheActiveElement` → `thread_local`), `IncrementalIntegrator.cpp` **and
+  `TransientIntegrator.cpp`** (loops B/C/D/E — §2), **`FE_Element.{h,cpp}`, `DOF_Group.{h,cpp}`,
+  `TransformationFE.cpp`** (the pools that actually race, §5.4-H1), **`AnalysisModel.cpp` +
+  `SRC/tagged/storage/`** (index-addressable iteration, §5.4-H3), **`Node.cpp`** (eager trial-array
+  creation, §5.4-H4), **`SRC/coordTransformation/`** (§5.4-H5), **`SRC/utility/profiler/`**
+  (per-thread scopes, §5.4-H6), `CMakeLists.txt` (`find_package(OpenMP)`), each with a `// Ladruno`
+  marker. **The list roughly tripled after the max-effort review** — that growth is itself the
+  strongest single argument that Lane 3 is the highest-risk lane in the family.
 - `LEDGER_implementations.md` — one row per threading feature + its flag token.
 - `LEDGER_quirks.md` — this session's entries are due now (§0's stale-premise trap, the
   `static`-return-buffer idiom, `ops_TheActiveElement`, the frozen-sparsity fact).
@@ -599,7 +717,17 @@ When stages land:
 7. **Does any element alias (rather than `getCopy()`) a material or section across elements?** Not
    verified (§2.1b item 4). If one does, threaded loop A corrupts shared material state. An L3-2
    verification item; ThreadSanitizer over the allowlisted set is the practical check.
-8. **Does the F1 gate verdict survive at production size?** Lane B here is 11 520 DOF, and P1c
+8. **Is Lane 3 still worth doing at all once the cheap work-removal items land?** L3-0b measures
+   −29.6% on Lane D from one shipped flag, and the `addA` search is ~14% of wall on both solvers.
+   Neither needs a re-entrancy audit, a determinism policy, or an OpenMP build. **This ADR's own data
+   is the strongest argument for doing them first** — and the honest question is whether what remains
+   after them still clears the gate. Re-measure the gate *after* L3-0b, not before.
+9. **What does per-element de-statication cost in SERIAL memory?** L3-2 mandates per-element buffers;
+   `LadrunoBrick`'s function-scope statics are ~3.5 KB/ele and its class-level `stiff/resid/mass/xl`
+   ~9.6 KB/ele ⇒ order **1–4 GB at the 325k-element scale** where §4.2 already flags 1.5 GB as
+   possibly unaffordable — paid in **every** run, including serial. L3-2's gate ("serial performance
+   and answers unchanged") does not currently cover memory. Fix the gate.
+10. **Does the F1 gate verdict survive at production size?** Lane B here is 11 520 DOF, and P1c
    measured the solve fraction *growing* with N. At production scale the element fraction is lower
    than the measured 74.85%, so the margin shrinks. Re-check before committing L3-3/L3-4. Not in
    doubt for lanes A and D (81–87%, no solver in the picture).

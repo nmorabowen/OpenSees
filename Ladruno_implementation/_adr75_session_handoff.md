@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 OPENED as ADR-75b (policy settled, L3-0 measured, no threading code); cluster/BLR validation still OPEN
+status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 OPENED as ADR-75b (policy settled, L3-0 measured + 3 adversarial passes, no threading code); cluster/BLR validation still OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -111,13 +111,28 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
      **35.8% (UmfPack) → 74.9% (`Pardiso -matrixType 2` @4T)**, solve 55.9% → 16.9%; the >40% gate
      fails under UmfPack and passes hugely under PARDISO. Lanes A/D element-bound regardless
      (81.9%/86.8%). `ForceBeamColumn2d::getTangent` = **0.12 µs/ele** (confirms the regression hazard).
-   - **Next: L3-1 = thread `Domain::update` on Lane D** (54.4% of step, fork-owned `LadrunoBrick`,
-     `system Diagonal` so no SOE in the picture). Blockers first: `ops_TheActiveElement` →
-     `thread_local`, the §2.1b node-writing exclusion list, `find_package(OpenMP)`.
-   - **Side finding worth taking before any threading:** `PARDISOGenLinSOE::addA`'s O(idSize² × rowlen)
-     search costs **~14% of wall** on the default `-matrixType 0` path and is **1.28× slower than
-     UmfPack's**. Serial, zero-determinism-cost, and on present evidence a better return than
-     threading loops B/C at all.
+   - **⚠ Next step REVERSED by a 64-agent max-effort review (3rd pass).** The draft said "next =
+     L3-1, thread `Domain::update` on Lane D (54.4%)". That 54.4% is **half redundant work**: it sums
+     two `elem.update` sites and ADR-67 P-NEW-2's **shipped `-commitSolveState`** deletes the second.
+     Re-measured (3 interleaved A/B rounds, `disp_z` bit-identical in all 6): step 24 555 → 17 278 ms
+     (**−29.6%**), **loop A 55.74% → 38.95% = FAILS the >40% gate**, loop C 32.77% → **46.33%**.
+     ⇒ **L3-1 is de-authorized as the first threading stage; no lane passes the gate for loop A on a
+     correctly-configured, fork-owned deck.**
+   - **NEXT = L3-0b, work removal, before any threading** (ADR-40's standing order, which the ADR had
+     inverted): (i) **`-commitSolveState` on explicit decks** — shipped, bit-identical, −29.6%;
+     (ii) **replace `addA`'s O(idSize² × rowlen) search** — ~14% of wall and it is a **BOTH-solvers**
+     fix (`UmfpackGenLinSOE::addA` has the identical frozen-CSC search). Neither needs a re-entrancy
+     audit, a determinism policy, or an OpenMP build.
+   - **Then, before ANY threading code:** the review found the re-entrancy inventory was
+     directory-scoped and missed the hazards that actually race — **`FE_Element::theMatrices` is a
+     class-wide pool** (one Matrix shared by every same-numDOF FE_Element, handed straight to `addA`
+     ⇒ a **100% collision** no element allowlist can fix), `LadrunoBrick::update()`'s 16 statics, the
+     **shared mutable loop iterator** (so the loop is not even index-addressable), `Node`'s lazily
+     allocating trial **getters**, `SRC/coordTransformation/`, and **the profiler instrument itself**.
+     ADR-75b §5.4 lists all seven; §10's vanilla-file plan roughly tripled as a result.
+   - **Also corrected:** the taxonomy had 3 loops; there are **five** — the transient path assembles
+     in `TransientIntegrator.cpp`, and both paths carry **DOF_Group `addA`/`addB` loops** carrying the
+     nodal mass and nodal loads, so a gather keyed on element matrices would silently drop them.
 4. **Rebuild the shared checkout** so `system Pardiso` is available outside this worktree.
    **Owner: nmora, once P1d merges** — decided 2026-07-25 rather than have an agent switch the shared
    checkout's branch under the other 6 worktrees. One build from a clean `ladruno` gets P1b + P1d.

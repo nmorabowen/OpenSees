@@ -6,6 +6,13 @@ the element-kernel fraction from **35.8% → 74.9%** and the solve fraction from
 ADR-75 §3's Lane-3 gate (>40% element fraction) **fails under UmfPack and passes with enormous
 margin under PARDISO**. Lane B was a solver-bound lane; PARDISO made it an element-bound one.
 
+> **⚠ Second headline, added after a 64-agent adversarial review — it reverses this document's
+> staging recommendation.** Lane D's loop-A fraction (54.35%) is **half redundant work**: the shipped
+> `-commitSolveState` (ADR-67 P-NEW-2, bit-identical) deletes the second constitutive pass, after
+> which **loop A is 38.95% and FAILS the gate**, while loop C rises to 46.33%. So **work removal
+> outranks threading here, and no lane currently passes the >40% gate for loop A on a
+> correctly-configured, fork-owned deck** (§2 F9, §3). The Lane-B result above is unaffected.
+
 Date: 2026-07-25 · worktree `patricio-palacios-prs-17c1e2` · `dist/bin/opensees.pyd` built this
 session from `ladruno` @ `bdf8adf9f` (PARDISO present, 3 lanes measured).
 Sub-ADR: [[75b_ladruno_threaded_assembly_adr]] (stage L3-0). **No threading code exists; this is
@@ -21,7 +28,10 @@ the element kernel (threadable, if the element is re-entrant) **and** the `theSO
 race ADR-75b §4 has to solve). Threading buys the first and not the second, so a phase percentage
 **systematically overstates the Amdahl headroom.**
 
-So L3-0's deliverable is the split, per lane, for each of the three loops of ADR-75b §2:
+So L3-0's deliverable is the split, per lane, for each of the three ELEMENT loops of ADR-75b §2.
+(ADR-75b §2 now also names two **DOF_Group** loops — nodal mass/damping and nodal loads — found by
+the max-effort review. They are 0.65% of step on Lane D and move no fraction here, but they are
+load-bearing for the §4.2 gather design.)
 
 | loop | site | kernel scope | reduction? |
 |---|---|---|---|
@@ -45,7 +55,8 @@ recovered as `kernel = Σ(elem_by_type wall under the loop scope)` and
   reproduce the original runs verbatim.**
 - **Median of 3 interleaved rounds** per configuration (the three Lane-B solver configs are
   interleaved within each round — this box swings ±30% on background load,
-  `phase0/PHASE0_RECIPE.md`). Lane-B rows are the interleaved set; fractions reproduced to ±0.2 pp.
+  `phase0/PHASE0_RECIPE.md`). Fractions reproduce to **±0.7 pp worst case (±0.4 pp on the Lane-B
+  rows)** — the first draft said ±0.2 pp, which only two configs actually meet (review M6).
 - Threads: `MKL_NUM_THREADS` = 1 except the `pard4` row (4). Lane 3 does not exist yet, so no
   assembly threads anywhere.
 - Full logs kept, never grepped down (banked P1d trap: a silent `ProfileSPDLinSOE` fallback hides in
@@ -59,11 +70,12 @@ recovered as `kernel = Σ(elem_by_type wall under the loop scope)` and
 
 | lane / config | step ms | solve % | **kernel %** | loop % | loop A % | loop B % | loop C % | `addA` % of loop B | Amdahl 4T (kernel) |
 |---|---|---|---|---|---|---|---|---|---|
-| **A** fiber frame, UmfPack | 7 919 | 5.65 ⚠ **(true 7.86 — see F8)** | **81.94** | 83.32 | **80.79** | 0.45 | 0.79 | 56.05 | 2.59× |
+| **A** fiber frame, UmfPack | 7 919 | 5.65 ⚠ **(true 7.86 — see F8)** | **81.94** | 83.32 | **80.79** | 0.45 | 0.79 | n/r ⚠ | 2.59× |
 | **B** 3D solid, UmfPack 1T | 19 191 | 55.89 | **35.84** | 43.04 | 2.55 | 29.42 | 3.90 | 19.09 | 1.37× |
 | **B** 3D solid, Pardiso `-matrixType 2` 1T | 11 879 | 36.39 | **57.22** | 62.53 | 4.04 | 46.81 | 6.20 | 9.47 | 1.75× |
 | **B** 3D solid, Pardiso `-matrixType 2` 4T | 9 200 | 16.87 | **74.85** | 81.73 | 5.24 | **61.56** | 8.04 | 9.45 | 2.28× |
-| **D** explicit CDL, Diagonal | 29 468 | 0.03 | **86.84** | 89.66 | **54.35** | ~0.00 | 32.34 | n/a | 2.87× |
+| **D** explicit CDL, Diagonal | 29 468 | 0.03 | **86.84** | 89.66 | **54.35** ⚠ **see F9** | ~0.00 | 32.34 | n/a | 2.87× |
+| **D** explicit CDL, **`-commitSolveState`** | 17 278 | 0.03 | **85.30** | 88.0 | **38.95 (gate FAILS)** | ~0.00 | **46.33** | n/a | 2.78× |
 
 `kernel %` = element kernel calls only (the threadable part). `loop %` = kernel + scatter.
 `Amdahl 4T` = `1/((1−p)+p/4)` with `p` = kernel fraction: a **ceiling** assuming perfect kernel
@@ -107,8 +119,13 @@ Absolute loop-B kernel wall across **all four** configurations: **5 646.6 (UmfPa
 (`LadrunoBrick::getTangent` = 38.02 / 37.28 / 38.14 / ~39.5 µs/ele).
 
 The element kernel *cannot* depend on which solver factorizes afterwards, so the residual spread is
-this box's measurement noise, not signal — and 5.8% is therefore a **useful noise floor for every
-other number here**. The check does its job: the F1 fraction shift (35.8% → 74.9%, a factor of 2.1)
+this box's measurement noise, not signal. **But 5.8% is a spread between four *medians*, not a
+per-run noise floor (review N8):** the same loop-B kernel wall varies **10.3% (pard1) and 11.8%
+(pard4) between rounds of one unchanged config**, and step wall spreads 12.1–13.8%. So per-run noise
+is ~12%, and even lane D's +8.0% instrumentation tax sits inside it — the sign test rescues that
+result's *direction*, not its magnitude. The reconciliation with the ±0.7 pp fraction band is that a
+**ratio of two co-varying walls is far more stable than either wall**, which is exactly why this
+document quotes fractions and not absolute times. The check does its job: the F1 fraction shift (35.8% → 74.9%, a factor of 2.1)
 is an order of magnitude outside that floor, so it is the *denominator* moving, exactly as claimed,
 and not an instrumentation artifact.
 
@@ -117,6 +134,16 @@ and not an instrumentation artifact.
 > attributed the win to *PARDISO's SOE* being a faster assembler than UmfPack's. That was wrong, and
 > the review killed it by measuring the one configuration the sweep had omitted: **unsymmetric
 > PARDISO.**
+
+> **⚠ Methodology caveat (review N7), and it applies to F2 as well.** The `-matrixType 0` row was
+> **not interleaved with the others**. Committed log timestamps: the umf1/pard1/pard4 batch ran
+> 03:09:42–03:11:27; `laneBunsym` ran **03:30:04–03:30:16, alone, 19 minutes later** — and only its
+> logs carry the `prof flags:` line, proving it came from a *later harness build*. So this document's
+> own Method claim ("every comparison that carries a verdict here is within one interleaved run") is
+> **false for this row**, which is the sole source of both F2's widened 5.8% figure and F3's 1.28×.
+> Correcting for the batch offset using the solver-invariance premise gives ~1.24× and ~13.9% instead
+> of 1.28× and ~14%. **The direction and the conclusion survive; the stated methodology does not.**
+> Re-run it interleaved before quoting the ratio anywhere load-bearing.
 
 Absolute median `addA` scatter in loop B (n=3 each, all at the same mesh):
 
@@ -184,9 +211,14 @@ step** — Amdahl-irrelevant. That, not fork-join, is the decisive argument. For
 hazard, and it cannot be quantified yet (see §5).
 
 ### F7 — Loop scopes appear at multiple sites; summing one undercounts ~2×
-Lane A's `elem.update` appears at **three** sites — `newStep/elem.update` 941.7 ms,
-`solveCurrentStep/elem.update` 581.0 ms (the `DisplacementControl` direct call), and
-`solveCurrentStep/update/elem.update` 3 952.7 ms. Lane D's appears at two
+Lane A's `elem.update` appears at **three** sites — `newStep/elem.update` **1 100.9 ms**,
+`solveCurrentStep/elem.update` **696.7 ms** (the `DisplacementControl` direct call), and
+`solveCurrentStep/update/elem.update` **4 637.8 ms** (medians of the 3 committed rounds).
+> **Corrected (review M3).** The first draft published 941.7 / 581.0 / 3 952.7 ms — uniformly ~15% low,
+> from a superseded probe run that was never committed. It was self-detectable: that sum is 69.1% of
+> the 7 919 ms step while §1 publishes loop A at 80.79%, i.e. the document stated two mutually
+> exclusive values for one quantity. The corrected sum is 6 435.4 ms = 81.3%, consistent with §1.
+> Summing one site undercounts by **1.39×** on Lane A; the "~2×" belongs to Lane D (8 534.2/16 598.3). Lane D's appears at two
 (`newStep` 8 064.1 ms + `solveCurrentStep/update` 8 534.2 ms — the double constitutive pass ADR-40b
 found, confirmed here by `n = 5 000 000 = 2 × 2500 steps × 1000 elements`). `parse_lane3.py` sums all
 sites; this is the same trap ADR-40b hit with the hidden second `soe.factor`.
@@ -224,22 +256,78 @@ the visible solve — LoadControl + Newton, no hidden `dUhat` solve), and Lane D
 exist for the fork's shipped desktop solver.** Adding it is cheap and would make the same
 hidden-solve check possible on PARDISO decks.
 
+### F9 — Lane D's 54.35% loop A is HALF REDUNDANT WORK. With the shipped `-commitSolveState` it is 38.95% and FAILS the gate — and loop C takes over.
+*(Found by the max-effort adversarial review, §7 pass 3 finding M2. This is the finding that changes a
+recommendation, and it is the most important one in this document.)*
+
+Lane D's loop A is the sum of **two** `elem.update` sites, which F7 above itself names "the double
+constitutive pass". ADR-67 P-NEW-2 shipped a flag that deletes the second one:
+`-commitSolveState` (`CentralDifferenceLadruno.cpp:127` parses it, `:775-786` guards the second
+`updateDomain()`). It is bit-identical on rate-independent materials, and Lane D is exactly that
+(`LadrunoJ2` + `LadrunoBrick`). **The deck simply never enabled it.**
+
+Re-measured, same binary, 3 interleaved A/B rounds (`CDL_FLAGS` hook added to `laneD_model.py`):
+
+| Lane D | step ms | kernel % | **loop A %** | loop C % | Amdahl 4T | gate >40% |
+|---|---|---|---|---|---|---|
+| as originally published | 24 555 | 88.52 | **55.74** | 32.77 | 2.98× | PASS |
+| **`-commitSolveState`** | **17 278** | 85.30 | **38.95** | **46.33** | 2.78× | **FAIL** |
+
+`top-center disp_z = -6.414580e-05 m` in **all six runs** — bit-identical, as ADR-67 claims. Wall
+drops 29.6%.
+
+**Three consequences:**
+1. **The ADR's rank-1 stage (L3-1 = thread loop A on Lane D) fails its own gate** once the deck is
+   configured the way ADR-67 recommends. Threading was being ranked ahead of a shipped,
+   strictly-cheaper, bit-identical work *removal* — which inverts ADR-40's standing
+   work-removal-before-parallelism ordering.
+2. **The ranking flips: loop C (`formUnbalance`, 46.33%) is now Lane D's dominant loop**, not loop A.
+   Loop C has an `addB` reduction, so it is *not* free of the determinism policy the way loop A is.
+3. Even so, **Lane D still passes the gate in aggregate** (85.30% total kernel), so Lane 3 is not
+   killed on this lane — only the choice of which loop to thread first.
+
+**This is the exact trap this PR's own new quirk row warns about** — "a phase baseline in a dated
+report may have been optimized away by a later ADR". The docs applied that correction to ADR-67
+P-NEW-1 (the mass cache, §4 below) and missed P-NEW-2 **two bullets away in the same source file**.
+
+**Which number should be quoted going forward:** the `-commitSolveState` row. The other one measures
+a configuration no informed user should run.
+
 ---
 
 ## 3. What this changes in ADR-75b §7 (recommended stage order)
 
+> **Rewritten after the max-effort review.** The first version ranked Lane D loop A first. F9 shows
+> that fraction is half redundant work; H1/H2 (below) show the prerequisites were mis-ordered. Both
+> the ranking and the prerequisite list changed.
+
+**Prerequisites — none of these are optional, and the first draft had them as later stages:**
+
+| P | what | why it is a prerequisite, not a stage |
+|---|---|---|
+| **P-a** | de-static `FE_Element::theMatrices` / `DOF_Group` pools | `theTangent = theMatrices[numDOF]` is **one Matrix shared by every same-numDOF FE_Element**, handed straight to `addA` ⇒ a **100% collision** in loops B/C that no element allowlist can fix |
+| **P-b** | de-static the element kernel itself (was L3-2) | `LadrunoBrick::update()` runs on **16** function-scope statics; 63 of 215 `update()` bodies do |
+| **P-c** | an index-addressable element accessor | the loop is driven by one shared mutable cursor; it cannot be a `#pragma omp for`, and a shared-cursor pull skips/duplicates elements |
+| **P-d** | eager `createDisp/createVel/createAccel` at `domainChanged` | `Node`'s trial getters lazily allocate on first touch |
+| **P-e** | per-thread profiler scopes | the instrument inside the loop is itself an unsynchronized shared write, and it must be ON to measure the payoff |
+
+**Revised ranking** (fractions quoted on the correctly-configured deck):
+
 | rank | target | fraction | element | why |
 |---|---|---|---|---|
-| **1** | **Lane D loop A** (`Domain::update`, explicit) | 54.35% | `LadrunoBrick` (fork-owned) | bit-identical by construction (F4); no SOE interaction at all; de-statication already authorized; ADR-40b already passed rank 7's gate here |
-| **2** | **Lane B loop A** (implicit) | 5.24% | `LadrunoBrick` | same code path as rank 1 — near-free once rank 1 lands, though small on its own |
-| **3** | **Lane B loop B** (`formTangent`) | **61.56%** | `LadrunoBrick` | the single largest kernel bucket in the fork (38 µs/ele). Needs the §4 scatter work (fast + ordered), so it is gated on the §4.2 gather-memory question |
-| **4** | Lane B loop C (`formUnbalance`) | 8.04% | `LadrunoBrick` | rides on rank 3's machinery |
-| **defer** | Lane A loop A | 80.79% | `ForceBeamColumn2d` (**vanilla**) | biggest fraction, worst re-entrancy, outside the change budget (F5) — upstream-facing |
-| **never** | Lane A/C loops B, C | 0.45% / 0.79% | — | Amdahl-irrelevant and scatter-bound (F6) |
+| **0** | **Enable `-commitSolveState` on explicit decks** | **−29.6% wall**, bit-identical | — | shipped, zero-risk, zero-code. Work removal before parallelism (ADR-40's standing order). Not Lane-3 work at all |
+| **0b** | **Replace the `addA` O(idSize²×rowlen) search** | ~14% of wall, **both** solvers | — | serial, zero determinism cost, no re-entrancy audit (F3) |
+| **1** | **Lane D loop C** (`formUnbalance`) | **46.33%** | `LadrunoBrick` | Lane D's dominant loop once configured correctly. Has an `addB` reduction, so it needs the §3 ordered/fast policy — it is **not** the free case loop A was |
+| **2** | **Lane B loop B** (`formTangent`) | **61.56%** | `LadrunoBrick` | the single largest kernel bucket in the fork (38 µs/ele); gated on the §4.2 gather-memory question |
+| **3** | Lane D / Lane B loop A | 38.95% / 5.24% | `LadrunoBrick` | still the only *reduction-free* loop, so still the cheapest determinism story — but no longer the biggest |
+| **defer** | Lane A loop A | 80.79% | `ForceBeamColumn2d` (**vanilla**) | biggest fraction, worst re-entrancy, outside the change budget (F5) |
+| **never** | Lane A loops B, C | 0.45% / 0.79% | — | Amdahl-irrelevant (F6) |
 
-This **confirms** ADR-75b §7's ordering (L3-1 loop A on fork-owned elements first, `ForceBeamColumn2d`
-last) and **refines** it: Lane **D** — not Lane B — is the cleanest first target, because its
-`system Diagonal` path removes the SOE from the picture entirely.
+**What survives from the original conclusion:** loop A is still the only loop with *no* FP reduction,
+so it is still the cheapest determinism story and still the right place to prove the machinery. What
+does **not** survive is "biggest frame-lane fraction ⇒ do it first": on the correctly-configured
+explicit deck it is no longer the biggest, and its prerequisites (P-a…P-e) are heavier than the
+first draft assumed.
 
 ---
 
@@ -341,8 +429,37 @@ Two honest qualifications:
 
 ## 7. What the adversarial review changed
 
-Two scoped passes ran against this document, both targeting the claims that would be **wrong without
-being obviously wrong**. Between them: **five real defects**, one of them a wrong published number.
+Three passes ran against this document, all targeting the claims that would be **wrong without being
+obviously wrong**. Between them: **twelve real defects**, two of which changed a published number and
+one of which **reversed a recommendation**.
+
+### Pass 3 — 64-agent max-effort review (10 dimensions → refute-by-default panel → completeness critic)
+
+68 raw findings; 26 verified by two independent lenses each (one mandated to refute by default, one
+judging materiality); 24 survived. The load-bearing ones, all re-verified by hand before acting:
+
+| # | Finding | Status |
+|---|---|---|
+| **M1** | **The transient path assembles in `TransientIntegrator.cpp`, not `IncrementalIntegrator.cpp` — and BOTH paths carry DOF_Group `addA`/`addB` loops the taxonomy omitted.** A *pass-1 clearance was wrong* ("`formTangent` has ONLY the FE_Element loop") — it read the static path only. `DOF_Group::addMtoTang` adds `myNode->getMass()`, so on any `ops.mass(...)` deck the entire nodal mass reaches `A` only through the omitted loop ⇒ **the §4.2 gather design as written would silently drop nodal mass and nodal loads** | ADR §2 now lists **five** loops; §4.2 rewritten; clearance withdrawn |
+| **M2** | **Lane D's 54.35% loop A is half redundant work** — shipped `-commitSolveState` deletes the second constitutive pass; re-measured, loop A = **38.95% (gate FAILS)** and loop C = **46.33%** | **F9 added**; L3-1 de-authorized as first stage; L3-0b (work removal) promoted |
+| **H1** | **`FE_Element::theMatrices` is a class-wide pool** (`static Matrix **`, `theTangent = theMatrices[numDOF]`) — **one 24×24 Matrix shared by all 3375 bricks**, handed straight to `addA`. A **100% collision** in loops B/C that no element allowlist, no L3-2, and no atomic can fix. §5.1 had mis-attributed ADR-40's rank-7 pools to `Element.cpp:49-52`, a different pool that is off the loop-A path | §5.4-H1; §5.1 corrected; §10 list grew |
+| **H2–H7** | Six further hazards outside the inventory's scope: `LadrunoBrick::update()`'s 16 statics (L3-1's own target); the shared mutable **iterator cursor** (loop is not index-addressable); **`Node`'s trial getters lazily allocate**; `SRC/coordTransformation/` uncounted; **the profiler instrument itself races** — and the deep gate must be ON to measure the payoff; `ops_TheActiveElement` is a per-call read for two materials, not a latch | new §5.4 |
+| **M3** | F7's three Lane-A site numbers came from a superseded uncommitted probe (~15% low) and contradicted §1 by 15% | corrected from the JSONs |
+| **M4/M6/N7/N8/N9** | Lane A's `addA%` cell is below the instrumentation floor; ±0.2 pp → ±0.7 pp; the unsym config was **not interleaved**; 5.8% is a between-medians spread, not a per-run floor (~12%); a wrong `zeroA` line ref | all corrected |
+| **N6** | **The sweep's "suspicious log" guard could not match the message it exists to catch** — verified by executing it against OpenSees' actual text — and fired spuriously on every Lane-A run | fixed + positive assertion added |
+
+**What pass 3 cleared** (attacked and survived): all 45 cells of the §1 gate table, the µs/ele table,
+the sign tests, the Amdahl column and the scope-instance counts — recomputed by an independent
+reducer; the frozen-sparsity claim across **14** SOE classes; "`Domain::update` has no FP reduction";
+every `Domain::update` override delegating to the base; the §2.1b node-*write* list under a depth-3
+transitive BFS; `Element::theMatrices` being genuinely off the loop-A path; `parse_lane3.py`'s
+structure (a double-count input was constructed, then proved unreachable); the `_opt()` float fix;
+the phase-0 edits being physics-neutral; and fork-convention compliance. **Fork-join cost was
+measured at ~19.5 µs at 4T against 3.3–11.5 ms of work per region — 0.2–0.6%, so not binding.**
+
+### Passes 1–2 (pre-PR and post-PR)
+
+Five real defects, one of them a wrong published number.
 
 ### Pass 2 (post-PR, deeper — verification by execution rather than re-reading)
 
