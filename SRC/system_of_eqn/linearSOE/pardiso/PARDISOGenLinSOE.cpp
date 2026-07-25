@@ -43,7 +43,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(0), asymWarned(0), asymBudget(0)
+	factored(false), matType(0), asymWarned(0), asymBudget(0), missWarned(0)
 {
 	the_Solver.setLinearSOE(*this);
 }
@@ -58,7 +58,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver, int _matType
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(_matType), asymWarned(0), asymBudget(0)
+	factored(false), matType(_matType), asymWarned(0), asymBudget(0), missWarned(0)
 {
 	if (matType < 0 || matType > 2) {
 		opserr << "WARNING PARDISOGenLinSOE - unknown matrixType (" << matType
@@ -366,6 +366,37 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 	return result;
 }
 
+// Ladruno ADR-75 P1f: locate `col1` (a ONE-based column index) in the ascending
+// run colA[lo, hi). Returns the offset into A, or -1 if the pattern has no such
+// entry.
+//
+// The stock scatter did this with a LINEAR scan, so assembling one element
+// matrix cost O(idSize^2 * rowlen): for a 3D brick that is 24*24 lookups each
+// rescanning a ~81-entry row. ADR-75b's L3-0 profile measured it at 1699 ms of
+// an ~11.9 s step — 1.28x slower than UmfPack's equivalent scatter — and it
+// only grew in relative terms as P1a/P1d/P1e made the SOLVE cheaper.
+//
+// Binary search is legal here because the ascending-CSR invariant is not merely
+// assumed, it is ENFORCED: setSize() above rejects the matrix (size = 0,
+// return -1) if any row's column indices are not strictly ascending. That check
+// is what makes this a safe drop-in rather than a bet.
+static inline int
+ops_pardiso_findCol(const int *colA, int lo, int hi, int col1)
+{
+	while (lo < hi) {
+		const int mid = lo + ((hi - lo) >> 1);
+		const int c = colA[mid];
+		if (c < col1)
+			lo = mid + 1;
+		else if (c > col1)
+			hi = mid;
+		else
+			return mid;
+	}
+	return -1;
+}
+
+
 int
 PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 {
@@ -435,6 +466,17 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 		}
 	}
 
+	// Ladruno ADR-75 P1f: a lookup that finds NO home for an element entry means
+	// the sparsity pattern is missing a coefficient the assembly needs, i.e. the
+	// contribution is silently DISCARDED and the run solves a matrix that is not
+	// the assembled tangent. The stock linear scan simply fell off the end of the
+	// row in that case, so it could not be observed at all. Should be
+	// unreachable — the pattern comes from the same DOF graph as `id` and P1d
+	// made a truncated CSR fill a hard error — but this is the same
+	// silent-wrong-answer class as the half-storage asymmetry above, and the
+	// branch is FREE: the miss test already exists as `k >= 0`.
+	int missing = 0;
+
 	if (fact == 1.0) { // do not need to multiply
 		for (int i = 0; i < idSize; i++) {
 			int row = id(i);
@@ -444,12 +486,14 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 				for (int j = 0; j < idSize; j++) {
 					int col = id(j);
 					if (col < size && col >= 0 && (!halfStore || col >= row)) {
-						// find place in A using colA
-						for (int k = startRowLoc; k < endRowLoc; k++)
-							if (colA[k] == col + 1) {
-								A[k] += m(i, j);
-								k = endRowLoc;
-							}
+						// find place in A using colA (Ladruno ADR-75 P1f: was a
+						// linear scan of the whole row)
+						const int k = ops_pardiso_findCol(colA, startRowLoc,
+						                                  endRowLoc, col + 1);
+						if (k >= 0)
+							A[k] += m(i, j);
+						else
+							missing = 1;
 					}
 				}  // for j
 			}
@@ -464,17 +508,33 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 				for (int j = 0; j < idSize; j++) {
 					int col = id(j);
 					if (col < size && col >= 0 && (!halfStore || col >= row)) {
-						// find place in A using colA
-						for (int k = startRowLoc; k < endRowLoc; k++)
-							if (colA[k] == col + 1) {
-								A[k] += fact * m(i, j);
-								k = endRowLoc;
-							}
+						// find place in A using colA (Ladruno ADR-75 P1f)
+						const int k = ops_pardiso_findCol(colA, startRowLoc,
+						                                  endRowLoc, col + 1);
+						if (k >= 0)
+							A[k] += fact * m(i, j);
+						else
+							missing = 1;
 					}
 				}  // for j
 			}
 		}  // for i
 	}
+
+	// Ladruno ADR-75 P1f: reported ONCE per SOE — a pattern defect is structural,
+	// so repeating it per element would bury the run in output.
+	if (missing == 1 && missWarned == 0) {
+		missWarned = 1;
+		opserr << "WARNING PARDISOGenLinSOE::addA() - an element matrix entry has "
+		          "NO slot in the CSR pattern, so its stiffness is being "
+		          "DISCARDED.\n"
+		          "     The assembled system is not the tangent this model "
+		          "defines and the answer may be silently wrong. This indicates "
+		          "the sparsity pattern\n"
+		          "     and the assembly disagree (a setSize/graph bug, not a "
+		          "modelling error). Reported once.\n";
+	}
+
 	return 0;
 }
 

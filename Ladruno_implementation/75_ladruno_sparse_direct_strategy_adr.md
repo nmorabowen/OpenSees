@@ -279,7 +279,14 @@ zero-pivot message now says exactly that.
   is built and working in the serial module (477 pardiso symbols, was 0). Lane B, same binary:
   **1.71× faster than UmfPack at 4 threads** (10.396 s vs 17.775 s), 1.76× at 8, and **1.19× even
   single-threaded**. Tip displacement **bit-identical to UmfPack at every thread count (rel err
-  0.0)** — so threading introduced no FP drift and the §7 determinism concern is Lane-3-only.
+  0.0)**. ~~so threading introduced no FP drift and the §7 determinism concern is Lane-3-only.~~
+  **⚠ CORRECTED by P1f:** the *accuracy* claim stands, but "no FP drift / Lane-3-only" does not — it
+  rested on one run per thread count. With **10 runs of one binary at a fixed thread count**,
+  threaded PARDISO returns **2 distinct results in a 5/5 split** (~1 ULP) at 4 threads while being
+  10/10 identical at 1 thread; reproduced on a pre-P1f binary, so it is MKL's, not ours, and it is
+  size-dependent (an 8³ model is stable even at 4T, which is why the single-sample 15³ check
+  passed). **So §7's determinism concern is NOT Lane-3-only** — a byte-identical gate must pin
+  `MKL_NUM_THREADS=1` or use `iparm[33]` CNR (legal here since we set `iparm[1]=2`; not yet exposed).
   Scaling flattens past 4 threads (1.50×→1.58×, memory-bandwidth-bound) ⇒ **4 threads is the
   recommended desktop default**. The measured 1.76× sits just under the predicted ~2.2× Amdahl
   ceiling, confirming the residual ~34% is Lane-3 territory. *(Original scoping, for the record:)* Compile-verify the prototype; wire
@@ -354,6 +361,27 @@ zero-pivot message now says exactly that.
   and both answers are non-physical (direct 6435 vs krylov −5502 at step 35). Post-limit-point path
   chaos amplifying a 1-ULP difference, not a defect — but it is a **reproducibility** hazard: keep
   `-krylov` off when the deliverable is a post-peak path (progressive-collapse / AEM lane).
+- **P1f — the `addA` scatter quadratic, and the determinism claim it broke. ✅ DONE**
+  (`phase1/p1f_adda_ab.py`, `p1f_determinism_probe.py`). `PARDISOGenLinSOE::addA` rescanned the
+  whole CSR row for each of `idSize²` element entries — `O(idSize² × rowlen)`, which ADR-75b's L3-0
+  profile measured at **1699 ms of an ~11.9 s step and 1.28× slower than UmfPack's** scatter.
+  Replaced by a binary search, legal because `setSize` **enforces** ascending CSR rather than
+  assuming it. **Measured 1.098× at 26.5k DOF** (`-matrixType 1`: 1.029×, less because half-storage
+  already scatters fewer entries into shorter rows). **This was the right next lever precisely
+  because P1a/P1d/P1e worked:** every solver win raises the assembly share (L3-0 put the element
+  fraction at 35.8% under UmfPack → 74.9% under PARDISO), and threading a quadratic would only buy
+  a parallel quadratic — so this lands *before* Lane 3's L3-1.
+  **⚠ And it broke a published claim.** The A/B reported "ux DIFFERS" at 4 threads. The tempting
+  reading was "the change is not exact"; the correct question was whether each binary reproduces
+  *itself*. It does not: **10 runs of ONE binary at 4 threads give 2 distinct results in a 5/5
+  split** (~1 ULP), on the *pre-P1f* binary too, while 1 thread is 10/10 identical and old==new.
+  So the change is exact, and **threaded MKL PARDISO is not byte-reproducible run-to-run** — which
+  refutes P1's "bit-identical at every thread count ⇒ the §7 determinism concern is Lane-3-only".
+  That conclusion came from **one run per thread count**, a design that cannot distinguish
+  deterministic from lucky. Corrections landed in `RESULTS_p1_pardiso.md` and §P1 above;
+  `LEDGER_quirks.md` carries the full entry. Mitigation: pin `MKL_NUM_THREADS=1` for byte-identical
+  gates, or expose `iparm[33]` CNR — available to us since we set `iparm[1]=2` (Intel forbids CNR
+  only for `iparm[1]=3`), **not currently wired**.
   **Opt-in, off by default** — byte-identical to P1d when absent.
 - **P2 — MUMPS cluster tuning. 🟡 `-BLR` SHIPPED, effect NOT yet validated at scale**
   (`phase1/RESULTS_p2_blr.md`). `system Mumps -BLR <eps>` (+ raw `-ICNTL35`/`-CNTL7`) is wired,

@@ -102,6 +102,8 @@ class PARDISOGenLinSOE : public LinearSOE
     int matType;         // Ladruno ADR-75 P1d: 0 unsym / 1 SPD / 2 sym-general
     int asymWarned;      // Ladruno ADR-75 P1d: half-store asymmetry reported once
     int asymBudget;      // ...and how many more element matrices to check
+    int missWarned;      // Ladruno ADR-75 P1f: an addA entry with no CSR slot
+                         // (stiffness silently discarded) reported once
 };
 
 

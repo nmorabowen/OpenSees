@@ -1,0 +1,46 @@
+{
+  "threads": "4",
+  "repeats": 3,
+  "old": "C:\\Users\\nmb\\AppData\\Local\\Temp\\claude\\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-opensees-pr-strategy-9c17b8\\1b90daf7-3f35-463b-aeae-74ea887faf17\\scratchpad\\pardiso_baseline_bin",
+  "new": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\opensees-pr-strategy-9c17b8\\dist\\bin",
+  "sizes": {
+    "25": {
+      "direct": {
+        "old_median_s": 60.836039,
+        "new_median_s": 55.776466,
+        "speedup": 1.0907116094447433,
+        "ux_old": "3.62640194868169941e+00",
+        "ux_new": "3.62640194868169941e+00",
+        "bit_identical": true,
+        "old_samples": [
+          60.609451,
+          60.836039,
+          61.269209
+        ],
+        "new_samples": [
+          55.77158,
+          55.776466,
+          56.604828
+        ]
+      },
+      "spd": {
+        "old_median_s": 42.614777,
+        "new_median_s": 41.493021,
+        "speedup": 1.0270348114686563,
+        "ux_old": "3.62640194868169941e+00",
+        "ux_new": "3.62640194868169941e+00",
+        "bit_identical": true,
+        "old_samples": [
+          42.513764,
+          42.614777,
+          43.108735
+        ],
+        "new_samples": [
+          41.316055,
+          41.493021,
+          41.873257
+        ]
+      }
+    }
+  }
+}
