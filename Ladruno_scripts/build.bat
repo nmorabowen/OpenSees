@@ -203,6 +203,28 @@ if defined CONAN_CMAKE if exist "%BUILD_DIR%\CMakeCache.txt" (
     )
 )
 
+REM ----- 2d. Heal a cache pointing at a VANISHED compiler -------------------
+REM Ladruno ADR-75: CMake caches the RESOLVED ABSOLUTE path of each compiler.
+REM oneAPI updates re-point the `compiler\latest` junction, and 2026.x ships no
+REM Fortran at all -- so a cache written while `latest` was 2025.x holds
+REM   CMAKE_Fortran_COMPILER=...\compiler\latest\bin\ifx.exe
+REM which simply stops existing after the update, and configure dies with
+REM   "is not a full path to an existing compiler tool".
+REM Passing -DCMAKE_Fortran_COMPILER=ifx does NOT fix it: the cached absolute
+REM path wins. setup_env.bat already fell back to a Fortran-capable compiler;
+REM here we just drop a cache that names a compiler which no longer exists.
+REM Compiled objects survive (ninja re-runs only what its hashes say changed).
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+    for /f "usebackq tokens=2 delims==" %%F in (`findstr /b /i /c:"CMAKE_Fortran_COMPILER:" "%BUILD_DIR%\CMakeCache.txt"`) do (
+        if not exist "%%F" (
+            echo   CMakeCache.txt names a vanished Fortran compiler:
+            echo     %%F
+            echo   ^(likely a oneAPI update re-pointed compiler\latest^) -- deleting cache
+            del /q "%BUILD_DIR%\CMakeCache.txt"
+        )
+    )
+)
+
 REM ----- 3. CMake configure ------------------------------------------------
 echo.
 echo === Step 3: CMake configure ===

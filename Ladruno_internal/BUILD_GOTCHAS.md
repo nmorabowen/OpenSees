@@ -262,3 +262,51 @@ not). Build it locally the same way: `build.bat` configures with
 `-DMUMPS_DIR`/`-DMUMPS_INCLUDE_DIR` already; add `-DLADRUNO_CMS=ON
 -DLADRUNO_CMS_BUILD_TESTS=ON` to the configure and the ~7 CMS TUs compile
 incrementally (the rest of the tree is cached).
+
+## 8. oneAPI 2026 ships NO Fortran → three cascading build failures (ADR-75)
+
+**Symptom (any one of three, depending on how far you get):**
+
+1. `CMAKE_Fortran_COMPILER: ifx ... is not a full path and was not found in the PATH`
+   — at the **MUMPS configure** (build.bat Step 1).
+2. `LINK : fatal error LNK1104: cannot open file 'ifconsol.lib'`
+   — when **linking `OpenSeesMP` / `OpenSeesSP` / `OpenSeesPyMP`**.
+3. `CMAKE_Fortran_COMPILER: ...\compiler\latest\bin\ifx.exe is not a full path to an
+   existing compiler tool` — at the **main OpenSees configure**.
+
+**Root cause — one event, three faces.** oneAPI **2026.x ships no Fortran at all**: Intel split it
+into a separate package, so `compiler\2026.1` has neither `ifx.exe` nor `ifconsol.lib`. An update
+re-points the **`compiler\latest` junction**, and everything downstream breaks:
+
+- no `ifx` ⇒ failure (1);
+- no `ifconsol.lib` ⇒ failure (2), because **MKL's ScaLAPACK/BLACS import libraries still carry a
+  `/DEFAULTLIB:ifconsol` directive**. **Serial targets never link ScaLAPACK, so they keep building
+  fine** — which is precisely why this stays invisible until somebody builds an MP target;
+- CMake caches the **resolved absolute** compiler path, so a cache written while `latest` was 2025.x
+  now names a file that no longer exists ⇒ failure (3). Note **`-DCMAKE_Fortran_COMPILER=ifx` does
+  NOT fix (3)** — the cached absolute path wins.
+
+This was observed **live**: an update flipped `latest` 2025.1 → 2026.1 *between two builds in one
+session* (the earlier log shows `Fortran compiler identification is IntelLLVM 2025.1.1` from
+`latest\bin`, the later one finds nothing there).
+
+**Fixes, all shipped (`Ladruno_scripts/`):**
+- `setup_env.bat` §2a — prefer `compiler\latest`, but if it has **no `ifx.exe`** fall back to the
+  newest installed compiler that does and source **that** `vars.bat`. Hard error (with a pointer to
+  the separate Fortran package) if none has it.
+- `setup_env.bat` §2b — independently, if the chosen compiler has no `ifconsol.lib`, prepend the lib
+  dir of one that does. Kept separate because a compiler *can* have `ifx` but not `ifconsol`.
+- `build.bat` §2d — delete `CMakeCache.txt` when its `CMAKE_Fortran_COMPILER` no longer exists on
+  disk. Compiled objects survive (ninja re-runs only what its hashes changed).
+
+**Diagnosis one-liner** (run after `setup_env.bat`, in `cmd`):
+```
+for %P in (ifx.exe) do @echo %~$PATH:P
+for %P in (ifconsol.lib) do @echo %~$LIB:P
+```
+Both must print a real path. If `ifx` resolves under `2025.x` while `latest` is `2026.x`, the
+fallback is doing its job.
+
+**Note for these scripts:** `setup_env.bat` must **not** `setlocal` (it exports the environment to
+its caller), so **delayed expansion `!VAR!` is unavailable** — write these blocks flat with labels,
+never as a parenthesized read-after-write.

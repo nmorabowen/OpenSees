@@ -36,10 +36,12 @@
 #include <iostream>
 
 #define ICNTL(I) icntl[(I)-1] /* macro s.t. indices match documentation */
+#define CNTL(I)  cntl[(I)-1]  /* Ladruno ADR-75 P2: same for the real controls */
 
 #include <mpi.h>
 
-MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14)
+MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14,
+					 int ICNTL35, double CNTL7)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
    theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
@@ -47,11 +49,14 @@ MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14)
 
   icntl7 = ICNTL7;
   icntl14 = ICNTL14;
+  icntl35 = ICNTL35;   // Ladruno ADR-75 P2 (BLR; 0 = off = stock behavior)
+  cntl7 = CNTL7;
   init = false;
   needsSetSize = false;
 }
 
-MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14)
+MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14,
+					 int ICNTL35, double CNTL7)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
    theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
@@ -59,6 +64,8 @@ MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14)
 
   icntl14 = ICNTL14;
   icntl7 = ICNTL7;
+  icntl35 = ICNTL35;   // Ladruno ADR-75 P2
+  cntl7 = CNTL7;
   init = false;
   needsSetSize = false;
 }
@@ -151,7 +158,13 @@ MumpsParallelSolver::initializeMumps()
     
     id.ICNTL(14) = icntl14;
     id.ICNTL(7) = icntl7;
-    
+    // Ladruno ADR-75 P2: Block Low-Rank. MUST be set before the ANALYSIS
+    // (job=1) as well as the factorization -- MUMPS uses it when planning the
+    // assembly tree. icntl35=0 leaves the stock (full-rank) path untouched.
+    id.ICNTL(35) = icntl35;
+    if (cntl7 != 0.0)
+      id.CNTL(7) = cntl7;
+
     int nnz = theMumpsSOE->nnz;
     int *colA = theMumpsSOE->colA;
     int *rowA = theMumpsSOE->rowA;
@@ -242,9 +255,12 @@ MumpsParallelSolver::solveAfterInitialization(void)
   //id.ICNTL(1) = 1; id.ICNTL(2) = 1; id.ICNTL(3) = 1; id.ICNTL(4) = 3;
 
 
-  id.ICNTL(14)=icntl14; 
-  id.ICNTL(7)=icntl7; 
-  
+  id.ICNTL(14)=icntl14;
+  id.ICNTL(7)=icntl7;
+  id.ICNTL(35)=icntl35;                 // Ladruno ADR-75 P2 (BLR)
+  if (cntl7 != 0.0)
+    id.CNTL(7) = cntl7;
+
   // increment row and col A values by 1 for mumps fortran indexing
   for (int i=0; i<nnz; i++) {
     rowA[i]++;
@@ -345,12 +361,19 @@ MumpsParallelSolver::setSize(void)
 int
 MumpsParallelSolver::sendSelf(int cTag, Channel &theChannel)
 {
-  // nothing to do
-  ID icntlData(2);
+  // Ladruno ADR-75 P2: icntl35 (BLR mode) rides along, else the subordinate
+  // ranks would factor FULL-RANK while P0 factors BLR -- an inconsistent
+  // distributed factorization. cntl7 (a double) goes in its own Vector.
+  ID icntlData(3);
 
-  icntlData(0) = icntl7;  
+  icntlData(0) = icntl7;
   icntlData(1) = icntl14;
+  icntlData(2) = icntl35;
   theChannel.sendID(0, cTag, icntlData);
+
+  Vector cntlData(1);
+  cntlData(0) = cntl7;
+  theChannel.sendVector(0, cTag, cntlData);
 
   return 0;
 }
@@ -360,13 +383,19 @@ MumpsParallelSolver::recvSelf(int ctag,
 		      Channel &theChannel, 
 		      FEM_ObjectBroker &theBroker)
 {
-  // nothing to do
-  ID icntlData(2);
+  // Ladruno ADR-75 P2: must mirror sendSelf exactly (3 ints + 1 double).
+  ID icntlData(3);
 
   theChannel.recvID(0, ctag, icntlData);
 
   icntl7 = icntlData(0);
   icntl14 = icntlData(1);
+  icntl35 = icntlData(2);
+
+  Vector cntlData(1);
+  theChannel.recvVector(0, ctag, cntlData);
+  cntl7 = cntlData(0);
+
   return 0;
 }
 

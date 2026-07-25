@@ -4920,6 +4920,8 @@ void* OPS_MumpsSolver() {
     int icntl7 = 7;
     int matType = 0; // 0: unsymmetric, 1: symmetric positive definite, 2: symmetric general
     int commColor = -1;        // Ladruno ADR43 P3a: -commSplit color (>=0 enables)
+    int icntl35 = 0;           // Ladruno ADR-75 P2: BLR off by default
+    double cntl7 = 0.0;        // Ladruno ADR-75 P2: BLR dropping tolerance
     // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
     // when exactly one "-opt value" pair remained (the common openseespy
     // system('Mumps','-ICNTL14',n) spelling) — every option needs opt+value,
@@ -4946,6 +4948,33 @@ void* OPS_MumpsSolver() {
                 opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
                 matType = 0;
             }
+        } else if (strcmp(opt, "-BLR") == 0) {
+            // Ladruno ADR-75 P2: `-BLR <eps>` turns on Block Low-Rank
+            // compression of the factors with dropping tolerance eps (e.g.
+            // 1e-9). ADR-75 P1c measured memory -- not time -- as the binding
+            // constraint on large 3D solid models, and BLR is the cheapest
+            // relief. NOTE: BLR is an APPROXIMATE factorization; it must stay
+            // off for byte-identical/oracle lanes. Experts can instead drive
+            // -ICNTL35/-CNTL7 directly.
+            if (OPS_GetDoubleInput(&num, &cntl7) < 0) {
+                opserr << "WARNING: failed to get -BLR tolerance\n";
+                return 0;
+            }
+            if (cntl7 < 0.0) {
+                opserr << "WARNING: -BLR tolerance must be >= 0\n";
+                return 0;
+            }
+            icntl35 = 1;   // BLR factorization + solve
+        } else if (strcmp(opt, "-ICNTL35") == 0) {
+            if (OPS_GetIntInput(&num, &icntl35) < 0) {
+                opserr << "WARNING: failed to get icntl35\n";
+                return 0;
+            }
+        } else if (strcmp(opt, "-CNTL7") == 0) {
+            if (OPS_GetDoubleInput(&num, &cntl7) < 0) {
+                opserr << "WARNING: failed to get cntl7\n";
+                return 0;
+            }
         } else if (strcmp(opt, "-commSplit") == 0) {
             // Ladruno ADR43 P3a: split MPI_COMM_WORLD by color; this rank's
             // MUMPS factor/solve then runs on the sub-communicator. The SOE's
@@ -4968,7 +4997,8 @@ void* OPS_MumpsSolver() {
 #ifdef _MUMPS
     MumpsParallelSOE* soe = 0;
 
-    MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14);
+    MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14,
+							 icntl35, cntl7);
     soe = new MumpsParallelSOE(*solver, matType);
 
     if (commColor >= 0) {
