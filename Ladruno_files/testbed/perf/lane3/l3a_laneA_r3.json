@@ -1,0 +1,133 @@
+{
+  "meta": {
+    "solver": "UmfPack",
+    "algorithm": "Newton",
+    "integrator": "DisplacementControl",
+    "nDOF": 810,
+    "nSteps": 93,
+    "threads": 1,
+    "wall_ms_total": 7430.3193,
+    "timestamp": "2026-07-25T03:14:27"
+  },
+  "step_ms": 7428.6483,
+  "loops": {
+    "A_update": {
+      "scope": "elem.update",
+      "sites": {
+        "root/step/newStep/elem.update": 1066.1798,
+        "root/step/solveCurrentStep/elem.update": 569.8595,
+        "root/step/solveCurrentStep/update/elem.update": 4345.1524
+      },
+      "loop_ms": 5981.191699999999,
+      "kernel_ms": 5944.7494,
+      "scatter_ms": 36.442299999999705,
+      "pct_step_loop": 80.51520893780904,
+      "pct_step_kernel": 80.02464459112971,
+      "pct_loop_scatter": 0.6092815918272559,
+      "per_classtag": {
+        "73": {
+          "count": 311610,
+          "wall_ms": 5944.7494,
+          "us_per_ele": 19.077530887968933
+        }
+      }
+    },
+    "B_tangent": {
+      "scope": "elem.tangent",
+      "sites": {
+        "root/step/newStep/elem.tangent": 19.5096,
+        "root/step/solveCurrentStep/elem.tangent": 2.729,
+        "root/step/solveCurrentStep/formTangent/elem.tangent": 55.8307
+      },
+      "loop_ms": 78.0693,
+      "kernel_ms": 34.3077,
+      "scatter_ms": 43.7616,
+      "pct_step_loop": 1.0509220095935892,
+      "pct_step_kernel": 0.4618296440282413,
+      "pct_loop_scatter": 56.05481283936195,
+      "per_classtag": {
+        "73": {
+          "count": 285090,
+          "wall_ms": 34.3077,
+          "us_per_ele": 0.12033989266547405
+        }
+      }
+    },
+    "C_residual": {
+      "scope": "elem.residual",
+      "sites": {
+        "root/step/elem.residual": 0.4468,
+        "root/step/solveCurrentStep/elem.residual": 10.1234,
+        "root/step/solveCurrentStep/formUnbalance/elem.residual": 72.0752
+      },
+      "loop_ms": 82.6454,
+      "kernel_ms": 58.8375,
+      "scatter_ms": 23.807899999999997,
+      "pct_step_loop": 1.112522718298563,
+      "pct_step_kernel": 0.792035073190906,
+      "pct_loop_scatter": 28.807289939911957,
+      "per_classtag": {
+        "73": {
+          "count": 311610,
+          "wall_ms": 58.8375,
+          "us_per_ele": 0.1888177529604313
+        }
+      }
+    }
+  },
+  "phases": {
+    "linearSolve": {
+      "ms": 420.0755,
+      "pct_step": 5.654803983653392
+    },
+    "formTangent": {
+      "ms": 58.3612,
+      "pct_step": 0.785623408770072
+    },
+    "formUnbalance": {
+      "ms": 78.0671,
+      "pct_step": 1.050892394515433
+    },
+    "update": {
+      "ms": 4540.0569,
+      "pct_step": 61.115518148840074
+    },
+    "newStep": {
+      "ms": 1211.0252,
+      "pct_step": 16.3020936123736
+    },
+    "commit": {
+      "ms": 447.4557,
+      "pct_step": 6.023379784987264
+    },
+    "convTest": {
+      "ms": 4.7168,
+      "pct_step": 0.06349472756705954
+    },
+    "soe.symbolic": {
+      "ms": 0.7794,
+      "pct_step": 0.010491814506819498
+    },
+    "soe.factor": {
+      "ms": 468.52270000000004,
+      "pct_step": 6.306971081131947
+    },
+    "soe.trisolve": {
+      "ms": 115.214,
+      "pct_step": 1.5509416430442668
+    }
+  },
+  "classtags": {},
+  "totals": {
+    "kernel_ms": 6037.8946,
+    "loop_ms": 6141.9064,
+    "pct_step_kernel": 81.27850930834886,
+    "pct_step_loop": 82.6786536657012
+  },
+  "amdahl_kernel_only": {
+    "2": 1.6846149659580096,
+    "4": 2.561402056980119,
+    "8": 3.4624474978746407,
+    "16": 4.201433966286647
+  }
+}

@@ -1,0 +1,14 @@
+C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\Ladruno_files\testbed\perf\phase0\laneD_model.py:4: SyntaxWarning: invalid escape sequence '\p'
+  Run: pythoncore-3.12-64\python.exe -S laneD_model.py
+CentralDifferenceLadruno: critical time step estimate
+  central-difference limit (2/omega_max): 0.0001253 @ element #1
+CentralDifferenceLadruno: critical time step (2/omega_max): 0.0001253 @ element #1
+pyd OK: C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\dist\bin\opensees.pyd
+model built: 1000 elements, 1331 nodes
+c_dil = 5856.4 m/s, h/c = 1.708e-04 s, dt_est(0.5 h/c) = 8.538e-05 s
+criticalTimeStep() = 1.253e-04 s
+using dt = 1.002e-04 s
+prof flags: ['-perStep']
+analyze block: 2500 steps, 0 failures, wall 22.14 s
+top-center disp_z = -6.414580e-05 m
+report written: True C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\Ladruno_files\testbed\perf\lane3\overhead\laneD_coarse_r2.h5

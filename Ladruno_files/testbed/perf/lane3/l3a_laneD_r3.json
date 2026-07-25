@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "solver": "Diagonal",
+    "algorithm": "Linear",
+    "integrator": "CentralDifferenceLadruno",
+    "nDOF": 3630,
+    "nSteps": 2500,
+    "threads": 1,
+    "wall_ms_total": 27711.6758,
+    "timestamp": "2026-07-25T03:14:35"
+  },
+  "step_ms": 27685.8536,
+  "loops": {
+    "A_update": {
+      "scope": "elem.update",
+      "sites": {
+        "root/step/newStep/elem.update": 7605.2719,
+        "root/step/solveCurrentStep/update/elem.update": 8106.5411
+      },
+      "loop_ms": 15711.813,
+      "kernel_ms": 15188.2346,
+      "scatter_ms": 523.5784000000003,
+      "pct_step_loop": 56.75032898389668,
+      "pct_step_kernel": 54.859188448500646,
+      "pct_loop_scatter": 3.332386911682314,
+      "per_classtag": {
+        "33002": {
+          "count": 5000000,
+          "wall_ms": 15188.2346,
+          "us_per_ele": 3.03764692
+        }
+      }
+    },
+    "C_residual": {
+      "scope": "elem.residual",
+      "sites": {
+        "root/step/solveCurrentStep/formUnbalance/elem.residual": 9162.2611
+      },
+      "loop_ms": 9162.2611,
+      "kernel_ms": 8938.9461,
+      "scatter_ms": 223.3150000000005,
+      "pct_step_loop": 33.09365581561841,
+      "pct_step_kernel": 32.28705254729802,
+      "pct_loop_scatter": 2.4373350373086455,
+      "per_classtag": {
+        "33002": {
+          "count": 2500000,
+          "wall_ms": 8938.9461,
+          "us_per_ele": 3.5755784399999997
+        }
+      }
+    }
+  },
+  "phases": {
+    "linearSolve": {
+      "ms": 8.5965,
+      "pct_step": 0.031050153353407897
+    },
+    "formTangent": {
+      "ms": 1.1739,
+      "pct_step": 0.004240071543251967
+    },
+    "formUnbalance": {
+      "ms": 9341.9025,
+      "pct_step": 33.7425120965026
+    },
+    "update": {
+      "ms": 8371.3986,
+      "pct_step": 30.23709769237529
+    },
+    "newStep": {
+      "ms": 8844.6193,
+      "pct_step": 31.94634858576295
+    },
+    "commit": {
+      "ms": 1096.9312,
+      "pct_step": 3.962063860656982
+    }
+  },
+  "classtags": {},
+  "totals": {
+    "kernel_ms": 24127.180699999997,
+    "loop_ms": 24874.074099999998,
+    "pct_step_kernel": 87.14624099579866,
+    "pct_step_loop": 89.84398479951508
+  },
+  "amdahl_kernel_only": {
+    "2": 1.7722050356564052,
+    "4": 2.8868094219686977,
+    "8": 4.211051300254236,
+    "16": 5.4643617134771
+  }
+}

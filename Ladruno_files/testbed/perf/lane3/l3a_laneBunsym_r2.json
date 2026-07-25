@@ -1,0 +1,115 @@
+{
+  "meta": {
+    "solver": "Pardiso",
+    "algorithm": "Newton",
+    "integrator": "LoadControl",
+    "nDOF": 11520,
+    "nSteps": 15,
+    "threads": 1,
+    "wall_ms_total": 11819.4424,
+    "timestamp": "2026-07-25T03:30:04"
+  },
+  "step_ms": 11819.1857,
+  "loops": {
+    "A_update": {
+      "scope": "elem.update",
+      "sites": {
+        "root/step/solveCurrentStep/update/elem.update": 522.8745
+      },
+      "loop_ms": 522.8745,
+      "kernel_ms": 499.6273,
+      "scatter_ms": 23.24720000000002,
+      "pct_step_loop": 4.4239469052423805,
+      "pct_step_kernel": 4.227256535955772,
+      "pct_loop_scatter": 4.446038198458716,
+      "per_classtag": {
+        "33002": {
+          "count": 148500,
+          "wall_ms": 499.6273,
+          "us_per_ele": 3.3644936026936025
+        }
+      }
+    },
+    "B_tangent": {
+      "scope": "elem.tangent",
+      "sites": {
+        "root/step/solveCurrentStep/formTangent/elem.tangent": 7565.1951
+      },
+      "loop_ms": 7565.1951,
+      "kernel_ms": 5857.9325,
+      "scatter_ms": 1707.2626,
+      "pct_step_loop": 64.00775224303312,
+      "pct_step_kernel": 49.562911089551626,
+      "pct_loop_scatter": 22.56733074868089,
+      "per_classtag": {
+        "33002": {
+          "count": 148500,
+          "wall_ms": 5857.9325,
+          "us_per_ele": 39.4473569023569
+        }
+      }
+    },
+    "C_residual": {
+      "scope": "elem.residual",
+      "sites": {
+        "root/step/solveCurrentStep/formUnbalance/elem.residual": 812.2565
+      },
+      "loop_ms": 812.2565,
+      "kernel_ms": 791.3303,
+      "scatter_ms": 20.926199999999994,
+      "pct_step_loop": 6.872355851046489,
+      "pct_step_kernel": 6.695303044439009,
+      "pct_loop_scatter": 2.576304406305151,
+      "per_classtag": {
+        "33002": {
+          "count": 199125,
+          "wall_ms": 791.3303,
+          "us_per_ele": 3.974037915881983
+        }
+      }
+    }
+  },
+  "phases": {
+    "linearSolve": {
+      "ms": 2764.834,
+      "pct_step": 23.39276215957923
+    },
+    "formTangent": {
+      "ms": 7583.8402,
+      "pct_step": 64.16550507367018
+    },
+    "formUnbalance": {
+      "ms": 824.7769,
+      "pct_step": 6.978288698856809
+    },
+    "update": {
+      "ms": 533.4846,
+      "pct_step": 4.5137170490518645
+    },
+    "newStep": {
+      "ms": 6.881,
+      "pct_step": 0.058218900816491954
+    },
+    "commit": {
+      "ms": 25.5435,
+      "pct_step": 0.216118949717492
+    },
+    "convTest": {
+      "ms": 6.0953,
+      "pct_step": 0.05157123472558689
+    }
+  },
+  "classtags": {},
+  "totals": {
+    "kernel_ms": 7148.8901,
+    "loop_ms": 8900.3261,
+    "pct_step_kernel": 60.48547066994641,
+    "pct_step_loop": 75.30405499932199
+  },
+  "amdahl_kernel_only": {
+    "2": 1.433542448663925,
+    "4": 1.8302984941292753,
+    "8": 2.124260163242443,
+    "16": 2.3097424041214096
+  }
+}

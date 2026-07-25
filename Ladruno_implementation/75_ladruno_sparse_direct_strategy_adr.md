@@ -178,8 +178,27 @@ cluster — so it strengthens desktop *and* cluster. Net-new, highest effort/ris
 - **Gate:** only where the profiler shows **>40% element/`update` fraction**; trivially-cheap
   elements (forceBeamColumn `getTangent` ≈0.1 µs) can *regress* from fork-join overhead.
   "OpenMP-by-default / implicit colored-scatter first" is an **anti-goal** (inherited from ADR-40).
-- **First move is instrumentation, not code:** ADR-40b's #1 gap is that the `elem.update` loop
-  (force-based / IMK interior iteration — the frame lanes' real cost) is unscoped. Measure it first.
+- **➜ NOW ITS OWN SUB-ADR: [[75b_ladruno_threaded_assembly_adr]]** (opened 2026-07-25). It settles the
+  two policy questions that constrain everything downstream — the **ordered-reduction / determinism CI
+  policy** (§3 there: per-loop-class; ordered mode is the CI gate and the default when threading is on,
+  fast/atomic mode opt-in and forbidden on oracle paths — LS-DYNA's *shape* with the default
+  **inverted**, because this fork's QA is exact rather than tolerance-based) and the **scatter remedy**
+  (§4 there: freeze-sparsity + atomic scatter as settled, with the new checked fact that OpenSees
+  *already* freezes the sparsity — `zeroA` never touches `colA`/`rowStartA` — so the race is one
+  `A[k] +=`). Stage L3-0 is measured.
+- ~~**First move is instrumentation, not code:** ADR-40b's #1 gap is that the `elem.update` loop
+  (force-based / IMK interior iteration — the frame lanes' real cost) is unscoped. Measure it first.~~
+  **CORRECTED — this premise was stale.** The `elem.update` instrument was built and shipped
+  **2026-07-06** (`Domain.cpp:2394`/`:2403`, macro `ProfilerMacros.h:114`), and ADR-40b's own addenda
+  already used it. The real gap was that the >40% gate had never been evaluated **per threadable
+  loop** — a profiler *phase* like `formTangent` bundles the threadable kernel with the
+  non-threadable `addA` scatter. **Closed by L3-0**
+  (`Ladruno_files/testbed/perf/lane3/RESULTS_l3a_update_scope.md`).
+- **Measured Lane-3 gate (L3-0):** the >40% element gate **fails on Lane B under UmfPack (35.8%
+  kernel) and passes under `Pardiso -matrixType 2` @4T (74.9%)** — solve falls 55.9% → 16.9%, so
+  **Lane 1's win is what creates Lane 3's business case**. Lanes A and D are element-bound regardless
+  (81.9% / 86.8%). `Domain::update` alone is 80.8% (lane A) / 54.4% (lane D) and has **no FP reduction
+  at all**, making it both the biggest frame-lane lever and the only one with zero determinism cost.
 
 ## 4. Cross-framework precedent (Abaqus · Kratos · LS-DYNA)
 
@@ -405,11 +424,20 @@ zero-pivot message now says exactly that.
   `-matrixType 2` (symmetric) and hybrid ranks×threads remain untouched.
 - **P3 — explicit-verb portability polish.** Clear build-time errors + docs (no `-auto`; §12) once
   P1/P2 land. **Preceded by the P0 trade study below** if unify-on-MKL is chosen.
-- **P4 — threaded assembly (own effort, staged).** (a) scope `elem.update`; (b) de-static kernels;
+- **P4 — threaded assembly. ➜ SPLIT OUT to [[75b_ladruno_threaded_assembly_adr]]** (2026-07-25); read
+  that for the staging (L3-0…L3-5), the determinism policy, and the risk register. **L3-0 (measure) is
+  DONE** — `lane3/RESULTS_l3a_update_scope.md`. Status of the original sketch: (a) "scope
+  `elem.update`" was **already shipped 2026-07-06**, so L3-0 instead produced the per-loop gate table
+  the >40% gate actually needs; (d) the frozen-sparsity precondition turns out to **already hold** in
+  OpenSees; (e) threading the `update` loop is **promoted from last to first** — it is the largest
+  frame-lane fraction *and* the only loop with no FP reduction, hence bit-identical when threaded.
+  Two hazards L3-0's review surfaced that the sketch did not anticipate: `ops_TheActiveElement` is a
+  mutable global written inside that loop, and ~13 element files (incl. `LadrunoRigidBody`) write
+  **shared node trial state** there — an *ordering* race no reduction policy can fix.
+  *(Original sketch, for the record:)* (a) scope `elem.update`; (b) de-static kernels;
   (c) explicit private-buffer reduction (ordered variant from day one); (d) **atomic-scatter on the
   frozen `formTangent` sparsity** (Kratos pattern; coloring/element-ordering only if it contends);
   (e) thread the `update` loop. **Gate each stage** on >40% element fraction + oracle correctness.
-  Likely its own sub-ADR.
 
 ### Bench matrix (the decider)
 - **Desktop:** Lane B + one larger 3D solid × {UmfPack baseline, PARDISO @ 1/2/4/8 threads,

@@ -1,0 +1,4 @@
+pyd OK: C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\dist\bin\opensees.pyd
+nElem=3375 nNode=4096 nDOF~=11520
+system: ['Pardiso', '-matrixType', '2']
+steps done=15/15  wall=11.88s  report=True  C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\Ladruno_files\testbed\perf\lane3\l3a_laneB_pard1_r1.h5

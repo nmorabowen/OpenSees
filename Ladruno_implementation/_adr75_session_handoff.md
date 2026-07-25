@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 + cluster validation OPEN
+status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 OPENED as ADR-75b (policy settled, L3-0 measured + 3 adversarial passes, no threading code); cluster/BLR validation still OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -93,12 +93,54 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    slowdown was *its* implementation quality, not a property of symmetric storage.
    **Follow-on, now carrying a strong prior: exercise MUMPS `-matrixType 2` on the cluster** — same
    lever, still untouched there, and it composes with item 1.
-3. **Lane 3 — threaded element assembly.** The only lever for the ~34% PARDISO cannot touch (Amdahl:
-   measured 1.76× vs a predicted ~2.2× ceiling). Deserves **its own sub-ADR**. Order: (a) scope
-   `elem.update` (ADR-40b's #1 instrumentation gap); (b) de-`static` element/material scratch; (c)
-   explicit diagonal-SOE private-buffer reduction **with an ordered variant from day one**;
-   (d) implicit — **freeze-sparsity + atomic-scatter (Kratos), NOT graph coloring** (see ADR-75 §4);
-   (e) thread the `update` loop. Gate each stage on a measured >40% element fraction.
+3. ~~**Lane 3 — threaded element assembly.**~~ ✅ **OPENED 2026-07-25 as
+   [[75b_ladruno_threaded_assembly_adr]]; policy SETTLED and stage L3-0 MEASURED.**
+   - **Determinism policy settled (§3):** *per loop class.* `Domain::update` has **no FP reduction at
+     all**, so threading it is bit-identical and the existing oracles gate it unchanged. For the
+     reducing loops (`addA`/`addB`), **ordered mode is the CI gate AND the default when threading is
+     on; fast/atomic mode is opt-in, 1e-12-gated, and forbidden on oracle paths** — LS-DYNA's
+     `ncpu=-N` *shape* with the default **inverted**, because this fork's QA is exact, not
+     tolerance-based (and BLR already set that precedent).
+   - **Scatter remedy settled (§4), not relitigated:** freeze-sparsity + atomic scatter. New checked
+     fact — **OpenSees already freezes the sparsity** (`zeroA` never touches `colA`/`rowStartA`), so
+     the whole race is one `A[k] += m(i,j)`. Ordered mode = **gather** over that same frozen CSR
+     (race-free without atomics, exact), which is why de-statication must produce **per-element**
+     buffers, not `thread_local` ones.
+   - **L3-0 measured** (`Ladruno_files/testbed/perf/lane3/RESULTS_l3a_update_scope.md`): **the Lane-1
+     solver win is what makes Lane 3 worth doing** — same Lane-B model, element-kernel fraction
+     **35.8% (UmfPack) → 74.9% (`Pardiso -matrixType 2` @4T)**, solve 55.9% → 16.9%; the >40% gate
+     fails under UmfPack and passes hugely under PARDISO. Lanes A/D element-bound regardless
+     (81.9%/86.8%). `ForceBeamColumn2d::getTangent` = **0.12 µs/ele** (confirms the regression hazard).
+   - **⚠ Next step REVERSED by a 64-agent max-effort review (3rd pass).** The draft said "next =
+     L3-1, thread `Domain::update` on Lane D (54.4%)". That 54.4% is **half redundant work**: it sums
+     two `elem.update` sites and ADR-67 P-NEW-2's **shipped `-commitSolveState`** deletes the second.
+     Re-measured (3 interleaved A/B rounds, `disp_z` bit-identical in all 6): step 24 555 → 17 278 ms
+     (**−29.6%**), **loop A 55.74% → 38.95% = FAILS the >40% gate**, loop C 32.77% → **46.33%**.
+     ⇒ **L3-1 is de-authorized as the first threading stage; no lane passes the gate for loop A on a
+     correctly-configured, fork-owned deck.**
+   - **NEXT = L3-0b, work removal, before any threading** (ADR-40's standing order, which the ADR had
+     inverted): (i) **`-commitSolveState` on explicit decks** — shipped, bit-identical, −29.6%;
+     (ii) ~~replace `addA`'s O(idSize² × rowlen) search~~ ✅ **SHIPPED as P1f
+     ([#636](https://github.com/nmorabowen/OpenSees/pull/636)), 1.09-1.10× — one day after L3-0 named
+     it, and it needed no re-entrancy audit, no determinism policy and no OpenMP build. The same fix
+     is still open in `UmfpackGenLinSOE::addA` (identical frozen-CSC scan).**
+   - **⚠ P1f also corrected a claim ADR-75b's determinism policy rested on:** threaded PARDISO is
+     **not byte-reproducible run-to-run** (4T: 2 distinct answers over 10 runs of one binary, ~1 ULP;
+     1T: 10/10 identical). So the "existing byte-identical oracles gate it unchanged" story holds
+     **only with `MKL_NUM_THREADS=1`**, and ADR-75b §7's acceptance protocol — which said
+     "bit-identical at 1/2/4/8 threads", i.e. **n=1 per thread count** — had the same flaw that
+     produced the original wrong claim. Both fixed (§3 P-6, §7 item 4): N≥10 repeats, each config must
+     reproduce **itself**, and pin MKL to 1 thread.
+   - **Then, before ANY threading code:** the review found the re-entrancy inventory was
+     directory-scoped and missed the hazards that actually race — **`FE_Element::theMatrices` is a
+     class-wide pool** (one Matrix shared by every same-numDOF FE_Element, handed straight to `addA`
+     ⇒ a **100% collision** no element allowlist can fix), `LadrunoBrick::update()`'s 16 statics, the
+     **shared mutable loop iterator** (so the loop is not even index-addressable), `Node`'s lazily
+     allocating trial **getters**, `SRC/coordTransformation/`, and **the profiler instrument itself**.
+     ADR-75b §5.4 lists all seven; §10's vanilla-file plan roughly tripled as a result.
+   - **Also corrected:** the taxonomy had 3 loops; there are **five** — the transient path assembles
+     in `TransientIntegrator.cpp`, and both paths carry **DOF_Group `addA`/`addB` loops** carrying the
+     nodal mass and nodal loads, so a gather keyed on element matrices would silently drop them.
 4. **Rebuild the shared checkout** so `system Pardiso` is available outside this worktree.
    **Owner: nmora, once P1d merges** — decided 2026-07-25 rather than have an agent switch the shared
    checkout's branch under the other 6 worktrees. One build from a clean `ladruno` gets P1b + P1d.
