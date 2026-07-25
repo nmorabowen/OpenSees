@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P1e/P2/P2b ALL MERGED to ladruno; Lane 3 + cluster validation OPEN
+status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 + cluster validation OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -26,6 +26,8 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 | [#626](https://github.com/nmorabowen/OpenSees/pull/626) | `434b1a6` | **P2b** `-stats` (INFOG/RINFOG) + BLR memory verdict |
 | [#630](https://github.com/nmorabowen/OpenSees/pull/630) | `222dca8` | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb (+ adversarial review) |
 | [#633](https://github.com/nmorabowen/OpenSees/pull/633) | `b5b7dc1` | **P1e** `-krylov` factorization-preconditioned CGS (`iparm[3]`) — the full-Newton reuse lever (+ adversarial review) |
+| [#635](https://github.com/nmorabowen/OpenSees/pull/635) | `1f5cde8` | **P1e follow-up** softening/limit-point sweep — CGS never falls back; post-peak branch caveat |
+| [#636](https://github.com/nmorabowen/OpenSees/pull/636) | `580cfb5` | **P1f** `addA` binary search (1.09-1.10x) + **threaded PARDISO is NOT byte-reproducible** (corrects P1) + apeGmsh recipe |
 
 ## Headline results (all measured, not estimated)
 
@@ -35,7 +37,11 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
   ~O(N²), PARDISO ~O(N^1.45).
 - **Capability, not just speed: UmfPack OOM'd at 86,490 DOF; PARDISO solved it in 30.4 s and
   136,080 DOF in 68.6 s.** Largest single-machine model raised ≥1.6× in DOF; true ceiling untested.
-- **Bit-identical to UmfPack at every thread count** ⇒ no FP-determinism problem in the solver lane.
+- **Bit-identical to UmfPack at every thread count** (accuracy). ⚠ **But NOT byte-reproducible
+  run-to-run when threaded** — corrected by P1f ([#636](https://github.com/nmorabowen/OpenSees/pull/636)):
+  10 runs of one binary at 4 threads give **2 distinct answers (5/5 split, ~1 ULP)**; 1 thread is
+  10/10 identical. The original "no FP-determinism problem in the solver lane" came from one run per
+  thread count. **Pin `MKL_NUM_THREADS=1` for any byte-identical gate** (or wire `iparm[33]` CNR).
 - **4 threads is the practical default** (1→8 only buys 1.58×; memory-bandwidth-bound).
 
 **Symmetric PARDISO (`-matrixType 2`) — the memory lever BLR was supposed to be.** (P1d, new)
