@@ -98,6 +98,19 @@ struct HierarchyDiagnostics {
     std::vector<double> massActionNorm;
     std::vector<int> level2CompatibilityCounts;
     std::vector<int> level1CompatibilityCounts;
+    // ADR-1000 P4 section 1 -- per-phase wall clock of the DISTRIBUTED
+    // hierarchy, so `hierarchySeconds` can be attributed instead of guessed at.
+    // Seconds, measured on this rank; zero on paths that never run the phase
+    // (the serial two-level entry point leaves them all zero).
+    double partitionSeconds = 0.0;        // owner counts + interior/boundary split
+    double fineModesSeconds = 0.0;        // T2, the local Craig-Bampton reduction
+    double compatibilitySeconds = 0.0;    // S2, the group merge
+    double level1Seconds = 0.0;           // T1, the coarse reduction
+    double globalSolveSeconds = 0.0;      // S1 + the leader/global solve
+    double backSubstitutionSeconds = 0.0; // reconstruction to global coordinates
+    double publicationSeconds = 0.0;      // gathering/publishing the eigenvectors
+    // Peak resident set of THIS rank, bytes; 0 when the platform query fails.
+    std::size_t peakResidentBytes = 0;
 };
 
 struct TwoLevelHierarchyResult {

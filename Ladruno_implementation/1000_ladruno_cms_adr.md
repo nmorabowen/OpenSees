@@ -2169,9 +2169,12 @@ cero sí se conservan, de modo que el patrón es la unión de las contribuciones
 no depende de la cancelación numérica.
 
 `compatibilityMaps` pasa de un `std::find` lineal sobre `unique` por **cada**
-clave —`O(claves * únicas)`, del orden de `1e9` comparaciones en una fusión del
-tamaño de Building 1A— a una tabla hash. El orden de primera aparición de
+clave —`O(claves * únicas)`— a una tabla hash. El orden de primera aparición de
 `unique` se conserva, porque define la numeración de coordenadas ensambladas.
+
+> La cifra de "`1e9` comparaciones en Building 1A" que apareció en el mensaje de
+> commit es una **extrapolación** desde `u ~ 31k`, no una medición. El punto de
+> cruce donde el join por hash empieza a importar no está medido. Ver 26.6.
 
 ### 26.3 Medición
 
@@ -2216,3 +2219,139 @@ rango— sigue intacto y sigue necesitando su propia ADR.
 **No se ha medido en Building 1A**: el deck no está en el repositorio. El factor
 de arriba viene de una fixture sintética; el efecto en el caso real sigue sin
 verificar, y P4 sigue abierta.
+
+### 26.6 Tiempo de reloj: medido, sin cambio
+
+La sección 26.3 mide **memoria**. La pregunta obvia —qué pasa con el tiempo— se
+midió después, y la respuesta honesta es **nada**.
+
+Protocolo: misma caja, misma sesión, back-to-back, reconstruyendo la
+implementación anterior desde `9bb6367c1` y midiendo mejor-de-5 sobre la misma
+fixture de cadena.
+
+| F | antes [ms] | ahora [ms] |
+|---:|---:|---:|
+| 4 | 11.43 | 11.59 |
+| 8 | 21.32 | 22.52 |
+| 16 | 42.42 | 45.41 |
+| 32 | 85.13 | 85.51 |
+| 64 | 168.51 | 170.80 |
+| 128 | 342.19 | 341.08 |
+| 256 | 721.22 | 708.32 |
+
+Dentro de ±3% en ambas direcciones. **El refactor es una victoria de memoria, no
+de tiempo**, y así debe citarse.
+
+Es coherente con lo que hace el código: el coste `O(dim^2)` anterior eran
+*escrituras en un buffer* —baratas por elemento—, y la ruta dispersa las cambia
+por un ordenamiento por fila. A estas dimensiones ninguna domina. El join por
+hash tampoco puede notarse aquí: con `u ~ 513` en el caso mayor, la búsqueda
+lineal anterior son ~263k comparaciones, nada.
+
+Un efecto secundario útil: reconstruir la implementación anterior hizo **fallar**
+`checkAssembledPencilsAreSparse` con el mensaje esperado (`stores the FULL upper
+triangle (45 of 45)`). El guardia tiene dientes, comprobado contra el código real
+que pretende atrapar, no sólo por construcción.
+
+**Intento fallido que conviene registrar.** Se construyó una segunda fixture
+—pocos subdominios pero grandes— para ver si el ensamblaje llega a dominar el
+reloj. No produjo ni un número: más de 15 minutos sin completar el caso más
+pequeño. Se descartó en lugar de arreglarla, porque medía la fixture y no el
+producto: usaba `denseMax = 4*order`, que permite un solve denso final mucho
+mayor que cualquiera de producción (Building 1A corrió con `r_D = 486`). Queda
+como advertencia: una fixture cuyo coste es un artefacto de su propia
+configuración es peor que ninguna.
+
+**Consecuencia para P4.** Se optimizó el código que *parecía* obvio —un buffer
+denso `dim x dim` literal— y movió la memoria pero no el reloj. Eso es la señal
+clásica para dejar de optimizar por inspección: el 7x frente a ARPACK sigue sin
+localizarse. Antes del siguiente cambio de rendimiento hay que ejecutar la
+instrumentación de la sección 1 del plan P4 (fases finas, RSS pico por rango,
+volumen de comunicación, razones `n/r2` y `r2/r*`).
+
+## 27. P4 sección 1 — instrumentación por fases y el primer perfil real — 2026-07-26
+
+La sección 26.6 concluyó que había que dejar de optimizar por inspección. Esto
+ejecuta la instrumentación que el plan P4 pide y la usa.
+
+### 27.1 Qué se instrumentó
+
+`HierarchyDiagnostics` gana las fases de la jerarquía **distribuida** —
+`partition`, `T2 fineModes`, `S2 compatibility`, `T1 level1`, `S1 globalSolve`,
+`backSubstitution`, `publication`— más el RSS pico del rango. Cada marca se toma
+**después** de la colectiva que cierra la fase, así que el tiempo de una fase
+incluye la espera al rango más lento: es lo que interesa al buscar un cuello de
+botella entre rangos. El solver emite además las razones `n/r2` y `r2/r*`.
+
+El RSS usa `GetProcessMemoryInfo` en Windows y `getrusage` en POSIX; el plan P4
+asumía sólo Linux, pero el arnés que de verdad corre CMS hoy es Windows. Devuelve
+0 cuando la consulta falla, y 0 significa **desconocido**, nunca "cero memoria".
+
+### 27.2 El perfil
+
+Deck `Ladruno_implementation/cms_profile/cms_profile_chain.tcl`: cadena 1-D,
+4 rangos x 2000 elementos, `n=8000`, `k2=12 k1=24`. Tres repeticiones dieron
+`total = 1.133 / 1.136 / 1.145 s`; se cita la primera. El deck verifica el primer
+autovalor contra el espectro analítico (error relativo `1.18e-9`), de modo que un
+perfil no puede tomarse de una corrida que produjo basura.
+
+| Fase | s | % del total |
+|---|---:|---:|
+| ensamblaje | 0.0021 | 0.2% |
+| **jerarquía** | **0.474** | **41.8%** |
+| — `partition` | 0.000012 | ~0% |
+| — **`T2 fineModes`** | **0.461** | **40.7%** |
+| — `S2 compatibility` | 0.00016 | 0.01% |
+| — `T1 level1` | 0.0066 | 0.6% |
+| — `S1 globalSolve` | 0.0010 | 0.1% |
+| — `backSubstitution` | 0.0011 | 0.1% |
+| — `publication` | 0.0021 | 0.2% |
+| **refinamiento** | **0.656** | **57.9%** |
+| total | 1.133 | 100% |
+
+Dimensiones: `n=8000`, `r2=52`, `r*=49`, `n/r2 = 153.8`, `r2/r* = 1.06`.
+RSS pico rango 0: 59.4 MiB.
+
+### 27.3 Tres lecturas
+
+1. **`T2` es el 97% de la jerarquía** y el 40.7% del total. Es
+   `reduceCraigBampton` —la misma función cuyos `phi`/`psi` densos son el
+   workspace grande que queda por dispersar (sección 26.5)—. El objetivo
+   siguiente ya no es una conjetura: es el mismo en las dos métricas.
+2. **El refinamiento es el 57.9%**, más que toda la jerarquía. Sus sub-fases ya
+   reportadas dan `solve = 0.566 s`, la mayor partida individual del programa.
+   *Nota de honestidad:* `solve` e `inverseRefinement` suman más que el total del
+   refinamiento, así que esos dos ámbitos se solapan; no son un desglose
+   disjunto y no deben sumarse.
+3. **`r2/r* = 1.06`: el nivel 1 casi no reduce nada.** El segundo nivel entero
+   —el que hace de esto una jerarquía— pasa de 52 a 49 coordenadas en este
+   modelo, por 0.6% del tiempo. En una cadena 1-D con interfaces de un solo grado
+   de libertad es lo esperable, pero es exactamente lo que la razón se especificó
+   para revelar.
+
+Todo lo demás —ensamblaje, `S2`, `S1`, retro-sustitución, publicación— suma menos
+del 1% junto. Optimizarlo sería ruido.
+
+### 27.4 Un límite duro encontrado al escalar
+
+Subir a 8000 elementos por rango (`n=32000`) **no produce un perfil: falla**.
+Primero por `maxIter` (aplicaciones del operador), y con el presupuesto subido a
+6000, por `local Lanczos exhausted maximum restarts`.
+
+`maximumRestarts` está **fijo en 20** en `solveDistributedHierarchy`
+(`LadrunoCMSHierarchy.cpp:1547`) y **ninguna opción de comando lo expone**. Es
+decir: al crecer el subdominio local, `T2` deja de converger y el usuario no
+tiene ninguna palanca.
+
+Esto importa especialmente ahora que CMS es una decisión de producción: el
+argumento para usar CMS es precisamente el modelo que no cabe en un nodo, y ese
+caso tiene subdominios locales **grandes**. Exponer el control —y revisar el
+criterio de reinicio— es el primer punto accionable de la lista.
+
+### 27.5 Alcance del perfil
+
+Es **una cadena 1-D**, la topología más amable posible: las interfaces son de un
+grado de libertad, así que `S2` y `T1` tienen casi nada que hacer. En Building 1A,
+con interfaces grandes, ese reparto puede cambiar mucho. No se debe generalizar
+este perfil a "CMS gasta el tiempo en T2 y refinamiento" sin repetirlo sobre un
+modelo con interfaces reales — que sigue bloqueado por el deck ausente.

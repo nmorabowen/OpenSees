@@ -932,13 +932,32 @@ void reportAssemblyScaling()
     if (enabled == nullptr)
         return;
     std::cout << "\n-- assembled final pencil: sparse vs the old dense path --\n"
-              << "fine  dim   stored   denseUpper   oldBytes     newBytes   ratio\n";
-    for (const int fineCount : {4, 8, 16, 32, 64}) {
+              << "fine  dim   stored   denseUpper   oldBytes     newBytes   ratio"
+                 "   bestOf5[ms]\n";
+    for (const int fineCount : {4, 8, 16, 32, 64, 128, 256}) {
         Fixture fixture = makeChainFixture(fineCount, fineCount / 2);
         ladruno_cms::TwoLevelHierarchyResult result;
         std::string message;
-        const bool ok =
-            ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0;
+        bool ok = false;
+        // Best-of-5: this is a wall-clock comparison against a rebuild of the
+        // previous implementation on the same box in the same session, so the
+        // statistic has to be robust to scheduling noise. Best-of is the right
+        // choice for a deterministic CPU-bound routine -- the minimum is the
+        // least contaminated sample.
+        double bestMilliseconds = 0.0;
+        for (int repeat = 0; repeat < 5; ++repeat) {
+            ladruno_cms::TwoLevelHierarchyResult attempt;
+            const double started = MPI_Wtime();
+            ok = ladruno_cms::solveTwoLevelHierarchy(
+                     fixture.input, attempt, message) == 0;
+            const double elapsed = (MPI_Wtime() - started) * 1000.0;
+            if (!ok)
+                break;
+            if (repeat == 0 || elapsed < bestMilliseconds)
+                bestMilliseconds = elapsed;
+            if (repeat == 0)
+                result = std::move(attempt);
+        }
         if (!ok) {
             std::cout << fineCount << "  FAILED: " << message << '\n';
             continue;
@@ -957,7 +976,7 @@ void reportAssemblyScaling()
                   << "     " << newBytes << "     "
                   << (static_cast<double>(oldBytes) /
                       static_cast<double>(std::max<std::size_t>(newBytes, 1u)))
-                  << "x\n";
+                  << "x    " << bestMilliseconds << '\n';
     }
     std::cout << '\n';
 }
