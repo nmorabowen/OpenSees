@@ -19,7 +19,7 @@ Converged displacements must agree across all cases. NOTE the scope of that clai
 it holds here because this deck uses a FORCE-residual test (NormUnbalance). Under
 NormDispIncr / RelativeNormDispIncr / EnergyIncr the acceptance criterion is
 dU = K_f^-1 R, so a different K_f accepts at a different point and the "K_f only
-sets the path" reassurance does NOT hold. See ADR-76 s2.
+sets the path" reassurance does NOT hold. See ADR-76 s3.
 
 Scope limit of this smoke, stated so it is not over-read: the profiled window is
 LINEAR (all ten bars sit in the same Steel01 hardening branch under monotonic
@@ -150,6 +150,22 @@ def main() -> int:
     check(spread <= 1.0e-9 * max(abs(ref), 1.0e-30),
           f"all cases converge to the same tip displacement "
           f"[max deviation {spread:.3e} about {ref:.12e}]")
+
+    # Absolute anchor (2026-07-26): mutual agreement alone would pass a
+    # regression that drives every case to the same WRONG answer. The chain's
+    # converged tip is analytically 7.0: the profiled window advances the
+    # load from the lambda=150 pre-yield to lambda = 150 + 5*2.0 = 160, and
+    # in a series chain every bar carries that full axial force. Steel01 with
+    # Fy=100, E=1000, b=0.1, A=1: post-yield eps = 0.1 + (sigma-100)/(b*E) =
+    # 0.1 + 60/100 = 0.7 per unit-length bar, x10 bars = 7.0. caseD lands on
+    # it exactly; the -initial cases converge to within their 1e-8 force
+    # tolerance, measured 9.4e-10 away. 1e-7 accepts that spread and still
+    # fails on any answer that is wrong rather than merely iterated.
+    ANCHOR = 7.0
+    worst = max(abs(v - ANCHOR) for v in disp.values())
+    check(worst <= 1.0e-7,
+          f"every case lands on the analytic tip ux == {ANCHOR} "
+          f"[max |ux - {ANCHOR}| = {worst:.3e}]")
 
     print()
     if problems:

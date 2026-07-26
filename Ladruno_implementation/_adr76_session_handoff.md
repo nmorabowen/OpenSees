@@ -8,6 +8,27 @@ tags: [handoff, adr, adr-76]
 
 # ADR-76 handoff (2026-07-25)
 
+## Disposition (2026-07-26) — the main job is DONE
+
+The rewrite happened: [[76_ladruno_tangent_reuse_adr]] now leads with the
+outcome (§1), the withdrawal reasoning is §4, the shipped work is §5, the
+LAPACK spin-off has its own §6, and the superseded R2 design is Appendix A
+(§4.5 rollout deleted; A.4 default-`false` box kept). Section references in
+both ledgers, `NewtonRaphson.cpp`, and the smoke checker were swept to the
+new numbering. Note also: the whole 2026-07-25 session had been stranded on
+`claude/newton-initial-redundant-refactor-48a060` with **no PR** — the
+WORKFLOW_GOTCHAS stranded-commits trap — and was merged to a PR'd branch as
+part of this disposition.
+
+Loose threads: **1** fixed + ledgered (Linear.cpp scope inside the guard);
+**3** queued (upstream_pr_campaign Wave 0.7); **4** resolved (tracked in
+ADR-75 §9 open items); **5** done (Zone-A CI step, marker-gated); **6** done
+(checker anchors on the analytic 7.0); **7** done (dormant-copies quirk
+line, line numbers verified). Still open: **2** (`LadrunoModifiedNewton` —
+designed in ADR-76 §4.5, unstarted) and **8** (the `PR = —` ledger rows,
+fill with this PR's number after merge). The corrections list below remains
+live — do not re-propagate.
+
 ## Shipped and verified
 
 | Commit | Change | Gate |

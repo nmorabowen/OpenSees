@@ -217,11 +217,11 @@ NewtonRaphson::solveCurrentStep(void)
     // Not fixed here on purpose: the skip is only sound when invariance is known,
     // and that is an ELEMENT property, not an integrator-family one. A
     // tangent-version counter was designed for this and then WITHDRAWN after
-    // adversarial review — do NOT implement from ADR-76 §4, which is kept only as
-    // a record; read §8 for why it is not safely implementable (the invalidator
-    // set misses staged construction, modal damping and six more; the predicate
-    // cannot express FE_Element/DOF_Group/domain-time dependencies). §2 of the
-    // same ADR carries the audit of which transformations are and are not
+    // adversarial review — do NOT implement from ADR-76 Appendix A, which is kept
+    // only as a record; read its §4 for why it is not safely implementable (the
+    // invalidator set misses staged construction, modal damping and six more; the
+    // predicate cannot express FE_Element/DOF_Group/domain-time dependencies). §3
+    // of the same ADR carries the audit of which transformations are and are not
     // configuration-dependent, which is the part worth reading.
     do {
 
