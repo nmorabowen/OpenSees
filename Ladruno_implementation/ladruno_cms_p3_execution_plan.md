@@ -161,11 +161,19 @@ fixture), mpiexec -n 4.
 Harness: `hierarchy_check` fixtures, mpiexec -n 4.
 
 - 4 ranks, `p=2, m=2` (the mandatory non-degenerate case).
-- Three interface topologies: level-2-only, level-1-only, combined.
+- Three interface topologies: level-2-only, level-1-only, combined. **OPEN.**
 - **Rank/partition-permutation invariance**: permuting which rank owns which
   partition leaves eigenvalues, residuals, AND the subspace (MAC≈1) unchanged.
+  **DONE 2026-07-26** — `checkRankPermutationInvariance` in
+  `ladruno_cms_hierarchy_check`: two permutations (a reversal, and an interleave
+  that puts subdomains `{0,2}` in coarse group 0 — the case that would catch an
+  implementation assuming a coarse group is a contiguous rank block), eigenvalues
+  to 1e-9 relative, MAC ≥ 1−1e-9, plus a collective non-vacuity control. Note the
+  API constraint it surfaced: `input.fine` **must** equal the MPI rank, so a
+  permutation can only be expressed by moving the data. See
+  [[1000_ladruno_cms_adr]] §23.
 - Level ablation (omit T1) allowed ONLY as a labelled diagnostic, never an
-  accepted config.
+  accepted config. **OPEN.**
 
 ## Part P3e — Building 1A physically distributed (the real gate)
 

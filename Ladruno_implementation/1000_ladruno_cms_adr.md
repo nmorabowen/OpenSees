@@ -1970,3 +1970,56 @@ Dos, y ambos verifican que **el oráculo tiene dientes**:
   un `Domain`; queda abierto.
 - **Equivalencia de decks** monolítico-con-guardas contra `per_rank=True`: es
   P3a, del lado del emisor.
+
+## 23. Puerta P3d — invariancia frente a permutación de rangos — 2026-07-26
+
+Qué rango posee qué subdominio fino es un accidente del particionador. La
+matemática no puede depender de ello. `ladruno_cms_hierarchy_check` gana
+`checkRankPermutationInvariance`: ejecuta la jerarquía distribuida con el reparto
+identidad y luego con dos permutaciones, y exige autovalores iguales a `1e-9`
+relativo, residuales intactos y `MAC >= 1 - 1e-9` modo a modo.
+
+Las dos permutaciones son una inversión y un intercalado; el intercalado es el
+que importa, porque deja el grupo grueso 0 con los subdominios `{0,2}` en lugar
+de `{0,1}` y por tanto detectaría una implementación que asuma que un grupo
+grueso es un bloque contiguo. Ambas pasan.
+
+### 23.1 La etiqueta `fine` no es un índice libre
+
+El primer intento permutaba `input.fine`. `solveDistributedHierarchy` valida
+`input.fine == rank` (`LadrunoCMSHierarchy.cpp:1293`) y lo rechaza. Es una
+restricción real de la interfaz, no un defecto: la etiqueta fina **es** la
+identidad del rango. Un reparto permutado sólo puede expresarse **moviendo los
+datos** —que es exactamente lo que entregaría otro particionador—, así que el
+check mantiene `fine = rank` y permuta el subdominio cuyos datos carga cada
+rango.
+
+### 23.2 Control de que la prueba no es vacía
+
+El check exige además, por colectiva, que al menos un rango termine con
+ecuaciones distintas de las que tenía en la corrida base. Sin eso, una
+permutación mal construida compararía una corrida consigo misma y pasaría
+trivialmente.
+
+### 23.3 Trampa encontrada en los checks existentes
+
+El primer intento reportó todos sus fallos con un diagnóstico **vacío**. La causa
+es el modismo `require(llamada(...), "..." + message)`: el orden de evaluación de
+los argumentos no está especificado en C++, y la cadena se construía **antes** de
+que la llamada rellenara `message`. El mismo modismo aparece en otros puntos de
+`ladruno_cms_hierarchy_check` (por ejemplo en la construcción de los
+`AssemblyRecord` del flujo distribuido). No produce falsos aprobados —sólo
+mensajes inútiles cuando algo ya falló—, pero conviene barrerlo. Aquí se corrigió
+únicamente en el código nuevo. Ver [[LEDGER_quirks]].
+
+### 23.4 Alcance
+
+| Evidencia | Resultado |
+|---|---|
+| invariancia, permutación por inversión, np=4 | PASS |
+| invariancia, permutación intercalada, np=4 | PASS |
+| control de no-vacuidad | PASS |
+| np=2 | SKIP anunciado en voz alta |
+
+Las demás filas de P3d —tres topologías de interfaz y la ablación de nivel como
+diagnóstico etiquetado— siguen abiertas, igual que P3a, P3e y P4.
