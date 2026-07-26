@@ -20,6 +20,10 @@ new numbering. Note also: the whole 2026-07-25 session had been stranded on
 WORKFLOW_GOTCHAS stranded-commits trap — and was merged to a PR'd branch as
 part of this disposition.
 
+Provenance: the TIMs ISSUE source file was FOUND (Dropbox `UANDES EC/TIMs/`)
+and is archived verbatim as `_adr76_issue_report_newton_initial.md`; ADR §7
+points at it.
+
 Loose threads: **1** fixed + ledgered (Linear.cpp scope inside the guard);
 **3** queued (upstream_pr_campaign Wave 0.7); **4** resolved (tracked in
 ADR-75 §9 open items); **5** done (Zone-A CI step, marker-gated); **6** done

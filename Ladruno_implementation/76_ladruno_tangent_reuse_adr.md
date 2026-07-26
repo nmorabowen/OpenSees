@@ -677,10 +677,12 @@ Full analysis, measured pre-fix numbers, and the call-site fact-check:
 
 - Issue report: TIMs project (SFIM continuum reference model), against `bdf8adf9f`,
   binaries of 2026-07-25. Measurements in §2 are theirs. Source file:
-  `ISSUE — Newton-initial redundant refactorization.md` — **external; not archived
-  in this repo** (searched 2026-07-26: not on this machine). §2 reproduces its
-  measured tables in full precisely so that nothing load-bearing lives only in the
-  unarchived file.
+  `ISSUE — Newton-initial redundant refactorization.md`, **archived verbatim in this
+  repo (2026-07-26) as [[_adr76_issue_report_newton_initial]]** — it previously
+  lived only in an external Dropbox folder, which is what an earlier draft of this
+  section meant by "external". Note when reading it: its framing ("an invariant
+  matrix", "cannot have changed") is the over-claim §3 corrects — the archive is
+  the record of what was reported, not of what is true.
 - Session handoff: [[_adr76_session_handoff]] — includes corrections to earlier
   findings that must not be re-propagated (`LadrunoIMKBeam` is clean;
   `LadrunoDispBeamColumn` clean except `-damping`/corot3d; do NOT freeze `Ki` at the
