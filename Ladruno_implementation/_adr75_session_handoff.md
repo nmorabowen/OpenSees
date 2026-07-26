@@ -141,6 +141,14 @@ times, with no stats**, and "`INFOG(21)` did not move" would have been written d
 `feast_l2_profile/*.json` artifacts), so updating it is safe. It has since been fetched to
 `origin/ladruno` = `d4f68cf4a`; **the working tree was left untouched at `e503ce4c0`.**
 
+⚠ **That checkout is on the local branch `ladruno-p5-build`, NOT `ladruno`** — it is ADR-74's cluster
+tree ("the Esmeralda tree (`ladruno-p5-build` @ #580)", [[74_ladruno_parallel_numberer_adr]] §Cluster
+note), even though `02_esmeralda_linux_build_guide.md` §2 still describes the clone as being on
+`ladruno`. The staged script therefore uses `git checkout --detach <ref>` on purpose: it moves the
+build tree without rewriting or clobbering `ladruno-p5-build`, so ADR-74's reference point survives.
+**Do not `git reset --hard origin/ladruno` on that branch** (which is what the build guide §6 says)
+unless you have first checked that ADR-74 is done with it.
+
 **A rebuild script is staged and ready at `esmeralda:~/adr75_rebuild.sh <ref>`** — fetch + detached
 checkout + `conan install` + the proven MP cmake line (`/opt/openmpi` wrappers, `/mnt/nfshare` MUMPS
 + ScaLAPACK) + `--target OpenSeesMP -j20`, logging to `~/ladruno_build_test/adr75_build.log` and
