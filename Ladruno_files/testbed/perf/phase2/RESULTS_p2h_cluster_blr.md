@@ -119,6 +119,40 @@ puts a model **over** a node, not under it.
 > never pays" is therefore **too strong**; the defensible claim is the narrower one
 > in §3.
 
+### 2e. CONFOUND CONTROL — the numberer (a miss, caught in review, then measured)
+
+The sweep above used vanilla **`numberer ParallelRCM`**. It should have used
+**`LadrunoParallelRCM`**: the fork's own `phase1/mp_blr_smoke.py` prefers it with a
+fallback, ADR-74 exists precisely because the vanilla parallel numberer degrades at
+scale, and it **is** wired into the Tcl ladder (`commands.cpp:4387`) — so it was
+available and simply not used.
+
+Rather than argue about whether that matters, it was **run**. Same model
+(143.8k DOF), same binary, np=16, `step1` = first `analyze` (carries numbering +
+`setSize`), `step2` = a pure second step:
+
+| numberer | mode | wall ms | step1 ms | step2 ms | setup ≈ step1−step2 |
+|---|---|---|---|---|---|
+| `ParallelRCM` | full | 46 518 | 24 139 | 22 379 | **1 760** |
+| `ParallelRCM` | sym | 18 892 | 10 289 | 8 603 | **1 686** |
+| `LadrunoParallelRCM` | full | 45 487 | 23 136 | 22 351 | **785** |
+| `LadrunoParallelRCM` | sym | 17 845 | 9 170 | 8 675 | **495** |
+
+- **`LadrunoParallelRCM` cuts setup 2.2×–3.4×** (1 760→785 ms full; 1 686→495 ms
+  sym) — ADR-74's claim reproduces.
+- **It changes no verdict here.** At 143.8k the solve dominates, so setup is only
+  1.7–3.8% of wall and the whole-run gain is 2.2% (full) / 5.5% (sym).
+- **The sym-vs-full ratio moves 2.46× → 2.55×**, i.e. the vanilla numberer was
+  *diluting* the symmetric win. Every wall ratio in §2 is therefore **conservative**,
+  never inflated — which is the direction that cannot manufacture a false positive.
+- Reproducibility bonus: this re-run's `full` (46 518 ms) vs the original sweep's
+  (47 805 ms) differ by **2.7%**, a useful read on the noise floor.
+
+⚠ **Not extrapolated.** ADR-74's degradation concern is about *much* larger decks
+(its kill-run is 18.6M DOF). Nothing here bounds the numbering share at 885k+; the
+sweep's absolute walls at the top end may carry more setup than these percentages
+suggest. Use `LadrunoParallelRCM` in any follow-up.
+
 ## 3. Verdicts
 
 ### Item 1 — BLR is not the memory lever; but the claim has to be narrower than it first looked
