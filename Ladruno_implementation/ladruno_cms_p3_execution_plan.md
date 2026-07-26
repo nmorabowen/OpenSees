@@ -119,6 +119,17 @@ Harness: extend `topology_check` (has `OpenSeesLIB`) + a Python emitter test on
 Harness: new `ladruno_cms_assembly_check.cpp` (mpiexec -n 4), + reuse
 `reference.py` serial matrices.
 
+> **LARGELY DONE 2026-07-26** — `tests/ladruno_cms_assembly_check.cpp` exists and
+> passes at np=2, np=3 and np=4 (size-generic by design; it announces the skip
+> loudly at np=1). Covered: sparse local IDs, contribution locality, shared
+> equations exist and agree across incident ranks, the **Kx and Mx oracles** (3
+> deterministic + 3 fixed-seed random probes, 1e-12), an entrywise sum check, and
+> both negative controls. **Not covered, and still open:** (a) the collective
+> global-dimension row — it needs a real `Domain`, not a fixture; (b) the negative
+> controls prove *the oracle* detects a double count, **not** that the production
+> `-verifyAssembly signature|full` guard fails loud in the `EigenSolver` path,
+> which also needs a `Domain`. See [[1000_ladruno_cms_adr]] §22.
+
 | Check | Assertion |
 |---|---|
 | Shared-node global IDs | copies of one shared node carry the SAME global equation id on all incident ranks |

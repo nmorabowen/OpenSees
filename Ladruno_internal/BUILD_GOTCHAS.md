@@ -421,3 +421,32 @@ unexpected at this time` — **after** a fully successful build, so the lane
 reported failure having never run a check. Escape inner parens as `^( ^)` (this
 is trap #5 in the family of batch traps in #1). Both defects had to be fixed
 before a single CMS numerical check had ever executed in this build tree.
+
+## 11. Never `sed -i` a `.bat` file — it strips CRLF and cmd silently miscompiles
+
+`sed -i` (Git Bash) rewrites the whole file with **LF-only** line endings. `cmd.exe`
+requires **CRLF** in batch files: with bare LFs, single-line commands still work,
+but multi-line constructs silently fall apart. A one-character edit to a `for`
+list produced:
+
+```
+'do' is not recognized as an internal or external command,
+'not' is not recognized as an internal or external command,
+```
+
+and a stray interactive Python prompt — because `for %%C in (...) do (` and the
+`if not defined ...` lines were no longer parsed as blocks. The `git diff` looked
+perfect (two changed characters); nothing in it hints at the real damage. `git`
+also warns `LF will be replaced by CRLF the next time Git touches it`, which is
+easy to dismiss as routine noise — on a `.bat` it is the actual error message.
+
+**Rule:** edit `.bat` files with the Edit tool (it preserves existing endings) or
+a CRLF-aware editor, never `sed -i`/`tr`. To repair one:
+
+```powershell
+$t = [IO.File]::ReadAllText($p) -replace "`r`n","`n" -replace "`n","`r`n"
+[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))
+```
+
+Verify with a bare-LF count (must be 0), not by eye — and re-run the script,
+because a `git diff` cannot show you this class of breakage.

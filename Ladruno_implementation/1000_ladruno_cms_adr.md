@@ -1904,3 +1904,69 @@ La pierna distribuida de `ladruno_cms_hierarchy_check` sigue restringida a cuatr
 rangos, y con razón: su oráculo fija cuatro subdominios finos y dimensiones
 `12/10/10/9` propias de ese reparto. Una jerarquía de dos rangos es una fixture
 nueva con su propio oráculo —trabajo de P3d, no de la Parte 0.
+
+## 22. Puerta P3b — oráculo de ensamblaje distribuido — 2026-07-26
+
+`tests/ladruno_cms_assembly_check.cpp` implementa la puerta que el plan P3
+califica como la más importante: demostrar que "físicamente distribuido"
+significa que **el álgebra** está partida de verdad, y no que hay una matriz
+replicada que por casualidad devuelve el resultado correcto. Todo lo que está
+por encima en la jerarquía consume los pencils locales; si el reparto duplica o
+pierde una contribución, las demás puertas miden el operador equivocado.
+
+### 22.1 Método
+
+Una malla estructurada de celdas bilineales, un grado de libertad por nodo y la
+fila inferior restringida —con ecuación global `-1`, de modo que también se
+ejercita el camino de grados de libertad restringidos—. Las mismas
+contribuciones elementales se ensamblan dos veces por **las mismas llamadas de
+producción**, `makeAssemblyRecord` + `buildSymmetricCSR`:
+
+- referencia: todos los elementos, en un rango, sin MPI;
+- distribuido: cada rango sólo su franja de columnas.
+
+Ambas se comparan como **operadores** —`K·x` y `M·x`, formando la acción
+distribuida exactamente como lo hace `globalAction` del refinador
+(`SymmetricCSR::multiply` por rango más `MPI_Allreduce`)— y **entrada por
+entrada** —la suma de las matrices locales contra la matriz de referencia—.
+El producto matriz-vector es el instrumento de medida, no el sujeto: el mismo
+núcleo corre en ambos lados, así que cualquier diferencia es atribuible al
+reparto.
+
+Sondas: `e1`, unos, rampa y tres vectores pseudoaleatorios de semilla fija (un
+LCG explícito, para que sean idénticos en todo rango y plataforma sin depender
+de `<random>`). Tolerancia relativa `1e-12`.
+
+El check es **genérico en tamaño**: corre sus piernas colectivas con cualquier
+`size >= 2` y anuncia el salto en voz alta a un solo rango. Es la lección
+directa de la sección 20.5: una prueba que condiciona su pierna colectiva a
+`size == N` no prueba nada en los demás tamaños.
+
+### 22.2 Controles negativos
+
+Dos, y ambos verifican que **el oráculo tiene dientes**:
+
+- pencil replicado: cada rango ensambla todos los elementos. La acción
+  distribuida debe diferir de la referencia; si no difiere, las comprobaciones
+  anteriores no demuestran nada.
+- propiedad corrupta: el rango 1 reclama además un elemento del rango 0. La
+  diferencia debe detectarse.
+
+### 22.3 Resultado
+
+| Evidencia | Resultado |
+|---|---|
+| `ladruno_cms_assembly_check`, np=2, np=3, np=4 | PASS |
+| np=1 | SKIP anunciado en voz alta |
+| carril `build.bat` con los cinco checks | PASS, salida 0 |
+
+### 22.4 Filas de P3b que esto NO cubre
+
+- **Dimensión global por colectiva** (`n` igual al conteo monolítico, 63 048 en
+  Building 1A): exige un `Domain` real, no una fixture.
+- **El guardián de producción**: los controles negativos prueban que *el oráculo*
+  distingue un doble conteo, no que `-verifyAssembly signature|full` falle en voz
+  alta en el camino del `EigenSolver`. Ese guardián vive en el solver y necesita
+  un `Domain`; queda abierto.
+- **Equivalencia de decks** monolítico-con-guardas contra `per_rank=True`: es
+  P3a, del lado del emisor.
