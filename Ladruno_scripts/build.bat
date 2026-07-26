@@ -306,9 +306,14 @@ echo === CMS: building isolated OPS_LadrunoCMS library + numerical checks ===
 for %%C in (mumps lanczos hierarchy subspace) do (
     cmake --build "%BUILD_DIR%" --target ladruno_cms_%%C_check -j 8 || (echo CMS check build %%C failed & exit /b 1)
 )
+REM The unescaped "(mpiexec -n 4)" in this echo used to sit INSIDE the for-body
+REM parens: cmd closed the block on that inner ")" and then choked on the
+REM trailing "---" with "--- was unexpected at this time", killing the run loop
+REM AFTER a fully successful build. Parens inside a parenthesized block must be
+REM escaped as ^( ^). — Ladruno build fix.
 for %%C in (mumps lanczos hierarchy subspace) do (
     echo.
-    echo --- running ladruno_cms_%%C_check (mpiexec -n 4) ---
+    echo --- running ladruno_cms_%%C_check ^(mpiexec -n 4^) ---
     "%IMPI_BIN%\mpiexec.exe" -n 4 "%BUILD_DIR%\SRC\system_of_eqn\ladrunoCMS\ladruno_cms_%%C_check.exe" || (echo CMS check %%C FAILED & exit /b 1)
 )
 echo.

@@ -19,6 +19,13 @@ expected number as "assert to be pinned", not "known good".
    Local: `set LADRUNO_CMS_BUILD=1 & Ladruno_scripts\build.bat` builds+runs the
    standalone checks (see [[../Ladruno_internal/BUILD_GOTCHAS]] #7). CI: the
    nightly self-hosted Zone-B lane (PR #612).
+   **Status 2026-07-26: the local half is now MET** — two defects blocked it (a
+   static/dynamic MKL link collision and a `build.bat` batch-parse bug, see
+   [[../Ladruno_internal/BUILD_GOTCHAS]] #10); with both fixed all four checks
+   pass under `mpiexec -n 4`. **The CI half is NOT met and never was:** the repo
+   has zero self-hosted runners registered, so `zone-b-nightly` is cancelled on
+   every scheduled run. Treat the local box as the only harness until a runner
+   is registered ([[1000_ladruno_cms_adr]] §20).
 2. The frozen Building-1A Gmsh harness (11 841 nodes, 27 360 elements) +
    `building_1A_cms_physical_run.ipynb` and its partition emitter.
 3. A **second** valid 4-way Gmsh partition of Building 1A (for the P3e invariance
@@ -32,6 +39,21 @@ Extension points already in-tree: `tests/ladruno_cms_{mumps,lanczos,hierarchy,`
 ---
 
 ## Part 0 — the 2-rank MUMPS ordering failure (blocks 2-rank support)
+
+> **RESOLVED 2026-07-26 — but not by the fix proposed below, and it was never a
+> 2-rank problem.** The 2-rank fixture this part asked for was built
+> (`testDistributedMumpsAtScale` / `testSerialMumpsAtScale` in
+> `tests/ladruno_cms_mumps_check.cpp`) and reproduces the exact failure with a
+> DENSE order-12000 pencil. Measured: it fails at **np=4 as well as np=2**; a
+> *sparse* order-64000 pencil passes at both; and **`ICNTL(28)=1` does not help**
+> — so the "MUMPS chose parallel analysis" diagnosis below is wrong. The trigger
+> is the dense pattern: `ICNTL(7)=7` selects PORD, whose multisector ordering
+> cannot form stages on a dense matrix. Fix shipped: **candidate 2,
+> `ICNTL(7)=0` (AMD)**, applied at BOTH factorization sites — including the
+> serial `MumpsSPD` (`MPI_COMM_SELF`) path that the rank-local Craig-Bampton
+> pencils actually use, which was outside this part's original scope and fails
+> identically on one rank. Full evidence: [[1000_ladruno_cms_adr]] §21. The
+> analysis below is kept as the historical hypothesis.
 
 **Symptom** (scalability/RESULTS.md decision 3): 2-rank physical CMS fails in the
 MUMPS analysis phase after ~124 s having consumed **15.6 GiB**, with
@@ -62,6 +84,16 @@ not regressed"):**
 deck at np=2 (must now pass) and np=4 (must match current eigenvalues/residuals
 byte-for-byte, or to 1e-12). Only then lift the "2-rank unsupported" note in
 RESULTS.md. Do NOT ship the ICNTL change without the np=4 non-regression run.
+
+> **Correction 2026-07-26 — the np=2 half of that protocol is currently vacuous.**
+> `testDistributedMumps` ([ladruno_cms_mumps_check.cpp:89](../tests/ladruno_cms_mumps_check.cpp))
+> and `checkDistributedFourRankFlow` ([ladruno_cms_hierarchy_check.cpp:290](../tests/ladruno_cms_hierarchy_check.cpp))
+> both `return` immediately when `size != 4`. At np=2 the distributed
+> factorization — the exact path that fails — is never entered, so the check
+> passes without exercising anything. **Prerequisite for Part 0: a 2-rank
+> distributed fixture (or a physical deck run at np=2).** Until one exists there
+> is no way to satisfy this gate, so the `ICNTL(28)` change stays unapplied.
+> See [[1000_ladruno_cms_adr]] §20.5.
 
 ---
 

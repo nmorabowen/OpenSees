@@ -1742,3 +1742,165 @@ locales densos.
 P4 queda parcialmente ejecutado. No se declara `shipped`: faltan repeticiones
 estadísticas, segundo particionado, oráculo explícito `Kx/Mx`, diagnóstico de MUMPS a dos
 ranks y reducción de memoria local.
+
+## 20. Desbloqueo del carril de ejecución `LADRUNO_CMS=ON` — 2026-07-26
+
+Los planes P3 y P4 fueron redactados sin una construcción funcional y designaron
+al job nocturno auto-hospedado como arnés permanente. Esta sesión auditó ese
+supuesto: **el carril no había ejecutado nunca un solo check**, por dos defectos
+independientes y por una condición de infraestructura.
+
+### 20.1 Defecto de enlace: capas MKL estática y dinámica en un mismo target
+
+`OPS_LadrunoCMS` enlazaba `${SCALAPACK_LIBRARIES}` (pila MKL **estática
+secuencial**, la que usan `OpenSeesSP` y `OpenSeesMP`) y además
+`${LAPACK_LIBRARIES}`, que en cualquier máquina donde `find_package(LAPACK)`
+resuelve a oneAPI expande a la interfaz **dinámica**. MKL no admite esa mezcla:
+el enlace muere con `LNK2005` sobre `mkl_serv_verbose_mode` y `mkl_serv_xerbla`.
+La lista era `PUBLIC`, de modo que el defecto alcanzaba también a cualquier
+target MP construido con `LADRUNO_CMS=ON`. Al depender de qué encuentra
+`find_package(LAPACK)`, el mismo árbol enlaza en una máquina y falla en otra —
+esta es la causa concreta del "no se pudo producir una construcción estable"
+registrado en el plan P3. Corrección: `${LAPACK_LIBRARIES}` sólo se enlaza
+`if(NOT MKL_FOUND)`. Detalle en [[../Ladruno_internal/BUILD_GOTCHAS]] #10.
+
+### 20.2 Defecto de batch: el lazo de ejecución nunca corría
+
+`build.bat` emitía `echo --- running ..._check (mpiexec -n 4) ---` dentro de un
+`for` con cuerpo entre paréntesis; `cmd` cerraba el bloque en ese `)` interno y
+abortaba con `--- was unexpected at this time` **después** de una compilación
+exitosa. El carril reportaba fallo sin haber ejecutado ningún check. Paréntesis
+internos escapados como `^( ^)`.
+
+### 20.3 El carril nocturno no existe en ejecución
+
+`GET /repos/nmorabowen/OpenSees/actions/runners` devuelve `total_count: 0`: no
+hay ningún runner auto-hospedado registrado. El job `zone-b-nightly` exige
+`[self-hosted, windows, ladruno-perf]`, por lo que queda en cola y el grupo de
+concurrencia lo cancela en cada corrida programada (22, 23, 24 y 25 de julio,
+todas `cancelled`). El arnés permanente que P3 y P4 dan por sentado **no produce
+evidencia alguna**, y aun con un runner en línea habría fallado por 20.2.
+
+### 20.4 Evidencia obtenida tras las correcciones
+
+Construcción local `LADRUNO_CMS=ON` completa —biblioteca, checks autónomos y el
+binario `OpenSeesMP.exe`— y toda la batería ejecutada bajo `mpiexec -n 4`:
+
+| Evidencia | Resultado |
+|---|---|
+| `ladruno_cms_mumps_check` | PASS en 4 rangos |
+| `ladruno_cms_lanczos_check` | PASS en 4 rangos |
+| `ladruno_cms_hierarchy_check` | PASS en 4 rangos |
+| `ladruno_cms_subspace_check` | PASS en 4 rangos |
+| enlace de `OpenSeesMP.exe` con `LADRUNO_CMS=ON` | PASS (confirma que la corrección 20.1 se propaga por el `PUBLIC`) |
+| `ladruno_cms_openseesmp_smoke.tcl` | PASS — dos `eigen -ladrunoCMS` consecutivos, cadena `T2->S2->T1->S1`, error relativo `<1e-8` contra el espectro analítico |
+| `ladruno_cms_physical_smoke.tcl` | PASS — modo `physical` en cuatro rangos, `n=16 r2=16 rRaw=13 rD=13`, residual `5.80175e-9` en 10 iteraciones de refinamiento |
+
+Es la primera evidencia de ejecución de CMS posterior a los planes P3/P4, y la
+primera vez que el comando `eigen -ladrunoCMS` se ejerce de extremo a extremo
+desde el intérprete en este árbol. No mueve ninguna puerta: son los checks
+unitarios de la biblioteca y dos smokes minúsculos, no el caso físico Building
+1A. El estado sigue siendo `draft` con P3 parcial y P4 pendiente.
+
+**Traza de reproducción** (necesaria porque el binario recién construido no
+encuentra Tcl por sí solo): `Ladruno_scripts\setup_env.bat`, luego
+`TCL_LIBRARY` apuntando al `lib\tcl8.6` de la caché de conan —de lo contrario
+el intérprete arranca sin comandos y falla con `invalid command name "wipe"`—,
+y finalmente `mpiexec -n 4 build\build\Release\OpenSeesMP.exe <deck>.tcl`. El
+`dist\` curado por el paso 5 de `build.bat` ya resuelve esto; el árbol de
+construcción crudo no.
+
+### 20.5 Corrección normativa al protocolo de la Parte 0 del plan P3
+
+El plan P3 ordena validar la corrección `ICNTL(28)=1` corriendo los checks a
+`np=2`. **Ese protocolo es vacío tal como está escrito**: `testDistributedMumps`
+y `checkDistributedFourRankFlow` retornan de inmediato si `size != 4`, así que a
+dos rangos la factorización distribuida —la ruta que falla— nunca se ejecuta y
+el check pasa sin probar nada. Validar la Parte 0 exige antes una fixture
+distribuida de dos rangos o un deck físico a `np=2`. La corrección `ICNTL(28)`
+no se aplica en esta sesión: aplicarla sin poder ejecutarla violaría su propia
+puerta de aceptación ("np=2 corregido Y np=4 sin regresión").
+
+> **Superado por la sección 21**: la fixture de dos rangos se construyó
+> inmediatamente después y reprodujo el fallo. La corrección correcta **no** es
+> `ICNTL(28)`.
+
+## 21. Cierre de la Parte 0 — el fallo de ordenamiento de MUMPS — 2026-07-26
+
+### 21.1 La fixture de dos rangos
+
+`ladruno_cms_mumps_check` gana `testDistributedMumpsAtScale` y
+`testSerialMumpsAtScale`, y la pierna distribuida preexistente deja de estar
+restringida a `size == 4`. La fixture antigua era una matriz `2x2`: sirve para
+probar el cableado, pero MUMPS nunca abandona su camino trivial sobre ella, así
+que jamás pudo haber visto un fallo de la fase de análisis. La nueva fixture
+construye un pencil SPD distribuido por bloques de filas contiguas en dos
+formas —Laplaciano 3-D de 7 puntos (realmente disperso) y bloque denso
+diagonalmente dominante (la forma que `reduceCraigBampton` entrega hoy)— con
+tamaños gobernados por `LADRUNO_CMS_CHECK_SIDE` y
+`LADRUNO_CMS_CHECK_DENSE_ORDER`. Los valores por defecto son baratos para CI;
+subir el orden denso convierte el mismo binario en el reproductor.
+
+### 21.2 El fallo reproducido, y la hipótesis del plan refutada
+
+Con orden denso `12000` el fallo aparece de forma determinista y con el mensaje
+exacto de la campaña Building 1A:
+
+```
+Error in function orderMinPriority
+  no valid number of stages in multisector (#stages = 2)
+```
+
+Tres mediciones desmontan el diagnóstico registrado en el plan P3:
+
+| Experimento | Resultado |
+|---|---|
+| denso `12000`, `ICNTL(7)=7` por defecto, **np=2** | FALLA (multisector) |
+| denso `12000`, `ICNTL(7)=7`, **np=4** | **FALLA igual** |
+| disperso `64000` (Laplaciano), `ICNTL(7)=7`, np=2 y np=4 | PASA |
+| denso `12000`, `ICNTL(28)=1` forzando análisis secuencial, np=2 | **FALLA idéntico** |
+| denso `12000`, `ICNTL(7)=0` (AMD), np=2 y np=4 | PASA |
+
+Conclusiones. Primero, **`ICNTL(28)` es irrelevante**: forzar análisis
+secuencial no evita el fallo, de modo que la causa no es el análisis paralelo.
+Segundo, **el número de rangos tampoco es la variable**: el mismo pencil denso
+mata también a cuatro rangos. Lo que dispara el fallo es el **patrón denso**:
+bajo `ICNTL(7)=7` MUMPS elige PORD, y el ordenamiento multisector de PORD no
+puede formar etapas válidas sobre un patrón denso. Que Building 1A fallara a
+dos rangos y sobreviviera a cuatro y seis es consistente con esto: al repartir
+en más rangos, el pencil local baja del umbral. No era una propiedad de `np=2`.
+
+### 21.3 Corrección aplicada, en los dos sitios
+
+`ICNTL(7)=0` (AMD, sin concepto de multisector y siempre compilado en MUMPS) en
+las dos factorizaciones de `LadrunoCMSMumps.cpp`: la distribuida
+(`MPI_COMM_WORLD`, `ICNTL(18)=3`) y la serial `MumpsSPD` (`MPI_COMM_SELF`).
+**El sitio serial importa más**, y no estaba en el alcance original de la Parte
+0: los pencils locales de Craig-Bampton —los densos— pasan por ahí, y la sonda
+serial demuestra que ese camino muere igual sobre un solo rango.
+
+### 21.4 Validación
+
+| Evidencia | Resultado |
+|---|---|
+| reproductor denso `12000`, np=2 y np=4 | PASS en ambos (antes FALLA en ambos) |
+| los cuatro checks autónomos, np=4, tamaños por defecto | PASS |
+| los cuatro checks autónomos, np=2 | PASS |
+| `ladruno_cms_openseesmp_smoke.tcl`, np=4 | PASS |
+| `ladruno_cms_physical_smoke.tcl`, np=4 | PASS |
+
+### 21.5 Lo que esto NO cierra
+
+El deck Building 1A no está en el repositorio, así que **no se ha verificado que
+la campaña original a dos rangos ahora corra**. Lo demostrado es que la modalidad
+de fallo está identificada, reproducida en una fixture permanente y corregida en
+ambos sitios de factorización. La nota "2-rank unsupported" de `RESULTS.md` sólo
+puede levantarse volviendo a correr Building 1A. Tampoco se ha medido si AMD
+cuesta más que PORD en fill-in para los pencils dispersos de CMS; no se observó
+regresión en ninguna de las pruebas anteriores, pero ninguna es grande y dispersa
+a la vez. Las demás puertas P3 y P4 siguen abiertas.
+
+La pierna distribuida de `ladruno_cms_hierarchy_check` sigue restringida a cuatro
+rangos, y con razón: su oráculo fija cuatro subdominios finos y dimensiones
+`12/10/10/9` propias de ese reparto. Una jerarquía de dos rangos es una fixture
+nueva con su propio oráculo —trabajo de P3d, no de la Parte 0.

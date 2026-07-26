@@ -47,11 +47,24 @@ target_link_libraries(OPS_LadrunoCMS
   PUBLIC
     MPI::MPI_CXX
     ${MUMPS_LIBRARIES}
-    ${LAPACK_LIBRARIES}
     ${SCALAPACK_LIBRARIES}
     ${MPI_Fortran_LIBRARIES}
     ${CMAKE_Fortran_IMPLICIT_LINK_LIBRARIES}
 )
+
+# BLAS/LAPACK layer. When MKL is present, SCALAPACK_LIBRARIES above ALREADY
+# carries the full static sequential MKL stack (scalapack_lp64 + intel_lp64 +
+# sequential + core + blacs) -- exactly what OpenSeesSP/OpenSeesMP link. Adding
+# ${LAPACK_LIBRARIES} on top pulls in the *dynamic* MKL interface that
+# find_package(LAPACK) resolves to (mkl_intel_lp64_dll + mkl_intel_thread_dll +
+# mkl_core_dll + libiomp5md); mixing the static and dynamic layers in one link
+# is unsupported by MKL and fails LNK2005 (mkl_serv_verbose_mode /
+# mkl_serv_xerbla multiply defined), taking down every ladruno_cms_*_check and
+# any MP target built with LADRUNO_CMS=ON. Only fall back to LAPACK_LIBRARIES on
+# a non-MKL box, where SCALAPACK_LIBRARIES is user-supplied and carries no BLAS.
+if(NOT MKL_FOUND)
+  target_link_libraries(OPS_LadrunoCMS PUBLIC ${LAPACK_LIBRARIES})
+endif()
 
 if(LADRUNO_CMS_BUILD_TESTS)
   add_executable(ladruno_cms_mumps_check EXCLUDE_FROM_ALL
