@@ -31,6 +31,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <utility>
 
 #include <mpi.h>
@@ -465,6 +466,23 @@ int reduceCraigBampton(
     return 0;
 }
 
+struct CoordinateKeyHash {
+    std::size_t operator()(const CoordinateKey &key) const noexcept
+    {
+        std::size_t seed = static_cast<std::size_t>(key.kind);
+        seed = seed * 1000003u +
+            static_cast<std::size_t>(static_cast<unsigned int>(key.owner));
+        seed = seed * 1000003u +
+            static_cast<std::size_t>(static_cast<unsigned int>(key.index));
+        return seed;
+    }
+};
+
+// ADR-1000 P4 section 4. This was a linear `std::find` over `unique` for EVERY
+// key, i.e. O(totalKeys * uniqueKeys) -- on a Building-1A-sized merge that is
+// ~1e9 key comparisons before any arithmetic happens. The hash join is the same
+// algorithm with a lookup table; `unique` keeps its first-seen order, which the
+// callers depend on (it defines the assembled coordinate numbering).
 int compatibilityMaps(
     const std::vector<std::vector<CoordinateKey>> &groups,
     std::vector<std::vector<int>> &maps,
@@ -474,18 +492,20 @@ int compatibilityMaps(
     maps.clear();
     unique.clear();
     counts.clear();
+    std::unordered_map<CoordinateKey, int, CoordinateKeyHash> lookup;
     for (const auto &group : groups) {
         std::vector<int> localMap;
         localMap.reserve(group.size());
         for (const CoordinateKey &key : group) {
-            const auto found = std::find(unique.begin(), unique.end(), key);
+            const auto found = lookup.find(key);
             int index = 0;
-            if (found == unique.end()) {
+            if (found == lookup.end()) {
                 index = static_cast<int>(unique.size());
+                lookup.emplace(key, index);
                 unique.push_back(key);
                 counts.push_back(0);
             } else {
-                index = static_cast<int>(std::distance(unique.begin(), found));
+                index = found->second;
             }
             localMap.push_back(index);
             ++counts[static_cast<std::size_t>(index)];
@@ -506,21 +526,109 @@ int assembleCompatible(
         message = "compatibility assembly dimensions are inconsistent";
         return -1;
     }
-    DenseMatrix dense = makeDense(dimension, dimension);
+    // ADR-1000 P4 section 4 -- the workspace that dominated rank-local memory.
+    //
+    // This used to materialise a dimension x dimension DENSE buffer, plus a
+    // dense copy of every block, and then hand the whole upper triangle to
+    // csrFromDenseUpper -- which keeps EVERY entry, zeros included. So the
+    // output was structurally dense too: O(dimension^2) paid twice, and a fully
+    // dense pattern handed downstream to MUMPS (the same dense pattern that
+    // makes MUMPS' auto ordering pick PORD and die in analysis -- see section 21
+    // / LEDGER_quirks). At Building-1A scale that is the multi-GB rank.
+    //
+    // The sparse accumulation below is the SAME arithmetic. The mapping rule is
+    // subtle enough to spell out, because the old code got it via brute force
+    // (it scattered the full dense block, both triangles):
+    //   * a block DIAGONAL entry (row == column) lands once on the mapped
+    //     diagonal;
+    //   * an off-diagonal entry whose two coordinates MERGE onto one unique
+    //     coordinate (mappedRow == mappedColumn) gets BOTH symmetric halves, so
+    //     it contributes 2*value to that diagonal;
+    //   * otherwise the two halves land on the two symmetric off-diagonal slots,
+    //     which are the same slot in upper-triangle storage, so it contributes
+    //     value once.
+    // Structural zeros are simply never created; entries that accumulate to zero
+    // are kept, so the pattern is the union of the contributions and does not
+    // depend on numerical cancellation.
+    std::vector<std::vector<std::pair<int, double>>> accumulated(
+        static_cast<std::size_t>(dimension));
     for (std::size_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex) {
         const SymmetricCSR &block = *blocks[blockIndex];
         if (maps[blockIndex].size() != static_cast<std::size_t>(block.dimension)) {
             message = "compatibility map does not cover a reduced block";
             return -2;
         }
-        const DenseMatrix blockDense = denseFromCSR(block);
-        for (int column = 0; column < block.dimension; ++column)
-            for (int row = 0; row < block.dimension; ++row)
-                dense(maps[blockIndex][static_cast<std::size_t>(row)],
-                      maps[blockIndex][static_cast<std::size_t>(column)]) +=
-                    blockDense(row, column);
+        const std::vector<int> &map = maps[blockIndex];
+        for (int row = 0; row < block.dimension; ++row) {
+            for (int entry = block.rowOffsets[static_cast<std::size_t>(row)];
+                 entry < block.rowOffsets[static_cast<std::size_t>(row + 1)];
+                 ++entry) {
+                const int column =
+                    block.columnIndices[static_cast<std::size_t>(entry)];
+                const double value =
+                    block.upperValues[static_cast<std::size_t>(entry)];
+                const int mappedRow = map[static_cast<std::size_t>(row)];
+                const int mappedColumn = map[static_cast<std::size_t>(column)];
+                if (mappedRow < 0 || mappedRow >= dimension ||
+                    mappedColumn < 0 || mappedColumn >= dimension) {
+                    message = "compatibility map points outside the assembled "
+                              "dimension";
+                    return -3;
+                }
+                if (row == column) {
+                    accumulated[static_cast<std::size_t>(mappedRow)]
+                        .emplace_back(mappedRow, value);
+                } else if (mappedRow == mappedColumn) {
+                    accumulated[static_cast<std::size_t>(mappedRow)]
+                        .emplace_back(mappedRow, 2.0 * value);
+                } else {
+                    const int lower = std::min(mappedRow, mappedColumn);
+                    const int upper = std::max(mappedRow, mappedColumn);
+                    accumulated[static_cast<std::size_t>(lower)]
+                        .emplace_back(upper, value);
+                }
+            }
+        }
     }
-    return csrFromDenseUpper(dense, result, message);
+
+    result = SymmetricCSR{};
+    result.dimension = dimension;
+    result.rowOffsets.push_back(0);
+    for (int row = 0; row < dimension; ++row) {
+        std::vector<std::pair<int, double>> &entries =
+            accumulated[static_cast<std::size_t>(row)];
+        std::sort(entries.begin(), entries.end(),
+                  [](const std::pair<int, double> &left,
+                     const std::pair<int, double> &right) {
+                      return left.first < right.first;
+                  });
+        int currentColumn = -1;
+        for (const std::pair<int, double> &item : entries) {
+            if (item.first != currentColumn) {
+                currentColumn = item.first;
+                result.columnIndices.push_back(currentColumn);
+                result.upperValues.push_back(item.second);
+            } else {
+                result.upperValues.back() += item.second;
+            }
+        }
+        // Release the row as we go: the accumulator never has to coexist with
+        // the finished CSR at full size.
+        std::vector<std::pair<int, double>>().swap(entries);
+        if (result.columnIndices.size() >
+            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            message = "assembled hierarchy matrix exceeds CSR integer range";
+            return -4;
+        }
+        result.rowOffsets.push_back(static_cast<int>(result.columnIndices.size()));
+    }
+    for (const double value : result.upperValues) {
+        if (!std::isfinite(value)) {
+            message = "dense hierarchy matrix contains a non-finite value";
+            return -5;
+        }
+    }
+    return result.validate(message);
 }
 
 int denseGeneralizedSolve(

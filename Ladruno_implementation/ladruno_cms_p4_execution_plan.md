@@ -87,12 +87,27 @@ is O((m+b)²) dense per rank — the multi-GB workspaces.
 **Design direction (verify each step preserves P2c to 1e-8):**
 - Keep the local interior pencils SPARSE end-to-end; drive the fixed-interface
   modes through the existing MUMPS inverse-action + block Lanczos (already
-  sparse) without ever forming a dense (m×m) matrix.
+  sparse) without ever forming a dense (m×m) matrix. **NOT DONE** —
+  `reduceCraigBampton` still builds dense `phi`/`psi`.
 - Assemble the reduced group/leader pencils as SPARSE (they are small but
-  currently dense-materialized); feed MUMPS the sparse form.
+  currently dense-materialized); feed MUMPS the sparse form. **HALF DONE
+  2026-07-26** — `assembleCompatible` is sparse now; `gatherCompatiblePencil`
+  still materialises a dense block per participant when unpacking the MPI upper
+  triangle.
 - Stream the compatibility merges (`assembleCompatible`, `gatherCompatiblePencil`)
   instead of dense unique×unique buffers; replace the O(u²) linear-search key
-  matching with a hash/sorted join.
+  matching with a hash/sorted join. **DONE 2026-07-26** for `assembleCompatible`
+  and the hash join.
+
+> **Status 2026-07-26 (ADR §26).** `assembleCompatible` no longer materialises a
+> `dimension × dimension` dense buffer, and no longer emits a structurally dense
+> CSR — the old path kept every upper entry including zeros, which is also what
+> handed MUMPS the dense pattern behind the Part-0 ordering failure. Cost goes
+> from O(dim²) to O(nnz): measured on an F-subdomain chain the saving grows
+> 3.4x → 43x as F goes 4 → 64, an asymptotic improvement rather than a constant.
+> Equivalence is exact, not merely in-tolerance — the physical smoke returns
+> `maxResidual = 5.80175e-09` with identical dimensions, the same value as before
+> the refactor. **Not measured on Building 1A** (the deck is not in the repo).
 
 **The irreducible floor (ADR §13) — state it honestly, do not fight it here.**
 Under the current `getEigenvector`/`AnalysisModel` contract each rank stores at

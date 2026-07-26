@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -829,6 +830,138 @@ void checkProductionPathIsNeverAblated(int rank, int size)
             "the production distributed hierarchy skipped the mandatory chain");
 }
 
+// ---------------------------------------------------------------------------
+// P4 section 4 -- the assembled pencils must be genuinely SPARSE.
+//
+// assembleCompatible used to build a dimension x dimension dense buffer and then
+// convert it with csrFromDenseUpper, which keeps every upper entry INCLUDING the
+// zeros. The result was therefore structurally dense: O(dimension^2) storage
+// regardless of how coupled the subdomains actually are, and a dense pattern
+// handed to MUMPS. This is a regression guard: on a chain fixture, subdomains at
+// opposite ends share nothing, so a correctly sparse assembly must contain
+// strictly fewer entries than the full upper triangle.
+// ---------------------------------------------------------------------------
+void checkAssembledPencilsAreSparse()
+{
+    Fixture fixture = makeFixture(true);
+    ladruno_cms::TwoLevelHierarchyResult result;
+    std::string message;
+    REQUIRE_CALL(
+        ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+        "hierarchy failed while checking assembly sparsity: " + message);
+
+    const int dimension = result.finalStiffness.dimension;
+    const std::size_t stored = result.finalStiffness.upperValues.size();
+    const std::size_t dense =
+        static_cast<std::size_t>(dimension) *
+        static_cast<std::size_t>(dimension + 1) / 2u;
+    std::cout << "final pencil sparsity: dimension=" << dimension
+              << " stored=" << stored << " denseUpper=" << dense
+              << " (dense buffer avoided: "
+              << (static_cast<std::size_t>(dimension) *
+                  static_cast<std::size_t>(dimension) * sizeof(double))
+              << " bytes)\n";
+    require(dimension > 0 && stored > 0u, "the final pencil is empty");
+    require(stored < dense,
+            "the assembled final pencil stores the FULL upper triangle (" +
+                std::to_string(stored) + " of " + std::to_string(dense) +
+                ") -- assembleCompatible is materialising dense again");
+    require(result.finalStiffness.validate(message) == 0,
+            "the sparsely assembled pencil does not validate: " + message);
+    require(result.finalMass.upperValues.size() <= dense,
+            "the assembled mass pencil is larger than its dense upper triangle");
+}
+
+// Opt-in scaling probe for the P4 section-4 memory claim: build a chain of
+// `fineCount` fine subdomains and report what the assembled final pencil costs
+// sparsely versus what the old dense path would have cost. Off by default (it is
+// a measurement, not a gate); set LADRUNO_CMS_ASSEMBLY_SCALING=1 to run it.
+Fixture makeChainFixture(int fineCount, int coarseCount)
+{
+    Fixture fixture;
+    const int order = 2 * fineCount + 1;
+    fixture.stiffness.assign(
+        static_cast<std::size_t>(order) * order, 0.0);
+    fixture.mass.assign(static_cast<std::size_t>(order) * order, 0.0);
+    for (int fine = 0; fine < fineCount; ++fine) {
+        const double shift = 0.15 * (fine % 7);
+        const std::vector<double> localStiffness = {
+            2.2 + shift, -1.0, 0.0,
+            -1.0, 2.6 + shift, -0.8,
+            0.0, -0.8, 1.9 + shift};
+        const std::vector<double> localMass = {
+            0.8, 0.04, 0.0,
+            0.04, 1.0, 0.03,
+            0.0, 0.03, 1.2};
+        const int equations[3] = {2 * fine, 2 * fine + 1, 2 * fine + 2};
+        ladruno_cms::FineSubdomainInput local;
+        local.fine = fine;
+        local.coarse = (fine * coarseCount) / fineCount;
+        local.equations.assign(equations, equations + 3);
+        local.stiffness = csrFromDense(localStiffness, 3);
+        local.mass = csrFromDense(localMass, 3);
+        local.modesToKeep = -1;
+        fixture.input.fineSubdomains.push_back(local);
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column) {
+                const std::size_t global =
+                    static_cast<std::size_t>(equations[row]) * order +
+                    equations[column];
+                fixture.stiffness[global] +=
+                    localStiffness[static_cast<std::size_t>(row) * 3 + column];
+                fixture.mass[global] +=
+                    localMass[static_cast<std::size_t>(row) * 3 + column];
+            }
+    }
+    fixture.input.globalStiffness = csrFromDense(fixture.stiffness, order);
+    fixture.input.globalMass = csrFromDense(fixture.mass, order);
+    fixture.input.numberOfCoarseSubdomains = coarseCount;
+    fixture.input.modesLevel1 = -1;
+    fixture.input.numberOfModes = 5;
+    fixture.input.denseMax = 4 * order;
+    fixture.input.localTolerance = 1.0e-10;
+    fixture.input.maximumOperatorApplications = 600;
+    fixture.input.maximumRestarts = 20;
+    fixture.input.storeTotalTransformation = false;
+    return fixture;
+}
+
+void reportAssemblyScaling()
+{
+    const char *enabled = std::getenv("LADRUNO_CMS_ASSEMBLY_SCALING");
+    if (enabled == nullptr)
+        return;
+    std::cout << "\n-- assembled final pencil: sparse vs the old dense path --\n"
+              << "fine  dim   stored   denseUpper   oldBytes     newBytes   ratio\n";
+    for (const int fineCount : {4, 8, 16, 32, 64}) {
+        Fixture fixture = makeChainFixture(fineCount, fineCount / 2);
+        ladruno_cms::TwoLevelHierarchyResult result;
+        std::string message;
+        const bool ok =
+            ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0;
+        if (!ok) {
+            std::cout << fineCount << "  FAILED: " << message << '\n';
+            continue;
+        }
+        const std::size_t dimension =
+            static_cast<std::size_t>(result.finalStiffness.dimension);
+        const std::size_t stored = result.finalStiffness.upperValues.size();
+        const std::size_t denseUpper = dimension * (dimension + 1u) / 2u;
+        // old: the dimension x dimension scratch buffer (8 B/entry) PLUS a CSR
+        // that kept the whole upper triangle (4 B index + 8 B value).
+        const std::size_t oldBytes =
+            dimension * dimension * sizeof(double) + denseUpper * 12u;
+        const std::size_t newBytes = stored * 12u;
+        std::cout << fineCount << "     " << dimension << "    " << stored
+                  << "       " << denseUpper << "        " << oldBytes
+                  << "     " << newBytes << "     "
+                  << (static_cast<double>(oldBytes) /
+                      static_cast<double>(std::max<std::size_t>(newBytes, 1u)))
+                  << "x\n";
+    }
+    std::cout << '\n';
+}
+
 void checkAssemblyMismatchIsRejected()
 {
     Fixture fixture = makeFixture(true);
@@ -858,8 +991,11 @@ int main(int argc, char **argv)
     checkDistributedFourRankFlow(rank, size);
     checkRankPermutationInvariance(rank, size);
     checkInterfaceTopologies(rank, size);
-    if (rank == 0)
+    if (rank == 0) {
         checkLevelAblationIsDiagnosticOnly();
+        checkAssembledPencilsAreSparse();
+        reportAssemblyScaling();
+    }
     checkProductionPathIsNeverAblated(rank, size);
     MPI_Finalize();
     if (failures != 0)
