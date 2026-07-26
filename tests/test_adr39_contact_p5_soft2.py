@@ -209,6 +209,17 @@ def _matched_static(kn, soft):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     _fixed_master()
     _matched_slave_nodes(0.0)
+    # ADR-76 LAPACK-fix fallout: each slave z is held by NOTHING until the
+    # mortar contact engages, so the FIRST tangent is singular. Pre-fix,
+    # FullGeneral swallowed that solve (rc 0, X = B) and the garbage first
+    # "displacement" is what seated the contact. Ground each slave z with a
+    # spring far softer than epsN (0.1 vs 1e6); both compared runs get the
+    # identical springs, so the bit-identity assertion is untouched.
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    for t, (x, y) in zip((5, 6, 7, 8), [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        ops.node(90 + t, float(x), float(y), 0.0)
+        ops.fix(90 + t, 1, 1, 1)
+        ops.element("zeroLength", 900 + t, 90 + t, t, "-mat", 90, "-dir", 3)
     ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
     if soft > 0.0:
         ops.contact(1, 1, 2, "-mortar", "-epsN", kn, "-soft", soft, "-outward", 0.0, 0.0, 1.0)
@@ -238,6 +249,15 @@ def test_soft2_implicit_byte_identical():
     z_on = _matched_static(KN, 0.1)
     assert z_off == z_on, f"-soft perturbed the implicit (explicit-only) solution: {z_off!r} vs {z_on!r}"
     assert z_off < 0.0, f"the static mortar contact should penetrate under load (z={z_off:.3e})"
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): an ENGAGED mortar contact penetrates ~P/epsN ~ 1e-4; if the broad
+    # phase ever failed to find the pair after the big spring-only first
+    # iterate, the rig would converge on the 0.1 spring alone at z ~ -1e3 and
+    # the two asserts above would pass MEANINGLESSLY. 7 orders separate the
+    # branches; -1.0 cleanly splits them.
+    assert z_off > -1.0, (
+        f"penetration magnitude {z_off:.3e} says the mortar contact never "
+        "engaged — the rig converged on the grounding spring alone")
 
 
 # ===================================================================================
