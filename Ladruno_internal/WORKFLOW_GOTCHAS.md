@@ -245,7 +245,11 @@ result set; "no failures because nothing ran" is the silent-truncation trap.
 - **Honest pattern** (the LAPACK step): `export TCL_LIBRARY="$(dirname "$(find
   ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"` before invoking the
   binary, and gate on a positive terminal marker, never the exit code.
-- **Open item:** resurrect the G1 suite — same `TCL_LIBRARY` export on its step
-  + make `check_tcl_results.py` fail on `total == 0`. Deliberately NOT bundled
-  into #643: the suite has not actually executed in CI for an unknown span, so
-  turning it on may surface real failures that need their own triage.
+- **RESURRECTED (#653, 2026-07-26, stacked on #643):** the G1 step got the same
+  `TCL_LIBRARY` export and `check_tcl_results.py` now fails on `total == 0`
+  (either fix alone is insufficient — without the export the suite dies empty;
+  without the zero-check the death is invisible). First genuine execution:
+  **`OK (19 checks passed)`** — all nine verification decks + the ladruno
+  cantilever clean, including under the ADR-76 LAPACK singular fix. The gate is
+  live; a future `0 checks ran` failure means the Tcl runtime went missing
+  again, not that the decks regressed.
