@@ -119,6 +119,52 @@ puts a model **over** a node, not under it.
 > never pays" is therefore **too strong**; the defensible claim is the narrower one
 > in §3.
 
+### 2d-bis. 884 835 DOF, np=32, 2 nodes — the capability wall, and the qualification it forces
+
+At np=16 on **one** 60 GB node, full-rank **FAILED** (`rc=1`) and `-BLR` did not
+rescue it — it drove the node to **323 MB free** without completing. Re-run on
+**two** nodes (120 GB):
+
+| metric | `full` | `-matrixType 2` | Δ |
+|---|---|---|---|
+| factor entries `INFOG(9)` | 3.979e9 | 2.257e9 | **−43.3%** |
+| **peak MB/proc `INFOG(21)`** | 4 382 | 3 996 | **−8.8%** |
+| **total MB `INFOG(22)`** | 54 052 | 30 708 | **−43.2%** |
+| elim flops `RINFOG(3)` | 3.13976e13 | 1.72739e13 | −45.0% |
+| wall | 2 866 975 ms (47.8 min) | **1 700 478 ms (28.3 min)** | **1.69× faster** |
+| tip `ux` | `3.99326054878141221e+01` | `3.99326054878141221e+01` | **BIT-IDENTICAL** |
+
+Two things to take from this, one of which corrects the headline:
+
+1. **Exactness confirmed at scale.** At 885k the two answers are **bit-identical**,
+   not merely close — the strongest form of the P1d claim that symmetric storage is
+   exact rather than approximate. (At 19.6k they differed in the last ~2 digits; the
+   agreement improves, it does not degrade.)
+2. ⚠ **The −43% "peak memory" headline needs a rank-count qualifier.** Symmetric
+   consistently halves the *factor* (`INFOG(9)` −43.3%, `INFOG(22)` −43.2%), but the
+   **per-process peak that actually decides whether a model fits a node** benefits
+   far less as ranks grow:
+
+   | N (DOF) | np | Δ `INFOG(21)` (per-proc peak) |
+   |---|---|---|
+   | 19.6k | 2 | **−37.3%** |
+   | 19.6k | 16 | −10.0% |
+   | 408.5k | 16 | **−43.1%** |
+   | 884.8k | **32** | **−8.8%** |
+
+   The pattern reproduces at two different model sizes: **more ranks ⇒ smaller
+   per-proc peak saving**, because that peak is set by the largest (distributed)
+   front rather than by total stored factors. **N and np are confounded across these
+   rows** — this is an observed pattern, not a fitted law, and a clean np-sweep at
+   fixed N is the experiment that would settle it. **Do not quote "−43% peak
+   memory" without the rank count it was measured at.**
+
+3. **The wall is about total node memory, not about symmetric.** Full-rank failed on
+   1 node and succeeded on 2; symmetric succeeded on both counts tested. Symmetric
+   did **not** uniquely clear this wall — it needs ~43% less *total* memory, so it
+   clears walls at intermediate budgets, but at 885k/np=32 it was not the difference
+   between running and not.
+
 ### 2e. CONFOUND CONTROL — the numberer (a miss, caught in review, then measured)
 
 The sweep above used vanilla **`numberer ParallelRCM`**. It should have used
@@ -216,20 +262,27 @@ The next candidate for a genuine memory wall remains **MUMPS out-of-core
 
 ### Item 2 — `-matrixType 2` IS the lever, and it transfers from PARDISO to MUMPS
 
-`-matrixType 2` won on **both** axes at **every** size and rank count:
+`-matrixType 2` won on **both** axes at **every** size and rank count tested:
 
-| N (DOF) | np | sym Δ peak mem | sym wall ratio |
-|---|---|---|---|
-| 19.6k | 2 | −37.3% | 1.28× faster |
-| 19.6k | 16 | −10.0% | 1.73× faster |
-| 143.8k | 16 | **−42.5%** | **2.32× faster** |
-| **408.5k** | 16 | **−43.1%** | **1.73× faster** |
+| N (DOF) | np | Δ per-proc peak | Δ total factor | wall |
+|---|---|---|---|---|
+| 19.6k | 2 | −37.3% | — | 1.28× faster |
+| 19.6k | 16 | −10.0% | — | 1.73× faster |
+| 143.8k | 16 | **−42.5%** | — | **2.32× faster** |
+| 408.5k | 16 | **−43.1%** | — | 1.73× faster |
+| 884.8k | 32 | −8.8% | **−43.2%** | 1.69× faster |
 
-The memory saving **converges on ≈ −43%** once the model is large enough to
-dominate the per-proc peak, landing almost exactly on P1d's desktop PARDISO
-measurement of **−41.8%** — an independent confirmation across a different
-solver, machine, and parallel model. Unlike BLR it is **exact** (answers agree to
-~1e-16), so it is legal on oracle paths.
+**Speed is the robust win: 1.28×–2.32× faster, every configuration.**
+
+**Memory needs care.** The *factor* is halved consistently (`INFOG(9)`/`INFOG(22)`
+≈ **−43%**), and that figure lands almost exactly on P1d's desktop PARDISO
+**−41.8%** — independent confirmation across a different solver, machine, and
+parallel model. But the **per-process peak that decides node fit** ranges from
+−43.1% to −8.8% depending on rank count (§2d-bis). Quote the total-factor number
+as the property of symmetric storage; quote the per-proc number only with its np.
+
+It is **exact** — at 884.8k DOF the symmetric and full-rank answers are
+**bit-identical** — so unlike BLR it is legal on oracle paths.
 
 **Recommendation:** `-matrixType 2` should be the **default for symmetric-tangent
 cluster decks**, exactly as on the desktop — with the same standing caveat that

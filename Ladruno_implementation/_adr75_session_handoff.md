@@ -127,9 +127,24 @@ silently solves the wrong system on a genuinely unsymmetric tangent, so it stays
   unsymmetric path for memory.** Next real memory candidate is still out-of-core
   `ICNTL(22)`, unexposed by the fork.
 
-**Capability wall found:** at **884.8k DOF / np=16 on one 60 GB node, full-rank
-FAILED** (`rc=1`) — the analogue of P1c's UmfPack OOM. Whether BLR or symmetric
-rescues it is the open follow-up (see below).
+**Capability wall — resolved.** At **884.8k DOF / np=16 on one 60 GB node full-rank
+FAILED** (`rc=1`) and **`-BLR` did not rescue it** (drove the node to 323 MB free
+without completing). On **two** nodes both succeed: `full` 47.8 min vs
+**`-matrixType 2` 28.3 min (1.69x)**, total factor memory 54.1 -> 30.7 GB
+(**-43.2%**), and the tip displacement is **BIT-IDENTICAL** between them — the
+strongest form of P1d's exactness claim. So the wall is about *total node memory*;
+symmetric needs ~43% less of it but was not, at this size, the difference between
+running and not.
+
+⚠ **One headline correction, found by this run.** "-43% peak memory" needs a
+**rank-count qualifier**. Symmetric halves the FACTOR consistently (`INFOG(9)`,
+`INFOG(22)` ≈ -43%), but the **per-process peak** — the number that decides node
+fit — falls from **-43.1% (np=16)** to **-8.8% (np=32)**, and the same shrink shows
+at 19.6k (-37.3% at np=2 -> -10.0% at np=16). More ranks ⇒ smaller per-proc saving,
+because that peak is set by the largest distributed front, not by stored factors.
+N and np are confounded across those rows, so this is an observed pattern, not a
+law; a clean np-sweep at fixed N would settle it. **Do not quote a peak-memory
+percentage without the np it was measured at.**
 
 ---
 
