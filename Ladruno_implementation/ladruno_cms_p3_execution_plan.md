@@ -102,6 +102,15 @@ RESULTS.md. Do NOT ship the ICNTL change without the np=4 non-regression run.
 Harness: extend `topology_check` (has `OpenSeesLIB`) + a Python emitter test on
 `cms_partition_manifest.json`.
 
+> **BLOCKED ON apeGmsh, and now formally requested 2026-07-26.** Every row below
+> needs a partitioned deck + manifest that only the emitter can produce, and the
+> emitter does not exist. The request — what to emit, the manifest schema, the
+> fail-loud preflight, and these acceptance rows restated for that audience — is
+> [[LadrunoCMS_apegmsh_emitter_guide]] (also listed in
+> [[ladruno_apegmsh_contract]]). The smallest useful first delivery asked for is
+> a **second valid 4-way Building-1A partition**, which alone unblocks the P3e
+> invariance gate.
+
 | Check | Assertion |
 |---|---|
 | Exact element coverage | union of per-rank element sets == monolithic set; count == 27 360 (Building 1A); zero missing/extra |
