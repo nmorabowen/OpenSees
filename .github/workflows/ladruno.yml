@@ -119,7 +119,14 @@ jobs:
         # is just build + Zone-A pytest. Still runs on PR open/reopen/ready, on
         # push to ladruno, and on the nightly schedule.
         if: github.event.action != 'synchronize'
+        # TCL_LIBRARY (WORKFLOW_GOTCHAS §7): without the conan Tcl runtime the
+        # binary aborts init before registering any OpenSees command, every
+        # sourced deck dies on its first command, and the suite driver's own
+        # `open results.out w` leaves an EMPTY file — which the checker used to
+        # bless as "OK (0 checks passed)". The checker now refuses an empty
+        # result set, so this export is load-bearing, not cosmetic.
         run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
           BIN="$GITHUB_WORKSPACE/build/Release/OpenSees"
           cd EXAMPLES/verification
           "$BIN" runVerificationSuite.tcl || true
