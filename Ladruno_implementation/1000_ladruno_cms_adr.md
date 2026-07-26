@@ -2069,3 +2069,62 @@ sólo garantiza que un fallo futuro imprima su causa.
 
 Con esto P3d queda cerrada salvo la ablación de nivel como diagnóstico
 etiquetado. P3a, P3e y P4 siguen abiertas.
+
+## 25. P3d — ablación de nivel 1 como diagnóstico etiquetado — 2026-07-26
+
+Última fila abierta de P3d. La sección 2b del plan P4 pide una ablación
+"sólo nivel 2" (omitir T1) para atribuir coste y reducción entre los dos
+niveles; P3d exige que **nunca** pueda ser una configuración aceptada ni un
+repliegue. No existía: `appliedT1` se fijaba incondicionalmente a `true`.
+
+### 25.1 Implementación
+
+`TwoLevelHierarchyInput::diagnosticAblateLevel1` (por defecto `false`). Cuando
+está activo, el lazo de T1 no llama a `reduceCraigBampton`: entrega a S1 el
+pencil de grupo **sin reducir**, que es exactamente el espacio de nivel 2.
+La reconstrucción sólo necesita `cb.transformation`, que para un grupo sin
+reducir es la identidad, de modo que el camino de retro-sustitución no cambia.
+El diagnóstico reporta `appliedT1 = false` y `ablatedLevel1 = true`.
+
+### 25.2 Las cuatro barreras
+
+1. **Por construcción**: el camino de producción es `solveDistributedHierarchy`,
+   que construye su propio `TwoLevelHierarchyInput` local y nunca toca el
+   indicador. La ruta distribuida no tiene ni campo de ablación.
+2. **En el parser**: `parseCommandOptions` rechaza `-ablate`, `-ablateLevel1`,
+   `-diagnosticAblateLevel1`, `-level2Only` y `-omitT1` como opciones
+   desconocidas. Es una prueba, no una promesa: si alguien añade la bandera, el
+   check falla.
+3. **En el solver**: `LadrunoCMSEigenSolver` rechaza un resultado con
+   `ablatedLevel1`, o sin `appliedT1`/`appliedS1`, antes de publicar modo alguno.
+   Hoy no puede dispararse; existe para atrapar una regresión futura.
+4. **Etiquetado**: ningún consumidor puede confundir una corrida ablada con la
+   cadena obligatoria, porque el diagnóstico lo dice.
+
+### 25.3 Que la ablación no sea un no-op
+
+Se mide sobre la fixture truncante (`modesLevel1 = 2`, donde T1 sí recorta):
+
+| Corrida | `finalRawDimension` |
+|---|---:|
+| cadena completa | 5 |
+| ablada (sólo nivel 2) | 7 |
+
+T1 elimina 2 coordenadas. Si la ablación fuera un no-op las dimensiones
+coincidirían y no podría atribuir nada; el check lo exige explícitamente.
+También se comprueba que el espacio mayor no produce valores de Ritz **más
+altos** —sería una reducción inconsistente— y que el indicador está apagado por
+defecto.
+
+### 25.4 Evidencia
+
+| Evidencia | Resultado |
+|---|---|
+| ablación etiquetada, no-op descartado, defecto apagado | PASS |
+| ruta de producción nunca ablada, np=4 | PASS |
+| parser rechaza las cinco grafías | PASS (g++ `-Wall -Wextra -pedantic`) |
+| los cinco checks, np=2 y np=4 | PASS |
+| ambos smokes de `OpenSeesMP`, np=4 | PASS |
+
+**P3d queda cerrada.** Siguen abiertas P3a, P3c (extras), P3e —bloqueada, el
+deck del edificio 1A no está en el repositorio— y todo P4.

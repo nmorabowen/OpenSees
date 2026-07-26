@@ -725,6 +725,110 @@ void checkInterfaceTopologies(int rank, int size)
     }
 }
 
+// ---------------------------------------------------------------------------
+// P3d -- the level-1 ablation, allowed ONLY as a labelled diagnostic.
+//
+// ADR-1000 P4 section 2b wants a "level-2 only" ablation (omit T1) to attribute
+// cost and reduction between the two levels, and P3d requires that it can never
+// be an accepted configuration or a fallback. Three things are checked:
+//   1. it is a REAL ablation -- the final space is strictly larger than the full
+//      chain's on a fixture where T1 actually truncates (else it is a no-op
+//      dressed up as a benchmark);
+//   2. it is LABELLED -- appliedT1 == false and ablatedLevel1 == true, so no
+//      consumer can mistake it for the mandatory chain;
+//   3. it is UNREACHABLE from the production path -- the distributed hierarchy
+//      the solver actually calls always reports the full chain.
+// The fourth guard (the option parser refuses an ablation flag) lives in
+// ladruno_cms_core_check, next to the rest of the parser tests.
+// ---------------------------------------------------------------------------
+
+void checkLevelAblationIsDiagnosticOnly()
+{
+    // A truncating fixture: modesLevel1 = 2, so T1 genuinely removes coordinates
+    // and the ablation must show up as a larger final space.
+    Fixture full = makeFixture(false);
+    ladruno_cms::TwoLevelHierarchyResult fullResult;
+    std::string message;
+    REQUIRE_CALL(
+        ladruno_cms::solveTwoLevelHierarchy(full.input, fullResult, message) == 0,
+        "full-chain hierarchy failed: " + message);
+
+    Fixture ablated = makeFixture(false);
+    ablated.input.diagnosticAblateLevel1 = true;
+    ladruno_cms::TwoLevelHierarchyResult ablatedResult;
+    message.clear();
+    REQUIRE_CALL(
+        ladruno_cms::solveTwoLevelHierarchy(
+            ablated.input, ablatedResult, message) == 0,
+        "level-1 ablation failed to run as a diagnostic: " + message);
+
+    std::cout << "level-1 ablation diagnostic: finalRawDimension full="
+              << fullResult.diagnostics.finalRawDimension << " ablated="
+              << ablatedResult.diagnostics.finalRawDimension
+              << " (T1 removes "
+              << ablatedResult.diagnostics.finalRawDimension -
+                     fullResult.diagnostics.finalRawDimension
+              << " coordinates)\n";
+
+    // 1. a real ablation, not a no-op
+    require(ablatedResult.diagnostics.finalRawDimension >
+                fullResult.diagnostics.finalRawDimension,
+            "the level-1 ablation did not enlarge the final space (" +
+                std::to_string(ablatedResult.diagnostics.finalRawDimension) +
+                " vs " +
+                std::to_string(fullResult.diagnostics.finalRawDimension) +
+                ") -- it is a no-op, so it cannot attribute anything");
+
+    // 2. labelled, and only the level-1 stage is skipped
+    require(!ablatedResult.diagnostics.appliedT1,
+            "the ablated run still reports appliedT1");
+    require(ablatedResult.diagnostics.ablatedLevel1,
+            "the ablated run is not labelled as ablated");
+    require(ablatedResult.diagnostics.appliedT2 &&
+                ablatedResult.diagnostics.appliedS2 &&
+                ablatedResult.diagnostics.appliedS1,
+            "the ablation skipped more than the level-1 reduction");
+    require(fullResult.diagnostics.appliedT1 &&
+                !fullResult.diagnostics.ablatedLevel1,
+            "the full chain mislabelled itself as ablated");
+
+    // The diagnostic must still be a usable measurement: a larger retained space
+    // cannot be less accurate than the truncated one.
+    const std::size_t modes = std::min(ablatedResult.eigenvalues.size(),
+                                       fullResult.eigenvalues.size());
+    for (std::size_t mode = 0; mode < modes; ++mode) {
+        const double allowance = 1.0e-9 *
+            std::max(1.0, std::fabs(fullResult.eigenvalues[mode]));
+        require(ablatedResult.eigenvalues[mode] <=
+                    fullResult.eigenvalues[mode] + allowance,
+                "the ablated (larger) space produced a HIGHER Ritz value at mode " +
+                    std::to_string(mode) + " -- the reduction is inconsistent");
+    }
+
+    // 3. default-off: nothing gets ablated by accident
+    const ladruno_cms::TwoLevelHierarchyInput defaults;
+    require(!defaults.diagnosticAblateLevel1,
+            "level-1 ablation is ON by default -- it must be opt-in");
+}
+
+void checkProductionPathIsNeverAblated(int rank, int size)
+{
+    if (size != 4)
+        return;
+    ladruno_cms::DistributedHierarchyResult result;
+    std::string message;
+    const bool ok = runDistributedHierarchy(rank, rank, rank / 2, result, message);
+    require(ok, "distributed hierarchy failed: " + message);
+    if (!ok)
+        return;
+    // The distributed path is the one LadrunoCMSEigenSolver calls. It has no
+    // ablation input at all, and the solver refuses a result that claims one.
+    require(!result.diagnostics.ablatedLevel1,
+            "the production distributed hierarchy reported an ablated level 1");
+    require(result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
+            "the production distributed hierarchy skipped the mandatory chain");
+}
+
 void checkAssemblyMismatchIsRejected()
 {
     Fixture fixture = makeFixture(true);
@@ -754,6 +858,9 @@ int main(int argc, char **argv)
     checkDistributedFourRankFlow(rank, size);
     checkRankPermutationInvariance(rank, size);
     checkInterfaceTopologies(rank, size);
+    if (rank == 0)
+        checkLevelAblationIsDiagnosticOnly();
+    checkProductionPathIsNeverAblated(rank, size);
     MPI_Finalize();
     if (failures != 0)
         return 1;

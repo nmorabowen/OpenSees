@@ -60,6 +60,15 @@ struct TwoLevelHierarchyInput {
     // requested modes and does not materialize the global n x r transformation.
     bool storeTotalTransformation = false;
     std::size_t maximumTransformationEntries = 1000000u;
+    // BENCHMARK DIAGNOSTIC ONLY -- omit the level-1 Craig-Bampton reduction (T1)
+    // and let S1 assemble the un-reduced group pencils, i.e. the "level-2 only"
+    // ablation of ADR-1000 P4 section 2b. It exists to attribute cost/reduction
+    // between the two levels and is NEVER an accepted solver configuration or a
+    // fallback: no command option can set it, and LadrunoCMSEigenSolver refuses
+    // an input that carries it. A run with this flag reports
+    // diagnostics.appliedT1 == false and diagnostics.ablatedLevel1 == true so it
+    // can never be mistaken for the mandatory T2 -> S2 -> T1 -> S1 chain.
+    bool diagnosticAblateLevel1 = false;
 };
 
 struct HierarchyDiagnostics {
@@ -67,6 +76,9 @@ struct HierarchyDiagnostics {
     bool appliedS2 = false;
     bool appliedT1 = false;
     bool appliedS1 = false;
+    // True only for the benchmark-only level-1 ablation above. Any consumer that
+    // treats a result as the mandatory chain must reject this.
+    bool ablatedLevel1 = false;
     int originalDimension = 0;
     int afterLevel2BeforeCompatibility = 0;
     int afterLevel2Compatibility = 0;
