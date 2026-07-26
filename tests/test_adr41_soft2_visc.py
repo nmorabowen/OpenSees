@@ -195,3 +195,10 @@ def test_soft2_visc_static_byte_identical():
     z_on = _soft2_static(20.0)
     assert z_off == z_on, f"-visc perturbed the static (v≡0) SOFT=2 solution: {z_off!r} vs {z_on!r}"
     assert z_off < 0.0, f"the static SOFT=2 contact should penetrate under load (z={z_off:.3e})"
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): engaged mortar penetration is ~P/epsN ~ 1e-4; spring-only
+    # (broad-phase miss after the big first iterate) converges at z ~ -1e3 and
+    # would pass the two asserts above meaninglessly. -1.0 splits the branches.
+    assert z_off > -1.0, (
+        f"penetration magnitude {z_off:.3e} says the mortar contact never "
+        "engaged — the rig converged on the grounding spring alone")

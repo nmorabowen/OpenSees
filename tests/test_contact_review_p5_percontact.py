@@ -162,6 +162,13 @@ def test_p5_visc_inert_under_static_integrator_with_stale_velocity(capfd):
     err = capfd.readouterr().err
     assert z_on == z_off, (
         f"-visc perturbed a STATIC solve via a stale committed velocity: {z_on!r} vs {z_off!r}")
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): engaged penetration is -P/KN = -1e-2; if contact somehow never
+    # engaged, the rig converges on the 0.1 spring alone at z = -1e4 and the
+    # equality assert above passes meaninglessly. -0.1 splits the branches.
+    assert z_off > -0.1, (
+        f"penetration magnitude {z_off:.3e} says the plane contact never "
+        "engaged — the rig converged on the grounding spring alone")
     assert "-visc" in err and "static integrator" in err, \
         f"the -visc static disablement did not warn (got: {err[-300:]!r})"
 

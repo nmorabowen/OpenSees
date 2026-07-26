@@ -249,6 +249,15 @@ def test_soft2_implicit_byte_identical():
     z_on = _matched_static(KN, 0.1)
     assert z_off == z_on, f"-soft perturbed the implicit (explicit-only) solution: {z_off!r} vs {z_on!r}"
     assert z_off < 0.0, f"the static mortar contact should penetrate under load (z={z_off:.3e})"
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): an ENGAGED mortar contact penetrates ~P/epsN ~ 1e-4; if the broad
+    # phase ever failed to find the pair after the big spring-only first
+    # iterate, the rig would converge on the 0.1 spring alone at z ~ -1e3 and
+    # the two asserts above would pass MEANINGLESSLY. 7 orders separate the
+    # branches; -1.0 cleanly splits them.
+    assert z_off > -1.0, (
+        f"penetration magnitude {z_off:.3e} says the mortar contact never "
+        "engaged — the rig converged on the grounding spring alone")
 
 
 # ===================================================================================
