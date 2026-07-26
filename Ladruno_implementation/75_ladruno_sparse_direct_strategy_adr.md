@@ -484,6 +484,11 @@ distributed PARDISO** (P0-decided: MUMPS is mandatory for CMS/FEAST/PFEM regardl
   Accept, or keep a non-MKL threaded option on the table.
 - Iterative (PETSc AMG-CG) for large *well-conditioned* 3D — data-justified only; softening tangents
   fight preconditioners. Out of scope here.
+- **PARDISO instrumentation parity** (raised by the [[76_ladruno_tangent_reuse_adr]] issue report,
+  tracked HERE): `PARDISOGenLinSolver` carries no `OPS_PROFILE` scopes where `UmfpackGenLinSolver`
+  has `soe.symbolic`/`soe.factor`/`soe.trisolve`, so on a PARDISO run `linearSolve` is one opaque
+  block and factor cannot be separated from trisolve without differencing two algorithms. Related:
+  the profiler HDF5 run attributes record `threads=1`/`nElem=0` regardless of configuration.
 
 ## 10. Ledger / banner
 No source touched yet (scoping ADR). When P1 lands: `LEDGER_implementations.md` row for the PARDISO
@@ -512,7 +517,12 @@ essentially all architectural risk sits in Lane 3.
    lives entirely in Lane 3 (highest risk). Real failure mode: ship the easy lanes, stall before the
    one the primary models need.
 8. **Stale-LU reuse trap (both solvers)** — reuse gated on `factored` assumes `A` untouched; any path
-   that refills `A` without clearing `factored` silently solves a stale factor.
+   that refills `A` without clearing `factored` silently solves a stale factor. The assembly-side
+   mirror of this axis (skip the re-assembly so `factored` stays set) was examined and **WITHDRAWN**
+   in [[76_ladruno_tangent_reuse_adr]] — its §4.1 invalidator inventory is the definitive list of
+   paths that change `A` without any observable event, and its §4.3 records that combining `-krylov`
+   with any assembly-skip (`ModifiedNewton -factoronce`) is a pessimization (a CGS win leaves
+   `factorsCurrent == false`, so every subsequent solve of the unchanged matrix re-enters phase 23).
 
 ## 12. Revision log — adversarial review (post-merge, evidence-backed)
 Corrections folded after reading `PARDISOGenLinSolver.cpp` (the review caught claims I'd made from a

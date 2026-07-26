@@ -106,8 +106,13 @@ Linear::solveCurrentStep(void)
 	return -5;
     }
 
-	{ OPS_PROFILE_SCOPE("formTangent");
+	// Ladruno (ADR-76): the profile scope sits INSIDE the factorOnce guard.
+	// It used to wrap the guard, so `Linear -factorOnce` profiles counted
+	// `formTangent` once per step even when the latch skipped the assembly —
+	// every such profile overstated assemblies. ModifiedNewton::solveCurrentStep
+	// is the reference pattern.
 	if (factorOnce != 2) {
+		OPS_PROFILE_SCOPE("formTangent");
 		if (theIncIntegrator->formTangent(incrTangent) < 0) {
 		  opserr << "WARNING Linear::solveCurrentStep() -";
 		  opserr << "the Integrator failed in formTangent()\n";
@@ -116,7 +121,6 @@ Linear::solveCurrentStep(void)
 		if (factorOnce == 1)
 			factorOnce = 2;
     }
-	}
 
 
     { OPS_PROFILE_SCOPE("formUnbalance");
