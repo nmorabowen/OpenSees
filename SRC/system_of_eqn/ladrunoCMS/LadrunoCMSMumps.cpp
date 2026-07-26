@@ -299,7 +299,18 @@ int DistributedMumpsSPD::factorize(
     impl_->control.icntl[1] = -1;
     impl_->control.icntl[2] = -1;
     impl_->control.icntl[3] = 0;
-    impl_->control.icntl[6] = 7;
+    // ICNTL(7)=0 (AMD), NOT 7 (auto). Under auto, MUMPS selects PORD for a
+    // DENSE-as-CSR pencil -- exactly what reduceCraigBampton feeds here -- and
+    // PORD dies in ANALYSIS with "Error in function orderMinPriority: no valid
+    // number of stages in multisector". Reproduced deterministically by the
+    // order-12000 dense fixture in ladruno_cms_mumps_check at BOTH np=2 and
+    // np=4; a sparse order-64000 pencil at the same rank counts is unaffected,
+    // so the trigger is the dense pattern, not the process count. AMD has no
+    // multisector concept and is always built into MUMPS. ICNTL(28) (sequential
+    // vs parallel analysis) was measured to be irrelevant: forcing
+    // ICNTL(28)=1 while leaving ICNTL(7)=7 still fails identically.
+    // ADR-1000 Part 0.
+    impl_->control.icntl[6] = 0;
     impl_->control.icntl[12] = 1;
     impl_->control.icntl[13] = 35;
     impl_->control.icntl[17] = 3; // distributed assembled matrix
@@ -447,7 +458,14 @@ int MumpsSPD::factorize(const SymmetricCSR &matrix, std::string &message)
     impl_->control.icntl[2] = -1;
     impl_->control.icntl[3] = 0;
     impl_->control.icntl[4] = 0;
-    impl_->control.icntl[6] = 7;
+    // ICNTL(7)=0 (AMD) for the same reason as the distributed factorization
+    // above -- and this site matters more: the rank-local Craig-Bampton pencils
+    // are what reach MumpsSPD, and they are the DENSE-as-CSR ones. Measured on
+    // the order-12000 dense fixture: with ICNTL(7)=7 this path dies in PORD
+    // ("orderMinPriority ... multisector") even on a single rank, while the
+    // distributed path next to it (already switched to AMD) completes.
+    // ADR-1000 Part 0.
+    impl_->control.icntl[6] = 0;
     impl_->control.icntl[12] = 1; // exact inertia/null-pivot behavior on the root
     impl_->control.icntl[13] = 35;
     impl_->control.icntl[17] = 0;

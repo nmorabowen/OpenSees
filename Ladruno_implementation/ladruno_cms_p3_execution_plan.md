@@ -40,6 +40,21 @@ Extension points already in-tree: `tests/ladruno_cms_{mumps,lanczos,hierarchy,`
 
 ## Part 0 — the 2-rank MUMPS ordering failure (blocks 2-rank support)
 
+> **RESOLVED 2026-07-26 — but not by the fix proposed below, and it was never a
+> 2-rank problem.** The 2-rank fixture this part asked for was built
+> (`testDistributedMumpsAtScale` / `testSerialMumpsAtScale` in
+> `tests/ladruno_cms_mumps_check.cpp`) and reproduces the exact failure with a
+> DENSE order-12000 pencil. Measured: it fails at **np=4 as well as np=2**; a
+> *sparse* order-64000 pencil passes at both; and **`ICNTL(28)=1` does not help**
+> — so the "MUMPS chose parallel analysis" diagnosis below is wrong. The trigger
+> is the dense pattern: `ICNTL(7)=7` selects PORD, whose multisector ordering
+> cannot form stages on a dense matrix. Fix shipped: **candidate 2,
+> `ICNTL(7)=0` (AMD)**, applied at BOTH factorization sites — including the
+> serial `MumpsSPD` (`MPI_COMM_SELF`) path that the rank-local Craig-Bampton
+> pencils actually use, which was outside this part's original scope and fails
+> identically on one rank. Full evidence: [[1000_ladruno_cms_adr]] §21. The
+> analysis below is kept as the historical hypothesis.
+
 **Symptom** (scalability/RESULTS.md decision 3): 2-rank physical CMS fails in the
 MUMPS analysis phase after ~124 s having consumed **15.6 GiB**, with
 `orderMinPriority: no valid number of stages in multisector`. np=4 and np=6 work.
