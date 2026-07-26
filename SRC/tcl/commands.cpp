@@ -4188,6 +4188,27 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       }
     }
 
+    // Ladruno ADR-75 P2h: -commSplit (ADR-43 P3a) is deliberately NOT wired
+    // here -- it is collective (every rank must call MPI_Comm_split with a
+    // colour or the run deadlocks) and its gate is a Python test, so porting
+    // it blind was out of scope. But apeGmsh's typed emitter CAN put it in a
+    // Tcl deck (`ops.system.Mumps(comm_split=...)` -> `-commSplit <color>`,
+    // apeGmsh src/apeGmsh/opensees/analysis/system.py), so this is a LIVE
+    // mismatch, not a theoretical one -- and the failure is silent-wrong: the
+    // user believes they have concurrent solve groups and instead every rank
+    // solves one system on WORLD. Call that out specifically rather than let
+    // it blend into the generic "unrecognized option" line above.
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-commSplit") == 0) {
+	opserr << "Mumps ERROR: -commSplit is NOT supported by the Tcl `system Mumps' command "
+	       << "(openseespy/openseesmp only). The sub-communicator split will NOT happen and "
+	       << "every rank will solve on MPI_COMM_WORLD -- which is a DIFFERENT analysis from "
+	       << "the one you asked for, not a slower one. Use the Python interpreter for "
+	       << "-commSplit, or drop it.\n";
+	break;
+      }
+    }
+
 #ifdef _PARALLEL_PROCESSING
     // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
     // untouched here) -- say so rather than drop it silently.

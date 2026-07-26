@@ -102,6 +102,37 @@ ADR-75's P-series is outstanding.
 | **3** | **Rebuild the SHARED checkout** so `system Pardiso` works outside a worktree | **owner decision** — an agent must not switch the shared checkout's branch under the other ~7 worktrees ([[ladruno-build-in-worktree-not-shared-checkout]]) | one build |
 | **4** | **Lane 3 (ADR-75b)** — threaded element assembly | see below; **genuinely open, not merely unstarted** | large |
 
+## § 2026-07-26 — ITEMS 1 AND 2 ARE MEASURED AND CLOSED
+
+Full data + method: **`Ladruno_files/testbed/perf/phase2/RESULTS_p2h_cluster_blr.md`**.
+Ran on esmeralda, `OpenSeesMP` @ `5cac083a8` (P2h), 1 node × np=16, 19.6k → 408.5k DOF.
+
+**Item 2 — `-matrixType 2` is the lever. Adopt it.** Won on **both** axes at every
+size: **−43.1% peak memory and 1.73× faster at 408.5k DOF** (−42.5% / 2.32× at
+143.8k). The memory saving converges on **≈ −43%**, landing on top of P1d's desktop
+PARDISO **−41.8%** — independent confirmation across a different solver, machine and
+parallel model. **Exact**, so legal on oracle paths. Same standing caveat: half-storage
+silently solves the wrong system on a genuinely unsymmetric tangent, so it stays opt-in.
+
+**Item 1 — BLR is not the memory lever, but the honest claim is narrower than
+"BLR never pays":**
+- **Unsymmetric + `-BLR`: never saved memory at any size** (+57.1 / +10.9 / +54.0 /
+  +16.4%) and was **always slower** (1.21×–3.43×).
+- **Symmetric + `-BLR`: the sign FLIPS with N** — +15.1% (worse) at 143.8k, but
+  **−18.9% (better) at 408.5k**, for ~1.28× wall. That is the front-size mechanism
+  the ADR predicted, appearing only once storage is already halved *and* the front
+  is large.
+- ⇒ **Order of reach: `-matrixType 2` first; add `-BLR` on top only at ≥~400k DOF
+  and only where an approximate factorization is legal; never use `-BLR` on the
+  unsymmetric path for memory.** Next real memory candidate is still out-of-core
+  `ICNTL(22)`, unexposed by the fork.
+
+**Capability wall found:** at **884.8k DOF / np=16 on one 60 GB node, full-rank
+FAILED** (`rc=1`) — the analogue of P1c's UmfPack OOM. Whether BLR or symmetric
+rescues it is the open follow-up (see below).
+
+---
+
 ## § 2026-07-25 (b) session — THE CLUSTER IS UP; item 4 answered; item 1's premise was wrong
 
 ### 1. The cluster is UP. Check it, do not inherit "it was down".
@@ -131,9 +162,15 @@ times, with no stats**, and "`INFOG(21)` did not move" would have been written d
 - ✅ **Fixed as P2h (this PR):** `-BLR`/`-stats`/`-ICNTL35`/`-CNTL7` in the Tcl ladder, 5-arg ctor on
   both parallel arms, a missing-value bounds check (it also read `argv[currentArg+1]` past the end),
   and the silent skip replaced by a warning. **Compile-verified on all three `#ifdef` arms with a
-  negative control; NOT executed** — no Tcl+MUMPS binary was reachable (see 3).
+  negative control, then EXECUTED on esmeralda** (see 3a).
 - **`-matrixType` (item 2) needs NO code** — it is vanilla and already present in *both* ladders.
-  Item 2 really is just a run, once a current binary exists.
+- ⚠ **Not hypothetical: `apeGmsh` #864 already emits these into Tcl decks.** Its typed
+  `ops.system.Mumps(...)` writes `-ICNTL14 / -ICNTL7 / -matrixType / -BLR / -ICNTL35 / -CNTL7 /
+  -commSplit / -stats` (`src/apeGmsh/opensees/analysis/system.py`). The deck generator had been
+  producing options the solver silently ignored.
+- **`-commSplit` is still Python-only** and is the one apeGmsh token the Tcl ladder does not
+  implement. P2h makes it a loud, specific ERROR rather than a silent no-op, because the failure
+  mode is silent-wrong (every rank solves on WORLD instead of in concurrent groups).
 
 ### 3. The cluster binary is 460 commits stale — this is now item 1's real gate
 `~/ladruno_build_test/OpenSees` was at **`e503ce4c0` (#580, built 18 Jul)** — predates `-BLR`
