@@ -2128,3 +2128,91 @@ defecto.
 
 **P3d queda cerrada.** Siguen abiertas P3a, P3c (extras), P3e —bloqueada, el
 deck del edificio 1A no está en el repositorio— y todo P4.
+
+## 26. P4 sección 4 — refactor de memoria del ensamblaje compatible — 2026-07-26
+
+La deuda que el plan P4 identifica como **la puerta** a cualquier victoria de P4:
+los workspaces densos por rango. Esta sección cierra la parte del ensamblaje.
+
+### 26.1 Qué hacía `assembleCompatible`
+
+Materializaba un buffer **denso** de `dimension x dimension`, más una copia densa
+de cada bloque, y luego convertía con `csrFromDenseUpper` —que conserva **todas**
+las entradas del triángulo superior, ceros incluidos—. Es decir: `O(dimension^2)`
+pagado dos veces, y una matriz de salida **estructuralmente densa**.
+
+Eso explica tres síntomas que hasta ahora se trataban por separado:
+
+1. el rango más grande de Building 1A ocupando 4.0 GiB;
+2. el `dense-as-CSR fed to MUMPS` que anota el plan P4;
+3. el fallo de ordenamiento de la sección 21 — el patrón denso es exactamente lo
+   que hace que la ordenación automática de MUMPS elija PORD y muera en análisis.
+
+Los tres son el mismo defecto.
+
+### 26.2 Qué hace ahora
+
+Acumulación dispersa por filas, misma aritmética. La regla de mapeo se explicita
+porque el código anterior la obtenía por fuerza bruta —esparcía el bloque denso
+completo, ambos triángulos—:
+
+- entrada **diagonal** del bloque: cae una vez en la diagonal mapeada;
+- entrada fuera de la diagonal cuyas dos coordenadas **se funden** en una sola
+  coordenada única: recibe **ambas** mitades simétricas, luego contribuye
+  `2*valor` a esa diagonal (rama defensiva: con claves distintas dentro de un
+  bloque es inalcanzable, pero el código anterior la habría ejecutado);
+- en otro caso las dos mitades caen en la misma ranura del triángulo superior:
+  contribuye `valor` una vez.
+
+Los ceros estructurales no se crean nunca. Las entradas que se **cancelan** a
+cero sí se conservan, de modo que el patrón es la unión de las contribuciones y
+no depende de la cancelación numérica.
+
+`compatibilityMaps` pasa de un `std::find` lineal sobre `unique` por **cada**
+clave —`O(claves * únicas)`, del orden de `1e9` comparaciones en una fusión del
+tamaño de Building 1A— a una tabla hash. El orden de primera aparición de
+`unique` se conserva, porque define la numeración de coordenadas ensambladas.
+
+### 26.3 Medición
+
+Cadena de `F` subdominios finos, pencil final ensamblado (sonda opcional
+`LADRUNO_CMS_ASSEMBLY_SCALING=1`):
+
+| F | dim | almacenadas | triángulo denso | bytes antes | bytes ahora | factor |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 9 | 29 | 45 | 1 188 | 348 | 3.41x |
+| 8 | 17 | 57 | 153 | 4 148 | 684 | 6.06x |
+| 16 | 33 | 113 | 561 | 15 444 | 1 356 | 11.39x |
+| 32 | 65 | 225 | 2 145 | 59 540 | 2 700 | 22.05x |
+| 64 | 129 | 449 | 8 385 | 233 748 | 5 388 | 43.38x |
+
+Lo que importa no es el factor puntual sino su **crecimiento**: el coste pasa de
+`O(dim^2)` a `O(nnz)`, así que el ahorro escala con el número de subdominios. Es
+una mejora asintótica, no una constante.
+
+### 26.4 Equivalencia
+
+El smoke físico devuelve `maxResidual = 5.80175e-09` con `n=16 r2=16 rRaw=13
+rD=13` — **el mismo valor y las mismas dimensiones** que antes del refactor. Los
+autovalores del check de jerarquía siguen coincidiendo con LAPACK directo en las
+tres topologías. No es "dentro de tolerancia": es el mismo resultado.
+
+### 26.5 Lo que NO cubre
+
+De los tres puntos del plan P4 sección 4:
+
+- **hecho** — fusionar las compatibilidades sin buffers densos `único x único`, y
+  el join por hash en lugar de la búsqueda lineal `O(u^2)`;
+- **hecho a medias** — ensamblar los pencils reducidos de grupo/líder de forma
+  dispersa: `assembleCompatible` ya lo hace, pero `gatherCompatiblePencil` sigue
+  materializando un bloque denso por participante al desempacar el triángulo
+  superior recibido por MPI;
+- **no hecho** — mantener los pencils interiores locales dispersos de extremo a
+  extremo; `reduceCraigBampton` sigue construyendo `phi`/`psi` densos.
+
+El piso irreducible de la sección 13 —los autovectores completos replicados por
+rango— sigue intacto y sigue necesitando su propia ADR.
+
+**No se ha medido en Building 1A**: el deck no está en el repositorio. El factor
+de arriba viene de una fixture sintética; el efecto en el caso real sigue sin
+verificar, y P4 sigue abierta.
