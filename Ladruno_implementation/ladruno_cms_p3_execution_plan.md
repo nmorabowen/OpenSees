@@ -103,8 +103,12 @@ Harness: extend `topology_check` (has `OpenSeesLIB`) + a Python emitter test on
 `cms_partition_manifest.json`.
 
 > **BLOCKED ON apeGmsh, and now formally requested 2026-07-26.** Every row below
-> needs a partitioned deck + manifest that only the emitter can produce, and the
-> emitter does not exist. The request — what to emit, the manifest schema, the
+> needs a partitioned deck + manifest that only the emitter can produce. Verified
+> against the apeGmsh source: per-rank emission DOES exist (`ops.tcl(...,
+> per_rank=True)`, element/node owner maps, and additive mass/load lines already
+> bucketed onto a single primary owner), so what is missing is narrower than
+> "the emitter" — it is the **manifest**, the **`coarse_of_fine` grouping**, the
+> **CMS preflight refusals**, and a **second Building-1A partition**. The request — what to emit, the manifest schema, the
 > fail-loud preflight, and these acceptance rows restated for that audience — is
 > [[LadrunoCMS_apegmsh_emitter_guide]] (also listed in
 > [[ladruno_apegmsh_contract]]). The smallest useful first delivery asked for is

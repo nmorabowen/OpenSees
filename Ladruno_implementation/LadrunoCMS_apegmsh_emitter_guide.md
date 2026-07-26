@@ -2,7 +2,7 @@
 title: LadrunoCMS partitioned emitter — implementation request for the apeGmsh team
 project: Ladruno
 status: request
-priority: medium
+priority: high
 adr: ADR-1000
 tags:
   - apegmsh
@@ -30,27 +30,30 @@ we will check against.
 
 ## 0. Read this before you plan the work
 
-**LadrunoCMS is `draft`, not shipped, and it does not currently beat the standard
-solver.** Measured on the Building-1A model: CMS at 4 ranks takes 311.6 s and
-10.3 GiB against sequential ARPACK's 30.1 s and 2.0 GiB — roughly 7× slower and
-5× the memory. Its only win is against FEAST, another *parallel* eigensolver,
-which is not the bar the ADR sets.
+**This is production-bound work.** The Ladruno owner has decided CMS goes into
+production use, and has accepted the speed cost explicitly.
 
-So this request does **not** unlock a production feature. It unlocks
-**verification**: two gates (P3a and P3e) and the whole P4 performance campaign
-are blocked today because the fork has no way to produce a partitioned deck, and
-the one Building-1A partition that exists is not in the fork repo. The plausible
-long-run win for CMS is *memory capacity* at sizes where no single node can hold
-the model — and that claim cannot even be measured until a partitioned deck can
-be generated on demand.
+You should still know the numbers, because they are real and they will show up in
+runs. Measured on the Building-1A model: CMS at 4 ranks takes 311.6 s and
+10.3 GiB against sequential ARPACK's 30.1 s and 2.0 GiB — roughly 7x slower and
+5x the memory at that size. CMS is `draft` on the fork side and not yet promoted;
+the remaining gates are P3a/P3e (blocked on exactly this document) and P4.
 
-We are telling you this so you can prioritise honestly. If apeGmsh has
-higher-value work in front of it, this can wait; what it should not do is get
-built on the assumption that a faster eigensolver is waiting at the end of it.
+The tradeoff being accepted deliberately: CMS is the only modal path here where
+**no rank holds the whole problem**. That makes it the route to models that do
+not fit in one node's RAM, and the one that scales with ranks rather than with a
+single machine. At Building-1A size that structural advantage costs time; at
+sizes where ARPACK cannot run at all, it is the difference between an answer and
+no answer.
 
-**Scale of the ask:** the pieces already exist on your side (partitioning,
-per-rank emission, owner maps). The new work is mostly the **manifest**, the
-**preflight refusals**, and the **`coarse_of_fine` grouping**.
+So please treat this as a **production dependency**, not a research favour. What
+it unblocks immediately is verification (P3a, P3e, the P4 campaign), because the
+fork has no way to produce a partitioned deck on demand and the single existing
+Building-1A partition is not in the fork repo.
+
+**The ask is smaller than it looks** — see §1.5. Most of the per-rank contract is
+already implemented in apeGmsh. The genuinely new work is the **manifest**, the
+**CMS preflight refusals**, and the **`coarse_of_fine` grouping**.
 
 ---
 
@@ -66,12 +69,53 @@ assembled anywhere. That is what a partitioned deck has to express.
 
 ---
 
+## 1.5 What already exists on your side (verified against source)
+
+Checked against the apeGmsh working tree at `334cc70e` before writing this, so
+the ask is scoped to what is actually missing rather than to what we assumed.
+
+**Already implemented — please reuse, do not rebuild:**
+
+| Capability | Where |
+|---|---|
+| `g.mesh.partitioning.partition(n_parts, *, weights=None, backend=None) -> PartitionInfo` | `mesh/_mesh_partitioning.py`. Must run after `g.mesh.generation.generate()`. A `partition_explicit` variant also exists. |
+| `build_element_partition_owner(fem)` → `{fem_eid: rank}` | `opensees/_internal/build.py` |
+| `build_node_partition_owners(fem)` → incident ranks per node, plus `NodePartitionOwners.primary_owner` / `primary_owner_map` giving `{node_id: min(rank)}` | `opensees/_internal/build.py` |
+| `ops.tcl(path, ..., per_rank=True)` — driver deck + one fragment per rank (your ADR 0061) | `opensees/apesees.py`. Note `split=True` and `per_rank=True` are mutually exclusive. |
+| **Additive quantities already emitted once** — both `mass` lines and pattern `load` lines are bucketed by PRIMARY owner and emit on that rank only | `apesees.py` (`_bucket_mass_targets_by_rank`, `load_nodes=primary_nodes`) |
+| Per-rank `fix` lines and owned-set caching | `apesees.py` |
+
+That covers most of §2.1 already. **We are not asking you to redo any of it** —
+we are asking you to make it *auditable*, *refusing*, and *CMS-aware*.
+
+**Genuinely missing — this is the work:**
+
+1. **`cms_partition_manifest.json`** (§2.2). Nothing like it exists today;
+   `PartitionInfo` carries only `n_parts`, `elements_per_partition` and
+   `weights_per_partition`, so it is not a starting point for the manifest.
+2. **`coarse_of_fine`** (§2.2). CMS-specific, absent — nothing in apeGmsh has a
+   notion of grouping partitions into coarse groups.
+3. **The CMS preflight refusals** (§3). Validators exist for other purposes
+   (e.g. `_run_staged_bc_validators`), but not this contract, and not the v1
+   unsupported-construction list.
+4. **A second valid 4-way Building-1A partition** (§6) — a data deliverable, not
+   code.
+
+If any of the "already implemented" rows is less complete than it looks from the
+outside — particularly the additive-once guarantee under **staged** models — tell
+us, because the fork side is currently assuming it holds.
+
+---
+
 ## 2. What to emit
 
 ### 2.1 Per-rank deck fragments
 
 One fragment per rank, plus a global driver. Your existing
-`ops.tcl(..., per_rank=True)` path is the intended starting point.
+`ops.tcl(..., per_rank=True)` path is the intended vehicle — per §1.5 it already
+satisfies most of this table. The table is the **contract we will verify**, not a
+list of things to write from scratch; treat it as the checklist to confirm the
+existing path against.
 
 Requirements per fragment:
 
@@ -79,7 +123,7 @@ Requirements per fragment:
 |---|---|
 | **Owned elements only** | Each element is emitted by **exactly one** rank. Never two, never zero. |
 | **Nodes where needed** | A node is emitted on every rank incident to one of that rank's elements. Interface nodes therefore appear on ≥2 ranks — that is expected and required. |
-| **Additive quantities once** | Nodal **mass** and **loads** are emitted **only** on their single primary owner rank. Summing across ranks must reproduce the monolithic model exactly. This is the easiest thing to get wrong and the hardest to see. |
+| **Additive quantities once** | Nodal **mass** and **loads** emitted **only** on their single primary owner rank; summing across ranks must reproduce the monolithic model exactly. **Already implemented** (§1.5) — confirm it also holds for staged models. This is the easiest thing to get wrong and the hardest to see. |
 | **Fixities / constraints where needed** | Emitted on the ranks that need them; restraint semantics must match the monolithic model. Building 1A has 1 333 base nodes and they must survive the split with the same restraints. |
 | **Same global numbering** | Copies of one shared node must resolve to the **same global equation id** on every incident rank. |
 
@@ -234,8 +278,10 @@ We do not want to over-specify your internals. Please push back on any of these:
 1. Is `coarse_of_fine` something the emitter should **compute** (from mesh
    adjacency) or something the caller should **pass in**? We have no strong
    preference; we need it recorded in the manifest either way.
-2. Is `ops.tcl(..., per_rank=True)` the right vehicle, or would you rather this
-   be a distinct CMS-specific emission entry point?
+2. `ops.tcl(..., per_rank=True)` looks like the right vehicle to us (it already
+   does the owner bucketing) — but would you rather the manifest ride that call,
+   or come from a separate CMS-specific entry point that wraps it? We have no
+   preference; you own the API shape.
 3. Which hash do you want to standardise on, and over exactly what byte stream?
    We will read whatever you document.
 4. Does the openseespy path need the same treatment, or is Tcl enough for now?
