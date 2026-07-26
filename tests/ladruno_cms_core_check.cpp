@@ -301,6 +301,24 @@ void testCommandParserAndLocalPencil()
                 options, modes, message) < 0,
             "unsupported final backend was accepted");
 
+    // ADR-1000 P3d: the level-1 ablation is a benchmark-only diagnostic reached
+    // through TwoLevelHierarchyInput::diagnosticAblateLevel1. It must NOT be
+    // requestable from a command line -- if someone ever adds such a flag, the
+    // solver would be able to publish modes from a reduction that skipped the
+    // mandatory T2 -> S2 -> T1 -> S1 chain. Every spelling stays an unknown
+    // option.
+    for (const char *spelling :
+         {"-ablate", "-ablateLevel1", "-diagnosticAblateLevel1", "-level2Only",
+          "-omitT1"}) {
+        require(ladruno_cms::parseCommandOptions(
+                    {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                     spelling, "2"},
+                    options, modes, message) < 0,
+                std::string("the parser accepted a level-1 ablation flag (") +
+                    spelling + ") -- the ablation must stay unreachable from a "
+                    "solver configuration");
+    }
+
     const std::vector<ladruno_cms::AssemblyRecord> stiffness = {
         record(ladruno_cms::ContributionKind::Stiffness, {5, 2}, {2.0, -1.0, 3.0})};
     const std::vector<ladruno_cms::AssemblyRecord> mass = {

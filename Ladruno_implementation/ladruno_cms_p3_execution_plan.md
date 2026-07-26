@@ -180,7 +180,14 @@ Harness: `hierarchy_check` fixtures, mpiexec -n 4.
   permutation can only be expressed by moving the data. See
   [[1000_ladruno_cms_adr]] §23.
 - Level ablation (omit T1) allowed ONLY as a labelled diagnostic, never an
-  accepted config. **OPEN.**
+  accepted config. **DONE 2026-07-26** — `TwoLevelHierarchyInput::
+  diagnosticAblateLevel1` (default off) hands S1 the un-reduced group pencils;
+  measured on the truncating fixture it enlarges the final space 5 → 7, so it is
+  a real ablation and not a no-op. Four barriers keep it out of production: the
+  distributed path has no such field, the parser rejects five spellings of the
+  flag, `LadrunoCMSEigenSolver` refuses a result carrying `ablatedLevel1` (or
+  missing `appliedT1`/`appliedS1`), and the run is labelled in its diagnostics.
+  See [[1000_ladruno_cms_adr]] §25. **P3d is now closed.**
 
 ## Part P3e — Building 1A physically distributed (the real gate)
 

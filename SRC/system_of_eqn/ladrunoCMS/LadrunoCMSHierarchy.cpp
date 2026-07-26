@@ -1146,19 +1146,49 @@ int solveTwoLevelHierarchy(
         CoarseReduction reduction;
         reduction.coarse = assembly.coarse;
         reduction.assemblyIndex = static_cast<int>(assemblyIndex);
-        if (reduceCraigBampton(
-                assembly.stiffness, assembly.mass, interior, boundary,
-                input.modesLevel1, input, 1, assembly.coarse,
-                reduction.cb, message) < 0)
-            return -10;
-        for (int mode = 0; mode < reduction.cb.retainedModes; ++mode)
-            reduction.keys.push_back({KeyKind::Level1Mode, assembly.coarse, mode});
-        for (int boundaryCoordinate : boundary)
-            reduction.keys.push_back(assembly.keys[static_cast<std::size_t>(boundaryCoordinate)]);
+        if (input.diagnosticAblateLevel1) {
+            // BENCHMARK DIAGNOSTIC ONLY (ADR-1000 P3d / P4 section 2b). Skip the
+            // level-1 Craig-Bampton reduction and hand S1 the un-reduced group
+            // pencil, which yields the "level-2 only" space. This is NOT a
+            // solver configuration and NOT a fallback: no command option can set
+            // this flag, and LadrunoCMSEigenSolver refuses an input that carries
+            // it. The reconstruction path needs cb.transformation, which for an
+            // un-reduced group is exactly the identity.
+            reduction.cb.stiffness = assembly.stiffness;
+            reduction.cb.mass = assembly.mass;
+            reduction.cb.interior = interior;
+            reduction.cb.boundary = boundary;
+            reduction.cb.retainedModes = 0;
+            reduction.cb.transformation =
+                makeDense(assembly.stiffness.dimension, assembly.stiffness.dimension);
+            if (reduction.cb.transformation.values.empty() &&
+                assembly.stiffness.dimension > 0) {
+                message = "level-1 ablation could not allocate its identity "
+                          "transformation";
+                return -10;
+            }
+            for (int coordinate = 0; coordinate < assembly.stiffness.dimension;
+                 ++coordinate)
+                reduction.cb.transformation(coordinate, coordinate) = 1.0;
+            reduction.keys = assembly.keys;
+        } else {
+            if (reduceCraigBampton(
+                    assembly.stiffness, assembly.mass, interior, boundary,
+                    input.modesLevel1, input, 1, assembly.coarse,
+                    reduction.cb, message) < 0)
+                return -10;
+            for (int mode = 0; mode < reduction.cb.retainedModes; ++mode)
+                reduction.keys.push_back({KeyKind::Level1Mode, assembly.coarse, mode});
+            for (int boundaryCoordinate : boundary)
+                reduction.keys.push_back(assembly.keys[static_cast<std::size_t>(boundaryCoordinate)]);
+        }
         result.diagnostics.afterLevel1BeforeCompatibility += reduction.cb.stiffness.dimension;
         coarseReductions.push_back(std::move(reduction));
     }
-    result.diagnostics.appliedT1 = true;
+    // Labelled, not silently equivalent: an ablated run reports appliedT1 =
+    // false, so no downstream consumer can mistake it for the mandatory chain.
+    result.diagnostics.appliedT1 = !input.diagnosticAblateLevel1;
+    result.diagnostics.ablatedLevel1 = input.diagnosticAblateLevel1;
 
     std::vector<std::vector<CoordinateKey>> coarseKeyGroups;
     std::vector<const SymmetricCSR *> coarseStiffnessBlocks;
