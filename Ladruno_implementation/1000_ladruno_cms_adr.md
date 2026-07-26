@@ -2023,3 +2023,49 @@ mensajes inútiles cuando algo ya falló—, pero conviene barrerlo. Aquí se co
 
 Las demás filas de P3d —tres topologías de interfaz y la ablación de nivel como
 diagnóstico etiquetado— siguen abiertas, igual que P3a, P3e y P4.
+
+## 24. P3d — barrido de topologías de interfaz y saneamiento de diagnósticos — 2026-07-26
+
+### 24.1 Las tres topologías
+
+La fixture compartida tiene una sola forma: una cadena cuyos subdominios
+comparten ecuaciones **dentro** de un grupo grueso (interfaz de nivel 2) y
+**entre** grupos (interfaz de nivel 1). Ejercita S2 y S1 juntos, lo que puede
+ocultar un camino de compatibilidad que sólo funcione cuando el otro también
+está activo. `checkInterfaceTopologies` añade las dos formas degenerantes en una
+fixture **separada**, para no tocar `makeFixture` ni las siete pruebas ancladas a
+sus dimensiones `9/12/10/10`:
+
+| Topología | Subdominios | Orden | Qué aísla |
+|---|---|---:|---|
+| `combined` | `{0,1,2} {2,3,4} {4,5,6} {6,7,8}` | 9 | ambas interfaces a la vez |
+| `level2Only` | `{0,1,2} {2,3,4}` \| `{5,6,7} {7,8,9}` | 10 | sólo dentro del grupo; los grupos quedan desacoplados |
+| `level1Only` | `{0,1,2} {3,4,5}` \| `{2,6,7} {5,8,9}` | 10 | sólo entre grupos; sin compartición intra-grupo |
+
+Cada topología se compara contra LAPACK directo sobre el pencil global
+ensamblado: autovalores a `3e-8`, residuales por debajo de `3e-8`, salto máximo
+entre copias duplicadas por debajo de `2e-10`, y la cadena obligatoria
+`T2 -> S2 -> T1 -> S1` aplicada de extremo a extremo. **Las tres pasan**,
+incluida `level2Only`, donde el conjunto de interfaz de nivel 1 está vacío y el
+pencil global es diagonal por bloques: la cadena se aplica igualmente.
+
+### 24.2 Saneamiento del modismo `require`
+
+La trampa de la sección 23.3 se barrió en toda la batería: se añadió
+`REQUIRE_CALL(status, text)`, que evalúa la llamada y sólo después construye el
+diagnóstico. Convertidos once sitios en cuatro archivos —`assembly` (4, código
+nuevo de esta misma sesión), `lanczos` (4), `mumps` (2) y `topology` (1)—; los
+sitios que ya calculaban el booleano por separado se dejaron intactos, porque
+nunca tuvieron el problema. Cambio mecánico, sin efecto sobre qué se comprueba:
+sólo garantiza que un fallo futuro imprima su causa.
+
+### 24.3 Evidencia
+
+| Evidencia | Resultado |
+|---|---|
+| `checkInterfaceTopologies`, tres topologías, np=4 | PASS |
+| los cinco checks autónomos, np=2 y np=4 (diez combinaciones) | PASS |
+| `ladruno_cms_topology_check` (enlaza `OpenSeesLIB`) | compila y enlaza |
+
+Con esto P3d queda cerrada salvo la ablación de nivel como diagnóstico
+etiquetado. P3a, P3e y P4 siguen abiertas.

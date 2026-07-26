@@ -29,6 +29,12 @@ void require(bool condition, const std::string &message)
     }
 }
 
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 Graph *makeChainGraph(int order)
 {
     Graph *graph = new Graph(order);
@@ -112,7 +118,7 @@ int main(int argc, char **argv)
     require(globalOwned == order - 1,
             "a stiffness contribution was lost or assigned more than once");
     std::string message;
-    require(soe->verifyReplicatedAssembly(message) == 0,
+    REQUIRE_CALL(soe->verifyReplicatedAssembly(message) == 0,
             "identical replicated assembly was rejected: " + message);
     require(soe->solve(3, true, true) == 0,
             "public SOE solve did not execute the distributed hierarchy");

@@ -161,7 +161,14 @@ fixture), mpiexec -n 4.
 Harness: `hierarchy_check` fixtures, mpiexec -n 4.
 
 - 4 ranks, `p=2, m=2` (the mandatory non-degenerate case).
-- Three interface topologies: level-2-only, level-1-only, combined. **OPEN.**
+- Three interface topologies: level-2-only, level-1-only, combined. **DONE
+  2026-07-26** — `checkInterfaceTopologies` builds the two degenerate shapes in a
+  separate fixture (so the shared `makeFixture` and the seven tests pinned to its
+  9/12/10/10 dimensions stay untouched) and checks each against direct LAPACK:
+  eigenvalues 3e-8, residuals < 3e-8, duplicate jump < 2e-10, and the mandatory
+  T2→S2→T1→S1 chain applied end to end. All three pass, including `level2Only`
+  where the level-1 interface set is empty and the global pencil is block
+  diagonal. See [[1000_ladruno_cms_adr]] §24.
 - **Rank/partition-permutation invariance**: permuting which rank owns which
   partition leaves eigenvalues, residuals, AND the subspace (MAC≈1) unchanged.
   **DONE 2026-07-26** — `checkRankPermutationInvariance` in

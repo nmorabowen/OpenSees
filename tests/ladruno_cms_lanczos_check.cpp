@@ -35,6 +35,12 @@ void require(bool condition, const std::string &message)
     }
 }
 
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 bool close(double left, double right, double tolerance = 1.0e-8)
 {
     return std::fabs(left - right) <= tolerance *
@@ -191,7 +197,7 @@ void testDefaultBasisAgainstLapack()
     controls.maximumOperatorApplications = 300;
     ladruno_cms::LocalEigenResult result;
     std::string message;
-    require(
+    REQUIRE_CALL(
         ladruno_cms::solveLocalLanczos(
             stiffness, mass, 4, controls, result, message) == 0,
         "default local Lanczos failed: " + message);
@@ -225,7 +231,7 @@ void testForcedThickRestart()
     std::string message;
     const ladruno_cms::SymmetricCSR stiffness = csrFromDense(pencil.stiffness, pencil.order);
     const ladruno_cms::SymmetricCSR mass = csrFromDense(pencil.mass, pencil.order);
-    require(
+    REQUIRE_CALL(
         ladruno_cms::solveLocalLanczos(
             stiffness, mass, 2, controls, result, message) == 0,
         "forced-restart local Lanczos failed: " + message);
@@ -305,7 +311,7 @@ void testCoordinateCondensationFlow()
     ladruno_cms::LocalLanczosControls controls;
     controls.tolerance = 1.0e-10;
     ladruno_cms::LocalEigenResult reduced;
-    require(
+    REQUIRE_CALL(
         ladruno_cms::solveLocalLanczos(
             condensation.reducedStiffness, condensation.reducedMass,
             2, controls, reduced, message) == 0,
@@ -351,7 +357,7 @@ void testWideSpectrumAgainstLapack()
     controls.maximumOperatorApplications = 300;
     ladruno_cms::LocalEigenResult result;
     std::string message;
-    require(
+    REQUIRE_CALL(
         ladruno_cms::solveLocalLanczos(
             stiffness, mass, 3, controls, result, message) == 0,
         "wide-spectrum local Lanczos failed: " + message);
