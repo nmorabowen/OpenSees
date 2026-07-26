@@ -160,6 +160,20 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         }
         hierarchySeconds += std::chrono::duration<double>(
             Clock::now() - hierarchyStarted).count();
+        // ADR-1000 P3d / P4 section 2b: the level-1 ablation is a benchmark-only
+        // diagnostic and must never be reachable as a solver configuration or a
+        // fallback. No command option can request it and the distributed path
+        // never sets it, so this can only fire on a future regression -- which
+        // is exactly what it is here to catch. Refuse rather than silently
+        // publish modes from a reduction that skipped the mandatory chain.
+        if (candidate.diagnostics.ablatedLevel1 ||
+            !candidate.diagnostics.appliedT1 || !candidate.diagnostics.appliedS1) {
+            opserr << "LadrunoCMSEigenSolver::solve - refusing a result that did "
+                      "not apply the mandatory T2 -> S2 -> T1 -> S1 chain "
+                      "(level-1 ablation is a benchmark diagnostic, never a "
+                      "solver configuration)" << endln;
+            return -8;
+        }
         const double maximumResidual = *std::max_element(
             candidate.normalizedResiduals.begin(),
             candidate.normalizedResiduals.end());

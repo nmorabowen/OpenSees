@@ -17,6 +17,12 @@ void require(bool condition, const std::string &message)
         ++failures;
     }
 }
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 
 bool close(double left, double right, double tolerance = 1.0e-13)
 {
@@ -255,7 +261,7 @@ void testCommandParserAndLocalPencil()
         "-maxRefineIter", "12",
         "-partition", "metis", "-localEigen", "lanczos",
         "-globalSolver", "dense", "-denseMax", "50", "-verbose", "5"};
-    require(ladruno_cms::parseCommandOptions(valid, options, modes, message) == 0,
+    REQUIRE_CALL(ladruno_cms::parseCommandOptions(valid, options, modes, message) == 0,
             "valid command options were rejected: " + message);
     require(modes == 5 && options.level1 == 2 && options.level2 == 2 &&
             options.modesLevel2 == 8 && options.modesLevel1 == 12 && options.verbose,
@@ -295,6 +301,24 @@ void testCommandParserAndLocalPencil()
                 options, modes, message) < 0,
             "unsupported final backend was accepted");
 
+    // ADR-1000 P3d: the level-1 ablation is a benchmark-only diagnostic reached
+    // through TwoLevelHierarchyInput::diagnosticAblateLevel1. It must NOT be
+    // requestable from a command line -- if someone ever adds such a flag, the
+    // solver would be able to publish modes from a reduction that skipped the
+    // mandatory T2 -> S2 -> T1 -> S1 chain. Every spelling stays an unknown
+    // option.
+    for (const char *spelling :
+         {"-ablate", "-ablateLevel1", "-diagnosticAblateLevel1", "-level2Only",
+          "-omitT1"}) {
+        require(ladruno_cms::parseCommandOptions(
+                    {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                     spelling, "2"},
+                    options, modes, message) < 0,
+                std::string("the parser accepted a level-1 ablation flag (") +
+                    spelling + ") -- the ablation must stay unreachable from a "
+                    "solver configuration");
+    }
+
     const std::vector<ladruno_cms::AssemblyRecord> stiffness = {
         record(ladruno_cms::ContributionKind::Stiffness, {5, 2}, {2.0, -1.0, 3.0})};
     const std::vector<ladruno_cms::AssemblyRecord> mass = {
@@ -302,7 +326,7 @@ void testCommandParserAndLocalPencil()
     std::vector<int> equations;
     ladruno_cms::SymmetricCSR localStiffness;
     ladruno_cms::SymmetricCSR localMass;
-    require(ladruno_cms::buildOwnedLocalPencil(
+    REQUIRE_CALL(ladruno_cms::buildOwnedLocalPencil(
                 stiffness, mass, equations, localStiffness, localMass, message) == 0,
             "owned local pencil construction failed: " + message);
     require(equations == std::vector<int>({2, 5}),

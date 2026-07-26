@@ -19,6 +19,13 @@ expected number as "assert to be pinned", not "known good".
    Local: `set LADRUNO_CMS_BUILD=1 & Ladruno_scripts\build.bat` builds+runs the
    standalone checks (see [[../Ladruno_internal/BUILD_GOTCHAS]] #7). CI: the
    nightly self-hosted Zone-B lane (PR #612).
+   **Status 2026-07-26: the local half is now MET** — two defects blocked it (a
+   static/dynamic MKL link collision and a `build.bat` batch-parse bug, see
+   [[../Ladruno_internal/BUILD_GOTCHAS]] #10); with both fixed all four checks
+   pass under `mpiexec -n 4`. **The CI half is NOT met and never was:** the repo
+   has zero self-hosted runners registered, so `zone-b-nightly` is cancelled on
+   every scheduled run. Treat the local box as the only harness until a runner
+   is registered ([[1000_ladruno_cms_adr]] §20).
 2. The frozen Building-1A Gmsh harness (11 841 nodes, 27 360 elements) +
    `building_1A_cms_physical_run.ipynb` and its partition emitter.
 3. A **second** valid 4-way Gmsh partition of Building 1A (for the P3e invariance
@@ -32,6 +39,21 @@ Extension points already in-tree: `tests/ladruno_cms_{mumps,lanczos,hierarchy,`
 ---
 
 ## Part 0 — the 2-rank MUMPS ordering failure (blocks 2-rank support)
+
+> **RESOLVED 2026-07-26 — but not by the fix proposed below, and it was never a
+> 2-rank problem.** The 2-rank fixture this part asked for was built
+> (`testDistributedMumpsAtScale` / `testSerialMumpsAtScale` in
+> `tests/ladruno_cms_mumps_check.cpp`) and reproduces the exact failure with a
+> DENSE order-12000 pencil. Measured: it fails at **np=4 as well as np=2**; a
+> *sparse* order-64000 pencil passes at both; and **`ICNTL(28)=1` does not help**
+> — so the "MUMPS chose parallel analysis" diagnosis below is wrong. The trigger
+> is the dense pattern: `ICNTL(7)=7` selects PORD, whose multisector ordering
+> cannot form stages on a dense matrix. Fix shipped: **candidate 2,
+> `ICNTL(7)=0` (AMD)**, applied at BOTH factorization sites — including the
+> serial `MumpsSPD` (`MPI_COMM_SELF`) path that the rank-local Craig-Bampton
+> pencils actually use, which was outside this part's original scope and fails
+> identically on one rank. Full evidence: [[1000_ladruno_cms_adr]] §21. The
+> analysis below is kept as the historical hypothesis.
 
 **Symptom** (scalability/RESULTS.md decision 3): 2-rank physical CMS fails in the
 MUMPS analysis phase after ~124 s having consumed **15.6 GiB**, with
@@ -63,12 +85,35 @@ deck at np=2 (must now pass) and np=4 (must match current eigenvalues/residuals
 byte-for-byte, or to 1e-12). Only then lift the "2-rank unsupported" note in
 RESULTS.md. Do NOT ship the ICNTL change without the np=4 non-regression run.
 
+> **Correction 2026-07-26 — the np=2 half of that protocol is currently vacuous.**
+> `testDistributedMumps` ([ladruno_cms_mumps_check.cpp:89](../tests/ladruno_cms_mumps_check.cpp))
+> and `checkDistributedFourRankFlow` ([ladruno_cms_hierarchy_check.cpp:290](../tests/ladruno_cms_hierarchy_check.cpp))
+> both `return` immediately when `size != 4`. At np=2 the distributed
+> factorization — the exact path that fails — is never entered, so the check
+> passes without exercising anything. **Prerequisite for Part 0: a 2-rank
+> distributed fixture (or a physical deck run at np=2).** Until one exists there
+> is no way to satisfy this gate, so the `ICNTL(28)` change stays unapplied.
+> See [[1000_ladruno_cms_adr]] §20.5.
+
 ---
 
 ## Part P3a — emitter + partition manifest
 
 Harness: extend `topology_check` (has `OpenSeesLIB`) + a Python emitter test on
 `cms_partition_manifest.json`.
+
+> **BLOCKED ON apeGmsh, and now formally requested 2026-07-26.** Every row below
+> needs a partitioned deck + manifest that only the emitter can produce. Verified
+> against the apeGmsh source: per-rank emission DOES exist (`ops.tcl(...,
+> per_rank=True)`, element/node owner maps, and additive mass/load lines already
+> bucketed onto a single primary owner), so what is missing is narrower than
+> "the emitter" — it is the **manifest**, the **`coarse_of_fine` grouping**, the
+> **CMS preflight refusals**, and a **second Building-1A partition**. The request — what to emit, the manifest schema, the
+> fail-loud preflight, and these acceptance rows restated for that audience — is
+> [[LadrunoCMS_apegmsh_emitter_guide]] (also listed in
+> [[ladruno_apegmsh_contract]]). The smallest useful first delivery asked for is
+> a **second valid 4-way Building-1A partition**, which alone unblocks the P3e
+> invariance gate.
 
 | Check | Assertion |
 |---|---|
@@ -86,6 +131,17 @@ Harness: extend `topology_check` (has `OpenSeesLIB`) + a Python emitter test on
 
 Harness: new `ladruno_cms_assembly_check.cpp` (mpiexec -n 4), + reuse
 `reference.py` serial matrices.
+
+> **LARGELY DONE 2026-07-26** — `tests/ladruno_cms_assembly_check.cpp` exists and
+> passes at np=2, np=3 and np=4 (size-generic by design; it announces the skip
+> loudly at np=1). Covered: sparse local IDs, contribution locality, shared
+> equations exist and agree across incident ranks, the **Kx and Mx oracles** (3
+> deterministic + 3 fixed-seed random probes, 1e-12), an entrywise sum check, and
+> both negative controls. **Not covered, and still open:** (a) the collective
+> global-dimension row — it needs a real `Domain`, not a fixture; (b) the negative
+> controls prove *the oracle* detects a double count, **not** that the production
+> `-verifyAssembly signature|full` guard fails loud in the `EigenSolver` path,
+> which also needs a `Domain`. See [[1000_ladruno_cms_adr]] §22.
 
 | Check | Assertion |
 |---|---|
@@ -118,11 +174,33 @@ fixture), mpiexec -n 4.
 Harness: `hierarchy_check` fixtures, mpiexec -n 4.
 
 - 4 ranks, `p=2, m=2` (the mandatory non-degenerate case).
-- Three interface topologies: level-2-only, level-1-only, combined.
+- Three interface topologies: level-2-only, level-1-only, combined. **DONE
+  2026-07-26** — `checkInterfaceTopologies` builds the two degenerate shapes in a
+  separate fixture (so the shared `makeFixture` and the seven tests pinned to its
+  9/12/10/10 dimensions stay untouched) and checks each against direct LAPACK:
+  eigenvalues 3e-8, residuals < 3e-8, duplicate jump < 2e-10, and the mandatory
+  T2→S2→T1→S1 chain applied end to end. All three pass, including `level2Only`
+  where the level-1 interface set is empty and the global pencil is block
+  diagonal. See [[1000_ladruno_cms_adr]] §24.
 - **Rank/partition-permutation invariance**: permuting which rank owns which
   partition leaves eigenvalues, residuals, AND the subspace (MAC≈1) unchanged.
+  **DONE 2026-07-26** — `checkRankPermutationInvariance` in
+  `ladruno_cms_hierarchy_check`: two permutations (a reversal, and an interleave
+  that puts subdomains `{0,2}` in coarse group 0 — the case that would catch an
+  implementation assuming a coarse group is a contiguous rank block), eigenvalues
+  to 1e-9 relative, MAC ≥ 1−1e-9, plus a collective non-vacuity control. Note the
+  API constraint it surfaced: `input.fine` **must** equal the MPI rank, so a
+  permutation can only be expressed by moving the data. See
+  [[1000_ladruno_cms_adr]] §23.
 - Level ablation (omit T1) allowed ONLY as a labelled diagnostic, never an
-  accepted config.
+  accepted config. **DONE 2026-07-26** — `TwoLevelHierarchyInput::
+  diagnosticAblateLevel1` (default off) hands S1 the un-reduced group pencils;
+  measured on the truncating fixture it enlarges the final space 5 → 7, so it is
+  a real ablation and not a no-op. Four barriers keep it out of production: the
+  distributed path has no such field, the parser rejects five spellings of the
+  flag, `LadrunoCMSEigenSolver` refuses a result carrying `ablatedLevel1` (or
+  missing `appliedT1`/`appliedS1`), and the run is labelled in its diagnostics.
+  See [[1000_ladruno_cms_adr]] §25. **P3d is now closed.**
 
 ## Part P3e — Building 1A physically distributed (the real gate)
 

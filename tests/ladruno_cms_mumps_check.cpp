@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -18,6 +19,17 @@ void require(bool condition, const char *message)
         std::cerr << "FAIL: " << message << '\n';
         ++failures;
     }
+}
+
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
+void require(bool condition, const std::string &message)
+{
+    require(condition, message.c_str());
 }
 
 bool close(double left, double right, double tolerance = 1.0e-11)
@@ -84,9 +96,12 @@ void testMumpsMultiRHS()
         "MUMPS SPD guard accepted a negative pivot");
 }
 
+// Ranks 0 and 1 carry every entry, so this fixture is valid for any size >= 2;
+// it used to be gated to size == 4, which silently skipped the whole
+// distributed path at np=2 (ADR-1000 section 20.5).
 void testDistributedMumps(int rank, int size)
 {
-    if (size != 4)
+    if (size != 2 && size != 4)
         return;
     ladruno_cms::SymmetricCSR local;
     local.dimension = 2;
@@ -113,6 +128,245 @@ void testDistributedMumps(int rank, int size)
     for (std::size_t index = 0; index < recovered.size(); ++index)
         require(close(recovered[index], rightHandSides[index]),
                 "distributed MUMPS solve residual is too large");
+}
+
+// ---------------------------------------------------------------------------
+// Part-0 fixture (ADR-1000 P3 execution plan, section 20.5 of the ADR).
+//
+// The fixture above is a 2x2 pencil: it proves the distributed wiring, but
+// MUMPS never leaves its trivial path on it, so it cannot see the np=2 analysis
+// failure Part 0 is about ("orderMinPriority: no valid number of stages in
+// multisector", 15.6 GiB spent in ANALYSIS, np=4 and np=6 unaffected). Part 0
+// needs a distributed pencil big enough that MUMPS makes a real ordering
+// decision, run at BOTH np=2 (must pass) and np=4 (must not regress).
+//
+// Two shapes, because the reported failure came from a rank-local CMS pencil
+// that is DENSE-as-CSR, not sparse (see the P4 plan's memory-debt section):
+//   * Laplace -- a 3-D 7-point Laplacian, genuinely sparse;
+//   * Dense   -- a diagonally dominant full block, the shape reduceCraigBampton
+//                actually hands MUMPS today.
+// Both are SPD by strict diagonal dominance. Only the PATTERN drives the
+// analysis phase, so the values are kept trivially well conditioned.
+//
+// Sizes are overridable (LADRUNO_CMS_CHECK_SIDE, LADRUNO_CMS_CHECK_DENSE_ORDER)
+// so the same binary can be cranked up to hunt an ordering failure without
+// making the default run expensive. Defaults are CI-cheap.
+// ---------------------------------------------------------------------------
+
+int environmentSize(const char *name, int fallback)
+{
+    const char *raw = std::getenv(name);
+    if (raw == nullptr)
+        return fallback;
+    const long parsed = std::strtol(raw, nullptr, 10);
+    if (parsed < 2 || parsed > 1000000)
+        return fallback;
+    return static_cast<int>(parsed);
+}
+
+struct ModelMatrix {
+    bool dense = false;
+    int side = 0;   // grid side of the Laplacian; unused when dense
+    int order = 0;
+
+    // Upper-triangular entries of `row` (columns >= row), ascending.
+    void upperRow(int row, std::vector<int> &columns,
+                  std::vector<double> &values) const
+    {
+        columns.clear();
+        values.clear();
+        columns.push_back(row);
+        if (dense) {
+            values.push_back(static_cast<double>(order) + 1.0);
+            for (int column = row + 1; column < order; ++column) {
+                columns.push_back(column);
+                values.push_back(
+                    1.0 / (1.0 + static_cast<double>(column - row)));
+            }
+            return;
+        }
+        values.push_back(6.0);
+        const int x = row % side;
+        const int y = (row / side) % side;
+        const int z = row / (side * side);
+        if (x + 1 < side) {
+            columns.push_back(row + 1);
+            values.push_back(-1.0);
+        }
+        if (y + 1 < side) {
+            columns.push_back(row + side);
+            values.push_back(-1.0);
+        }
+        if (z + 1 < side) {
+            columns.push_back(row + side * side);
+            values.push_back(-1.0);
+        }
+    }
+};
+
+// This rank's contiguous row block, in the distributed-assembled form
+// factorizeDistributed expects: GLOBAL dimension, only owned rows populated.
+ladruno_cms::SymmetricCSR buildLocalBlock(
+    const ModelMatrix &model, int rank, int size)
+{
+    ladruno_cms::SymmetricCSR result;
+    result.dimension = model.order;
+    result.rowOffsets.assign(1, 0);
+    const long long order = model.order;
+    const int begin = static_cast<int>((order * rank) / size);
+    const int end = static_cast<int>((order * (rank + 1)) / size);
+    std::vector<int> columns;
+    std::vector<double> values;
+    for (int row = 0; row < model.order; ++row) {
+        if (row >= begin && row < end) {
+            model.upperRow(row, columns, values);
+            result.columnIndices.insert(
+                result.columnIndices.end(), columns.begin(), columns.end());
+            result.upperValues.insert(
+                result.upperValues.end(), values.begin(), values.end());
+        }
+        result.rowOffsets.push_back(
+            static_cast<int>(result.columnIndices.size()));
+    }
+    return result;
+}
+
+std::vector<double> multiplySymmetric(
+    const ModelMatrix &model,
+    const std::vector<double> &vectors,
+    int numberOfColumns)
+{
+    std::vector<double> result(vectors.size(), 0.0);
+    std::vector<int> columns;
+    std::vector<double> values;
+    for (int row = 0; row < model.order; ++row) {
+        model.upperRow(row, columns, values);
+        for (std::size_t entry = 0; entry < columns.size(); ++entry) {
+            const int column = columns[entry];
+            const double value = values[entry];
+            for (int rhs = 0; rhs < numberOfColumns; ++rhs) {
+                const std::size_t base =
+                    static_cast<std::size_t>(rhs) * model.order;
+                result[base + static_cast<std::size_t>(row)] +=
+                    value * vectors[base + static_cast<std::size_t>(column)];
+                if (column != row)
+                    result[base + static_cast<std::size_t>(column)] +=
+                        value * vectors[base + static_cast<std::size_t>(row)];
+            }
+        }
+    }
+    return result;
+}
+
+void testDistributedMumpsAtScale(int rank, int size)
+{
+    if (size != 2 && size != 4)
+        return;
+
+    ModelMatrix laplace;
+    laplace.side = environmentSize("LADRUNO_CMS_CHECK_SIDE", 16);
+    laplace.order = laplace.side * laplace.side * laplace.side;
+    ModelMatrix denseBlock;
+    denseBlock.dense = true;
+    denseBlock.order = environmentSize("LADRUNO_CMS_CHECK_DENSE_ORDER", 1000);
+
+    const ModelMatrix models[2] = {laplace, denseBlock};
+    const char *labels[2] = {"laplace", "dense"};
+    const int numberOfColumns = 2;
+
+    for (int index = 0; index < 2; ++index) {
+        const ModelMatrix &model = models[index];
+        const std::string label(labels[index]);
+        if (rank == 0)
+            std::cout << "distributed MUMPS at scale: shape=" << label
+                      << " order=" << model.order << " ranks=" << size << '\n';
+
+        std::vector<double> expected(
+            static_cast<std::size_t>(model.order) * numberOfColumns, 0.0);
+        for (int row = 0; row < model.order; ++row) {
+            expected[static_cast<std::size_t>(row)] =
+                1.0 + 0.25 * static_cast<double>(row % 7);
+            expected[static_cast<std::size_t>(model.order + row)] =
+                (row % 2 == 0) ? 1.0 : -1.0;
+        }
+        std::vector<double> solution =
+            multiplySymmetric(model, expected, numberOfColumns);
+
+        const ladruno_cms::SymmetricCSR local =
+            buildLocalBlock(model, rank, size);
+        ladruno_cms::DistributedMumpsSPD solver;
+        std::string message;
+        const int factorized = solver.factorize(local, message);
+        require(factorized == 0,
+                "distributed SPD factorization failed at scale (" + label +
+                    ", np=" + std::to_string(size) + "): " + message);
+        if (factorized != 0)
+            continue;
+        REQUIRE_CALL(solver.solve(solution, numberOfColumns, message) == 0,
+                "distributed multi-RHS solve failed at scale (" + label +
+                    ", np=" + std::to_string(size) + "): " + message);
+
+        double worst = 0.0;
+        for (std::size_t entry = 0; entry < solution.size(); ++entry)
+            worst = std::max(
+                worst, std::fabs(solution[entry] - expected[entry]));
+        require(worst <= 1.0e-9,
+                "distributed solve at scale (" + label + ", np=" +
+                    std::to_string(size) + ") recovered the wrong vector, "
+                    "worst componentwise error " + std::to_string(worst));
+    }
+}
+
+// The rank-local Craig-Bampton pencils go through MumpsSPD (MPI_COMM_SELF), not
+// the distributed class, so the same ordering trap has to be probed there too:
+// same dense shape, one rank, no collectives.
+void testSerialMumpsAtScale(int rank)
+{
+    if (rank != 0)
+        return;
+    ModelMatrix model;
+    model.dense = true;
+    model.order = environmentSize("LADRUNO_CMS_CHECK_DENSE_ORDER", 1000);
+    std::cout << "serial MUMPS at scale: shape=dense order=" << model.order
+              << '\n';
+
+    ladruno_cms::SymmetricCSR matrix;
+    matrix.dimension = model.order;
+    matrix.rowOffsets.assign(1, 0);
+    std::vector<int> columns;
+    std::vector<double> values;
+    for (int row = 0; row < model.order; ++row) {
+        model.upperRow(row, columns, values);
+        matrix.columnIndices.insert(
+            matrix.columnIndices.end(), columns.begin(), columns.end());
+        matrix.upperValues.insert(
+            matrix.upperValues.end(), values.begin(), values.end());
+        matrix.rowOffsets.push_back(
+            static_cast<int>(matrix.columnIndices.size()));
+    }
+
+    std::vector<double> expected(static_cast<std::size_t>(model.order), 0.0);
+    for (int row = 0; row < model.order; ++row)
+        expected[static_cast<std::size_t>(row)] =
+            1.0 + 0.25 * static_cast<double>(row % 7);
+    std::vector<double> solution = multiplySymmetric(model, expected, 1);
+
+    ladruno_cms::MumpsSPD solver;
+    std::string message;
+    const int factorized = solver.factorize(matrix, message);
+    require(factorized == 0,
+            "serial SPD factorization failed at scale (dense, order " +
+                std::to_string(model.order) + "): " + message);
+    if (factorized != 0)
+        return;
+    REQUIRE_CALL(solver.solve(solution, 1, message) == 0,
+            "serial solve failed at scale: " + message);
+    double worst = 0.0;
+    for (std::size_t entry = 0; entry < solution.size(); ++entry)
+        worst = std::max(worst, std::fabs(solution[entry] - expected[entry]));
+    require(worst <= 1.0e-9,
+            "serial solve at scale recovered the wrong vector, worst "
+            "componentwise error " + std::to_string(worst));
 }
 
 void testStaticCondensation()
@@ -295,6 +549,8 @@ int main(int argc, char **argv)
     {
         testMumpsMultiRHS();
         testDistributedMumps(rank, size);
+        testDistributedMumpsAtScale(rank, size);
+        testSerialMumpsAtScale(rank);
         testStaticCondensation();
         testBlockedSparseCondensation();
     }

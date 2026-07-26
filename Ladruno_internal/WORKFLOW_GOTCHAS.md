@@ -224,3 +224,28 @@ Also: GNU `sed -i` on a CRLF `SRC/` file rewrites EVERY line ending — a
 one-word edit became a 9,900-line diff (OpenSeesCommands.cpp). Use the
 byte-preserving Edit path for CRLF sources; check `git diff --stat` before
 committing after any sed.
+
+## 7. The G1 Tcl gate has been green on a DEAD suite — "OK (0 checks passed)"
+
+Found 2026-07-26 by the first marker-gated Tcl step (the ADR-76 LAPACK
+regression, #643). The Zone-A `build/Release/OpenSees` binary aborts Tcl
+initialization on the CI runner — `application-specific initialization failed:
+Can't find a usable init.tcl` — because `TCL_LIBRARY` is not set and the conan
+Tcl runtime is not on the binary's search list. After that failure NO OpenSees
+command is registered (`invalid command name "wipe"`), so every deck dies on
+its first command.
+
+The "Tcl verification suite + ladruno tcl (gated, G1)" step has been hitting
+this on EVERY run — visible as two `init.tcl` complaints in even fully green
+logs (e.g. run 30173461993) — and still passing, because `runVerificationSuite`
+leaves an empty `results.out` and `ci/check_tcl_results.py` reports
+`OK (0 checks passed)`. A gate that counts failures must also refuse an empty
+result set; "no failures because nothing ran" is the silent-truncation trap.
+
+- **Honest pattern** (the LAPACK step): `export TCL_LIBRARY="$(dirname "$(find
+  ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"` before invoking the
+  binary, and gate on a positive terminal marker, never the exit code.
+- **Open item:** resurrect the G1 suite — same `TCL_LIBRARY` export on its step
+  + make `check_tcl_results.py` fail on `total == 0`. Deliberately NOT bundled
+  into #643: the suite has not actually executed in CI for an unknown span, so
+  turning it on may surface real failures that need their own triage.

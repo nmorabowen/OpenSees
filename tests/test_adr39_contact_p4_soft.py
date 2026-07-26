@@ -162,6 +162,17 @@ def _plane_static(kn, soft):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     ops.node(1, 0.0, 0.0, 0.0)
     ops.fix(1, 1, 1, 0)
+    # ADR-76 LAPACK-fix fallout: the node's z is held by NOTHING until contact
+    # engages, so the FIRST tangent is singular. Pre-fix, FullGeneral SWALLOWED
+    # that solve (rc 0, X = B) and the garbage displacement is what seated the
+    # contact. Post-fix the singular solve correctly refuses, so ground z with
+    # a spring far softer than kn (0.1 vs 1e6): analytic-penetration error
+    # ≈ P·ks/kn² ≈ 1e-10, inside the 1e-9 gate; both compared runs get the
+    # identical spring, so bit-identity is untouched.
+    ops.node(90, 0.0, 0.0, 0.0)
+    ops.fix(90, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    ops.element("zeroLength", 90, 90, 1, "-mat", 90, "-dir", 3)
     ops.contactSurface(1, "-slave", 1)
     if soft > 0.0:
         ops.contactPlane(1, 1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, kn, "-soft", soft)

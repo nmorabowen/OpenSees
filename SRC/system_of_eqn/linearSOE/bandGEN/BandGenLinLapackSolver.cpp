@@ -145,7 +145,21 @@ BandGenLinLapackSolver::solve(void)
       if (info > 0) {
 	opserr << "WARNING BandGenLinLapackSolver::solve() -";
 	opserr << "factorization failed, matrix singular U(i,i) = 0, i= " << info-1 << endln;
-	return -info+1;
+	// Ladruno: was `return -info+1;`, which C parses as (-info)+1 — so the
+	// commonest singular case, info==1 (U(1,1)==0, i.e. an all-zero A), returned
+	// 0 == SUCCESS. LAPACK does not compute X when info>0, and X was copied from
+	// B above, so the caller then consumed the LOAD VECTOR as a displacement
+	// increment; `theSOE->factored` also stays false, so every later iteration
+	// silently repeats the same non-solve. Verified: a 3-DOF all-zero A gave
+	// `analyze` == 0 with nodeDisp == the applied load. `-info` is always
+	// negative here (this branch is info>0) and keeps the failing pivot index in
+	// the magnitude; it is the idiom already used by SymBandEigenSolver.cpp:228
+	// and FullGenEigenSolver.cpp:188. No caller reads the magnitude — no
+	// comparison against a specific value exists in SRC/. (NB: it is NOT true
+	// that every call site gates on `< 0` — many ignore the return entirely,
+	// e.g. ArcLength/DisplacementControl — which made the original bug worse
+	// than it first appeared, not the fix less safe.)
+	return -info;
       } else {
 	opserr << "WARNING BandGenLinLapackSolver::solve() - OpenSees code error\n";
 	return info;

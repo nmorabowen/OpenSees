@@ -377,3 +377,76 @@ uninformative unless both are benched back-to-back in one session.
 One mechanism *was* settled while chasing this: UmfPack speeds up 1.35x from
 1→4 MKL threads, confirming it runs inside threaded MKL BLAS, whereas MKL
 PARDISO uses its own supernodal kernels and is untouched by BLAS-layer work.
+
+## 10. `LADRUNO_CMS=ON` never linked — static + dynamic MKL in one target
+
+**Symptom.** Any `LADRUNO_CMS=ON` build dies at the *link* step (the whole
+library compiles first, which makes it look like a late/unrelated failure):
+
+```
+mkl_core.lib(mkl_verbose.obj) : error LNK2005: mkl_serv_verbose_mode already
+    defined in mkl_intel_thread_dll.lib(mkl_intel_thread.3.dll)
+mkl_core.lib(mkl_xerbla.obj)  : error LNK2005: mkl_serv_xerbla already defined ...
+ladruno_cms_mumps_check.exe : fatal error LNK1169: one or more multiply defined
+```
+
+**Cause.** `SRC/system_of_eqn/ladrunoCMS/CMakeLists.txt` linked BOTH
+`${SCALAPACK_LIBRARIES}` — the **static sequential** MKL stack the root
+`CMakeLists` builds for the parallel targets (`mkl_scalapack_lp64` +
+`mkl_intel_lp64` + `mkl_sequential` + `mkl_core` + `mkl_blacs_intelmpi_lp64`) —
+and `${LAPACK_LIBRARIES}`, which on any box where `find_package(LAPACK)`
+resolves to oneAPI MKL expands to the **dynamic** interface
+(`mkl_intel_lp64_dll` + `mkl_intel_thread_dll` + `mkl_core_dll` + `libiomp5md`).
+MKL does not support mixing the static and dynamic layers in one link. The two
+sets collide on `mkl_serv_*`.
+
+`OpenSeesSP`/`OpenSeesMP` link `${SCALAPACK_LIBRARIES}` and **not**
+`${LAPACK_LIBRARIES}` — that is why only the CMS library tripped this, and why
+it propagated (the offending list was `PUBLIC`) to any MP target built with
+`LADRUNO_CMS=ON`. Whether it bites is environment-dependent: it needs a box
+where `find_package(LAPACK)` finds MKL, so the same tree can link on one machine
+and fail on another. This is the concrete reason the ADR-1000 P3/P4 execution
+plans were authored "without a runtime build".
+
+**Fix.** Drop `${LAPACK_LIBRARIES}` from `OPS_LadrunoCMS` and re-add it only
+`if(NOT MKL_FOUND)` (the non-MKL box, where `SCALAPACK_LIBRARIES` is
+user-supplied and carries no BLAS). Same rule for any future Pattern-B library
+(#7): **take the BLAS/LAPACK layer from exactly one source, and match whichever
+one the targets you link into already use.**
+
+**A second, independent defect in the same lane.** `build.bat`'s CMS run loop
+echoed `--- running ..._check (mpiexec -n 4) ---` *inside* a parenthesized
+`for`-body. `cmd` closed the block on that inner `)` and failed with `--- was
+unexpected at this time` — **after** a fully successful build, so the lane
+reported failure having never run a check. Escape inner parens as `^( ^)` (this
+is trap #5 in the family of batch traps in #1). Both defects had to be fixed
+before a single CMS numerical check had ever executed in this build tree.
+
+## 11. Never `sed -i` a `.bat` file — it strips CRLF and cmd silently miscompiles
+
+`sed -i` (Git Bash) rewrites the whole file with **LF-only** line endings. `cmd.exe`
+requires **CRLF** in batch files: with bare LFs, single-line commands still work,
+but multi-line constructs silently fall apart. A one-character edit to a `for`
+list produced:
+
+```
+'do' is not recognized as an internal or external command,
+'not' is not recognized as an internal or external command,
+```
+
+and a stray interactive Python prompt — because `for %%C in (...) do (` and the
+`if not defined ...` lines were no longer parsed as blocks. The `git diff` looked
+perfect (two changed characters); nothing in it hints at the real damage. `git`
+also warns `LF will be replaced by CRLF the next time Git touches it`, which is
+easy to dismiss as routine noise — on a `.bat` it is the actual error message.
+
+**Rule:** edit `.bat` files with the Edit tool (it preserves existing endings) or
+a CRLF-aware editor, never `sed -i`/`tr`. To repair one:
+
+```powershell
+$t = [IO.File]::ReadAllText($p) -replace "`r`n","`n" -replace "`n","`r`n"
+[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))
+```
+
+Verify with a bare-LF count (must be 0), not by eye — and re-run the script,
+because a `git diff` cannot show you this class of breakage.

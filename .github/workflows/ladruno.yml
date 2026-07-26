@@ -99,6 +99,21 @@ jobs:
           cp build/Release/opensees.so tests/
           cd tests
           pytest -v -m "zone_a"
+      # ADR-76 spin-off: a singular matrix must not report SUCCESS (LAPACK
+      # `return -info+1`). Gate on the deck's terminal marker, NOT the exit code
+      # — OpenSees exits 0 after a Tcl parse error (recorded quirk), so an exit-
+      # code gate would pass on a deck that never ran.
+      # TCL_LIBRARY: the CI binary aborts before registering ANY OpenSees command
+      # without the conan Tcl runtime ("Can't find a usable init.tcl"). The G1
+      # Tcl step below has been silently green through that exact failure since
+      # its checker accepts "0 checks passed" — this step's marker gate is what
+      # surfaced it (WORKFLOW_GOTCHAS). If find matches nothing, the deck dies,
+      # the marker is absent, and this step goes red — honest either way.
+      - name: LAPACK singular-matrix regression (ADR-76)
+        run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          build/Release/OpenSees Ladruno_implementation/lapack_singular_regression/lapack_singular_model.tcl 2>&1 | tee lapack_singular.log || true
+          grep -q "LAPACK singular regression: all solvers reject the singular system" lapack_singular.log
       - name: Tcl verification suite + ladruno tcl (gated, G1)
         # Heavy suite: skip on iterative PR pushes (synchronize) so the dev loop
         # is just build + Zone-A pytest. Still runs on PR open/reopen/ready, on

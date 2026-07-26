@@ -1742,3 +1742,389 @@ locales densos.
 P4 queda parcialmente ejecutado. No se declara `shipped`: faltan repeticiones
 estadísticas, segundo particionado, oráculo explícito `Kx/Mx`, diagnóstico de MUMPS a dos
 ranks y reducción de memoria local.
+
+## 20. Desbloqueo del carril de ejecución `LADRUNO_CMS=ON` — 2026-07-26
+
+Los planes P3 y P4 fueron redactados sin una construcción funcional y designaron
+al job nocturno auto-hospedado como arnés permanente. Esta sesión auditó ese
+supuesto: **el carril no había ejecutado nunca un solo check**, por dos defectos
+independientes y por una condición de infraestructura.
+
+### 20.1 Defecto de enlace: capas MKL estática y dinámica en un mismo target
+
+`OPS_LadrunoCMS` enlazaba `${SCALAPACK_LIBRARIES}` (pila MKL **estática
+secuencial**, la que usan `OpenSeesSP` y `OpenSeesMP`) y además
+`${LAPACK_LIBRARIES}`, que en cualquier máquina donde `find_package(LAPACK)`
+resuelve a oneAPI expande a la interfaz **dinámica**. MKL no admite esa mezcla:
+el enlace muere con `LNK2005` sobre `mkl_serv_verbose_mode` y `mkl_serv_xerbla`.
+La lista era `PUBLIC`, de modo que el defecto alcanzaba también a cualquier
+target MP construido con `LADRUNO_CMS=ON`. Al depender de qué encuentra
+`find_package(LAPACK)`, el mismo árbol enlaza en una máquina y falla en otra —
+esta es la causa concreta del "no se pudo producir una construcción estable"
+registrado en el plan P3. Corrección: `${LAPACK_LIBRARIES}` sólo se enlaza
+`if(NOT MKL_FOUND)`. Detalle en [[../Ladruno_internal/BUILD_GOTCHAS]] #10.
+
+### 20.2 Defecto de batch: el lazo de ejecución nunca corría
+
+`build.bat` emitía `echo --- running ..._check (mpiexec -n 4) ---` dentro de un
+`for` con cuerpo entre paréntesis; `cmd` cerraba el bloque en ese `)` interno y
+abortaba con `--- was unexpected at this time` **después** de una compilación
+exitosa. El carril reportaba fallo sin haber ejecutado ningún check. Paréntesis
+internos escapados como `^( ^)`.
+
+### 20.3 El carril nocturno no existe en ejecución
+
+`GET /repos/nmorabowen/OpenSees/actions/runners` devuelve `total_count: 0`: no
+hay ningún runner auto-hospedado registrado. El job `zone-b-nightly` exige
+`[self-hosted, windows, ladruno-perf]`, por lo que queda en cola y el grupo de
+concurrencia lo cancela en cada corrida programada (22, 23, 24 y 25 de julio,
+todas `cancelled`). El arnés permanente que P3 y P4 dan por sentado **no produce
+evidencia alguna**, y aun con un runner en línea habría fallado por 20.2.
+
+### 20.4 Evidencia obtenida tras las correcciones
+
+Construcción local `LADRUNO_CMS=ON` completa —biblioteca, checks autónomos y el
+binario `OpenSeesMP.exe`— y toda la batería ejecutada bajo `mpiexec -n 4`:
+
+| Evidencia | Resultado |
+|---|---|
+| `ladruno_cms_mumps_check` | PASS en 4 rangos |
+| `ladruno_cms_lanczos_check` | PASS en 4 rangos |
+| `ladruno_cms_hierarchy_check` | PASS en 4 rangos |
+| `ladruno_cms_subspace_check` | PASS en 4 rangos |
+| enlace de `OpenSeesMP.exe` con `LADRUNO_CMS=ON` | PASS (confirma que la corrección 20.1 se propaga por el `PUBLIC`) |
+| `ladruno_cms_openseesmp_smoke.tcl` | PASS — dos `eigen -ladrunoCMS` consecutivos, cadena `T2->S2->T1->S1`, error relativo `<1e-8` contra el espectro analítico |
+| `ladruno_cms_physical_smoke.tcl` | PASS — modo `physical` en cuatro rangos, `n=16 r2=16 rRaw=13 rD=13`, residual `5.80175e-9` en 10 iteraciones de refinamiento |
+
+Es la primera evidencia de ejecución de CMS posterior a los planes P3/P4, y la
+primera vez que el comando `eigen -ladrunoCMS` se ejerce de extremo a extremo
+desde el intérprete en este árbol. No mueve ninguna puerta: son los checks
+unitarios de la biblioteca y dos smokes minúsculos, no el caso físico Building
+1A. El estado sigue siendo `draft` con P3 parcial y P4 pendiente.
+
+**Traza de reproducción** (necesaria porque el binario recién construido no
+encuentra Tcl por sí solo): `Ladruno_scripts\setup_env.bat`, luego
+`TCL_LIBRARY` apuntando al `lib\tcl8.6` de la caché de conan —de lo contrario
+el intérprete arranca sin comandos y falla con `invalid command name "wipe"`—,
+y finalmente `mpiexec -n 4 build\build\Release\OpenSeesMP.exe <deck>.tcl`. El
+`dist\` curado por el paso 5 de `build.bat` ya resuelve esto; el árbol de
+construcción crudo no.
+
+### 20.5 Corrección normativa al protocolo de la Parte 0 del plan P3
+
+El plan P3 ordena validar la corrección `ICNTL(28)=1` corriendo los checks a
+`np=2`. **Ese protocolo es vacío tal como está escrito**: `testDistributedMumps`
+y `checkDistributedFourRankFlow` retornan de inmediato si `size != 4`, así que a
+dos rangos la factorización distribuida —la ruta que falla— nunca se ejecuta y
+el check pasa sin probar nada. Validar la Parte 0 exige antes una fixture
+distribuida de dos rangos o un deck físico a `np=2`. La corrección `ICNTL(28)`
+no se aplica en esta sesión: aplicarla sin poder ejecutarla violaría su propia
+puerta de aceptación ("np=2 corregido Y np=4 sin regresión").
+
+> **Superado por la sección 21**: la fixture de dos rangos se construyó
+> inmediatamente después y reprodujo el fallo. La corrección correcta **no** es
+> `ICNTL(28)`.
+
+## 21. Cierre de la Parte 0 — el fallo de ordenamiento de MUMPS — 2026-07-26
+
+### 21.1 La fixture de dos rangos
+
+`ladruno_cms_mumps_check` gana `testDistributedMumpsAtScale` y
+`testSerialMumpsAtScale`, y la pierna distribuida preexistente deja de estar
+restringida a `size == 4`. La fixture antigua era una matriz `2x2`: sirve para
+probar el cableado, pero MUMPS nunca abandona su camino trivial sobre ella, así
+que jamás pudo haber visto un fallo de la fase de análisis. La nueva fixture
+construye un pencil SPD distribuido por bloques de filas contiguas en dos
+formas —Laplaciano 3-D de 7 puntos (realmente disperso) y bloque denso
+diagonalmente dominante (la forma que `reduceCraigBampton` entrega hoy)— con
+tamaños gobernados por `LADRUNO_CMS_CHECK_SIDE` y
+`LADRUNO_CMS_CHECK_DENSE_ORDER`. Los valores por defecto son baratos para CI;
+subir el orden denso convierte el mismo binario en el reproductor.
+
+### 21.2 El fallo reproducido, y la hipótesis del plan refutada
+
+Con orden denso `12000` el fallo aparece de forma determinista y con el mensaje
+exacto de la campaña Building 1A:
+
+```
+Error in function orderMinPriority
+  no valid number of stages in multisector (#stages = 2)
+```
+
+Tres mediciones desmontan el diagnóstico registrado en el plan P3:
+
+| Experimento | Resultado |
+|---|---|
+| denso `12000`, `ICNTL(7)=7` por defecto, **np=2** | FALLA (multisector) |
+| denso `12000`, `ICNTL(7)=7`, **np=4** | **FALLA igual** |
+| disperso `64000` (Laplaciano), `ICNTL(7)=7`, np=2 y np=4 | PASA |
+| denso `12000`, `ICNTL(28)=1` forzando análisis secuencial, np=2 | **FALLA idéntico** |
+| denso `12000`, `ICNTL(7)=0` (AMD), np=2 y np=4 | PASA |
+
+Conclusiones. Primero, **`ICNTL(28)` es irrelevante**: forzar análisis
+secuencial no evita el fallo, de modo que la causa no es el análisis paralelo.
+Segundo, **el número de rangos tampoco es la variable**: el mismo pencil denso
+mata también a cuatro rangos. Lo que dispara el fallo es el **patrón denso**:
+bajo `ICNTL(7)=7` MUMPS elige PORD, y el ordenamiento multisector de PORD no
+puede formar etapas válidas sobre un patrón denso. Que Building 1A fallara a
+dos rangos y sobreviviera a cuatro y seis es consistente con esto: al repartir
+en más rangos, el pencil local baja del umbral. No era una propiedad de `np=2`.
+
+### 21.3 Corrección aplicada, en los dos sitios
+
+`ICNTL(7)=0` (AMD, sin concepto de multisector y siempre compilado en MUMPS) en
+las dos factorizaciones de `LadrunoCMSMumps.cpp`: la distribuida
+(`MPI_COMM_WORLD`, `ICNTL(18)=3`) y la serial `MumpsSPD` (`MPI_COMM_SELF`).
+**El sitio serial importa más**, y no estaba en el alcance original de la Parte
+0: los pencils locales de Craig-Bampton —los densos— pasan por ahí, y la sonda
+serial demuestra que ese camino muere igual sobre un solo rango.
+
+### 21.4 Validación
+
+| Evidencia | Resultado |
+|---|---|
+| reproductor denso `12000`, np=2 y np=4 | PASS en ambos (antes FALLA en ambos) |
+| los cuatro checks autónomos, np=4, tamaños por defecto | PASS |
+| los cuatro checks autónomos, np=2 | PASS |
+| `ladruno_cms_openseesmp_smoke.tcl`, np=4 | PASS |
+| `ladruno_cms_physical_smoke.tcl`, np=4 | PASS |
+
+### 21.5 Lo que esto NO cierra
+
+El deck Building 1A no está en el repositorio, así que **no se ha verificado que
+la campaña original a dos rangos ahora corra**. Lo demostrado es que la modalidad
+de fallo está identificada, reproducida en una fixture permanente y corregida en
+ambos sitios de factorización. La nota "2-rank unsupported" de `RESULTS.md` sólo
+puede levantarse volviendo a correr Building 1A. Tampoco se ha medido si AMD
+cuesta más que PORD en fill-in para los pencils dispersos de CMS; no se observó
+regresión en ninguna de las pruebas anteriores, pero ninguna es grande y dispersa
+a la vez. Las demás puertas P3 y P4 siguen abiertas.
+
+La pierna distribuida de `ladruno_cms_hierarchy_check` sigue restringida a cuatro
+rangos, y con razón: su oráculo fija cuatro subdominios finos y dimensiones
+`12/10/10/9` propias de ese reparto. Una jerarquía de dos rangos es una fixture
+nueva con su propio oráculo —trabajo de P3d, no de la Parte 0.
+
+## 22. Puerta P3b — oráculo de ensamblaje distribuido — 2026-07-26
+
+`tests/ladruno_cms_assembly_check.cpp` implementa la puerta que el plan P3
+califica como la más importante: demostrar que "físicamente distribuido"
+significa que **el álgebra** está partida de verdad, y no que hay una matriz
+replicada que por casualidad devuelve el resultado correcto. Todo lo que está
+por encima en la jerarquía consume los pencils locales; si el reparto duplica o
+pierde una contribución, las demás puertas miden el operador equivocado.
+
+### 22.1 Método
+
+Una malla estructurada de celdas bilineales, un grado de libertad por nodo y la
+fila inferior restringida —con ecuación global `-1`, de modo que también se
+ejercita el camino de grados de libertad restringidos—. Las mismas
+contribuciones elementales se ensamblan dos veces por **las mismas llamadas de
+producción**, `makeAssemblyRecord` + `buildSymmetricCSR`:
+
+- referencia: todos los elementos, en un rango, sin MPI;
+- distribuido: cada rango sólo su franja de columnas.
+
+Ambas se comparan como **operadores** —`K·x` y `M·x`, formando la acción
+distribuida exactamente como lo hace `globalAction` del refinador
+(`SymmetricCSR::multiply` por rango más `MPI_Allreduce`)— y **entrada por
+entrada** —la suma de las matrices locales contra la matriz de referencia—.
+El producto matriz-vector es el instrumento de medida, no el sujeto: el mismo
+núcleo corre en ambos lados, así que cualquier diferencia es atribuible al
+reparto.
+
+Sondas: `e1`, unos, rampa y tres vectores pseudoaleatorios de semilla fija (un
+LCG explícito, para que sean idénticos en todo rango y plataforma sin depender
+de `<random>`). Tolerancia relativa `1e-12`.
+
+El check es **genérico en tamaño**: corre sus piernas colectivas con cualquier
+`size >= 2` y anuncia el salto en voz alta a un solo rango. Es la lección
+directa de la sección 20.5: una prueba que condiciona su pierna colectiva a
+`size == N` no prueba nada en los demás tamaños.
+
+### 22.2 Controles negativos
+
+Dos, y ambos verifican que **el oráculo tiene dientes**:
+
+- pencil replicado: cada rango ensambla todos los elementos. La acción
+  distribuida debe diferir de la referencia; si no difiere, las comprobaciones
+  anteriores no demuestran nada.
+- propiedad corrupta: el rango 1 reclama además un elemento del rango 0. La
+  diferencia debe detectarse.
+
+### 22.3 Resultado
+
+| Evidencia | Resultado |
+|---|---|
+| `ladruno_cms_assembly_check`, np=2, np=3, np=4 | PASS |
+| np=1 | SKIP anunciado en voz alta |
+| carril `build.bat` con los cinco checks | PASS, salida 0 |
+
+### 22.4 Filas de P3b que esto NO cubre
+
+- **Dimensión global por colectiva** (`n` igual al conteo monolítico, 63 048 en
+  Building 1A): exige un `Domain` real, no una fixture.
+- **El guardián de producción**: los controles negativos prueban que *el oráculo*
+  distingue un doble conteo, no que `-verifyAssembly signature|full` falle en voz
+  alta en el camino del `EigenSolver`. Ese guardián vive en el solver y necesita
+  un `Domain`; queda abierto.
+- **Equivalencia de decks** monolítico-con-guardas contra `per_rank=True`: es
+  P3a, del lado del emisor.
+
+## 23. Puerta P3d — invariancia frente a permutación de rangos — 2026-07-26
+
+Qué rango posee qué subdominio fino es un accidente del particionador. La
+matemática no puede depender de ello. `ladruno_cms_hierarchy_check` gana
+`checkRankPermutationInvariance`: ejecuta la jerarquía distribuida con el reparto
+identidad y luego con dos permutaciones, y exige autovalores iguales a `1e-9`
+relativo, residuales intactos y `MAC >= 1 - 1e-9` modo a modo.
+
+Las dos permutaciones son una inversión y un intercalado; el intercalado es el
+que importa, porque deja el grupo grueso 0 con los subdominios `{0,2}` en lugar
+de `{0,1}` y por tanto detectaría una implementación que asuma que un grupo
+grueso es un bloque contiguo. Ambas pasan.
+
+### 23.1 La etiqueta `fine` no es un índice libre
+
+El primer intento permutaba `input.fine`. `solveDistributedHierarchy` valida
+`input.fine == rank` (`LadrunoCMSHierarchy.cpp:1293`) y lo rechaza. Es una
+restricción real de la interfaz, no un defecto: la etiqueta fina **es** la
+identidad del rango. Un reparto permutado sólo puede expresarse **moviendo los
+datos** —que es exactamente lo que entregaría otro particionador—, así que el
+check mantiene `fine = rank` y permuta el subdominio cuyos datos carga cada
+rango.
+
+### 23.2 Control de que la prueba no es vacía
+
+El check exige además, por colectiva, que al menos un rango termine con
+ecuaciones distintas de las que tenía en la corrida base. Sin eso, una
+permutación mal construida compararía una corrida consigo misma y pasaría
+trivialmente.
+
+### 23.3 Trampa encontrada en los checks existentes
+
+El primer intento reportó todos sus fallos con un diagnóstico **vacío**. La causa
+es el modismo `require(llamada(...), "..." + message)`: el orden de evaluación de
+los argumentos no está especificado en C++, y la cadena se construía **antes** de
+que la llamada rellenara `message`. El mismo modismo aparece en otros puntos de
+`ladruno_cms_hierarchy_check` (por ejemplo en la construcción de los
+`AssemblyRecord` del flujo distribuido). No produce falsos aprobados —sólo
+mensajes inútiles cuando algo ya falló—, pero conviene barrerlo. Aquí se corrigió
+únicamente en el código nuevo. Ver [[LEDGER_quirks]].
+
+### 23.4 Alcance
+
+| Evidencia | Resultado |
+|---|---|
+| invariancia, permutación por inversión, np=4 | PASS |
+| invariancia, permutación intercalada, np=4 | PASS |
+| control de no-vacuidad | PASS |
+| np=2 | SKIP anunciado en voz alta |
+
+Las demás filas de P3d —tres topologías de interfaz y la ablación de nivel como
+diagnóstico etiquetado— siguen abiertas, igual que P3a, P3e y P4.
+
+## 24. P3d — barrido de topologías de interfaz y saneamiento de diagnósticos — 2026-07-26
+
+### 24.1 Las tres topologías
+
+La fixture compartida tiene una sola forma: una cadena cuyos subdominios
+comparten ecuaciones **dentro** de un grupo grueso (interfaz de nivel 2) y
+**entre** grupos (interfaz de nivel 1). Ejercita S2 y S1 juntos, lo que puede
+ocultar un camino de compatibilidad que sólo funcione cuando el otro también
+está activo. `checkInterfaceTopologies` añade las dos formas degenerantes en una
+fixture **separada**, para no tocar `makeFixture` ni las siete pruebas ancladas a
+sus dimensiones `9/12/10/10`:
+
+| Topología | Subdominios | Orden | Qué aísla |
+|---|---|---:|---|
+| `combined` | `{0,1,2} {2,3,4} {4,5,6} {6,7,8}` | 9 | ambas interfaces a la vez |
+| `level2Only` | `{0,1,2} {2,3,4}` \| `{5,6,7} {7,8,9}` | 10 | sólo dentro del grupo; los grupos quedan desacoplados |
+| `level1Only` | `{0,1,2} {3,4,5}` \| `{2,6,7} {5,8,9}` | 10 | sólo entre grupos; sin compartición intra-grupo |
+
+Cada topología se compara contra LAPACK directo sobre el pencil global
+ensamblado: autovalores a `3e-8`, residuales por debajo de `3e-8`, salto máximo
+entre copias duplicadas por debajo de `2e-10`, y la cadena obligatoria
+`T2 -> S2 -> T1 -> S1` aplicada de extremo a extremo. **Las tres pasan**,
+incluida `level2Only`, donde el conjunto de interfaz de nivel 1 está vacío y el
+pencil global es diagonal por bloques: la cadena se aplica igualmente.
+
+### 24.2 Saneamiento del modismo `require`
+
+La trampa de la sección 23.3 se barrió en toda la batería: se añadió
+`REQUIRE_CALL(status, text)`, que evalúa la llamada y sólo después construye el
+diagnóstico. Convertidos once sitios en cuatro archivos —`assembly` (4, código
+nuevo de esta misma sesión), `lanczos` (4), `mumps` (2) y `topology` (1)—; los
+sitios que ya calculaban el booleano por separado se dejaron intactos, porque
+nunca tuvieron el problema. Cambio mecánico, sin efecto sobre qué se comprueba:
+sólo garantiza que un fallo futuro imprima su causa.
+
+### 24.3 Evidencia
+
+| Evidencia | Resultado |
+|---|---|
+| `checkInterfaceTopologies`, tres topologías, np=4 | PASS |
+| los cinco checks autónomos, np=2 y np=4 (diez combinaciones) | PASS |
+| `ladruno_cms_topology_check` (enlaza `OpenSeesLIB`) | compila y enlaza |
+
+Con esto P3d queda cerrada salvo la ablación de nivel como diagnóstico
+etiquetado. P3a, P3e y P4 siguen abiertas.
+
+## 25. P3d — ablación de nivel 1 como diagnóstico etiquetado — 2026-07-26
+
+Última fila abierta de P3d. La sección 2b del plan P4 pide una ablación
+"sólo nivel 2" (omitir T1) para atribuir coste y reducción entre los dos
+niveles; P3d exige que **nunca** pueda ser una configuración aceptada ni un
+repliegue. No existía: `appliedT1` se fijaba incondicionalmente a `true`.
+
+### 25.1 Implementación
+
+`TwoLevelHierarchyInput::diagnosticAblateLevel1` (por defecto `false`). Cuando
+está activo, el lazo de T1 no llama a `reduceCraigBampton`: entrega a S1 el
+pencil de grupo **sin reducir**, que es exactamente el espacio de nivel 2.
+La reconstrucción sólo necesita `cb.transformation`, que para un grupo sin
+reducir es la identidad, de modo que el camino de retro-sustitución no cambia.
+El diagnóstico reporta `appliedT1 = false` y `ablatedLevel1 = true`.
+
+### 25.2 Las cuatro barreras
+
+1. **Por construcción**: el camino de producción es `solveDistributedHierarchy`,
+   que construye su propio `TwoLevelHierarchyInput` local y nunca toca el
+   indicador. La ruta distribuida no tiene ni campo de ablación.
+2. **En el parser**: `parseCommandOptions` rechaza `-ablate`, `-ablateLevel1`,
+   `-diagnosticAblateLevel1`, `-level2Only` y `-omitT1` como opciones
+   desconocidas. Es una prueba, no una promesa: si alguien añade la bandera, el
+   check falla.
+3. **En el solver**: `LadrunoCMSEigenSolver` rechaza un resultado con
+   `ablatedLevel1`, o sin `appliedT1`/`appliedS1`, antes de publicar modo alguno.
+   Hoy no puede dispararse; existe para atrapar una regresión futura.
+4. **Etiquetado**: ningún consumidor puede confundir una corrida ablada con la
+   cadena obligatoria, porque el diagnóstico lo dice.
+
+### 25.3 Que la ablación no sea un no-op
+
+Se mide sobre la fixture truncante (`modesLevel1 = 2`, donde T1 sí recorta):
+
+| Corrida | `finalRawDimension` |
+|---|---:|
+| cadena completa | 5 |
+| ablada (sólo nivel 2) | 7 |
+
+T1 elimina 2 coordenadas. Si la ablación fuera un no-op las dimensiones
+coincidirían y no podría atribuir nada; el check lo exige explícitamente.
+También se comprueba que el espacio mayor no produce valores de Ritz **más
+altos** —sería una reducción inconsistente— y que el indicador está apagado por
+defecto.
+
+### 25.4 Evidencia
+
+| Evidencia | Resultado |
+|---|---|
+| ablación etiquetada, no-op descartado, defecto apagado | PASS |
+| ruta de producción nunca ablada, np=4 | PASS |
+| parser rechaza las cinco grafías | PASS (g++ `-Wall -Wextra -pedantic`) |
+| los cinco checks, np=2 y np=4 | PASS |
+| ambos smokes de `OpenSeesMP`, np=4 | PASS |
+
+**P3d queda cerrada.** Siguen abiertas P3a, P3c (extras), P3e —bloqueada, el
+deck del edificio 1A no está en el repositorio— y todo P4.

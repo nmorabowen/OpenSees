@@ -328,5 +328,16 @@ Per-rank grounding is curated in the `opensees-performance` skill →
   per-classTag `elem.update` bucket** — ahead of the ModifiedNewton + factor-vs-solve gaps listed
   above. Verdict table + next actions in 40b.
 
+- **2026-07-25/26 — [[76_ladruno_tangent_reuse_adr]] (assembly/solve-lane sub-ADR, amends this
+  program) OPENED AND CLOSED.** From an external issue report (`Newton -initial` re-assembles +
+  re-factorizes every iteration, measured 1.61× `ModifiedNewton -initial` at 39k DOF for an
+  identical answer). Shipped: the documentation (R1), the `OPS_ModifiedNewton` multi-option parser
+  (R4, 11/11 smoke), and a spun-off LAPACK **singular-matrix-reported-SUCCESS** fix in
+  BandGen/FullGen/BandSPD (CI-gated regression deck). The engine-side tangent-version counter (R2)
+  was **WITHDRAWN after adversarial review** — the load-bearing finding, worth reading from the
+  program level: `NDMaterial::getInitialTangent()` *defaults to* `getTangent()`, so "initial
+  stiffness" is state-dependent for most solid element/material pairs and `-initial` on such models
+  silently IS full Newton. Any future reuse predicate must default false (its Appendix A.4).
+
 *(filled in as items execute; per-item detail moves to its sub-ADR and to
 `Ladruno_internal/` on completion.)*
