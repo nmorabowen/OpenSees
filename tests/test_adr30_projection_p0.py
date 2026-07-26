@@ -259,12 +259,21 @@ def _run_massless(system_args, mass):
 
 def test_massless_dof_is_not_policeable_by_the_soe_layer():
     """ADR §2.5: zero lumped mass on a free DOF makes the assembled M singular.
-    No SOE choice gives a trustworthy, actionable outcome — which is precisely why
-    the handler must detect massless DOFs at handle() time, not lean on the SOE.
+    The SOE layer gives no actionable diagnosis — which is why the handler must
+    detect massless DOFs at handle() time, not lean on the SOE.
+
+    HISTORY (premise drift, deliberate): when this test was written, Full/Band
+    SWALLOWED a first-pivot-singular LAPACK factor (`return -info+1` defect) and
+    reported rc == 0 with a non-physical result — the silently-wrong outcome
+    that first motivated the handle()-time scan. The ADR-76 audit fixed that
+    (all three LAPACK solvers now refuse; see the LEDGER_quirks first-pivot-
+    singularity entry), so the SOE layer is no longer silently WRONG — but it
+    is still opaque (a solve-time abort that names no DOF), so the handler
+    contract stands unchanged.
 
       * Diagonal  -> opaque solve-time pivot abort (analyze rc != 0).
-      * Full/Band -> singular LAPACK factor SWALLOWED, analyze returns rc == 0
-                     (success!) with a non-physical result. Silently wrong.
+      * Full/Band -> singular factor now correctly REFUSED (rc != 0) — post
+                     ADR-76; pre-fix these returned rc == 0, silently wrong.
 
     A positive control (valid mass) isolates the zero-mass DOF as the cause."""
     # positive control: a real mass solves cleanly with a finite acceleration.
@@ -278,20 +287,18 @@ def test_massless_dof_is_not_policeable_by_the_soe_layer():
         "Diagonal SOE unexpectedly 'solved' a zero-mass DOF — §2.5 not reproduced")
     assert u_diag == 0.0, "rejected starter should leave displacement at its IC"
 
-    # Full / Band: the SINGULAR system is reported as a SUCCESS (rc == 0). This is
-    # the silently-wrong outcome that makes the handler scan mandatory.
+    # Full / Band: post-ADR-76 the singular factorization is REFUSED. A rc == 0
+    # here means the singular-as-success LAPACK defect has REGRESSED.
     rc_full, _, _ = _run_massless(("FullGeneral",), 0.0)
     rc_band, _, _ = _run_massless(("BandGeneral",), 0.0)
-    assert rc_full == 0 and rc_band == 0, (
-        "expected Full/Band to swallow the singular factorization and report "
-        f"success (rc_full={rc_full}, rc_band={rc_band}); §2.5 premise drifted")
+    assert rc_full != 0 and rc_band != 0, (
+        "Full/Band reported SUCCESS on a singular mass matrix — the ADR-76 "
+        "singular-as-success LAPACK defect has regressed "
+        f"(rc_full={rc_full}, rc_band={rc_band})")
 
-    # the contract the handler must provide: the SOE layer is inconsistent and
-    # non-actionable on a massless DOF (one aborts opaquely, the others lie),
-    # so detection belongs at handle() time.
-    assert rc_diag != rc_full, (
-        "Diagonal and Full agreed on a massless DOF — the inconsistency that "
-        "motivates a handle()-time scan did not materialize")
+    # the contract the handler must provide: every SOE refuses, but none can say
+    # WHICH DOF is massless — an actionable, named diagnosis still belongs at
+    # handle() time.
 
 
 # --------------------------------------------------------------------------

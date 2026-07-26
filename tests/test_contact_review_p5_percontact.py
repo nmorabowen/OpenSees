@@ -124,6 +124,14 @@ def _static_plane_press(muc, stale_vz):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     ops.node(1, 0.0, 0.0, 0.0)
     ops.fix(1, 1, 1, 0)
+    # ADR-76 LAPACK-fix fallout: z held by nothing until contact engages ⇒ the
+    # first tangent is singular; FullGeneral used to swallow it (rc 0, X = B)
+    # and that garbage solve seated the contact. Ground z with a 0.1 spring
+    # (vs KN 1e5); identical spring in both runs keeps the equality assertion.
+    ops.node(90, 0.0, 0.0, 0.0)
+    ops.fix(90, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    ops.element("zeroLength", 90, 90, 1, "-mat", 90, "-dir", 3)
     if stale_vz != 0.0:
         ops.setNodeVel(1, 3, stale_vz, "-commit")
     ops.contactSurface(20, "-slave", 1)

@@ -185,7 +185,13 @@ def test_peak_equals_Mc_and_near_rigid_preeak():
     k0 = _kappa0(_Mc, _Gf, Kpen)
     kf = _kappaf(_Mc, _Gf, Kpen)
     _build((_Mc, _Gf, "-linear"))
-    path, _ = _push([(k0 + kf, 1000)])
+    # Stop just SHY of full exhaustion: at kappa >= kappaf the cohesive moment
+    # and tangent are both exactly zero, so the 1-DOF static tangent is
+    # legitimately singular. Pre-ADR-76 the LAPACK solver SWALLOWED that
+    # singular solve (rc 0) and the push limped through it; post-fix it
+    # correctly refuses. Every assertion below (peak == Mc at kappa0, near-
+    # rigid pre-peak) is decided long before 0.999*kappaf.
+    path, _ = _push([(k0 + 0.999 * kf, 1000)])
 
     moments = [m for _, m in path]
     peak = max(moments)
