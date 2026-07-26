@@ -89,12 +89,161 @@ ADR-75's P-series is outstanding.
 
 **The four things left, and what gates each:**
 
+> **⚠ SUPERSEDED IN PART — see "§ 2026-07-25 (b) session" below.** **The cluster is UP** (it was not
+> re-checked last session, only assumed down). **Item 4 is ANSWERED** (park Lane 3, ADR-75b §12).
+> **Item 1 was never "~10 min, no code"** — the Tcl `system Mumps` ladder could not parse `-BLR` or
+> `-stats` at all, and dropped them *silently*; fixed as **P2h**, but the cluster binary still needs
+> a rebuild before the measurement is possible. The table below is kept as written for provenance.
+
 | # | Item | Gated on | Effort |
 |---|---|---|---|
 | **1** | **Cluster BLR validation** — production deck, `-stats`, BLR on/off, compare `INFOG(21)` | **the cluster being up** (it was down all session) | ~10 min, no code |
 | **2** | **MUMPS `-matrixType 2`** on the cluster — same symmetric lever P1d measured at −41.8% peak memory on the desktop; untouched on MUMPS, strong prior | the cluster | small |
 | **3** | **Rebuild the SHARED checkout** so `system Pardiso` works outside a worktree | **owner decision** — an agent must not switch the shared checkout's branch under the other ~7 worktrees ([[ladruno-build-in-worktree-not-shared-checkout]]) | one build |
 | **4** | **Lane 3 (ADR-75b)** — threaded element assembly | see below; **genuinely open, not merely unstarted** | large |
+
+## § 2026-07-26 — ITEMS 1 AND 2 ARE MEASURED AND CLOSED
+
+Full data + method: **`Ladruno_files/testbed/perf/phase2/RESULTS_p2h_cluster_blr.md`**.
+Ran on esmeralda, `OpenSeesMP` @ `5cac083a8` (P2h), 1 node × np=16, 19.6k → 408.5k DOF.
+
+**Item 2 — `-matrixType 2` is the lever. Adopt it.** Won on **both** axes at every
+size: **−43.1% peak memory and 1.73× faster at 408.5k DOF** (−42.5% / 2.32× at
+143.8k). The memory saving converges on **≈ −43%**, landing on top of P1d's desktop
+PARDISO **−41.8%** — independent confirmation across a different solver, machine and
+parallel model. **Exact**, so legal on oracle paths. Same standing caveat: half-storage
+silently solves the wrong system on a genuinely unsymmetric tangent, so it stays opt-in.
+
+**Item 1 — BLR is not the memory lever, but the honest claim is narrower than
+"BLR never pays":**
+- **Unsymmetric + `-BLR`: never saved memory at any size** (+57.1 / +10.9 / +54.0 /
+  +16.4%) and was **always slower** (1.21×–3.43×).
+- **Symmetric + `-BLR`: the sign FLIPS with N** — +15.1% (worse) at 143.8k, but
+  **−18.9% (better) at 408.5k**, for ~1.28× wall. That is the front-size mechanism
+  the ADR predicted, appearing only once storage is already halved *and* the front
+  is large.
+- ⇒ **Order of reach: `-matrixType 2` first; add `-BLR` on top only at ≥~400k DOF
+  and only where an approximate factorization is legal; never use `-BLR` on the
+  unsymmetric path for memory.** Next real memory candidate is still out-of-core
+  `ICNTL(22)`, unexposed by the fork.
+
+**Capability wall — resolved.** At **884.8k DOF / np=16 on one 60 GB node full-rank
+FAILED** (`rc=1`) and **`-BLR` did not rescue it** (drove the node to 323 MB free
+without completing). On **two** nodes both succeed: `full` 47.8 min vs
+**`-matrixType 2` 28.3 min (1.69x)**, total factor memory 54.1 -> 30.7 GB
+(**-43.2%**), and the tip displacement is **BIT-IDENTICAL** between them — the
+strongest form of P1d's exactness claim. So the wall is about *total node memory*;
+symmetric needs ~43% less of it but was not, at this size, the difference between
+running and not.
+
+⚠ **One headline correction, found by this run.** "-43% peak memory" needs a
+**rank-count qualifier**. Symmetric halves the FACTOR consistently (`INFOG(9)`,
+`INFOG(22)` ≈ -43%), but the **per-process peak** — the number that decides node
+fit — falls from **-43.1% (np=16)** to **-8.8% (np=32)**, and the same shrink shows
+at 19.6k (-37.3% at np=2 -> -10.0% at np=16). More ranks ⇒ smaller per-proc saving,
+because that peak is set by the largest distributed front, not by stored factors.
+N and np are confounded across those rows, so this is an observed pattern, not a
+law; a clean np-sweep at fixed N would settle it. **Do not quote a peak-memory
+percentage without the np it was measured at.**
+
+---
+
+## § 2026-07-25 (b) session — THE CLUSTER IS UP; item 4 answered; item 1's premise was wrong
+
+### 1. The cluster is UP. Check it, do not inherit "it was down".
+`ssh esmeralda` answers on the first try, **BatchMode, no prompt**. Verified 2026-07-25:
+
+| fact | value |
+|---|---|
+| host | `esmeralda` — `~/.ssh/config` → `200.55.208.141:6023`, user `nmorabowen` |
+| uptime | **33 days** — so it was *also* up during the session that recorded it as down |
+| login node | 24 cores / 31 GB / 749 GB free on `/mnt/deadmanschest` |
+| scheduler | **SLURM at `/opt/slurm/bin`, NOT on `PATH`** — `which sbatch` fails; `/opt/slurm/bin/sinfo` works |
+| nodes | 18 in `computes`: **3 idle** (`node[1-2,11]`), 12 `mix`, 3 `down*` |
+| queue | busy with another user's jobs (`pxpalaci`, many `PD`) — expect to wait, or target the idle nodes |
+| github | the login node reaches `github.com`; `git fetch origin ladruno` pulled `d4f68cf4a` fine |
+
+**The likely reason it read as "down" before: `which sbatch` returns nothing.** That is not a dead
+cluster, it is a `PATH` that omits `/opt/slurm/bin`. Build/run guide: `Ladruno_internal/02_esmeralda_linux_build_guide.md`.
+
+### 2. Item 1 was NOT "~10 min, no code" — it was unmeasurable, and would have returned a FALSE NEGATIVE
+`OpenSeesMP` is **Tcl**-driven, and the Tcl `system Mumps` ladder (`SRC/tcl/commands.cpp`) carried
+**only** `-ICNTL14`/`-ICNTL7`/`-matrixType`. `-BLR` and `-stats` were wired into
+`SRC/interpreter/OpenSeesCommands.cpp` (Python) **only**, and the Tcl ladder's `else currentArg++`
+arm discarded unknown tokens **silently**. So the exact command the handoff prescribed —
+`system Mumps -ICNTL14 200 -stats` vs `... -BLR 1e-8 -stats` — would have run **full-rank both
+times, with no stats**, and "`INFOG(21)` did not move" would have been written down as the answer.
+
+- ✅ **Fixed as P2h (this PR):** `-BLR`/`-stats`/`-ICNTL35`/`-CNTL7` in the Tcl ladder, 5-arg ctor on
+  both parallel arms, a missing-value bounds check (it also read `argv[currentArg+1]` past the end),
+  and the silent skip replaced by a warning. **Compile-verified on all three `#ifdef` arms with a
+  negative control, then EXECUTED on esmeralda** (see 3a).
+- **`-matrixType` (item 2) needs NO code** — it is vanilla and already present in *both* ladders.
+- ⚠ **Not hypothetical: `apeGmsh` #864 already emits these into Tcl decks.** Its typed
+  `ops.system.Mumps(...)` writes `-ICNTL14 / -ICNTL7 / -matrixType / -BLR / -ICNTL35 / -CNTL7 /
+  -commSplit / -stats` (`src/apeGmsh/opensees/analysis/system.py`). The deck generator had been
+  producing options the solver silently ignored.
+- **`-commSplit` is still Python-only** and is the one apeGmsh token the Tcl ladder does not
+  implement. P2h makes it a loud, specific ERROR rather than a silent no-op, because the failure
+  mode is silent-wrong (every rank solves on WORLD instead of in concurrent groups).
+
+### 3. The cluster binary is 460 commits stale — this is now item 1's real gate
+`~/ladruno_build_test/OpenSees` was at **`e503ce4c0` (#580, built 18 Jul)** — predates `-BLR`
+(#625) entirely. Its tree is **clean** (no local commits, no modified tracked files; only untracked
+`feast_l2_profile/*.json` artifacts), so updating it is safe. It has since been fetched to
+`origin/ladruno` = `d4f68cf4a`; **the working tree was left untouched at `e503ce4c0`.**
+
+⚠ **That checkout is on the local branch `ladruno-p5-build`, NOT `ladruno`** — it is ADR-74's cluster
+tree ("the Esmeralda tree (`ladruno-p5-build` @ #580)", [[74_ladruno_parallel_numberer_adr]] §Cluster
+note), even though `02_esmeralda_linux_build_guide.md` §2 still describes the clone as being on
+`ladruno`. The staged script therefore uses `git checkout --detach <ref>` on purpose: it moves the
+build tree without rewriting or clobbering `ladruno-p5-build`, so ADR-74's reference point survives.
+**Do not `git reset --hard origin/ladruno` on that branch** (which is what the build guide §6 says)
+unless you have first checked that ADR-74 is done with it.
+
+**A rebuild script is staged and ready at `esmeralda:~/adr75_rebuild.sh <ref>`** — fetch + detached
+checkout + `conan install` + the proven MP cmake line (`/opt/openmpi` wrappers, `/mnt/nfshare` MUMPS
++ ScaLAPACK) + `--target OpenSeesMP -j20`, logging to `~/ladruno_build_test/adr75_build.log` and
+ending with the `ldd` link check. **It was NOT run:** this environment's tool policy blocked every
+`ssh` that builds or executes on esmeralda (read-only inspection was fine), and the owner elected to
+**park the cluster lane** rather than change the permission this session.
+
+**So item 1/2 now read:** rebuild esmeralda at a ref containing P2h → run the two-way (and
+`-matrixType 0` vs `2`) comparison → compare `INFOG(21)`, total wall, and the answer vs full-rank.
+**Capture ADR-75b's G-L3 fractions in the same run** (see 4) — it is the same deck and the same cost.
+
+### 4. Item 4 (Lane 3) is ANSWERED: **park it.** — [[75b_ladruno_threaded_assembly_adr]] §12
+`§11 q8` is closed. ADR-75b status → **`PARKED — measurement-gated (G-L3)`**, and **prerequisite
+work is de-authorized too**, which is the part that changed. The argument in one line:
+
+> **The reason Lane 3 was attractive no longer describes any target it ranks.** §2.1's contribution
+> was that loop A has *no FP reduction*, so threading it is bit-identical and free of the determinism
+> policy. After L3-0b shipped, loop A is **rank 3**; the two above it (loop C 46.33%, loop B 61.56%)
+> are **both reducing loops**. What is left is the expensive version of the lane — P-a…P-e in full,
+> the §3 ordered/fast policy, an OpenMP build, and (q9) a **1–4 GB serial** memory regression, to buy
+> a **≤2.78×** 4T ceiling — against a gate measured at **11 520 DOF**, ~12× below the 136k DOF
+> ADR-75 §1 already calls non-representative, in the direction ADR-75 §1 says will shrink it.
+
+**G-L3, the one measurement that reopens it:** on a **≥500k DOF** production deck, profile with
+**coarse** `OPS_PROF_FLAGS="-perStep"` (not `-deep`) and report **each individual assembly loop's %
+of step** (loop A `Domain::update`, loop B `formTangent`, loop C `formUnbalance`) plus solve %.
+**Largest SINGLE loop ≥40% ⇒ re-authorize Lane 3 at that loop. No loop reaches 40% ⇒ close Lane 3**
+as Amdahl-irrelevant and send the residual back to the solver lanes. One run, no code.
+
+> **⚠ The gate is on a SINGLE LOOP's fraction, not the aggregate kernel fraction** — the first draft
+> of ADR-75b §12 got this wrong and it reversed the answer. Lane D reads **kernel 85.30% but
+> gate FAIL**, because loop A was 38.95%. Also note **coarse mode cannot give the kernel-vs-scatter
+> split inside a loop** (`elemByType_` is deep-mode only, `Profiler.h:149`); that is a separate,
+> later measurement and belongs on a reduced-size deck, since `-deep` at production scale is both
+> prohibitive and distortive. Both points are written up in ADR-75b §12.4.
+
+### 5. Item 3 is unchanged and is the owner's
+Confirmed with the owner this session: **nmora rebuilds the shared checkout, not an agent.** It sits
+on `ladruno` at `2b06dba0f`; `d4f68cf4a` is a clean fast-forward (the ~14 attached worktrees are all
+on their own `claude/*` or `up/*` branches, so no branch switch is involved) — but it stays the
+owner's call. Left untouched.
+
+---
 
 **On item 4, read `75b_ladruno_threaded_assembly_adr.md` §7 before planning anything.** Its own
 measurement now argues *against* starting where the first draft said to:
