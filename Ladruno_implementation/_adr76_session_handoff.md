@@ -28,9 +28,9 @@ Loose threads: **1** fixed + ledgered (Linear.cpp scope inside the guard);
 **3** queued (upstream_pr_campaign Wave 0.7); **4** resolved (tracked in
 ADR-75 §9 open items); **5** done (Zone-A CI step, marker-gated); **6** done
 (checker anchors on the analytic 7.0); **7** done (dormant-copies quirk
-line, line numbers verified). Still open: **2** (`LadrunoModifiedNewton` —
-designed in ADR-76 §4.5, unstarted) and **8** (the `PR = —` ledger rows,
-fill with this PR's number after merge). The corrections list below remains
+line, line numbers verified). Still open: **2** only (`LadrunoModifiedNewton` —
+designed in ADR-76 §4.5, unstarted). **8** done: the seven ledger rows carry
+[#642](https://github.com/nmorabowen/OpenSees/pull/642). The corrections list below remains
 live — do not re-propagate.
 
 ## Shipped and verified
