@@ -386,6 +386,179 @@ void checkDistributedFourRankFlow(int rank, int size)
 }
 
 
+// ---------------------------------------------------------------------------
+// P3d -- rank/partition-permutation invariance.
+//
+// Which rank happens to own which fine subdomain is an accident of the
+// partitioner. Permuting that mapping must leave the eigenvalues, the residuals
+// AND the subspace (MAC ~ 1) untouched; if it does not, the hierarchy is
+// smuggling rank identity into the mathematics. Two permutations are exercised:
+// a reversal (coarse groups stay contiguous rank ranges) and an interleave
+// (coarse group 0 becomes ranks {0,2}), which is the one that would catch an
+// implementation assuming a coarse group is a contiguous block of ranks.
+// ---------------------------------------------------------------------------
+
+// `subdomain` selects which fine subdomain's DATA this rank carries. The `fine`
+// LABEL is always the rank: solveDistributedHierarchy validates `input.fine ==
+// rank` (LadrunoCMSHierarchy.cpp:1293), so the label is not a free index and a
+// permuted assignment can only be expressed by moving the data, which is what a
+// different partitioner would hand you anyway.
+bool runDistributedHierarchy(
+    int rank,
+    int subdomain,
+    int coarse,
+    ladruno_cms::DistributedHierarchyResult &result,
+    std::string &message)
+{
+    Fixture fixture = makeFixture(true);
+    const ladruno_cms::FineSubdomainInput &local =
+        fixture.input.fineSubdomains[static_cast<std::size_t>(subdomain)];
+    const std::vector<double> stiffnessDense = local.stiffness.toDense();
+    const std::vector<double> massDense = local.mass.toDense();
+    ladruno_cms::AssemblyRecord stiffnessRecord;
+    ladruno_cms::AssemblyRecord massRecord;
+    if (ladruno_cms::makeAssemblyRecord(
+            ladruno_cms::ContributionKind::Stiffness,
+            static_cast<std::size_t>(subdomain), stiffnessDense.data(), 3, 3,
+            local.equations, 9, 1.0, 1.0e-12, 1.0e-14, stiffnessRecord,
+            message) != 0)
+        return false;
+    if (ladruno_cms::makeAssemblyRecord(
+            ladruno_cms::ContributionKind::Mass,
+            static_cast<std::size_t>(subdomain), massDense.data(), 3, 3,
+            local.equations, 9, 1.0, 1.0e-12, 1.0e-14, massRecord,
+            message) != 0)
+        return false;
+
+    ladruno_cms::DistributedHierarchyInput input;
+    input.globalDimension = 9;
+    input.fine = rank;
+    input.coarse = coarse;
+    input.numberOfCoarseSubdomains = 2;
+    input.localEquations = local.equations;
+    input.localStiffness = local.stiffness;
+    input.localMass = local.mass;
+    std::vector<ladruno_cms::AssemblyRecord> ownedStiffness{stiffnessRecord};
+    std::vector<ladruno_cms::AssemblyRecord> ownedMass{massRecord};
+    input.ownedStiffnessContributions = &ownedStiffness;
+    input.ownedMassContributions = &ownedMass;
+    input.modesLevel2 = 3;
+    input.modesLevel1 = 10;
+    input.numberOfModes = 5;
+    input.denseMax = 20;
+    input.tolerance = 1.0e-8;
+    input.maximumOperatorApplications = 300;
+    message.clear();
+    return ladruno_cms::solveDistributedHierarchy(input, result, message) == 0;
+}
+
+double modalAssuranceCriterion(
+    const std::vector<double> &left,
+    const std::vector<double> &right,
+    int dimension,
+    int mode)
+{
+    const std::size_t offset = static_cast<std::size_t>(mode) * dimension;
+    double cross = 0.0;
+    double leftNorm = 0.0;
+    double rightNorm = 0.0;
+    for (int row = 0; row < dimension; ++row) {
+        const double a = left[offset + static_cast<std::size_t>(row)];
+        const double b = right[offset + static_cast<std::size_t>(row)];
+        cross += a * b;
+        leftNorm += a * a;
+        rightNorm += b * b;
+    }
+    if (leftNorm <= 0.0 || rightNorm <= 0.0)
+        return 0.0;
+    return (cross * cross) / (leftNorm * rightNorm);
+}
+
+void checkRankPermutationInvariance(int rank, int size)
+{
+    if (size != 4) {
+        if (rank == 0)
+            std::cout << "rank-permutation invariance SKIPPED: the fixture has "
+                         "4 fine subdomains and needs exactly 4 ranks, got "
+                      << size << '\n';
+        return;
+    }
+    // The coarse grouping stays structural (ranks 0,1 -> group 0; 2,3 -> group
+    // 1); what the permutation changes is WHICH subdomain's data lands in which
+    // group. With a complete local basis both runs are exact, so the spectra and
+    // the subspace must agree regardless.
+    ladruno_cms::DistributedHierarchyResult baseline;
+    std::string message;
+    // NOTE: run first, THEN build the failure string. Passing the call and
+    // "..." + message as two arguments of require() leaves their evaluation
+    // order unspecified, and the message was being captured BEFORE the call ran
+    // -- which reported every failure with an empty diagnostic.
+    const bool baselineOk =
+        runDistributedHierarchy(rank, rank, rank / 2, baseline, message);
+    require(baselineOk, "baseline distributed hierarchy failed: " + message);
+
+    const int permutations[2][4] = {
+        {3, 2, 1, 0},   // reversal
+        {0, 2, 1, 3}};  // interleave: group 0 now holds subdomains {0,2}
+    const char *labels[2] = {"reversal", "interleave"};
+
+    for (int which = 0; which < 2; ++which) {
+        const int subdomain = permutations[which][rank];
+        const std::string label(labels[which]);
+        ladruno_cms::DistributedHierarchyResult permuted;
+        message.clear();
+        const bool permutedOk = runDistributedHierarchy(
+            rank, subdomain, rank / 2, permuted, message);
+        require(permutedOk,
+                "permuted (" + label + ") distributed hierarchy failed: " +
+                    message);
+        if (!permutedOk ||
+            permuted.eigenvalues.size() != baseline.eigenvalues.size())
+            continue;
+
+        // Teeth check: the permutation must actually have moved data, or the
+        // comparisons below are comparing a run with itself.
+        const Fixture layout = makeFixture(true);
+        const int moved =
+            layout.input.fineSubdomains[static_cast<std::size_t>(subdomain)]
+                        .equations !=
+                    layout.input.fineSubdomains[static_cast<std::size_t>(rank)]
+                        .equations
+                ? 1
+                : 0;
+        int movedAnywhere = 0;
+        MPI_Allreduce(&moved, &movedAnywhere, 1, MPI_INT, MPI_MAX,
+                      MPI_COMM_WORLD);
+        require(movedAnywhere == 1,
+                "permutation (" + label + ") left every rank holding its "
+                "original subdomain -- the invariance check is vacuous");
+
+        for (std::size_t mode = 0; mode < baseline.eigenvalues.size(); ++mode) {
+            const double reference = baseline.eigenvalues[mode];
+            const double candidate = permuted.eigenvalues[mode];
+            const double relative = std::fabs(candidate - reference) /
+                std::max(1.0, std::fabs(reference));
+            require(relative <= 1.0e-9,
+                    "permutation (" + label + ") moved eigenvalue " +
+                        std::to_string(mode) + " by a relative " +
+                        std::to_string(relative));
+            require(permuted.normalizedResiduals[mode] < 3.0e-8,
+                    "permutation (" + label + ") damaged the residual of mode " +
+                        std::to_string(mode));
+            const double mac = modalAssuranceCriterion(
+                baseline.eigenvectors, permuted.eigenvectors, 9,
+                static_cast<int>(mode));
+            require(mac >= 1.0 - 1.0e-9,
+                    "permutation (" + label + ") rotated the subspace: MAC of "
+                    "mode " + std::to_string(mode) + " is " +
+                        std::to_string(mac));
+        }
+        require(permuted.diagnostics.finalRawDimension ==
+                    baseline.diagnostics.finalRawDimension,
+                "permutation (" + label + ") changed the reduced dimension");
+    }
+}
+
 void checkAssemblyMismatchIsRejected()
 {
     Fixture fixture = makeFixture(true);
@@ -413,6 +586,7 @@ int main(int argc, char **argv)
     checkExplicitMemoryGuards();
     checkAssemblyMismatchIsRejected();
     checkDistributedFourRankFlow(rank, size);
+    checkRankPermutationInvariance(rank, size);
     MPI_Finalize();
     if (failures != 0)
         return 1;
