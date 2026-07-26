@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 measured (see [[77a_c0_t0_results_2026-07-26]]); T0b/T1/T2/T3 open
+status: active — C0 + T0 + T0b measured (see [[77a_c0_t0_results_2026-07-26]]); T1/T2-nodal-mass/T3 open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -108,13 +108,17 @@ solve-bound lane. If the transient step behaves the same way, **the study's targ
 assembly side, not the scheme and not the factorization** — but that transplant is exactly
 what T0 must confirm or kill, because the transient step adds loops statics doesn't have.
 
-> [!warning] **MEASURED 2026-07-26 — the transplant did NOT hold.** T0 at n=15, 1 thread:
-> `elem.tangent` 30.4% → 40.8% under PARDISO while `linearSolve` went 58.5% → **45.2%**, so
-> the solve is **still the largest single loop** on the transient step — not the ~75%
-> element share L3-0 saw on the static lane. G0 earned its keep. The paragraph above stands
-> as the *hypothesis it was*, now falsified at 1 thread; a thread sweep (T0b) is the open
-> question, since PARDISO is handicapped at 1 thread and L3-0's number was not measured at
-> the same thread count. Full numbers + the G2 kill: [[77a_c0_t0_results_2026-07-26]].
+> [!warning] **MEASURED 2026-07-26 (T0 + T0b) — true, but only under a threaded solver.**
+> At **1 thread** the transplant fails: `elem.tangent` 30.4% → 40.8% under PARDISO while
+> `linearSolve` goes 58.5% → **45.2%**, leaving the solve the largest single loop. The
+> thread sweep then restored the premise: PARDISO crosses over at **2 threads**, and total
+> assembly reaches **59.6% (2 thr) / 64.7% (4 thr) / 73.9% (16 thr)** — the last essentially
+> L3-0's 74.9%. **UmfPack never crosses over at any thread count**, so the correct claim is
+> *"a fast threaded solver makes assembly dominant"*, not *"transient steps are
+> assembly-bound"*. G0 earned its keep twice: the answer is both thread- and
+> solver-dependent, which the transplant would have hidden in either direction. Operating
+> point: `MKL_NUM_THREADS=4` (wall degrades past 4 on this hybrid P/E part). Full numbers,
+> the G2 kill, and the C0 audit: [[77a_c0_t0_results_2026-07-26]].
 
 ## 4. Q1 — the fork-integrator question, argued
 
@@ -295,6 +299,11 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **C0 + T0 + T0b measured** ([[77a_c0_t0_results_2026-07-26]]). §3's
+  assembly premise holds only under a threaded solver (PARDISO crossover at 2 threads,
+  assembly 64.7% at 4; UmfPack never crosses). **G2 fails its gate at every thread count
+  (4.4-6.9% vs ≥10%) ⇒ constant-M/C cache not authorized.** C0: 4 confirmed findings, all
+  patch-in-place, none requiring ownership. T1 is the live stage.
 - 2026-07-26 (same day) — **Q1 split into Q1a (performance) / Q1b (ownership for fixes)**
   after owner raised upstream inconsistency. §4.2 added: measured inconsistency matrix
   (`-hall` missing from BackwardEuler/Collocation/Newmark1; sensitivity in Newmark only;

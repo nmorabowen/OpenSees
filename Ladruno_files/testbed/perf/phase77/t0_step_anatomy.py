@@ -34,6 +34,11 @@ Env knobs:
   OPS_T0_STEPS    transient steps timed (default 6)
   OPS_T0_REPEATS  repeats per arm, median reported (default 3)
   OPS_T0_SOLVERS  comma list subset of "UmfPack,Pardiso"
+  OPS_T0_TAG      suffix appended to the profile/json filenames (T0b thread sweep
+                  uses it to keep one profile per thread count; MKL reads
+                  MKL_NUM_THREADS at library init, so each thread count MUST be a
+                  separate process -- an in-process loop silently measures the
+                  first setting for every arm)
   OPS_T0_NUMBERER "RCM" (default)
 
 NUMBERER GOTCHA (measured 2026-07-26, ADR-77 T0): the fork's parallel numberer is
@@ -77,6 +82,7 @@ NSTEPS = int(os.environ.get("OPS_T0_STEPS", "6"))
 REPEATS = int(os.environ.get("OPS_T0_REPEATS", "3"))
 NUMBERER = os.environ.get("OPS_T0_NUMBERER", "RCM")
 THREADS = os.environ["MKL_NUM_THREADS"]
+TAG = os.environ.get("OPS_T0_TAG", "")
 
 # Same material/geometry constants as the ADR-75 Lane-B deck so the two studies
 # are comparable; only the analysis type and the added density differ.
@@ -148,7 +154,7 @@ def run_once(n, system_args, numberer, profile_tag=None):
     wall = time.perf_counter() - t0
     if profile_tag:
         ops.profiler("stop")
-        out = HERE / f"t0_{profile_tag}_n{n}.h5"
+        out = HERE / f"t0_{profile_tag}_n{n}{TAG}.h5"
         ops.profiler("report", str(out), "-run", profile_tag)
         ops.profiler("reset")
     return wall, ops.nodeDisp(tip, 3), nele, ndof
@@ -184,8 +190,8 @@ def main():
         spd = out["arms"]["UmfPack"]["wall_s"] / out["arms"]["Pardiso"]["wall_s"]
         out["speedup_pardiso"] = spd
         print(f"  speedup (Umf/Pardiso) = {spd:.2f}x")
-    (HERE / "t0_step_anatomy.json").write_text(json.dumps(out, indent=2))
-    print(f"wrote {HERE / 't0_step_anatomy.json'} + per-arm .h5 profiles")
+    (HERE / f"t0_step_anatomy{TAG}.json").write_text(json.dumps(out, indent=2))
+    print(f"wrote t0_step_anatomy{TAG}.json + per-arm .h5 profiles")
 
 
 if __name__ == "__main__":
