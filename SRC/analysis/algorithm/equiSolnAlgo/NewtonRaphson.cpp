@@ -160,6 +160,69 @@ NewtonRaphson::solveCurrentStep(void)
     int result = -1;
     numIterations = 0;
 
+    // Ladruno ADR-76 (R1 — documentation only, no behaviour change here):
+    //
+    // `formTangent` below sits INSIDE the iteration loop, so `algorithm Newton
+    // -initial` performs a full tangent assembly AND a full numeric
+    // factorization on every iteration. `INITIAL_THEN_CURRENT_TANGENT` is the
+    // only flag given special treatment (immediately below); `INITIAL_TANGENT`
+    // falls through to the generic branch and is re-formed unconditionally.
+    //
+    // Under `StaticIntegrator` that re-formation is `zeroTangent(); addKiToTang();`
+    // (StaticIntegrator.cpp:75-76). Whether the result is actually invariant is a
+    // per-element question and the default answer is NO:
+    //   * `NDMaterial::getInitialTangent()` is DEFINED as `{return getTangent();}`
+    //     (SRC/material/nD/NDMaterial.h:64), so any nD material that does not
+    //     override it hands every solid element a fully current tangent. By
+    //     contrast `UniaxialMaterial::getInitialTangent` is pure virtual
+    //     (UniaxialMaterial.h:68) — which is why fiber/frame models are better
+    //     behaved here than solids.
+    //   * ~41 elements implement `getInitialStiff()` as a straight
+    //     `return getTangentStiff();` — including the whole
+    //     SSPquad/SSPbrick/SSPquadUP/SSPbrickUP family.
+    // ==> On many solid models `algorithm Newton -initial` is not initial-stiffness
+    //     iteration at all. It is full Newton, at full cost, silently.
+    //
+    // READ THE CAVEAT BEFORE THE RECOMMENDATION. "Initial tangent" is a naming
+    // convention here, not a contract, so the matrix is NOT always invariant:
+    //   * `addKiToTang()` reaches `Element::getInitialStiff()`, which for a 3D
+    //     corotational transformation is material initial stiffness on the
+    //     CURRENT geometry — CorotCrdTransf3d::getInitialGlobalStiffMatrix
+    //     (:1452) triple-products through the member `T`, which `update()`
+    //     rebuilds at its tail (:549). LadrunoContactFE::addKiToTang likewise
+    //     reads the current active set.
+    //   * under a transient integrator the `c2*C` term carries `betaK*Kt`
+    //     (Newmark.cpp:295-298, SRC/element/Element.cpp:222-223), so with
+    //     `betaK != 0` the matrix genuinely differs between iterations.
+    // In those models `Newton -initial` and `ModifiedNewton -initial` are NOT the
+    // same algorithm: the former re-linearizes on the current configuration each
+    // iteration, the latter freezes at step start, so iteration counts and
+    // convergence can differ.
+    //
+    // ==> Outside those cases — i.e. when the assembled initial tangent really is
+    //     state-independent — `algorithm ModifiedNewton -initial` is the cheap
+    //     spelling of the same iteration: one assembly and one factorization per
+    //     step, forming the tangent BEFORE the loop (see
+    //     ModifiedNewton::solveCurrentStep). Add `-factorOnce` for one per
+    //     analysis, but see the staleness trap in LEDGER_quirks first.
+    //
+    // The cost, so the number is not mistaken for a redundancy proof: on a
+    // 39k-DOF SSPbrickUP/ShellMITC4 model with MKL PARDISO, `Newton -initial`
+    // cost 1.504 s/step against `ModifiedNewton -initial` at 0.936 s/step (1.61x)
+    // for an identical converged answer in an identical iteration count. That run
+    // was TRANSIENT with betaK != 0 — one of the cases above where the extra
+    // assembly is defensible. It measures what the extra work COSTS, not that it
+    // was redundant; it simply bought nothing there.
+    //
+    // Not fixed here on purpose: the skip is only sound when invariance is known,
+    // and that is an ELEMENT property, not an integrator-family one. A
+    // tangent-version counter was designed for this and then WITHDRAWN after
+    // adversarial review — do NOT implement from ADR-76 §4, which is kept only as
+    // a record; read §8 for why it is not safely implementable (the invalidator
+    // set misses staged construction, modal damping and six more; the predicate
+    // cannot express FE_Element/DOF_Group/domain-time dependencies). §2 of the
+    // same ADR carries the audit of which transformations are and are not
+    // configuration-dependent, which is the part worth reading.
     do {
 
       { OPS_PROFILE_SCOPE("formTangent");

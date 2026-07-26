@@ -2047,11 +2047,22 @@ int OPS_Algorithm()
 	opserr<<"WARNING unknown algorithm type "<<type<<"\n";
     }
 
-    // set algorithm
-    if (theAlgo != 0) {
-	if (cmds != 0) {
-	    cmds->setAlgorithm(theAlgo);
-	}
+    // Ladruno ADR-76 (adversarial review): a null factory result must be an ERROR.
+    //
+    // This used to fall through to `return 0`, i.e. openseespy reported SUCCESS
+    // while silently leaving the PREVIOUS algorithm in force — a wrong-answer
+    // path with no Python exception. Every algorithm factory can return null on
+    // a bad option (OPS_ModifiedNewton, OPS_NewtonRaphsonAlgorithm:85,
+    // OPS_ExpressNewton:64/71, ...), so fixing it HERE closes the hole for all of
+    // them at once. The classic Tcl path never had this bug — commands.cpp:4469
+    // already does `if (theNewtonAlgo == 0) return TCL_ERROR` — so this restores
+    // parity rather than inventing a new behaviour.
+    if (theAlgo == 0) {
+	opserr << "WARNING failed to create the algorithm - previous algorithm left unchanged\n";
+	return -1;
+    }
+    if (cmds != 0) {
+	cmds->setAlgorithm(theAlgo);
     }
 
     return 0;
