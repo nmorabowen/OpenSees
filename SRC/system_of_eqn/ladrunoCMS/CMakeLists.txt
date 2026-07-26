@@ -87,6 +87,11 @@ if(LADRUNO_CMS_BUILD_TESTS)
   )
   target_link_libraries(ladruno_cms_subspace_check PRIVATE OPS_LadrunoCMS)
 
+  add_executable(ladruno_cms_assembly_check EXCLUDE_FROM_ALL
+    ${PROJECT_SOURCE_DIR}/tests/ladruno_cms_assembly_check.cpp
+  )
+  target_link_libraries(ladruno_cms_assembly_check PRIVATE OPS_LadrunoCMS)
+
   add_executable(ladruno_cms_topology_check EXCLUDE_FROM_ALL
     ${PROJECT_SOURCE_DIR}/tests/ladruno_cms_topology_check.cpp
   )
