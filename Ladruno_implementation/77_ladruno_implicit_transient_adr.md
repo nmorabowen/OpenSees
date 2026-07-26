@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: draft — scoping; T0 not yet run
+status: active — C0 + T0 measured (see [[77a_c0_t0_results_2026-07-26]]); T0b/T1/T2/T3 open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -107,6 +107,14 @@ Plus the L3-0 baseline transplanted from statics: with PARDISO the element loop 
 solve-bound lane. If the transient step behaves the same way, **the study's target is the
 assembly side, not the scheme and not the factorization** — but that transplant is exactly
 what T0 must confirm or kill, because the transient step adds loops statics doesn't have.
+
+> [!warning] **MEASURED 2026-07-26 — the transplant did NOT hold.** T0 at n=15, 1 thread:
+> `elem.tangent` 30.4% → 40.8% under PARDISO while `linearSolve` went 58.5% → **45.2%**, so
+> the solve is **still the largest single loop** on the transient step — not the ~75%
+> element share L3-0 saw on the static lane. G0 earned its keep. The paragraph above stands
+> as the *hypothesis it was*, now falsified at 1 thread; a thread sweep (T0b) is the open
+> question, since PARDISO is handicapped at 1 thread and L3-0's number was not measured at
+> the same thread count. Full numbers + the G2 kill: [[77a_c0_t0_results_2026-07-26]].
 
 ## 4. Q1 — the fork-integrator question, argued
 
