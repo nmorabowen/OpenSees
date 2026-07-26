@@ -34,6 +34,23 @@
 #include <unordered_map>
 #include <utility>
 
+#if defined(_WIN32)
+// NOMINMAX: windows.h defines min/max as MACROS, which breaks every std::min /
+// std::max in this file (C2589 "illegal token on right side of '::'"). Must be
+// defined before windows.h is pulled in.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#elif defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
+
 #include <mpi.h>
 
 #ifdef _WIN32
@@ -130,6 +147,32 @@ bool checkedMPIProduct(int left, int right, int &value)
         return false;
     value = static_cast<int>(product);
     return true;
+}
+
+// ADR-1000 P4 section 1. Peak resident set of THIS process, bytes. The P4 plan
+// assumed a Linux CI lane (getrusage ru_maxrss); the harness that actually runs
+// CMS today is Windows, so both are wired. Returns 0 when the query fails --
+// callers must treat 0 as "unknown", never as "no memory used".
+std::size_t peakResidentSetBytes()
+{
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        return static_cast<std::size_t>(counters.PeakWorkingSetSize);
+    return 0u;
+#elif defined(__unix__) || defined(__APPLE__)
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+#if defined(__APPLE__)
+        return static_cast<std::size_t>(usage.ru_maxrss);        // bytes
+#else
+        return static_cast<std::size_t>(usage.ru_maxrss) * 1024u; // kilobytes
+#endif
+    }
+    return 0u;
+#else
+    return 0u;
+#endif
 }
 
 DenseMatrix makeDense(int rows, int columns)
@@ -1538,6 +1581,18 @@ int solveDistributedHierarchy(
         return -2;
     }
 
+    // ADR-1000 P4 section 1: per-phase attribution of the distributed
+    // hierarchy. Each phase stamp is taken AFTER the collective that closes the
+    // phase, so a phase's time includes the wait for the slowest rank in it --
+    // which is what you want when hunting a bottleneck across ranks.
+    double phaseMark = MPI_Wtime();
+    const auto stampPhase = [&phaseMark]() {
+        const double now = MPI_Wtime();
+        const double elapsed = now - phaseMark;
+        phaseMark = now;
+        return elapsed;
+    };
+
     std::vector<int> interior;
     std::vector<int> boundary;
     for (std::size_t local = 0; local < input.localEquations.size(); ++local) {
@@ -1547,6 +1602,8 @@ int solveDistributedHierarchy(
         else
             interior.push_back(static_cast<int>(local));
     }
+    result.diagnostics.partitionSeconds = stampPhase();
+
     CBReduction fineReduction;
     localFailure = reduceCraigBampton(
         input.localStiffness, input.localMass, interior, boundary,
@@ -1560,6 +1617,7 @@ int solveDistributedHierarchy(
         return -3;
     }
     result.diagnostics.appliedT2 = true;
+    result.diagnostics.fineModesSeconds = stampPhase();
     result.diagnostics.originalDimension = input.globalDimension;
     int localDimension = fineReduction.stiffness.dimension;
     MPI_Allreduce(&localDimension,
@@ -1591,6 +1649,7 @@ int solveDistributedHierarchy(
         return -4;
     }
     result.diagnostics.appliedS2 = true;
+    result.diagnostics.compatibilitySeconds = stampPhase();
     int groupCompatibleDimension = groupRank == 0 ? groupStiffness.dimension : 0;
     MPI_Allreduce(&groupCompatibleDimension,
                   &result.diagnostics.afterLevel2Compatibility,
@@ -1630,6 +1689,7 @@ int solveDistributedHierarchy(
         return -5;
     }
     result.diagnostics.appliedT1 = true;
+    result.diagnostics.level1Seconds = stampPhase();
     int coarseDimension = groupRank == 0 ? coarseReduction.stiffness.dimension : 0;
     MPI_Allreduce(&coarseDimension,
                   &result.diagnostics.afterLevel1BeforeCompatibility,
@@ -1722,6 +1782,8 @@ int solveDistributedHierarchy(
         MPI_Bcast(finalVectors.data(), finalVectorCount,
                   MPI_DOUBLE, 0, leaderComm);
     }
+
+    result.diagnostics.globalSolveSeconds = stampPhase();
 
     std::vector<double> groupCoordinates;
     if (groupRank == 0) {
@@ -1846,6 +1908,8 @@ int solveDistributedHierarchy(
                 result.diagnostics.maximumDuplicateJump, std::sqrt(variance));
         }
     }
+
+    result.diagnostics.backSubstitutionSeconds = stampPhase();
 
     SymmetricCSR ownedGlobalStiffness;
     SymmetricCSR ownedGlobalMass;
@@ -2063,6 +2127,8 @@ int solveDistributedHierarchy(
                      std::fabs(result.eigenvalues[static_cast<std::size_t>(mode)]) *
                      massNorm);
     }
+    result.diagnostics.publicationSeconds = stampPhase();
+    result.diagnostics.peakResidentBytes = peakResidentSetBytes();
     cleanup();
     return 0;
 }
