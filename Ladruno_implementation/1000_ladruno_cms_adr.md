@@ -1742,3 +1742,81 @@ locales densos.
 P4 queda parcialmente ejecutado. No se declara `shipped`: faltan repeticiones
 estadísticas, segundo particionado, oráculo explícito `Kx/Mx`, diagnóstico de MUMPS a dos
 ranks y reducción de memoria local.
+
+## 20. Desbloqueo del carril de ejecución `LADRUNO_CMS=ON` — 2026-07-26
+
+Los planes P3 y P4 fueron redactados sin una construcción funcional y designaron
+al job nocturno auto-hospedado como arnés permanente. Esta sesión auditó ese
+supuesto: **el carril no había ejecutado nunca un solo check**, por dos defectos
+independientes y por una condición de infraestructura.
+
+### 20.1 Defecto de enlace: capas MKL estática y dinámica en un mismo target
+
+`OPS_LadrunoCMS` enlazaba `${SCALAPACK_LIBRARIES}` (pila MKL **estática
+secuencial**, la que usan `OpenSeesSP` y `OpenSeesMP`) y además
+`${LAPACK_LIBRARIES}`, que en cualquier máquina donde `find_package(LAPACK)`
+resuelve a oneAPI expande a la interfaz **dinámica**. MKL no admite esa mezcla:
+el enlace muere con `LNK2005` sobre `mkl_serv_verbose_mode` y `mkl_serv_xerbla`.
+La lista era `PUBLIC`, de modo que el defecto alcanzaba también a cualquier
+target MP construido con `LADRUNO_CMS=ON`. Al depender de qué encuentra
+`find_package(LAPACK)`, el mismo árbol enlaza en una máquina y falla en otra —
+esta es la causa concreta del "no se pudo producir una construcción estable"
+registrado en el plan P3. Corrección: `${LAPACK_LIBRARIES}` sólo se enlaza
+`if(NOT MKL_FOUND)`. Detalle en [[../Ladruno_internal/BUILD_GOTCHAS]] #10.
+
+### 20.2 Defecto de batch: el lazo de ejecución nunca corría
+
+`build.bat` emitía `echo --- running ..._check (mpiexec -n 4) ---` dentro de un
+`for` con cuerpo entre paréntesis; `cmd` cerraba el bloque en ese `)` interno y
+abortaba con `--- was unexpected at this time` **después** de una compilación
+exitosa. El carril reportaba fallo sin haber ejecutado ningún check. Paréntesis
+internos escapados como `^( ^)`.
+
+### 20.3 El carril nocturno no existe en ejecución
+
+`GET /repos/nmorabowen/OpenSees/actions/runners` devuelve `total_count: 0`: no
+hay ningún runner auto-hospedado registrado. El job `zone-b-nightly` exige
+`[self-hosted, windows, ladruno-perf]`, por lo que queda en cola y el grupo de
+concurrencia lo cancela en cada corrida programada (22, 23, 24 y 25 de julio,
+todas `cancelled`). El arnés permanente que P3 y P4 dan por sentado **no produce
+evidencia alguna**, y aun con un runner en línea habría fallado por 20.2.
+
+### 20.4 Evidencia obtenida tras las correcciones
+
+Construcción local `LADRUNO_CMS=ON` completa —biblioteca, checks autónomos y el
+binario `OpenSeesMP.exe`— y toda la batería ejecutada bajo `mpiexec -n 4`:
+
+| Evidencia | Resultado |
+|---|---|
+| `ladruno_cms_mumps_check` | PASS en 4 rangos |
+| `ladruno_cms_lanczos_check` | PASS en 4 rangos |
+| `ladruno_cms_hierarchy_check` | PASS en 4 rangos |
+| `ladruno_cms_subspace_check` | PASS en 4 rangos |
+| enlace de `OpenSeesMP.exe` con `LADRUNO_CMS=ON` | PASS (confirma que la corrección 20.1 se propaga por el `PUBLIC`) |
+| `ladruno_cms_openseesmp_smoke.tcl` | PASS — dos `eigen -ladrunoCMS` consecutivos, cadena `T2->S2->T1->S1`, error relativo `<1e-8` contra el espectro analítico |
+| `ladruno_cms_physical_smoke.tcl` | PASS — modo `physical` en cuatro rangos, `n=16 r2=16 rRaw=13 rD=13`, residual `5.80175e-9` en 10 iteraciones de refinamiento |
+
+Es la primera evidencia de ejecución de CMS posterior a los planes P3/P4, y la
+primera vez que el comando `eigen -ladrunoCMS` se ejerce de extremo a extremo
+desde el intérprete en este árbol. No mueve ninguna puerta: son los checks
+unitarios de la biblioteca y dos smokes minúsculos, no el caso físico Building
+1A. El estado sigue siendo `draft` con P3 parcial y P4 pendiente.
+
+**Traza de reproducción** (necesaria porque el binario recién construido no
+encuentra Tcl por sí solo): `Ladruno_scripts\setup_env.bat`, luego
+`TCL_LIBRARY` apuntando al `lib\tcl8.6` de la caché de conan —de lo contrario
+el intérprete arranca sin comandos y falla con `invalid command name "wipe"`—,
+y finalmente `mpiexec -n 4 build\build\Release\OpenSeesMP.exe <deck>.tcl`. El
+`dist\` curado por el paso 5 de `build.bat` ya resuelve esto; el árbol de
+construcción crudo no.
+
+### 20.5 Corrección normativa al protocolo de la Parte 0 del plan P3
+
+El plan P3 ordena validar la corrección `ICNTL(28)=1` corriendo los checks a
+`np=2`. **Ese protocolo es vacío tal como está escrito**: `testDistributedMumps`
+y `checkDistributedFourRankFlow` retornan de inmediato si `size != 4`, así que a
+dos rangos la factorización distribuida —la ruta que falla— nunca se ejecuta y
+el check pasa sin probar nada. Validar la Parte 0 exige antes una fixture
+distribuida de dos rangos o un deck físico a `np=2`. La corrección `ICNTL(28)`
+no se aplica en esta sesión: aplicarla sin poder ejecutarla violaría su propia
+puerta de aceptación ("np=2 corregido Y np=4 sin regresión").
