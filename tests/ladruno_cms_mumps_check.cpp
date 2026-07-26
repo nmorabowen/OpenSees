@@ -21,6 +21,12 @@ void require(bool condition, const char *message)
     }
 }
 
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 void require(bool condition, const std::string &message)
 {
     require(condition, message.c_str());
@@ -296,7 +302,7 @@ void testDistributedMumpsAtScale(int rank, int size)
                     ", np=" + std::to_string(size) + "): " + message);
         if (factorized != 0)
             continue;
-        require(solver.solve(solution, numberOfColumns, message) == 0,
+        REQUIRE_CALL(solver.solve(solution, numberOfColumns, message) == 0,
                 "distributed multi-RHS solve failed at scale (" + label +
                     ", np=" + std::to_string(size) + "): " + message);
 
@@ -353,7 +359,7 @@ void testSerialMumpsAtScale(int rank)
                 std::to_string(model.order) + "): " + message);
     if (factorized != 0)
         return;
-    require(solver.solve(solution, 1, message) == 0,
+    REQUIRE_CALL(solver.solve(solution, 1, message) == 0,
             "serial solve failed at scale: " + message);
     double worst = 0.0;
     for (std::size_t entry = 0; entry < solution.size(); ++entry)

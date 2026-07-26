@@ -34,6 +34,12 @@ void require(bool condition, const std::string &message)
         ++failures;
     }
 }
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 
 bool close(double left, double right, double tolerance = 1.0e-8)
 {
@@ -169,7 +175,7 @@ void checkCompleteTwoLevelFlow()
         fixture.input.globalStiffness, fixture.input.globalMass, 5);
     ladruno_cms::TwoLevelHierarchyResult result;
     std::string message;
-    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+    REQUIRE_CALL(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
             "complete two-level hierarchy failed: " + message);
     require(result.diagnostics.appliedT2 && result.diagnostics.appliedS2 &&
             result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
@@ -207,7 +213,7 @@ void checkTruncatedTwoLevelFlow()
         fixture.input.globalStiffness, fixture.input.globalMass, 3);
     ladruno_cms::TwoLevelHierarchyResult result;
     std::string message;
-    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+    REQUIRE_CALL(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
             "truncated two-level hierarchy failed: " + message);
     require(result.diagnostics.finalRawDimension == 5,
             "truncated hierarchy has an unexpected final dimension");
@@ -238,7 +244,7 @@ void checkCoordinateMassCondensationAcrossHierarchy()
 
     ladruno_cms::StaticCondensation directCondensation;
     std::string message;
-    require(ladruno_cms::condenseCoordinateMass(
+    REQUIRE_CALL(ladruno_cms::condenseCoordinateMass(
                 fixture.input.globalStiffness, fixture.input.globalMass,
                 fixture.input.massRtol, fixture.input.massAtol,
                 directCondensation, message) == 0,
@@ -249,7 +255,7 @@ void checkCoordinateMassCondensationAcrossHierarchy()
 
     ladruno_cms::TwoLevelHierarchyResult result;
     message.clear();
-    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+    REQUIRE_CALL(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
             "hierarchical coordinate-mass condensation failed: " + message);
     require(result.diagnostics.finalRawDimension == 8,
             "hierarchy did not eliminate the finite-inertia coordinate at T2");
@@ -299,12 +305,12 @@ void checkDistributedFourRankFlow(int rank, int size)
     ladruno_cms::AssemblyRecord stiffnessRecord;
     ladruno_cms::AssemblyRecord massRecord;
     std::string message;
-    require(ladruno_cms::makeAssemblyRecord(
+    REQUIRE_CALL(ladruno_cms::makeAssemblyRecord(
                 ladruno_cms::ContributionKind::Stiffness, 0,
                 stiffnessDense.data(), 3, 3, local.equations, 9, 1.0,
                 1.0e-12, 1.0e-14, stiffnessRecord, message) == 0,
             "distributed stiffness record construction failed: " + message);
-    require(ladruno_cms::makeAssemblyRecord(
+    REQUIRE_CALL(ladruno_cms::makeAssemblyRecord(
                 ladruno_cms::ContributionKind::Mass, 0,
                 massDense.data(), 3, 3, local.equations, 9, 1.0,
                 1.0e-12, 1.0e-14, massRecord, message) == 0,
@@ -330,7 +336,7 @@ void checkDistributedFourRankFlow(int rank, int size)
     input.maximumOperatorApplications = 300;
     ladruno_cms::DistributedHierarchyResult result;
     message.clear();
-    require(ladruno_cms::solveDistributedHierarchy(input, result, message) == 0,
+    REQUIRE_CALL(ladruno_cms::solveDistributedHierarchy(input, result, message) == 0,
             "distributed T2/S2/T1/S1 flow failed: " + message);
     require(result.diagnostics.appliedT2 && result.diagnostics.appliedS2 &&
             result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
@@ -362,7 +368,7 @@ void checkDistributedFourRankFlow(int rank, int size)
             perturbationRow] += 2.0e-2;
     }
     message.clear();
-    require(ladruno_cms::solveNestedRitzUnion(
+    REQUIRE_CALL(ladruno_cms::solveNestedRitzUnion(
                 input.globalDimension, input.numberOfModes,
                 ownedStiffness, ownedMass, result, enriched, message) == 0,
             "nested distributed enrichment failed: " + message);
@@ -559,6 +565,166 @@ void checkRankPermutationInvariance(int rank, int size)
     }
 }
 
+// ---------------------------------------------------------------------------
+// P3d -- the three interface topologies.
+//
+// The shared fixture is one shape: a chain whose subdomains share equations both
+// INSIDE a coarse group (a level-2 interface) and ACROSS groups (a level-1
+// interface). That exercises S2 and S1 together and can hide a compatibility
+// path that only works when the other one is also active. The two degenerate
+// shapes are built here as a SEPARATE fixture so the shared makeFixture -- and
+// the seven tests pinned to its 9/12/10/10 dimensions -- stay untouched.
+//
+//   combined    subdomains {0,1,2} {2,3,4} {4,5,6} {6,7,8}      order 9
+//               shares 2 (in group 0), 4 (across groups), 6 (in group 1)
+//   level2Only  {0,1,2} {2,3,4} | {5,6,7} {7,8,9}               order 10
+//               shares only within each coarse group; the groups are decoupled
+//   level1Only  {0,1,2} {3,4,5} | {2,6,7} {5,8,9}               order 10
+//               no sharing inside a group; groups couple through 2 and 5
+// ---------------------------------------------------------------------------
+
+struct TopologyFixture {
+    int order = 0;
+    std::vector<std::vector<int>> equations;
+    std::vector<ladruno_cms::SymmetricCSR> stiffness;
+    std::vector<ladruno_cms::SymmetricCSR> mass;
+    ladruno_cms::SymmetricCSR globalStiffness;
+    ladruno_cms::SymmetricCSR globalMass;
+};
+
+TopologyFixture makeTopologyFixture(int topology)
+{
+    static const int tables[3][4][3] = {
+        {{0, 1, 2}, {2, 3, 4}, {4, 5, 6}, {6, 7, 8}},   // combined
+        {{0, 1, 2}, {2, 3, 4}, {5, 6, 7}, {7, 8, 9}},   // level-2 only
+        {{0, 1, 2}, {3, 4, 5}, {2, 6, 7}, {5, 8, 9}}};  // level-1 only
+    TopologyFixture fixture;
+    fixture.order = topology == 0 ? 9 : 10;
+    std::vector<double> globalStiffness(
+        static_cast<std::size_t>(fixture.order) * fixture.order, 0.0);
+    std::vector<double> globalMass(globalStiffness.size(), 0.0);
+    for (int fine = 0; fine < 4; ++fine) {
+        const double shift = 0.15 * fine;
+        const std::vector<double> localStiffness = {
+            2.2 + shift, -1.0, 0.0,
+            -1.0, 2.6 + shift, -0.8,
+            0.0, -0.8, 1.9 + shift};
+        const std::vector<double> localMass = {
+            0.8 + 0.05 * fine, 0.04, 0.0,
+            0.04, 1.0 + 0.05 * fine, 0.03,
+            0.0, 0.03, 1.2 + 0.05 * fine};
+        std::vector<int> ids(tables[topology][fine], tables[topology][fine] + 3);
+        fixture.equations.push_back(ids);
+        fixture.stiffness.push_back(csrFromDense(localStiffness, 3));
+        fixture.mass.push_back(csrFromDense(localMass, 3));
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                const std::size_t global =
+                    static_cast<std::size_t>(ids[static_cast<std::size_t>(row)]) *
+                        fixture.order +
+                    ids[static_cast<std::size_t>(column)];
+                globalStiffness[global] +=
+                    localStiffness[static_cast<std::size_t>(row) * 3 + column];
+                globalMass[global] +=
+                    localMass[static_cast<std::size_t>(row) * 3 + column];
+            }
+        }
+    }
+    fixture.globalStiffness = csrFromDense(globalStiffness, fixture.order);
+    fixture.globalMass = csrFromDense(globalMass, fixture.order);
+    return fixture;
+}
+
+void checkInterfaceTopologies(int rank, int size)
+{
+    if (size != 4) {
+        if (rank == 0)
+            std::cout << "interface-topology sweep SKIPPED: needs exactly 4 "
+                         "ranks, got " << size << '\n';
+        return;
+    }
+    const char *labels[3] = {"combined", "level2Only", "level1Only"};
+    for (int topology = 0; topology < 3; ++topology) {
+        const std::string label(labels[topology]);
+        const TopologyFixture fixture = makeTopologyFixture(topology);
+        const std::vector<double> reference =
+            directEigenvalues(fixture.globalStiffness, fixture.globalMass, 5);
+        const std::vector<double> stiffnessDense =
+            fixture.stiffness[static_cast<std::size_t>(rank)].toDense();
+        const std::vector<double> massDense =
+            fixture.mass[static_cast<std::size_t>(rank)].toDense();
+
+        std::string message;
+        ladruno_cms::AssemblyRecord stiffnessRecord;
+        ladruno_cms::AssemblyRecord massRecord;
+        const bool stiffnessOk = ladruno_cms::makeAssemblyRecord(
+            ladruno_cms::ContributionKind::Stiffness,
+            static_cast<std::size_t>(rank), stiffnessDense.data(), 3, 3,
+            fixture.equations[static_cast<std::size_t>(rank)], fixture.order,
+            1.0, 1.0e-12, 1.0e-14, stiffnessRecord, message) == 0;
+        require(stiffnessOk,
+                "topology " + label + ": stiffness record failed: " + message);
+        message.clear();
+        const bool massOk = ladruno_cms::makeAssemblyRecord(
+            ladruno_cms::ContributionKind::Mass,
+            static_cast<std::size_t>(rank), massDense.data(), 3, 3,
+            fixture.equations[static_cast<std::size_t>(rank)], fixture.order,
+            1.0, 1.0e-12, 1.0e-14, massRecord, message) == 0;
+        require(massOk, "topology " + label + ": mass record failed: " + message);
+        if (!stiffnessOk || !massOk)
+            continue;
+
+        ladruno_cms::DistributedHierarchyInput input;
+        input.globalDimension = fixture.order;
+        input.fine = rank;
+        input.coarse = rank / 2;
+        input.numberOfCoarseSubdomains = 2;
+        input.localEquations = fixture.equations[static_cast<std::size_t>(rank)];
+        input.localStiffness = fixture.stiffness[static_cast<std::size_t>(rank)];
+        input.localMass = fixture.mass[static_cast<std::size_t>(rank)];
+        std::vector<ladruno_cms::AssemblyRecord> ownedStiffness{stiffnessRecord};
+        std::vector<ladruno_cms::AssemblyRecord> ownedMass{massRecord};
+        input.ownedStiffnessContributions = &ownedStiffness;
+        input.ownedMassContributions = &ownedMass;
+        input.modesLevel2 = 3;
+        input.modesLevel1 = 10;
+        input.numberOfModes = 5;
+        input.denseMax = 20;
+        input.tolerance = 1.0e-8;
+        input.maximumOperatorApplications = 300;
+
+        ladruno_cms::DistributedHierarchyResult result;
+        message.clear();
+        const bool solved =
+            ladruno_cms::solveDistributedHierarchy(input, result, message) == 0;
+        require(solved,
+                "topology " + label + ": distributed hierarchy failed: " +
+                    message);
+        if (!solved)
+            continue;
+
+        // The T2 -> S2 -> T1 -> S1 chain is mandatory per the ADR, including on
+        // a topology where one of the interface sets is empty.
+        require(result.diagnostics.appliedT2 && result.diagnostics.appliedS2 &&
+                    result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
+                "topology " + label + ": the mandatory transformation chain was "
+                "not applied end to end");
+        require(result.eigenvectors.size() ==
+                    static_cast<std::size_t>(fixture.order) * 5,
+                "topology " + label + ": incomplete published eigenvectors");
+        require(result.diagnostics.maximumDuplicateJump < 2.0e-10,
+                "topology " + label + ": incompatible interface copies");
+        for (std::size_t mode = 0; mode < reference.size(); ++mode) {
+            require(close(result.eigenvalues[mode], reference[mode], 3.0e-8),
+                    "topology " + label + ": eigenvalue " +
+                        std::to_string(mode) + " differs from direct LAPACK");
+            require(result.normalizedResiduals[mode] < 3.0e-8,
+                    "topology " + label + ": residual of mode " +
+                        std::to_string(mode) + " is excessive");
+        }
+    }
+}
+
 void checkAssemblyMismatchIsRejected()
 {
     Fixture fixture = makeFixture(true);
@@ -587,6 +753,7 @@ int main(int argc, char **argv)
     checkAssemblyMismatchIsRejected();
     checkDistributedFourRankFlow(rank, size);
     checkRankPermutationInvariance(rank, size);
+    checkInterfaceTopologies(rank, size);
     MPI_Finalize();
     if (failures != 0)
         return 1;

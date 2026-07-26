@@ -48,6 +48,12 @@ void require(bool condition, const std::string &message)
     }
 }
 
+// Evaluates the call FIRST, then builds the diagnostic. As two arguments of
+// require() their evaluation order is unspecified in C++, and MSVC was building
+// the message string BEFORE the call filled `message` -- every failure printed
+// an empty diagnostic. See LEDGER_quirks (2026-07-26).
+#define REQUIRE_CALL(status, text)                                                 do {                                                                               const bool ladrunoCallOk = (status);                                           require(ladrunoCallOk, text);                                              } while (0)
+
 // ---------------------------------------------------------------------------
 // Model: nx by ny bilinear cells, one DOF per node, bottom row constrained.
 // ---------------------------------------------------------------------------
@@ -224,7 +230,7 @@ void checkDistributedAssembly(int rank, int size)
     ladruno_cms::SymmetricCSR referenceStiffness;
     ladruno_cms::SymmetricCSR referenceMass;
     std::vector<std::size_t> referenceOrdinals;
-    require(assemblePencil(
+    REQUIRE_CALL(assemblePencil(
                 model, [](int) { return true; }, referenceStiffness,
                 referenceMass, referenceOrdinals, message),
             "reference assembly failed: " + message);
@@ -238,7 +244,7 @@ void checkDistributedAssembly(int rank, int size)
     const auto owned = [&model, rank, size](int element) {
         return model.owner(element % model.nx, size) == rank;
     };
-    require(assemblePencil(model, owned, localStiffness, localMass,
+    REQUIRE_CALL(assemblePencil(model, owned, localStiffness, localMass,
                            ownedOrdinals, message),
             "distributed assembly failed: " + message);
 
@@ -334,7 +340,7 @@ void checkDistributedAssembly(int rank, int size)
     ladruno_cms::SymmetricCSR replicatedStiffness;
     ladruno_cms::SymmetricCSR replicatedMass;
     std::vector<std::size_t> replicatedOrdinals;
-    require(assemblePencil(model, [](int) { return true; },
+    REQUIRE_CALL(assemblePencil(model, [](int) { return true; },
                            replicatedStiffness, replicatedMass,
                            replicatedOrdinals, message),
             "replicated assembly fixture failed: " + message);
@@ -354,7 +360,7 @@ void checkDistributedAssembly(int rank, int size)
     ladruno_cms::SymmetricCSR corruptedStiffness;
     ladruno_cms::SymmetricCSR corruptedMass;
     std::vector<std::size_t> corruptedOrdinals;
-    require(assemblePencil(model, corrupted, corruptedStiffness,
+    REQUIRE_CALL(assemblePencil(model, corrupted, corruptedStiffness,
                            corruptedMass, corruptedOrdinals, message),
             "corrupted-owner fixture failed: " + message);
     const double corruptedDifference = worstRelativeDifference(
