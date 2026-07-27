@@ -1713,6 +1713,20 @@ int solveDistributedHierarchy(
     result.diagnostics.lanczosOperatorApplications =
         fineReduction.profile.lanczosOperatorApplications;
     result.diagnostics.lanczosRestarts = fineReduction.profile.lanczosRestarts;
+    // ADR-1000 section 33. Reduce the restart count with MAXLOC so the caller
+    // can warn about a THRASHING rank, not merely about rank 0 -- section 32
+    // measured rank 0 as the fastest subdomain (it owns the clamped column), so
+    // its own count understates the problem. One extra int-pair Allreduce per
+    // solve, on a phase that already carries several.
+    {
+        int localPair[2] = { fineReduction.profile.lanczosRestarts, 0 };
+        int worstPair[2] = { 0, 0 };
+        MPI_Comm_rank(MPI_COMM_WORLD, &localPair[1]);
+        MPI_Allreduce(localPair, worstPair, 1, MPI_2INT, MPI_MAXLOC,
+                      MPI_COMM_WORLD);
+        result.diagnostics.lanczosRestartsAcrossRanks = worstPair[0];
+        result.diagnostics.lanczosRestartsWorstRank = worstPair[1];
+    }
     result.diagnostics.originalDimension = input.globalDimension;
     int localDimension = fineReduction.stiffness.dimension;
     MPI_Allreduce(&localDimension,

@@ -344,6 +344,77 @@ void testCommandParserAndLocalPencil()
                     "validate accepted -maxRestarts 0");
     }
 
+    // ADR-1000 section 33: -restartWarn is the k2 convergence diagnostic. A k2
+    // below the threshold does not fail, it grinds and then returns the right
+    // answer, so nothing in the result tells the user to raise -modesL2. Unlike
+    // -maxRestarts, 0 is LEGAL here: it disables the warning.
+    {
+        ladruno_cms::Options warnOptions;
+        int warnModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "-restartWarn", "40", "2"},
+                         warnOptions, warnModes, message) == 0,
+                     "-restartWarn was rejected: " + message);
+        require(warnOptions.restartWarn == 40,
+                "-restartWarn did not reach the options");
+        REQUIRE_CALL(warnOptions.validate(1, 2, message) == 0,
+                     "validate rejected a positive -restartWarn: " + message);
+    }
+    {
+        ladruno_cms::Options defaultWarn;
+        int defaultWarnModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "2"},
+                         defaultWarn, defaultWarnModes, message) == 0,
+                     "default parse failed: " + message);
+        require(defaultWarn.restartWarn == 8,
+                "the -restartWarn default is not 8");
+        // The warning must not be scaled off the restart BUDGET: raising
+        // -maxRestarts is what a user does when thrashing, so a threshold tied
+        // to it would go quiet exactly when it matters (section 33).
+        ladruno_cms::Options raisedBudget;
+        int raisedModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "-maxRestarts", "4000", "2"},
+                         raisedBudget, raisedModes, message) == 0,
+                     "raised-budget parse failed: " + message);
+        require(raisedBudget.restartWarn == 8,
+                "-maxRestarts moved the -restartWarn threshold");
+    }
+    {
+        ladruno_cms::Options offOptions;
+        int offModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "-restartWarn", "0", "2"},
+                         offOptions, offModes, message) == 0,
+                     "-restartWarn 0 was rejected at parse: " + message);
+        require(offOptions.restartWarn == 0,
+                "-restartWarn 0 did not reach the options");
+        REQUIRE_CALL(offOptions.validate(1, 2, message) == 0,
+                     "validate rejected -restartWarn 0, which must disable "
+                     "the warning rather than be an error: " + message);
+    }
+    require(ladruno_cms::parseCommandOptions(
+                {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                 "-restartWarn", "notAnInteger", "2"},
+                options, modes, message) < 0,
+            "-restartWarn accepted a non-integer");
+    {
+        ladruno_cms::Options negativeOptions;
+        int negativeModes = 0;
+        std::string negativeMessage;
+        if (ladruno_cms::parseCommandOptions(
+                {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                 "-restartWarn", "-1", "2"},
+                negativeOptions, negativeModes, negativeMessage) == 0)
+            require(negativeOptions.validate(1, 2, negativeMessage) < 0,
+                    "validate accepted a negative -restartWarn");
+    }
+
     // ADR-1000 P3d: the level-1 ablation is a benchmark-only diagnostic reached
     // through TwoLevelHierarchyInput::diagnosticAblateLevel1. It must NOT be
     // requestable from a command line -- if someone ever adds such a flag, the
