@@ -67,6 +67,28 @@ These are additive reporting only — no algorithm change — and belong in the 
 
 ## 2. The ablation comparison (identical hardware + model)
 
+> **RE-MEASURED 2026-07-26 (ADR §30), and the news is bad.** Not on Building 1A
+> — that deck is still missing — but on a like-for-like sheet model where both
+> paths solve the identical mesh (`cms_compare_arpack.tcl`; the six eigenvalues
+> agree to ~1e-12). Standard = `eigen` with Arpack+UmfPack on 1 rank; CMS = 4
+> ranks.
+>
+> | mesh | n | standard | CMS | ratio |
+> |---|---:|---:|---:|---:|
+> | 20x20 | 3 200 | 0.0294 s | 0.2335 s | **7.9x** |
+> | 40x40 | 12 800 | 0.2061 s | **107.90 s** | **523x** |
+> | 60x60 | 28 800 | 0.6480 s | did not finish | — |
+>
+> The 7.9x at n=3200 reproduces the Building-1A 7.0x almost exactly (§29's work
+> moved it down from ~11x). **The second row is the problem:** 4x the DOFs costs
+> the standard solver 7x and CMS **462x**. CMS scales far WORSE, which undercuts
+> the memory-capacity argument — a capacity win is worthless if the answer never
+> arrives. Caveat: CMS parameters were held fixed (k2=12, k1=24) at every size,
+> so a campaign that scales k2 with n would do better; 523x is not a tuning gap
+> though. Prime suspect: the fixed-interface Lanczos cost growing
+> super-linearly in m at constant k2 (consistent with the restart exhaustion in
+> §27.4).
+
 Run all four, same Building-1A deck, same box:
 
 - (a) standard solver, no CMS (ARPACK) — the bar;
