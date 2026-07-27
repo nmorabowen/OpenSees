@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 + T0b + T1 measured (see [[77a_c0_t0_results_2026-07-26]]); T2-nodal-mass/T3 open
+status: active — C0 + T0 + T0b + T1 + T3 measured; G2 and G3 both CLOSED; T2-nodal-mass + C0 patch wave open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -247,7 +247,12 @@ runs A/B interleaved, 3 rounds, per the ADR-75b method rules.
   `addMtoTang`/`addCtoTang` + `getMass`/`getDamp` + the DOF_Group tangent loop per step.
   That number **is** the ceiling of the cache win of §4.3(4). If it is small, the cache
   dies here at zero design cost.
-- **T3 — scheme shootout on cost-per-simulated-second.** Newmark(γ=½,β=¼) vs HHT(α) vs
+- **T3 — scheme shootout on cost-per-simulated-second.** ✅ **MEASURED — §6d.**
+  **G3 NOT AUTHORIZED** (TRBDF2 1.18-1.25x, best damped 1.00-1.07x, bar is ≥1.3x) ⇒ the
+  implicit Bathe β1/β2 lane is **closed with the benchmark on record**. Also **falsified**
+  this stage's own hypothesis — numerical damping bought *zero* iteration reduction. And it
+  turned up **C0-6**, a confirmed bug in `GeneralizedAlpha::update()` that
+  `LadrunoGeneralizedAlpha` inherits. Original scope text: Newmark(γ=½,β=¼) vs HHT(α) vs
   GeneralizedAlpha(ρ∞) vs TRBDF2 on a *nonlinear* fork-real deck: iterations/step ×
   cost/step × achievable Δt at matched accuracy (energy/drift oracle). Feeds gate G3.
   This is the ADR-49a Rank-3 "assess" finally executed.
@@ -304,6 +309,14 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **T3 measured** (§6d). **G3 NOT AUTHORIZED ⇒ implicit Bathe β1/β2 CLOSED**
+  with the benchmark on record (the ADR-49a Rank-3 deliverable). Damping bought zero
+  iteration reduction, falsifying §5's T3 hypothesis. **C0-6 found: a real bug in vanilla
+  `GeneralizedAlpha::update()`** (αM-weighted acceleration computed then discarded),
+  **inherited by `LadrunoGeneralizedAlpha`**; both correct only at αM=1.0. One-line
+  patch-in-place, not yet applied. With G2 and G3 both closed, **every gated code item in
+  this ADR is now decided, and none authorized a fork integrator** — Q1a and Q1b both land
+  on "no" with measurement behind them.
 - 2026-07-26 — **T1 measured** (§6c of the results doc). The inference T0b invited —
   "assembly is 65%, so assembly-skipping levers win" — is **false**: `ModifiedNewton` buys
   a 0.33x cheaper iteration for 3.88x more iterations (net 1.27x slower). Winner is
