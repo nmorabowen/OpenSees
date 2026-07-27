@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 + T0b measured (see [[77a_c0_t0_results_2026-07-26]]); T1/T2-nodal-mass/T3 open
+status: active — C0 + T0 + T0b + T1 measured (see [[77a_c0_t0_results_2026-07-26]]); T2-nodal-mass/T3 open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -233,7 +233,12 @@ runs A/B interleaved, 3 rounds, per the ADR-75b method rules.
   `commit`. Requires one small instrumentation addition: a deep-profile scope on the
   DOF_Group loop at `TransientIntegrator.cpp:102` (currently untimed, noted in the P3
   comment at `:110`). **Everything downstream keys on this table.**
-- **T1 — reuse levers as shipped today.** Same deck: `Newton` vs `ModifiedNewton` vs
+- **T1 — reuse levers as shipped today.** ✅ **MEASURED — see [[77a_c0_t0_results_2026-07-26]] §6c.**
+  Verdict: the winner is **nonlinearity-dependent** (Newton at 1% past yield;
+  **KrylovNewton at 2.4x and 7x yield, 1.75x faster than Newton at ×4 and the only
+  practical arm at ×10**), every lever loses to plain Newton on a near-elastic deck, and
+  the modified/initial-stiffness family is a **robustness** lever (converges at ×10 where
+  Newton diverges) rather than a speed one. Same deck: `Newton` vs `ModifiedNewton` vs
   `ModifiedNewton -factoronce` vs `KrylovNewton` (P1c `-krylov` on the PARDISO side), each
   at equal convergence tolerance. Deliver cost-per-converged-step and iterations/step.
   Under PARDISO the textbook ranking may invert (factor is cheap, assembly isn't) —
@@ -299,6 +304,14 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **T1 measured** (§6c of the results doc). The inference T0b invited —
+  "assembly is 65%, so assembly-skipping levers win" — is **false**: `ModifiedNewton` buys
+  a 0.33x cheaper iteration for 3.88x more iterations (net 1.27x slower). Winner is
+  nonlinearity-dependent; `KrylovNewton` is the standout. The ModifiedNewton family is
+  re-cast as a **robustness** lever (converges at 7x yield where Newton diverges), which
+  **re-motivates `LadrunoModifiedNewton` on robustness grounds and removes its speed
+  justification**. New **C0-5**: the P3 profiler instruments only 3 of 11 solution
+  algorithms (patch-in-place). ADR-76 §3's trap does **not** fire on fork materials.
 - 2026-07-26 — **C0 + T0 + T0b measured** ([[77a_c0_t0_results_2026-07-26]]). §3's
   assembly premise holds only under a threaded solver (PARDISO crossover at 2 threads,
   assembly 64.7% at 4; UmfPack never crosses). **G2 fails its gate at every thread count

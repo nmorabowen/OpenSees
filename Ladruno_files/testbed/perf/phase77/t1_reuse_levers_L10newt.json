@@ -1,0 +1,15 @@
+{
+  "n": 15,
+  "steps": 1,
+  "system": "Pardiso",
+  "threads": "4",
+  "tol": 1e-07,
+  "maxIter": 2500,
+  "load_scale": 10.0,
+  "arms": {
+    "newton": {
+      "label": "Newton",
+      "failed": "analyze FAILED at step 1"
+    }
+  }
+}
