@@ -6696,10 +6696,16 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       }
 #ifdef _PARALLEL_INTERPRETERS
       else if (typeSolver == EigenSOE_TAGS_ArpackSOE) {
+	// Ladruno ADR-1000 §31.5 (apeGmsh ADR 0077 F1): re-gate on REUSE.
 	// The SOE is reused across `system` changes, so a deck that
 	// switches between a serial system and Mumps between eigen calls
 	// must re-gate the MP wiring here; setProcessID(-1) restores the
 	// serial semantics (merge and lockstep guard go dormant).
+	// NOTE (PR #668 review): that `else` is correct for a REPLICATED
+	// deck on a serial system, but it is the old broken path on a
+	// PARTITIONED deck with a non-Mumps distributed system
+	// (DistributedProfileSPD, MPIDiagonal are also reachable here) —
+	// recorded as a known scope hole in ADR-1000 §32.4.
 	ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
 	if (theSOE != 0 &&
 	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {

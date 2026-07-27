@@ -65,6 +65,17 @@ ArpackSOE::getNumEqn(void) const
 ArpackSOE::~ArpackSOE()
 {
   if (M != 0) delete [] M;
+
+  // Ladruno (PR #668 review): free the wiring bookkeeping the setters /
+  // recvSelf allocate. The Channel objects themselves are owned by the
+  // interpreter main — only the arrays are ours.
+  if (theChannels != 0) delete [] theChannels;
+  if (localCol != 0) {
+    for (int i=0; i<numChannels; i++)
+      if (localCol[i] != 0) delete localCol[i];
+    delete [] localCol;
+  }
+  if (sizeLocal != 0) delete sizeLocal;
 }
 
 int 
@@ -385,6 +396,7 @@ ArpackSOE::setProcessID(int dTag)
 int
 ArpackSOE::setChannels(int nChannels, Channel **theC)
 {
+  int oldNumChannels = numChannels;
   numChannels = nChannels;
 
   if (theChannels != 0)
@@ -394,8 +406,11 @@ ArpackSOE::setChannels(int nChannels, Channel **theC)
   for (int i=0; i<numChannels; i++)
     theChannels[i] = theC[i];
 
-  if (localCol != 0)
+  if (localCol != 0) {
+    for (int i=0; i<oldNumChannels; i++)
+      if (localCol[i] != 0) delete localCol[i];
     delete [] localCol;
+  }
   localCol = new ID *[numChannels];
   for (int i=0; i<numChannels; i++)
     localCol[i] = 0;
