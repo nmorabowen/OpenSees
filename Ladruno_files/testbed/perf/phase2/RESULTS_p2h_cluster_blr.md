@@ -152,12 +152,33 @@ Two things to take from this, one of which corrects the headline:
    | 408.5k | 16 | **−43.1%** |
    | 884.8k | **32** | **−8.8%** |
 
-   The pattern reproduces at two different model sizes: **more ranks ⇒ smaller
-   per-proc peak saving**, because that peak is set by the largest (distributed)
-   front rather than by total stored factors. **N and np are confounded across these
-   rows** — this is an observed pattern, not a fitted law, and a clean np-sweep at
-   fixed N is the experiment that would settle it. **Do not quote "−43% peak
-   memory" without the rank count it was measured at.**
+   The pattern appeared to reproduce at two model sizes, suggesting **more ranks ⇒
+   smaller per-proc peak saving**. **N and np are confounded across these rows**, so
+   it was recorded as an observed pattern, not a fitted law, with a clean np-sweep
+   at fixed N named as the experiment that would settle it.
+
+   > ### ❌ REFUTED — the np-sweep was run, and the proposed explanation is WRONG
+   >
+   > See **`RESULTS_p2h_npsweep.md`** in this directory. At **fixed N = 143 811 DOF,
+   > every rank count on ONE node** (so neither N nor the interconnect varies), the
+   > per-proc saving does not shrink with np — **it grows**:
+   >
+   > | np | Δ per-proc `INFOG(21)` | Δ total `INFOG(22)` |
+   > |---|---|---|
+   > | 4 | −36.6% | −38.0% |
+   > | 8 | −35.0% | −36.0% |
+   > | 16 | −45.4% | −29.1% |
+   > | 32 | **−52.8%** | −22.6% |
+   >
+   > So the −8.8% at 884.8k is **not** a rank-count effect. That run differed in
+   > **two** ways from the rows above — 6.2× the DOF *and* 2 nodes instead of 1 —
+   > and node count was never isolated. It remains unexplained; **the one thing now
+   > established is that np is not the cause.**
+   >
+   > What *is* solid: the two memory measures move in **opposite** directions with
+   > np — per-proc peak saving improves, total-factor saving erodes (−38.0% → −22.6%)
+   > because total memory grows with rank count for both modes. Quote whichever one
+   > answers your question, and quote it **with its np**.
 
 3. **The wall is about total node memory, not about symmetric.** Full-rank failed on
    1 node and succeeded on 2; symmetric succeeded on both counts tested. Symmetric
