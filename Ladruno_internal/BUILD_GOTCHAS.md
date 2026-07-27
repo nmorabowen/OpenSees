@@ -450,3 +450,54 @@ $t = [IO.File]::ReadAllText($p) -replace "`r`n","`n" -replace "`n","`r`n"
 
 Verify with a bare-LF count (must be 0), not by eye — and re-run the script,
 because a `git diff` cannot show you this class of breakage.
+
+## 12. Running an MP binary from the raw build tree — three DLL traps (ADR-1000 §32)
+
+The curated installer layout resolves its own runtime. A freshly built
+`build\build\Release\OpenSeesMP.exe` does not, and fails in three different ways
+that all look like "the build is broken". Each one cost time in the ADR-1000 §32
+session; none is a build problem.
+
+**a. `c0000135` on every rank = a missing DLL, and it is usually the MKL
+generation.** `dumpbin /DEPENDENTS OpenSeesMP.exe` is the fast answer. This fork
+currently imports `mkl_core.3.dll` / `mkl_intel_thread.3.dll` — the **2026.1**
+generation. `mkl\2025.1\bin` ships `mkl_core.2.dll`, so sourcing the 2025.1 MKL
+vars gets you a clean environment with the wrong SONAME (the §9 failure mode,
+seen from the running end instead of the packaging end). Source
+`mkl\2026.1\env\vars.bat`.
+
+**b. `C:\Program Files\Ladruno\OpenSees\bin` is on the machine PATH and shadows
+the build tree.** The *installed* distribution ships its own `libiomp5md.dll`
+plus MKL/MUMPS DLLs. A raw build-tree exe picks them up and aborts with:
+
+```
+OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already
+initialized.
+```
+
+Do **not** reach for `KMP_DUPLICATE_LIB_OK=TRUE` — that is the documented unsafe
+workaround and it leaves you measuring an unknown mixture of two runtimes. Strip
+the installed directory from `PATH` for the run instead. The abort is the benign
+outcome here; the dangerous one is a *silent* stale-DLL shadow when the versions
+happen to be compatible, which would quietly invalidate any performance number.
+
+**c. `PMPI_Init` fails with `MPIDI_OFI_mpi_init_hook`** when `mpi\latest\bin` is
+on `PATH` but the rest of the Intel MPI environment is not — libfabric and
+`I_MPI_ROOT` come from `mpi\latest\env\vars.bat`, not from the `bin` directory.
+Call the `vars.bat`, do not hand-assemble `PATH`.
+
+Plus the non-DLL trap: **`TCL_LIBRARY` must point at the conan Tcl**
+(`%USERPROFILE%\.conan2\p\b\tcl*\p\lib\tcl8.6`) or the interpreter starts with no
+commands at all and the first line of the deck dies with
+`invalid command name "wipe"`.
+
+A working recipe (PowerShell), which imports the real component environments
+rather than guessing at `PATH`:
+
+```powershell
+$O = "C:\Program Files (x86)\Intel\oneAPI"
+cmd /c "call `"$O\compiler\2026.1\env\vars.bat`" >nul & call `"$O\mkl\2026.1\env\vars.bat`" >nul & call `"$O\mpi\latest\env\vars.bat`" >nul & set" |
+  ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { Set-Item "env:$($matches[1])" $matches[2] -EA SilentlyContinue } }
+$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -notmatch 'Ladruno\\OpenSees\\bin' }) -join ';'
+$env:TCL_LIBRARY = "C:\Users\nmb\.conan2\p\b\tcl1fa6686758830\p\lib\tcl8.6"
+```

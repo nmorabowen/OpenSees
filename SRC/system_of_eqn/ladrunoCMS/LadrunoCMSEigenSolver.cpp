@@ -103,6 +103,10 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
     }
     ladruno_cms::DistributedHierarchyResult accepted;
     bool hierarchySolved = false;
+    // k2 actually used by the ACCEPTED attempt. The enrichment retry raises it
+    // above options.modesLevel2, so quoting the option in the section-33
+    // warning would name a number the user cannot act on.
+    int acceptedLevel2 = options.modesLevel2;
     for (int enrichment = 0; enrichment <= options.maxEnrich; ++enrichment) {
         const long long increment = static_cast<long long>(enrichment) * numModes;
         const long long requestedLevel2 = options.modesLevel2 + increment;
@@ -201,6 +205,7 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
             }
         }
         accepted = std::move(candidate);
+        acceptedLevel2 = static_cast<int>(requestedLevel2);
         hierarchySolved = true;
         break;
     }
@@ -308,6 +313,28 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
             static_cast<std::ptrdiff_t>(mode) * soe_->getNumEqn();
         eigenvectors_[static_cast<std::size_t>(mode)].assign(
             begin, begin + soe_->getNumEqn());
+    }
+    // ADR-1000 section 33 -- the k2 convergence warning. NOT gated on -verbose,
+    // deliberately: the failure it describes is silent by construction (the
+    // solve grinds and then returns the CORRECT answer), and the runs that most
+    // need to hear about it are batch jobs nobody set -verbose on. It is gated
+    // on rank 0 only so four ranks do not print four copies; the count itself
+    // is the cross-rank maximum, so rank 0 reports another rank's thrashing.
+    if (options.restartWarn > 0 && rank == 0 &&
+        diagnostics_.lanczosRestartsAcrossRanks >= options.restartWarn) {
+        opserr << "WARNING LadrunoCMS: the local fixed-interface Lanczos (T2) "
+               << "restarted " << diagnostics_.lanczosRestartsAcrossRanks
+               << " times on rank " << diagnostics_.lanczosRestartsWorstRank
+               << " (warn at " << options.restartWarn << ", budget "
+               << options.maxRestarts << ")." << endln
+               << "  The result is still converged to the requested tolerance, "
+               << "but the fixed-interface basis is too poor for that "
+               << "subdomain and the solve may be orders of magnitude slower "
+               << "than necessary." << endln
+               << "  Raise -modesL2 (currently " << acceptedLevel2
+               << "); a few extra modes is usually enough. Do NOT overshoot -- "
+               << "past convergence the cost grows with -modesL2. Silence with "
+               << "-restartWarn 0." << endln;
     }
     if (options.verbose && rank == 0) {
         opserr << "LadrunoCMS: n=" << diagnostics_.originalDimension

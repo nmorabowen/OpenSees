@@ -133,6 +133,15 @@ struct HierarchyDiagnostics {
     int lanczosRayleighRitzCalls = 0;
     int lanczosOperatorApplications = 0;
     int lanczosRestarts = 0;
+    // ADR-1000 section 33 -- the two counters above are THIS rank's. A k2 below
+    // the convergence threshold does not fail, it grinds, and it does not grind
+    // evenly: in the section-32 profile rank 0 (the easy, clamped subdomain)
+    // finished its Lanczos in half the time of the slowest rank. A warning
+    // driven by rank 0's own count would therefore miss part of the very case
+    // it exists for. These two carry the max across ranks and who owned it
+    // (MPI_MAXLOC). On the serial path they are this rank's count and rank 0.
+    int lanczosRestartsAcrossRanks = 0;
+    int lanczosRestartsWorstRank = 0;
 };
 
 struct TwoLevelHierarchyResult {
