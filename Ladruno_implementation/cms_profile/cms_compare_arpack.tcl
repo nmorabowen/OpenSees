@@ -49,6 +49,13 @@ set modesL1 [expr {2 * $modesL2}]
 if {[info exists env(LADRUNO_CMS_COMPARE_MODESL1)]} {
     set modesL1 $env(LADRUNO_CMS_COMPARE_MODESL1)
 }
+# section 33: -1 leaves the solver default (8). Set 0 to silence the k2
+# convergence warning, or a number to move the threshold. This deck passes NO
+# -verbose, which is the point -- the warning has to survive without it.
+set restartWarn -1
+if {[info exists env(LADRUNO_CMS_COMPARE_RESTARTWARN)]} {
+    set restartWarn $env(LADRUNO_CMS_COMPARE_RESTARTWARN)
+}
 
 # The sheet is ALWAYS 4 strips wide, so the two runs solve the same problem.
 set strips 4
@@ -113,6 +120,10 @@ if {$np == 1} {
     numberer ParallelRCM
     system Mumps
     analysis Static
+    set warnArgs {}
+    if {$restartWarn >= 0} {
+        set warnArgs [list -restartWarn $restartWarn]
+    }
     set started [clock microseconds]
     set values [eigen -ladrunoCMS \
         -domainMode physical \
@@ -120,6 +131,7 @@ if {$np == 1} {
         -modesL2 $modesL2 -modesL1 $modesL1 \
         -tol 1.0e-8 -maxEnrich 2 -maxIter 200000 \
         -maxRestarts 4000 -maxRefineIter 160 \
+        {*}$warnArgs \
         -denseMax 4000 $numModes]
     set elapsed [expr {([clock microseconds] - $started) / 1.0e6}]
     if {$pid == 0} {

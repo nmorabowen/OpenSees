@@ -2852,11 +2852,12 @@ Los datos dicen tres cosas que desaconsejan fijar una regla hoy:
    caja no bastan para ajustar una regla que decide entre 1 s y >300 s.
 
 Lo accionable y barato **sí** está identificado, y es un **diagnóstico, no una
-heurística**: el solver ya cuenta `restarts` y `opApplications` (sección 27) pero
+heurística** — **shippeado el 2026-07-27 como `-restartWarn`, sección 33**: el
+solver ya cuenta `restarts` y `opApplications` (sección 27) pero
 sólo los enseña bajo `-verbose`. Un aviso cuando `restarts` supera un umbral
 —"la base de interfaz fija no está convergiendo; suba `-modesL2`"— convierte un
 fallo silencioso de 300 s en un mensaje accionable **sin comprometerse a ninguna
-regla**. Queda especificado como el siguiente punto de P4, junto con la campaña
+regla**. Queda la campaña
 que haría falta para justificar una heurística: barrido de `k2` sobre >=3
 topologías de interfaz y >=2 recuentos de modos pedidos, para separar la
 dependencia en `m` de la dependencia en `b` y en el número de modos.
@@ -2894,7 +2895,8 @@ Tres cosas, todas accionables antes de reservar tiempo de cluster:
    espera. En una cola de cluster eso se ve como un trabajo que agota su tiempo,
    que es indistinguible de "el modelo es demasiado grande". Sin el diagnóstico
    de 32.7, la campaña puede recoger falsos negativos y no notarlo. **El aviso de
-   `restarts` debería ir antes que la campaña**, no después.
+   `restarts` debería ir antes que la campaña**, no después. — **HECHO
+   2026-07-27: `-restartWarn`, sección 33. Este bloqueo está levantado.**
 3. **La referencia (b) de 31.4 —`eigen` sobre `MumpsParallelSOE`— gana peso.**
    El competidor a batir ya no es un ARPACK secuencial 523x más lento sino uno
    ~4x más rápido y con mejor exponente, y a escala de Esmeralda la comparación
@@ -2903,3 +2905,133 @@ Tres cosas, todas accionables antes de reservar tiempo de cluster:
 
 Lo que **no** cambia: el aplazamiento de 31.4 sigue siendo correcto, y por la
 misma razón. Toda la evidencia de esta sección son 4 rangos en un escritorio.
+
+## 33. `-restartWarn` — el fallo silencioso de `k2` deja de serlo — 2026-07-27
+
+La sección 32.7 dejó una sola cosa accionable y barata, y 32.9 la puso **antes**
+de la campaña de Esmeralda en lugar de después. Esto la implementa.
+
+### 33.1 El problema, dicho con precisión
+
+Un `k2` por debajo del umbral de convergencia **no falla**. Muele —de minutos a
+horas— y luego devuelve **el resultado correcto**, convergido a la tolerancia
+pedida. No hay error, no hay aviso, no hay residual malo: el único síntoma es el
+reloj. Desde fuera, *"esta corrida está en thrashing"* y *"este modelo es
+grande"* son indistinguibles.
+
+En un escritorio eso cuesta una tarde. En una cola de cluster —que es a donde va
+la campaña de la sección 31— el trabajo agota su walltime y lo matan, que es
+**exactamente** lo que se ve cuando un modelo de verdad no cabe. Una campaña
+puede recoger falsos negativos y no enterarse nunca. Por eso el aviso va antes.
+
+Los contadores existían desde la sección 27. Lo único que faltaba era que alguien
+los mirara sin `-verbose`.
+
+### 33.2 Qué se añade
+
+`Options::restartWarn`, opción **`-restartWarn <n>`, por defecto 8**, `0`
+desactiva. Cuando el recuento de reinicios del Lanczos de interfaz fija alcanza
+el umbral, el solver avisa nombrando la palanca:
+
+```
+WARNING LadrunoCMS: the local fixed-interface Lanczos (T2) restarted 131 times
+on rank 1 (warn at 8, budget 4000).
+  The result is still converged to the requested tolerance, but the
+  fixed-interface basis is too poor for that subdomain and the solve may be
+  orders of magnitude slower than necessary.
+  Raise -modesL2 (currently 10); a few extra modes is usually enough. Do NOT
+  overshoot -- past convergence the cost grows with -modesL2. Silence with
+  -restartWarn 0.
+```
+
+Cuatro decisiones, cada una con una razón medida detrás:
+
+1. **No está condicionado a `-verbose`.** El fallo que describe es silencioso por
+   construcción, y las corridas que más necesitan oírlo son trabajos por lotes
+   donde nadie puso `-verbose`. Ponerlo bajo la bandera lo haría inútil justo
+   donde hace falta.
+2. **El recuento es el máximo ENTRE RANGOS, no el del rango 0** —
+   `MPI_Allreduce`/`MPI_MAXLOC` sobre el par `{reinicios, rango}`, lo que además
+   permite **nombrar el rango** culpable. Esto no es celo preventivo: ver 33.4,
+   donde el rango 0 declara 54 reinicios mientras el peor rango lleva 131.
+3. **El umbral NO se escala con `-maxRestarts`.** Subir *ese* presupuesto es
+   precisamente lo que hace un usuario cuando está en thrashing (sección 28), así
+   que atar el aviso al presupuesto lo silenciaría exactamente cuando importa. Es
+   absoluto, y hay un check que lo fija.
+4. **`-restartWarn 0` desactiva y es legal**, a diferencia de `-maxRestarts 0`
+   que `validate()` rechaza. Un diagnóstico tiene que poder apagarse.
+
+El defecto 8 es **una heurística sobre evidencia limitada**, y se coloca lejos de
+los dos extremos del hueco medido en la sección 32: toda corrida sana usó 0 o 1
+reinicios; toda corrida en thrashing, 54 o más. Se documenta como heurística, no
+como resultado.
+
+**No cambia ningún resultado.** Por eso `-restartWarn` **no** entra en la puerta
+de consistencia entre rangos a la que sí tuvo que entrar `-maxRestarts` (§28.1):
+un umbral divergente cambia lo que se imprime, no lo que se calcula. El aviso lo
+emite sólo el rango 0, para que cuatro rangos no impriman cuatro copias de un
+recuento que ya es global.
+
+### 33.3 El `k2` que se cita es el de verdad
+
+Detalle pequeño y fácil de errar: el reintento por enriquecimiento sube `k2` por
+encima de `options.modesLevel2`, así que citar la opción habría nombrado un
+número sobre el que el usuario no puede actuar. El aviso cita el `k2` del intento
+**aceptado**.
+
+### 33.4 Evidencia
+
+Malla de 20x20 por rango a 4 rangos, con el binario recién construido. `k2=10` es
+el caso lento de la sección 32.4 (5.56 s contra 0.23 s de `k2=12` justo al lado),
+elegido porque hace thrashing en segundos en vez de en los 106 s del 40x40.
+
+| caso | avisos | esperado |
+|---|---:|---|
+| `cms_compare_arpack.tcl` (**sin `-verbose`**), `k2=10` | **1** | ≥1 |
+| `cms_compare_arpack.tcl` (sin `-verbose`), `k2=12` | 0 | 0 |
+| `k2=10` con `-restartWarn 0` | 0 | 0 |
+| `k2=10` con `-restartWarn 4000` (umbral por encima del recuento) | 0 | 0 |
+| `cms_profile_sheet.tcl` (`-verbose`), `k2=10` | 1 | ≥1 |
+| `cms_profile_sheet.tcl` (`-verbose`), `k2=12` | 0 | 0 |
+
+Las dos primeras filas son la propiedad que importa: **el aviso sobrevive sin
+`-verbose`**, que es el deck que usa la comparación y el que se parece a un
+trabajo de cola.
+
+**Y la fila que justifica el `MAXLOC`.** En la corrida de perfil con `k2=10`, la
+línea `T2 Lanczos` —que es local al rango 0— declara `restarts=54`, mientras el
+aviso dice **131 en el rango 1**. Un aviso construido sobre el contador del rango
+0 habría subestimado el thrashing en **2.4x**, exactamente el sesgo que 32.1
+predijo por escrito antes de medirlo aquí. Con `k2=12` el mismo deck da
+`restarts=1` y no avisa: el umbral 8 separa los dos regímenes con holgura por
+ambos lados.
+
+### 33.5 Batería
+
+- `ladruno_cms_core_check` (g++ `-O2 -std=c++17 -Wall -Wextra -pedantic`): PASA,
+  con 19 aserciones nuevas — que la opción llega a `Options`, que el defecto es
+  8, que `-restartWarn 0` es aceptado por `validate()` mientras un negativo se
+  rechaza, que un no-entero se rechaza, y que **subir `-maxRestarts` a 4000 no
+  mueve el umbral** (el punto 3 de 33.2, fijado por un check para que nadie lo
+  "simplifique" después a una fracción del presupuesto).
+- Los cinco checks numéricos (`mumps`, `lanczos`, `hierarchy`, `subspace`,
+  `assembly`) bajo `mpiexec -n 4`: PASAN. Cubren la nueva colectiva: el
+  `MPI_Allreduce` añadido está en `solveDistributedHierarchy`, después de la
+  barrera de fallo que ya existía, así que no introduce una ruta de salida
+  asimétrica.
+- `ladruno_cms_topology_check` a np=4 y los dos smokes (`physical`,
+  `openseesmp`): PASAN, sin cambio en los residuales.
+
+### 33.6 Alcance
+
+- El umbral 8 sale de **una** topología (la chapa en 4 franjas) y de 6 modos
+  pedidos. Es un diagnóstico, no una puerta: equivocarlo cuesta un mensaje de
+  más o de menos, nunca un resultado. La campaña de 32.7 —`k2` sobre ≥3
+  topologías y ≥2 recuentos de modos— sigue siendo lo que haría falta para
+  calibrarlo de verdad, y es la misma campaña que haría falta para una
+  heurística automática de `k2`, que **sigue sin shippearse** y por las mismas
+  tres razones de 32.7.
+- El aviso cubre el Lanczos de **T2**. El refinamiento tiene sus propios
+  presupuestos (`-maxRefineIter`) y no está instrumentado así; en los perfiles
+  de la sección 32 nunca fue el cuello de botella, pero eso es una observación
+  sobre esta malla, no una garantía.

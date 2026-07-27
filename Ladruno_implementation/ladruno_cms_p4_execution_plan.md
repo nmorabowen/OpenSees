@@ -157,6 +157,18 @@ final backend.
 
 ## 2b. `k2` convergence diagnostic (the actionable follow-up from ADR §32)
 
+> **SHIPPED 2026-07-27 (ADR §33).** `-restartWarn <n>`, default **8**, 0 disables.
+> Warns naming `-modesL2` when the T2 fixed-interface Lanczos restart count
+> reaches the threshold. Three properties that matter and are each pinned by a
+> check: it is **not** gated on `-verbose` (the failure is silent by
+> construction, and batch jobs are exactly the ones that never set it); the count
+> is the **max across ranks** via `MPI_MAXLOC`, not rank 0's — §32.1 measured
+> rank 0 as the *easiest* subdomain, so its own count understates the problem —
+> and the message names the offending rank; and the threshold is **absolute, not
+> scaled off `-maxRestarts`**, because raising that budget is what a user does
+> when thrashing, so a relative threshold would go quiet exactly when it matters.
+> **The blocker on the Esmeralda campaign is cleared.**
+
 **Problem it solves.** A `k2` below the convergence threshold does not fail — it
 *grinds*, silently, for minutes to forever, and returns the right answer if you
 wait. The user has no way to tell "this model is big" from "this run is
@@ -265,9 +277,8 @@ criterion (§10).
 > you can fit but cannot finish is not a win). §32 retracts that: cost is a
 > constant ~4x with `n^1.12` scaling, so a capacity win would be a real win.
 >
-> Order of work from here: (1) the §2b `k2` diagnostic — cheap, and it stops the
-> next person losing a session to a silent stall; (2) §4, the workspace memory
-> refactor, which is the gate itself; (3) Building 1A, still blocked on the deck
-> being absent from the repo, which remains the only measurement that can close
-> P4 for real. Do **not** spend further sessions optimising CMS wall clock: §26,
+> Order of work from here: (1) the §2b `k2` diagnostic — **DONE 2026-07-27, ADR
+> §33**; (2) §4, the workspace memory refactor, which is the gate itself;
+> (3) Building 1A, still blocked on the deck being absent from the repo, which
+> remains the only measurement that can close P4 for real. Do **not** spend further sessions optimising CMS wall clock: §26,
 > §29 and §32 together say the speed axis is not where this is decided.
