@@ -2402,3 +2402,87 @@ techo artificial y un coste real. Esto elimina el techo. El coste sigue ahí.
 El deck de perfilado expone ambos presupuestos por variable de entorno
 (`LADRUNO_CMS_PROFILE_RESTARTS`, `LADRUNO_CMS_PROFILE_MAXITER`) para que el
 siguiente experimento no tenga que editar el archivo.
+
+## 29. T2 no era `phi`/`psi` — era el Lanczos, y ahora es 1.65x más rápido — 2026-07-26
+
+### 29.1 La premisa era falsa, y medirla lo demostró
+
+La sección 27 dejó a T2 como objetivo siguiente y la intuición decía `phi`/`psi`:
+son las matrices densas visibles del código. **La medición dice otra cosa.**
+
+Primer perfil con una **interfaz real** —deck nuevo `cms_profile_sheet.tcl`, malla
+de cuadriláteros cortada en cuatro franjas, `b=40`, `m=760`—:
+
+| Sub-fase de T2 | s | % de T2 |
+|---|---:|---:|
+| **lanczos** | **0.136** | **79.6%** |
+| factorize `K_II` | 0.0084 | 4.9% |
+| condensación | 0.0036 | 2.1% |
+| congruencia | 0.0027 | 1.6% |
+| modos de restricción (`psi`) | 0.0016 | 0.9% |
+| dispersión a `T` | 0.00025 | 0.1% |
+| reconstrucción | 0.00003 | ~0% |
+
+Y la memoria: **`transformation` = 0.317 MiB**. El objetivo propuesto era una
+estructura de un tercio de megabyte que cuesta el 0.1% de T2. Reescribirla habría
+sido optimizar ruido — el mismo error de la sección 26, evitado esta vez por
+medir antes de tocar.
+
+**Corrección adicional:** la sección 27 leyó `r2/r* = 1.06` y concluyó que el
+nivel 1 casi no reduce. En la malla con interfaz real, `r2/r* = 2.36`. Aquello
+era un artefacto de la cadena 1-D y sus interfaces de un solo grado de libertad,
+exactamente como advertía 27.5.
+
+### 29.2 Dentro del Lanczos
+
+| | s | % del Lanczos | llamadas |
+|---|---:|---:|---:|
+| `applyOperator` (acción inversa) | 0.092 | 49% | 120 |
+| `rayleighRitz` | 0.052 | 28% | 15 |
+| `mOrthonormalize` | 0.025 | 13% | — |
+| residuales | 0.0095 | 5% | — |
+
+**0.77 ms por solve de MUMPS contra ~31 us por producto disperso sobre la misma
+matriz.** Veinticinco veces más caro por llamada en una matriz de 760: eso no es
+aritmética, es **sobrecoste por llamada**.
+
+### 29.3 Dos cambios
+
+1. **Acción inversa por bloques.** La expansión aceptaba hasta `blockSize`
+   columnas y hacía un solve de un RHS por cada una. Ahora acumula `M*x` de todas
+   las columnas aceptadas y emite **un** solve multi-RHS. `MumpsSPD::solve` ya
+   admitía `numberOfColumns`; no hizo falta API nueva. La comprobación de
+   presupuesto pasa a `operatorApplications + acceptedColumns` para que un bloque
+   no rebase el tope.
+2. **`M*operatorBasis` cacheado.** `rayleighRitz` recomputaba ese producto —un
+   producto disperso y dos asignaciones por columna— **en cada llamada**, sobre
+   una base que sólo había crecido un bloque. Ahora se mantiene incremental: una
+   vez por columna en lugar de una vez por columna por iteración. En el reinicio
+   se reconstruye para las columnas retenidas.
+
+### 29.4 Resultado
+
+A/B en la misma caja y la misma sesión, cuatro repeticiones cada uno:
+
+| | base (mejor) | ahora (mejor) | factor |
+|---|---:|---:|---:|
+| jerarquía | 0.1966 | 0.1194 | **1.65x** |
+| solve total | 0.3309 | 0.2461 | **1.34x** |
+
+Rangos sin solapamiento (base 0.331–0.349; ahora 0.246–0.268).
+
+**No es bit-idéntico**, y conviene decirlo: MUMPS resuelve un bloque multi-RHS
+con núcleos por bloques, no repitiendo el camino de un RHS. El primer autovalor
+de la malla cambia en `2.7e-13` relativo. El deck de cadena, en cambio, reproduce
+su error analítico `1.1750199004417125e-9` **dígito a dígito**, y el smoke físico
+mantiene `maxResidual = 5.80175e-09`.
+
+Batería completa: cinco checks a np=2 y np=4, ambos smokes, ambos decks de perfil.
+
+### 29.5 Lo que queda
+
+`rayleighRitz` sigue siendo el mayor término del Lanczos (~0.029 s). Su coste
+restante son las `j^2` productos escalares de la proyección, que también podrían
+hacerse incrementales —sólo cambian filas y columnas nuevas al crecer la base—,
+pero eso es cirugía sobre el reinicio y no se ha hecho. `phi`/`psi` siguen densos,
+y ahora se sabe que da igual.
