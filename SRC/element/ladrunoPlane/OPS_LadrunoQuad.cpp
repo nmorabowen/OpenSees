@@ -53,6 +53,7 @@ void *OPS_LadrunoQuad()
   }
 
   int idata[5];
+  bool massCacheOn = true;   // Ladruno (ADR-77 G2 ext): default on, guard-checked
   int num = 5;
   if (OPS_GetIntInput(&num, idata) < 0) {
     opserr << "WARNING LadrunoQuad -- invalid tag/node integers\n";
@@ -123,6 +124,8 @@ void *OPS_LadrunoQuad()
       num = 1;
       if (OPS_GetDoubleInput(&num, &pressure) < 0) { opserr << "WARNING LadrunoQuad -- bad -pressure\n"; return 0; }
 
+    } else if (strcmp(opt, "-noMassCache") == 0) {
+      massCacheOn = false;   // Ladruno (ADR-77 G2 ext): A/B escape
     } else if (strcmp(opt, "-bulkViscosity") == 0 || strcmp(opt, "-bv") == 0) {
       // Ladruno (W2-E1): explicit bulk viscosity reads TWO doubles (linear b1,
       // quadratic b2). Both must be >= 0; a negative coeff is warned and ignored.
@@ -207,7 +210,9 @@ void *OPS_LadrunoQuad()
     bvB1 = bvB2 = 0.0;
   }
 
-  return new LadrunoQuad(idata[0], idata[1], idata[2], idata[3], idata[4],
+  LadrunoQuad *theEle = new LadrunoQuad(idata[0], idata[1], idata[2], idata[3], idata[4],
                          *mat, typeBuf, thk, form, geom, rho, b1, b2, pressure,
                          bvB1, bvB2);   // Ladruno (ADR 70) geom; (W2-E1) bulk-viscosity
+  theEle->setMassCache(massCacheOn);    // Ladruno (ADR-77 G2 ext): transient, unserialized
+  return theEle;
 }

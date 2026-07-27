@@ -1,0 +1,27 @@
+{
+  "n": 15,
+  "steps": 1,
+  "system": "Pardiso",
+  "threads": "4",
+  "tol": 1e-07,
+  "maxIter": 6000,
+  "load_scale": 10.0,
+  "arms": {
+    "modnewton": {
+      "label": "ModifiedNewton",
+      "wall_s": 25.80673970002681,
+      "samples": [
+        25.80673970002681
+      ],
+      "uz": -0.9933404942110307,
+      "rel_err_vs_newton": 0.0,
+      "iters": [
+        751
+      ],
+      "total_iters": 751,
+      "iters_per_step": 751.0,
+      "ms_per_iter": 34.36316870842452,
+      "answer": "OK"
+    }
+  }
+}

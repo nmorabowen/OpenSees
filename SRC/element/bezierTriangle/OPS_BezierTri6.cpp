@@ -96,6 +96,7 @@ void *OPS_BezierTri6()
     }
 
     int tag = iData[0];
+    bool massCacheOn = true;   // Ladruno (ADR-77 G2 ext): default on, guard-checked
     int nd1 = iData[1], nd2 = iData[2], nd3 = iData[3];
     int nd4 = iData[4], nd5 = iData[5], nd6 = iData[6];
 
@@ -169,6 +170,9 @@ void *OPS_BezierTri6()
                 return 0;
             }
         }
+        else if (strcmp(option, "-noMassCache") == 0) {
+            massCacheOn = false;   // Ladruno (ADR-77 G2 ext): A/B escape
+        }
         else if (strcmp(option, "-bodyForce") == 0 || strcmp(option, "-body") == 0) {
             double bData[2];
             numData = 2;
@@ -209,5 +213,6 @@ void *OPS_BezierTri6()
         return 0;
     }
 
+    ((BezierTri6 *)theEle)->setMassCache(massCacheOn);   // Ladruno (ADR-77 G2 ext): transient, unserialized
     return theEle;
 }

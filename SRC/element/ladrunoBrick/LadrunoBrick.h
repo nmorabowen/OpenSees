@@ -110,6 +110,7 @@ class LadrunoBrick : public Element {
   // Ladruno (ADR-68 T7): toggle the residual inertia no-op skip (default on).
   // Transient perf flag, set by the parser (-noInertiaSkip); NOT serialized.
   void setInertiaSkip(bool s) { inertiaSkip = s; }
+  void setMassCache(bool s) { massCache = s; }   // Ladruno (ADR-77 T2/G2): escape = -noMassCache
 
   // domain
   void setDomain(Domain *theDomain);
@@ -202,6 +203,16 @@ class LadrunoBrick : public Element {
 
   Vector *load;
   Matrix *Ki;
+  // Ladruno (ADR-77 T2/G2): per-instance mass-matrix cache, the Ki idiom applied
+  // to M. Guards hold the ONLY mutable inputs of formInertiaTerms(1) -- per-GP
+  // rho (mutable via material setParameter "rho") and nodal coords (mutable via
+  // setNodeCoord) -- compared on every getMass() call, so invariance is CHECKED,
+  // never assumed (ADR-76 App. A.4). ~4.6 KB + 256 B per element. Not serialized
+  // (same policy as inertiaSkip; the cache re-forms on first use after recv).
+  Matrix *Mi;
+  double MiRho[8];                    // guard: per-GP rho at cache fill
+  double MiCrd[24];                   // guard: nodal coords at cache fill
+  bool massCache;                     // default true; escape = -noMassCache
   int massType;                       // 0 consistent, 1 lumped
   bool inertiaSkip;                   // Ladruno (ADR-68 T7): skip the residual (tangFlag==0) inertia pass when every nodal trial accel is exactly 0 (CDL Azero); default true, not serialized
 

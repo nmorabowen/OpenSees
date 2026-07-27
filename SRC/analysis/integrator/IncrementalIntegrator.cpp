@@ -292,11 +292,17 @@ int
 IncrementalIntegrator::formNodalUnbalance(void)
 {
     // loop through the DOF_Groups and add the unbalance
+    // Ladruno ADR-77 T0: the nodal side of the residual (inertia/damping forces and
+    // nodal loads). Mirrors "dof.tangent" in TransientIntegrator::formTangent; both
+    // DOF_Group loops were untimed, so the five-loop transient anatomy could not be
+    // closed from the element scopes alone.
+    OPS_PROFILE_SCOPE("dof.residual");   // Ladruno ADR-77 T0
+
     DOF_GrpIter &theDOFs = theAnalysisModel->getDOFs();
     DOF_Group *dofPtr;
     int res = 0;
 
-    while ((dofPtr = theDOFs()) != 0) { 
+    while ((dofPtr = theDOFs()) != 0) {
       //      opserr << "NODPTR: " << dofPtr->getUnbalance(this);
 
 	if (theSOE->addB(dofPtr->getUnbalance(this),dofPtr->getID()) <0) {

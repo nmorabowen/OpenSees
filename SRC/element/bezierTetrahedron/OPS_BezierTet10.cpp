@@ -101,6 +101,7 @@ void *OPS_BezierTet10()
     }
 
     int tag = iData[0];
+    bool massCacheOn = true;   // Ladruno (ADR-77 G2 ext): default on, guard-checked
 
     // ─── Parse material tag ───────────────────────────────────
     int matTag;
@@ -178,6 +179,9 @@ void *OPS_BezierTet10()
             b1 = bData[0];
             b2 = bData[1];
             b3 = bData[2];
+        }
+        else if (strcmp(option, "-noMassCache") == 0) {
+            massCacheOn = false;   // Ladruno (ADR-77 G2 ext): A/B escape
         }
         else if (strcmp(option, "-geom") == 0 || strcmp(option, "-geometry") == 0) {
             // Ladruno: geometry method. linear (default), corot, or finite.
@@ -281,5 +285,6 @@ void *OPS_BezierTet10()
         return 0;
     }
 
+    ((BezierTet10 *)theEle)->setMassCache(massCacheOn);   // Ladruno (ADR-77 G2 ext): transient, unserialized
     return theEle;
 }

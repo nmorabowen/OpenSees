@@ -43,6 +43,7 @@
 #include <ID.h>
 #include <math.h>
 #include <elementAPI.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 void* OPS_Broyden()
 {
@@ -196,6 +197,12 @@ Broyden::setConvergenceTest(ConvergenceTest *newTest)
 
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 Broyden::solveCurrentStep(void)
 {
  
@@ -232,31 +239,39 @@ Broyden::solveCurrentStep(void)
       // opserr << "      Broyden -- Forming New Tangent" << endln ;
 
       //form the initial tangent
+      { OPS_PROFILE_SCOPE("formTangent");
       if (theIntegrator->formTangent(tangent) < 0){
          opserr << "WARNING Broyden::solveCurrentStep() -";
          opserr << "the Integrator failed in formTangent()\n";
          return -1; 
       }
+      }
 
       //form the initial residual 
+      { OPS_PROFILE_SCOPE("formUnbalance");
       if (theIntegrator->formUnbalance() < 0) {
         opserr << "WARNING Broyden::solveCurrentStep() -";
         opserr << "the Integrator failed in formUnbalance()\n";	
       }	    
+      }
 
       //solve
+      { OPS_PROFILE_SCOPE("linearSolve");
       if (theSOE->solve() < 0) {
 	  opserr << "WARNING Broyden::solveCurrentStep() -";
 	  opserr << "the LinearSysOfEqn failed in solve()\n";	
 	  return -3;
 	}	    
+      }
 
       //update
+      { OPS_PROFILE_SCOPE("update");
       if ( theIntegrator->update(theSOE->getX() ) < 0) {
 	opserr << "WARNING Broyden::solveCurrentStep() -";
 	opserr << "the Integrator failed in update()\n";	
 	return -4;
       }	        
+      }
 
       //    int systemSize = ( theSOE->getB() ).Size();
       int systemSize = theSOE->getNumEqn( ) ;
@@ -284,10 +299,12 @@ Broyden::solveCurrentStep(void)
       *residOld *= (-1.0 ) ;
 
       //form the residual again
+      { OPS_PROFILE_SCOPE("formUnbalance");
       if (theIntegrator->formUnbalance() < 0) {
         opserr << "WARNING Broyden::solveCurrentStep() -";
         opserr << "the Integrator failed in formUnbalance()\n";	
       }	    
+      }
 
       if ( residNew == 0 ) 
 	residNew = new Vector(systemSize) ;
@@ -311,11 +328,13 @@ Broyden::solveCurrentStep(void)
         *residNew *= (-1.0 ) ;
       
         //solve
+        { OPS_PROFILE_SCOPE("linearSolve");
         if (theSOE->solve() < 0) {
 	    opserr << "WARNING Broyden::solveCurrentStep() -";
 	    opserr << "the LinearSysOfEqn failed in solve()\n";	
 	    return -3;
         }	    
+        }
 
         //save displacement increment
         *du = theSOE->getX( ) ;
@@ -323,11 +342,13 @@ Broyden::solveCurrentStep(void)
         //broyden modifications to du
         BroydenUpdate( theIntegrator, theSOE, *du, nBroyden )  ;
 
+        { OPS_PROFILE_SCOPE("update");
         if ( theIntegrator->update( *du ) < 0 ) {
 	   opserr << "WARNING Broyden::solveCurrentStep() -";
 	   opserr << "the Integrator failed in update()\n";	
 	   return -4;
         }	        
+        }
 
 
 	/*	opserr << "        Broyden Iteration " << nBroyden 
@@ -348,17 +369,19 @@ Broyden::solveCurrentStep(void)
 	*residOld = *residNew ;
 
         //form the residual again
+        { OPS_PROFILE_SCOPE("formUnbalance");
         if (theIntegrator->formUnbalance() < 0) {
           opserr << "WARNING Broyden::solveCurrentStep() -";
           opserr << "the Integrator failed in formUnbalance()\n";	
         }	    
+        }
 	
 	result = localTest->test() ;
         
       } while ( result == -1 && nBroyden <= numberLoops );
 
 
-      result = theTest->test();
+      { OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
       this->record(count++);
 
     }  while (result == -1);
@@ -397,10 +420,12 @@ void  Broyden::BroydenUpdate( IncrementalIntegrator *theIntegrator,
   *temp -= (*residOld) ;
   theSOE->setB( *temp ) ;
 
+  { OPS_PROFILE_SCOPE("linearSolve");
   if (theSOE->solve() < 0) {
        opserr << "WARNING Broyden::solveCurrentStep() -";
        opserr << "the LinearSysOfEqn failed in solve()\n";	
    }	    
+  }
   
   if ( z[nBroyden] == 0 ) 
     z[nBroyden] = new Vector(systemSize) ;
@@ -532,33 +557,41 @@ Broyden::Print(OPS_Stream &s, int flag)
 
         //first solve step
 
+ 	{ OPS_PROFILE_SCOPE("formTangent");
  	if (theIntegrator->formTangent(tangent) < 0){
 	    opserr << "WARNING Broyden::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formTangent()\n";
 	    return -1;
 	}		    
+ 	}
 	
+	{ OPS_PROFILE_SCOPE("linearSolve");
 	if (theSOE->solve() < 0) {
 	    opserr << "WARNING Broyden::solveCurrentStep() -";
 	    opserr << "the LinearSysOfEqn failed in solve()\n";	
 	    return -3;
 	}	    
+	}
 
 
+	{ OPS_PROFILE_SCOPE("update");
 	if (theIntegrator->update(theSOE->getX()) < 0) {
 	    opserr << "WARNING Broyden::solveCurrentStep() -";
 	    opserr << "the Integrator failed in update()\n";	
 	    return -4;
 	}	        
+	}
 
 
+	{ OPS_PROFILE_SCOPE("formUnbalance");
 	if (theIntegrator->formUnbalance() < 0) {
 	    opserr << "WARNING Broyden::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formUnbalance()\n";	
 	    return -2;
 	}	
+	}
 	
-	result = theTest->test();
+	{ OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
 	this->record(nBroyden++);
 
       const Vector &du = BroydengetX( theIntegrator, theSOE, nBroyden )  ;

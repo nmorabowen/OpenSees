@@ -1,0 +1,20 @@
+{
+  "n": 10,
+  "steps": 4,
+  "repeats": 1,
+  "dt": 0.0002,
+  "numberer": "RCM",
+  "threads": "1",
+  "arms": {
+    "Pardiso": {
+      "wall_s": 1.1639831999782473,
+      "samples": [
+        1.1639831999782473
+      ],
+      "uz": -0.25382251916089665,
+      "rel_err_vs_first": 0.0,
+      "nele": 1000,
+      "ndof": 3630
+    }
+  }
+}

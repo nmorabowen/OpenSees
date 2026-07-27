@@ -1,0 +1,51 @@
+{
+  "n": 15,
+  "steps": 4,
+  "system": "Pardiso",
+  "threads": "4",
+  "tol": 1e-07,
+  "maxIter": 300,
+  "load_scale": 10.0,
+  "arms": {
+    "newton": {
+      "label": "Newton",
+      "failed": "analyze FAILED at step 1"
+    },
+    "newton_init": {
+      "label": "Newton -initial",
+      "failed": "analyze FAILED at step 1"
+    },
+    "modnewton": {
+      "label": "ModifiedNewton",
+      "failed": "analyze FAILED at step 1"
+    },
+    "modnewton_init": {
+      "label": "ModifiedNewton -initial",
+      "failed": "analyze FAILED at step 1"
+    },
+    "modnewton_init_fo": {
+      "label": "ModifiedNewton -initial -factoronce",
+      "failed": "analyze FAILED at step 1"
+    },
+    "krylov": {
+      "label": "KrylovNewton",
+      "wall_s": 5.730728050053585,
+      "samples": [
+        5.686567299999297,
+        5.774888800107874
+      ],
+      "uz": -14.216414899958618,
+      "rel_err_vs_newton": 0.0,
+      "iters": [
+        22,
+        37,
+        52,
+        66
+      ],
+      "total_iters": 177,
+      "iters_per_step": 44.25,
+      "ms_per_iter": 32.37699463307111,
+      "answer": "OK"
+    }
+  }
+}

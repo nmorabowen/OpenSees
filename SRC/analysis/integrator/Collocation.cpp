@@ -207,11 +207,25 @@ int Collocation::formEleTangent(FE_Element *theEle)
 {
     theEle->zeroTangent();
     
+    // Ladruno ADR-77 (C0-2): HALL_TANGENT fell through this chain and failed
+    // SILENTLY. Unlike BackwardEuler/Newmark1 (which produced an all-zero
+    // tangent), Collocation adds C and M *outside* the chain, so `-hall`
+    // assembled c2*C + c3*M with NO STIFFNESS AT ALL -- arguably worse, because
+    // the tangent looks populated. Reached by NewtonRaphson/ModifiedNewton
+    // -hall, NewtonHallM and ExpressNewton. Branch transposed from
+    // Newmark::formEleTangent (c1 is the stiffness coefficient here too); the
+    // C/M adds are deliberately left outside so CURRENT/INITIAL behaviour is
+    // byte-for-byte what it was.
     if (statusFlag == CURRENT_TANGENT)
         theEle->addKtToTang(c1);
     else if (statusFlag == INITIAL_TANGENT)
         theEle->addKiToTang(c1);
-    
+    else if (statusFlag == HALL_TANGENT)  {
+        theEle->addKtToTang(c1*cFactor);
+        theEle->addKiToTang(c1*iFactor);
+    } else
+        opserr << "Collocation::formEleTangent - unknown FLAG\n";
+
     theEle->addCtoTang(c2);
     theEle->addMtoTang(c3);
     

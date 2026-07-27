@@ -840,7 +840,25 @@ void LadrunoSolidShell::formInertiaTerms(int tangFlag)
 
 const Matrix &LadrunoSolidShell::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h;
+  // this element is the brick pattern verbatim (formInertiaTerms(1) into a
+  // CLASS-STATIC `mass`), so it gets the brick treatment. Signature = the
+  // numGP (= 4*nz) material rhos; coords guarded inside; massType fixed at
+  // construction. Bounded stack signature: numGP > 64 (nz > 16) falls back to
+  // the uncached path rather than allocating -- far beyond any real nz.
+  double mcSig[64];
+  const bool mcOk = (numGP <= 64);
+  if (mcOk) {
+    for (int i = 0; i < numGP; i++)
+      mcSig[i] = materialPointers[i]->getRho();
+    if (const Matrix *Mc = massCache.lookup(mcSig, numGP, nodePointers, 8, 3))
+      return *Mc;
+  }
+
   formInertiaTerms(1);
+
+  if (mcOk)
+    massCache.fill(mass, mcSig, numGP, nodePointers, 8, 3);
   return mass;
 }
 
@@ -869,7 +887,9 @@ int LadrunoSolidShell::addInertiaLoadToUnbalance(const Vector &accel)
   if (!haveRho)
     return 0;
 
-  formInertiaTerms(1);   // fills mass
+  // Ladruno (ADR-77 G2 ext): route through getMass() so the cached M is used
+  // (this function reads only the mass matrix; ra is overwritten below).
+  const Matrix &M = this->getMass();
 
   static Vector ra(24);
   for (int i = 0; i < 8; i++) {
@@ -879,7 +899,7 @@ int LadrunoSolidShell::addInertiaLoadToUnbalance(const Vector &accel)
 
   if (load == 0)
     load = new Vector(24);
-  load->addMatrixVector(1.0, mass, ra, -1.0);
+  load->addMatrixVector(1.0, M, ra, -1.0);
   return 0;
 }
 

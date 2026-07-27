@@ -1,0 +1,43 @@
+{
+  "n": 15,
+  "steps": 1,
+  "system": "Pardiso",
+  "threads": "4",
+  "tol": 1e-07,
+  "maxIter": 3000,
+  "load_scale": 4.0,
+  "arms": {
+    "modnewton": {
+      "label": "ModifiedNewton",
+      "wall_s": 16.83914499997627,
+      "samples": [
+        16.83914499997627
+      ],
+      "uz": -0.3852736908926437,
+      "rel_err_vs_newton": 0.0,
+      "iters": [
+        514
+      ],
+      "total_iters": 514,
+      "iters_per_step": 514.0,
+      "ms_per_iter": 32.760982490226205,
+      "answer": "OK"
+    },
+    "modnewton_init": {
+      "label": "ModifiedNewton -initial",
+      "wall_s": 15.68960500007961,
+      "samples": [
+        15.68960500007961
+      ],
+      "uz": -0.38527369089264357,
+      "rel_err_vs_newton": 2.881647646515577e-16,
+      "iters": [
+        514
+      ],
+      "total_iters": 514,
+      "iters_per_step": 514.0,
+      "ms_per_iter": 30.524523346458384,
+      "answer": "OK"
+    }
+  }
+}
