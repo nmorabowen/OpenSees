@@ -16,6 +16,13 @@
 #                               has 4 strips regardless of rank count
 #   LADRUNO_CMS_PROFILE_HEIGHT  rows of nodes (default 20)
 #   LADRUNO_CMS_COMPARE_MODES   modes requested (default 6)
+#   LADRUNO_CMS_COMPARE_MODESL2 fixed-interface modes k2 kept per subdomain
+#                               (default 12 -- the section 30 setting)
+#   LADRUNO_CMS_COMPARE_MODESL1 level-1 modes k1 (default 2*k2)
+#
+# section 31: k2 was held at 12 at every mesh size in the section 30 ladder, so
+# that ladder could not tell a tuning artefact from an algorithmic one. These
+# two knobs exist to scale k2 with the subdomain (k2 ~ sqrt(m)) and re-run.
 set pid [getPID]
 set np [getNP]
 if {$np != 1 && $np != 4} {
@@ -33,6 +40,14 @@ if {[info exists env(LADRUNO_CMS_PROFILE_HEIGHT)]} {
 set numModes 6
 if {[info exists env(LADRUNO_CMS_COMPARE_MODES)]} {
     set numModes $env(LADRUNO_CMS_COMPARE_MODES)
+}
+set modesL2 12
+if {[info exists env(LADRUNO_CMS_COMPARE_MODESL2)]} {
+    set modesL2 $env(LADRUNO_CMS_COMPARE_MODESL2)
+}
+set modesL1 [expr {2 * $modesL2}]
+if {[info exists env(LADRUNO_CMS_COMPARE_MODESL1)]} {
+    set modesL1 $env(LADRUNO_CMS_COMPARE_MODESL1)
 }
 
 # The sheet is ALWAYS 4 strips wide, so the two runs solve the same problem.
@@ -102,13 +117,13 @@ if {$np == 1} {
     set values [eigen -ladrunoCMS \
         -domainMode physical \
         -hierarchy logical -level1 2 -level2 2 \
-        -modesL2 12 -modesL1 24 \
+        -modesL2 $modesL2 -modesL1 $modesL1 \
         -tol 1.0e-8 -maxEnrich 2 -maxIter 200000 \
         -maxRestarts 4000 -maxRefineIter 160 \
         -denseMax 4000 $numModes]
     set elapsed [expr {([clock microseconds] - $started) / 1.0e6}]
     if {$pid == 0} {
-        puts "COMPARE cms np=4 modes=$numModes seconds=$elapsed"
+        puts "COMPARE cms np=4 modes=$numModes k2=$modesL2 k1=$modesL1 seconds=$elapsed"
     }
 }
 

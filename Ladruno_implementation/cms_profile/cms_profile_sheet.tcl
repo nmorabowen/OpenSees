@@ -36,6 +36,16 @@ set maxIter 20000
 if {[info exists env(LADRUNO_CMS_PROFILE_MAXITER)]} {
     set maxIter $env(LADRUNO_CMS_PROFILE_MAXITER)
 }
+# section 31: k2 is the parameter that decides whether the local Lanczos
+# converges at all, so the profiling deck has to be able to vary it.
+set modesL2 12
+if {[info exists env(LADRUNO_CMS_PROFILE_MODESL2)]} {
+    set modesL2 $env(LADRUNO_CMS_PROFILE_MODESL2)
+}
+set modesL1 [expr {2 * $modesL2}]
+if {[info exists env(LADRUNO_CMS_PROFILE_MODESL1)]} {
+    set modesL1 $env(LADRUNO_CMS_PROFILE_MODESL1)
+}
 
 wipe
 model BasicBuilder -ndm 2 -ndf 2
@@ -101,7 +111,7 @@ if {$pid == 0} {
 set values [eigen -ladrunoCMS \
     -domainMode physical \
     -hierarchy logical -level1 2 -level2 2 \
-    -modesL2 12 -modesL1 24 \
+    -modesL2 $modesL2 -modesL1 $modesL1 \
     -tol 1.0e-8 -maxEnrich 2 -maxIter $maxIter \
     -maxRestarts $maxRestarts \
     -maxRefineIter 160 \
