@@ -1120,6 +1120,11 @@ int LadrunoSolidShell::recvSelf(int commitTag, Channel &theChannel,
   // drop any cached initial stiffness: nz/formulation/material class may all
   // differ from the pre-recv element, so a stale Ki would be wrong.  // Ladruno
   if (Ki != 0) { delete Ki; Ki = 0; }
+  // same for the mass cache: massType/quadz are sig-exempt (construction-fixed
+  // in normal flows) but a restore into a live element CAN flip them with rho
+  // and coords unchanged -- a guard hit would then serve the pre-recv mass
+  // (ADR-77 review wave).  // Ladruno
+  massCache.invalidate();
   return res;
 }
 

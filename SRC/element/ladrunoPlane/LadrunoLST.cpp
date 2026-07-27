@@ -796,6 +796,10 @@ int LadrunoLST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
       if (res < 0) return res;
     }
   }
+  // Ladruno (ADR-77 review wave): defensive, keeps the cache lifecycle uniform
+  // across the G2 family -- nothing sig-exempt that recvSelf rewrites may
+  // survive a re-receive into a live element.
+  massCache.invalidate();
   return res;
 }
 

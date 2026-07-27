@@ -19,6 +19,20 @@
 // guard value changed) it returns 0; the element forms its mass exactly as
 // before and calls fill(), which stores a byte-copy plus the guards.
 //
+// SCOPE OF THE GUARANTEE (ADR-77 review wave): the guards guarantee the
+// cached matrix is bit-identical to what the element's OWN formation would
+// produce right now -- no more. Elements whose formation reads a setDomain
+// snapshot (BezierT*'s controlPts, SolidShell's X, the SSP J-tables) re-form
+// from that snapshot after setNodeCoord: the guard trips, the re-formed mass
+// still reflects old geometry, cached and uncached stay byte-identical. A
+// guard match is NOT proof the matrix matches current node coordinates.
+// Also: a hit's Matrix* is owned here and freed on the next invalidation --
+// callers must consume it immediately, never hold it across another
+// getMass()/setEnabled/recvSelf (the vanilla class-static never dangled).
+// And the -noMassCache escape is per-instance and NOT serialized: broker-
+// built remote copies (SP/MP/DDM) default to enabled, so the A/B escape is
+// effective on the building rank only.
+//
 // WHY GUARDS, NOT ASSUMPTIONS (ADR-76 App. A.4, made concrete by the brick's
 // acceptance test): rho IS mutable mid-analysis on materials that register
 // setParameter "rho" (e.g. LadrunoJ2), and coordinates via setNodeCoord.
@@ -70,6 +84,10 @@ public:
     for (int i = 0; i < nsig; i++)
       if (sig[i] != guard[k++]) { invalidate(); return 0; }
     for (int a = 0; a < nnode; a++) {
+      // a warm cache can outlive the nodes (setDomain(0) on element removal /
+      // collapse-recorder flows) -- the uncached formation never touches the
+      // node array on those paths, so the cache must not either (review wave)
+      if (nodes[a] == 0) { invalidate(); return 0; }
       const Vector &crd = nodes[a]->getCrds();
       for (int j = 0; j < ndm; j++)
         if (crd(j) != guard[k++]) { invalidate(); return 0; }
@@ -82,6 +100,10 @@ public:
     if (!enabled)
       return;
     invalidate();
+    for (int a = 0; a < nnode; a++)
+      if (nodes[a] == 0)                  // pre-setDomain getMass (broker /
+        return;                           // direct-C++): can't guard geometry,
+                                          // stay uncached (review wave)
     M = new Matrix(m);                    // byte-copy of the fresh formation
     const int n = nsig + nnode * ndm;
     if (n != nGuard) {

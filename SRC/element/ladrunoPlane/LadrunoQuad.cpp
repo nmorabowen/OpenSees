@@ -806,8 +806,11 @@ const Matrix &LadrunoQuad::getMass(void)
 {
   // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
   // Signature = rho override + 4 material rhos + thickness; coords guarded
-  // inside (they also cover the SSP branch's J0/J1/J2, which are functions of
-  // the coordinates). Formulation fixed at construction, omitted.
+  // inside. NOTE (review wave): the coord guard buys cached==uncached
+  // bit-identity only -- after setNodeCoord the re-form still uses the SSP
+  // J0/J1/J2 snapshot from setDomain (computeSSP is not re-run), the same
+  // stale-geometry behavior the uncached element always had.
+  // Formulation fixed at construction, omitted (recvSelf invalidates).
   double mcSig[6];
   mcSig[0] = rho;
   mcSig[1] = thickness;
@@ -1411,6 +1414,11 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     }
     alpha = alphaCommit;
   }
+
+  // Ladruno (ADR-77 review wave): formulation (a mass-formula branch, SSP
+  // vs std lumping) is sig-exempt as construction-fixed, but recvSelf just
+  // rewrote it -- a guard hit on a live element would serve the pre-recv mass.
+  massCache.invalidate();
 
   return res;
 }
