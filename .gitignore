@@ -113,6 +113,14 @@ __pycache__
 /test_*.mpco
 /test_out.*
 
+# A zero-byte `wipe` at the repo root is always an accident -- a shell
+# redirection that captured the OpenSees/Tcl `wipe` command (`> wipe`). One got
+# committed in 100f90d76 and survived to `ladruno`. It is never a real artifact:
+# the upstream root Makefile declares `wipe:` as a TARGET (line ~130) and does
+# NOT mark it .PHONY, so a file by that name makes `make wipe` report
+# "up to date" and silently do nothing.
+/wipe
+
 # Ladruno install artifacts (release outputs, not source)
 /Ladruno_files/install.exe
 /Ladruno_files/install.ps1
