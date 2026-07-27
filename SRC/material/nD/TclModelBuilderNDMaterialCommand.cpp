@@ -98,6 +98,25 @@ extern  void *OPS_J2PlasticityThermal(void);
 extern  void *OPS_J2BeamFiber2dMaterial(void);
 extern  void *OPS_J2BeamFiber3dMaterial(void);
 extern  void *OPS_J2PlateFibreMaterial(void);
+
+// Ladruno: the fork's nD materials were registered ONLY in
+// SRC/interpreter/OpenSeesNDMaterialCommands.cpp (openseespy). This Tcl command
+// is a separate hand-written strcmp ladder with NO generic OPS_* fallback, so
+// `nDMaterial LadrunoJ2 ...` failed from every .tcl deck while the identical
+// call worked from Python. The fork's ELEMENTS were wired long ago (a dispatch
+// table in SRC/element/TclElementCommands.cpp), which is exactly why the gap in
+// the MATERIALS was easy to miss. Names + aliases below mirror the Python map
+// one-for-one so the two surfaces cannot drift again.
+extern  void *OPS_LogStrainNDMaterial(void);           // Ladruno
+extern  void *OPS_LogStrain2D(void);                   // Ladruno
+extern  void *OPS_LadrunoCohesiveHingeBiaxial(void);   // Ladruno
+extern  void *OPS_LadrunoJ2(void);                     // Ladruno
+extern  void *OPS_LadrunoJ2Finite(void);               // Ladruno
+extern  void *OPS_InitDefGradNDMaterial(void);         // Ladruno
+extern  void *OPS_StagedStrainNDMaterial(void);        // Ladruno
+extern  void *OPS_LadrunoRCConcrete(void);             // Ladruno
+extern  void *OPS_LadrunoRCFiniteStrain(void);         // Ladruno
+extern  void *OPS_LadrunoConcrete3D(void);             // Ladruno
 extern  void *OPS_PlaneStressLayeredMaterial(void);
 extern  void *OPS_PlaneStressRebarMaterial(void);
 extern  void *OPS_PlateFiberMaterial(void);
@@ -235,6 +254,97 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
       if (theMat != 0) 
         theMaterial = (NDMaterial *)theMat;
       else 
+        return TCL_ERROR;
+    }
+
+    // ---- Ladruno fork nD materials: Tcl parity with the openseespy map ----
+    // Same shape as every branch above. OPS_ResetInput() has already primed the
+    // OPS_Get* argument stream at the top of this function, so these factories
+    // parse identically to the Python path; a null return is TCL_ERROR, matching
+    // the surrounding convention.
+
+    else if ((strcmp(argv[1],"LogStrain") == 0) ||
+             (strcmp(argv[1],"LogStrainNDMaterial") == 0)) {
+      void *theMat = OPS_LogStrainNDMaterial();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LogStrain2D") == 0)) {
+      void *theMat = OPS_LogStrain2D();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoCohesiveHingeBiaxial") == 0)) {
+      void *theMat = OPS_LadrunoCohesiveHingeBiaxial();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoJ2") == 0)) {
+      void *theMat = OPS_LadrunoJ2();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoJ2Finite") == 0)) {
+      void *theMat = OPS_LadrunoJ2Finite();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"InitDefGrad") == 0) ||
+             (strcmp(argv[1],"InitDefGradNDMaterial") == 0) ||
+             (strcmp(argv[1],"StagedDefGrad") == 0) ||
+             (strcmp(argv[1],"StagedDefGradNDMaterial") == 0)) {
+      void *theMat = OPS_InitDefGradNDMaterial();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"StagedStrain") == 0) ||
+             (strcmp(argv[1],"StagedStrainNDMaterial") == 0)) {
+      void *theMat = OPS_StagedStrainNDMaterial();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoRCConcrete") == 0)) {
+      void *theMat = OPS_LadrunoRCConcrete();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoRCFiniteStrain") == 0)) {
+      void *theMat = OPS_LadrunoRCFiniteStrain();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoConcrete3D") == 0)) {
+      void *theMat = OPS_LadrunoConcrete3D();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
         return TCL_ERROR;
     }
 

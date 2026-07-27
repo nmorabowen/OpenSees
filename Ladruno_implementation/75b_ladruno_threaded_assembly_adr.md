@@ -920,7 +920,14 @@ is monotonic in N** — growing the model makes this lane *less* attractive, exa
 ADR-75 §1 predicted. One MUMPS solve is **40.2 s** against **0.39 s** for one element
 tangent assembly: a **104× ratio**.
 
-**The proxy caveat cannot rescue it.** The deck uses vanilla `stdBrick`/`J2Plasticity`
+**✅ The proxy caveat is now CLOSED by measurement.** The Tcl `nDMaterial` gap has
+been fixed, and G-L3 re-run on the fork's own `LadrunoBrick` + `LadrunoJ2` gives
+**1.99%** at 143 811 DOF and **0.97%** at 540 675 DOF — unchanged from the proxy's
+2.07% / 0.95%, with essentially the same wall. The fork kernel is not meaningfully
+more expensive than `stdBrick`/`J2Plasticity` in this configuration, so the
+"lower bound" framing below was right in direction but the gap is ~zero.
+
+*(Original reasoning, retained:)* **The proxy caveat cannot rescue it.** The deck uses vanilla `stdBrick`/`J2Plasticity`
 because the Tcl `nDMaterial` ladder does not carry `LadrunoJ2`; both are cheaper than
 `LadrunoBrick`/`LadrunoJ2`, so these fractions are a **lower bound**. But lifting
 0.95% to 40% needs a **~66× more expensive element kernel**, and `LadrunoBrick` is not
