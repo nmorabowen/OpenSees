@@ -47,6 +47,7 @@
 #include <ID.h>
 
 #include <fstream>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 // Constructor
 AcceleratedNewton::AcceleratedNewton(int theTangentToUse)
@@ -95,6 +96,12 @@ AcceleratedNewton::setConvergenceTest(ConvergenceTest *newTest)
 }
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 AcceleratedNewton::solveCurrentStep(void)
 {
   // set up some pointers and check they are valid
@@ -132,17 +139,21 @@ AcceleratedNewton::solveCurrentStep(void)
   //totalTimer.start();
 
   // Evaluate system residual R(y_0)
+  { OPS_PROFILE_SCOPE("formUnbalance");
   if (theIntegrator->formUnbalance() < 0) {
     opserr << "WARNING AcceleratedNewton::solveCurrentStep() -";
     opserr << "the Integrator failed in formUnbalance()\n";	
     return -2;
   }
+  }
 
   // Evaluate system Jacobian J = R'(y)|y_0
+  { OPS_PROFILE_SCOPE("formTangent");
   if (theIntegrator->formTangent(tangent) < 0){
     opserr << "WARNING AcceleratedNewton::solveCurrentStep() -";
     opserr << "the Integrator failed in formTangent()\n";
     return -1;
+  }
   }
   
   // Count factorization of the first tangent
@@ -165,10 +176,12 @@ AcceleratedNewton::solveCurrentStep(void)
 
     //solveTimer.start();
     // Solve for displacement increment
+    { OPS_PROFILE_SCOPE("linearSolve");
     if (theSOE->solve() < 0) {
       opserr << "WARNING AcceleratedNewton::solveCurrentStep() -";
       opserr << "the LinearSysOfEqn failed in solve()\n";	
       return -3;
+    }
     }
 //    solveTimer.pause();
 //    solveTimeReal += solveTimer.getReal();
@@ -192,23 +205,27 @@ AcceleratedNewton::solveCurrentStep(void)
     }
 
     // Update system with accelerated displacement increment v_{k+1}
+    { OPS_PROFILE_SCOPE("update");
     if (theIntegrator->update(*vAccel) < 0) {
       opserr << "WARNING AcceleratedNewton::solveCurrentStep() -";
       opserr << "the Integrator failed in update()\n";	
       return -4;
     }	
+    }
 
     // Evaluate residual
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIntegrator->formUnbalance() < 0) {
       opserr << "WARNING AcceleratedNewton::solveCurrentStep() -";
       opserr << "the Integrator failed in formUnbalance()\n";	
       return -2;
     }
+    }
 
     numIterations++;
 
     // Check convergence criteria
-    result = theTest->test();
+    { OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
 
     if (result == -1) {
       // Let the accelerator update the tangent if needed

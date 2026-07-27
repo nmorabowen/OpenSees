@@ -1,8 +1,8 @@
 ---
 title: ADR-1000 CMS — P4 session handoff (why CMS scales worse, and the two experiments that settle it)
 project: Ladruno
-status: handoff
-priority: high
+status: consumed
+priority: low
 adr: ADR-1000
 tags:
   - cms
@@ -13,6 +13,17 @@ tags:
 ---
 
 # ADR-1000 CMS — P4 handoff
+
+> **CONSUMED 2026-07-26 — both experiments ran; the answer is in
+> [[1000_ladruno_cms_adr]] §32. Read that, not this.** Verdict: **tuning, not
+> algorithmic.** The 523x below is a `k2` artefact; with `k2` chosen per size the
+> ratio flattens at ~4x and CMS scales as `n^1.12` vs the standard solver's
+> `n^1.34`. Two things in this document turned out to be wrong and are corrected
+> in §32: the suggested `k2 = max(12, sqrt(m))` rule is safe but 1.4–8.7x off the
+> optimum — measuring *only* that rule would have produced a **false
+> "algorithmic" verdict** — and §6's "known remaining inefficiency"
+> (`rayleighRitz`) is not the target; it is large in the thrashing profile only
+> because the whole Lanczos is. Kept for the record.
 
 **Read this first, then [[1000_ladruno_cms_adr]] §27–§30.** Everything below is
 measured, not assumed; where something is an assumption it says so.

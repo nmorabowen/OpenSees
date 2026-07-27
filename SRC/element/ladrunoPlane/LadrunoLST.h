@@ -67,6 +67,7 @@
 #define LadrunoLST_h
 
 #include <Element.h>
+#include <LadrunoMassCache.h>   // Ladruno (ADR-77 G2 ext)
 #include <Matrix.h>
 #include <Vector.h>
 #include <ID.h>
@@ -78,6 +79,9 @@ class Response;
 class LadrunoLST : public Element
 {
   public:
+      // Ladruno (ADR-77 G2 ext): escape = -noMassCache
+      void setMassCache(bool s) { massCache.setEnabled(s); }
+
     // std only — bbar/F-bar REFUTED on the T6 (rank-deficient, see header note);
     // the enum survives so the serialized formulation slot stays forward-usable.
     enum class Formulation { STD = 0 };
@@ -141,6 +145,9 @@ class LadrunoLST : public Element
     NDMaterial **theMaterial;          // 3 material points
     ID connectedExternalNodes;         // tags of the 6 nodes
     Node *theNodes[numnodes];
+  LadrunoMassCache massCache;   // Ladruno (ADR-77 G2 ext): per-instance mass cache,
+                  // guard-checked (rho/thickness/coords); -noMassCache escape
+
 
     static double matrixData[(2 * numnodes) * (2 * numnodes)];
     static Matrix K;                   // 12x12 element matrix (shared scratch)

@@ -6705,7 +6705,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	// deck on a serial system, but it is the old broken path on a
 	// PARTITIONED deck with a non-Mumps distributed system
 	// (DistributedProfileSPD, MPIDiagonal are also reachable here) —
-	// recorded as a known scope hole in ADR-1000 §32.4.
+	// recorded as a known scope hole in ADR-1000 §34.4.
 	ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
 	if (theSOE != 0 &&
 	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {

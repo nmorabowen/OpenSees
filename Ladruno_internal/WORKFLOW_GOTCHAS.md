@@ -225,6 +225,41 @@ one-word edit became a 9,900-line diff (OpenSeesCommands.cpp). Use the
 byte-preserving Edit path for CRLF sources; check `git diff --stat` before
 committing after any sed.
 
+**This bites from BOTH directions, and the warning above did not stop it.**
+Hit again 2026-07-26 (ADR-77 C0-5), inverted: a Python patch script doing
+`Path(p).write_text("\n".join(lines))` on **LF** sources rewrote every line as
+**CRLF**, because `write_text` defaults to `newline=None` -> `os.linesep`. Five
+inserted profiler scopes became **1119 changed lines** in `BFGS.cpp` (~1000 more
+in `Broyden.cpp`/`KrylovNewton.cpp`).
+
+Why LF sources are the norm here at all: **`.gitattributes` marks most vanilla
+`SRC/` files `-text`** (253 KB of such entries), so git does *no* EOL
+normalisation in either direction -- whatever byte the tool writes is a real
+content change. **The repo's own config, not git's defaults, decides what counts
+as a change.**
+
+The cost is not cosmetic on this fork: it defeats `LEDGER_vanilla_files.md`'s
+entire purpose (keep the divergence from upstream small and *greppable*) and
+makes the PR unreviewable.
+
+- **Avoid:** patch existing sources through bytes, not text --
+  `p.write_bytes(p.read_bytes().decode().replace(...).encode())`, or pass
+  `newline=""` to `open`. The Edit tool is already byte-preserving; prefer it.
+- **Detect:** `git show --stat HEAD` immediately after committing. If a file's
+  changed-line count is near its total length, this is why. *Do this even when
+  the edit "obviously" touched five lines* -- that assumption is exactly what
+  suppressed the check both times.
+- **Repair:** `p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))` (or the
+  reverse) then `git commit --amend`, which is safe while the PR is unmerged --
+  confirm with `gh pr view <n> --json state,mergedAt` before force-pushing.
+
+**Related trap, same family (hit 2026-07-27, ADR-77 G2 ext):** the Bash tool's
+heredoc layer EATS ONE LEVEL OF BACKSLASH even with a quoted delimiter, so an
+inline python script whose anchor contains the two characters backslash-n
+receives a real newline instead -- the anchor silently never matches (or worse,
+matches wrongly). Write patch scripts to a file (Write tool is verbatim) and
+construct backslashes with `chr(92)`.
+
 ## 7. The G1 Tcl gate has been green on a DEAD suite — "OK (0 checks passed)"
 
 Found 2026-07-26 by the first marker-gated Tcl step (the ADR-76 LAPACK

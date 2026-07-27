@@ -316,6 +316,17 @@ const Matrix &LadrunoLST::getInitialStiff(void)
 
 const Matrix &LadrunoLST::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
+  // Signature = rho override + numgp material rhos + thickness; coords
+  // guarded inside.
+  double mcSig[2 + numgp];
+  mcSig[0] = rho;
+  mcSig[1] = thickness;
+  for (int i = 0; i < numgp; i++)
+    mcSig[2 + i] = theMaterial[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(mcSig, 2 + numgp, theNodes, numnodes, 2))
+    return *Mc;
+
   K.Zero();
 
   static double rhoi[numgp];
@@ -324,8 +335,10 @@ const Matrix &LadrunoLST::getMass(void)
     rhoi[i] = (rho == 0.0) ? theMaterial[i]->getRho() : rho;
     sum += rhoi[i];
   }
-  if (sum == 0.0)
+  if (sum == 0.0) {
+    massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
 
   // Ladruno (ADR 70 P3, deliberate divergence from SixNodeTri): HRZ lumping.
   // Upstream's plain N-lumping (Σ N_a ρ dV) gives EXACTLY ZERO corner masses
@@ -346,14 +359,17 @@ const Matrix &LadrunoLST::getMass(void)
   }
   double dsum = 0.0;
   for (int a = 0; a < numnodes; a++) dsum += d[a];
-  if (dsum <= 0.0)
+  if (dsum <= 0.0) {
+    massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
   double scale = total / dsum;
   for (int a = 0, ia = 0; a < numnodes; a++, ia += 2) {
     double Nrho = scale * d[a];
     K(ia, ia)         = Nrho;
     K(ia + 1, ia + 1) = Nrho;
   }
+  massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
   return K;
 }
 
@@ -400,9 +416,15 @@ int LadrunoLST::addInertiaLoadToUnbalance(const Vector &accel)
     ra[2 * a]     = Raccel(0);
     ra[2 * a + 1] = Raccel(1);
   }
-  this->getMass();
+// Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 2 * numnodes; i++)
-    Q(i) += -K(i, i) * ra[i];
+    Q(i) += -Mq(i, i) * ra[i];
   return 0;
 }
 
@@ -509,9 +531,15 @@ const Vector &LadrunoLST::getResistingForceIncInertia(void)
     a[2 * n + 1] = accel(1);
   }
   this->getResistingForce();
-  this->getMass();
+  // Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 2 * numnodes; i++)
-    P(i) += K(i, i) * a[i];
+    P(i) += Mq(i, i) * a[i];
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     res += this->getRayleighDampingForces();
@@ -768,6 +796,10 @@ int LadrunoLST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
       if (res < 0) return res;
     }
   }
+  // Ladruno (ADR-77 review wave): defensive, keeps the cache lifecycle uniform
+  // across the G2 family -- nothing sig-exempt that recvSelf rewrites may
+  // survive a re-receive into a live element.
+  massCache.invalidate();
   return res;
 }
 

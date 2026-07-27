@@ -53,7 +53,14 @@
 //#include<ReliabilityDomain.h>//Abbas
 #include<Parameter.h>
 #include<ParameterIter.h>//Abbas
-static bool converged = false;
+// Ladruno ADR-77 (C0-4): removed `static bool converged = false;` -- a file-scope
+// MUTABLE GLOBAL shared by every Newmark instance in the process. It was written
+// in newStep() (true) and revertToLastStep() (false), and its ONLY read sat
+// inside a commented-out debug block that dumped U to "Newmark.dat". Dead state
+// carrying a live re-entrancy hazard for zero benefit -- exactly the static-idiom
+// class ADR-75b §5.4 catalogued as a blocker for threaded assembly. The two
+// writes and the commented-out reader are removed with it. Removing state that
+// nothing reads cannot change results.
 static int count = 0;
 
 void *
@@ -192,22 +199,11 @@ int Newmark::newStep(double deltaT)
     }
     
     // set response at t to be that at t+deltaT of previous step
-    /*
-    if (converged == true) {
-      std::ofstream outfile;
+    // (Ladruno ADR-77 C0-4: the commented-out "Newmark.dat" debug dump and the
+    //  `converged = true;` write that fed it were removed here -- see the note
+    //  at the top of this file.)
 
-      outfile.open("Newmark.dat",std::ofstream::out | std::ofstream::app);
-      int size = U->Size();
-      for (int i=0; i<size; i++)
-	outfile << (*U)(i) << " ";
-      outfile << "\n";
-      outfile.close();
-    }
-    */
-
-    converged = true;
-
-    (*Ut) = *U;        
+    (*Ut) = *U;
     (*Utdot) = *Udot;  
     (*Utdotdot) = *Udotdot;
     
@@ -270,7 +266,7 @@ Newmark::getVel(void)
 int Newmark::revertToLastStep()
 {
   // set response at t+deltaT to be that at t .. for next newStep
-  converged = false;
+  // (Ladruno ADR-77 C0-4: `converged = false;` removed -- see the file-top note.)
   if (U != 0)  {
     (*U) = *Ut;        
     (*Udot) = *Utdot;  

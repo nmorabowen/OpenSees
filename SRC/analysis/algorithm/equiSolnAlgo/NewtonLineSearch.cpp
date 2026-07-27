@@ -39,6 +39,7 @@
 #include <FEM_ObjectBroker.h>
 #include <ConvergenceTest.h>
 #include <ID.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 
 //Null Constructor
@@ -82,6 +83,12 @@ NewtonLineSearch::setConvergenceTest(ConvergenceTest *newTest)
 
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 NewtonLineSearch::solveCurrentStep(void)
 {
     // set up some pointers and check they are valid
@@ -107,11 +114,13 @@ NewtonLineSearch::solveCurrentStep(void)
       return -3;
     }
 
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIntegrator->formUnbalance() < 0) {
       opserr << "WARNING NewtonLineSearch::solveCurrentStep() -";
       opserr << "the Integrator failed in formUnbalance()\n";	
       return -2;
     }	    
+    }
 
     int result = -1;
     do {
@@ -120,18 +129,22 @@ NewtonLineSearch::solveCurrentStep(void)
 	const Vector &Resid0 = theSOE->getB() ;
 	
 	//form the tangent
+        { OPS_PROFILE_SCOPE("formTangent");
         if (theIntegrator->formTangent() < 0){
 	    opserr << "WARNING NewtonLineSearch::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formTangent()\n";
 	    return -1;
 	}		    
+        }
 	
 	//solve 
+	{ OPS_PROFILE_SCOPE("linearSolve");
 	if (theSOE->solve() < 0) {
 	    opserr << "WARNING NewtonLineSearch::solveCurrentStep() -";
 	    opserr << "the LinearSysOfEqn failed in solve()\n";	
 	    return -3;
 	}	    
+	}
 
 
 	//line search direction 
@@ -140,17 +153,21 @@ NewtonLineSearch::solveCurrentStep(void)
 	//initial value of s
 	double s0 = - (dx0 ^ Resid0) ; 
 
+	{ OPS_PROFILE_SCOPE("update");
 	if (theIntegrator->update(theSOE->getX()) < 0) {
 	    opserr << "WARNING NewtonLineSearch::solveCurrentStep() -";
 	    opserr << "the Integrator failed in update()\n";	
 	    return -4;
 	}	        
+	}
 
+	{ OPS_PROFILE_SCOPE("formUnbalance");
 	if (theIntegrator->formUnbalance() < 0) {
 	    opserr << "WARNING NewtonLineSearch::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formUnbalance()\n";	
 	    return -2;
 	}	
+	}
 
 	// do a line search only if convergence criteria not met
 	theOtherTest->start();
@@ -169,7 +186,7 @@ NewtonLineSearch::solveCurrentStep(void)
 
 	this->record(0);
 	  
-	result = theTest->test();
+	{ OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
 
     } while (result == -1);
 

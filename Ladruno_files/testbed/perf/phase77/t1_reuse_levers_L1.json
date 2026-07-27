@@ -1,0 +1,131 @@
+{
+  "n": 15,
+  "steps": 4,
+  "system": "Pardiso",
+  "threads": "4",
+  "tol": 1e-07,
+  "maxIter": 300,
+  "load_scale": 1.0,
+  "arms": {
+    "newton": {
+      "label": "Newton",
+      "wall_s": 3.4977350999834016,
+      "samples": [
+        3.4974240999436006,
+        3.4980461000232026
+      ],
+      "uz": -0.4885940044500152,
+      "rel_err_vs_newton": 0.0,
+      "iters": [
+        2,
+        5,
+        4,
+        6
+      ],
+      "total_iters": 17,
+      "iters_per_step": 4.25,
+      "ms_per_iter": 205.74912352843538,
+      "answer": "OK"
+    },
+    "newton_init": {
+      "label": "Newton -initial",
+      "wall_s": 8.505823500046972,
+      "samples": [
+        6.8104079000186175,
+        10.201239100075327
+      ],
+      "uz": -0.48859400443374773,
+      "rel_err_vs_newton": 3.3294488284767913e-11,
+      "iters": [
+        2,
+        21,
+        9,
+        34
+      ],
+      "total_iters": 66,
+      "iters_per_step": 16.5,
+      "ms_per_iter": 128.87611363707535,
+      "answer": "OK"
+    },
+    "modnewton": {
+      "label": "ModifiedNewton",
+      "wall_s": 4.444364099937957,
+      "samples": [
+        4.306481499923393,
+        4.58224669995252
+      ],
+      "uz": -0.48859400443374773,
+      "rel_err_vs_newton": 3.3294488284767913e-11,
+      "iters": [
+        2,
+        21,
+        9,
+        34
+      ],
+      "total_iters": 66,
+      "iters_per_step": 16.5,
+      "ms_per_iter": 67.33884999905995,
+      "answer": "OK"
+    },
+    "modnewton_init": {
+      "label": "ModifiedNewton -initial",
+      "wall_s": 4.18527889996767,
+      "samples": [
+        4.182377199991606,
+        4.188180599943735
+      ],
+      "uz": -0.48859400443374773,
+      "rel_err_vs_newton": 3.3294488284767913e-11,
+      "iters": [
+        2,
+        21,
+        9,
+        34
+      ],
+      "total_iters": 66,
+      "iters_per_step": 16.5,
+      "ms_per_iter": 63.413316666176826,
+      "answer": "OK"
+    },
+    "modnewton_init_fo": {
+      "label": "ModifiedNewton -initial -factoronce",
+      "wall_s": 4.117737049993593,
+      "samples": [
+        4.042770499945618,
+        4.192703600041568
+      ],
+      "uz": -0.48859400443374773,
+      "rel_err_vs_newton": 3.3294488284767913e-11,
+      "iters": [
+        2,
+        21,
+        9,
+        34
+      ],
+      "total_iters": 66,
+      "iters_per_step": 16.5,
+      "ms_per_iter": 62.38995530293323,
+      "answer": "OK"
+    },
+    "krylov": {
+      "label": "KrylovNewton",
+      "wall_s": 3.650527050020173,
+      "samples": [
+        3.4463505999883637,
+        3.8547035000519827
+      ],
+      "uz": -0.48859400445001505,
+      "rel_err_vs_newton": 3.408421965415468e-16,
+      "iters": [
+        2,
+        9,
+        15,
+        24
+      ],
+      "total_iters": 50,
+      "iters_per_step": 12.5,
+      "ms_per_iter": 73.01054100040346,
+      "answer": "OK"
+    }
+  }
+}

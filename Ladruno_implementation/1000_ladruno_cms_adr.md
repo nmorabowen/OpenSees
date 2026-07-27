@@ -2656,8 +2656,394 @@ encargada. Debe medirse en la misma campaña.
   números del veredicto P4— **nunca ha estado en el repositorio**. Vive en una
   carpeta de descargas. Debe importarse antes de la campaña, o la evidencia de
   Esmeralda nacerá con el mismo defecto.
+## 32. P4 — el 523x era `k2`, no el algoritmo — 2026-07-26
 
-## 32. La referencia (b) existía a medias: el cableado F1, verificado y cerrado — 2026-07-27
+La sección 30 midió CMS 7.9x más lento que Arpack+UmfPack a `n=3200` y **523x** a
+`n=12800`, y dejó abierta la pregunta que decide P4: ¿es un artefacto de afinado
+o una propiedad de la formulación? [[_adr1000_cms_p4_handoff]] especificó dos
+experimentos y sus criterios de aceptación **por adelantado**. Se ejecutaron los
+dos. **La respuesta es afinado, y por un margen que no admite duda.**
+
+La sección 31 aplazó el veredicto de P4 a una campaña en Esmeralda y dejó estos
+experimentos en pie precisamente porque su respuesta condiciona cómo configurar
+esa campaña (31.6). Esta sección la da, y **cambia el requisito 4 de 31.4**: no
+basta con "escalar `k2` con el subdominio", porque la regla obvia para hacerlo es
+la equivocada (32.5). Ver 32.9 para lo que esto implica para la campaña.
+
+### 32.1 Experimento A — dónde se van los 106 segundos
+
+Un solo perfil de `cms_profile_sheet.tcl` a 40x40 (`n=12800`, `m=3120`, `b=80`)
+con `k2=12`, contra la referencia 20x20 (`m=760`) de la sección 29:
+
+| | 20x20 (`m=760`) | 40x40 (`m=3120`) | factor |
+|---|---:|---:|---:|
+| `m` | 760 | 3 120 | 4.1x |
+| **`restarts`** | **1** | **239** | **239x** |
+| **`opApplications`** | **120** | **22 032** | **184x** |
+| `ritzCalls` | 15 | 2 873 | 192x |
+| `lanczos` [s] | 0.0727 | 54.15 | 745x |
+| `T2 fineModes` [s] | 0.0965 | 105.4 | 1 093x |
+| total [s] | 0.229 | 105.9 | 462x |
+
+Es exactamente la primera fila de la tabla de lecturas del handoff: **`restarts`
+grande y `opApplications` enorme ⇒ el Lanczos de interfaz fija está en
+*thrashing***. El coste no está repartido: `T2 fineModes` es el 99.6% del total,
+y dentro de T2 todo lo que no es el Lanczos (factorización, modos de restricción,
+condensación, congruencia) suma 0.073 s — es decir, nada. El refinamiento, que en
+la sección 27 era el 58% del total, aquí es el 0.4%.
+
+**Un hueco que hay que declarar.** `T2 fineModes` marca 105.4 s mientras las
+sub-fases de T2 suman 54.2 s. No es trabajo sin instrumentar: `fineModesSeconds`
+se toma *después* de la colectiva que cierra la fase, mientras el desglose de T2
+es local y sólo lo emite el rango 0 (`LadrunoCMSEigenSolver.cpp`, bloque
+`-verbose`). El hueco de 51 s es **espera entre rangos**: el rango 0 —el que
+tiene la columna empotrada, y por tanto el subdominio más fácil— termina su
+Lanczos en 54 s y espera al más lento. Con un `k2` convergente el hueco se cierra
+(0.530 s de fase contra 0.482 s de sub-fases, 91%), lo que confirma la lectura:
+el desequilibrio *es* el thrashing, repartido de forma desigual.
+
+### 32.2 El mismo caso con `k2=16`
+
+Mismo deck, misma malla, mismo binario, sólo `-modesL2 16`:
+
+| | `k2=12` | `k2=16` | factor |
+|---|---:|---:|---:|
+| `restarts` | 239 | **0** | — |
+| `opApplications` | 22 032 | **136** | 162x |
+| `ritzCalls` | 2 873 | 17 | 169x |
+| `lanczos` [s] | 54.15 | 0.402 | 135x |
+| `T2 fineModes` [s] | 105.4 | 0.530 | 199x |
+| total [s] | 105.9 | **1.045** | **101x** |
+
+Cuatro modos más en la base de interfaz fija convierten 106 segundos en uno. La
+memoria no se mueve (RSS pico del rango 0: 80.9 → 81.6 MiB; `transformation`
+2.25 → 2.34 MiB) y el espectro es el mismo. **No hay un coste algorítmico
+escondido: había una base demasiado pobre para converger.**
+
+### 32.3 Experimento B — la escalera con `k2` variable
+
+`cms_compare_arpack.tcl`, que construye la misma malla en los dos caminos; los
+seis autovalores coinciden a ~1e-12 en todos los puntos. Estándar = `eigen`
+Arpack+UmfPack a 1 rango; CMS = 4 rangos. Se añadió un cuarto tamaño, 80x80, que
+la sección 30 no tenía. Los cuatro puntos de la escalera final se tomaron **5
+repeticiones por brazo, estándar y CMS espalda contra espalda en una sola
+pasada**; se cita el **mínimo** (ver 32.4 sobre por qué el mínimo).
+
+| malla | `n` | `m` | estándar [s] | CMS `k2=12` (§30) | CMS `k2=√m` | **CMS mejor `k2`** |
+|---|---:|---:|---:|---:|---:|---:|
+| 20x20 | 3 200 | 760 | 0.0288 | 0.2328 (**8.1x**) | 0.3241 `k2=28` (11.3x) | **0.2328** `k2=12` (**8.1x**) |
+| 40x40 | 12 800 | 3 120 | 0.2021 | 105.63 (**523x**) | 2.4848 `k2=56` (12.3x) | **0.9592** `k2=16` (**4.7x**) |
+| 60x60 | 28 800 | 7 080 | 0.5914 | >200 (agotó) | 13.016 `k2=84` (22.0x) | **2.3163** `k2=16` (**3.9x**) |
+| 80x80 | 51 200 | 12 640 | 1.1902 | >300 (agotó) | 44.593 `k2=112` (37.5x) | **5.1306** `k2=16` (**4.3x**) |
+
+La columna `k2=12` reproduce la sección 30 casi exactamente: a `n=12800` el
+cociente sale **522.7x** contra el 523x publicado. Aquella medición no estaba
+mal — medía un Lanczos que no converge.
+
+**Con `k2` elegido por tamaño el cociente se aplana:** 8.1x → 4.7x → 3.9x → 4.3x
+sobre un rango de **16x en `n`**. El 8.1x del punto más pequeño es coste fijo de
+arranque MPI sobre un problema de 0.03 s, no una tendencia.
+
+Y los exponentes, ajustados sobre el rango completo `n = 3200 → 51 200`:
+
+| | `t ~ n^p` |
+|---|---:|
+| estándar (Arpack+UmfPack) | `p = 1.34` |
+| **CMS, mejor `k2`** | **`p = 1.12`** |
+| CMS, `k2 = √m` | `p = 1.78` |
+| CMS, `k2 = 12` fijo | `p >= 2.6` (cota inferior: dos puntos agotaron el tiempo) |
+
+**Con `k2` bien elegido CMS escala algo MEJOR que el solver estándar**, no peor.
+
+### 32.4 El precipicio de `k2`, y por qué no es monótono
+
+Barrido fino (1 repetición donde la distinción es binaria —converge en ~1 s o
+muele durante minutos—, 3 repeticiones en la zona rápida):
+
+| `n` (`m`) | régimen lento | régimen rápido |
+|---|---|---|
+| 3 200 (760) | `k2=9` 3.65 s · `10` 5.56 s · `11` 2.64 s | `k2=8` **0.255** · `12` **0.233** · `13` 0.282 · `20` 0.268 |
+| 12 800 (3 120) | `11` 172.7 · `12` 105.6 · `13` 64.4 | `14` 0.973 · `15` 1.177 · `16` **0.959** |
+| 28 800 (7 080) | `12` >200 · `13` 28.5 · `14` 39.8 | `15` 2.445 · `16` **2.316** · `17` 2.384 |
+| 51 200 (12 640) | `12`, `13`, `14` >300 | `15` 5.251 · `16` **5.131** · `17` 5.258 · `18` 5.378 |
+
+Dos hechos, ambos con 3 repeticiones:
+
+1. **El salto es de dos órdenes de magnitud sobre un único modo.** A `n=12800`,
+   `k2=13` cuesta 64.4 s y `k2=14` cuesta 0.97 s: **66x por un modo**.
+2. **Por debajo del umbral el coste NO es monótono.** A `n=3200`, `k2=8` va bien
+   (0.255 s), `9`/`10`/`11` van mal (3.65 / 5.56 / 2.64 s) y `12` vuelve a ir
+   bien (0.233 s). Un `k2` *más pequeño* puede ser mucho más rápido que uno más
+   grande. Es lo que se espera si el truncamiento parte un grupo de autovalores
+   casi degenerados —la chapa rectangular tiene muchos— y no lo que se esperaría
+   de una base "demasiado pequeña" sin más.
+
+Por encima del umbral el coste crece de forma limpia y monótona con `k2`
+(a `n=12800`: 0.96 → 1.08 → 1.22 → 1.31 → 1.74 → 2.60 → 4.29 → 8.23 → 18.71 s
+para `k2` = 16 → 160), así que pasarse tampoco es gratis.
+
+**Nota de método — por qué el mínimo y no la media.** Esta caja es compartida y
+llegó a estar al 76% de CPU con procesos ajenos. Una tanda de 80x80 midió
+`k2=16` en 8.80 s (3 repeticiones, 7.84–9.80, dispersión ±11%) y la misma
+configuración, repetida con la máquina tranquila, dio 5.25 s (±1%). La dispersión
+delató la tanda mala; la disciplina de espalda-contra-espalda de la sección 3 del
+plan P4 es lo que la hizo visible. Bajo contención —ruido de un solo signo— el
+mínimo es el estimador honesto; las medias están en los registros y cuentan la
+misma historia.
+
+### 32.5 La regla `√m` del handoff funciona, y aun así es la regla equivocada
+
+El handoff proponía `k2 = max(12, round(√m))`. Es **segura** —queda por encima
+del umbral en los cuatro tamaños— pero **cara**, porque por encima del umbral el
+tiempo crece con `k2`: cuesta entre 1.4x y 8.7x más que el mejor `k2` medido.
+
+Y tiene una consecuencia metodológica que conviene dejar escrita. Si sólo se
+hubiera medido la regla propuesta, el cociente habría salido
+**11.3x → 12.3x → 22.0x → 37.5x** con `p = 1.78`, es decir *"sigue
+degradándose"*, y por el criterio de aceptación del handoff eso se habría leído
+como **algorítmico**: un veredicto falso obtenido ejecutando el experimento
+correcto. Lo que salvó la lectura fue **barrer `k2`** en lugar de confiar en una
+regla a priori.
+
+### 32.6 Veredicto
+
+**Es afinado. No es algorítmico.** Con `k2` elegido por tamaño, el 523x de la
+sección 30 desaparece: 40x40 pasa de 105.6 s a 0.96 s (**110x**), y 60x60 y 80x80
+pasan de "no termina" a 2.3 s y 5.1 s. Nada de esto es una optimización del
+código: es **el mismo binario con un parámetro distinto**.
+
+**La afirmación de la sección 30 de que CMS escala como `O(n^4)` queda
+retirada.** Era el perfil de un Lanczos que no converge, no el de la formulación.
+Con `k2` sano, CMS escala como `n^1.12` frente al `n^1.34` del solver estándar
+sobre 16x de rango en `n`.
+
+**Lo que NO cambia:** CMS sigue sin ganar al solver estándar en velocidad en
+ningún punto medido — el cociente se estabiliza en torno a **~4x más lento**, no
+por debajo de 1. **La puerta P4 sigue sin cumplirse en el eje de tiempo.**
+
+Lo que sí cambia es la objeción de la sección 30.3, y es el resultado importante
+para la decisión de producción: un factor **constante** de orden 4x sobre 16x de
+rango en `n` es compatible con el argumento de capacidad de memoria —la respuesta
+llega, sólo que 4x más tarde—, mientras que `O(n^4)` no lo era. **El argumento de
+capacidad de memoria queda restaurado**, y con él la línea de trabajo de la
+sección 4 del plan P4, que sigue siendo la puerta real.
+
+Esto **no cierra P4 ni lo desbloquea**: el veredicto sigue aplazado a Esmeralda
+(31.4). Lo que hace es quitar de la mesa el argumento que habría cerrado P4 sin
+campaña. Con `O(n^4)`, la campaña habría sido una formalidad; con `n^1.12`, no lo
+es — y esa es exactamente la razón por la que 31.4 se negó a cerrar sobre
+evidencia de escritorio.
+
+### 32.7 Por qué NO se ha shippeado una heurística automática de `k2`
+
+El handoff decía: si es afinado, shippear una heurística automática de `k2`. **No
+se ha hecho, deliberadamente**, y la razón es la regla que esta línea de trabajo
+ya pagó dos veces (secciones 26 y 29): *no cambiar sin medir*.
+
+Los datos dicen tres cosas que desaconsejan fijar una regla hoy:
+
+1. La regla obvia (`√m`) es **medidamente** subóptima: hasta 8.7x de sobrecoste,
+   y su propio cociente se degrada (32.5).
+2. El óptimo está pegado a un precipicio de dos órdenes de magnitud, y el
+   precipicio **no es monótono por debajo** (32.4). Una regla del tipo "el `k2`
+   más pequeño que converge" es por tanto insegura, y una regla generosa paga el
+   sobrecoste de `√m`.
+3. Cuatro tamaños, una malla, una topología (4 franjas), 6 modos pedidos y una
+   caja no bastan para ajustar una regla que decide entre 1 s y >300 s.
+
+Lo accionable y barato **sí** está identificado, y es un **diagnóstico, no una
+heurística** — **shippeado el 2026-07-27 como `-restartWarn`, sección 33**: el
+solver ya cuenta `restarts` y `opApplications` (sección 27) pero
+sólo los enseña bajo `-verbose`. Un aviso cuando `restarts` supera un umbral
+—"la base de interfaz fija no está convergiendo; suba `-modesL2`"— convierte un
+fallo silencioso de 300 s en un mensaje accionable **sin comprometerse a ninguna
+regla**. Queda la campaña
+que haría falta para justificar una heurística: barrido de `k2` sobre >=3
+topologías de interfaz y >=2 recuentos de modos pedidos, para separar la
+dependencia en `m` de la dependencia en `b` y en el número de modos.
+
+### 32.8 Alcance — lo que esto no dice
+
+- Es la chapa de cuadriláteros en 4 franjas, 4 rangos, 6 modos, una sola caja.
+  **No es Building 1A**, que sigue sin estar en el repositorio (sección 30), así
+  que el 7.0x original de la puerta P4 sigue sin poder re-medirse.
+- El eje medido es **tiempo**. La memoria no se barrió: el RSS pico del rango 0
+  apenas se mueve entre `k2=12` y `k2=16` a 40x40 (80.9 → 81.6 MiB), lo que
+  sugiere que `k2` no es la palanca de memoria, pero son dos puntos, no una
+  medición.
+- El umbral se localizó con **una** repetición por punto en la zona lenta (la
+  distinción es binaria); los puntos citados de la escalera y del régimen rápido
+  tienen 3 o 5.
+- Los decks ganaron `LADRUNO_CMS_COMPARE_MODESL2/L1` y
+  `LADRUNO_CMS_PROFILE_MODESL2/L1`; sin ellos `k2` estaba fijo en el archivo, que
+  es precisamente por lo que la sección 30 no pudo distinguir estos dos mundos.
+- Trampas de entorno nuevas al correr el binario MP desde el árbol de compilación
+  crudo (DLL de MKL, `libiomp5md.dll` de la instalación en el `PATH`, `PMPI_Init`
+  sin `libfabric`): [[../Ladruno_internal/BUILD_GOTCHAS]] #12.
+
+### 32.9 Qué cambia esto en la campaña de Esmeralda (sección 31.4)
+
+Tres cosas, todas accionables antes de reservar tiempo de cluster:
+
+1. **El requisito 4 se sustituye.** "`k2` escalado con el subdominio" no es una
+   instrucción suficiente: la regla natural para cumplirla —`√m`— es la peor de
+   las medidas aquí (32.5), y usarla en Esmeralda produciría un cociente inflado
+   entre 1.4x y 8.7x. **La campaña debe barrer `k2` en cada punto**, no fijarlo
+   por regla. Presupuéstese: es un barrido anidado dentro del barrido de rangos.
+2. **Un punto que falla por `k2` no es un punto negativo.** Con `k2` bajo el
+   umbral, CMS no falla — *muele*, y devuelve el resultado correcto si se le
+   espera. En una cola de cluster eso se ve como un trabajo que agota su tiempo,
+   que es indistinguible de "el modelo es demasiado grande". Sin el diagnóstico
+   de 32.7, la campaña puede recoger falsos negativos y no notarlo. **El aviso de
+   `restarts` debería ir antes que la campaña**, no después. — **HECHO
+   2026-07-27: `-restartWarn`, sección 33. Este bloqueo está levantado.**
+3. **La referencia (b) de 31.4 —`eigen` sobre `MumpsParallelSOE`— gana peso.**
+   El competidor a batir ya no es un ARPACK secuencial 523x más lento sino uno
+   ~4x más rápido y con mejor exponente, y a escala de Esmeralda la comparación
+   honesta es contra la ruta MUMPS distribuida. El margen que CMS tiene que
+   recuperar es mayor de lo que sugería la sección 30.
+
+Lo que **no** cambia: el aplazamiento de 31.4 sigue siendo correcto, y por la
+misma razón. Toda la evidencia de esta sección son 4 rangos en un escritorio.
+
+## 33. `-restartWarn` — el fallo silencioso de `k2` deja de serlo — 2026-07-27
+
+La sección 32.7 dejó una sola cosa accionable y barata, y 32.9 la puso **antes**
+de la campaña de Esmeralda en lugar de después. Esto la implementa.
+
+### 33.1 El problema, dicho con precisión
+
+Un `k2` por debajo del umbral de convergencia **no falla**. Muele —de minutos a
+horas— y luego devuelve **el resultado correcto**, convergido a la tolerancia
+pedida. No hay error, no hay aviso, no hay residual malo: el único síntoma es el
+reloj. Desde fuera, *"esta corrida está en thrashing"* y *"este modelo es
+grande"* son indistinguibles.
+
+En un escritorio eso cuesta una tarde. En una cola de cluster —que es a donde va
+la campaña de la sección 31— el trabajo agota su walltime y lo matan, que es
+**exactamente** lo que se ve cuando un modelo de verdad no cabe. Una campaña
+puede recoger falsos negativos y no enterarse nunca. Por eso el aviso va antes.
+
+Los contadores existían desde la sección 27. Lo único que faltaba era que alguien
+los mirara sin `-verbose`.
+
+### 33.2 Qué se añade
+
+`Options::restartWarn`, opción **`-restartWarn <n>`, por defecto 8**, `0`
+desactiva. Cuando el recuento de reinicios del Lanczos de interfaz fija alcanza
+el umbral, el solver avisa nombrando la palanca:
+
+```
+WARNING LadrunoCMS: the local fixed-interface Lanczos (T2) restarted 131 times
+on rank 1 (warn at 8, budget 4000).
+  The result is still converged to the requested tolerance, but the
+  fixed-interface basis is too poor for that subdomain and the solve may be
+  orders of magnitude slower than necessary.
+  Raise -modesL2 (currently 10); a few extra modes is usually enough. Do NOT
+  overshoot -- past convergence the cost grows with -modesL2. Silence with
+  -restartWarn 0.
+```
+
+Cuatro decisiones, cada una con una razón medida detrás:
+
+1. **No está condicionado a `-verbose`.** El fallo que describe es silencioso por
+   construcción, y las corridas que más necesitan oírlo son trabajos por lotes
+   donde nadie puso `-verbose`. Ponerlo bajo la bandera lo haría inútil justo
+   donde hace falta.
+2. **El recuento es el máximo ENTRE RANGOS, no el del rango 0** —
+   `MPI_Allreduce`/`MPI_MAXLOC` sobre el par `{reinicios, rango}`, lo que además
+   permite **nombrar el rango** culpable. Esto no es celo preventivo: ver 33.4,
+   donde el rango 0 declara 54 reinicios mientras el peor rango lleva 131.
+3. **El umbral NO se escala con `-maxRestarts`.** Subir *ese* presupuesto es
+   precisamente lo que hace un usuario cuando está en thrashing (sección 28), así
+   que atar el aviso al presupuesto lo silenciaría exactamente cuando importa. Es
+   absoluto, y hay un check que lo fija.
+4. **`-restartWarn 0` desactiva y es legal**, a diferencia de `-maxRestarts 0`
+   que `validate()` rechaza. Un diagnóstico tiene que poder apagarse.
+
+El defecto 8 es **una heurística sobre evidencia limitada**, y se coloca lejos de
+los dos extremos del hueco medido en la sección 32: toda corrida sana usó 0 o 1
+reinicios; toda corrida en thrashing, 54 o más. Se documenta como heurística, no
+como resultado.
+
+**No cambia ningún resultado.** Por eso `-restartWarn` **no** entra en la puerta
+de consistencia entre rangos a la que sí tuvo que entrar `-maxRestarts` (§28.1):
+un umbral divergente cambia lo que se imprime, no lo que se calcula. El aviso lo
+emite sólo el rango 0, para que cuatro rangos no impriman cuatro copias de un
+recuento que ya es global.
+
+### 33.3 El `k2` que se cita es el de verdad
+
+Detalle pequeño y fácil de errar: el reintento por enriquecimiento sube `k2` por
+encima de `options.modesLevel2`, así que citar la opción habría nombrado un
+número sobre el que el usuario no puede actuar. El aviso cita el `k2` del intento
+**aceptado**.
+
+### 33.4 Evidencia
+
+Malla de 20x20 por rango a 4 rangos, con el binario recién construido. `k2=10` es
+el caso lento de la sección 32.4 (5.56 s contra 0.23 s de `k2=12` justo al lado),
+elegido porque hace thrashing en segundos en vez de en los 106 s del 40x40.
+
+| caso | avisos | esperado |
+|---|---:|---|
+| `cms_compare_arpack.tcl` (**sin `-verbose`**), `k2=10` | **1** | ≥1 |
+| `cms_compare_arpack.tcl` (sin `-verbose`), `k2=12` | 0 | 0 |
+| `k2=10` con `-restartWarn 0` | 0 | 0 |
+| `k2=10` con `-restartWarn 4000` (umbral por encima del recuento) | 0 | 0 |
+| `cms_profile_sheet.tcl` (`-verbose`), `k2=10` | 1 | ≥1 |
+| `cms_profile_sheet.tcl` (`-verbose`), `k2=12` | 0 | 0 |
+
+Las dos primeras filas son la propiedad que importa: **el aviso sobrevive sin
+`-verbose`**, que es el deck que usa la comparación y el que se parece a un
+trabajo de cola.
+
+**Y la fila que justifica el `MAXLOC`.** En la corrida de perfil con `k2=10`, la
+línea `T2 Lanczos` —que es local al rango 0— declara `restarts=54`, mientras el
+aviso dice **131 en el rango 1**. Un aviso construido sobre el contador del rango
+0 habría subestimado el thrashing en **2.4x**, exactamente el sesgo que 32.1
+predijo por escrito antes de medirlo aquí. Con `k2=12` el mismo deck da
+`restarts=1` y no avisa: el umbral 8 separa los dos regímenes con holgura por
+ambos lados.
+
+### 33.5 Batería
+
+- `ladruno_cms_core_check` (g++ `-O2 -std=c++17 -Wall -Wextra -pedantic`): PASA,
+  con 19 aserciones nuevas — que la opción llega a `Options`, que el defecto es
+  8, que `-restartWarn 0` es aceptado por `validate()` mientras un negativo se
+  rechaza, que un no-entero se rechaza, y que **subir `-maxRestarts` a 4000 no
+  mueve el umbral** (el punto 3 de 33.2, fijado por un check para que nadie lo
+  "simplifique" después a una fracción del presupuesto).
+- Los cinco checks numéricos (`mumps`, `lanczos`, `hierarchy`, `subspace`,
+  `assembly`) bajo `mpiexec -n 4`: PASAN. Cubren la nueva colectiva: el
+  `MPI_Allreduce` añadido está en `solveDistributedHierarchy`, después de la
+  barrera de fallo que ya existía, así que no introduce una ruta de salida
+  asimétrica.
+- `ladruno_cms_topology_check` a np=4 y los dos smokes (`physical`,
+  `openseesmp`): PASAN, sin cambio en los residuales.
+
+### 33.6 Alcance
+
+- El umbral 8 sale de **una** topología (la chapa en 4 franjas) y de 6 modos
+  pedidos. Es un diagnóstico, no una puerta: equivocarlo cuesta un mensaje de
+  más o de menos, nunca un resultado. La campaña de 32.7 —`k2` sobre ≥3
+  topologías y ≥2 recuentos de modos— sigue siendo lo que haría falta para
+  calibrarlo de verdad, y es la misma campaña que haría falta para una
+  heurística automática de `k2`, que **sigue sin shippearse** y por las mismas
+  tres razones de 32.7.
+- El aviso cubre el Lanczos de **T2**. El refinamiento tiene sus propios
+  presupuestos (`-maxRefineIter`) y no está instrumentado así; en los perfiles
+  de la sección 32 nunca fue el cuello de botella, pero eso es una observación
+  sobre esta malla, no una garantía.
+
+
+## 34. La referencia (b) existía a medias: el cableado F1, verificado y cerrado — 2026-07-27
+
+La sección 32.9 acaba de subirle el peso a la referencia (b): con CMS escalando
+`n^1.12` y el ARPACK secuencial ~4x más rápido de lo que creía la sección 30, "la
+comparación honesta a escala de Esmeralda es contra la ruta MUMPS distribuida".
+Esta sección reporta que esa ruta **no existía en estado ejecutable** — y que ya
+lo está.
 
 La sección 31.5 nominó `eigen` sobre `MumpsParallelSOE` como el competidor
 honesto de la campaña, "verificado en el código". La verificación de esta
@@ -2665,7 +3051,7 @@ sesión muestra que cada afirmación era cierta por separado y la composición
 no: es exactamente la trampa F1 que apeGmsh ADR 0077 documentó, y quedó
 cerrada en la misma sesión.
 
-### 32.1 El defecto, ahora con mecanismo exacto
+### 34.1 El defecto, ahora con mecanismo exacto
 
 Bajo `_PARALLEL_INTERPRETERS` el comando `eigen` construye el `ArpackSOE`
 desnudo (`commands.cpp`, rama final de `eigenAnalysis()`) y **nadie llama**
@@ -2682,7 +3068,7 @@ llave.
 `mpiexec -n 2`): rank 0 devolvió un espectro **vacío** y rank 1 quedó en
 deadlock. No es un modo degradado: es inutilizable, como F1 predijo.
 
-### 32.2 El cableado
+### 34.2 El cableado
 
 Dos ediciones mínimas, ambas en el ledger de archivos vanilla:
 
@@ -2702,7 +3088,7 @@ de dsaupd, lockstep verificado por `checkSameInt`), factor+solve de
 `(K−σM)` **distribuido** en dmumps a través del `LinearSOE`, `M*v` ensamblado
 local y fusionado, `X` difundido por `MumpsParallelSOE`.
 
-### 32.3 Evidencia
+### 34.3 Evidencia
 
 `Ladruno_scripts/verify_arpack_mp_mumps.tcl`: cadena fija-libre de 8 masas
 con oráculo analítico `lambda_j = 4(k/m) sin^2((2j-1)pi/(2(2n+1)))` y chequeo
@@ -2770,7 +3156,7 @@ siempre en `MPI_Finalize`. El gate debe correr bajo timeout y exigir
 `ARPACK_MP_SMOKE_PASS … cases=3` en **todos** los rangos; timeout, línea
 ausente o menos de 3 casos = FAIL.
 
-### 32.4 Lo que esto NO da
+### 34.4 Lo que esto NO da
 
 - `modalProperties` sigue MPI-blind (C7): el cableado entrega autovalores y
   autovectores replicados correctos, no participación ni masa efectiva
@@ -2803,11 +3189,11 @@ ausente o menos de 3 casos = FAIL.
   distribuido reparte la memoria dominante. El número a mirar en Esmeralda
   es RSS pico por rango, con el tiempo como restricción de utilizabilidad.
 
-### 32.5 Consecuencia para la campaña
+### 34.5 Consecuencia para la campaña
 
 La referencia (b) de 31.4 es ejecutable tal cual. Requisito adicional a los
 cinco listados allí: usar un build con este cableado y correr
 `verify_arpack_mp_mumps.tcl` como gate previo en el conteo de rangos de la
-campaña, **bajo timeout y verificando `cases=3` por rango** (32.3) — el
+campaña, **bajo timeout y verificando `cases=3` por rango** (34.3) — el
 control negativo demostró que sin el cableado la referencia no mide nada, y
 el código de salida por sí solo no distingue PASS de aborto.

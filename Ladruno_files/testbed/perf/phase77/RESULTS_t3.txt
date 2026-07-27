@@ -1,0 +1,42 @@
+ADR-77 T3 — n=10 load x1 T_end=0.0008 algorithm=KrylovNewton
+reference dt=6.25e-07, self-convergence (L2) = 3.23e-05
+
+scheme                              rho_inf  obs.order     cost@0.005     cost@0.01
+Newmark(0.5,0.25) trapezoidal         1.000       1.67         2385.1        1625.9
+Newmark(0.6,0.3025) damped                -       1.04         4281.5        2122.5
+HHT(0.90)                             0.818       2.17         2842.5        1824.8
+HHT(0.80)                             0.667       2.16         3137.8        1980.9
+GeneralizedAlpha(rho=0.818)           0.818       1.89         2499.7        1706.2
+GeneralizedAlpha(rho=0.667)           0.667       2.17         3356.6        2178.9
+TRBDF2 (composite Trap+BDF2)              -       2.09         3798.6        2306.4
+BackwardEuler (1st order)             0.000       1.59         4715.6        3123.4
+
+  cost = wall-clock seconds per simulated second, lower is better
+  NOTE: errors below the reference floor 3.2e-05 are not resolved;
+        any target at or under that floor is not a real comparison.
+
+=== G3 test — is an implicit Bathe beta1/beta2 authorized? ===
+G3: authorize ONLY if TRBDF2 *and* HHT/GeneralizedAlpha each lose
+    >=1.3x on cost-per-simulated-second at matched accuracy, or fail.
+
+  target err 0.005 — best = Newmark(0.5,0.25) trapezoidal at 2385.1
+    Newmark(0.5,0.25) trapezoidal         2385.1   1.00x
+    GeneralizedAlpha(rho=0.818)           2499.7   1.05x
+    HHT(0.90)                             2842.5   1.19x
+    HHT(0.80)                             3137.8   1.32x
+    GeneralizedAlpha(rho=0.667)           3356.6   1.41x
+    TRBDF2 (composite Trap+BDF2)          3798.6   1.59x
+    Newmark(0.6,0.3025) damped            4281.5   1.80x
+    BackwardEuler (1st order)             4715.6   1.98x
+    -> TRBDF2 1.59x, best damped 1.05x => G3 NOT authorized
+
+  target err 0.01 — best = Newmark(0.5,0.25) trapezoidal at 1625.9
+    Newmark(0.5,0.25) trapezoidal         1625.9   1.00x
+    GeneralizedAlpha(rho=0.818)           1706.2   1.05x
+    HHT(0.90)                             1824.8   1.12x
+    HHT(0.80)                             1980.9   1.22x
+    Newmark(0.6,0.3025) damped            2122.5   1.31x
+    GeneralizedAlpha(rho=0.667)           2178.9   1.34x
+    TRBDF2 (composite Trap+BDF2)          2306.4   1.42x
+    BackwardEuler (1st order)             3123.4   1.92x
+    -> TRBDF2 1.42x, best damped 1.05x => G3 NOT authorized

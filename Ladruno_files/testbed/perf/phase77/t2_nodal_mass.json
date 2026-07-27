@@ -1,0 +1,36 @@
+{
+  "n": 15,
+  "steps": 4,
+  "system": "Pardiso",
+  "threads": "4",
+  "arms": {
+    "material": {
+      "label": "A: material mass (-rho), = the T0 deck",
+      "wall_s": 3.8655172499711625,
+      "uz": -0.48859400445001516,
+      "nele": 3375,
+      "ndof": 11520
+    },
+    "nodal": {
+      "label": "B: nodal mass (`mass` cmd), -rho 0",
+      "wall_s": 3.6549650999950245,
+      "uz": -0.47526666971716486,
+      "nele": 3375,
+      "ndof": 11520
+    },
+    "nodal_rayleigh": {
+      "label": "C: nodal + rayleigh betaK0 (C constant)",
+      "wall_s": 4.175524499965832,
+      "uz": -0.47372151113067434,
+      "nele": 3375,
+      "ndof": 11520
+    },
+    "nodal_rayleigh_kt": {
+      "label": "D: nodal + rayleigh betaKcurr (C varies)",
+      "wall_s": 7.751487700035796,
+      "uz": -0.47374844930746063,
+      "nele": 3375,
+      "ndof": 11520
+    }
+  }
+}

@@ -1,12 +1,12 @@
-# Ladruno ADR-1000 §31.5 smoke: plain `eigen` (ARPACK shift-invert) under
+# Ladruno ADR-1000 §31.5 / §34 smoke: plain `eigen` (ARPACK shift-invert) under
 # OpenSeesMP — the composition apeGmsh ADR 0077 F1 refuted in vanilla
 # (ArpackSOE left at processID -1, M*v never merged across ranks).
 #
 # Fixed-free chain, nMass masses, k=100, m=1:
 #   lambda_j = 4*(k/m)*sin^2((2j-1)*pi/(2*(2*nMass+1)))
 #
-# THREE CASES (PR #668 review: the first alone cannot detect a lost gate or
-# a broken re-gate):
+# THREE CONFIGURATIONS, FOUR RECORDED CHECKS (PR #668 review: configuration
+# A alone cannot detect a lost gate or a broken re-gate):
 #
 #   A  partitioned deck + `system Mumps`   -> the gate's TRUE side. Wiring
 #      must be ACTIVE: without it, rank 0 returns an empty spectrum and
@@ -36,8 +36,8 @@
 # Tcl error exits 0 (g3TclMain drops its exitCode; mpiParameterMain returns
 # 0 unconditionally), and a rank that `exit`s while a peer is deadlocked
 # blocks in MPI_Finalize forever. Run under a timeout and require
-#   ARPACK_MP_SMOKE_PASS  ...  cases=3
-# on EVERY rank; treat a timeout, a missing line, or fewer than 3 cases as
+#   ARPACK_MP_SMOKE_PASS  ...  cases=4
+# on EVERY rank; treat a timeout, a missing line, or fewer than 4 checks as
 # FAIL. Everything below is catch-wrapped so a Tcl error still prints
 # ARPACK_MP_SMOKE_FAIL rather than dying silently.
 
@@ -133,7 +133,7 @@ proc checkShape {eLo eHi nMass} {
     return $worst
 }
 
-# --- the three cases ------------------------------------------------------
+# --- the cases ------------------------------------------------------
 set results {}
 set failures {}
 

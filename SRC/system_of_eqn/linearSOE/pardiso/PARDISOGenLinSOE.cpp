@@ -37,6 +37,7 @@
 
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-75: CSR-build + scatter brackets
 
 PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	:LinearSOE(the_Solver, LinSOE_TAGS_PARDISOGenLinSOE),
@@ -221,6 +222,11 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 		rowStartA[0] = 0 + 1;
 		int startLoc = 0;
 		int lastLoc = 0;
+		// Ladruno ADR-75: bracket the CSR build (the O(nnz x rowlen) sorted
+		// insertion) separately from the P1d contract check below, following
+		// the dc.s.* setSize sub-bracket convention MumpsParallelSOE uses —
+		// setSize runs once per pattern, so the cost is per-domain-change.
+		{ OPS_PROFILE_SCOPE("dc.s.fill");
 		for (int a = 0; a < size; a++) {
 
 			theVertex = theGraph.getVertexPtr(a);
@@ -297,6 +303,7 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 			rowStartA[a + 1] = lastLoc + 1;
 			startLoc = lastLoc;
 		}
+		}   // Ladruno ADR-75: end dc.s.fill
 
 		// ---- Ladruno ADR-75 P1d: verify the CSR contract, don't assume it ---
 		// MKL PARDISO requires, per row: column indices STRICTLY ASCENDING, and
@@ -312,6 +319,9 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 		// checks all of it directly instead — O(nnz), negligible next to the
 		// O(nnz x rowlen) insertion above, and it validates the unsymmetric
 		// path for free.
+		// Ladruno ADR-75: dc.s.verify times the O(nnz) contract sweep so its
+		// cost is visible next to dc.s.fill rather than smeared into it.
+		OPS_PROFILE_SCOPE("dc.s.verify");
 		if (lastLoc != nnz) {
 			opserr << "WARNING:PARDISOGenLinSOE::setSize : filled " << lastLoc
 			       << " entries but nnz=" << nnz << " (matType " << matType
@@ -412,6 +422,14 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 		opserr << " - Matrix and ID not of similar sizes\n";
 		return -1;
 	}
+
+	// Ladruno ADR-75: DEEP-gated scatter bracket. addA runs once per element
+	// per assembly, so a coarse bracket here would tax the assembly loop of a
+	// performance feature (P1f measured the scatter at 1699 ms of an ~11.9 s
+	// step BEFORE the binary search); deep mode is the layer that already pays
+	// per-element cost by choice. This is the kernel-vs-scatter split ADR-75b
+	// L3-0 needed — previously only obtainable by differencing harness runs.
+	OPS_PROFILE_SCOPE_DEEP("soe.addA");
 
 	// Ladruno ADR-75 P1d: when half-storing, only the col >= row entries of the
 	// element matrix have a home in A. Everything else is identical to the

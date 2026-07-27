@@ -88,6 +88,7 @@
 #include <Vector.h>
 #include <Matrix.h>
 #include <Element.h>
+#include <LadrunoMassCache.h>   // Ladruno (ADR-77 G2 ext)
 #include <Node.h>
 #include <NDMaterial.h>
 
@@ -96,6 +97,9 @@ class Response;
 class LadrunoSolidShell : public Element {
 
  public:
+     // Ladruno (ADR-77 G2 ext): escape = -noMassCache
+     void setMassCache(bool s) { massCache.setEnabled(s); }
+
 
   // Formulation selector. Ordinals are serialized — order is load-bearing.
   //   ANS — the full solid-shell recipe (ANS shear + ANS E33 + EAS-on-E33).
@@ -178,6 +182,9 @@ class LadrunoSolidShell : public Element {
   // -------- attributes --------
   ID connectedExternalNodes;        // 8 node tags
   Node *nodePointers[8];
+  LadrunoMassCache massCache;   // Ladruno (ADR-77 G2 ext): per-instance mass cache,
+                  // guard-checked (rho/thickness/coords); -noMassCache escape
+
   NDMaterial **materialPointers;    // 4*nz material states (allocated in ctor/recvSelf)
 
   Formulation formulation;

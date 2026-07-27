@@ -125,7 +125,9 @@ LadrunoBrick::LadrunoBrick()
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
-   applyLoad(0), load(0), Ki(0), massType(0),
+   applyLoad(0), load(0), Ki(0),
+   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
+   massType(0),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -167,7 +169,9 @@ LadrunoBrick::LadrunoBrick(int tag,
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
-   applyLoad(0), load(0), Ki(0), massType(matype),
+   applyLoad(0), load(0), Ki(0),
+   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
+   massType(matype),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -228,6 +232,7 @@ LadrunoBrick::~LadrunoBrick()
 
   if (load != 0) delete load;
   if (Ki != 0) delete Ki;
+  if (Mi != 0) delete Mi;   // Ladruno (ADR-77 T2/G2)
 
   for (int i = 0; i < 8; i++) {
     if (theDamping[i]) {
@@ -457,9 +462,63 @@ const Matrix &  LadrunoBrick::getTangentStiff(void)
 }
 
 //mass
+// Ladruno (ADR-77 T2/G2): per-instance mass-matrix cache -- the Ki idiom
+// applied to M. Motivation is measured, not assumed: T2 timed the mass
+// re-formation at 214 ms / 4 steps on the n=15 deck, DOUBLING to 477 ms under
+// alphaM-Rayleigh because Element::getDamp() calls getMass() every iteration
+// on top of the addMtoTang call -- 10.9% of step wall at the 4-thread PARDISO
+// operating point (G2 gate >= 10%, passed).
+//
+// Bit-identity (G-BYTE): the cache returns a byte-copy of a formation whose
+// every input is either immutable (sg/wg/shp3d constants, massType fixed at
+// construction) or GUARDED below -- per-GP rho (mutable via the material's
+// setParameter "rho", e.g. LadrunoJ2.cpp:622) and nodal coordinates via
+// getCrds() (mutable via setNodeCoord; NOTE formInertiaTerms uses getCrds()
+// always, so the mass is reference-configuration BY DESIGN in every
+// formulation including -geom finite -- see the note at formResidAndTangent-
+// Finite). A guard mismatch re-forms and re-fills. So invariance is CHECKED
+// per call (32 double compares, ~ns) rather than assumed (ADR-76 App. A.4);
+// the guard costs ~0.1% of what it saves (~1.5 us per formation).
+//
+// Scope, deliberately narrow: the residual (tangFlag==0) inertia pass is NOT
+// routed through this cache. Two reasons: (i) for massType==1 the residual is
+// consistent-mass-based while M is lumped, so "resid = M*a" would change the
+// answer; (ii) even for massType==0, computing M*a reorders the floating-point
+// accumulation vs the Gauss-loop and breaks bit-identity. That pass is instead
+// covered by the ADR-68 T7 skip where it is provably zero.
+//
+// The cached path also stops returning the CLASS-LEVEL `static Matrix mass`
+// (a shared-static hazard on ADR-75b 5.4's threading blocklist) -- each
+// instance returns its own Mi.
+// Cost: ~4.6 KB + 256 B per element. Escape: element ... -noMassCache.
 const Matrix &  LadrunoBrick::getMass(void)
 {
+  if (massCache && Mi != 0) {
+    bool clean = true;
+    for (int i = 0; i < 8 && clean; i++)
+      if (materialPointers[i]->getRho() != MiRho[i]) clean = false;
+    for (int i = 0; i < 8 && clean; i++) {
+      const Vector &crd = nodePointers[i]->getCrds();
+      if (crd(0) != MiCrd[3*i] || crd(1) != MiCrd[3*i+1] || crd(2) != MiCrd[3*i+2])
+        clean = false;
+    }
+    if (clean)
+      return *Mi;
+    delete Mi;          // guard tripped (rho or coords changed): re-form + re-fill
+    Mi = 0;
+  }
+
   formInertiaTerms(1);
+
+  if (massCache) {
+    Mi = new Matrix(mass);
+    for (int i = 0; i < 8; i++) {
+      MiRho[i] = materialPointers[i]->getRho();
+      const Vector &crd = nodePointers[i]->getCrds();
+      MiCrd[3*i] = crd(0); MiCrd[3*i+1] = crd(1); MiCrd[3*i+2] = crd(2);
+    }
+    return *Mi;
+  }
   return mass;
 }
 
@@ -664,7 +723,10 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
     if (materialPointers[i]->getRho() != 0.0) haveRho = 1;
   if (haveRho == 0) return 0;
 
-  formInertiaTerms(1);
+  // Ladruno (ADR-77 T2/G2): route through getMass() so the cached M is used.
+  // Safe: this function OVERWRITES resid immediately below, so losing
+  // formInertiaTerms(1)'s resid side-effect on a cache hit changes nothing.
+  const Matrix &M = this->getMass();
 
   int count = 0;
   for (int i = 0; i < numberNodes; i++) {
@@ -674,7 +736,7 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
   }
 
   if (load == 0) load = new Vector(numberNodes * ndf);
-  load->addMatrixVector(1.0, mass, resid, -1.0);
+  load->addMatrixVector(1.0, M, resid, -1.0);
   return 0;
 }
 
@@ -3161,6 +3223,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
       }
     }
   }
+
+  // Ladruno (ADR-77 review wave): massType decoded above is guard-exempt
+  // (construction-fixed in normal flows), but a restore into a live element
+  // can flip it with rho and coords unchanged -- a clean-guard hit would then
+  // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
+  if (Mi != 0) { delete Mi; Mi = 0; }
 
   return res;
 }

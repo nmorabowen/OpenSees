@@ -6,27 +6,34 @@
 // Ladruno fork — N. Mora-Bowen
 // ADR-52 W3-I2: sensitivity-carrying (DDM) subclass of GeneralizedAlpha.
 //
-// IMPORTANT — base-class tangent inconsistency (drives the DDM design here):
-// OpenSees GeneralizedAlpha::update() sets the model acceleration to *Udotdot
-// (GeneralizedAlpha.cpp), so the PRIMAL dynamic residual integrates inertia at
-// the FULL step: R = F(t+alphaF*dt) - P(Ualpha) - C*Ualphadot - M*Udotdot. Its
-// consistent Jacobian is ∂R/∂U = alphaF*K + alphaF*c2*C + c3*M (M-coef c3). But
-// GeneralizedAlpha::formEleTangent emits alphaF*K + alphaF*c2*C + alphaM*c3*M
-// (M-coef alphaM*c3) — i.e. the base TANGENT is inconsistent with its own
-// residual for alphaM != 1 (a long-standing base quirk; harmless to the converged
-// LINEAR solution but it degrades Newton's rate and breaks tangent-reuse DDM).
+// IMPORTANT — history of the base-class inconsistency (drives the DDM design):
+// Until ADR-77 C0-6 (2026-07-26), GeneralizedAlpha::update() DISCARDED the
+// alphaM-weighted acceleration and set the model acceleration to *Udotdot, so
+// the primal residual integrated inertia at the FULL step (M*Udotdot) while the
+// tangent carried alphaM*c3*M — tangent inconsistent with residual for
+// alphaM != 1. This class was originally built PRIMAL-consistent against that
+// buggy residual (unweighted mass multiplicator, dM/dh at Udotdot, and a
+// re-formed c3*M sensitivity Jacobian), and its FD oracle validated that at
+// ~1e-5 — faithfully modelling a wrong scheme.
 //
-// Consequences for DDM (validated by the FD oracle, which failed ~2e-3 when the
-// sensitivity residual/tangent were built tangent-consistent instead of
-// primal-consistent):
-//   * the sensitivity RESIDUAL must match the PRIMAL — M acts at Udotdot with NO
-//     alphaM weighting (exactly like Newmark/LadrunoHHT). K and C genuinely act at
-//     Ualpha/Ualphadot, so their alphaF weighting + the -K*(1-alphaF)*dUn term stay.
-//   * the sensitivity SOLVE must use the PRIMAL Jacobian (M-coef c3), so we
-//     RE-FORM the tangent with c3*M (sensTangentFlag) in computeSensitivities
-//     rather than reuse the inconsistent factored alphaM*c3*M primal tangent.
+// C0-6 FIXED the base: update() now feeds *Ualphadotdot, so the primal residual
+// is R = F(t+alphaF*dt) - P(Ualpha) - C*Ualphadot - M*Ualphadotdot and the base
+// tangent alphaF*K + alphaF*c2*C + alphaM*c3*M is consistent with it. The DDM
+// machinery here therefore now carries the alphaM weighting throughout:
+//   * sensitivity RESIDUAL: mass multiplicator = non-(dU/dh) part of
+//     dUalphadotdot/dh = (1-alphaM)*dAn + alphaM*(a2*dUn + a3*dVn + a4*dAn);
+//     dM/dh acts at Ualphadotdot. K/C keep their alphaF weighting + the
+//     -K*(1-alphaF)*dUn term.
+//   * sensitivity SOLVE: the primal-consistent Jacobian IS now the base tangent
+//     (M-coef alphaM*c3); the sensTangentFlag re-form matches it coefficient-
+//     for-coefficient — kept because it REFRESHES a possibly stale or
+//     initial-tangent factorization left by the primal algorithm (ModifiedNewton,
+//     -initial), which is what the sensitivity solves must not inherit.
+// Caught by the Zone-A FD gate itself (rel_err ~2e-3 post-C0-6, PR #650), which
+// is exactly what that oracle is for: the DDM must track the PRIMAL, whichever
+// scheme the primal implements.
 // The non-sensitivity (primal) path delegates to the base unchanged ⇒ a plain
-// transient run is byte-identical to vanilla GeneralizedAlpha. See
+// transient run is byte-identical to (post-C0-6) vanilla GeneralizedAlpha. See
 // Ladruno_implementation/LEDGER_quirks.md for the base-class note.
 
 #include <LadrunoGeneralizedAlpha.h>
@@ -182,15 +189,16 @@ LadrunoGeneralizedAlpha::formEleResidual(FE_Element *theEle)
             }
         }
 
-        // mass multiplicator: the PRIMAL integrates inertia at the FULL step
-        // (M*Udotdot, see the file header) — so this is the Newmark form with NO
-        // alphaM weighting (dUdotdot/dh = c3*dU/dh + a2*dUn + a3*dVn + a4*dAn; the
-        // c3*dU/dh chain term goes to the re-formed consistent LHS):
-        //   tmp1 = a2*dUn + a3*dVn + a4*dAn
+        // mass multiplicator (ADR-77 C0-6: the PRIMAL now integrates inertia at
+        // the alphaM state, M*Ualphadotdot — see the file header): the non-(dU/dh)
+        // part of dUalphadotdot/dh = (1-alphaM)*dAn + alphaM*dUdotdot/dh, i.e.
+        //   tmp1 = alphaM*a2*dUn + alphaM*a3*dVn + ((1-alphaM) + alphaM*a4)*dAn
+        // (the alphaM*c3*dU/dh chain term goes to the consistent LHS, which is
+        // now the base tangent's alphaM*c3*M).
         Vector tmp1(vectorSize);
-        tmp1.addVector(0.0, dUn, a2);
-        tmp1.addVector(1.0, dVn, a3);
-        tmp1.addVector(1.0, dAn, a4);
+        tmp1.addVector(0.0, dUn, alphaM*a2);
+        tmp1.addVector(1.0, dVn, alphaM*a3);
+        tmp1.addVector(1.0, dAn, (1.0-alphaM) + alphaM*a4);
 
         // damping multiplicator: C acts at Ualphadot, whose non-(dU/dh) part is
         //   (1-alphaF)*dVn + alphaF*(a6*dUn + a7*dVn + a8*dAn)
@@ -210,8 +218,8 @@ LadrunoGeneralizedAlpha::formEleResidual(FE_Element *theEle)
         // -dPint/dh|u fixed (element evaluated at Ualpha, the current trial state)
         theEle->addResistingForceSensitivity(gradNumber);
 
-        // -dM/dh*acc  (acc at Udotdot — the PRIMAL inertia state, NOT Ualphadotdot)
-        theEle->addM_ForceSensitivity(gradNumber, *Udotdot, -1.0);
+        // -dM/dh*acc  (acc at Ualphadotdot — the PRIMAL inertia state post-C0-6)
+        theEle->addM_ForceSensitivity(gradNumber, *Ualphadotdot, -1.0);
 
         // generalized-alpha stiffness term: -K*(1-alphaF)*dUn (the (1-alphaF) part
         // of d(Ualpha)/dh; addK_Force uses the current consistent tangent)
@@ -249,11 +257,11 @@ LadrunoGeneralizedAlpha::formNodUnbalance(DOF_Group *theDof)
         if (dampingMatrixMultiplicator == 0)
             dampingMatrixMultiplicator = new Vector(U->Size());
 
-        // -M*(mass multiplicator, full-step / no-alphaM form set by formEleResidual)
+        // -M*(mass multiplicator, alphaM-weighted form set by formEleResidual)
         theDof->addM_Force(*massMatrixMultiplicator, -1.0);
 
-        // -dM/dh*acc  (acc at Udotdot — the PRIMAL inertia state)
-        theDof->addM_ForceSensitivity(*Udotdot, -1.0);
+        // -dM/dh*acc  (acc at Ualphadotdot — the PRIMAL inertia state post-C0-6)
+        theDof->addM_ForceSensitivity(*Ualphadotdot, -1.0);
 
         // -C*(alphaF-weighted damping multiplicator)
         theDof->addD_Force(*dampingMatrixMultiplicator, -1.0);
@@ -276,16 +284,17 @@ LadrunoGeneralizedAlpha::formEleTangent(FE_Element *theEle)
         return this->GeneralizedAlpha::formEleTangent(theEle);
 
     // DDM solve path: the PRIMAL-CONSISTENT Jacobian of R = F - P(Ualpha) -
-    // C*Ualphadot - M*Udotdot, i.e. alphaF*K + alphaF*c2*C + c3*M (M-coef c3, NOT
-    // the base's alphaM*c3). Re-formed in computeSensitivities so the sensitivity
-    // solve uses the true ∂R/∂U; the primal run never sees this branch.
+    // C*Ualphadot - M*Ualphadotdot (post-C0-6), i.e. alphaF*K + alphaF*c2*C +
+    // alphaM*c3*M — now the SAME coefficients as the base tangent. The branch is
+    // kept (re-formed in computeSensitivities) for the explicit INITIAL_TANGENT
+    // selection, not for a coefficient difference; the primal run never sees it.
     theEle->zeroTangent();
     if (statusFlag == INITIAL_TANGENT)
         theEle->addKiToTang(alphaF*c1);
     else
         theEle->addKtToTang(alphaF*c1);
     theEle->addCtoTang(alphaF*c2);
-    theEle->addMtoTang(c3);
+    theEle->addMtoTang(alphaM*c3);
 
     return 0;
 }
@@ -297,10 +306,11 @@ LadrunoGeneralizedAlpha::formNodTangent(DOF_Group *theDof)
     if (sensTangentFlag == 0)   // primal path -> base tangent (byte-identical)
         return this->GeneralizedAlpha::formNodTangent(theDof);
 
-    // DDM solve path: nodal M/C with the primal-consistent M-coef c3.
+    // DDM solve path: nodal M/C with the primal-consistent M-coef alphaM*c3
+    // (post-C0-6 this matches the base nodal tangent).
     theDof->zeroTangent();
     theDof->addCtoTang(alphaF*c2);
-    theDof->addMtoTang(c3);
+    theDof->addMtoTang(alphaM*c3);
 
     return 0;
 }
@@ -469,14 +479,17 @@ LadrunoGeneralizedAlpha::computeSensitivities()
     theSOE->zeroB();
     this->formIndependentSensitivityRHS();
 
-    // Re-form the system tangent with the PRIMAL-CONSISTENT Jacobian (M-coef c3,
-    // not the base's alphaM*c3) so every sensitivity solve below uses the true
-    // ∂R/∂U. The base GeneralizedAlpha tangent that the primal Newton left
-    // factored in the SOE is inconsistent for alphaM != 1 (see the file header);
-    // reusing it (as Newmark's computeSensitivities does, where it IS consistent)
-    // would bias the gradients (FD oracle: ~2e-3). Re-formed once here; the
+    // Re-form the system tangent so every sensitivity solve below uses the true
+    // consistent ∂R/∂U at the converged state. Post-C0-6 the COEFFICIENTS are
+    // the base tangent's own (alphaF*K + alphaF*c2*C + alphaM*c3*M — see the
+    // file header; the pre-C0-6 M-coef difference is gone): what the re-form
+    // still buys is FRESHNESS. The factorization the primal Newton left in the
+    // SOE may be stale (ModifiedNewton: formed at step start, state moved
+    // since) or the wrong selection (-initial: alphaF*Ki), and reusing either
+    // would bias the gradients. Re-formed once with CURRENT_TANGENT; the
     // per-parameter solves below reuse this factorization. The flag is cleared
-    // immediately so nothing else sees the sensitivity tangent.
+    // immediately so nothing else sees the sensitivity tangent. (Confirmed by
+    // the ADR-77 review-wave independent re-derivation, 2026-07-27.)
     sensTangentFlag = 1;
     this->formTangent(CURRENT_TANGENT);
     sensTangentFlag = 0;

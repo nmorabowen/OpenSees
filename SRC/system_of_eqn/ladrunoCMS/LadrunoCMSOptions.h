@@ -105,6 +105,23 @@ struct Options {
     // exactly the regime CMS exists for, so the budget is a user control.
     // Default 20 preserves the previous behaviour.
     int maxRestarts = 20;
+    // ADR-1000 section 33. Restart count of the local fixed-interface Lanczos
+    // (max across ranks) at or above which the solver prints a warning naming
+    // -modesL2. This exists because a k2 below the convergence threshold does
+    // NOT fail: it grinds -- for minutes to hours -- and then returns the right
+    // answer. From outside, "this run is thrashing" and "this model is big"
+    // look identical, and in a batch queue both just burn walltime, so a
+    // campaign can collect false negatives and never know (section 32.9).
+    //
+    // Default 8 is a heuristic on limited evidence, deliberately placed far
+    // from both ends of the measured gap: every healthy solve in section 32
+    // used 0 or 1 restarts, every thrashing one used 239 or more. It is NOT
+    // scaled off maxRestarts -- raising THAT budget is precisely what a user
+    // does when thrashing, so tying the warning to it would silence the
+    // warning exactly when it matters. 0 disables. Diagnostic only: it never
+    // changes a result, which is why it is not in the cross-rank consistency
+    // gate that -maxRestarts had to join.
+    int restartWarn = 8;
     int denseMax = 2000;
     double assemblyRtol = 1.0e-12;
     double assemblyAtol = 1.0e-14;

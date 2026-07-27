@@ -804,12 +804,29 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
 
 const Matrix &LadrunoQuad::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
+  // Signature = rho override + 4 material rhos + thickness; coords guarded
+  // inside. NOTE (review wave): the coord guard buys cached==uncached
+  // bit-identity only -- after setNodeCoord the re-form still uses the SSP
+  // J0/J1/J2 snapshot from setDomain (computeSSP is not re-run), the same
+  // stale-geometry behavior the uncached element always had.
+  // Formulation fixed at construction, omitted (recvSelf invalidates).
+  double mcSig[6];
+  mcSig[0] = rho;
+  mcSig[1] = thickness;
+  for (int i = 0; i < 4; i++)
+    mcSig[2 + i] = theMaterial[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(mcSig, 6, theNodes, 4, 2))
+    return *Mc;
+
   K.Zero();
 
   if (formulation == Formulation::SSP) {
     double density = (rho == 0.0) ? theMaterial[0]->getRho() : rho;
-    if (density == 0.0)
+    if (density == 0.0) {
+      massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
       return K;
+    }
     const double xi[4]  = {-1.0,  1.0, 1.0, -1.0};
     const double eta[4] = {-1.0, -1.0, 1.0,  1.0};
     for (int i = 0; i < 4; i++) {
@@ -817,6 +834,7 @@ const Matrix &LadrunoQuad::getMass(void)
       K(2 * i,     2 * i)     += m;
       K(2 * i + 1, 2 * i + 1) += m;
     }
+    massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
   }
 
@@ -826,8 +844,10 @@ const Matrix &LadrunoQuad::getMass(void)
     rhoi[i] = (rho == 0.0) ? theMaterial[i]->getRho() : rho;
     sum += rhoi[i];
   }
-  if (sum == 0.0)
+  if (sum == 0.0) {
+    massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
 
   for (int i = 0; i < 4; i++) {
     double rhodvol = this->shapeFunction(pts[i][0], pts[i][1]);
@@ -838,6 +858,7 @@ const Matrix &LadrunoQuad::getMass(void)
       K(ia + 1, ia + 1) += Nrho;
     }
   }
+  massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
   return K;
 }
 
@@ -885,9 +906,15 @@ int LadrunoQuad::addInertiaLoadToUnbalance(const Vector &accel)
     ra[2 * a + 1] = Raccel(1);
   }
 
-  this->getMass();
+// Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 8; i++)
-    Q(i) += -K(i, i) * ra[i];
+    Q(i) += -Mq(i, i) * ra[i];
   return 0;
 }
 
@@ -1036,9 +1063,15 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   }
 
   this->getResistingForce();
-  this->getMass();
+  // Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 8; i++)
-    P(i) += K(i, i) * a[i];
+    P(i) += Mq(i, i) * a[i];
 
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
@@ -1381,6 +1414,11 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     }
     alpha = alphaCommit;
   }
+
+  // Ladruno (ADR-77 review wave): formulation (a mass-formula branch, SSP
+  // vs std lumping) is sig-exempt as construction-fixed, but recvSelf just
+  // rewrote it -- a guard hit on a live element would serve the pre-recv mass.
+  massCache.invalidate();
 
   return res;
 }
