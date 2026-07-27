@@ -92,6 +92,7 @@ void *OPS_LadrunoBrick()
   double bf[3] = { 0.0, 0.0, 0.0 };
   int massType = 0;
   bool inertiaSkip = true;   // Ladruno (ADR-68 T7): residual inertia no-op skip, default on
+  bool massCache = true;     // Ladruno (ADR-77 T2/G2): per-instance mass cache, default on (guard-checked, G-BYTE)
   Damping *theDamping = 0;
   int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (default linear)
 
@@ -185,6 +186,9 @@ void *OPS_LadrunoBrick()
     }
     else if (strcmp(opt, "-noInertiaSkip") == 0) {
       inertiaSkip = false;   // Ladruno (ADR-68 T7): disable the residual inertia no-op skip (A/B escape)
+    }
+    else if (strcmp(opt, "-noMassCache") == 0) {
+      massCache = false;     // Ladruno (ADR-77 T2/G2): disable the per-instance mass cache (A/B escape)
     }
     else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -339,5 +343,6 @@ void *OPS_LadrunoBrick()
                           massType, hgType, hgCoeff, theDamping, geomMethodID,
                           bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
   theEle->setInertiaSkip(inertiaSkip);   // Ladruno (ADR-68 T7): not a ctor arg (transient, unserialized)
+  theEle->setMassCache(massCache);       // Ladruno (ADR-77 T2/G2): same policy — transient, unserialized
   return theEle;
 }

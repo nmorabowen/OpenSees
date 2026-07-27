@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0/T0/T0b/T1/T2/T3 all measured; G3 CLOSED, **G2 AUTHORIZED** (element-mass cache, not the integrator cache); C0 patch wave COMPLETE; implementation of the mass cache is the only open item
+status: **complete** — all stages measured; G3 closed; G2 authorized AND SHIPPED (LadrunoBrick per-instance mass cache, §6g of the results doc); C0 wave + C0-6 fixed; no open items
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -309,6 +309,20 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **G2 IMPLEMENTED, VERIFIED, MEASURED (§6g) — ADR COMPLETE.** Per-instance
+  mass cache in `LadrunoBrick::getMass()`, guard-checked (rho + coords compared per call —
+  invariance verified, never assumed), `-noMassCache` escape. 11-check acceptance all pass,
+  incl. a control that attributes the 4-thread baseline drift to P1f rather than the cache,
+  and a rho-guard liveness test (density tripled mid-analysis via `updateParameter`).
+  Tangent-side inertia 383→0.00 ms under Rayleigh; profiled step −12.6% (arm C). One §6f
+  claim corrected by source: `computeBasis()` uses INITIAL coords in every formulation, so
+  the cache is valid under `-geom` too (witnessed by the corot A/B). **Banked, not run:**
+  a vectorization probe — the build carries NO `/arch` flag (element kernels are SSE2
+  baseline while MKL runtime-dispatches AVX2/512), so `/arch:AVX2` is a cheap V0 experiment;
+  but FMA contraction changes answers bit-wise (collides with the exact-QA policy — needs
+  the BLR/threaded-PARDISO opt-in treatment), and the real ceiling (cross-element batching /
+  SoA) is blocked by the same §5.4 statics as threading — it belongs to ADR-75b's lane,
+  after de-statication, not here.
 - 2026-07-26 — **T2 measured (§6f) — G2 REOPENED AND AUTHORIZED, on evidence that
   contradicts both the caveat and the envisioned design.** The nodal-mass caveat that kept
   G2 open is **false**: moving all inertia from the material to `mass` commands moved
