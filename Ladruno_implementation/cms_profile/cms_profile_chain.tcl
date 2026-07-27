@@ -19,6 +19,22 @@ if {[info exists env(LADRUNO_CMS_PROFILE_ELEMENTS)]} {
     set elementsPerRank $env(LADRUNO_CMS_PROFILE_ELEMENTS)
 }
 
+# T2's local fixed-interface Lanczos needs more restarts as the per-rank
+# subdomain grows: 20 -- the value that used to be hard-coded with no way to
+# raise it -- is not enough past a few thousand elements per rank, and the run
+# fails outright rather than merely slowing down. See ADR-1000 §27.4.
+set maxRestarts 20
+if {[info exists env(LADRUNO_CMS_PROFILE_RESTARTS)]} {
+    set maxRestarts $env(LADRUNO_CMS_PROFILE_RESTARTS)
+}
+
+# The two T2 budgets interact: raising -maxRestarts only helps if -maxIter can
+# pay for the extra operator applications the restarts consume.
+set maxIter 6000
+if {[info exists env(LADRUNO_CMS_PROFILE_MAXITER)]} {
+    set maxIter $env(LADRUNO_CMS_PROFILE_MAXITER)
+}
+
 wipe
 model BasicBuilder -ndm 1 -ndf 1
 
@@ -60,7 +76,8 @@ set values [eigen -ladrunoCMS \
     -domainMode physical \
     -hierarchy logical -level1 2 -level2 2 \
     -modesL2 12 -modesL1 24 \
-    -tol 1.0e-8 -maxEnrich 2 -maxIter 6000 \
+    -tol 1.0e-8 -maxEnrich 2 -maxIter $maxIter \
+    -maxRestarts $maxRestarts \
     -maxRefineIter 160 \
     -denseMax 2000 -verbose 6]
 

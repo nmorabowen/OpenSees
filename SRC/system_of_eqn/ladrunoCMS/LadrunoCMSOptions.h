@@ -97,6 +97,14 @@ struct Options {
     // Building 1A needs roughly O(10^2) inverse actions with the automatic
     // q=max(p+8,2p) block; the acceptance gate remains the original residual.
     int maxRefineIterations = 160;
+    // Restart budget of the LOCAL fixed-interface Lanczos inside T2. This was
+    // hard-coded to 20 in solveDistributedHierarchy, with no way to raise it --
+    // and 20 is not enough once a rank's subdomain gets large: profiling a 1-D
+    // chain at 8000 elements/rank fails with "local Lanczos exhausted maximum
+    // restarts" no matter how large -maxIter is (ADR-1000 section 27.4). That is
+    // exactly the regime CMS exists for, so the budget is a user control.
+    // Default 20 preserves the previous behaviour.
+    int maxRestarts = 20;
     int denseMax = 2000;
     double assemblyRtol = 1.0e-12;
     double assemblyAtol = 1.0e-14;

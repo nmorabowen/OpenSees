@@ -1496,19 +1496,23 @@ int solveDistributedHierarchy(
     // agreement collectively (symmetric on every rank) before any such
     // collective runs. This is additive and cannot itself deadlock.
     {
-        const int consistencyValues[4] = {
+        // maximumRestarts joins the gate not because it sizes a collective but
+        // because a divergent budget makes T2 converge on some ranks and not
+        // others -- a rank-dependent result, which is worse than a refusal.
+        const int consistencyValues[5] = {
             input.numberOfModes, input.denseMax,
-            input.modesLevel2, input.modesLevel1};
-        int consistencyMin[4];
-        int consistencyMax[4];
-        MPI_Allreduce(consistencyValues, consistencyMin, 4, MPI_INT, MPI_MIN,
+            input.modesLevel2, input.modesLevel1, input.maximumRestarts};
+        int consistencyMin[5];
+        int consistencyMax[5];
+        MPI_Allreduce(consistencyValues, consistencyMin, 5, MPI_INT, MPI_MIN,
                       MPI_COMM_WORLD);
-        MPI_Allreduce(consistencyValues, consistencyMax, 4, MPI_INT, MPI_MAX,
+        MPI_Allreduce(consistencyValues, consistencyMax, 5, MPI_INT, MPI_MAX,
                       MPI_COMM_WORLD);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (consistencyMin[i] != consistencyMax[i]) {
-                static const char *const names[4] = {
-                    "numberOfModes", "denseMax", "modesLevel2", "modesLevel1"};
+                static const char *const names[5] = {
+                    "numberOfModes", "denseMax", "modesLevel2", "modesLevel1",
+                    "maximumRestarts"};
                 message = std::string("distributed hierarchy option '") +
                     names[i] + "' disagrees across ranks (min=" +
                     std::to_string(consistencyMin[i]) + ", max=" +
@@ -1544,7 +1548,7 @@ int solveDistributedHierarchy(
     // residual gate remains authoritative.
     controls.localTolerance = std::min(1.0e-8, input.tolerance);
     controls.maximumOperatorApplications = input.maximumOperatorApplications;
-    controls.maximumRestarts = 20;
+    controls.maximumRestarts = input.maximumRestarts;
     controls.massRtol = input.massRtol;
     controls.massAtol = input.massAtol;
 

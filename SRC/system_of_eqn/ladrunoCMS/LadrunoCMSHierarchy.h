@@ -141,6 +141,9 @@ struct DistributedHierarchyInput {
     int denseMax = 2000;
     double tolerance = 1.0e-8;
     int maximumOperatorApplications = 500;
+    // Restart budget of the local fixed-interface Lanczos (T2). See
+    // Options::maxRestarts -- was hard-coded to 20 here.
+    int maximumRestarts = 20;
     double massRtol = 1.0e-12;
     double massAtol = 1.0e-14;
 };
