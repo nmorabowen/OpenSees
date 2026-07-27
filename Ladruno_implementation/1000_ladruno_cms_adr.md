@@ -3035,3 +3035,165 @@ ambos lados.
   presupuestos (`-maxRefineIter`) y no está instrumentado así; en los perfiles
   de la sección 32 nunca fue el cuello de botella, pero eso es una observación
   sobre esta malla, no una garantía.
+
+
+## 34. La referencia (b) existía a medias: el cableado F1, verificado y cerrado — 2026-07-27
+
+La sección 32.9 acaba de subirle el peso a la referencia (b): con CMS escalando
+`n^1.12` y el ARPACK secuencial ~4x más rápido de lo que creía la sección 30, "la
+comparación honesta a escala de Esmeralda es contra la ruta MUMPS distribuida".
+Esta sección reporta que esa ruta **no existía en estado ejecutable** — y que ya
+lo está.
+
+La sección 31.5 nominó `eigen` sobre `MumpsParallelSOE` como el competidor
+honesto de la campaña, "verificado en el código". La verificación de esta
+sesión muestra que cada afirmación era cierta por separado y la composición
+no: es exactamente la trampa F1 que apeGmsh ADR 0077 documentó, y quedó
+cerrada en la misma sesión.
+
+### 34.1 El defecto, ahora con mecanismo exacto
+
+Bajo `_PARALLEL_INTERPRETERS` el comando `eigen` construye el `ArpackSOE`
+desnudo (`commands.cpp`, rama final de `eigenAnalysis()`) y **nadie llama**
+`setProcessID`/`setChannels`: el único camino de cableado era el envío del
+objeto por `sendSelf`/`recvSelf`, que sólo ocurre en SP. Con `processID = -1`
+quedan dormidos los tres colectivos que la clase sí trae: el merge
+estrella-P0 de `M*v` (`ArpackSolver::myMv`), la guardia de lockstep del
+`ido` (`checkSameInt`) y el `setSize` colectivo de tamaño global. ADR 0077
+describió la reducción como gateada por `#ifdef _PARALLEL_PROCESSING`; el
+gate real es de *runtime* (`processID != -1`) — misma consecuencia, otra
+llave.
+
+**Control negativo observado** (binario pre-fix, deck particionado,
+`mpiexec -n 2`): rank 0 devolvió un espectro **vacío** y rank 1 quedó en
+deadlock. No es un modo degradado: es inutilizable, como F1 predijo.
+
+### 34.2 El cableado
+
+Dos ediciones mínimas, ambas en el ledger de archivos vanilla:
+
+- `ArpackSOE` gana `setProcessID`/`setChannels` públicos (contrato idéntico
+  al de `MumpsParallelSOE`).
+- El `eigen` MP los aplica — en la creación del SOE **y** en el camino de
+  reutilización por classTag — **condicionado a que el `LinearSOE` del
+  análisis sea `MumpsParallelSOE`**. La condición no es cosmética: con un
+  sistema serial cada rango ya tiene el problema replicado completo y el
+  merge sumaría `np` copias de `M*v`. El camino de reutilización re-evalúa
+  la condición en cada llamada y vuelve a `setProcessID(-1)` si el deck
+  cambió a un sistema serial.
+
+Con el cableado, la forma del algoritmo es la misma que FEAST L3: lazo
+exterior ARPACK **replicado** e idéntico en cada rango (semilla determinista
+de dsaupd, lockstep verificado por `checkSameInt`), factor+solve de
+`(K−σM)` **distribuido** en dmumps a través del `LinearSOE`, `M*v` ensamblado
+local y fusionado, `X` difundido por `MumpsParallelSOE`.
+
+### 34.3 Evidencia
+
+`Ladruno_scripts/verify_arpack_mp_mumps.tcl`: cadena fija-libre de 8 masas
+con oráculo analítico `lambda_j = 4(k/m) sin^2((2j-1)pi/(2(2n+1)))` y chequeo
+de forma modal (cocientes del modo 1 contra el perfil seno — un Lanczos
+local-por-rango daría cocientes basura aunque algún autovalor coincidiera por
+accidente). **Tres casos**, porque el primero solo no distingue un cableado
+correcto de uno incondicional ni ejercita la re-evaluación:
+
+- **A — particionado + `system Mumps`** (lado VERDADERO de la condición;
+  bloques contiguos de elementos, disciplina de propietario para las masas
+  nodales). Sin cableado: espectro vacío en rank 0 y deadlock en rank 1.
+- **B — deck REPLICADO + sistema serial** (lado FALSO). El cableado debe
+  quedar dormido: una regresión que cablee incondicionalmente suma `np`
+  copias de `M*v` y escala todo el espectro por ~`1/np`. El caso A pasa sin
+  cambio bajo esa regresión — B es lo que fija la condición.
+- **C — A, luego `system UmfPack` + eigen, luego `system Mumps` + eigen**:
+  la re-evaluación en el camino de reutilización, en ambas direcciones. Se
+  alcanza solo con un SEGUNDO `eigen` plano consecutivo.
+
+| corrida | max err rel lambda | max err forma |
+|---|---:|---:|
+| serial (`OpenSees`) | 5.9e-16 | 1.8e-15 |
+| `mpiexec -n 2` | 1.3e-15 | 2.2e-15 |
+| `mpiexec -n 4` | 8.3e-16 | 1.1e-15 |
+
+Valores idénticos dígito a dígito entre rangos (4 casos: A, B, C1, C2). El
+resmoke de FEAST (`verify_feast_classic_tcl.tcl`) reproduce sus seis casos
+sin cambio.
+
+**Prueba de mutación — la clave de que el caso B no es decorativo.** Se
+construyó a propósito un binario con la condición eliminada (cableado
+incondicional en ambos sitios) y se corrieron las dos versiones del smoke
+contra él, a `mpiexec -n 2`:
+
+| smoke | binario mutante (sin condición) |
+|---|---|
+| versión anterior, solo caso A | **PASS**, `maxRelErr = 1.3e-15` |
+| versión actual, 4 casos | **FAIL** (aborta en el guardia de lockstep) |
+
+Es decir: la regresión más natural que se puede cometer sobre este código
+—"simplificar" quitando la condición— era **invisible** para el smoke tal
+como se entregó originalmente. Ese es exactamente el hallazgo que motivó los
+casos B y C, y la medición confirma que ahora sí se detecta.
+
+Nota sobre el modo de fallo: el mutante no reporta un espectro escalado por
+`1/np`, aborta antes por divergencia de `ido` entre rangos
+(`ArpackSolver::solve - ido values not the same`). El guardia de lockstep
+—dormido en vanilla, activo con el cableado— resulta ser el detector. Es un
+fallo ruidoso, que es lo que se quiere, pero conviene registrarlo: el gate
+debe tratar "sin línea PASS" como FAIL, no esperar una línea FAIL limpia.
+
+**Corrección (revisión adversarial de la PR #668).** Una versión previa de
+esta sección afirmaba que ese resmoke "incluye los dos cruces FEAST↔ARPACK
+que tocan el camino de reutilización editado". Es **falso** por partida
+doble: los cruces FEAST↔ARPACK toman la ruta de *recreación* por classTag
+distinto, no la rama editada (que exige `eigen` plano dos veces seguidas), y
+el resmoke corre en serie, donde `#ifdef _PARALLEL_INTERPRETERS` ni siquiera
+compila la rama. El caso C existe precisamente para cerrar esa brecha real.
+
+**Uso como gate — no leer el código de salida.** Bajo
+`_PARALLEL_INTERPRETERS` un error de Tcl termina con código **0**
+(`g3TclMain` descarta su `exitCode`; `mpiParameterMain` retorna 0 siempre), y
+un rango que hace `exit` mientras otro está en deadlock se bloquea para
+siempre en `MPI_Finalize`. El gate debe correr bajo timeout y exigir
+`ARPACK_MP_SMOKE_PASS … cases=3` en **todos** los rangos; timeout, línea
+ausente o menos de 3 casos = FAIL.
+
+### 34.4 Lo que esto NO da
+
+- `modalProperties` sigue MPI-blind (C7): el cableado entrega autovalores y
+  autovectores replicados correctos, no participación ni masa efectiva
+  sobre un deck particionado.
+- **`modalDamping` sobre un deck particionado es silenciosamente incorrecto**
+  y el cableado lo vuelve *alcanzable* (antes el `eigen` previo fallaba). La
+  proyección modal de velocidad es una suma parcial por rango: la fuerza de
+  amortiguamiento ensamblada es `sum_r beta_r M_r phi`, no `beta M phi`, así
+  que la respuesta depende de `np`. No hay aviso ni error. (apeGmsh ya
+  rechaza `ops.damping.modal` bajo MPI; un deck Tcl crudo no.)
+- El intérprete moderno (`OpenSeesCommands.cpp`, openseespy/PyMP) construye
+  su `ArpackSOE` igual de desnudo — misma F1 latente, fuera del alcance de
+  esta rebanada (el camino de producción HPC son los ejecutables clásicos).
+- **Otros sistemas distribuidos MP quedan en el camino roto sin cablear.**
+  La condición mira solo `LinSOE_TAGS_MumpsParallelSOE`; bajo
+  `_PARALLEL_INTERPRETERS` el comando `system` también produce
+  `DistributedProfileSPDLinSOE` (`ParallelProfileSPD`) y `MPIDiagonalSOE`,
+  cuyos propios colectivos sí están activos mientras el `ArpackSOE` queda en
+  `processID -1` — misma composición incoherente que el control negativo.
+  Defecto preexistente, no empeorado, pero la rama `else` de reutilización
+  *afirma* "restaura la semántica serial", lo cual es falso para esos dos.
+  Cerrarlo (cablear o fallar ruidosamente) queda pendiente.
+- **Doble conteo de masa nodal en nodos de frontera compartidos.** El merge
+  suma la masa de un nodo definido con masa en dos rangos; nada en el código
+  lo detecta. Con `shift = 0` (siempre, en el `eigen` de Tcl) `K` queda
+  exacta y solo `M` sale mal, así que jamás se manifiesta como error: antes
+  el deck fallaba ruidosamente, ahora da un espectro plausible y equivocado.
+  La única defensa es la disciplina de propietario documentada arriba.
+- La ganancia esperada es de **capacidad**, no de tiempo: el factor
+  distribuido reparte la memoria dominante. El número a mirar en Esmeralda
+  es RSS pico por rango, con el tiempo como restricción de utilizabilidad.
+
+### 34.5 Consecuencia para la campaña
+
+La referencia (b) de 31.4 es ejecutable tal cual. Requisito adicional a los
+cinco listados allí: usar un build con este cableado y correr
+`verify_arpack_mp_mumps.tcl` como gate previo en el conteo de rangos de la
+campaña, **bajo timeout y verificando `cases=3` por rango** (34.3) — el
+control negativo demostró que sin el cableado la referencia no mide nada, y
+el código de salida por sí solo no distingue PASS de aborto.
