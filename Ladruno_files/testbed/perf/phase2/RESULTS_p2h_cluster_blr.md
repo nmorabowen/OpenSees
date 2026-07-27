@@ -171,9 +171,21 @@ Two things to take from this, one of which corrects the headline:
    > | 32 | **−52.8%** | −22.6% |
    >
    > So the −8.8% at 884.8k is **not** a rank-count effect. That run differed in
-   > **two** ways from the rows above — 6.2× the DOF *and* 2 nodes instead of 1 —
-   > and node count was never isolated. It remains unexplained; **the one thing now
-   > established is that np is not the cause.**
+   > **two** ways from the rows above — 6.2× the DOF *and* 2 nodes instead of 1.
+   >
+   > ### ✅ CLOSED — see `RESULTS_p2h_885k_anomaly.md`
+   > Both remaining candidates were isolated at fixed np=32 and **neither is the
+   > cause**: 1→2 nodes moves the saving only −52.8%→−49.7% (143.8k) and
+   > −45.2%→−39.7% (408.5k), and 408 483 DOF still returns a normal −45.2%.
+   >
+   > **It is LOAD IMBALANCE.** `INFOG(21)` is a *max over procs* and `INFOG(22)` a
+   > *sum*, so `max/(sum/np)` measures balance directly. Symmetric's ratio jumps to
+   > **4.16** at 884.8k while full-rank stays at **2.59** — an inversion, since at
+   > smaller N symmetric was *better* balanced (2.17 vs 3.55). Total factor memory
+   > still falls **−43.2%**, exactly in line with 408.5k. The saving did not vanish,
+   > it **concentrated** on one rank, and a max-over-procs metric stops tracking the
+   > average. **Quote `INFOG(22)` for "what does symmetric save"; `INFOG(21)` answers
+   > "will the worst rank fit".**
    >
    > What *is* solid: the two memory measures move in **opposite** directions with
    > np — per-proc peak saving improves, total-factor saving erodes (−38.0% → −22.6%)

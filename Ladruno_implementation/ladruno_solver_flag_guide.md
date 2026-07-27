@@ -69,6 +69,12 @@ The two memory measures move in **opposite** directions with rank count
 
 Always state which measure, and at what np.
 
+⚠ **`INFOG(21)` can badly understate the saving when the factorization is imbalanced.**
+At 884 835 DOF it reported only −8.8% while `INFOG(22)` reported a normal −43.2% —
+because one rank held **4.16×** the average (`RESULTS_p2h_885k_anomaly.md`). If a
+large symmetric job OOMs on a single rank while total memory looks comfortable, that
+is the reason, and **adding nodes will not fix it**.
+
 ---
 
 ## `-BLR <eps>` — almost never
