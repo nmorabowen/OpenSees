@@ -1,8 +1,8 @@
 ---
 title: LadrunoCMS partitioned emitter — implementation request for the apeGmsh team
 project: Ladruno
-status: request
-priority: high
+status: request-on-hold
+priority: low
 adr: ADR-1000
 tags:
   - apegmsh
@@ -28,32 +28,59 @@ we will check against.
 
 ---
 
-## 0. Read this before you plan the work
+## 0. STAND DOWN — read this before you plan anything
 
-**This is production-bound work.** The Ladruno owner has decided CMS goes into
-production use, and has accepted the speed cost explicitly.
+**Correction, 2026-07-26, same day this document was written. Do not schedule
+this work yet.**
 
-You should still know the numbers, because they are real and they will show up in
-runs. Measured on the Building-1A model: CMS at 4 ranks takes 311.6 s and
-10.3 GiB against sequential ARPACK's 30.1 s and 2.0 GiB — roughly 7x slower and
-5x the memory at that size. CMS is `draft` on the fork side and not yet promoted;
-the remaining gates are P3a/P3e (blocked on exactly this document) and P4.
+An earlier version of this section told you to treat the emitter as a
+**production dependency**. That was based on a decision to ship CMS to
+production in exchange for its known slowness. **New measurements taken hours
+later have undermined the reason CMS exists**, and the fork is now likely to
+close the lane rather than ship it. You should not spend a sprint on a
+dependency of something that may be shelved.
 
-The tradeoff being accepted deliberately: CMS is the only modal path here where
-**no rank holds the whole problem**. That makes it the route to models that do
-not fit in one node's RAM, and the one that scales with ranks rather than with a
-single machine. At Building-1A size that structural advantage costs time; at
-sizes where ARPACK cannot run at all, it is the difference between an answer and
-no answer.
+**What changed.** Measured on an identical mesh, standard solver vs CMS on four
+ranks (both computing the same six eigenvalues to ~1e-12):
 
-So please treat this as a **production dependency**, not a research favour. What
-it unblocks immediately is verification (P3a, P3e, the P4 campaign), because the
-fork has no way to produce a partitioned deck on demand and the single existing
-Building-1A partition is not in the fork repo.
+| mesh | n | standard | CMS, 4 ranks | ratio |
+|---|---:|---:|---:|---:|
+| 20x20 | 3 200 | 0.0294 s | 0.2335 s | 7.9x slower |
+| 40x40 | 12 800 | 0.2061 s | 107.90 s | **523x slower** |
+| 60x60 | 28 800 | 0.6480 s | did not finish | — |
 
-**The ask is smaller than it looks** — see §1.5. Most of the per-rank contract is
-already implemented in apeGmsh. The genuinely new work is the **manifest**, the
-**CMS preflight refusals**, and the **`coarse_of_fine` grouping**.
+CMS does not merely lose on speed, it **scales worse**: 4x the DOFs costs the
+standard solver 7x and costs CMS 462x.
+
+**Why that kills the rationale.** The justification for CMS was never speed — it
+was *memory capacity*: it is the route to models too large for one node, because
+no rank holds the whole problem. Two independent findings undercut that:
+
+1. **The capacity route already exists in this codebase without CMS.** The
+   standard `eigen` command drives shift-invert through whatever `LinearSOE` the
+   analysis owns (`ArpackSolver` calls `theSOE->solve()`), `ArpackSOE` is
+   parallel-aware, and `MumpsParallelSOE` is present and reachable from the MP
+   interpreter. So `eigen` over a distributed MUMPS system already spreads the
+   factorization — the dominant memory object — across ranks, using code that
+   has been hardened for two decades.
+2. **CMS's memory growth is asymptotically backwards.** Craig-Bampton
+   materialises a DENSE constraint-mode block of size
+   `n_interior x n_boundary`, which grows faster than the sparse factor fill it
+   is supposed to avoid. Consistent with the real building model, where CMS used
+   **more** total memory than the sequential solver, not less.
+
+**What we are asking of you right now: nothing.** No emitter work, no manifest,
+no `coarse_of_fine`. Keep the document for reference.
+
+**One item is still worth having, and is cheap:** a **second valid 4-way
+partition of Building 1A** (item 1 of §6). It is a data deliverable, not code,
+and it unblocks a verification gate regardless of what happens to CMS.
+
+**If CMS is revived** it will most likely be for a different purpose —
+*superelements*: reducing a substructure once and reusing it across many
+analyses (e.g. a foundation/soil block across a suite of ground motions), which
+is what Craig-Bampton is actually good at. That use case would need much of this
+same contract, so the document stays as written below.
 
 ---
 
