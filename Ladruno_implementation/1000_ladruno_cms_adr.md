@@ -3189,7 +3189,22 @@ ausente o menos de 3 casos = FAIL.
   distribuido reparte la memoria dominante. El número a mirar en Esmeralda
   es RSS pico por rango, con el tiempo como restricción de utilizabilidad.
 
-### 34.5 Consecuencia para la campaña
+### 34.5 Consecuencia para apeGmsh
+
+apeGmsh ADR 0077 lista esta ruta en *Rejected alternatives* — "REFUTED (F1) …
+never emitted". Era correcto contra vanilla y **es falso contra un build con
+#668**, así que la ADR necesita enmienda. La solicitud de emisor
+correspondiente está escrita y **no está en espera** (a diferencia de la de
+CMS): [[ladruno_arpack_mp_apegmsh_emitter_guide]].
+
+Lo que ese documento pide, en una línea: un segundo backend Tier-1 que emita un
+deck **particionado** con `system Mumps` — al contrario del deck FEAST, que es
+plano y cuyo `system` no participa del solve. Y la trampa que apeGmsh debe
+cerrar de su lado: la masa nodal de un nodo de frontera definida en dos rangos
+se suma dos veces, en silencio; apeGmsh ya conoce la pertenencia de particiones,
+así que la disciplina de propietario le corresponde a él, no al usuario.
+
+### 34.6 Consecuencia para la campaña
 
 La referencia (b) de 31.4 es ejecutable tal cual. Requisito adicional a los
 cinco listados allí: usar un build con este cableado y correr
