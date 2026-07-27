@@ -64,7 +64,7 @@ Full 10-field rubric tables are in the run transcript; condensed here.
 | `StagedNewmark` | Newmark + inactive-DOF diag fill | inherits | mature | overhead; staged-only | **keep** (staged) |
 | `HHT` | HHT-α; 2nd | uncond. α∈[0,⅓]; L-stable α=0 | mature | fixed β(α),γ(α); no sensitivity | **keep** |
 | `HHTGeneralized` | indep αI,αF; 2nd | uncond. | mature | overlaps GeneralizedAlpha | keep, but see consolidation |
-| `GeneralizedAlpha` | Chung-Hulbert αM,αF; 2nd | uncond. | mature | no sensitivity | **keep** (gold standard) |
+| `GeneralizedAlpha` | Chung-Hulbert αM,αF; 2nd | uncond. | mature | no sensitivity | **keep** (gold standard — **only post-C0-6**: until [#650](https://github.com/nmorabowen/OpenSees/pull/650) (2026-07-26, ADR-77) `update()` discarded `Ualphadotdot`, so any pre-fix result at αM≠1 is invalid) |
 | `Collocation` | collocation θ; β poly-fit | stable θ∈[½,1] | legacy | ad-hoc β fit | keep for completeness |
 | `WilsonTheta` | Wilson-θ; 2nd | stable θ≥1.37 | legacy | needs θ>1; outdated | keep (historical) |
 | `Houbolt` | 3-step Houbolt; 2nd | A-stable (after 2 trap steps) | legacy | brittle step-count logic | keep/low-priority |
