@@ -78,9 +78,9 @@ amended. All five units are on `ladruno` now — review against HEAD.
 2. **ADR-75b de-statication brief** — now the *only* route to both threaded
    assembly AND cross-element batching/vectorization (V0 closed `/arch:AVX2`:
    no win, no drift — do not add the flag). Blockers list = ADR-75b §5.4.
-3. **ADR-49a scorecard caveat** — its "GeneralizedAlpha = gold standard" row
-   should gain a note: correct only post-C0-6; pre-fix αM≠1 results invalid.
-   One-line docs PR, unclaimed.
+3. **ADR-49a scorecard caveat** — ✅ DONE 2026-07-27: the "GeneralizedAlpha =
+   gold standard" row now carries the post-C0-6-only note (pre-fix αM≠1
+   results invalid, #650).
 
 ## 3. Traps banked THIS session (do not rediscover — full text in WORKFLOW_GOTCHAS + memory)
 
