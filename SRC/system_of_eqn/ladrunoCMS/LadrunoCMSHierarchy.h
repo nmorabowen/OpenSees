@@ -111,6 +111,28 @@ struct HierarchyDiagnostics {
     double publicationSeconds = 0.0;      // gathering/publishing the eigenvectors
     // Peak resident set of THIS rank, bytes; 0 when the platform query fails.
     std::size_t peakResidentBytes = 0;
+    // ADR-1000 P4 section 4 -- inside T2, which the section-27 profile showed is
+    // 97% of the hierarchy. The split depends strongly on the INTERFACE size b:
+    // the Lanczos is b-independent, the constraint-mode solve is O(b) and the
+    // congruence O(b^2), so a profile from one topology does not transfer.
+    double t2FactorizeSeconds = 0.0;
+    double t2ConstraintModesSeconds = 0.0;
+    double t2CondensationSeconds = 0.0;
+    double t2LanczosSeconds = 0.0;
+    double t2ReconstructSeconds = 0.0;
+    double t2ScatterSeconds = 0.0;
+    double t2CongruenceSeconds = 0.0;
+    int t2InteriorCount = 0;              // m
+    int t2BoundaryCount = 0;              // b
+    std::size_t t2TransformationBytes = 0;
+    // Inside the T2 Lanczos, which the profiles put at ~65% of hierarchy time.
+    double lanczosRayleighRitzSeconds = 0.0;
+    double lanczosOrthonormalizeSeconds = 0.0;
+    double lanczosOperatorSeconds = 0.0;
+    double lanczosResidualSeconds = 0.0;
+    int lanczosRayleighRitzCalls = 0;
+    int lanczosOperatorApplications = 0;
+    int lanczosRestarts = 0;
 };
 
 struct TwoLevelHierarchyResult {

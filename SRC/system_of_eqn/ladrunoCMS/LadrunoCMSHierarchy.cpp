@@ -98,6 +98,33 @@ struct CoordinateKey {
     }
 };
 
+// ADR-1000 P4 section 4. T2 is 97% of the hierarchy (section 27), so it needs
+// the same treatment the hierarchy got: attribution, not inspection. Its cost
+// splits very differently depending on the INTERFACE size b -- the Lanczos is
+// b-independent while the constraint-mode solve and the congruence are O(b) and
+// O(b^2) -- so a profile taken on one topology says little about another.
+struct CBProfile {
+    double factorizeSeconds = 0.0;      // MUMPS factorization of K_II
+    double constraintModesSeconds = 0.0;// psi = -K_II^-1 K_IB, b right-hand sides
+    double condensationSeconds = 0.0;   // massless-coordinate condensation
+    double lanczosSeconds = 0.0;        // fixed-interface modes
+    double reconstructSeconds = 0.0;    // modes back to interior coordinates
+    double scatterSeconds = 0.0;        // phi/psi -> the transformation
+    double congruenceSeconds = 0.0;     // T^T K T and T^T M T
+    int interiorCount = 0;              // m
+    int boundaryCount = 0;              // b
+    int retainedModes = 0;              // k
+    std::size_t transformationBytes = 0;
+    std::size_t phiPsiBytes = 0;
+    double lanczosRayleighRitzSeconds = 0.0;
+    double lanczosOrthonormalizeSeconds = 0.0;
+    double lanczosOperatorSeconds = 0.0;
+    double lanczosResidualSeconds = 0.0;
+    int lanczosRayleighRitzCalls = 0;
+    int lanczosOperatorApplications = 0;
+    int lanczosRestarts = 0;
+};
+
 struct CBReduction {
     DenseMatrix transformation;
     SymmetricCSR stiffness;
@@ -105,6 +132,7 @@ struct CBReduction {
     std::vector<int> interior;
     std::vector<int> boundary;
     int retainedModes = 0;
+    CBProfile profile;
 };
 
 struct FineReduction {
@@ -420,6 +448,15 @@ int reduceCraigBampton(
     }
 
     result.retainedModes = 0;
+    result.profile.interiorCount = numberOfInterior;
+    result.profile.boundaryCount = numberOfBoundary;
+    double cbMark = MPI_Wtime();
+    const auto stampCB = [&cbMark]() {
+        const double now = MPI_Wtime();
+        const double elapsed = now - cbMark;
+        cbMark = now;
+        return elapsed;
+    };
     DenseMatrix phi = makeDense(numberOfInterior, 0);
     DenseMatrix psi = makeDense(numberOfInterior, numberOfBoundary);
     if (numberOfInterior > 0) {
@@ -431,6 +468,7 @@ int reduceCraigBampton(
             message = "Craig-Bampton K_II is not SPD: " + message;
             return -6;
         }
+        result.profile.factorizeSeconds = stampCB();
         if (numberOfBoundary > 0) {
             DenseMatrix stiffnessIB;
             if (crossBlock(stiffness, interior, boundary, stiffnessIB, message) < 0)
@@ -443,6 +481,7 @@ int reduceCraigBampton(
                 return -7;
             }
         }
+        result.profile.constraintModesSeconds = stampCB();
         if (requestedModes != 0) {
             const SymmetricCSR massII = principalSubmatrix(mass, interior, message);
             if (massII.dimension != numberOfInterior)
@@ -455,6 +494,7 @@ int reduceCraigBampton(
                 message = "Craig-Bampton interior mass condensation failed: " + message;
                 return -9;
             }
+            result.profile.condensationSeconds = stampCB();
             result.retainedModes = requestedModes < 0
                 ? condensation.reducedStiffness.dimension
                 : std::min(requestedModes, condensation.reducedStiffness.dimension);
@@ -476,6 +516,14 @@ int reduceCraigBampton(
                 message = "Craig-Bampton fixed-interface Lanczos failed: " + message;
                 return -11;
             }
+            result.profile.lanczosSeconds = stampCB();
+            result.profile.lanczosRayleighRitzSeconds = modes.rayleighRitzSeconds;
+            result.profile.lanczosOrthonormalizeSeconds = modes.orthonormalizeSeconds;
+            result.profile.lanczosOperatorSeconds = modes.operatorSeconds;
+            result.profile.lanczosResidualSeconds = modes.residualSeconds;
+            result.profile.lanczosRayleighRitzCalls = modes.rayleighRitzCalls;
+            result.profile.lanczosOperatorApplications = modes.operatorApplications;
+            result.profile.lanczosRestarts = modes.restarts;
             std::vector<double> reconstructed;
             if (reconstructStaticCoordinates(
                     condensation,
@@ -487,6 +535,7 @@ int reduceCraigBampton(
                 return -12;
             }
             phi.values.swap(reconstructed);
+            result.profile.reconstructSeconds = stampCB();
         }
     }
 
@@ -503,9 +552,23 @@ int reduceCraigBampton(
         result.transformation(boundary[static_cast<std::size_t>(boundaryColumn)],
                               reducedColumn) = 1.0;
     }
+    result.profile.retainedModes = result.retainedModes;
+    result.profile.transformationBytes =
+        result.transformation.values.size() * sizeof(double);
+    result.profile.phiPsiBytes =
+        (phi.values.size() + psi.values.size()) * sizeof(double);
+    // ADR-1000 P4 section 4: phi and psi have now been scattered into the
+    // transformation, which holds a copy of every value they carry. Keeping them
+    // alive across the congruence -- which itself allocates a second buffer the
+    // size of the transformation -- inflates the T2 peak by their full size for
+    // no reason. Release them here rather than at the end of scope.
+    DenseMatrix().values.swap(phi.values);
+    DenseMatrix().values.swap(psi.values);
+    result.profile.scatterSeconds = stampCB();
     if (congruence(stiffness, result.transformation, result.stiffness, message) < 0 ||
         congruence(mass, result.transformation, result.mass, message) < 0)
         return -14;
+    result.profile.congruenceSeconds = stampCB();
     return 0;
 }
 
@@ -1622,6 +1685,34 @@ int solveDistributedHierarchy(
     }
     result.diagnostics.appliedT2 = true;
     result.diagnostics.fineModesSeconds = stampPhase();
+    result.diagnostics.t2FactorizeSeconds = fineReduction.profile.factorizeSeconds;
+    result.diagnostics.t2ConstraintModesSeconds =
+        fineReduction.profile.constraintModesSeconds;
+    result.diagnostics.t2CondensationSeconds =
+        fineReduction.profile.condensationSeconds;
+    result.diagnostics.t2LanczosSeconds = fineReduction.profile.lanczosSeconds;
+    result.diagnostics.t2ReconstructSeconds =
+        fineReduction.profile.reconstructSeconds;
+    result.diagnostics.t2ScatterSeconds = fineReduction.profile.scatterSeconds;
+    result.diagnostics.t2CongruenceSeconds =
+        fineReduction.profile.congruenceSeconds;
+    result.diagnostics.t2InteriorCount = fineReduction.profile.interiorCount;
+    result.diagnostics.t2BoundaryCount = fineReduction.profile.boundaryCount;
+    result.diagnostics.t2TransformationBytes =
+        fineReduction.profile.transformationBytes;
+    result.diagnostics.lanczosRayleighRitzSeconds =
+        fineReduction.profile.lanczosRayleighRitzSeconds;
+    result.diagnostics.lanczosOrthonormalizeSeconds =
+        fineReduction.profile.lanczosOrthonormalizeSeconds;
+    result.diagnostics.lanczosOperatorSeconds =
+        fineReduction.profile.lanczosOperatorSeconds;
+    result.diagnostics.lanczosResidualSeconds =
+        fineReduction.profile.lanczosResidualSeconds;
+    result.diagnostics.lanczosRayleighRitzCalls =
+        fineReduction.profile.lanczosRayleighRitzCalls;
+    result.diagnostics.lanczosOperatorApplications =
+        fineReduction.profile.lanczosOperatorApplications;
+    result.diagnostics.lanczosRestarts = fineReduction.profile.lanczosRestarts;
     result.diagnostics.originalDimension = input.globalDimension;
     int localDimension = fineReduction.stiffness.dimension;
     MPI_Allreduce(&localDimension,

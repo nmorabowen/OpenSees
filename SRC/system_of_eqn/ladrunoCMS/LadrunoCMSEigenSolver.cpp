@@ -350,6 +350,27 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         if (finalRaw > 0.0)
             opserr << " r2/rStar=" << afterLevel2 / finalRaw;
         opserr << endln;
+        opserr << "LadrunoCMS T2 breakdown [s]: factorize="
+               << phases.t2FactorizeSeconds
+               << " constraintModes=" << phases.t2ConstraintModesSeconds
+               << " condensation=" << phases.t2CondensationSeconds
+               << " lanczos=" << phases.t2LanczosSeconds
+               << " reconstruct=" << phases.t2ReconstructSeconds
+               << " scatter=" << phases.t2ScatterSeconds
+               << " congruence=" << phases.t2CongruenceSeconds << endln;
+        opserr << "LadrunoCMS T2 Lanczos [s]: rayleighRitz="
+               << phases.lanczosRayleighRitzSeconds
+               << " orthonormalize=" << phases.lanczosOrthonormalizeSeconds
+               << " operator=" << phases.lanczosOperatorSeconds
+               << " residual=" << phases.lanczosResidualSeconds
+               << " (ritzCalls=" << phases.lanczosRayleighRitzCalls
+               << " opApplications=" << phases.lanczosOperatorApplications
+               << " restarts=" << phases.lanczosRestarts << ")" << endln;
+        opserr << "LadrunoCMS T2 shape: interior m=" << phases.t2InteriorCount
+               << " boundary b=" << phases.t2BoundaryCount
+               << " transformation="
+               << static_cast<double>(phases.t2TransformationBytes) /
+                  (1024.0 * 1024.0) << " MiB" << endln;
         if (phases.peakResidentBytes > 0u)
             opserr << "LadrunoCMS peak resident set (rank 0): "
                    << static_cast<double>(phases.peakResidentBytes) /
