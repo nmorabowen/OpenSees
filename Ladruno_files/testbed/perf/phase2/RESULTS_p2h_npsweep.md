@@ -47,9 +47,13 @@ distributed front, so more ranks dilute the benefit") predicts the opposite of w
 happens and should not be repeated.
 
 ⇒ **The −8.8% at 884.8k DOF is not an np effect.** That run differed from these rows
-in **two** ways — 6.2× the DOF **and** 2 nodes rather than 1 — and node count has
-never been isolated. It stays unexplained. The only thing now established is what it
-is *not*.
+in **two** ways — 6.2× the DOF **and** 2 nodes rather than 1.
+
+> **✅ Now fully closed** (`RESULTS_p2h_885k_anomaly.md`): node count and N were both
+> isolated at fixed np=32 and **neither is the cause**. It is **load imbalance** —
+> symmetric's `max/avg` ratio jumps to **4.16** at 884.8k vs full-rank's **2.59**,
+> inverting the ordering seen at smaller N. Total factor memory still falls −43.2%;
+> the saving concentrated on one rank rather than disappearing.
 
 ## Finding 2 — the two memory measures move in OPPOSITE directions with np
 
