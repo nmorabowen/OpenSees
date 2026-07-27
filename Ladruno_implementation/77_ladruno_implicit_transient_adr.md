@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 + T0b + T1 + T3 measured; G2/G3 CLOSED; C0 patch wave COMPLETE (C0-1/2/4/5/6 fixed, C0-3 withdrawn); T2-nodal-mass open
+status: active — C0/T0/T0b/T1/T2/T3 all measured; G3 CLOSED, **G2 AUTHORIZED** (element-mass cache, not the integrator cache); C0 patch wave COMPLETE; implementation of the mass cache is the only open item
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -309,6 +309,18 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **T2 measured (§6f) — G2 REOPENED AND AUTHORIZED, on evidence that
+  contradicts both the caveat and the envisioned design.** The nodal-mass caveat that kept
+  G2 open is **false**: moving all inertia from the material to `mass` commands moved
+  `dof.tangent` 0.36% → 0.37%, i.e. the DOF_Group loop is negligible regardless of where
+  mass lives. G2 nevertheless **passes at 10.91%** via an unpredicted route —
+  `Element::getDamp()` calls `getMass()` when `alphaM != 0`, so Rayleigh forms the element
+  mass matrix **twice per element per iteration** (214 → 477 ms). Because the headroom is
+  entirely **element-local**, §4.3 item 4's integrator-level constant-M/C cache is the wrong
+  shape; what the evidence supports is caching the mass matrix **in the element**, mirroring
+  `LadrunoBrick`'s existing `Ki` cache (and retiring one shared-static hazard while at it).
+  Invariance must still default false per ADR-76 App. A.4. Side finding: `rayleigh
+  betaKcurr` costs **1.86x** the step of `betaKinit` for a near-identical answer.
 - 2026-07-26 — **C0 PATCH WAVE COMPLETE** (§6e). C0-1 (`deltaT` guards, 4 classes), C0-2
   (`HALL_TANGENT` branches — the silent-wrong-answer finding, 3 classes), C0-4 (dead
   file-scope static), C0-5 (profiler scopes, 8 algorithms, 61 sites) all fixed, rebuilt and
