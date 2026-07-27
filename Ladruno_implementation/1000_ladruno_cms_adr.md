@@ -2486,3 +2486,60 @@ restante son las `j^2` productos escalares de la proyección, que también podr�
 hacerse incrementales —sólo cambian filas y columnas nuevas al crecer la base—,
 pero eso es cirugía sobre el reinicio y no se ha hecho. `phi`/`psi` siguen densos,
 y ahora se sabe que da igual.
+
+## 30. P4 sección 2 — CMS contra el solver estándar, vuelto a medir — 2026-07-26
+
+Tras la mejora de 1.65x de la sección 29 procede repetir la comparación. **No es
+la comparación de Building 1A**: ese deck no está en el repositorio, así que el
+veredicto de 7x del plan P4 no puede re-medirse. Esto es un equivalente sobre la
+malla, con `cms_compare_arpack.tcl`, que construye **el mismo modelo** en ambos
+caminos —cuatro franjas siempre— y sólo cambia el solver:
+
+- `mpiexec -n 1` → monolítico + `eigen` estándar (Arpack + UmfPack);
+- `mpiexec -n 4` → particionado + `eigen -ladrunoCMS`.
+
+### 30.1 Mismo problema
+
+Los seis autovalores coinciden a `~1e-12` relativo. Se está comparando el mismo
+espectro, no dos problemas distintos.
+
+### 30.2 El resultado, y no es bueno
+
+| Malla | `n` | estándar [s] | CMS 4 rangos [s] | CMS / estándar |
+|---|---:|---:|---:|---:|
+| 20x20 | 3 200 | 0.0294 | 0.2335 | **7.9x** |
+| 40x40 | 12 800 | 0.2061 | **107.90** | **523x** |
+| 60x60 | 28 800 | 0.6480 | no completó | — |
+
+A `n=3200` el factor 7.9x reproduce casi exactamente el 7.0x que el plan P4
+registró para Building 1A — la mejora de la sección 29 movió el cociente desde
+~11x, pero no cambia el orden de magnitud.
+
+**Lo grave es la segunda fila.** Cuadruplicar `n` multiplica el estándar por 7
+—comportamiento sano— y a CMS por **462**. CMS no sólo es más lento: **escala
+mucho peor**. La corrida de 60x60 se abandonó tras varios minutos sin terminar.
+
+### 30.3 Qué significa para la decisión de producción
+
+El argumento aceptado para llevar CMS a producción es la **capacidad de
+memoria**: el modelo que no cabe en un nodo. Estos números lo comprometen: si el
+coste crece como `O(n^4)` aproximado, el modelo grande que CMS debería hacer
+posible tardaría un tiempo inutilizable. Una victoria de capacidad sólo sirve si
+el resultado llega.
+
+### 30.4 Salvedad honesta, y el sospechoso
+
+Los parámetros de CMS se dejaron **fijos** (`k2=12`, `k1=24`) en todos los
+tamaños. Al crecer `m`, una base de interfaz fija de 12 modos es relativamente
+más pobre, así que el refinamiento y el Lanczos local tienen que trabajar mucho
+más — y ya se vio (secciones 27.4 y 29) que ese Lanczos agota reinicios al
+crecer el subdominio. Una campaña que escale `k2` con el tamaño daría un
+cociente mejor, y **esta medición no la sustituye**.
+
+Pero 523x no es una brecha de afinado. La hipótesis a comprobar es que el coste
+del Lanczos de interfaz fija crece super-linealmente en `m` a `k2` constante, y
+que ése —no la memoria— es el verdadero obstáculo de P4.
+
+**P4 sigue sin cumplirse, y ahora con un dato peor que el de partida:** no sólo
+no hay régimen donde CMS gane, sino que el cociente empeora con el tamaño en el
+único eje medido.
