@@ -309,6 +309,11 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **V0 `/arch:AVX2` probe run and CLOSED (§6h): no measurable speed (paired
+  interleaved rounds put AVX2 within noise, ≤1-3% slower), and — the surprise — ZERO bit
+  drift at 1 thread (MSVC `/fp:precise` does not contract to FMA: safe and useless, two
+  faces of the same fact). Do not add the flag. The vectorization lane now points solely at
+  cross-element batching behind ADR-75b's de-statication.**
 - 2026-07-26 — **G2 IMPLEMENTED, VERIFIED, MEASURED (§6g) — ADR COMPLETE.** Per-instance
   mass cache in `LadrunoBrick::getMass()`, guard-checked (rho + coords compared per call —
   invariance verified, never assumed), `-noMassCache` escape. 11-check acceptance all pass,
