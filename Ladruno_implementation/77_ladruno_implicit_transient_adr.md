@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 + T0b + T1 + T3 measured; G2 and G3 both CLOSED; T2-nodal-mass + C0 patch wave open
+status: active — C0 + T0 + T0b + T1 + T3 measured; G2 and G3 CLOSED; C0-6 bug FIXED + verified; T2-nodal-mass + rest of C0 patch wave open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -309,6 +309,14 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **C0-6 FIXED, rebuilt, verified; G3 recomputed** (§6d.3 of the results doc).
+  Fix applied to the **vanilla base class**, not `LadrunoGeneralizedAlpha` — the fork class
+  inherits `update()`, so one line repairs both, and owning it would have duplicated ~40
+  lines while leaving vanilla broken. All 8 acceptance checks pass: αM=1.0 **bit-identical**,
+  every other αM's observed order −1.34/−4.41/−6.71 → **+1.30/+1.18/+1.19**. **G3 re-derived
+  on the now-valid data: still NOT AUTHORIZED**, and more firmly — the repaired
+  GeneralizedAlpha is the second-best scheme (1.05x). Noise floor recorded: wall-clock
+  varies ~12% run-to-run, so cost ratios under ~1.2x are not a ranking.
 - 2026-07-26 — **T3 measured** (§6d). **G3 NOT AUTHORIZED ⇒ implicit Bathe β1/β2 CLOSED**
   with the benchmark on record (the ADR-49a Rank-3 deliverable). Damping bought zero
   iteration reduction, falsifying §5's T3 hypothesis. **C0-6 found: a real bug in vanilla

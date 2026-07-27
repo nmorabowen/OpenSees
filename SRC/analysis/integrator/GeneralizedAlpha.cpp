@@ -396,13 +396,34 @@ int GeneralizedAlpha::update(const Vector &deltaU)
     (*Ualphadot) = *Utdot;
     Ualphadot->addVector((1.0-alphaF), *Udot, alphaF);
 
-    // determine the velocities at t+alphaM*deltaT
+    // determine the accelerations at t+alphaM*deltaT
     (*Ualphadotdot) = *Utdotdot;
     Ualphadotdot->addVector((1.0-alphaM), *Udotdot, alphaM);
 
-    
+
     // update the response at the DOFs
-    theModel->setResponse(*Ualpha,*Ualphadot,*Udotdot);        
+    // Ladruno ADR-77 (C0-6): was setResponse(*Ualpha,*Ualphadot,*Udotdot) --
+    // Ualphadotdot was computed on the line above and then DISCARDED, so the
+    // inertia term was evaluated at t+deltaT instead of t+alphaM*deltaT on every
+    // Newton iteration. The separate alphaM weighting of the ACCELERATION is the
+    // one thing that distinguishes generalized-alpha from HHT, so dropping it
+    // makes this class not the scheme it claims to be. newStep() already sets it
+    // correctly (setAccel(*Ualphadotdot), :193); update() then overwrote it.
+    // NOTE the identical-looking line in HHT.cpp:394 is CORRECT and must NOT be
+    // "fixed" -- HHT weights only the stiffness/damping terms and its inertia
+    // genuinely belongs at t+deltaT.
+    // Diagnosis was confirmed by PREDICTION: the defect must vanish exactly at
+    // alphaM==1.0 (there Ualphadotdot == Udotdot identically), and it does --
+    // measured L2 error vs a fine reference went 2.16e-2 at alphaM=1.0 (matching
+    // HHT(0.8)'s 2.07e-2) but 1.01e-1 / 7.68e-1 / 2.01e+2 at alphaM=0.80 / 0.65
+    // / 0.50, i.e. worse the further alphaM sits from 1.0. The T3 sweep also
+    // reported NEGATIVE observed convergence order (-6.98, -2.81): error growing
+    // as dt shrinks, which no consistent scheme does.
+    // Results are bit-identical at alphaM==1.0 (rho_inf=0.5) by construction;
+    // every other alphaM changes, which is the point. LadrunoGeneralizedAlpha
+    // inherits update() and is fixed by this same line.
+    // See [[77_ladruno_implicit_transient_adr]] / [[77a_c0_t0_results_2026-07-26]].
+    theModel->setResponse(*Ualpha,*Ualphadot,*Ualphadotdot);
     if (theModel->updateDomain() < 0)  {
         opserr << "GeneralizedAlpha::update() - failed to update the domain\n";
         return -4;
