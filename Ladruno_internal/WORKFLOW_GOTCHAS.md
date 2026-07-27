@@ -227,15 +227,14 @@ committing after any sed.
 
 **This bites from BOTH directions, and the warning above did not stop it.**
 Hit again 2026-07-26 (ADR-77 C0-5), inverted: a Python patch script doing
-`Path(p).write_text("
-".join(lines))` on **LF** sources rewrote every line as
-**CRLF**, because `write_text` defaults to `newline=None` → `os.linesep`. Five
+`Path(p).write_text("\n".join(lines))` on **LF** sources rewrote every line as
+**CRLF**, because `write_text` defaults to `newline=None` -> `os.linesep`. Five
 inserted profiler scopes became **1119 changed lines** in `BFGS.cpp` (~1000 more
 in `Broyden.cpp`/`KrylovNewton.cpp`).
 
 Why LF sources are the norm here at all: **`.gitattributes` marks most vanilla
 `SRC/` files `-text`** (253 KB of such entries), so git does *no* EOL
-normalisation in either direction — whatever byte the tool writes is a real
+normalisation in either direction -- whatever byte the tool writes is a real
 content change. **The repo's own config, not git's defaults, decides what counts
 as a change.**
 
@@ -243,15 +242,49 @@ The cost is not cosmetic on this fork: it defeats `LEDGER_vanilla_files.md`'s
 entire purpose (keep the divergence from upstream small and *greppable*) and
 makes the PR unreviewable.
 
-- **Avoid:** patch existing sources through bytes, not text —
+- **Avoid:** patch existing sources through bytes, not text --
   `p.write_bytes(p.read_bytes().decode().replace(...).encode())`, or pass
   `newline=""` to `open`. The Edit tool is already byte-preserving; prefer it.
 - **Detect:** `git show --stat HEAD` immediately after committing. If a file's
   changed-line count is near its total length, this is why. *Do this even when
-  the edit "obviously" touched five lines* — that assumption is exactly what
+  the edit "obviously" touched five lines* -- that assumption is exactly what
   suppressed the check both times.
-- **Repair:** `p.write_bytes(p.read_bytes().replace(b"
-", b"
-"))` (or the
-  reverse) then `git commit --amend`, which is safe while the PR is unmerged —
+- **Repair:** `p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))` (or the
+  reverse) then `git commit --amend`, which is safe while the PR is unmerged --
   confirm with `gh pr view <n> --json state,mergedAt` before force-pushing.
+
+**Related trap, same family (hit 2026-07-27, ADR-77 G2 ext):** the Bash tool's
+heredoc layer EATS ONE LEVEL OF BACKSLASH even with a quoted delimiter, so an
+inline python script whose anchor contains the two characters backslash-n
+receives a real newline instead -- the anchor silently never matches (or worse,
+matches wrongly). Write patch scripts to a file (Write tool is verbatim) and
+construct backslashes with `chr(92)`.
+
+## 7. The G1 Tcl gate has been green on a DEAD suite — "OK (0 checks passed)"
+
+Found 2026-07-26 by the first marker-gated Tcl step (the ADR-76 LAPACK
+regression, #643). The Zone-A `build/Release/OpenSees` binary aborts Tcl
+initialization on the CI runner — `application-specific initialization failed:
+Can't find a usable init.tcl` — because `TCL_LIBRARY` is not set and the conan
+Tcl runtime is not on the binary's search list. After that failure NO OpenSees
+command is registered (`invalid command name "wipe"`), so every deck dies on
+its first command.
+
+The "Tcl verification suite + ladruno tcl (gated, G1)" step has been hitting
+this on EVERY run — visible as two `init.tcl` complaints in even fully green
+logs (e.g. run 30173461993) — and still passing, because `runVerificationSuite`
+leaves an empty `results.out` and `ci/check_tcl_results.py` reports
+`OK (0 checks passed)`. A gate that counts failures must also refuse an empty
+result set; "no failures because nothing ran" is the silent-truncation trap.
+
+- **Honest pattern** (the LAPACK step): `export TCL_LIBRARY="$(dirname "$(find
+  ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"` before invoking the
+  binary, and gate on a positive terminal marker, never the exit code.
+- **RESURRECTED (#653, 2026-07-26, stacked on #643):** the G1 step got the same
+  `TCL_LIBRARY` export and `check_tcl_results.py` now fails on `total == 0`
+  (either fix alone is insufficient — without the export the suite dies empty;
+  without the zero-check the death is invisible). First genuine execution:
+  **`OK (19 checks passed)`** — all nine verification decks + the ladruno
+  cantilever clean, including under the ADR-76 LAPACK singular fix. The gate is
+  live; a future `0 checks ran` failure means the Tcl runtime went missing
+  again, not that the decks regressed.

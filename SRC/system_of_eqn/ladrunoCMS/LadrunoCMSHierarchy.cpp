@@ -31,7 +31,25 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <utility>
+
+#if defined(_WIN32)
+// NOMINMAX: windows.h defines min/max as MACROS, which breaks every std::min /
+// std::max in this file (C2589 "illegal token on right side of '::'"). Must be
+// defined before windows.h is pulled in.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#elif defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
 
 #include <mpi.h>
 
@@ -80,6 +98,33 @@ struct CoordinateKey {
     }
 };
 
+// ADR-1000 P4 section 4. T2 is 97% of the hierarchy (section 27), so it needs
+// the same treatment the hierarchy got: attribution, not inspection. Its cost
+// splits very differently depending on the INTERFACE size b -- the Lanczos is
+// b-independent while the constraint-mode solve and the congruence are O(b) and
+// O(b^2) -- so a profile taken on one topology says little about another.
+struct CBProfile {
+    double factorizeSeconds = 0.0;      // MUMPS factorization of K_II
+    double constraintModesSeconds = 0.0;// psi = -K_II^-1 K_IB, b right-hand sides
+    double condensationSeconds = 0.0;   // massless-coordinate condensation
+    double lanczosSeconds = 0.0;        // fixed-interface modes
+    double reconstructSeconds = 0.0;    // modes back to interior coordinates
+    double scatterSeconds = 0.0;        // phi/psi -> the transformation
+    double congruenceSeconds = 0.0;     // T^T K T and T^T M T
+    int interiorCount = 0;              // m
+    int boundaryCount = 0;              // b
+    int retainedModes = 0;              // k
+    std::size_t transformationBytes = 0;
+    std::size_t phiPsiBytes = 0;
+    double lanczosRayleighRitzSeconds = 0.0;
+    double lanczosOrthonormalizeSeconds = 0.0;
+    double lanczosOperatorSeconds = 0.0;
+    double lanczosResidualSeconds = 0.0;
+    int lanczosRayleighRitzCalls = 0;
+    int lanczosOperatorApplications = 0;
+    int lanczosRestarts = 0;
+};
+
 struct CBReduction {
     DenseMatrix transformation;
     SymmetricCSR stiffness;
@@ -87,6 +132,7 @@ struct CBReduction {
     std::vector<int> interior;
     std::vector<int> boundary;
     int retainedModes = 0;
+    CBProfile profile;
 };
 
 struct FineReduction {
@@ -129,6 +175,32 @@ bool checkedMPIProduct(int left, int right, int &value)
         return false;
     value = static_cast<int>(product);
     return true;
+}
+
+// ADR-1000 P4 section 1. Peak resident set of THIS process, bytes. The P4 plan
+// assumed a Linux CI lane (getrusage ru_maxrss); the harness that actually runs
+// CMS today is Windows, so both are wired. Returns 0 when the query fails --
+// callers must treat 0 as "unknown", never as "no memory used".
+std::size_t peakResidentSetBytes()
+{
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        return static_cast<std::size_t>(counters.PeakWorkingSetSize);
+    return 0u;
+#elif defined(__unix__) || defined(__APPLE__)
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+#if defined(__APPLE__)
+        return static_cast<std::size_t>(usage.ru_maxrss);        // bytes
+#else
+        return static_cast<std::size_t>(usage.ru_maxrss) * 1024u; // kilobytes
+#endif
+    }
+    return 0u;
+#else
+    return 0u;
+#endif
 }
 
 DenseMatrix makeDense(int rows, int columns)
@@ -376,6 +448,15 @@ int reduceCraigBampton(
     }
 
     result.retainedModes = 0;
+    result.profile.interiorCount = numberOfInterior;
+    result.profile.boundaryCount = numberOfBoundary;
+    double cbMark = MPI_Wtime();
+    const auto stampCB = [&cbMark]() {
+        const double now = MPI_Wtime();
+        const double elapsed = now - cbMark;
+        cbMark = now;
+        return elapsed;
+    };
     DenseMatrix phi = makeDense(numberOfInterior, 0);
     DenseMatrix psi = makeDense(numberOfInterior, numberOfBoundary);
     if (numberOfInterior > 0) {
@@ -387,6 +468,7 @@ int reduceCraigBampton(
             message = "Craig-Bampton K_II is not SPD: " + message;
             return -6;
         }
+        result.profile.factorizeSeconds = stampCB();
         if (numberOfBoundary > 0) {
             DenseMatrix stiffnessIB;
             if (crossBlock(stiffness, interior, boundary, stiffnessIB, message) < 0)
@@ -399,6 +481,7 @@ int reduceCraigBampton(
                 return -7;
             }
         }
+        result.profile.constraintModesSeconds = stampCB();
         if (requestedModes != 0) {
             const SymmetricCSR massII = principalSubmatrix(mass, interior, message);
             if (massII.dimension != numberOfInterior)
@@ -411,6 +494,7 @@ int reduceCraigBampton(
                 message = "Craig-Bampton interior mass condensation failed: " + message;
                 return -9;
             }
+            result.profile.condensationSeconds = stampCB();
             result.retainedModes = requestedModes < 0
                 ? condensation.reducedStiffness.dimension
                 : std::min(requestedModes, condensation.reducedStiffness.dimension);
@@ -432,6 +516,14 @@ int reduceCraigBampton(
                 message = "Craig-Bampton fixed-interface Lanczos failed: " + message;
                 return -11;
             }
+            result.profile.lanczosSeconds = stampCB();
+            result.profile.lanczosRayleighRitzSeconds = modes.rayleighRitzSeconds;
+            result.profile.lanczosOrthonormalizeSeconds = modes.orthonormalizeSeconds;
+            result.profile.lanczosOperatorSeconds = modes.operatorSeconds;
+            result.profile.lanczosResidualSeconds = modes.residualSeconds;
+            result.profile.lanczosRayleighRitzCalls = modes.rayleighRitzCalls;
+            result.profile.lanczosOperatorApplications = modes.operatorApplications;
+            result.profile.lanczosRestarts = modes.restarts;
             std::vector<double> reconstructed;
             if (reconstructStaticCoordinates(
                     condensation,
@@ -443,6 +535,7 @@ int reduceCraigBampton(
                 return -12;
             }
             phi.values.swap(reconstructed);
+            result.profile.reconstructSeconds = stampCB();
         }
     }
 
@@ -459,12 +552,43 @@ int reduceCraigBampton(
         result.transformation(boundary[static_cast<std::size_t>(boundaryColumn)],
                               reducedColumn) = 1.0;
     }
+    result.profile.retainedModes = result.retainedModes;
+    result.profile.transformationBytes =
+        result.transformation.values.size() * sizeof(double);
+    result.profile.phiPsiBytes =
+        (phi.values.size() + psi.values.size()) * sizeof(double);
+    // ADR-1000 P4 section 4: phi and psi have now been scattered into the
+    // transformation, which holds a copy of every value they carry. Keeping them
+    // alive across the congruence -- which itself allocates a second buffer the
+    // size of the transformation -- inflates the T2 peak by their full size for
+    // no reason. Release them here rather than at the end of scope.
+    DenseMatrix().values.swap(phi.values);
+    DenseMatrix().values.swap(psi.values);
+    result.profile.scatterSeconds = stampCB();
     if (congruence(stiffness, result.transformation, result.stiffness, message) < 0 ||
         congruence(mass, result.transformation, result.mass, message) < 0)
         return -14;
+    result.profile.congruenceSeconds = stampCB();
     return 0;
 }
 
+struct CoordinateKeyHash {
+    std::size_t operator()(const CoordinateKey &key) const noexcept
+    {
+        std::size_t seed = static_cast<std::size_t>(key.kind);
+        seed = seed * 1000003u +
+            static_cast<std::size_t>(static_cast<unsigned int>(key.owner));
+        seed = seed * 1000003u +
+            static_cast<std::size_t>(static_cast<unsigned int>(key.index));
+        return seed;
+    }
+};
+
+// ADR-1000 P4 section 4. This was a linear `std::find` over `unique` for EVERY
+// key, i.e. O(totalKeys * uniqueKeys) -- on a Building-1A-sized merge that is
+// ~1e9 key comparisons before any arithmetic happens. The hash join is the same
+// algorithm with a lookup table; `unique` keeps its first-seen order, which the
+// callers depend on (it defines the assembled coordinate numbering).
 int compatibilityMaps(
     const std::vector<std::vector<CoordinateKey>> &groups,
     std::vector<std::vector<int>> &maps,
@@ -474,18 +598,20 @@ int compatibilityMaps(
     maps.clear();
     unique.clear();
     counts.clear();
+    std::unordered_map<CoordinateKey, int, CoordinateKeyHash> lookup;
     for (const auto &group : groups) {
         std::vector<int> localMap;
         localMap.reserve(group.size());
         for (const CoordinateKey &key : group) {
-            const auto found = std::find(unique.begin(), unique.end(), key);
+            const auto found = lookup.find(key);
             int index = 0;
-            if (found == unique.end()) {
+            if (found == lookup.end()) {
                 index = static_cast<int>(unique.size());
+                lookup.emplace(key, index);
                 unique.push_back(key);
                 counts.push_back(0);
             } else {
-                index = static_cast<int>(std::distance(unique.begin(), found));
+                index = found->second;
             }
             localMap.push_back(index);
             ++counts[static_cast<std::size_t>(index)];
@@ -506,21 +632,109 @@ int assembleCompatible(
         message = "compatibility assembly dimensions are inconsistent";
         return -1;
     }
-    DenseMatrix dense = makeDense(dimension, dimension);
+    // ADR-1000 P4 section 4 -- the workspace that dominated rank-local memory.
+    //
+    // This used to materialise a dimension x dimension DENSE buffer, plus a
+    // dense copy of every block, and then hand the whole upper triangle to
+    // csrFromDenseUpper -- which keeps EVERY entry, zeros included. So the
+    // output was structurally dense too: O(dimension^2) paid twice, and a fully
+    // dense pattern handed downstream to MUMPS (the same dense pattern that
+    // makes MUMPS' auto ordering pick PORD and die in analysis -- see section 21
+    // / LEDGER_quirks). At Building-1A scale that is the multi-GB rank.
+    //
+    // The sparse accumulation below is the SAME arithmetic. The mapping rule is
+    // subtle enough to spell out, because the old code got it via brute force
+    // (it scattered the full dense block, both triangles):
+    //   * a block DIAGONAL entry (row == column) lands once on the mapped
+    //     diagonal;
+    //   * an off-diagonal entry whose two coordinates MERGE onto one unique
+    //     coordinate (mappedRow == mappedColumn) gets BOTH symmetric halves, so
+    //     it contributes 2*value to that diagonal;
+    //   * otherwise the two halves land on the two symmetric off-diagonal slots,
+    //     which are the same slot in upper-triangle storage, so it contributes
+    //     value once.
+    // Structural zeros are simply never created; entries that accumulate to zero
+    // are kept, so the pattern is the union of the contributions and does not
+    // depend on numerical cancellation.
+    std::vector<std::vector<std::pair<int, double>>> accumulated(
+        static_cast<std::size_t>(dimension));
     for (std::size_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex) {
         const SymmetricCSR &block = *blocks[blockIndex];
         if (maps[blockIndex].size() != static_cast<std::size_t>(block.dimension)) {
             message = "compatibility map does not cover a reduced block";
             return -2;
         }
-        const DenseMatrix blockDense = denseFromCSR(block);
-        for (int column = 0; column < block.dimension; ++column)
-            for (int row = 0; row < block.dimension; ++row)
-                dense(maps[blockIndex][static_cast<std::size_t>(row)],
-                      maps[blockIndex][static_cast<std::size_t>(column)]) +=
-                    blockDense(row, column);
+        const std::vector<int> &map = maps[blockIndex];
+        for (int row = 0; row < block.dimension; ++row) {
+            for (int entry = block.rowOffsets[static_cast<std::size_t>(row)];
+                 entry < block.rowOffsets[static_cast<std::size_t>(row + 1)];
+                 ++entry) {
+                const int column =
+                    block.columnIndices[static_cast<std::size_t>(entry)];
+                const double value =
+                    block.upperValues[static_cast<std::size_t>(entry)];
+                const int mappedRow = map[static_cast<std::size_t>(row)];
+                const int mappedColumn = map[static_cast<std::size_t>(column)];
+                if (mappedRow < 0 || mappedRow >= dimension ||
+                    mappedColumn < 0 || mappedColumn >= dimension) {
+                    message = "compatibility map points outside the assembled "
+                              "dimension";
+                    return -3;
+                }
+                if (row == column) {
+                    accumulated[static_cast<std::size_t>(mappedRow)]
+                        .emplace_back(mappedRow, value);
+                } else if (mappedRow == mappedColumn) {
+                    accumulated[static_cast<std::size_t>(mappedRow)]
+                        .emplace_back(mappedRow, 2.0 * value);
+                } else {
+                    const int lower = std::min(mappedRow, mappedColumn);
+                    const int upper = std::max(mappedRow, mappedColumn);
+                    accumulated[static_cast<std::size_t>(lower)]
+                        .emplace_back(upper, value);
+                }
+            }
+        }
     }
-    return csrFromDenseUpper(dense, result, message);
+
+    result = SymmetricCSR{};
+    result.dimension = dimension;
+    result.rowOffsets.push_back(0);
+    for (int row = 0; row < dimension; ++row) {
+        std::vector<std::pair<int, double>> &entries =
+            accumulated[static_cast<std::size_t>(row)];
+        std::sort(entries.begin(), entries.end(),
+                  [](const std::pair<int, double> &left,
+                     const std::pair<int, double> &right) {
+                      return left.first < right.first;
+                  });
+        int currentColumn = -1;
+        for (const std::pair<int, double> &item : entries) {
+            if (item.first != currentColumn) {
+                currentColumn = item.first;
+                result.columnIndices.push_back(currentColumn);
+                result.upperValues.push_back(item.second);
+            } else {
+                result.upperValues.back() += item.second;
+            }
+        }
+        // Release the row as we go: the accumulator never has to coexist with
+        // the finished CSR at full size.
+        std::vector<std::pair<int, double>>().swap(entries);
+        if (result.columnIndices.size() >
+            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            message = "assembled hierarchy matrix exceeds CSR integer range";
+            return -4;
+        }
+        result.rowOffsets.push_back(static_cast<int>(result.columnIndices.size()));
+    }
+    for (const double value : result.upperValues) {
+        if (!std::isfinite(value)) {
+            message = "dense hierarchy matrix contains a non-finite value";
+            return -5;
+        }
+    }
+    return result.validate(message);
 }
 
 int denseGeneralizedSolve(
@@ -1345,19 +1559,23 @@ int solveDistributedHierarchy(
     // agreement collectively (symmetric on every rank) before any such
     // collective runs. This is additive and cannot itself deadlock.
     {
-        const int consistencyValues[4] = {
+        // maximumRestarts joins the gate not because it sizes a collective but
+        // because a divergent budget makes T2 converge on some ranks and not
+        // others -- a rank-dependent result, which is worse than a refusal.
+        const int consistencyValues[5] = {
             input.numberOfModes, input.denseMax,
-            input.modesLevel2, input.modesLevel1};
-        int consistencyMin[4];
-        int consistencyMax[4];
-        MPI_Allreduce(consistencyValues, consistencyMin, 4, MPI_INT, MPI_MIN,
+            input.modesLevel2, input.modesLevel1, input.maximumRestarts};
+        int consistencyMin[5];
+        int consistencyMax[5];
+        MPI_Allreduce(consistencyValues, consistencyMin, 5, MPI_INT, MPI_MIN,
                       MPI_COMM_WORLD);
-        MPI_Allreduce(consistencyValues, consistencyMax, 4, MPI_INT, MPI_MAX,
+        MPI_Allreduce(consistencyValues, consistencyMax, 5, MPI_INT, MPI_MAX,
                       MPI_COMM_WORLD);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (consistencyMin[i] != consistencyMax[i]) {
-                static const char *const names[4] = {
-                    "numberOfModes", "denseMax", "modesLevel2", "modesLevel1"};
+                static const char *const names[5] = {
+                    "numberOfModes", "denseMax", "modesLevel2", "modesLevel1",
+                    "maximumRestarts"};
                 message = std::string("distributed hierarchy option '") +
                     names[i] + "' disagrees across ranks (min=" +
                     std::to_string(consistencyMin[i]) + ", max=" +
@@ -1393,7 +1611,7 @@ int solveDistributedHierarchy(
     // residual gate remains authoritative.
     controls.localTolerance = std::min(1.0e-8, input.tolerance);
     controls.maximumOperatorApplications = input.maximumOperatorApplications;
-    controls.maximumRestarts = 20;
+    controls.maximumRestarts = input.maximumRestarts;
     controls.massRtol = input.massRtol;
     controls.massAtol = input.massAtol;
 
@@ -1430,6 +1648,18 @@ int solveDistributedHierarchy(
         return -2;
     }
 
+    // ADR-1000 P4 section 1: per-phase attribution of the distributed
+    // hierarchy. Each phase stamp is taken AFTER the collective that closes the
+    // phase, so a phase's time includes the wait for the slowest rank in it --
+    // which is what you want when hunting a bottleneck across ranks.
+    double phaseMark = MPI_Wtime();
+    const auto stampPhase = [&phaseMark]() {
+        const double now = MPI_Wtime();
+        const double elapsed = now - phaseMark;
+        phaseMark = now;
+        return elapsed;
+    };
+
     std::vector<int> interior;
     std::vector<int> boundary;
     for (std::size_t local = 0; local < input.localEquations.size(); ++local) {
@@ -1439,6 +1669,8 @@ int solveDistributedHierarchy(
         else
             interior.push_back(static_cast<int>(local));
     }
+    result.diagnostics.partitionSeconds = stampPhase();
+
     CBReduction fineReduction;
     localFailure = reduceCraigBampton(
         input.localStiffness, input.localMass, interior, boundary,
@@ -1452,6 +1684,35 @@ int solveDistributedHierarchy(
         return -3;
     }
     result.diagnostics.appliedT2 = true;
+    result.diagnostics.fineModesSeconds = stampPhase();
+    result.diagnostics.t2FactorizeSeconds = fineReduction.profile.factorizeSeconds;
+    result.diagnostics.t2ConstraintModesSeconds =
+        fineReduction.profile.constraintModesSeconds;
+    result.diagnostics.t2CondensationSeconds =
+        fineReduction.profile.condensationSeconds;
+    result.diagnostics.t2LanczosSeconds = fineReduction.profile.lanczosSeconds;
+    result.diagnostics.t2ReconstructSeconds =
+        fineReduction.profile.reconstructSeconds;
+    result.diagnostics.t2ScatterSeconds = fineReduction.profile.scatterSeconds;
+    result.diagnostics.t2CongruenceSeconds =
+        fineReduction.profile.congruenceSeconds;
+    result.diagnostics.t2InteriorCount = fineReduction.profile.interiorCount;
+    result.diagnostics.t2BoundaryCount = fineReduction.profile.boundaryCount;
+    result.diagnostics.t2TransformationBytes =
+        fineReduction.profile.transformationBytes;
+    result.diagnostics.lanczosRayleighRitzSeconds =
+        fineReduction.profile.lanczosRayleighRitzSeconds;
+    result.diagnostics.lanczosOrthonormalizeSeconds =
+        fineReduction.profile.lanczosOrthonormalizeSeconds;
+    result.diagnostics.lanczosOperatorSeconds =
+        fineReduction.profile.lanczosOperatorSeconds;
+    result.diagnostics.lanczosResidualSeconds =
+        fineReduction.profile.lanczosResidualSeconds;
+    result.diagnostics.lanczosRayleighRitzCalls =
+        fineReduction.profile.lanczosRayleighRitzCalls;
+    result.diagnostics.lanczosOperatorApplications =
+        fineReduction.profile.lanczosOperatorApplications;
+    result.diagnostics.lanczosRestarts = fineReduction.profile.lanczosRestarts;
     result.diagnostics.originalDimension = input.globalDimension;
     int localDimension = fineReduction.stiffness.dimension;
     MPI_Allreduce(&localDimension,
@@ -1483,6 +1744,7 @@ int solveDistributedHierarchy(
         return -4;
     }
     result.diagnostics.appliedS2 = true;
+    result.diagnostics.compatibilitySeconds = stampPhase();
     int groupCompatibleDimension = groupRank == 0 ? groupStiffness.dimension : 0;
     MPI_Allreduce(&groupCompatibleDimension,
                   &result.diagnostics.afterLevel2Compatibility,
@@ -1522,6 +1784,7 @@ int solveDistributedHierarchy(
         return -5;
     }
     result.diagnostics.appliedT1 = true;
+    result.diagnostics.level1Seconds = stampPhase();
     int coarseDimension = groupRank == 0 ? coarseReduction.stiffness.dimension : 0;
     MPI_Allreduce(&coarseDimension,
                   &result.diagnostics.afterLevel1BeforeCompatibility,
@@ -1614,6 +1877,8 @@ int solveDistributedHierarchy(
         MPI_Bcast(finalVectors.data(), finalVectorCount,
                   MPI_DOUBLE, 0, leaderComm);
     }
+
+    result.diagnostics.globalSolveSeconds = stampPhase();
 
     std::vector<double> groupCoordinates;
     if (groupRank == 0) {
@@ -1738,6 +2003,8 @@ int solveDistributedHierarchy(
                 result.diagnostics.maximumDuplicateJump, std::sqrt(variance));
         }
     }
+
+    result.diagnostics.backSubstitutionSeconds = stampPhase();
 
     SymmetricCSR ownedGlobalStiffness;
     SymmetricCSR ownedGlobalMass;
@@ -1955,6 +2222,8 @@ int solveDistributedHierarchy(
                      std::fabs(result.eigenvalues[static_cast<std::size_t>(mode)]) *
                      massNorm);
     }
+    result.diagnostics.publicationSeconds = stampPhase();
+    result.diagnostics.peakResidentBytes = peakResidentSetBytes();
     cleanup();
     return 0;
 }

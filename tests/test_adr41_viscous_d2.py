@@ -116,6 +116,15 @@ def _static_penetration(muc):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     ops.node(1, 0.0, 0.0, 0.0)
     ops.fix(1, 1, 1, 0)
+    # ADR-76 LAPACK-fix fallout: z held by nothing until contact engages ⇒ the
+    # first tangent is singular; FullGeneral used to swallow it (rc 0, X = B)
+    # and that garbage solve seated the contact. Ground z with a 0.1 spring
+    # (vs KN 1e6): analytic-penetration error ≈ P·ks/KN² ≈ 1e-10 < the 1e-9
+    # gate; identical spring in both runs keeps the bit-identity assertion.
+    ops.node(90, 0.0, 0.0, 0.0)
+    ops.fix(90, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    ops.element("zeroLength", 90, 90, 1, "-mat", 90, "-dir", 3)
     ops.contactSurface(1, "-slave", 1)
     ops.contactPlane(1, 1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, KN, "-visc", muc)
     ops.timeSeries("Linear", 1)

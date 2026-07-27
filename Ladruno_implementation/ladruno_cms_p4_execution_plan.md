@@ -38,6 +38,14 @@ below) is THE gate to any P4 win.**
 
 ## 1. Instrumentation — mostly present; close these gaps
 
+> **DONE 2026-07-26 (ADR §27).** Finer hierarchy phases, per-rank peak RSS and
+> the n/r2, r2/r* ratios are wired and reported under `-verbose`; the first
+> profile is recorded in §27. Comm volume is still **not** instrumented. The
+> profile's headline: T2 is 97% of the hierarchy, refinement is 58% of total,
+> and r2/r* = 1.06 (level 1 buys almost nothing on a 1-D chain). It also
+> surfaced a hard-coded `maximumRestarts = 20` with no user control, now exposed
+> as `-maxRestarts` (§28).
+
 Already reported (`LadrunoCMSEigenSolver.cpp`, `-verbose`): assembly / hierarchy
 / refinement seconds; refinement sub-phases (factorization, solve,
 inverseRefinement, massAction, RayleighRitz); dimensions rRaw, rD (=r*),
@@ -59,6 +67,28 @@ These are additive reporting only — no algorithm change — and belong in the 
 
 ## 2. The ablation comparison (identical hardware + model)
 
+> **RE-MEASURED 2026-07-26 (ADR §30), and the news is bad.** Not on Building 1A
+> — that deck is still missing — but on a like-for-like sheet model where both
+> paths solve the identical mesh (`cms_compare_arpack.tcl`; the six eigenvalues
+> agree to ~1e-12). Standard = `eigen` with Arpack+UmfPack on 1 rank; CMS = 4
+> ranks.
+>
+> | mesh | n | standard | CMS | ratio |
+> |---|---:|---:|---:|---:|
+> | 20x20 | 3 200 | 0.0294 s | 0.2335 s | **7.9x** |
+> | 40x40 | 12 800 | 0.2061 s | **107.90 s** | **523x** |
+> | 60x60 | 28 800 | 0.6480 s | did not finish | — |
+>
+> The 7.9x at n=3200 reproduces the Building-1A 7.0x almost exactly (§29's work
+> moved it down from ~11x). **The second row is the problem:** 4x the DOFs costs
+> the standard solver 7x and CMS **462x**. CMS scales far WORSE, which undercuts
+> the memory-capacity argument — a capacity win is worthless if the answer never
+> arrives. Caveat: CMS parameters were held fixed (k2=12, k1=24) at every size,
+> so a campaign that scales k2 with n would do better; 523x is not a tuning gap
+> though. Prime suspect: the fixed-interface Lanczos cost growing
+> super-linearly in m at constant k2 (consistent with the restart exhaustion in
+> §27.4).
+
 Run all four, same Building-1A deck, same box:
 
 - (a) standard solver, no CMS (ARPACK) — the bar;
@@ -70,6 +100,21 @@ Run all four, same Building-1A deck, same box:
 Report per-phase time, peak RSS/rank, comm volume, and n, r2, r*, n/r2, r2/r*
 for each. This isolates the reduction each level contributes from the cost of the
 final backend.
+
+> **VERDICT DEFERRED TO AN ESMERALDA CAMPAIGN (ADR §31).** All the negative
+> evidence was taken at 4 ranks on a desktop — precisely where the source paper's
+> own data predicts CMS cannot win (Yu et al. measure 6.2M–13.2M DOF on
+> 4 096–65 536 cores, against another *parallel* CMS, not against a sequential
+> direct solver; at their smallest configuration the advantage is 1.11x). Closing
+> the lane without testing it in the regime it was designed for would mirror the
+> original mistake of building it without checking that regime was reachable.
+> §31 defines the campaign and its exit criterion, including the competitor that
+> was in the tree all along: `eigen` over `MumpsParallelSOE`.
+>
+> **NEXT SESSION: [[_adr1000_cms_p4_handoff]]** — the two experiments that
+> decide whether the scaling collapse is a `k2` tuning artefact or an
+> algorithmic property, with acceptance criteria for each outcome (including
+> closing P4 honestly if it is algorithmic).
 
 ## 3. Statistical discipline
 
@@ -87,12 +132,27 @@ is O((m+b)²) dense per rank — the multi-GB workspaces.
 **Design direction (verify each step preserves P2c to 1e-8):**
 - Keep the local interior pencils SPARSE end-to-end; drive the fixed-interface
   modes through the existing MUMPS inverse-action + block Lanczos (already
-  sparse) without ever forming a dense (m×m) matrix.
+  sparse) without ever forming a dense (m×m) matrix. **NOT DONE** —
+  `reduceCraigBampton` still builds dense `phi`/`psi`.
 - Assemble the reduced group/leader pencils as SPARSE (they are small but
-  currently dense-materialized); feed MUMPS the sparse form.
+  currently dense-materialized); feed MUMPS the sparse form. **HALF DONE
+  2026-07-26** — `assembleCompatible` is sparse now; `gatherCompatiblePencil`
+  still materialises a dense block per participant when unpacking the MPI upper
+  triangle.
 - Stream the compatibility merges (`assembleCompatible`, `gatherCompatiblePencil`)
   instead of dense unique×unique buffers; replace the O(u²) linear-search key
-  matching with a hash/sorted join.
+  matching with a hash/sorted join. **DONE 2026-07-26** for `assembleCompatible`
+  and the hash join.
+
+> **Status 2026-07-26 (ADR §26).** `assembleCompatible` no longer materialises a
+> `dimension × dimension` dense buffer, and no longer emits a structurally dense
+> CSR — the old path kept every upper entry including zeros, which is also what
+> handed MUMPS the dense pattern behind the Part-0 ordering failure. Cost goes
+> from O(dim²) to O(nnz): measured on an F-subdomain chain the saving grows
+> 3.4x → 43x as F goes 4 → 64, an asymptotic improvement rather than a constant.
+> Equivalence is exact, not merely in-tolerance — the physical smoke returns
+> `maxResidual = 5.80175e-09` with identical dimensions, the same value as before
+> the refactor. **Not measured on Building 1A** (the deck is not in the repo).
 
 **The irreducible floor (ADR §13) — state it honestly, do not fight it here.**
 Under the current `getEigenvector`/`AnalysisModel` contract each rank stores at

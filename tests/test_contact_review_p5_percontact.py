@@ -124,6 +124,14 @@ def _static_plane_press(muc, stale_vz):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     ops.node(1, 0.0, 0.0, 0.0)
     ops.fix(1, 1, 1, 0)
+    # ADR-76 LAPACK-fix fallout: z held by nothing until contact engages ⇒ the
+    # first tangent is singular; FullGeneral used to swallow it (rc 0, X = B)
+    # and that garbage solve seated the contact. Ground z with a 0.1 spring
+    # (vs KN 1e5); identical spring in both runs keeps the equality assertion.
+    ops.node(90, 0.0, 0.0, 0.0)
+    ops.fix(90, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    ops.element("zeroLength", 90, 90, 1, "-mat", 90, "-dir", 3)
     if stale_vz != 0.0:
         ops.setNodeVel(1, 3, stale_vz, "-commit")
     ops.contactSurface(20, "-slave", 1)
@@ -154,6 +162,13 @@ def test_p5_visc_inert_under_static_integrator_with_stale_velocity(capfd):
     err = capfd.readouterr().err
     assert z_on == z_off, (
         f"-visc perturbed a STATIC solve via a stale committed velocity: {z_on!r} vs {z_off!r}")
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): engaged penetration is -P/KN = -1e-2; if contact somehow never
+    # engaged, the rig converges on the 0.1 spring alone at z = -1e4 and the
+    # equality assert above passes meaninglessly. -0.1 splits the branches.
+    assert z_off > -0.1, (
+        f"penetration magnitude {z_off:.3e} says the plane contact never "
+        "engaged — the rig converged on the grounding spring alone")
     assert "-visc" in err and "static integrator" in err, \
         f"the -visc static disablement did not warn (got: {err[-300:]!r})"
 

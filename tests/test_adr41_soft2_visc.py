@@ -98,6 +98,17 @@ def _soft2_static(muc, soft=0.1, P=100.0):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     _fixed_master()
     _matched_slave(0.0)
+    # ADR-76 LAPACK-fix fallout: each slave z is held by NOTHING until the
+    # mortar contact engages, so the FIRST tangent is singular. Pre-fix,
+    # FullGeneral swallowed that solve (rc 0, X = B) and the garbage first
+    # "displacement" is what seated the contact. Ground each slave z with a
+    # spring far softer than epsN (0.1 vs 1e6); both compared runs get the
+    # identical springs, so the bit-identity assertion is untouched.
+    ops.uniaxialMaterial("Elastic", 90, 0.1)
+    for t, (x, y) in zip((5, 6, 7, 8), [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        ops.node(90 + t, float(x), float(y), 0.0)
+        ops.fix(90 + t, 1, 1, 1)
+        ops.element("zeroLength", 900 + t, 90 + t, t, "-mat", 90, "-dir", 3)
     ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
     if muc > 0.0:
         ops.contact(1, 1, 2, "-mortar", "-epsN", KN, "-soft", soft, "-visc", muc,
@@ -184,3 +195,10 @@ def test_soft2_visc_static_byte_identical():
     z_on = _soft2_static(20.0)
     assert z_off == z_on, f"-visc perturbed the static (v≡0) SOFT=2 solution: {z_off!r} vs {z_on!r}"
     assert z_off < 0.0, f"the static SOFT=2 contact should penetrate under load (z={z_off:.3e})"
+    # Magnitude gate (guards the grounding spring added for the ADR-76 LAPACK
+    # fix): engaged mortar penetration is ~P/epsN ~ 1e-4; spring-only
+    # (broad-phase miss after the big first iterate) converges at z ~ -1e3 and
+    # would pass the two asserts above meaninglessly. -1.0 splits the branches.
+    assert z_off > -1.0, (
+        f"penetration magnitude {z_off:.3e} says the mortar contact never "
+        "engaged — the rig converged on the grounding spring alone")

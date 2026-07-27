@@ -27,6 +27,18 @@ def main(argv):
         for ln in failed:
             print("  " + ln)
         return 1
+    if total == 0:
+        # A gate that counts failures must refuse an empty result set. The
+        # suite driver clears results.out with core-Tcl `open ... w` BEFORE any
+        # OpenSees command runs, so a binary that dies on its first model
+        # command (TCL_LIBRARY unset -> "Can't find a usable init.tcl" -> no
+        # commands registered) leaves a fresh empty file — which this checker
+        # blessed as "OK (0 checks passed)" while zero decks executed. See
+        # Ladruno_internal/WORKFLOW_GOTCHAS.md §7.
+        print("check_tcl_results: ERROR 0 checks ran — results.out is empty. "
+              "The suite died before its first check (TCL_LIBRARY / init.tcl?). "
+              "An empty result set is a FAILURE, not a pass.")
+        return 1
     print(f"check_tcl_results: OK ({total} checks passed)")
     return 0
 

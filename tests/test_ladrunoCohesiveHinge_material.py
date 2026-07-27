@@ -185,7 +185,18 @@ def test_peak_equals_Mc_and_near_rigid_preeak():
     k0 = _kappa0(_Mc, _Gf, Kpen)
     kf = _kappaf(_Mc, _Gf, Kpen)
     _build((_Mc, _Gf, "-linear"))
-    path, _ = _push([(k0 + kf, 1000)])
+    # Stop ONE SUBSTEP shy of full exhaustion: at kappa >= kappaf the cohesive
+    # moment and tangent are both exactly zero, so the 1-DOF static tangent is
+    # legitimately singular. Pre-ADR-76 the LAPACK solver SWALLOWED that
+    # singular solve (rc 0) and the push limped through it; post-fix it
+    # correctly refuses. The increment MUST stay (k0+kf)/1000: with the
+    # default penalty ratio (kf = 999*k0) that increment equals k0 EXACTLY, so
+    # the first substep lands precisely on the peak and samples M == Mc — the
+    # construction the rel_tol=1e-6 assertions below depend on. 999 substeps
+    # of that same increment reach kappa = k0 + (998/999)*kf and never touch
+    # the singular point.
+    incr_target = (k0 + kf) * (999.0 / 1000.0)   # 999 steps of (k0+kf)/1000
+    path, _ = _push([(incr_target, 999)])
 
     moments = [m for _, m in path]
     peak = max(moments)

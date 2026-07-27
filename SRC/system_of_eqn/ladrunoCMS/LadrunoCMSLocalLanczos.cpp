@@ -21,6 +21,8 @@
 
 #include "LadrunoCMSLocalLanczos.h"
 
+#include <mpi.h>
+
 #include "LadrunoCMSMumps.h"
 
 #include <algorithm>
@@ -205,30 +207,35 @@ int symmetricEigen(
     return 0;
 }
 
+// ADR-1000 P4 section 4: `massOperatorBasis` is M*operatorBasis, maintained
+// incrementally by the caller. This routine used to recompute it here -- one
+// sparse mat-vec plus two vector allocations per basis column, on EVERY call,
+// for a basis that had only grown by one block since the previous call. The
+// values are identical; they are just computed once per column instead of once
+// per column per iteration.
 int rayleighRitz(
     const std::vector<double> &basis,
-    const std::vector<double> &operatorBasis,
+    const std::vector<double> &massOperatorBasis,
     int dimension,
-    const SymmetricCSR &mass,
     std::vector<double> &ritzValues,
     std::vector<double> &ritzCoordinates,
     std::string &message)
 {
     const int columns = static_cast<int>(basis.size() / static_cast<std::size_t>(dimension));
+    if (massOperatorBasis.size() !=
+        static_cast<std::size_t>(dimension) * static_cast<std::size_t>(columns)) {
+        message = "cached M*operator basis is out of step with the Krylov basis";
+        return -1;
+    }
     ritzCoordinates.assign(static_cast<std::size_t>(columns) * columns, 0.0);
     for (int columnIndex = 0; columnIndex < columns; ++columnIndex) {
-        const std::vector<double> operatorColumn =
-            column(operatorBasis, dimension, columnIndex);
-        const std::vector<double> massOperatorColumn = mass.multiply(operatorColumn);
-        if (massOperatorColumn.size() != static_cast<std::size_t>(dimension)) {
-            message = "mass multiplication failed while projecting the Krylov operator";
-            return -1;
-        }
+        const double *massOperatorColumn =
+            massOperatorBasis.data() + static_cast<std::size_t>(columnIndex) * dimension;
         for (int rowIndex = 0; rowIndex < columns; ++rowIndex) {
             const double *basisColumn =
                 basis.data() + static_cast<std::size_t>(rowIndex) * dimension;
             ritzCoordinates[static_cast<std::size_t>(columnIndex) * columns + rowIndex] =
-                dot(basisColumn, massOperatorColumn.data(), dimension);
+                dot(basisColumn, massOperatorColumn, dimension);
         }
     }
     for (int columnIndex = 0; columnIndex < columns; ++columnIndex) {
@@ -358,6 +365,8 @@ int solveLocalLanczos(
 
     std::vector<double> basis;
     std::vector<double> operatorBasis;
+    // M * operatorBasis, kept in step column by column (see rayleighRitz).
+    std::vector<double> massOperatorBasis;
     int activeFirstColumn = 0;
     int activeColumns = 0;
     for (int initial = 0; initial < blockSize &&
@@ -366,8 +375,10 @@ int solveLocalLanczos(
          ++initial) {
         std::vector<double> candidate = deterministicVector(
             dimension, controls.level, controls.subdomain, 0, initial);
+        const double orthoStarted = MPI_Wtime();
         const int accepted = mOrthonormalize(
             candidate, basis, dimension, mass, result.maximumMOrthogonalityLoss);
+        result.orthonormalizeSeconds += MPI_Wtime() - orthoStarted;
         if (accepted < 0) {
             message = "local Lanczos failed during initial M-orthogonalization";
             return -6;
@@ -378,9 +389,12 @@ int solveLocalLanczos(
         }
         appendColumn(basis, candidate);
         std::vector<double> operatorColumn;
+        const double operatorStarted = MPI_Wtime();
         if (applyOperator(mass, stiffnessFactor, candidate, operatorColumn, message) < 0)
             return -7;
+        result.operatorSeconds += MPI_Wtime() - operatorStarted;
         appendColumn(operatorBasis, operatorColumn);
+        appendColumn(massOperatorBasis, mass.multiply(operatorColumn));
         ++result.operatorApplications;
         ++activeColumns;
     }
@@ -395,10 +409,13 @@ int solveLocalLanczos(
         const int basisColumns = static_cast<int>(
             basis.size() / static_cast<std::size_t>(dimension));
         result.maximumBasisUsed = std::max(result.maximumBasisUsed, basisColumns);
+        const double ritzStarted = MPI_Wtime();
         if (rayleighRitz(
-                basis, operatorBasis, dimension, mass,
+                basis, massOperatorBasis, dimension,
                 ritzValues, ritzCoordinates, message) < 0)
             return -9;
+        result.rayleighRitzSeconds += MPI_Wtime() - ritzStarted;
+        ++result.rayleighRitzCalls;
 
         const int availableModes = std::min(numberOfModes, basisColumns);
         result.eigenvalues.assign(static_cast<std::size_t>(availableModes), 0.0);
@@ -418,7 +435,9 @@ int solveLocalLanczos(
                 ritzCoordinates.data() + static_cast<std::size_t>(ritzColumn) * basisColumns,
                 basisColumns);
             const double eigenvalue = 1.0 / inverseEigenvalue;
+            const double residualStarted = MPI_Wtime();
             const double residual = normalizedResidual(stiffness, mass, vector, eigenvalue);
+            result.residualSeconds += MPI_Wtime() - residualStarted;
             result.eigenvalues[static_cast<std::size_t>(mode)] = eigenvalue;
             result.normalizedResiduals[static_cast<std::size_t>(mode)] = residual;
             std::copy(
@@ -494,6 +513,11 @@ int solveLocalLanczos(
             }
             basis.swap(retainedBasis);
             operatorBasis.swap(retainedOperatorBasis);
+            massOperatorBasis.clear();
+            for (int kept = 0; kept < retained; ++kept)
+                appendColumn(
+                    massOperatorBasis,
+                    mass.multiply(column(operatorBasis, dimension, kept)));
             activeFirstColumn = 0;
             activeColumns = std::min(blockSize, retained);
             ++result.restarts;
@@ -515,8 +539,15 @@ int solveLocalLanczos(
         int acceptedColumns = 0;
         int candidateIndex = 0;
         int deterministicAttempt = 0;
+        // M*x for each accepted column, solved as one block below.
+        std::vector<double> pendingOperator;
+        pendingOperator.reserve(
+            static_cast<std::size_t>(dimension) * requestedExpansion);
+        // acceptedColumns counts applications not yet added to the running total,
+        // so the budget must include them or a block could overshoot the cap.
         while (acceptedColumns < requestedExpansion &&
-               result.operatorApplications < controls.maximumOperatorApplications) {
+               result.operatorApplications + acceptedColumns <
+                   controls.maximumOperatorApplications) {
             std::vector<double> candidate;
             const int candidateColumns = static_cast<int>(
                 candidates.size() / static_cast<std::size_t>(dimension));
@@ -531,8 +562,10 @@ int solveLocalLanczos(
                     1000 + deterministicAttempt++);
                 ++result.breakdowns;
             }
+            const double blockOrthoStarted = MPI_Wtime();
             const int accepted = mOrthonormalize(
                 candidate, basis, dimension, mass, result.maximumMOrthogonalityLoss);
+            result.orthonormalizeSeconds += MPI_Wtime() - blockOrthoStarted;
             if (accepted < 0) {
                 message = "local Lanczos failed during block M-orthogonalization";
                 return -15;
@@ -546,16 +579,46 @@ int solveLocalLanczos(
                 continue;
             }
             appendColumn(basis, candidate);
-            std::vector<double> operatorColumn;
-            if (applyOperator(mass, stiffnessFactor, candidate, operatorColumn, message) < 0)
+            // ADR-1000 P4 section 4: the inverse action is DEFERRED. Each
+            // accepted column only needs M*x here; the K^-1 solves for the whole
+            // block are issued as ONE multi-RHS MUMPS call below. Measured on the
+            // sheet profile, a single-RHS solve cost 0.77 ms against ~31 us for a
+            // sparse mat-vec on the same matrix -- i.e. the cost was per-CALL
+            // overhead, not arithmetic, so batching removes most of it. Nothing
+            // downstream in this loop reads operatorBasis, so deferring is safe:
+            // the next block's candidates come from the columns this expansion is
+            // about to produce, and they are consumed on the NEXT iteration.
+            const double blockOperatorStarted = MPI_Wtime();
+            std::vector<double> massCandidate = mass.multiply(candidate);
+            result.operatorSeconds += MPI_Wtime() - blockOperatorStarted;
+            if (massCandidate.size() != candidate.size()) {
+                message = "mass multiplication failed in the local Lanczos operator";
                 return -17;
-            appendColumn(operatorBasis, operatorColumn);
-            ++result.operatorApplications;
+            }
+            pendingOperator.insert(
+                pendingOperator.end(), massCandidate.begin(), massCandidate.end());
             ++acceptedColumns;
         }
         if (acceptedColumns == 0) {
             message = "local Lanczos added no vector during expansion";
             return -18;
+        }
+        {
+            const double blockSolveStarted = MPI_Wtime();
+            if (stiffnessFactor.solve(pendingOperator, acceptedColumns, message) < 0) {
+                message = "local Lanczos inverse action failed: " + message;
+                return -17;
+            }
+            result.operatorSeconds += MPI_Wtime() - blockSolveStarted;
+            operatorBasis.insert(
+                operatorBasis.end(), pendingOperator.begin(), pendingOperator.end());
+            for (int added = 0; added < acceptedColumns; ++added)
+                appendColumn(
+                    massOperatorBasis,
+                    mass.multiply(column(pendingOperator, dimension, added)));
+            result.operatorApplications += acceptedColumns;
+            ++result.blockSolves;
+            pendingOperator.clear();
         }
         activeFirstColumn = expansionStart;
         activeColumns = acceptedColumns;

@@ -190,6 +190,11 @@ int parseCommandOptions(
                 message = "-maxIter requires an integer";
                 return -12;
             }
+        } else if (flag == "-maxRestarts") {
+            if (!parseInteger(value, options.maxRestarts)) {
+                message = "-maxRestarts requires an integer";
+                return -12;
+            }
         } else if (flag == "-refinement") {
             if (value == "subspace")
                 options.refinement = RefinementMode::Subspace;
@@ -325,7 +330,7 @@ int Options::validate(int worldSize, int numModes, std::string &message) const
         return -5;
     }
     if (!(tolerance > 0.0) || maxEnrich < 0 || maxIterations < 1 ||
-        maxRefineIterations < 0) {
+        maxRefineIterations < 0 || maxRestarts < 1) {
         message = "invalid convergence controls";
         return -6;
     }

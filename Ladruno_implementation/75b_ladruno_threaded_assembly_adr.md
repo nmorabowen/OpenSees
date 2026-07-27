@@ -1,7 +1,7 @@
 ---
 title: ADR-75b — Lane 3, threaded element assembly (shared-memory OpenMP)
 project: Ladruno
-status: proposed — policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized as first stage, work-removal L3-0b promoted); no threading code authorized
+status: CLOSED for the production/cluster path — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
 priority: medium
 owner: nmora
 amends: 75_ladruno_sparse_direct_strategy_adr
@@ -767,11 +767,13 @@ When stages land:
 7. **Does any element alias (rather than `getCopy()`) a material or section across elements?** Not
    verified (§2.1b item 4). If one does, threaded loop A corrupts shared material state. An L3-2
    verification item; ThreadSanitizer over the allowlisted set is the practical check.
-8. **Is Lane 3 still worth doing at all once the cheap work-removal items land?** L3-0b measures
-   −29.6% on Lane D from one shipped flag, and the `addA` search is ~14% of wall on both solvers.
-   Neither needs a re-entrancy audit, a determinism policy, or an OpenMP build. **This ADR's own data
-   is the strongest argument for doing them first** — and the honest question is whether what remains
-   after them still clears the gate. Re-measure the gate *after* L3-0b, not before.
+8. ~~**Is Lane 3 still worth doing at all once the cheap work-removal items land?**~~
+   ✅ **ANSWERED 2026-07-25 — see §12. Verdict: PARK, do not start; re-entry gated on G-L3.**
+   *(Original: L3-0b measures −29.6% on Lane D from one shipped flag, and the `addA` search is ~14%
+   of wall on both solvers. Neither needs a re-entrancy audit, a determinism policy, or an OpenMP
+   build. **This ADR's own data is the strongest argument for doing them first** — and the honest
+   question is whether what remains after them still clears the gate. Re-measure the gate *after*
+   L3-0b, not before.)*
 9. **What does per-element de-statication cost in SERIAL memory?** L3-2 mandates per-element buffers;
    `LadrunoBrick`'s function-scope statics are ~3.5 KB/ele and its class-level `stiff/resid/mass/xl`
    ~9.6 KB/ele ⇒ order **1–4 GB at the 325k-element scale** where §4.2 already flags 1.5 GB as
@@ -781,3 +783,164 @@ When stages land:
    measured the solve fraction *growing* with N. At production scale the element fraction is lower
    than the measured 74.85%, so the margin shrinks. Re-check before committing L3-3/L3-4. Not in
    doubt for lanes A and D (81–87%, no solver in the picture).
+
+---
+
+## 12. VERDICT on q8 — **PARK Lane 3. Do not start. Re-entry is gated on G-L3.**
+
+*(2026-07-25. Answers §11 q8, which the handoff names as the question to settle before any Lane-3
+planning. This is a decision about **sequencing**, not a claim that threaded assembly is unsound.)*
+
+### 12.1 The finding: the reason this lane was attractive no longer describes any ranked target
+
+ADR-75b's structural contribution is §2.1 — *loop A carries no floating-point reduction, so threading
+it is bit-identical and the fork's existing byte-identical oracles gate it unchanged, with no new CI
+mode and no ordered-mode cost.* That is what made Lane 3 look like it had a cheap entry point.
+
+After L3-0b landed, `RESULTS_l3a_update_scope.md` §3's revised ranking reads:
+
+| rank | target | fraction | reduction? | determinism policy needed? |
+|---|---|---|---|---|
+| 1 | Lane D **loop C** (`formUnbalance`) | 46.33% | **yes** (`addB`) | **yes — full §3 ordered/fast** |
+| 2 | Lane B **loop B** (`formTangent`) | 61.56% | **yes** (`addA`) | **yes**, + the §4.2 gather-memory question |
+| 3 | Lane D / B **loop A** | 38.95% / 5.24% | no | no |
+
+**Both targets now ranked above loop A are reducing loops.** The reduction-free case fell to rank 3
+and, on Lane D, to *below the ADR's own >40% gate* (38.95%). So the remaining work is precisely the
+expensive version of this lane: every ranked target needs the §3 ordered/fast policy, an OpenMP
+build, and P-a…P-e in full. **The cheap entry point was real, and it is gone.** Starting now means
+paying the whole prerequisite bill before the first measurable win — the opposite of how L3-0b
+itself paid off.
+
+### 12.2 Four costs that are now priced, and were not when the lane was opened
+
+1. **Five mandatory prerequisites, none of which pay anything on their own** (P-a…P-e). P-a is not
+   negotiable by scoping: `FE_Element::theMatrices` is a **class-wide pool** handed straight to
+   `addA` — a 100% collision that no element allowlist can fix.
+2. **A serial memory regression is now part of the price.** §11 q9: per-element de-statication is
+   order **1–4 GB at 325k elements**, paid in *every* run **including serial**, and L3-2's gate does
+   not yet even cover memory. The lane currently proposes spending GB of serial memory to buy a
+   **≤2.78× (4T Amdahl)** threaded ceiling on Lane D.
+3. **The byte-identical CI gate may not survive its own remedy** — §11 q1 puts the §4.2 gather at
+   ~1.5 GB at 1M DOF, i.e. the ordered mode that makes threading exact may be unaffordable exactly
+   at production scale.
+4. **The loop is not index-addressable** (P-c): a shared mutable cursor, so this is not a
+   `#pragma omp for` retrofit but a change to how the domain hands out elements.
+
+### 12.3 The decisive gap: the gate has never been measured where the fork intends to run
+
+Every fraction authorizing Lane 3 comes from **Lane B at 11 520 DOF** or a single explicit deck.
+ADR-75's standing correction (§1) is that the production regime is **huge solid nonlinear models**,
+that the solve fraction is a **floor that grows with N**, and that *no gate measured at ≤136k DOF
+should be treated as production-representative*. §11 q10 states the consequence plainly: at
+production scale the element fraction is **lower** than the measured 74.85%.
+
+So the single number that authorizes this lane — "PARDISO flips Lane B's gate, 35.8% → 74.9%" — is
+measured at a size **~12× below the 136k DOF that ADR-75 §1 already declares non-representative**,
+~90× below 1M DOF, and ~1 600× below the 18.6M-DOF deck ADR-74 treats as the production kill-run —
+and it moves in the direction known to shrink it. **Committing prerequisite work against an
+unmeasured gate is the confounded-comparison failure mode this program has already paid for three
+times.**
+
+### 12.4 What to do instead, and the one measurement that reopens the lane
+
+**G-L3 (the re-entry gate).** On a **production-scale** deck (≥500k DOF, the real solid nonlinear
+regime — `system Pardiso -matrixType 2` on the desktop or `system Mumps` on the cluster), profile
+with **coarse** instrumentation (`OPS_PROF_FLAGS="-perStep"`, no `-deep`) and report **the fraction
+of step held by each individual assembly loop** — loop A (`Domain::update`), loop B (`formTangent`),
+loop C (`formUnbalance`) — plus the solve %.
+
+- **The largest SINGLE loop ≥ 40% of step** ⇒ re-authorize Lane 3 *at that loop*, with q1/q9
+  answered **before** any code.
+- **No single loop reaches 40%** ⇒ **close** Lane 3 as Amdahl-irrelevant in the production regime;
+  the residual belongs to Lane 1/2 (solver) work, not assembly.
+
+> **⚠ Read the gate quantity carefully — an earlier draft of this section got it wrong, and the
+> error reversed the answer.** The >40% gate is evaluated on a **single loop's** fraction, **not** on
+> the aggregate element-kernel fraction. §3's Lane D row is the proof: **kernel 85.30% but
+> gate = FAIL**, because the loop being considered (loop A) was 38.95%. A gate written on the
+> aggregate would have passed Lane D at 85.30% and re-authorized exactly the stage F9 de-authorized.
+> Aggregate kernel % tells you the lane's *ceiling*; a single loop's % tells you what one threading
+> stage can actually buy.
+
+**Why coarse, and what coarse cannot give you.** `enabled()` gates coarse phase timing while
+`deep()` *additionally* gates the per-element buckets (`Profiler.h:327-334`), so `-perStep` alone
+does yield the per-loop phase fractions the gate needs — untaxed. What it **cannot** give is the
+kernel-vs-scatter split *within* a loop: that is `scatter = scope_wall − Σ(elem_by_type wall)`, and
+`elemByType_` is *"lazy; deep mode only"* (`Profiler.h:149`). That split is a **separate, later**
+question — it decides how much of a passing loop is actually threadable (scatter is not), and on
+Lane A it was decisive (scatter 44.1 ms **exceeded** kernel 35.4 ms). Take it on a **reduced-size**
+deck: at production scale `-deep` is likely prohibitive *and* distortive, since §5 prices it at
+0.14–0.39 µs per scope instance and instance count scales with elements × steps (Lane D already
+carried 15.25 M instances at only 1 000 elements).
+
+G-L3 costs **one profiled run and no code** — the same shape and cost class as the ADR-75 handoff's
+item-1 cluster run, and it should be captured in the *same* run. That is the whole recommendation:
+**buy the number before buying the lane.**
+
+**Also worth preferring over threading, on this lane's own evidence:** the −29.6% that de-authorized
+L3-1 came from a **shipped flag the deck never set**, found by accident during a review. Nothing in
+Lane 3 has yet beaten a deck-configuration audit on return-per-unit-risk. *(Checked, so it is not
+offered loosely: ADR-67's sibling P-NEW-1 constant-mass tangent cache is **already default-on**
+(`CentralDifferenceLadruno.cpp:89`), so that particular well is dry — the point is the class of win,
+not another instance of it.)*
+
+### 12.5 What this verdict does **not** say
+
+- Not "threaded assembly is wrong". §3 and §4 are settled and stay settled; §2's five-loop taxonomy
+  is the reusable asset and remains correct.
+- Not "the fractions are wrong". Lane D still passes **in aggregate** (85.30% kernel). The objection
+  is to starting an expensive lane against a gate measured off-regime.
+- Not a claim about the cluster. Hybrid MPI+threads (§11 q6) is untouched and still deferred.
+
+**Status change:** `proposed` → **`parked — measurement-gated (G-L3)`**. No threading code
+authorized; no prerequisite work authorized either, which is the part that changed.
+
+
+---
+
+## 13. G-L3 MEASURED — the gate FAILS by ~42×. Lane 3 is CLOSED for the production path.
+
+*(2026-07-26. Full data: `Ladruno_files/testbed/perf/lane3/RESULTS_gl3_gate.md`.)*
+
+§12 parked this lane behind exactly one measurement. It has been run.
+
+**Deck:** 3D solid cantilever, `stdBrick` + `J2Plasticity`, `system Mumps -matrixType 2`,
+`numberer LadrunoParallelRCM`, np=16 on one node, coarse `profiler start -perStep`.
+Nonlinearity verified: **11 `formTangent` calls for 2 steps = 5.5 Newton iters/step.**
+
+| N (DOF) | loop A | loop B | loop C | solve | **max loop** | gate |
+|---|---|---|---|---|---|---|
+| 28 611 | 1.83% | 8.23% | 1.06% | 87.77% | 8.23% | FAIL |
+| 143 811 | 0.58% | 2.07% | 0.31% | 96.70% | 2.07% | FAIL |
+| **540 675** | **0.26%** | **0.95%** | **0.13%** | **98.54%** | **0.95%** | **FAIL** |
+
+**At the production-scale point the gate fails by ~42× (0.95% vs 40%), and the trend
+is monotonic in N** — growing the model makes this lane *less* attractive, exactly as
+ADR-75 §1 predicted. One MUMPS solve is **40.2 s** against **0.39 s** for one element
+tangent assembly: a **104× ratio**.
+
+**✅ The proxy caveat is now CLOSED by measurement.** The Tcl `nDMaterial` gap has
+been fixed, and G-L3 re-run on the fork's own `LadrunoBrick` + `LadrunoJ2` gives
+**1.99%** at 143 811 DOF and **0.97%** at 540 675 DOF — unchanged from the proxy's
+2.07% / 0.95%, with essentially the same wall. The fork kernel is not meaningfully
+more expensive than `stdBrick`/`J2Plasticity` in this configuration, so the
+"lower bound" framing below was right in direction but the gap is ~zero.
+
+*(Original reasoning, retained:)* **The proxy caveat cannot rescue it.** The deck uses vanilla `stdBrick`/`J2Plasticity`
+because the Tcl `nDMaterial` ladder does not carry `LadrunoJ2`; both are cheaper than
+`LadrunoBrick`/`LadrunoJ2`, so these fractions are a **lower bound**. But lifting
+0.95% to 40% needs a **~66× more expensive element kernel**, and `LadrunoBrick` is not
+66× `stdBrick`.
+
+**What remains open — and it is small.** L3-0's Lane B 74.85% element fraction was
+measured on the **desktop under `Pardiso -matrixType 2` at 11 520 DOF**, a far cheaper
+solve per DOF; that number is not contradicted, it is a different solver at a different
+scale. But the desktop cannot reach this regime at all (P1c: UmfPack OOM'd at 86 490
+DOF, PARDISO reached 136 080). **So Lane 3 is at best a desktop-only optimization on
+models ≲136k DOF**, against a stated production regime of huge solid nonlinear models
+that live on the cluster. Its addressable scope has collapsed.
+
+**Decision: CLOSE Lane 3 for the production/cluster path.** §2's five-loop taxonomy,
+§3's determinism policy and §4's scatter remedy remain correct and are the reusable
+assets; they should be cited, not re-derived, if a desktop-scoped case is ever made.

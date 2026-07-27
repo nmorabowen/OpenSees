@@ -50,6 +50,15 @@ struct LocalEigenResult {
     int maximumBasisUsed = 0;
     int maximumRetainedAtRestart = 0;
     double maximumMOrthogonalityLoss = 0.0;
+    // ADR-1000 P4 section 4. The section-27/29 profiles put ~65% of hierarchy
+    // time inside this routine, so it gets its own attribution rather than
+    // another round of optimizing by inspection. Seconds.
+    double rayleighRitzSeconds = 0.0;
+    double orthonormalizeSeconds = 0.0;
+    double operatorSeconds = 0.0;
+    double residualSeconds = 0.0;
+    int rayleighRitzCalls = 0;
+    int blockSolves = 0;
 };
 
 // Ritz values must be ascending. Returns -1 for invalid inputs.

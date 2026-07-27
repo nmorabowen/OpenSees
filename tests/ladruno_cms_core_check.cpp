@@ -301,6 +301,49 @@ void testCommandParserAndLocalPencil()
                 options, modes, message) < 0,
             "unsupported final backend was accepted");
 
+    // ADR-1000 section 27.4: -maxRestarts is the restart budget of the local
+    // fixed-interface Lanczos in T2. It used to be hard-coded to 20 with no way
+    // to raise it, which made large per-rank subdomains fail outright -- exactly
+    // the regime CMS exists for.
+    {
+        ladruno_cms::Options restartOptions;
+        int restartModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "-maxRestarts", "500", "2"},
+                         restartOptions, restartModes, message) == 0,
+                     "-maxRestarts was rejected: " + message);
+        require(restartOptions.maxRestarts == 500,
+                "-maxRestarts did not reach the options");
+    }
+    {
+        ladruno_cms::Options defaultOptions;
+        int defaultModes = 0;
+        REQUIRE_CALL(ladruno_cms::parseCommandOptions(
+                         {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                          "2"},
+                         defaultOptions, defaultModes, message) == 0,
+                     "default parse failed: " + message);
+        require(defaultOptions.maxRestarts == 20,
+                "the -maxRestarts default changed from the historical 20");
+    }
+    require(ladruno_cms::parseCommandOptions(
+                {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                 "-maxRestarts", "notAnInteger", "2"},
+                options, modes, message) < 0,
+            "-maxRestarts accepted a non-integer");
+    {
+        ladruno_cms::Options zeroOptions;
+        int zeroModes = 0;
+        std::string zeroMessage;
+        if (ladruno_cms::parseCommandOptions(
+                {"-hierarchy", "auto", "-modesL2", "4", "-modesL1", "4",
+                 "-maxRestarts", "0", "2"},
+                zeroOptions, zeroModes, zeroMessage) == 0)
+            require(zeroOptions.validate(1, 2, zeroMessage) < 0,
+                    "validate accepted -maxRestarts 0");
+    }
+
     // ADR-1000 P3d: the level-1 ablation is a benchmark-only diagnostic reached
     // through TwoLevelHierarchyInput::diagnosticAblateLevel1. It must NOT be
     // requestable from a command line -- if someone ever adds such a flag, the

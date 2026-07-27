@@ -4099,44 +4099,139 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
   else if (strcmp(argv[1],"Mumps") == 0) {
 
-    int icntl14 = 20;    
+    int icntl14 = 20;
     int icntl7 = 7;
     int matType = 0; // 0: unsymmetric, 1: symmetric positive definite, 2: symmetric general
+    // Ladruno ADR-75 P2h: the BLR + stats controls shipped by P2/P2b existed
+    // ONLY in the OpenSeesCommands.cpp (Python) `system' ladder. OpenSeesMP is
+    // Tcl-driven, so on the cluster -- the one place MUMPS actually runs -- they
+    // were unreachable, AND the `else currentArg++' arm below dropped them
+    // SILENTLY: `system Mumps -BLR 1e-8 -stats' produced a plain full-rank solve
+    // with no stats, which reads as "BLR does not move INFOG(21)" -- a false
+    // negative that would have been recorded as a measurement. Names, defaults
+    // and semantics below mirror OpenSeesCommands.cpp exactly so the two
+    // ladders cannot drift.
+    int icntl35 = 0;      // BLR off by default => byte-identical to the pre-BLR solver
+    double cntl7 = 0.0;   // BLR dropping tolerance
+    int mumpsStats = 0;   // -stats dumps INFOG/RINFOG after the factorization
 
     int currentArg = 2;
     while (currentArg < argc) {
-      if (argc > 2) {
-	if (strcmp(argv[currentArg],"-ICNTL14") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &icntl14) != TCL_OK)	
-	    ;
-	  currentArg += 2;
-	} else  if (strcmp(argv[currentArg],"-ICNTL7") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &icntl7) != TCL_OK)	
-	    ;
-	  currentArg += 2;
-	} else  if (strcmp(argv[currentArg],"-matrixType") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &matType) != TCL_OK)
-		  opserr << "Mumps Warning: failed to get -matrixType. Unsymmetric matrix assumed\n";
-	  if (matType < 0 || matType > 2) {
-		  opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
-		  matType = 0;
-	  }
-	  currentArg += 2;
-	} else 
-	  currentArg++;
-      }    
+      const char *opt = argv[currentArg];
+
+      // Ladruno ADR-75 P2h: every value-taking option reads argv[currentArg+1],
+      // so its existence must be proven FIRST. The old ladder never checked, so
+      // a trailing `-ICNTL14' read one past the end of argv.
+      bool needsValue = (strcmp(opt, "-ICNTL14") == 0 ||
+			 strcmp(opt, "-ICNTL7") == 0 ||
+			 strcmp(opt, "-matrixType") == 0 ||
+			 strcmp(opt, "-ICNTL35") == 0 ||
+			 strcmp(opt, "-CNTL7") == 0 ||
+			 strcmp(opt, "-BLR") == 0);
+      if (needsValue && currentArg + 1 >= argc) {
+	opserr << "Mumps Warning: " << opt << " needs a value -- ignored\n";
+	currentArg++;
+	continue;
+      }
+
+      if (strcmp(opt, "-ICNTL14") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl14) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL14 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-ICNTL7") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl7) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL7 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-matrixType") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &matType) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -matrixType. Unsymmetric matrix assumed\n";
+	if (matType < 0 || matType > 2) {
+	  opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
+	  matType = 0;
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-BLR") == 0) {
+	// `-BLR <eps>' = ICNTL(35)=1 + CNTL(7)=eps. This is an APPROXIMATE
+	// factorization: it must stay OFF on byte-identical/oracle lanes.
+	// A bit-identical answer at a loose eps means BLR never engaged.
+	double eps = 0.0;
+	if (Tcl_GetDouble(interp, argv[currentArg+1], &eps) != TCL_OK) {
+	  opserr << "Mumps Warning: failed to get -BLR tolerance -- BLR NOT enabled\n";
+	} else if (eps < 0.0) {
+	  opserr << "Mumps Warning: -BLR tolerance must be >= 0 -- BLR NOT enabled\n";
+	} else {
+	  cntl7 = eps;
+	  icntl35 = 1;   // BLR factorization + solve
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-ICNTL35") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl35) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL35 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-CNTL7") == 0) {
+	if (Tcl_GetDouble(interp, argv[currentArg+1], &cntl7) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -CNTL7 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-mumpsStats") == 0) {
+	// Ladruno ADR-75 P2h: bare FLAG -- consumes no value. The Python ladder
+	// had to relax its `> 1' loop guard for the same reason.
+	mumpsStats = 1;
+	currentArg++;
+      } else {
+	// Ladruno ADR-75 P2h: this arm used to skip SILENTLY, so a mistyped or
+	// not-yet-wired option cost you the setting without a trace -- which is
+	// precisely how -BLR/-stats were lost on the cluster. Still non-fatal
+	// (a deck may legitimately carry options this build does not know), but
+	// it now leaves a mark in the log.
+	opserr << "Mumps Warning: unrecognized option '" << opt << "' -- ignored\n";
+	currentArg++;
+      }
+    }
+
+    // Ladruno ADR-75 P2h: -commSplit (ADR-43 P3a) is deliberately NOT wired
+    // here -- it is collective (every rank must call MPI_Comm_split with a
+    // colour or the run deadlocks) and its gate is a Python test, so porting
+    // it blind was out of scope. But apeGmsh's typed emitter CAN put it in a
+    // Tcl deck (`ops.system.Mumps(comm_split=...)` -> `-commSplit <color>`,
+    // apeGmsh src/apeGmsh/opensees/analysis/system.py), so this is a LIVE
+    // mismatch, not a theoretical one -- and the failure is silent-wrong: the
+    // user believes they have concurrent solve groups and instead every rank
+    // solves one system on WORLD. Call that out specifically rather than let
+    // it blend into the generic "unrecognized option" line above.
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-commSplit") == 0) {
+	opserr << "Mumps ERROR: -commSplit is NOT supported by the Tcl `system Mumps' command "
+	       << "(openseespy/openseesmp only). The sub-communicator split will NOT happen and "
+	       << "every rank will solve on MPI_COMM_WORLD -- which is a DIFFERENT analysis from "
+	       << "the one you asked for, not a slower one. Use the Python interpreter for "
+	       << "-commSplit, or drop it.\n";
+	break;
+      }
     }
 
 #ifdef _PARALLEL_PROCESSING
-    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14);
+    // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
+    // untouched here) -- say so rather than drop it silently.
+    if (matType != 0)
+      opserr << "Mumps Warning: -matrixType is not honoured on the _PARALLEL_PROCESSING (SP) path -- ignored\n";
+    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
+							     icntl35, cntl7,
+							     mumpsStats);
     theSOE = new MumpsParallelSOE(*theSolver);
 #elif _PARALLEL_INTERPRETERS
-    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14);
+    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
+							     icntl35, cntl7,
+							     mumpsStats);
     MumpsParallelSOE *theParallelSOE = new MumpsParallelSOE(*theSolver, matType);
     theParallelSOE->setProcessID(OPS_rank);
     theParallelSOE->setChannels(numChannels, theChannels);
     theSOE = theParallelSOE;
 #else
+    // Ladruno ADR-75 P2h: the serial MumpsSolver ctor carries no BLR/stats
+    // parameters, so these would be dropped here. Checked where we DEPEND on
+    // it, not where it happens to be true today.
+    if (icntl35 != 0 || cntl7 != 0.0 || mumpsStats != 0)
+      opserr << "Mumps Warning: -BLR/-ICNTL35/-CNTL7/-stats are not supported by the serial MumpsSolver -- ignored\n";
     MumpsSolver *theSolver = new MumpsSolver(icntl7, icntl14);
     theSOE = new MumpsSOE(*theSolver, matType);
 #endif

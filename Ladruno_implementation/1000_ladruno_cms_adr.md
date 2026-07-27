@@ -2128,3 +2128,531 @@ defecto.
 
 **P3d queda cerrada.** Siguen abiertas P3a, P3c (extras), P3e —bloqueada, el
 deck del edificio 1A no está en el repositorio— y todo P4.
+
+## 26. P4 sección 4 — refactor de memoria del ensamblaje compatible — 2026-07-26
+
+La deuda que el plan P4 identifica como **la puerta** a cualquier victoria de P4:
+los workspaces densos por rango. Esta sección cierra la parte del ensamblaje.
+
+### 26.1 Qué hacía `assembleCompatible`
+
+Materializaba un buffer **denso** de `dimension x dimension`, más una copia densa
+de cada bloque, y luego convertía con `csrFromDenseUpper` —que conserva **todas**
+las entradas del triángulo superior, ceros incluidos—. Es decir: `O(dimension^2)`
+pagado dos veces, y una matriz de salida **estructuralmente densa**.
+
+Eso explica tres síntomas que hasta ahora se trataban por separado:
+
+1. el rango más grande de Building 1A ocupando 4.0 GiB;
+2. el `dense-as-CSR fed to MUMPS` que anota el plan P4;
+3. el fallo de ordenamiento de la sección 21 — el patrón denso es exactamente lo
+   que hace que la ordenación automática de MUMPS elija PORD y muera en análisis.
+
+Los tres son el mismo defecto.
+
+### 26.2 Qué hace ahora
+
+Acumulación dispersa por filas, misma aritmética. La regla de mapeo se explicita
+porque el código anterior la obtenía por fuerza bruta —esparcía el bloque denso
+completo, ambos triángulos—:
+
+- entrada **diagonal** del bloque: cae una vez en la diagonal mapeada;
+- entrada fuera de la diagonal cuyas dos coordenadas **se funden** en una sola
+  coordenada única: recibe **ambas** mitades simétricas, luego contribuye
+  `2*valor` a esa diagonal (rama defensiva: con claves distintas dentro de un
+  bloque es inalcanzable, pero el código anterior la habría ejecutado);
+- en otro caso las dos mitades caen en la misma ranura del triángulo superior:
+  contribuye `valor` una vez.
+
+Los ceros estructurales no se crean nunca. Las entradas que se **cancelan** a
+cero sí se conservan, de modo que el patrón es la unión de las contribuciones y
+no depende de la cancelación numérica.
+
+`compatibilityMaps` pasa de un `std::find` lineal sobre `unique` por **cada**
+clave —`O(claves * únicas)`— a una tabla hash. El orden de primera aparición de
+`unique` se conserva, porque define la numeración de coordenadas ensambladas.
+
+> La cifra de "`1e9` comparaciones en Building 1A" que apareció en el mensaje de
+> commit es una **extrapolación** desde `u ~ 31k`, no una medición. El punto de
+> cruce donde el join por hash empieza a importar no está medido. Ver 26.6.
+
+### 26.3 Medición
+
+Cadena de `F` subdominios finos, pencil final ensamblado (sonda opcional
+`LADRUNO_CMS_ASSEMBLY_SCALING=1`):
+
+| F | dim | almacenadas | triángulo denso | bytes antes | bytes ahora | factor |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 9 | 29 | 45 | 1 188 | 348 | 3.41x |
+| 8 | 17 | 57 | 153 | 4 148 | 684 | 6.06x |
+| 16 | 33 | 113 | 561 | 15 444 | 1 356 | 11.39x |
+| 32 | 65 | 225 | 2 145 | 59 540 | 2 700 | 22.05x |
+| 64 | 129 | 449 | 8 385 | 233 748 | 5 388 | 43.38x |
+
+Lo que importa no es el factor puntual sino su **crecimiento**: el coste pasa de
+`O(dim^2)` a `O(nnz)`, así que el ahorro escala con el número de subdominios. Es
+una mejora asintótica, no una constante.
+
+### 26.4 Equivalencia
+
+El smoke físico devuelve `maxResidual = 5.80175e-09` con `n=16 r2=16 rRaw=13
+rD=13` — **el mismo valor y las mismas dimensiones** que antes del refactor. Los
+autovalores del check de jerarquía siguen coincidiendo con LAPACK directo en las
+tres topologías. No es "dentro de tolerancia": es el mismo resultado.
+
+### 26.5 Lo que NO cubre
+
+De los tres puntos del plan P4 sección 4:
+
+- **hecho** — fusionar las compatibilidades sin buffers densos `único x único`, y
+  el join por hash en lugar de la búsqueda lineal `O(u^2)`;
+- **hecho a medias** — ensamblar los pencils reducidos de grupo/líder de forma
+  dispersa: `assembleCompatible` ya lo hace, pero `gatherCompatiblePencil` sigue
+  materializando un bloque denso por participante al desempacar el triángulo
+  superior recibido por MPI;
+- **no hecho** — mantener los pencils interiores locales dispersos de extremo a
+  extremo; `reduceCraigBampton` sigue construyendo `phi`/`psi` densos.
+
+El piso irreducible de la sección 13 —los autovectores completos replicados por
+rango— sigue intacto y sigue necesitando su propia ADR.
+
+**No se ha medido en Building 1A**: el deck no está en el repositorio. El factor
+de arriba viene de una fixture sintética; el efecto en el caso real sigue sin
+verificar, y P4 sigue abierta.
+
+### 26.6 Tiempo de reloj: medido, sin cambio
+
+La sección 26.3 mide **memoria**. La pregunta obvia —qué pasa con el tiempo— se
+midió después, y la respuesta honesta es **nada**.
+
+Protocolo: misma caja, misma sesión, back-to-back, reconstruyendo la
+implementación anterior desde `9bb6367c1` y midiendo mejor-de-5 sobre la misma
+fixture de cadena.
+
+| F | antes [ms] | ahora [ms] |
+|---:|---:|---:|
+| 4 | 11.43 | 11.59 |
+| 8 | 21.32 | 22.52 |
+| 16 | 42.42 | 45.41 |
+| 32 | 85.13 | 85.51 |
+| 64 | 168.51 | 170.80 |
+| 128 | 342.19 | 341.08 |
+| 256 | 721.22 | 708.32 |
+
+Dentro de ±3% en ambas direcciones. **El refactor es una victoria de memoria, no
+de tiempo**, y así debe citarse.
+
+Es coherente con lo que hace el código: el coste `O(dim^2)` anterior eran
+*escrituras en un buffer* —baratas por elemento—, y la ruta dispersa las cambia
+por un ordenamiento por fila. A estas dimensiones ninguna domina. El join por
+hash tampoco puede notarse aquí: con `u ~ 513` en el caso mayor, la búsqueda
+lineal anterior son ~263k comparaciones, nada.
+
+Un efecto secundario útil: reconstruir la implementación anterior hizo **fallar**
+`checkAssembledPencilsAreSparse` con el mensaje esperado (`stores the FULL upper
+triangle (45 of 45)`). El guardia tiene dientes, comprobado contra el código real
+que pretende atrapar, no sólo por construcción.
+
+**Intento fallido que conviene registrar.** Se construyó una segunda fixture
+—pocos subdominios pero grandes— para ver si el ensamblaje llega a dominar el
+reloj. No produjo ni un número: más de 15 minutos sin completar el caso más
+pequeño. Se descartó en lugar de arreglarla, porque medía la fixture y no el
+producto: usaba `denseMax = 4*order`, que permite un solve denso final mucho
+mayor que cualquiera de producción (Building 1A corrió con `r_D = 486`). Queda
+como advertencia: una fixture cuyo coste es un artefacto de su propia
+configuración es peor que ninguna.
+
+**Consecuencia para P4.** Se optimizó el código que *parecía* obvio —un buffer
+denso `dim x dim` literal— y movió la memoria pero no el reloj. Eso es la señal
+clásica para dejar de optimizar por inspección: el 7x frente a ARPACK sigue sin
+localizarse. Antes del siguiente cambio de rendimiento hay que ejecutar la
+instrumentación de la sección 1 del plan P4 (fases finas, RSS pico por rango,
+volumen de comunicación, razones `n/r2` y `r2/r*`).
+
+## 27. P4 sección 1 — instrumentación por fases y el primer perfil real — 2026-07-26
+
+La sección 26.6 concluyó que había que dejar de optimizar por inspección. Esto
+ejecuta la instrumentación que el plan P4 pide y la usa.
+
+### 27.1 Qué se instrumentó
+
+`HierarchyDiagnostics` gana las fases de la jerarquía **distribuida** —
+`partition`, `T2 fineModes`, `S2 compatibility`, `T1 level1`, `S1 globalSolve`,
+`backSubstitution`, `publication`— más el RSS pico del rango. Cada marca se toma
+**después** de la colectiva que cierra la fase, así que el tiempo de una fase
+incluye la espera al rango más lento: es lo que interesa al buscar un cuello de
+botella entre rangos. El solver emite además las razones `n/r2` y `r2/r*`.
+
+El RSS usa `GetProcessMemoryInfo` en Windows y `getrusage` en POSIX; el plan P4
+asumía sólo Linux, pero el arnés que de verdad corre CMS hoy es Windows. Devuelve
+0 cuando la consulta falla, y 0 significa **desconocido**, nunca "cero memoria".
+
+### 27.2 El perfil
+
+Deck `Ladruno_implementation/cms_profile/cms_profile_chain.tcl`: cadena 1-D,
+4 rangos x 2000 elementos, `n=8000`, `k2=12 k1=24`. Tres repeticiones dieron
+`total = 1.133 / 1.136 / 1.145 s`; se cita la primera. El deck verifica el primer
+autovalor contra el espectro analítico (error relativo `1.18e-9`), de modo que un
+perfil no puede tomarse de una corrida que produjo basura.
+
+| Fase | s | % del total |
+|---|---:|---:|
+| ensamblaje | 0.0021 | 0.2% |
+| **jerarquía** | **0.474** | **41.8%** |
+| — `partition` | 0.000012 | ~0% |
+| — **`T2 fineModes`** | **0.461** | **40.7%** |
+| — `S2 compatibility` | 0.00016 | 0.01% |
+| — `T1 level1` | 0.0066 | 0.6% |
+| — `S1 globalSolve` | 0.0010 | 0.1% |
+| — `backSubstitution` | 0.0011 | 0.1% |
+| — `publication` | 0.0021 | 0.2% |
+| **refinamiento** | **0.656** | **57.9%** |
+| total | 1.133 | 100% |
+
+Dimensiones: `n=8000`, `r2=52`, `r*=49`, `n/r2 = 153.8`, `r2/r* = 1.06`.
+RSS pico rango 0: 59.4 MiB.
+
+### 27.3 Tres lecturas
+
+1. **`T2` es el 97% de la jerarquía** y el 40.7% del total. Es
+   `reduceCraigBampton` —la misma función cuyos `phi`/`psi` densos son el
+   workspace grande que queda por dispersar (sección 26.5)—. El objetivo
+   siguiente ya no es una conjetura: es el mismo en las dos métricas.
+2. **El refinamiento es el 57.9%**, más que toda la jerarquía. Sus sub-fases ya
+   reportadas dan `solve = 0.566 s`, la mayor partida individual del programa.
+   *Nota de honestidad:* `solve` e `inverseRefinement` suman más que el total del
+   refinamiento, así que esos dos ámbitos se solapan; no son un desglose
+   disjunto y no deben sumarse.
+3. **`r2/r* = 1.06`: el nivel 1 casi no reduce nada.** El segundo nivel entero
+   —el que hace de esto una jerarquía— pasa de 52 a 49 coordenadas en este
+   modelo, por 0.6% del tiempo. En una cadena 1-D con interfaces de un solo grado
+   de libertad es lo esperable, pero es exactamente lo que la razón se especificó
+   para revelar.
+
+Todo lo demás —ensamblaje, `S2`, `S1`, retro-sustitución, publicación— suma menos
+del 1% junto. Optimizarlo sería ruido.
+
+### 27.4 Un límite duro encontrado al escalar
+
+Subir a 8000 elementos por rango (`n=32000`) **no produce un perfil: falla**.
+Primero por `maxIter` (aplicaciones del operador), y con el presupuesto subido a
+6000, por `local Lanczos exhausted maximum restarts`.
+
+`maximumRestarts` está **fijo en 20** en `solveDistributedHierarchy`
+(`LadrunoCMSHierarchy.cpp:1547`) y **ninguna opción de comando lo expone**. Es
+decir: al crecer el subdominio local, `T2` deja de converger y el usuario no
+tiene ninguna palanca.
+
+Esto importa especialmente ahora que CMS es una decisión de producción: el
+argumento para usar CMS es precisamente el modelo que no cabe en un nodo, y ese
+caso tiene subdominios locales **grandes**. Exponer el control —y revisar el
+criterio de reinicio— es el primer punto accionable de la lista.
+
+### 27.5 Alcance del perfil
+
+Es **una cadena 1-D**, la topología más amable posible: las interfaces son de un
+grado de libertad, así que `S2` y `T1` tienen casi nada que hacer. En Building 1A,
+con interfaces grandes, ese reparto puede cambiar mucho. No se debe generalizar
+este perfil a "CMS gasta el tiempo en T2 y refinamiento" sin repetirlo sobre un
+modelo con interfaces reales — que sigue bloqueado por el deck ausente.
+
+## 28. `-maxRestarts` — el presupuesto de reinicios de T2 deja de estar fijo — 2026-07-26
+
+La sección 27.4 encontró un muro duro: `maximumRestarts` fijo en 20 dentro de
+`solveDistributedHierarchy`, sin ninguna opción que lo expusiera. Al crecer el
+subdominio local, el Lanczos de interfaz fija de T2 deja de converger y el
+usuario no tiene palanca. Para una feature cuyo argumento de producción es
+justamente el modelo que no cabe en un nodo —subdominios locales **grandes**—,
+eso no es una constante de ajuste: es un techo.
+
+### 28.1 Cambio
+
+`-maxRestarts <n>` en la gramática del comando, `Options::maxRestarts`,
+propagado por `DistributedHierarchyInput::maximumRestarts` hasta
+`controls.maximumRestarts`. **Por defecto 20**, de modo que toda corrida
+existente se comporta exactamente igual.
+
+`validate()` exige `>= 1`. La opción se suma además a la puerta de consistencia
+entre rangos: no porque dimensione una colectiva —no lo hace—, sino porque un
+presupuesto divergente haría converger T2 en unos rangos y no en otros, es decir
+un resultado dependiente del rango, que es peor que un rechazo.
+
+### 28.2 Evidencia
+
+- checks del parser en `ladruno_cms_core_check` (g++ `-Wall -Wextra -pedantic`):
+  la opción llega a `Options`, el **defecto sigue siendo 20**, un valor no
+  entero se rechaza y `validate` rechaza `0`;
+- la cadena de 8000 elementos por rango que en 27.4 moría con `exhausted maximum
+  restarts` ya **no muere ahí**: con `-maxRestarts 400` el muro de reinicios
+  desaparece y el fallo se desplaza al presupuesto de aplicaciones del operador
+  (`-maxIter`). Ese desplazamiento es la prueba de que la opción llega de verdad
+  al Lanczos local.
+
+### 28.3 Lo que esto NO arregla
+
+Quitar el techo no hace barato a T2. Con los dos presupuestos subidos, el caso de
+32 000 elementos **deja de fallar rápido y pasa a tardar mucho**: en esta caja no
+completó en un margen razonable. Es coherente con el perfil de la sección 27 —T2
+es el 97% de la jerarquía— y confirma que el trabajo siguiente es el coste de
+`reduceCraigBampton`, no su presupuesto.
+
+Dicho de otro modo: la sección 27.4 describía **dos** problemas superpuestos, un
+techo artificial y un coste real. Esto elimina el techo. El coste sigue ahí.
+
+El deck de perfilado expone ambos presupuestos por variable de entorno
+(`LADRUNO_CMS_PROFILE_RESTARTS`, `LADRUNO_CMS_PROFILE_MAXITER`) para que el
+siguiente experimento no tenga que editar el archivo.
+
+## 29. T2 no era `phi`/`psi` — era el Lanczos, y ahora es 1.65x más rápido — 2026-07-26
+
+### 29.1 La premisa era falsa, y medirla lo demostró
+
+La sección 27 dejó a T2 como objetivo siguiente y la intuición decía `phi`/`psi`:
+son las matrices densas visibles del código. **La medición dice otra cosa.**
+
+Primer perfil con una **interfaz real** —deck nuevo `cms_profile_sheet.tcl`, malla
+de cuadriláteros cortada en cuatro franjas, `b=40`, `m=760`—:
+
+| Sub-fase de T2 | s | % de T2 |
+|---|---:|---:|
+| **lanczos** | **0.136** | **79.6%** |
+| factorize `K_II` | 0.0084 | 4.9% |
+| condensación | 0.0036 | 2.1% |
+| congruencia | 0.0027 | 1.6% |
+| modos de restricción (`psi`) | 0.0016 | 0.9% |
+| dispersión a `T` | 0.00025 | 0.1% |
+| reconstrucción | 0.00003 | ~0% |
+
+Y la memoria: **`transformation` = 0.317 MiB**. El objetivo propuesto era una
+estructura de un tercio de megabyte que cuesta el 0.1% de T2. Reescribirla habría
+sido optimizar ruido — el mismo error de la sección 26, evitado esta vez por
+medir antes de tocar.
+
+**Corrección adicional:** la sección 27 leyó `r2/r* = 1.06` y concluyó que el
+nivel 1 casi no reduce. En la malla con interfaz real, `r2/r* = 2.36`. Aquello
+era un artefacto de la cadena 1-D y sus interfaces de un solo grado de libertad,
+exactamente como advertía 27.5.
+
+### 29.2 Dentro del Lanczos
+
+| | s | % del Lanczos | llamadas |
+|---|---:|---:|---:|
+| `applyOperator` (acción inversa) | 0.092 | 49% | 120 |
+| `rayleighRitz` | 0.052 | 28% | 15 |
+| `mOrthonormalize` | 0.025 | 13% | — |
+| residuales | 0.0095 | 5% | — |
+
+**0.77 ms por solve de MUMPS contra ~31 us por producto disperso sobre la misma
+matriz.** Veinticinco veces más caro por llamada en una matriz de 760: eso no es
+aritmética, es **sobrecoste por llamada**.
+
+### 29.3 Dos cambios
+
+1. **Acción inversa por bloques.** La expansión aceptaba hasta `blockSize`
+   columnas y hacía un solve de un RHS por cada una. Ahora acumula `M*x` de todas
+   las columnas aceptadas y emite **un** solve multi-RHS. `MumpsSPD::solve` ya
+   admitía `numberOfColumns`; no hizo falta API nueva. La comprobación de
+   presupuesto pasa a `operatorApplications + acceptedColumns` para que un bloque
+   no rebase el tope.
+2. **`M*operatorBasis` cacheado.** `rayleighRitz` recomputaba ese producto —un
+   producto disperso y dos asignaciones por columna— **en cada llamada**, sobre
+   una base que sólo había crecido un bloque. Ahora se mantiene incremental: una
+   vez por columna en lugar de una vez por columna por iteración. En el reinicio
+   se reconstruye para las columnas retenidas.
+
+### 29.4 Resultado
+
+A/B en la misma caja y la misma sesión, cuatro repeticiones cada uno:
+
+| | base (mejor) | ahora (mejor) | factor |
+|---|---:|---:|---:|
+| jerarquía | 0.1966 | 0.1194 | **1.65x** |
+| solve total | 0.3309 | 0.2461 | **1.34x** |
+
+Rangos sin solapamiento (base 0.331–0.349; ahora 0.246–0.268).
+
+**No es bit-idéntico**, y conviene decirlo: MUMPS resuelve un bloque multi-RHS
+con núcleos por bloques, no repitiendo el camino de un RHS. El primer autovalor
+de la malla cambia en `2.7e-13` relativo. El deck de cadena, en cambio, reproduce
+su error analítico `1.1750199004417125e-9` **dígito a dígito**, y el smoke físico
+mantiene `maxResidual = 5.80175e-09`.
+
+Batería completa: cinco checks a np=2 y np=4, ambos smokes, ambos decks de perfil.
+
+### 29.5 Lo que queda
+
+`rayleighRitz` sigue siendo el mayor término del Lanczos (~0.029 s). Su coste
+restante son las `j^2` productos escalares de la proyección, que también podrían
+hacerse incrementales —sólo cambian filas y columnas nuevas al crecer la base—,
+pero eso es cirugía sobre el reinicio y no se ha hecho. `phi`/`psi` siguen densos,
+y ahora se sabe que da igual.
+
+## 30. P4 sección 2 — CMS contra el solver estándar, vuelto a medir — 2026-07-26
+
+Tras la mejora de 1.65x de la sección 29 procede repetir la comparación. **No es
+la comparación de Building 1A**: ese deck no está en el repositorio, así que el
+veredicto de 7x del plan P4 no puede re-medirse. Esto es un equivalente sobre la
+malla, con `cms_compare_arpack.tcl`, que construye **el mismo modelo** en ambos
+caminos —cuatro franjas siempre— y sólo cambia el solver:
+
+- `mpiexec -n 1` → monolítico + `eigen` estándar (Arpack + UmfPack);
+- `mpiexec -n 4` → particionado + `eigen -ladrunoCMS`.
+
+### 30.1 Mismo problema
+
+Los seis autovalores coinciden a `~1e-12` relativo. Se está comparando el mismo
+espectro, no dos problemas distintos.
+
+### 30.2 El resultado, y no es bueno
+
+| Malla | `n` | estándar [s] | CMS 4 rangos [s] | CMS / estándar |
+|---|---:|---:|---:|---:|
+| 20x20 | 3 200 | 0.0294 | 0.2335 | **7.9x** |
+| 40x40 | 12 800 | 0.2061 | **107.90** | **523x** |
+| 60x60 | 28 800 | 0.6480 | no completó | — |
+
+A `n=3200` el factor 7.9x reproduce casi exactamente el 7.0x que el plan P4
+registró para Building 1A — la mejora de la sección 29 movió el cociente desde
+~11x, pero no cambia el orden de magnitud.
+
+**Lo grave es la segunda fila.** Cuadruplicar `n` multiplica el estándar por 7
+—comportamiento sano— y a CMS por **462**. CMS no sólo es más lento: **escala
+mucho peor**. La corrida de 60x60 se abandonó tras varios minutos sin terminar.
+
+### 30.3 Qué significa para la decisión de producción
+
+El argumento aceptado para llevar CMS a producción es la **capacidad de
+memoria**: el modelo que no cabe en un nodo. Estos números lo comprometen: si el
+coste crece como `O(n^4)` aproximado, el modelo grande que CMS debería hacer
+posible tardaría un tiempo inutilizable. Una victoria de capacidad sólo sirve si
+el resultado llega.
+
+### 30.4 Salvedad honesta, y el sospechoso
+
+Los parámetros de CMS se dejaron **fijos** (`k2=12`, `k1=24`) en todos los
+tamaños. Al crecer `m`, una base de interfaz fija de 12 modos es relativamente
+más pobre, así que el refinamiento y el Lanczos local tienen que trabajar mucho
+más — y ya se vio (secciones 27.4 y 29) que ese Lanczos agota reinicios al
+crecer el subdominio. Una campaña que escale `k2` con el tamaño daría un
+cociente mejor, y **esta medición no la sustituye**.
+
+Pero 523x no es una brecha de afinado. La hipótesis a comprobar es que el coste
+del Lanczos de interfaz fija crece super-linealmente en `m` a `k2` constante, y
+que ése —no la memoria— es el verdadero obstáculo de P4.
+
+**P4 sigue sin cumplirse, y ahora con un dato peor que el de partida:** no sólo
+no hay régimen donde CMS gane, sino que el cociente empeora con el tamaño en el
+único eje medido.
+
+## 31. Qué dicen las mediciones sobre el paper fuente — y por qué el veredicto se aplaza a Esmeralda — 2026-07-26
+
+### 31.1 Las mediciones NO contradicen a Yu et al.
+
+Conviene decirlo primero, porque la tentación contraria es fuerte: el 523x de la
+sección 30 no refuta MHPMSA. Compara otra cosa, a otra escala, contra otra
+referencia.
+
+| | Yu et al. (2023) | Este fork (sección 30) |
+|---|---|---|
+| modelo | 6 176 367 y **13 167 203** gdl | 3 200 – 28 800 gdl |
+| hardware | 4 096 – **65 536 núcleos** (Shenwei) | **4 rangos**, un escritorio |
+| modos | 20 | 6 – 8 |
+| **referencia de comparación** | **CPMSA, otra síntesis modal PARALELA** | ARPACK+UmfPack secuencial |
+
+Entre 400x y 4 000x más pequeño, con entre 1 000x y 16 000x menos núcleos, y
+contra una referencia distinta. **El paper simplemente no habla de nuestro
+régimen.**
+
+### 31.2 Pero ese silencio es el hallazgo
+
+**Primero: la ventaja que MHPMSA demuestra no existe estructuralmente a cuatro
+rangos.** En las propias tablas del paper, la eficiencia de MHPMSA frente a
+CPMSA en el túnel pasa de la paridad a 8 192 núcleos a `66.78 %` contra
+`26.79 %` a 65 536. El mecanismo es la **reducción de comunicación global entre
+líderes** al crecer el número de núcleos. A cuatro rangos no hay comunicación
+global que reducir. Y en su configuración **más pequeña** (rotor, 4 096 núcleos)
+la ventaja es de `1.11x` — `12 213.7 s` contra `13 581.1 s`. La propia evidencia
+del paper muestra el beneficio desvaneciéndose al bajar de escala, y 4 096
+núcleos ya está tres órdenes de magnitud por encima de donde vive este fork.
+
+**Segundo: la referencia del paper nunca fue "el solver estándar".** CPMSA es a
+su vez una CMS paralela. Yu et al. establecen *"nuestra CMS supera a la CMS de
+ellos a 65k núcleos"*, lo cual no dice nada sobre CMS frente a un eigensolver
+directo secuencial — que es exactamente la barra que fija la sección 10 de esta
+ADR ("el solver estándar de OpenSees"). **El paper y la puerta de aceptación
+nunca midieron lo mismo**, y ese desajuste pasó inadvertido hasta esta semana.
+
+**Tercero: la ADR lo intuyó a medias y no lo llevó hasta el final.** La sección
+10 ya decía que los speedups de Shenwei no son criterio local de aceptación —
+instinto correcto. Pero no se sacó la consecuencia: si la evidencia del paper no
+transfiere, entonces **no había ninguna evidencia** de que CMS ayudara a la
+escala de este fork. Y `scalability/RESULTS.md` ya había respondido en julio
+—"the standard sparse ARPACK path is the fastest Building 1A workflow", decisión
+2: "do not claim CMS is faster than the standard sequential ARPACK solver"—.
+
+### 31.3 Lo que la lectura del corpus sí acertó
+
+No fue trabajo perdido: acertó en **precisión**. Bathe y Dong dieron el diseño
+del refinamiento, y la observación de que Yu et al. demuestran escalamiento y
+error en frecuencia pero **no certifican el residual por vector propio** es
+exactamente la brecha que P2c cerró a `1e-9`. La matemática estuvo bien
+fundamentada. **Lo que nunca se fundamentó fue el caso de rendimiento a esta
+escala.**
+
+### 31.4 Decisión: el veredicto se APLAZA a una campaña en Esmeralda
+
+La sección 30 y el análisis de Fable apuntan a cerrar P4. **No se cierra
+todavía**, por una razón concreta y no sentimental: toda la evidencia negativa se
+ha tomado a 4 rangos en un escritorio, que es precisamente donde la teoría del
+paper predice que CMS no puede ganar. Cerrar la línea sin haberla probado en el
+régimen para el que fue diseñada repetiría, en espejo, el error de haberla
+construido sin comprobar que el régimen era alcanzable.
+
+El fork tiene acceso a **Esmeralda** y precedente de usarla justo para esto: la
+evaluación L2 de FEAST allí devolvió "DON'T BUILD, premisa refutada", y esa es
+una forma perfectamente buena de terminar.
+
+**La campaña debe ser decisiva, no indicativa. Requisitos:**
+
+1. **Modelo grande de verdad** — el deck de 18.6 M gdl ya usado en ADR-74/G3, o
+   comparable. A 3 200 gdl no se puede aprender nada sobre este algoritmo.
+2. **Barrido de rangos** (escalamiento fuerte), no un punto: la ventaja de
+   MHPMSA *crece* con el número de núcleos, así que un único conteo no puede
+   confirmarla ni refutarla.
+3. **La referencia correcta es doble**: (a) ARPACK secuencial donde todavía
+   corra, y (b) **`eigen` sobre `MumpsParallelSOE`** — la ruta distribuida que ya
+   existe en el árbol (ver 31.5). (b) es el competidor honesto a esta escala; si
+   CMS no le gana, no tiene caso.
+4. **`k2` escalado con el subdominio**, no fijo — el experimento pendiente del
+   handoff. Fijarlo fue lo que produjo el 523x.
+5. **>=3 repeticiones** por punto, como exige la disciplina estadística de P4.
+
+**Criterio de salida.** Si existe algún `(n, rangos)` donde CMS reduzca tiempo
+**o** RSS pico por rango frente a la mejor de las dos referencias, P4 tiene por
+fin su régimen y la línea sigue. Si no lo hay a escala de Esmeralda, P4 se cierra
+como "no existe régimen ganador a escalas alcanzables" —lo que la sección 10
+permite explícitamente— y el código queda archivado y verificado tras su bandera
+CMake.
+
+### 31.5 El competidor que estaba en casa
+
+Verificado en el código, no supuesto: `ArpackSolver` conduce el shift-invert a
+través del `LinearSOE` que posea el análisis (`theSOE->solve()`), `ArpackSOE` es
+consciente del paralelismo (`processID`, `theChannels`) y `MumpsParallelSOE`
+existe y es alcanzable desde el intérprete MP. Es decir, `eigen` sobre un sistema
+MUMPS distribuido **ya reparte la factorización** —el objeto de memoria
+dominante— entre rangos, sin CMS. Verificar ese camino en Esmeralda es días de
+trabajo, no meses, y entrega el objetivo de capacidad para el que CMS fue
+encargada. Debe medirse en la misma campaña.
+
+### 31.6 Consecuencias inmediatas
+
+- El **stand-down a apeGmsh sigue en pie** ([[LadrunoCMS_apegmsh_emitter_guide]]
+  §0): no se les pide nada mientras el veredicto esté abierto.
+- Los experimentos del handoff ([[_adr1000_cms_p4_handoff]]) siguen siendo
+  útiles: dicen si el 523x es afinado o algoritmia, y esa respuesta condiciona
+  cómo configurar la campaña de Esmeralda.
+- **Deuda de trazabilidad:** `scalability/RESULTS.md` —la fuente de todos los
+  números del veredicto P4— **nunca ha estado en el repositorio**. Vive en una
+  carpeta de descargas. Debe importarse antes de la campaña, o la evidencia de
+  Esmeralda nacerá con el mismo defecto.

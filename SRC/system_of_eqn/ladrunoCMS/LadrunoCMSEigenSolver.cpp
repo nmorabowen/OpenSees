@@ -129,6 +129,7 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         input.denseMax = options.denseMax;
         input.tolerance = options.tolerance;
         input.maximumOperatorApplications = options.maxIterations;
+        input.maximumRestarts = options.maxRestarts;
         input.massRtol = options.massRtol;
         input.massAtol = options.massAtol;
         ladruno_cms::DistributedHierarchyResult candidate;
@@ -321,6 +322,59 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
                << " refinement=" << refinementSeconds
                << " total=" << std::chrono::duration<double>(
                       Clock::now() - solveStarted).count() << endln;
+        // ADR-1000 P4 section 1: attribute `hierarchy` instead of guessing at
+        // it. Phases are rank-local and measured across the collective that
+        // closes each one, so they include cross-rank wait -- which is what you
+        // want when hunting a bottleneck. Reported on rank 0; use -verbose on a
+        // multi-rank run and compare ranks to see imbalance.
+        const ladruno_cms::HierarchyDiagnostics &phases = diagnostics_;
+        opserr << "LadrunoCMS hierarchy phases [s]: partition="
+               << phases.partitionSeconds
+               << " T2fineModes=" << phases.fineModesSeconds
+               << " S2compatibility=" << phases.compatibilitySeconds
+               << " T1level1=" << phases.level1Seconds
+               << " S1globalSolve=" << phases.globalSolveSeconds
+               << " backSubstitution=" << phases.backSubstitutionSeconds
+               << " publication=" << phases.publicationSeconds << endln;
+        // Dimension ratios: n/r2 is the level-2 reduction, r2/r* the marginal
+        // contribution of level 1 (a ratio near 1.0 means T1 bought nothing).
+        const double afterLevel2 =
+            static_cast<double>(phases.afterLevel2Compatibility);
+        const double finalRaw = static_cast<double>(phases.finalRawDimension);
+        opserr << "LadrunoCMS dimensions: n=" << phases.originalDimension
+               << " r2=" << phases.afterLevel2Compatibility
+               << " rStar=" << phases.finalRawDimension;
+        if (afterLevel2 > 0.0)
+            opserr << " n/r2="
+                   << static_cast<double>(phases.originalDimension) / afterLevel2;
+        if (finalRaw > 0.0)
+            opserr << " r2/rStar=" << afterLevel2 / finalRaw;
+        opserr << endln;
+        opserr << "LadrunoCMS T2 breakdown [s]: factorize="
+               << phases.t2FactorizeSeconds
+               << " constraintModes=" << phases.t2ConstraintModesSeconds
+               << " condensation=" << phases.t2CondensationSeconds
+               << " lanczos=" << phases.t2LanczosSeconds
+               << " reconstruct=" << phases.t2ReconstructSeconds
+               << " scatter=" << phases.t2ScatterSeconds
+               << " congruence=" << phases.t2CongruenceSeconds << endln;
+        opserr << "LadrunoCMS T2 Lanczos [s]: rayleighRitz="
+               << phases.lanczosRayleighRitzSeconds
+               << " orthonormalize=" << phases.lanczosOrthonormalizeSeconds
+               << " operator=" << phases.lanczosOperatorSeconds
+               << " residual=" << phases.lanczosResidualSeconds
+               << " (ritzCalls=" << phases.lanczosRayleighRitzCalls
+               << " opApplications=" << phases.lanczosOperatorApplications
+               << " restarts=" << phases.lanczosRestarts << ")" << endln;
+        opserr << "LadrunoCMS T2 shape: interior m=" << phases.t2InteriorCount
+               << " boundary b=" << phases.t2BoundaryCount
+               << " transformation="
+               << static_cast<double>(phases.t2TransformationBytes) /
+                  (1024.0 * 1024.0) << " MiB" << endln;
+        if (phases.peakResidentBytes > 0u)
+            opserr << "LadrunoCMS peak resident set (rank 0): "
+                   << static_cast<double>(phases.peakResidentBytes) /
+                      (1024.0 * 1024.0) << " MiB" << endln;
     }
     return 0;
 }
