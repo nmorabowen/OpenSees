@@ -40,6 +40,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ConvergenceTest.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 // Constructor
 PeriodicNewton::PeriodicNewton(int theTangentToUse, int mc)
@@ -64,6 +65,12 @@ PeriodicNewton::~PeriodicNewton()
 }
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 PeriodicNewton::solveCurrentStep(void)
 {
     // set up some pointers and check they are valid
@@ -81,17 +88,21 @@ PeriodicNewton::solveCurrentStep(void)
 
     // we form the tangent
     
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIncIntegratorr->formUnbalance() < 0) {
 	opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 	opserr << "the Integrator failed in formUnbalance()\n";	
 	return -2;
     }	
+    }
 
+    { OPS_PROFILE_SCOPE("formTangent");
     if (theIncIntegratorr->formTangent(tangent) < 0){
 	opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 	opserr << "the Integrator failed in formTangent()\n";
 	return -1;
     }		    
+    }
 
     // set itself as the ConvergenceTest objects EquiSolnAlgo
     theTest->setEquiSolnAlgo(*this);
@@ -106,33 +117,41 @@ PeriodicNewton::solveCurrentStep(void)
     int count = 0;
 	int iter = 0;
     do {
+	{ OPS_PROFILE_SCOPE("linearSolve");
 	if (theSOE->solve() < 0) {
 	    opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 	    opserr << "the LinearSysOfEqn failed in solve()\n";	
 	    return -3;
 	}	    
+	}
 
+	{ OPS_PROFILE_SCOPE("update");
 	if (theIncIntegratorr->update(theSOE->getX()) < 0) {
 	    opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 	    opserr << "the Integrator failed in update()\n";	
 	    return -4;
 	}	        
+	}
 
+	{ OPS_PROFILE_SCOPE("formUnbalance");
 	if (theIncIntegratorr->formUnbalance() < 0) {
 	    opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formUnbalance()\n";	
 	    return -2;
 	}	
+	}
 
 	this->record(count++);
-	result = theTest->test();
+	{ OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
 	
 	iter++;
 	if (iter > maxCount) {
+		{ OPS_PROFILE_SCOPE("formTangent");
 		if (theIncIntegratorr->formTangent(tangent) < 0){
 		opserr << "WARNING PeriodicNewton::solveCurrentStep() -";
 		opserr << "the Integrator failed in formTangent()\n";
 		return -1;
+		}
 		}
 		iter = 0;
 	}

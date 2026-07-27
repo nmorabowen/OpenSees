@@ -89,6 +89,17 @@ int Houbolt::newStep(double deltaT)
     return -3;	
   }
 
+  // Ladruno ADR-77 (C0-1): guard deltaT before it is divided by -- see the
+  // TRBDF2::newStep comment. c2/c3 divide by deltaT and deltaT^2 below, so
+  // analyze(n, 0.0) yielded inf/nan constants and an inf/nan tangent with no
+  // diagnostic. Same wording/return code (-2) as HHT::newStep; cannot change
+  // results on valid input.
+  if (deltaT <= 0.0)  {
+    opserr << "Houbolt::newStep() - error in variable\n";
+    opserr << "dT = " << deltaT << endln;
+    return -2;
+  }
+
   // mark step as bootstrap or not
   if ( deltaT != dt )
       step = 0;

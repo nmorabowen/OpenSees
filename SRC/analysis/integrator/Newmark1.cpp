@@ -193,14 +193,26 @@ Newmark1::formEleTangent(FE_Element *theEle)
     theEle->addKtToTang(c1);
     theEle->addCtoTang(c2);
     theEle->addMtoTang(c3);
+  // Ladruno ADR-77 (C0-2): HALL_TANGENT branch was MISSING and failed SILENTLY
+  // -- zeroTangent() above then nothing added, i.e. an ALL-ZERO element tangent
+  // for `algorithm Newton -hall` (and ModifiedNewton -hall / NewtonHallM /
+  // ExpressNewton). The run completed and reported numbers. Branch transposed
+  // from Newmark::formEleTangent; CURRENT/INITIAL paths untouched.
   } else if (statusFlag == INITIAL_TANGENT) {
     theEle->addKiToTang(c1);
     theEle->addCtoTang(c2);
     theEle->addMtoTang(c3);
+  } else if (statusFlag == HALL_TANGENT) {
+    theEle->addKtToTang(c1*cFactor);
+    theEle->addKiToTang(c1*iFactor);
+    theEle->addCtoTang(c2);
+    theEle->addMtoTang(c3);
+  } else {
+    opserr << "Newmark1::formEleTangent - unknown FLAG\n";
   }
 
   return 0;
-}    
+}
 
 
 int

@@ -44,6 +44,7 @@
 #include <Matrix.h>
 #include <Vector.h>
 #include <ID.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 // Constructor
 KrylovNewton::KrylovNewton(int theTangentToUse, int maxDim)
@@ -92,6 +93,12 @@ KrylovNewton::~KrylovNewton()
 }
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 KrylovNewton::solveCurrentStep(void)
 {
   // set up some pointers and check they are valid
@@ -142,10 +149,12 @@ KrylovNewton::solveCurrentStep(void)
     work = new double [lwork];
 
   // Evaluate system residual R(y_0)
+  { OPS_PROFILE_SCOPE("formUnbalance");
   if (theIntegrator->formUnbalance() < 0) {
     opserr << "WARNING KrylovNewton::solveCurrentStep() -";
     opserr << "the Integrator failed in formUnbalance()\n";	
     return -2;
+  }
   }
 
 
@@ -159,11 +168,13 @@ KrylovNewton::solveCurrentStep(void)
   
   
   // Evaluate system Jacobian J = R'(y)|y_0
+  { OPS_PROFILE_SCOPE("formTangent");
   if (theIntegrator->formTangent(tangent) < 0){
     opserr << "WARNING KrylovNewton::solveCurrentStep() -";
     opserr << "the Integrator failed in formTangent()\n";
     return -1;
   }    
+  }
 
   // Loop counter
   int k = 1;
@@ -178,18 +189,22 @@ KrylovNewton::solveCurrentStep(void)
     // Clear the subspace if its dimension has exceeded max
     if (dim > maxDimension) {
       dim = 0;
+      { OPS_PROFILE_SCOPE("formTangent");
       if (theIntegrator->formTangent(tangent) < 0){
 	opserr << "WARNING KrylovNewton::solveCurrentStep() -";
 	opserr << "the Integrator failed to produce new formTangent()\n";
 	return -1;
       }
+      }
     }
 
     // Solve for residual f(y_k) = J^{-1} R(y_k)
+    { OPS_PROFILE_SCOPE("linearSolve");
     if (theSOE->solve() < 0) {
       opserr << "WARNING KrylovNewton::solveCurrentStep() -";
       opserr << "the LinearSysOfEqn failed in solve()\n";	
       return -3;
+    }
     }
 
     // Solve least squares A w_{k+1} = r_k
@@ -200,23 +215,27 @@ KrylovNewton::solveCurrentStep(void)
     }		    
 
     // Update system with v_k
+    { OPS_PROFILE_SCOPE("update");
     if (theIntegrator->update(*(v[dim])) < 0) {
       opserr << "WARNING KrylovNewton::solveCurrentStep() -";
       opserr << "the Integrator failed in update()\n";	
       return -4;
     }	
+    }
 
     // Evaluate system residual R(y_k)
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIntegrator->formUnbalance() < 0) {
       opserr << "WARNING KrylovNewton::solveCurrentStep() -";
       opserr << "the Integrator failed in formUnbalance()\n";	
       return -2;
     }
+    }
 
     // Increase current dimension of Krylov subspace
     dim++;
 
-    result = theTest->test();
+    { OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
     this->record(k++);
 
   } while (result == -1);

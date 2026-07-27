@@ -1,7 +1,7 @@
 ---
 title: Implicit transient solver study — step anatomy, reuse levers, and the fork-integrator question
 project: Ladruno
-status: active — C0 + T0 + T0b + T1 + T3 measured; G2 and G3 CLOSED; C0-6 bug FIXED + verified; T2-nodal-mass + rest of C0 patch wave open
+status: active — C0 + T0 + T0b + T1 + T3 measured; G2/G3 CLOSED; C0 patch wave COMPLETE (C0-1/2/4/5/6 fixed, C0-3 withdrawn); T2-nodal-mass open
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -309,6 +309,15 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-26 — **C0 PATCH WAVE COMPLETE** (§6e). C0-1 (`deltaT` guards, 4 classes), C0-2
+  (`HALL_TANGENT` branches — the silent-wrong-answer finding, 3 classes), C0-4 (dead
+  file-scope static), C0-5 (profiler scopes, 8 algorithms, 61 sites) all fixed, rebuilt and
+  verified. **C0-3 WITHDRAWN as a false positive** — the classes are parameterless, so the
+  "stub" `return 0` was always correct; third grep-shaped false positive this audit produced.
+  **15 vanilla files, 15 ledger rows, ZERO fork classes created** — the §4.2 rule carrying the
+  entire wave, which is the strongest available answer to Q1b. No-regression proven against
+  the committed T3 oracle once a control run showed the harness gate sat below threaded
+  PARDISO's own ~1e-12 floor.
 - 2026-07-26 — **C0-6 FIXED, rebuilt, verified; G3 recomputed** (§6d.3 of the results doc).
   Fix applied to the **vanilla base class**, not `LadrunoGeneralizedAlpha` — the fork class
   inherits `update()`, so one line repairs both, and owning it would have duplicated ~40

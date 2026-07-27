@@ -111,6 +111,17 @@ int BackwardEuler::newStep(double deltaT)
         return -3;	
     }
 
+    // Ladruno ADR-77 (C0-1): guard deltaT before it is divided by -- see the
+    // TRBDF2::newStep comment. c2 = 2.0/deltaT, c3 = 4.0/(deltaT*deltaT) below,
+    // so analyze(n, 0.0) yielded inf/nan constants and an inf/nan tangent with
+    // no diagnostic. Same wording/return code (-2) as HHT::newStep; cannot
+    // change results on valid input.
+    if (deltaT <= 0.0)  {
+        opserr << "BackwardEuler::newStep() - error in variable\n";
+        opserr << "dT = " << deltaT << endln;
+        return -2;
+    }
+
     // mark step as bootstrap or not
     if ( deltaT != dt )
         step = 0;
@@ -219,10 +230,28 @@ int BackwardEuler::formEleTangent(FE_Element *theEle)
         theEle->addKiToTang(c1);
         theEle->addCtoTang(c2);
         theEle->addMtoTang(c3);
+    // Ladruno ADR-77 (C0-2): HALL_TANGENT branch was MISSING and failed
+    // SILENTLY -- the tangent was zeroed above and then nothing was added, so
+    // `algorithm Newton -hall` (also ModifiedNewton -hall, NewtonHallM and
+    // ExpressNewton, which all reach HALL_TANGENT) assembled an ALL-ZERO
+    // element tangent and the run completed reporting numbers. A silent wrong
+    // answer is worse than an unsupported-option error. Branch transposed from
+    // Newmark::formEleTangent; c1 is the stiffness coefficient here as it is
+    // there, and iFactor/cFactor are protected members of IncrementalIntegrator
+    // (:115-116) set by TransientIntegrator::formTangent(flag, iFact, cFact).
+    // CURRENT_TANGENT/INITIAL_TANGENT paths are untouched, so nothing that
+    // already worked can change.
+    } else if (statusFlag == HALL_TANGENT)  {
+        theEle->addKtToTang(c1*cFactor);
+        theEle->addKiToTang(c1*iFactor);
+        theEle->addCtoTang(c2);
+        theEle->addMtoTang(c3);
+    } else  {
+        opserr << "BackwardEuler::formEleTangent - unknown FLAG\n";
     }
-    
+
     return 0;
-}    
+}
 
 
 int BackwardEuler::formNodTangent(DOF_Group *theDof)

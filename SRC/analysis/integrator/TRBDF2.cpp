@@ -90,6 +90,20 @@ int TRBDF2::newStep(double deltaT)
     return -3;	
   }
 
+  // Ladruno ADR-77 (C0-1): guard deltaT before it is divided by. Below,
+  // c2 = 2.0/deltaT and c3 = 4.0/(deltaT*deltaT) (and 1.5/deltaT, 2.25/... on
+  // the BDF2 leg), so analyze(n, 0.0) silently produced inf/nan constants and
+  // an inf/nan tangent instead of returning an error -- the run completes and
+  // reports numbers. Newmark/HHT/HHTGeneralized/GeneralizedAlpha/Collocation/
+  // WilsonTheta already guard this; TRBDF2/TRBDF3/BackwardEuler/Houbolt did not.
+  // Same wording and return code (-2) as HHT::newStep. Cannot change results on
+  // valid input: every deltaT > 0 takes the identical path.
+  if (deltaT <= 0.0)  {
+    opserr << "TRBDF2::newStep() - error in variable\n";
+    opserr << "dT = " << deltaT << endln;
+    return -2;
+  }
+
   // mark step as Trapezoidal (=0) or Backward Euler (=1)
 
   if (deltaT != dt || step == 1) {
@@ -370,12 +384,23 @@ TRBDF2::getVel()
 
 int TRBDF2::sendSelf(int cTag, Channel &theChannel)
 {
+    // Ladruno ADR-77 (C0-3): comment only, NO behaviour change. TRBDF2 is
+    // constructed parameterless (`new TRBDF2()`), so there is genuinely nothing
+    // to serialize -- `return 0` is CORRECT here, not a stub. Recorded because
+    // this ADR's own C0 audit initially mis-filed it as a stub-shaped defect
+    // alongside the contact handler's P1a stubs; TRBDF3 and Houbolt already
+    // carry the "// nothing to send" note and TRBDF2 did not, which is what
+    // made it look different. If a ctor argument is ever added to this class,
+    // THIS is the function that must be filled in.
+    // nothing to send
     return 0;
 }
 
 
 int TRBDF2::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
+    // Ladruno ADR-77 (C0-3): comment only -- see sendSelf. Parameterless class,
+    // nothing to receive.
     return 0;
 }
 
