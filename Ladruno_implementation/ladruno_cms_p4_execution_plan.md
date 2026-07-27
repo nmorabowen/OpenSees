@@ -101,6 +101,11 @@ Report per-phase time, peak RSS/rank, comm volume, and n, r2, r*, n/r2, r2/r*
 for each. This isolates the reduction each level contributes from the cost of the
 final backend.
 
+> **NEXT SESSION: [[_adr1000_cms_p4_handoff]]** — the two experiments that
+> decide whether the scaling collapse is a `k2` tuning artefact or an
+> algorithmic property, with acceptance criteria for each outcome (including
+> closing P4 honestly if it is algorithmic).
+
 ## 3. Statistical discipline
 
 Repeat each accepted point **≥3×** before any performance claim (RESULTS.md
