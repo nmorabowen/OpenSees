@@ -95,6 +95,7 @@
 #define BezierTet10_h
 
 #include <Element.h>
+#include <LadrunoMassCache.h>   // Ladruno (ADR-77 G2 ext)
 #include <Matrix.h>
 #include <Vector.h>
 #include <ID.h>
@@ -109,6 +110,9 @@ class SolidTransformation;   // Ladruno — geometry-method layer (linear/corot)
 class BezierTet10 : public Element
 {
   public:
+      // Ladruno (ADR-77 G2 ext): escape = -noMassCache
+      void setMassCache(bool s) { massCache.setEnabled(s); }
+
     // ─── F-bar variant ids (bbar + -geom finite) — public so the OPS factory
     // can map the -fbar option. CENTROID = single centroid dilatation J₀ (dSNPO
     // eq 15.5, the LadrunoBrick form). MEAN = volume-averaged J̄ = (∫J dV₀)/V₀
@@ -326,6 +330,9 @@ class BezierTet10 : public Element
 
     ID connectedExternalNodes;  // 10 node tags
     Node *theNodes[NEN];        // 10 node pointers
+    LadrunoMassCache massCache;   // Ladruno (ADR-77 G2 ext): per-instance mass cache,
+                                  // guard-checked (rho/thickness/coords); -noMassCache escape
+
 
     double controlPts[NEN][3];  // Bézier control points (P = X if straight)
 

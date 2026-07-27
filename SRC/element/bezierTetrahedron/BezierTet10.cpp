@@ -498,6 +498,21 @@ const Matrix &BezierTet10::getInitialStiff()
 
 const Matrix &BezierTet10::getMass()
 {
+    // Ladruno (ADR-77 G2 ext): per-instance mass cache -- see LadrunoMassCache.h
+    // for the contract and the brick's measured motivation. Signature = every
+    // mutable scalar input: the element rho override + the NGAUSS material
+    // rhos (mutable via setParameter "rho"). Coordinates guarded inside.
+    // cMass/bbar are fixed at construction and deliberately omitted. The
+    // 64-GP collapsed-Duffy consistent mass is the single most expensive
+    // formation among the fork solids, which is why this element is in the
+    // extension's scope at all.
+    double mcSig[1 + NGAUSS];
+    mcSig[0] = rho;
+    for (int i = 0; i < NGAUSS; i++)
+        mcSig[1 + i] = theMaterial[i]->getRho();
+    if (const Matrix *Mc = massCache.lookup(mcSig, 1 + NGAUSS, theNodes, NEN, 3))
+        return *Mc;
+
     // Lumped (default) or consistent (-cMass). Density: element rho
     // overrides; otherwise the material's own density.
     M_return.Zero();
@@ -509,8 +524,10 @@ const Matrix &BezierTet10::getMass()
             sum += theMaterial[i]->getRho();
         rhoEff = sum / NGAUSS;
     }
-    if (rhoEff == 0.0)
+    if (rhoEff == 0.0) {
+        massCache.fill(M_return, mcSig, 1 + NGAUSS, theNodes, NEN, 3);   // Ladruno (ADR-77 G2 ext)
         return M_return;
+    }
 
     if (!cMass) {
         // ─── Lumped mass (Kadapa Eq. 57) ──────────────────────
@@ -525,6 +542,7 @@ const Matrix &BezierTet10::getMass()
             M_return(3*a + 1, 3*a + 1) = m;
             M_return(3*a + 2, 3*a + 2) = m;
         }
+        massCache.fill(M_return, mcSig, 1 + NGAUSS, theNodes, NEN, 3);   // Ladruno (ADR-77 G2 ext)
         return M_return;
     }
 
@@ -567,6 +585,7 @@ const Matrix &BezierTet10::getMass()
         }
     }
 
+    massCache.fill(M_return, mcSig, 1 + NGAUSS, theNodes, NEN, 3);   // Ladruno (ADR-77 G2 ext)
     return M_return;
 }
 

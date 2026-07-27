@@ -309,6 +309,16 @@ Pardiso`; apeGmsh is the mesh source when the deck outgrows hand-written Tcl.
 - 2026-07-26 — ADR drafted; scoping only, no measurements run. Position on Q1 recorded
   (§4.2): no fork integrator family; gated exceptions G2/G3 only. T0 instrumentation gap
   identified (DOF_Group tangent loop untimed).
+- 2026-07-27 — **G2 extension shipped (§6i): the mass cache rolled out to BezierTet10,
+  BezierTri6, LadrunoQuad, LadrunoLST, LadrunoSolidShell** via a shared guard-checked helper
+  (`SRC/element/LadrunoMassCache.h`), each with `-noMassCache`; CST/CSTPair skipped (trivial
+  formation), LadrunoUP deferred (mixed-field inputs need their own review), Brick20 already
+  cached (F-1). The rollout hit and fixed two self-inflicted bugs — a brace-less-`if`
+  zero-mass corruption the A/B test could NOT see (both arms identically broken; the LST
+  Zone-A eigen gate caught it) and a `getMass()`-for-side-effect contract in Quad/LST that a
+  cache hit invalidated (caught by the dynamics Rayleigh gate). **129/129 fork-solid battery
+  tests + 6/6 acceptance.** Lesson recorded: A/B equality validates agreement, not
+  correctness — always run the element batteries.
 - 2026-07-26 — **V0 `/arch:AVX2` probe run and CLOSED (§6h): no measurable speed (paired
   interleaved rounds put AVX2 within noise, ≤1-3% slower), and — the surprise — ZERO bit
   drift at 1 thread (MSVC `/fp:precise` does not contract to FMA: safe and useless, two
