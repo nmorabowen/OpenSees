@@ -1,7 +1,7 @@
 ---
 title: ADR-75b — Lane 3, threaded element assembly (shared-memory OpenMP)
 project: Ladruno
-status: PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
+status: CLOSED for the production/cluster path — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
 priority: medium
 owner: nmora
 amends: 75_ladruno_sparse_direct_strategy_adr
@@ -895,3 +895,45 @@ not another instance of it.)*
 
 **Status change:** `proposed` → **`parked — measurement-gated (G-L3)`**. No threading code
 authorized; no prerequisite work authorized either, which is the part that changed.
+
+
+---
+
+## 13. G-L3 MEASURED — the gate FAILS by ~42×. Lane 3 is CLOSED for the production path.
+
+*(2026-07-26. Full data: `Ladruno_files/testbed/perf/lane3/RESULTS_gl3_gate.md`.)*
+
+§12 parked this lane behind exactly one measurement. It has been run.
+
+**Deck:** 3D solid cantilever, `stdBrick` + `J2Plasticity`, `system Mumps -matrixType 2`,
+`numberer LadrunoParallelRCM`, np=16 on one node, coarse `profiler start -perStep`.
+Nonlinearity verified: **11 `formTangent` calls for 2 steps = 5.5 Newton iters/step.**
+
+| N (DOF) | loop A | loop B | loop C | solve | **max loop** | gate |
+|---|---|---|---|---|---|---|
+| 28 611 | 1.83% | 8.23% | 1.06% | 87.77% | 8.23% | FAIL |
+| 143 811 | 0.58% | 2.07% | 0.31% | 96.70% | 2.07% | FAIL |
+| **540 675** | **0.26%** | **0.95%** | **0.13%** | **98.54%** | **0.95%** | **FAIL** |
+
+**At the production-scale point the gate fails by ~42× (0.95% vs 40%), and the trend
+is monotonic in N** — growing the model makes this lane *less* attractive, exactly as
+ADR-75 §1 predicted. One MUMPS solve is **40.2 s** against **0.39 s** for one element
+tangent assembly: a **104× ratio**.
+
+**The proxy caveat cannot rescue it.** The deck uses vanilla `stdBrick`/`J2Plasticity`
+because the Tcl `nDMaterial` ladder does not carry `LadrunoJ2`; both are cheaper than
+`LadrunoBrick`/`LadrunoJ2`, so these fractions are a **lower bound**. But lifting
+0.95% to 40% needs a **~66× more expensive element kernel**, and `LadrunoBrick` is not
+66× `stdBrick`.
+
+**What remains open — and it is small.** L3-0's Lane B 74.85% element fraction was
+measured on the **desktop under `Pardiso -matrixType 2` at 11 520 DOF**, a far cheaper
+solve per DOF; that number is not contradicted, it is a different solver at a different
+scale. But the desktop cannot reach this regime at all (P1c: UmfPack OOM'd at 86 490
+DOF, PARDISO reached 136 080). **So Lane 3 is at best a desktop-only optimization on
+models ≲136k DOF**, against a stated production regime of huge solid nonlinear models
+that live on the cluster. Its addressable scope has collapsed.
+
+**Decision: CLOSE Lane 3 for the production/cluster path.** §2's five-loop taxonomy,
+§3's determinism policy and §4's scatter remedy remain correct and are the reusable
+assets; they should be cited, not re-derived, if a desktop-scoped case is ever made.
