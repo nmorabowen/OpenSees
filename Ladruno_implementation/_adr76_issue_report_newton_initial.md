@@ -180,9 +180,12 @@ provably unchanged, so even the path must be preserved.
 
 ## 7. Unrelated, noticed in passing
 
-- `PARDISOGenLinSolver.cpp` carries no profiler scopes, where `UmfpackGenLinSolver.cpp` has
+- ~~`PARDISOGenLinSolver.cpp` carries no profiler scopes, where `UmfpackGenLinSolver.cpp` has
   `soe.symbolic` / `soe.factor` / `soe.trisolve`. On a PARDISO run `linearSolve` is a single
   opaque block, so factorization cannot be separated from substitution without differencing
-  two algorithms. Instrumentation parity would be welcome.
-- The profiler HDF5 run attributes record `threads=1` and `nElem=0` regardless of the actual
-  run configuration (observed with `MKL_NUM_THREADS=8` and 9 325 elements).
+  two algorithms. Instrumentation parity would be welcome.~~
+  ✅ **FIXED 2026-07-27, [#667](https://github.com/nmorabowen/OpenSees/pull/667)** — this report
+  is what put it on the list. PARDISO now has the three UmfPack names plus `soe.cgs` (phase 23),
+  `dc.s.fill`/`dc.s.verify`, and a deep `soe.addA`.
+- **STILL OPEN.** The profiler HDF5 run attributes record `threads=1` and `nElem=0` regardless of
+  the actual run configuration (observed with `MKL_NUM_THREADS=8` and 9 325 elements).

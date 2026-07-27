@@ -484,11 +484,20 @@ distributed PARDISO** (P0-decided: MUMPS is mandatory for CMS/FEAST/PFEM regardl
   Accept, or keep a non-MKL threaded option on the table.
 - Iterative (PETSc AMG-CG) for large *well-conditioned* 3D — data-justified only; softening tangents
   fight preconditioners. Out of scope here.
-- **PARDISO instrumentation parity** (raised by the [[76_ladruno_tangent_reuse_adr]] issue report,
-  tracked HERE): `PARDISOGenLinSolver` carries no `OPS_PROFILE` scopes where `UmfpackGenLinSolver`
-  has `soe.symbolic`/`soe.factor`/`soe.trisolve`, so on a PARDISO run `linearSolve` is one opaque
-  block and factor cannot be separated from trisolve without differencing two algorithms. Related:
-  the profiler HDF5 run attributes record `threads=1`/`nElem=0` regardless of configuration.
+- ~~**PARDISO instrumentation parity**~~ ✅ **CLOSED 2026-07-27,
+  [#667](https://github.com/nmorabowen/OpenSees/pull/667) (`62768d1f1`).** Raised by the
+  [[76_ladruno_tangent_reuse_adr]] issue report, tracked here. `PARDISOGenLinSolver` carried no
+  `OPS_PROFILE` scopes where `UmfpackGenLinSolver` had `soe.symbolic`/`soe.factor`/`soe.trisolve`,
+  so on a PARDISO run `linearSolve` was one opaque block. Now 7 brackets: the three UmfPack names
+  (reused verbatim so a cross-solver profile lines the phases up), a PARDISO-only `soe.cgs` for
+  phase 23, `dc.s.fill`/`dc.s.verify` on the `setSize` CSR build, and a DEEP-gated `soe.addA`.
+  Verified by `tests/test_pardiso_solver.py::test_profiler_brackets_present`; measured split
+  published in `Ladruno_files/testbed/perf/phase1/RESULTS_p1h_phase_split.md`.
+- **STILL OPEN — the other half of that item:** the profiler HDF5 run attributes record
+  `threads=1`/`nElem=0` regardless of configuration (`Profiler.cpp` sets
+  `m.threads = threads_.size()`, i.e. profiler-*registered* threads, not `MKL_NUM_THREADS`).
+  Untouched by #667, which only added brackets. Record the thread count from the environment;
+  do not read it off a profile.
 
 ## 10. Ledger / banner
 No source touched yet (scoping ADR). When P1 lands: `LEDGER_implementations.md` row for the PARDISO

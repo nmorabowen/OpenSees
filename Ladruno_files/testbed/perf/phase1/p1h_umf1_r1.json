@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "solver": "UmfPack",
+    "algorithm": "Newton",
+    "integrator": "LoadControl",
+    "nDOF": 11520,
+    "nSteps": 0,
+    "threads": 1,
+    "wall_ms_total": 24893.4277,
+    "timestamp": "2026-07-27T10:41:07"
+  },
+  "step_ms": 24893.2049,
+  "phases": {
+    "linearSolve": {
+      "ms": 16911.953,
+      "calls": 44,
+      "pct_step": 67.938
+    },
+    "formTangent": {
+      "ms": 6538.911,
+      "calls": 44,
+      "pct_step": 26.268
+    },
+    "formUnbalance": {
+      "ms": 754.991,
+      "calls": 59,
+      "pct_step": 3.033
+    },
+    "update": {
+      "ms": 503.026,
+      "calls": 44,
+      "pct_step": 2.021
+    },
+    "newStep": {
+      "ms": 6.101,
+      "calls": 15,
+      "pct_step": 0.025
+    },
+    "commit": {
+      "ms": 24.242,
+      "calls": 15,
+      "pct_step": 0.097
+    },
+    "convTest": {
+      "ms": 6.647,
+      "calls": 44,
+      "pct_step": 0.027
+    }
+  },
+  "solver": {
+    "soe.symbolic": {
+      "ms": 58.595,
+      "calls": 1,
+      "pct_step": 0.235,
+      "sites": {
+        "root/step/soe.symbolic": 58.595
+      }
+    },
+    "soe.factor": {
+      "ms": 15226.581,
+      "calls": 44,
+      "pct_step": 61.168,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.factor": 15226.581
+      }
+    },
+    "soe.trisolve": {
+      "ms": 1387.701,
+      "calls": 44,
+      "pct_step": 5.575,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.trisolve": 1387.701
+      }
+    }
+  },
+  "setSize": {},
+  "deep": {},
+  "split": {
+    "solver_total_ms": 16672.877,
+    "pct_step": 66.978,
+    "pct_solver_factor": 91.33,
+    "pct_solver_trisolve": 8.32,
+    "pct_solver_symbolic": 0.35,
+    "pct_solver_cgs": 0.0,
+    "linearSolve_ms": 16911.953,
+    "attribution_gap_ms": -239.076,
+    "gap_note": "solver total within linearSolve (expected for LoadControl)",
+    "cgs_caveat": null
+  }
+}

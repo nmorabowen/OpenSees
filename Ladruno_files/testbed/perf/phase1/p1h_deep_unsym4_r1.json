@@ -1,0 +1,116 @@
+{
+  "meta": {
+    "solver": "Pardiso",
+    "algorithm": "Newton",
+    "integrator": "LoadControl",
+    "nDOF": 11520,
+    "nSteps": 0,
+    "threads": 1,
+    "wall_ms_total": 14257.0319,
+    "timestamp": "2026-07-27T10:45:06"
+  },
+  "step_ms": 14256.7744,
+  "phases": {
+    "linearSolve": {
+      "ms": 4563.305,
+      "calls": 44,
+      "pct_step": 32.008
+    },
+    "formTangent": {
+      "ms": 7587.621,
+      "calls": 44,
+      "pct_step": 53.221
+    },
+    "formUnbalance": {
+      "ms": 1216.882,
+      "calls": 59,
+      "pct_step": 8.535
+    },
+    "update": {
+      "ms": 751.55,
+      "calls": 44,
+      "pct_step": 5.272
+    },
+    "newStep": {
+      "ms": 11.214,
+      "calls": 15,
+      "pct_step": 0.079
+    },
+    "commit": {
+      "ms": 38.795,
+      "calls": 15,
+      "pct_step": 0.272
+    },
+    "convTest": {
+      "ms": 7.553,
+      "calls": 44,
+      "pct_step": 0.053
+    }
+  },
+  "solver": {
+    "soe.symbolic": {
+      "ms": 342.607,
+      "calls": 1,
+      "pct_step": 2.403,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.symbolic": 342.607
+      }
+    },
+    "soe.factor": {
+      "ms": 3608.828,
+      "calls": 44,
+      "pct_step": 25.313,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.factor": 3608.828
+      }
+    },
+    "soe.trisolve": {
+      "ms": 611.352,
+      "calls": 44,
+      "pct_step": 4.288,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.trisolve": 611.352
+      }
+    }
+  },
+  "setSize": {
+    "dc.s.fill": {
+      "ms": 15.018,
+      "calls": 1,
+      "pct_step": 0.105,
+      "sites": {
+        "root/step/dc.s.fill": 15.018
+      }
+    },
+    "dc.s.verify": {
+      "ms": 0.495,
+      "calls": 1,
+      "pct_step": 0.003,
+      "sites": {
+        "root/step/dc.s.verify": 0.495
+      }
+    }
+  },
+  "deep": {
+    "soe.addA": {
+      "ms": 875.408,
+      "calls": 148500,
+      "pct_step": 6.14,
+      "sites": {
+        "root/step/solveCurrentStep/formTangent/elem.tangent/soe.addA": 875.408
+      }
+    }
+  },
+  "split": {
+    "solver_total_ms": 4562.787,
+    "pct_step": 32.004,
+    "pct_solver_factor": 79.09,
+    "pct_solver_trisolve": 13.4,
+    "pct_solver_symbolic": 7.51,
+    "pct_solver_cgs": 0.0,
+    "linearSolve_ms": 4563.305,
+    "attribution_gap_ms": -0.518,
+    "gap_note": "solver total within linearSolve (expected for LoadControl)",
+    "cgs_caveat": null
+  }
+}
