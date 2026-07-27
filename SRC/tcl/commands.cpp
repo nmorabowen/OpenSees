@@ -6694,6 +6694,22 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	f->setBlockZGate(feastBlockZGate);
 	f->setRci(feastRci);
       }
+#ifdef _PARALLEL_INTERPRETERS
+      else if (typeSolver == EigenSOE_TAGS_ArpackSOE) {
+	// The SOE is reused across `system` changes, so a deck that
+	// switches between a serial system and Mumps between eigen calls
+	// must re-gate the MP wiring here; setProcessID(-1) restores the
+	// serial semantics (merge and lockstep guard go dormant).
+	ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
+	if (theSOE != 0 &&
+	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {
+	  theArpSOE->setProcessID(OPS_rank);
+	  theArpSOE->setChannels(numChannels, theChannels);
+	} else {
+	  theArpSOE->setProcessID(-1);
+	}
+      }
+#endif
     }
 
 	
@@ -6738,6 +6754,23 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       } else {
 
 	theEigenSOE = new ArpackSOE(shift);
+
+#ifdef _PARALLEL_INTERPRETERS
+	// Ladruno ADR-1000 §31.5 (apeGmsh ADR 0077 F1): vanilla MP `eigen`
+	// left ArpackSOE at processID -1, so the M*v merge and the ido
+	// lockstep guard in ArpackSolver stayed dormant -- on a partitioned
+	// deck every rank ran a private Lanczos over global-K/local-M.
+	// Wire the P0-star collectives ONLY when the analysis LinearSOE is
+	// the distributed MUMPS SOE: with a serial system each rank already
+	// holds the full replicated problem and the merge would sum np
+	// copies of M*v.
+	if (theSOE != 0 &&
+	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {
+	  ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
+	  theArpSOE->setProcessID(OPS_rank);
+	  theArpSOE->setChannels(numChannels, theChannels);
+	}
+#endif
 
       }
       

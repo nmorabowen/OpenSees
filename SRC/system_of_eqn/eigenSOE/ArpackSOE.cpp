@@ -371,7 +371,43 @@ ArpackSOE::recvSelf(int commitTag, Channel &theChannel,
   return 0;
 }
 
-int 
+// Ladruno ADR-1000 §31.5 (apeGmsh ADR 0077 F1): explicit wiring setters
+// for _PARALLEL_INTERPRETERS, where nothing ships the SOE via
+// sendSelf/recvSelf (the SP wiring path). Same contract as
+// MumpsParallelSOE::setProcessID/setChannels.
+int
+ArpackSOE::setProcessID(int dTag)
+{
+  processID = dTag;
+  return 0;
+}
+
+int
+ArpackSOE::setChannels(int nChannels, Channel **theC)
+{
+  numChannels = nChannels;
+
+  if (theChannels != 0)
+    delete [] theChannels;
+
+  theChannels = new Channel *[numChannels];
+  for (int i=0; i<numChannels; i++)
+    theChannels[i] = theC[i];
+
+  if (localCol != 0)
+    delete [] localCol;
+  localCol = new ID *[numChannels];
+  for (int i=0; i<numChannels; i++)
+    localCol[i] = 0;
+
+  if (sizeLocal != 0)
+    delete sizeLocal;
+  sizeLocal = new ID(numChannels);
+
+  return 0;
+}
+
+int
 ArpackSOE::setLinks(AnalysisModel &theAnalysisModel)
 {
   theModel = &theAnalysisModel;

@@ -45,8 +45,15 @@ class ArpackSOE : public EigenSOE
 
     ~ArpackSOE();
 
-    int setLinks(AnalysisModel &theModel);   
-    int setLinearSOE(LinearSOE &theSOE);    
+    int setLinks(AnalysisModel &theModel);
+    int setLinearSOE(LinearSOE &theSOE);
+
+    // Ladruno: the SP path wires processID/theChannels through
+    // sendSelf/recvSelf when the SOE ships to subdomains; under
+    // _PARALLEL_INTERPRETERS nothing ships, so the MP eigen command
+    // needs explicit setters (same contract as MumpsParallelSOE's).
+    int setProcessID(int processTag);
+    int setChannels(int numChannels, Channel **theChannels);
 
     int getNumEqn(void) const;
     int setSize(Graph &theGraph);

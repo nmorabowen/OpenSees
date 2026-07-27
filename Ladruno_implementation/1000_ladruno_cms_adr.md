@@ -2656,3 +2656,88 @@ encargada. Debe medirse en la misma campaña.
   números del veredicto P4— **nunca ha estado en el repositorio**. Vive en una
   carpeta de descargas. Debe importarse antes de la campaña, o la evidencia de
   Esmeralda nacerá con el mismo defecto.
+
+## 32. La referencia (b) existía a medias: el cableado F1, verificado y cerrado — 2026-07-27
+
+La sección 31.5 nominó `eigen` sobre `MumpsParallelSOE` como el competidor
+honesto de la campaña, "verificado en el código". La verificación de esta
+sesión muestra que cada afirmación era cierta por separado y la composición
+no: es exactamente la trampa F1 que apeGmsh ADR 0077 documentó, y quedó
+cerrada en la misma sesión.
+
+### 32.1 El defecto, ahora con mecanismo exacto
+
+Bajo `_PARALLEL_INTERPRETERS` el comando `eigen` construye el `ArpackSOE`
+desnudo (`commands.cpp`, rama final de `eigenAnalysis()`) y **nadie llama**
+`setProcessID`/`setChannels`: el único camino de cableado era el envío del
+objeto por `sendSelf`/`recvSelf`, que sólo ocurre en SP. Con `processID = -1`
+quedan dormidos los tres colectivos que la clase sí trae: el merge
+estrella-P0 de `M*v` (`ArpackSolver::myMv`), la guardia de lockstep del
+`ido` (`checkSameInt`) y el `setSize` colectivo de tamaño global. ADR 0077
+describió la reducción como gateada por `#ifdef _PARALLEL_PROCESSING`; el
+gate real es de *runtime* (`processID != -1`) — misma consecuencia, otra
+llave.
+
+**Control negativo observado** (binario pre-fix, deck particionado,
+`mpiexec -n 2`): rank 0 devolvió un espectro **vacío** y rank 1 quedó en
+deadlock. No es un modo degradado: es inutilizable, como F1 predijo.
+
+### 32.2 El cableado
+
+Dos ediciones mínimas, ambas en el ledger de archivos vanilla:
+
+- `ArpackSOE` gana `setProcessID`/`setChannels` públicos (contrato idéntico
+  al de `MumpsParallelSOE`).
+- El `eigen` MP los aplica — en la creación del SOE **y** en el camino de
+  reutilización por classTag — **condicionado a que el `LinearSOE` del
+  análisis sea `MumpsParallelSOE`**. La condición no es cosmética: con un
+  sistema serial cada rango ya tiene el problema replicado completo y el
+  merge sumaría `np` copias de `M*v`. El camino de reutilización re-evalúa
+  la condición en cada llamada y vuelve a `setProcessID(-1)` si el deck
+  cambió a un sistema serial.
+
+Con el cableado, la forma del algoritmo es la misma que FEAST L3: lazo
+exterior ARPACK **replicado** e idéntico en cada rango (semilla determinista
+de dsaupd, lockstep verificado por `checkSameInt`), factor+solve de
+`(K−σM)` **distribuido** en dmumps a través del `LinearSOE`, `M*v` ensamblado
+local y fusionado, `X` difundido por `MumpsParallelSOE`.
+
+### 32.3 Evidencia
+
+`Ladruno_scripts/verify_arpack_mp_mumps.tcl`: cadena fija-libre de 8 masas
+con oráculo analítico `lambda_j = 4(k/m) sin^2((2j-1)pi/(2(2n+1)))`,
+particionado real (bloques contiguos de elementos, disciplina de propietario
+para las masas nodales) y chequeo de forma modal (cocientes del modo 1
+contra el perfil seno — un Lanczos local-por-rango daría cocientes basura
+aunque algún autovalor coincidiera por accidente).
+
+| corrida | max err rel lambda | max err forma |
+|---|---:|---:|
+| serial (`OpenSees`) | 5.9e-16 | 1.8e-15 |
+| `mpiexec -n 2` | 1.3e-15 | 2.2e-15 |
+| `mpiexec -n 4` | 8.3e-16 | 1.1e-15 |
+
+Valores idénticos dígito a dígito entre rangos. El resmoke de FEAST
+(`verify_feast_classic_tcl.tcl`) reproduce sus seis casos sin cambio —
+incluye los dos cruces FEAST↔ARPACK que tocan el camino de reutilización
+editado.
+
+### 32.4 Lo que esto NO da
+
+- `modalProperties` sigue MPI-blind (C7): el cableado entrega autovalores y
+  autovectores replicados correctos, no participación ni masa efectiva
+  sobre un deck particionado.
+- El intérprete moderno (`OpenSeesCommands.cpp`, openseespy/PyMP) construye
+  su `ArpackSOE` igual de desnudo — misma F1 latente, fuera del alcance de
+  esta rebanada (el camino de producción HPC son los ejecutables clásicos).
+- La ganancia esperada es de **capacidad**, no de tiempo: el factor
+  distribuido reparte la memoria dominante. El número a mirar en Esmeralda
+  es RSS pico por rango, con el tiempo como restricción de utilizabilidad.
+
+### 32.5 Consecuencia para la campaña
+
+La referencia (b) de 31.4 es ejecutable tal cual. Requisito adicional a los
+cinco listados allí: usar un build con este cableado y correr
+`verify_arpack_mp_mumps.tcl` como gate previo en el conteo de rangos de la
+campaña — el control negativo demostró que sin el cableado la referencia no
+mide nada.
