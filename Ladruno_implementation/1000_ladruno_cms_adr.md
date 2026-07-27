@@ -2355,3 +2355,50 @@ grado de libertad, así que `S2` y `T1` tienen casi nada que hacer. En Building 
 con interfaces grandes, ese reparto puede cambiar mucho. No se debe generalizar
 este perfil a "CMS gasta el tiempo en T2 y refinamiento" sin repetirlo sobre un
 modelo con interfaces reales — que sigue bloqueado por el deck ausente.
+
+## 28. `-maxRestarts` — el presupuesto de reinicios de T2 deja de estar fijo — 2026-07-26
+
+La sección 27.4 encontró un muro duro: `maximumRestarts` fijo en 20 dentro de
+`solveDistributedHierarchy`, sin ninguna opción que lo expusiera. Al crecer el
+subdominio local, el Lanczos de interfaz fija de T2 deja de converger y el
+usuario no tiene palanca. Para una feature cuyo argumento de producción es
+justamente el modelo que no cabe en un nodo —subdominios locales **grandes**—,
+eso no es una constante de ajuste: es un techo.
+
+### 28.1 Cambio
+
+`-maxRestarts <n>` en la gramática del comando, `Options::maxRestarts`,
+propagado por `DistributedHierarchyInput::maximumRestarts` hasta
+`controls.maximumRestarts`. **Por defecto 20**, de modo que toda corrida
+existente se comporta exactamente igual.
+
+`validate()` exige `>= 1`. La opción se suma además a la puerta de consistencia
+entre rangos: no porque dimensione una colectiva —no lo hace—, sino porque un
+presupuesto divergente haría converger T2 en unos rangos y no en otros, es decir
+un resultado dependiente del rango, que es peor que un rechazo.
+
+### 28.2 Evidencia
+
+- checks del parser en `ladruno_cms_core_check` (g++ `-Wall -Wextra -pedantic`):
+  la opción llega a `Options`, el **defecto sigue siendo 20**, un valor no
+  entero se rechaza y `validate` rechaza `0`;
+- la cadena de 8000 elementos por rango que en 27.4 moría con `exhausted maximum
+  restarts` ya **no muere ahí**: con `-maxRestarts 400` el muro de reinicios
+  desaparece y el fallo se desplaza al presupuesto de aplicaciones del operador
+  (`-maxIter`). Ese desplazamiento es la prueba de que la opción llega de verdad
+  al Lanczos local.
+
+### 28.3 Lo que esto NO arregla
+
+Quitar el techo no hace barato a T2. Con los dos presupuestos subidos, el caso de
+32 000 elementos **deja de fallar rápido y pasa a tardar mucho**: en esta caja no
+completó en un margen razonable. Es coherente con el perfil de la sección 27 —T2
+es el 97% de la jerarquía— y confirma que el trabajo siguiente es el coste de
+`reduceCraigBampton`, no su presupuesto.
+
+Dicho de otro modo: la sección 27.4 describía **dos** problemas superpuestos, un
+techo artificial y un coste real. Esto elimina el techo. El coste sigue ahí.
+
+El deck de perfilado expone ambos presupuestos por variable de entorno
+(`LADRUNO_CMS_PROFILE_RESTARTS`, `LADRUNO_CMS_PROFILE_MAXITER`) para que el
+siguiente experimento no tenga que editar el archivo.

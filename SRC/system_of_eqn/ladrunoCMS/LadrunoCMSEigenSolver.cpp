@@ -129,6 +129,7 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         input.denseMax = options.denseMax;
         input.tolerance = options.tolerance;
         input.maximumOperatorApplications = options.maxIterations;
+        input.maximumRestarts = options.maxRestarts;
         input.massRtol = options.massRtol;
         input.massAtol = options.massAtol;
         ladruno_cms::DistributedHierarchyResult candidate;

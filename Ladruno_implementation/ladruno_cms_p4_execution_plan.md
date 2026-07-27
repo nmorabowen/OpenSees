@@ -38,6 +38,14 @@ below) is THE gate to any P4 win.**
 
 ## 1. Instrumentation — mostly present; close these gaps
 
+> **DONE 2026-07-26 (ADR §27).** Finer hierarchy phases, per-rank peak RSS and
+> the n/r2, r2/r* ratios are wired and reported under `-verbose`; the first
+> profile is recorded in §27. Comm volume is still **not** instrumented. The
+> profile's headline: T2 is 97% of the hierarchy, refinement is 58% of total,
+> and r2/r* = 1.06 (level 1 buys almost nothing on a 1-D chain). It also
+> surfaced a hard-coded `maximumRestarts = 20` with no user control, now exposed
+> as `-maxRestarts` (§28).
+
 Already reported (`LadrunoCMSEigenSolver.cpp`, `-verbose`): assembly / hierarchy
 / refinement seconds; refinement sub-phases (factorization, solve,
 inverseRefinement, massAction, RayleighRitz); dimensions rRaw, rD (=r*),
