@@ -55,6 +55,8 @@
 #include <elementAPI.h>
 #include <mkl_pardiso.h>
 #include <mkl_types.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-75: phase-split brackets
+                                      // (UmfPack parity, ADR-40 rank 8/10)
 
 PARDISOGenLinSolver::PARDISOGenLinSolver()
 :LinearSOESolver(SOLVER_TAGS_PARDISOGenLinSolver),
@@ -258,8 +260,13 @@ PARDISOGenLinSolver::solve(void)
 		iparm[34] =  0;  /* ONE-based indexing — the SOE builds Fortran-style CSR */
 
 		int phase = 11;
+		// Ladruno ADR-75: same bracket names as UmfpackGenLinSolver, so a
+		// profile comparing the two solvers lines the phases up column-for-
+		// column. This one is the METIS reorder — once per sparsity pattern.
+		{ OPS_PROFILE_SCOPE("soe.symbolic");
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
+		}
 		if (error != 0) {
 			ops_pardiso_report("symbolic factorization", error, mtype);
 			return -1;
@@ -316,8 +323,16 @@ PARDISOGenLinSolver::solve(void)
 
 		iparm[3] = 10 * krylovL + krylovK;
 		int phase = 23;
+		// Ladruno ADR-75: its own bracket, NOT soe.trisolve — the whole point
+		// of -krylov is that this call replaces a factor+trisolve pair, and a
+		// profile has to show which of the two regimes carried the run. NB a
+		// CGS give-up refactorizes INSIDE this call (Intel's automatic
+		// fallback), so that cost is billed here, not to soe.factor; iparm[19]
+		// (the -stats win/fallback tally) says how often that happened.
+		{ OPS_PROFILE_SCOPE("soe.cgs");
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, Bptr, Xptr, &error);
+		}
 		iparm[3] = 0;   // leave the control array in its direct-solve state
 
 		if (error != 0) {
@@ -377,8 +392,10 @@ PARDISOGenLinSolver::solve(void)
 	// ---- numeric: ONLY when A changed — this is the reuse win --------------
 	else if (theSOE->factored == false) {
 		int phase = 22;
+		{ OPS_PROFILE_SCOPE("soe.factor");   // Ladruno ADR-75 (UmfPack parity)
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
+		}
 		if (error != 0) {
 			ops_pardiso_report("numerical factorization", error, mtype);
 			return -2;
@@ -393,8 +410,10 @@ PARDISOGenLinSolver::solve(void)
 	// Skipped after a phase-23 call, which already produced X.
 	if (solvedByKrylov == false) {
 		int phase = 33;
+		{ OPS_PROFILE_SCOPE("soe.trisolve");   // Ladruno ADR-75 (UmfPack parity)
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, Bptr, Xptr, &error);
+		}
 		if (error != 0) {
 			ops_pardiso_report("solution", error, mtype);
 			return -3;
