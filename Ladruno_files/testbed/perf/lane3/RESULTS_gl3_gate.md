@@ -60,7 +60,30 @@ and the trend is **monotonic in N**: from 28.6k → 540.7k the largest loop fall
 *less* attractive, not more — exactly what ADR-75 §1 predicted ("the solve fraction
 is a floor that grows with N").
 
-### Why the deck's caveats do not rescue it — quantified
+### ✅ The proxy caveat is now CLOSED by measurement, not by argument
+
+The original run used vanilla `stdBrick` + `J2Plasticity` because the Tcl
+`nDMaterial` ladder carried no fork material. **That gap has since been fixed**
+(`TclModelBuilderNDMaterialCommand.cpp` now wires all 10 fork factories), so G-L3
+was re-run on the fork's own element and material — `LadrunoBrick` + `LadrunoJ2`:
+
+| N (DOF) | proxy `stdBrick`+`J2Plasticity` | **fork `LadrunoBrick`+`LadrunoJ2`** |
+|---|---|---|
+| 143 811 | 2.07% | **1.99%** |
+| **540 675** | **0.95%** | **0.97%** |
+
+**The answer is unchanged.** Wall was also essentially identical (438.8 s fork vs
+449.3 s proxy at 540 675 DOF — the fork deck was marginally *faster*).
+
+**Honest correction to the original reasoning.** The proxy was argued to be a
+*lower bound*, on the grounds that `LadrunoBrick` (16 function-scope statics per
+`update()`) is more expensive than `stdBrick`. Directionally that framing was
+defensible, but the measured gap is **~zero** — the fork kernel is not
+meaningfully more expensive here, so the proxy was simply *accurate*, not
+conservative. The conclusion never depended on the margin, but the margin was not
+what was claimed.
+
+### Why the remaining caveats do not rescue it — quantified
 
 The Tcl `nDMaterial` command is a hand-written `strcmp` ladder that does **not**
 carry `LadrunoJ2` (Python-only), so this deck uses vanilla `stdBrick` +
