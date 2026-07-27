@@ -25,8 +25,10 @@
 //     dM/dh acts at Ualphadotdot. K/C keep their alphaF weighting + the
 //     -K*(1-alphaF)*dUn term.
 //   * sensitivity SOLVE: the primal-consistent Jacobian IS now the base tangent
-//     (M-coef alphaM*c3); the sensTangentFlag re-form matches it (kept for the
-//     INITIAL_TANGENT selection parity, not for a coefficient difference).
+//     (M-coef alphaM*c3); the sensTangentFlag re-form matches it coefficient-
+//     for-coefficient — kept because it REFRESHES a possibly stale or
+//     initial-tangent factorization left by the primal algorithm (ModifiedNewton,
+//     -initial), which is what the sensitivity solves must not inherit.
 // Caught by the Zone-A FD gate itself (rel_err ~2e-3 post-C0-6, PR #650), which
 // is exactly what that oracle is for: the DDM must track the PRIMAL, whichever
 // scheme the primal implements.
@@ -477,14 +479,17 @@ LadrunoGeneralizedAlpha::computeSensitivities()
     theSOE->zeroB();
     this->formIndependentSensitivityRHS();
 
-    // Re-form the system tangent with the PRIMAL-CONSISTENT Jacobian (M-coef c3,
-    // not the base's alphaM*c3) so every sensitivity solve below uses the true
-    // ∂R/∂U. The base GeneralizedAlpha tangent that the primal Newton left
-    // factored in the SOE is inconsistent for alphaM != 1 (see the file header);
-    // reusing it (as Newmark's computeSensitivities does, where it IS consistent)
-    // would bias the gradients (FD oracle: ~2e-3). Re-formed once here; the
+    // Re-form the system tangent so every sensitivity solve below uses the true
+    // consistent ∂R/∂U at the converged state. Post-C0-6 the COEFFICIENTS are
+    // the base tangent's own (alphaF*K + alphaF*c2*C + alphaM*c3*M — see the
+    // file header; the pre-C0-6 M-coef difference is gone): what the re-form
+    // still buys is FRESHNESS. The factorization the primal Newton left in the
+    // SOE may be stale (ModifiedNewton: formed at step start, state moved
+    // since) or the wrong selection (-initial: alphaF*Ki), and reusing either
+    // would bias the gradients. Re-formed once with CURRENT_TANGENT; the
     // per-parameter solves below reuse this factorization. The flag is cleared
-    // immediately so nothing else sees the sensitivity tangent.
+    // immediately so nothing else sees the sensitivity tangent. (Confirmed by
+    // the ADR-77 review-wave independent re-derivation, 2026-07-27.)
     sensTangentFlag = 1;
     this->formTangent(CURRENT_TANGENT);
     sensTangentFlag = 0;
