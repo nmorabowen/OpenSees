@@ -3224,6 +3224,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
     }
   }
 
+  // Ladruno (ADR-77 review wave): massType decoded above is guard-exempt
+  // (construction-fixed in normal flows), but a restore into a live element
+  // can flip it with rho and coords unchanged -- a clean-guard hit would then
+  // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
+  if (Mi != 0) { delete Mi; Mi = 0; }
+
   return res;
 }
 

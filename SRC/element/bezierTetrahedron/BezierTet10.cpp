@@ -1643,6 +1643,11 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
         res += theMaterial[i]->recvSelf(commitTag, theChannel, theBroker);
     }
 
+    // Ladruno (ADR-77 review wave): cMass (a mass-formula branch) is
+    // sig-exempt as construction-fixed, but recvSelf just rewrote it -- a
+    // guard hit on a live element would serve the pre-recv mass structure.
+    massCache.invalidate();
+
     return res;
 }
 

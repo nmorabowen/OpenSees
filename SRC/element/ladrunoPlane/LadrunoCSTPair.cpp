@@ -486,6 +486,11 @@ int LadrunoCSTPair::addInertiaLoadToUnbalance(const Vector &accel)
     ra[2 * a]     = Raccel(0);
     ra[2 * a + 1] = Raccel(1);
   }
+  // Ladruno (ADR-77 review wave): bare getMass() called for its SIDE EFFECT of
+  // refilling class-static K, then K read directly. Correct ONLY while this
+  // element has no mass cache -- a LadrunoMassCache hit skips the formation and
+  // leaves K holding the last tangent. DO NOT add the G2 cache here without
+  // first rewriting this to consume getMass()'s return (the Quad/LST fix).
   this->getMass();
   for (int i = 0; i < ndf; i++)
     Q(i) += -K(i, i) * ra[i];
@@ -529,6 +534,8 @@ const Vector &LadrunoCSTPair::getResistingForceIncInertia(void)
     a[2 * n + 1] = accel(1);
   }
   this->getResistingForce();
+  // Ladruno (ADR-77 review wave): same bare-getMass side-effect idiom as
+  // addInertiaLoadToUnbalance above -- see the warning there before caching.
   this->getMass();
   for (int i = 0; i < ndf; i++)
     P(i) += K(i, i) * a[i];

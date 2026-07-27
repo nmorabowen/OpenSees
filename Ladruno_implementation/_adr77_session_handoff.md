@@ -1,7 +1,7 @@
 ---
 title: ADR-77 session handoff — implicit transient study SHIPPED; next = post-ship reviews
 project: Ladruno
-status: handoff — ADR-77 complete and merged (#650); review wave + two parked lanes queued
+status: handoff — ADR-77 complete and merged (#650); REVIEW WAVE DONE 2026-07-27 (see §1a); two parked lanes still queued
 owner: nmora
 tags:
   - handoff
@@ -33,6 +33,42 @@ tags:
 Review-wave shape that fits the fork's precedent (ADR-41/57 pattern): one
 adversarial multi-lens review per row above, patch-in-place fixes, ledger rows
 amended. All five units are on `ladruno` now — review against HEAD.
+
+## 1a. Review-wave OUTCOME (2026-07-27)
+
+- **DDM algebra (priority 1): CONFIRMED by independent re-derivation.**
+  Differentiating the Newmark update relations against the post-C0-6 residual
+  `R = F(t+αF·dt) − P(Uα) − C·U̇α − M·Üα` reproduces every implemented
+  constant (`a2=−c3`, `a3=−c2/γ`, `a4=1−1/(2β)`, `a6=−c2`, `a7=1−γ/β`,
+  `a8=dt(1−γ/(2β))`), the αM/αF-weighted multiplicators, the `−K(1−αF)dUn`
+  term (`addK_Force` uses the consistent tangent at the trial state = Uα
+  pre-commit — correct), the `dM/dh@Üα` / `dC/dh@U̇α` states, and the LHS
+  `αF·K+αF·c2·C+αM·c3·M` = base tangent. `saveSensitivity` is Newmark-exact
+  as claimed. ONE fix: the `computeSensitivities` comment still described the
+  pre-C0-6 design (claimed M-coef `c3` vs the base's `αM·c3` — the code says
+  `αM·c3`); rewritten. The tangent re-form itself is KEPT — its live value is
+  refreshing a stale/initial factorization left by ModifiedNewton/`-initial`
+  primal solves, not a coefficient difference.
+- **Collocation HALL branch (priority 3): CONFIRMED, no change.** The
+  transposition is structurally byte-for-byte vanilla `WilsonTheta` — the
+  exact precedent for a t+θΔt-substep integrator (`c1=1.0`, C/M outside the
+  chain); `c1` plays the same effective-tangent stiffness-coefficient role in
+  both. BackwardEuler/Newmark1 additions spot-checked against their vanilla
+  precedents too — clean.
+- **Mass-cache extension (priority 2): 5-lens × 5 integrations + helper — NO
+  serial-run-corrupting bug; lifecycle hardening applied.** The in-session
+  Quad/LST 4-site side-effect fix is verified complete. Patched: recvSelf
+  cache invalidation ×6 (sig-exempt `massType`/`quadz`/`formulation`/`cMass`
+  can flip on restore-into-live-object — brick donor had the gap too),
+  helper null-node tolerance (`setDomain(0)` removal flows / pre-setDomain
+  getMass no longer segfault where uncached code survived), contract-scope +
+  dangling-hit-pointer + serial-only `-noMassCache` notes in the header, and
+  do-not-cache breadcrumbs at the four bare-`getMass()` sites in the
+  cache-less CST/CSTPair. Three new [[LEDGER_quirks]] entries. Known
+  accepted non-issues: setDomain-snapshot geometry staleness (controlPts /
+  SolidShell `X` / SSP J-tables) is pre-existing element behavior the cache
+  faithfully preserves; the Bezier/plane miss path still returns the class
+  static (per-instance only on hits) — an ADR-75b nuance, not a bug.
 
 ## 2. Parked lanes (decided, not started)
 
