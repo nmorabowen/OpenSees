@@ -101,6 +101,16 @@ Report per-phase time, peak RSS/rank, comm volume, and n, r2, r*, n/r2, r2/r*
 for each. This isolates the reduction each level contributes from the cost of the
 final backend.
 
+> **VERDICT DEFERRED TO AN ESMERALDA CAMPAIGN (ADR §31).** All the negative
+> evidence was taken at 4 ranks on a desktop — precisely where the source paper's
+> own data predicts CMS cannot win (Yu et al. measure 6.2M–13.2M DOF on
+> 4 096–65 536 cores, against another *parallel* CMS, not against a sequential
+> direct solver; at their smallest configuration the advantage is 1.11x). Closing
+> the lane without testing it in the regime it was designed for would mirror the
+> original mistake of building it without checking that regime was reachable.
+> §31 defines the campaign and its exit criterion, including the competitor that
+> was in the tree all along: `eigen` over `MumpsParallelSOE`.
+>
 > **NEXT SESSION: [[_adr1000_cms_p4_handoff]]** — the two experiments that
 > decide whether the scaling collapse is a `k2` tuning artefact or an
 > algorithmic property, with acceptance criteria for each outcome (including

@@ -2543,3 +2543,116 @@ que ése —no la memoria— es el verdadero obstáculo de P4.
 **P4 sigue sin cumplirse, y ahora con un dato peor que el de partida:** no sólo
 no hay régimen donde CMS gane, sino que el cociente empeora con el tamaño en el
 único eje medido.
+
+## 31. Qué dicen las mediciones sobre el paper fuente — y por qué el veredicto se aplaza a Esmeralda — 2026-07-26
+
+### 31.1 Las mediciones NO contradicen a Yu et al.
+
+Conviene decirlo primero, porque la tentación contraria es fuerte: el 523x de la
+sección 30 no refuta MHPMSA. Compara otra cosa, a otra escala, contra otra
+referencia.
+
+| | Yu et al. (2023) | Este fork (sección 30) |
+|---|---|---|
+| modelo | 6 176 367 y **13 167 203** gdl | 3 200 – 28 800 gdl |
+| hardware | 4 096 – **65 536 núcleos** (Shenwei) | **4 rangos**, un escritorio |
+| modos | 20 | 6 – 8 |
+| **referencia de comparación** | **CPMSA, otra síntesis modal PARALELA** | ARPACK+UmfPack secuencial |
+
+Entre 400x y 4 000x más pequeño, con entre 1 000x y 16 000x menos núcleos, y
+contra una referencia distinta. **El paper simplemente no habla de nuestro
+régimen.**
+
+### 31.2 Pero ese silencio es el hallazgo
+
+**Primero: la ventaja que MHPMSA demuestra no existe estructuralmente a cuatro
+rangos.** En las propias tablas del paper, la eficiencia de MHPMSA frente a
+CPMSA en el túnel pasa de la paridad a 8 192 núcleos a `66.78 %` contra
+`26.79 %` a 65 536. El mecanismo es la **reducción de comunicación global entre
+líderes** al crecer el número de núcleos. A cuatro rangos no hay comunicación
+global que reducir. Y en su configuración **más pequeña** (rotor, 4 096 núcleos)
+la ventaja es de `1.11x` — `12 213.7 s` contra `13 581.1 s`. La propia evidencia
+del paper muestra el beneficio desvaneciéndose al bajar de escala, y 4 096
+núcleos ya está tres órdenes de magnitud por encima de donde vive este fork.
+
+**Segundo: la referencia del paper nunca fue "el solver estándar".** CPMSA es a
+su vez una CMS paralela. Yu et al. establecen *"nuestra CMS supera a la CMS de
+ellos a 65k núcleos"*, lo cual no dice nada sobre CMS frente a un eigensolver
+directo secuencial — que es exactamente la barra que fija la sección 10 de esta
+ADR ("el solver estándar de OpenSees"). **El paper y la puerta de aceptación
+nunca midieron lo mismo**, y ese desajuste pasó inadvertido hasta esta semana.
+
+**Tercero: la ADR lo intuyó a medias y no lo llevó hasta el final.** La sección
+10 ya decía que los speedups de Shenwei no son criterio local de aceptación —
+instinto correcto. Pero no se sacó la consecuencia: si la evidencia del paper no
+transfiere, entonces **no había ninguna evidencia** de que CMS ayudara a la
+escala de este fork. Y `scalability/RESULTS.md` ya había respondido en julio
+—"the standard sparse ARPACK path is the fastest Building 1A workflow", decisión
+2: "do not claim CMS is faster than the standard sequential ARPACK solver"—.
+
+### 31.3 Lo que la lectura del corpus sí acertó
+
+No fue trabajo perdido: acertó en **precisión**. Bathe y Dong dieron el diseño
+del refinamiento, y la observación de que Yu et al. demuestran escalamiento y
+error en frecuencia pero **no certifican el residual por vector propio** es
+exactamente la brecha que P2c cerró a `1e-9`. La matemática estuvo bien
+fundamentada. **Lo que nunca se fundamentó fue el caso de rendimiento a esta
+escala.**
+
+### 31.4 Decisión: el veredicto se APLAZA a una campaña en Esmeralda
+
+La sección 30 y el análisis de Fable apuntan a cerrar P4. **No se cierra
+todavía**, por una razón concreta y no sentimental: toda la evidencia negativa se
+ha tomado a 4 rangos en un escritorio, que es precisamente donde la teoría del
+paper predice que CMS no puede ganar. Cerrar la línea sin haberla probado en el
+régimen para el que fue diseñada repetiría, en espejo, el error de haberla
+construido sin comprobar que el régimen era alcanzable.
+
+El fork tiene acceso a **Esmeralda** y precedente de usarla justo para esto: la
+evaluación L2 de FEAST allí devolvió "DON'T BUILD, premisa refutada", y esa es
+una forma perfectamente buena de terminar.
+
+**La campaña debe ser decisiva, no indicativa. Requisitos:**
+
+1. **Modelo grande de verdad** — el deck de 18.6 M gdl ya usado en ADR-74/G3, o
+   comparable. A 3 200 gdl no se puede aprender nada sobre este algoritmo.
+2. **Barrido de rangos** (escalamiento fuerte), no un punto: la ventaja de
+   MHPMSA *crece* con el número de núcleos, así que un único conteo no puede
+   confirmarla ni refutarla.
+3. **La referencia correcta es doble**: (a) ARPACK secuencial donde todavía
+   corra, y (b) **`eigen` sobre `MumpsParallelSOE`** — la ruta distribuida que ya
+   existe en el árbol (ver 31.5). (b) es el competidor honesto a esta escala; si
+   CMS no le gana, no tiene caso.
+4. **`k2` escalado con el subdominio**, no fijo — el experimento pendiente del
+   handoff. Fijarlo fue lo que produjo el 523x.
+5. **>=3 repeticiones** por punto, como exige la disciplina estadística de P4.
+
+**Criterio de salida.** Si existe algún `(n, rangos)` donde CMS reduzca tiempo
+**o** RSS pico por rango frente a la mejor de las dos referencias, P4 tiene por
+fin su régimen y la línea sigue. Si no lo hay a escala de Esmeralda, P4 se cierra
+como "no existe régimen ganador a escalas alcanzables" —lo que la sección 10
+permite explícitamente— y el código queda archivado y verificado tras su bandera
+CMake.
+
+### 31.5 El competidor que estaba en casa
+
+Verificado en el código, no supuesto: `ArpackSolver` conduce el shift-invert a
+través del `LinearSOE` que posea el análisis (`theSOE->solve()`), `ArpackSOE` es
+consciente del paralelismo (`processID`, `theChannels`) y `MumpsParallelSOE`
+existe y es alcanzable desde el intérprete MP. Es decir, `eigen` sobre un sistema
+MUMPS distribuido **ya reparte la factorización** —el objeto de memoria
+dominante— entre rangos, sin CMS. Verificar ese camino en Esmeralda es días de
+trabajo, no meses, y entrega el objetivo de capacidad para el que CMS fue
+encargada. Debe medirse en la misma campaña.
+
+### 31.6 Consecuencias inmediatas
+
+- El **stand-down a apeGmsh sigue en pie** ([[LadrunoCMS_apegmsh_emitter_guide]]
+  §0): no se les pide nada mientras el veredicto esté abierto.
+- Los experimentos del handoff ([[_adr1000_cms_p4_handoff]]) siguen siendo
+  útiles: dicen si el 523x es afinado o algoritmia, y esa respuesta condiciona
+  cómo configurar la campaña de Esmeralda.
+- **Deuda de trazabilidad:** `scalability/RESULTS.md` —la fuente de todos los
+  números del veredicto P4— **nunca ha estado en el repositorio**. Vive en una
+  carpeta de descargas. Debe importarse antes de la campaña, o la evidencia de
+  Esmeralda nacerá con el mismo defecto.

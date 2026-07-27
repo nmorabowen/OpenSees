@@ -36,6 +36,15 @@ discriminates.
 
 ---
 
+## 1b. Scope note added after this handoff was written
+
+**The final verdict is deferred to an Esmeralda campaign (ADR §31).** Your two
+experiments still matter — they decide whether the 523x is tuning or algorithmic,
+and that answer shapes how the cluster campaign is configured — but do NOT close
+P4 on desktop evidence alone. All of it was taken at 4 ranks, which is where the
+source paper's own data predicts CMS cannot win. §31 has the campaign design and
+the exit criterion.
+
 ## 2. The hypothesis
 
 CMS parameters were held **fixed** (`k2 = -modesL2 12`, `k1 = -modesL1 24`) at
