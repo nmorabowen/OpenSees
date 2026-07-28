@@ -204,6 +204,7 @@ void *OPS_LadrunoUP()
   double stabValue = 0.25; // auto: alpha0; manual: alpha
   bool stabGiven = false;
   int geomMethodID = SolidTransformation::METHOD_LINEAR;   // ADR 78 -geom axis
+  bool kozenyCarman = false;   // ADR 79 P2: opt-in k(J) evolution (hypo only)
   bool dynSeepage = false;  // P4 B5 adjudication: default OFF. The u-p
                             // dynamic-seepage drive (b - u_ddot) diverges under
                             // quasi-static dt-refinement (P1, ZS84 sweep) AND
@@ -475,19 +476,36 @@ void *OPS_LadrunoUP()
           return 0;
         }
         geomMethodID = SolidTransformation::METHOD_COROT;
+      } else if (strcmp(g, "hypo") == 0) {
+        // ADR 79 P2: hypoelastic rate-form updated-Lagrangian — genuine large
+        // strain with the UNCHANGED small-strain material library (the route
+        // for rate-form soil laws). v1: 3D H8 equal-order std only; the ctor
+        // sanitizer enforces the full combination and the formulation/pOrder
+        // legs are re-checked after the flag loop below.
+        if (ndm != 3) {
+          opserr << "ERROR LadrunoUP " << tag << " -- -geom hypo is 3D-only "
+                    "in v1 (the H8 lane; ADR 79 P2)\n";
+          return 0;
+        }
+        geomMethodID = SolidTransformation::METHOD_HYPO;
       } else if (strcmp(g, "finite") == 0) {
         opserr << "ERROR LadrunoUP " << tag << " -- -geom finite is reserved: "
                   "it needs a FiniteStrainNDMaterial (setTrialF), and the "
                   "LogStrain lifting adaptor assumes a linear-elastic inner "
                   "law — no usable soil constitutive path exists yet (ADR 78 "
-                  "§1.1). Use -geom corot for large rotation with the "
-                  "small-strain material library\n";
+                  "§1.1). Use -geom hypo for large strain with the "
+                  "small-strain material library (ADR 79)\n";
         return 0;
       } else {
         opserr << "ERROR LadrunoUP " << tag << " -- unknown -geom '" << g
-               << "' (want linear|corot; finite is reserved, ADR 78)\n";
+               << "' (want linear|corot|hypo; finite is reserved, ADR 78)\n";
         return 0;
       }
+
+    } else if (strcmp(opt, "-kozenyCarman") == 0 || strcmp(opt, "-kc") == 0) {
+      // ADR 79 P2: opt-in Kozeny–Carman k(J) permeability evolution — a
+      // constitutive CHOICE (unlike the kinematic n(J), always on under hypo).
+      kozenyCarman = true;
 
     } else {
       // DELIBERATE break from the family's warn-and-continue: a mistyped u-p
@@ -583,11 +601,37 @@ void *OPS_LadrunoUP()
     }
   }
 
-  // ---- build (pinned WP1.A ctor + the ADR-78 geom trailing arg) --------------
+  // ---- hypo combination guards (ADR 79 P2; parser = first line, sanitizer =
+  // belt-and-braces). Reject rather than degrade so the user learns why.
+  if (geomMethodID == SolidTransformation::METHOD_HYPO) {
+    if (formulation != 0) {
+      opserr << "ERROR LadrunoUP " << tag << " -- -geom hypo v1 supports only "
+                "-formulation std (bbar in rate form is reserved; ADR 79 P2)\n";
+      return 0;
+    }
+    if (pOrder != 0) {
+      opserr << "ERROR LadrunoUP " << tag << " -- -geom hypo v1 supports only "
+                "equal-order pressure (-pOrder equal; TH is reserved; "
+                "ADR 79 P2)\n";
+      return 0;
+    }
+    if (nodeTags.Size() != 8) {
+      opserr << "ERROR LadrunoUP " << tag << " -- -geom hypo v1 supports only "
+                "the H8 lane (8 nodes; got " << nodeTags.Size()
+             << "; ADR 79 P2)\n";
+      return 0;
+    }
+  } else if (kozenyCarman) {
+    opserr << "ERROR LadrunoUP " << tag << " -- -kozenyCarman needs -geom hypo "
+              "(k(J) evolution requires the hypo path's per-GP J; ADR 79 P2)\n";
+    return 0;
+  }
+
+  // ---- build (pinned WP1.A ctor + the ADR-78/79 geom trailing args) ----------
   return new LadrunoUP(tag, ndm, nodeTags, *mat,
                        thick, Kf, poro, rhoF, perm,
                        biotAlpha, Ks, body, fluidBody,
                        formulation, pOrder, lumped,
                        stabMode, stabValue, dynSeepage,
-                       geomMethodID);
+                       geomMethodID, kozenyCarman);
 }

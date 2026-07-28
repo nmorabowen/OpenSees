@@ -1,6 +1,6 @@
 # ADR 79 — `-geom hypo`: hypoelastic rate-form updated-Lagrangian geometry method
 
-**Status:** P0+P1 shipped (dry solid); P2 (u–p) staged, blocked on ADR-78 (PR #677) merge
+**Status:** P0+P1 shipped (PR #679, merged); P2 (u–p) shipped (this PR); P3 (PDMY TIMs smoke) pending
 **Element:** `LadrunoBrick` (ELE 33002) first; `LadrunoUP` (ELE 33017) in P2
 **Seam extended:** `SolidTransformation` gains `METHOD_HYPO = 3` (marker only)
 **Kernel:** `SRC/element/solidTransformation/LadrunoHypoKernel.h` (header-only, OpenSees-free)
@@ -235,15 +235,54 @@ committed state — no accumulation-within-iteration hazard.
   7. database round-trip: the guarded Vector(48) feed-strain payload survives
      save/restore — the post-restore step matches the uninterrupted run to
      1e-9.
-- **P2 — the u–p element (follow-up PR, after #677 merges):** extend to
-  `LadrunoUP` reusing the kernel: the ADR-78 machinery carries over (GN22/GN11
-  incremental p-row — the chord-defect findings), the incremental volumetric
-  term becomes `Δ ln J` (continuity on the true volume change), and the
-  ADR-78 §3.7 deferrals finally open: porosity `n = 1 − (1−n₀)/J` and
-  Kozeny–Carman `k(J)`. Gates: ADR-78 battery rerun, drained equivalence vs
-  the P1 dry hypo brick (roller sides; `-b` conventions differ — UP is an
-  acceleration ×ρ_sat, brick is force/volume; summed-reaction weight check),
-  large-strain 1D consolidation vs a Gibson-family reference.
+- **P2 — the u–p element (second PR; #677 merged 2026-07-28, unblocking it):**
+  `-geom hypo` on `LadrunoUP`, reusing the kernel. Per-block decisions (the
+  ADR-78 §3 discipline):
+  - **u-rows** — the P1 brick lane verbatim: spatial total-stress internal
+    force `∫Bᵀ(σ′_pushed − αp·m) dv` on the current configuration (the −αp leg
+    against the SAME spatial gradients IS −Q_cur·p, so K/Q frame-AND-
+    configuration consistency is structural — ADR 78 §3.2 carried over);
+    `K = ∫BᵀcB dv +` the total-stress symmetric geometric term.
+  - **p-row coupling** — the ADR-78 GN22/GN11 incremental pairing verbatim,
+    with the coupling increment now the TRUE volume change: per GP
+    `α·tr(Δε)·dv/Δt`. `tr(Δε)` sums to `ln J` in the midpoint limit (the
+    Δln J continuity) and is EXACTLY zero on a rigid increment — the ADR-78
+    chord defect cannot arise by construction. S (evolved) + αH̃ go
+    incremental with it (mixing schemes on the p-row is the measured ADR-78
+    pump). Tangent: Q_cur / Q_curᵀ dominant-term blocks.
+  - **H/S** — rebuilt per evaluation on the CURRENT configuration:
+    `H = ∫(∇ₓN_p)ᵀ k_sp (∇ₓN_p) dv` with the skeleton-attached permeability
+    pushed spatially, `k_sp = kc(J)·R·diag(k̄)·Rᵀ`;
+    `S = ∫N_pᵀ (1/Q̄(n(J))) N_p dv`. The KINEMATIC porosity
+    `n(J) = 1 − (1−n₀)/J` (clamped) is always on under hypo — it is
+    kinematics, not a model. **Kozeny–Carman `k(J)` scaling is a constitutive
+    CHOICE and OPT-IN via `-kozenyCarman`** (normalized to 1 at n₀, floored at
+    1e-6 so a crushed GP degrades to near-impermeable without singularizing
+    H). The equal-order H̃ stays the reference unit-α Laplacian (a
+    stabilization term; O(ε) effect).
+  - **Seepage drive** — spatial gradients are already global-frame: no
+    pull-back (the corot Rᵀ exists because corot assembles in the material
+    frame). Full-tensor k_sp loop replaces the diagonal-k kernel call.
+  - **Mass / body / initial stiffness / Rayleigh** — reference-configuration
+    (mass and dead load per reference volume keep the summed-reaction weight
+    identity exact; `getInitialStiff` keeps R=I/J=1 semantics per ADR 78
+    §3.6; Rayleigh C stays the reference build — per-GP rotations define no
+    single element frame, the βK parts carry a documented O(rotation)
+    approximation in the damping forces only).
+  - **Scope v1**: 3D H8 equal-order std lane only (parser + ctor sanitizer
+    both police; 2D plane-strain embedding, TH vertex-p, bbar-in-rate-form
+    reserved). Serialization: payload widened 30→31 (`-kozenyCarman` flag) +
+    the committed feed strain as a guarded extra `Vector(nGP·6)` (the P1
+    pattern). New response `hypoState` = per-GP `[J, n(J), kcScale]`.
+  - **Gates** (tests/test_ladruno_up_element_hypo.py): parser guards; static
+    + transient-undrained rigid rotation (the tr(Δε) rigid-exactness);
+    consolidation reduces to linear (refinement-aware); drained equivalence
+    vs the P1 dry hypo brick (roller sides, `-b` conversion, summed-reaction
+    weight check); porosity/J + KC-formula identities via `hypoState` +
+    KC-slows-consolidation direction; undrained large-strain storage
+    `p ≈ Q̄·α·|ln λ|`. A Gibson-family closed-form large-strain consolidation
+    oracle is deferred (demand-driven) — the physics identities above pin the
+    same machinery without the PDE oracle.
 - **P3 — PDMY01 smoke** on the TIMs footing regime (`References/SFIM_model/`,
   bearing limit point) — the driving application, last.
 
@@ -274,6 +313,9 @@ nodal positions), so nothing else ships. The idData(28) packing
 | `tests/hypo_reference.py` | numpy oracle (emits `tests/hypo_cases.txt`) |
 | `tests/hypo_kernel_check.cpp` + `tests/test_hypo_kernel_cpp.py` | P0 g++ cross-check |
 | `tests/test_ladrunoBrick_hypo.py` | P1 gates |
+| `SRC/element/ladrunoUP/LadrunoUP.h/.cpp` | P2 hypo lane: state, updateHypo, current-config blocks, incremental p-row, hypoState response, serialization 30→31 + guarded feed |
+| `SRC/element/ladrunoUP/OPS_LadrunoUP.cpp` | P2: `-geom hypo` parse + guards, `-kozenyCarman` |
+| `tests/test_ladruno_up_element_hypo.py` | P2 gates |
 
 No upstream file is touched; no new class tag (the seam is tag-free by
 design).

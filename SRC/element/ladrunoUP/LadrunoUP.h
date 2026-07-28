@@ -126,8 +126,10 @@ class LadrunoUP : public Element
               bool lumped,
               int stabMode, double stabValue,              // 0=off,1=auto(alpha0),2=manual(alpha)
               bool dynSeepage,                             // default true
-              int geomMethod = 0);                         // SolidTransformation method id
-                                                           // (ADR 78: 0=linear, 1=corot 3D-only)
+              int geomMethod = 0,                          // SolidTransformation method id
+                                                           // (ADR 78: 0=linear, 1=corot 3D-only;
+                                                           //  ADR 79: 3=hypo, H8-only)
+              bool kozenyCarman = false);                  // ADR 79 P2: opt-in k(J) evolution (hypo)
     LadrunoUP();                                           // broker
     ~LadrunoUP();
 
@@ -259,6 +261,45 @@ class LadrunoUP : public Element
     // pre-ADR-78 float-op sequence exactly.
     SolidTransformation *theGeom_;
     bool corotActive_;
+
+    // ---- geometry method: hypo (ADR 79 P2) ----------------------------------
+    // Rate-form updated-Lagrangian on the u-p family: per GP the Hughes–Winget
+    // midpoint objective strain increment is de-rotated into the fixed
+    // unrotated (Green–Naghdi) material frame (LadrunoHypoKernel.h),
+    // accumulated (hypoFeed_) and fed via setTrialStrain; assembly runs on the
+    // CURRENT configuration (spatial gradients via F⁻¹, dv = J·dV) with the
+    // material stress/tangent pushed forward by R = polar(F_trial). The p-row
+    // continuity coupling becomes the per-GP α·tr(Δε)·dv/Δt increment — the
+    // Δln J form (tr(Δε) sums to ln J in the midpoint limit and is EXACTLY
+    // zero on a rigid increment, so the ADR-78 chord defect cannot arise by
+    // construction). Porosity evolves kinematically, n(J) = 1 − (1−n₀)/J,
+    // feeding the storage coefficient per GP; permeability evolution
+    // (Kozeny–Carman scaling on k) is a constitutive CHOICE and therefore
+    // OPT-IN via -kozenyCarman. Every hypo branch is behind hypoActive_ so
+    // -geom linear|corot stay bit-identical. v1: 3D H8 equal-order std only.
+    bool hypoActive_;
+    bool kozenyCarman_;
+
+    int  updateHypo(void);                 // the hypo update + per-eval caches
+    void buildSolidKHypo(Matrix &Ks);      // spatial ∫BᵀcB + ∫GᵀΣ_tot G (current dv)
+    void buildCoreForceHypo(Vector &fu);   // ∫Bᵀ(σ′_pushed − αp·m) dv (fills pScratch_)
+    double hypoPorosity(int gp) const;     // n(J) = 1 − (1−n₀)/J, clamped
+
+    // hypo per-GP state (COMMITTED feed strain is the only persistent state —
+    // serialized as a guarded extra Vector(nGP·6)) + per-evaluation caches
+    // refreshed by updateHypo() (sized in configureSizing when hypo, else empty)
+    std::vector<double> hypoFeed_;         // nGP·6 trial accumulated feed strain
+    std::vector<double> hypoFeedCommit_;   // nGP·6 committed
+    std::vector<double> hypoR_;            // nGP·9 polar(F_trial), row-major
+    std::vector<double> hypoJ_;            // nGP   det F_trial
+    std::vector<double> hypoTrDeps_;       // nGP   tr(Δε) of the step increment
+    std::vector<double> hypoDNuX_;         // nGP·nNodes·3 spatial solid gradients
+    std::vector<double> hypoDNpX_;         // nGP·nP·3 spatial pressure gradients
+    std::vector<double> hypoDvCur_;        // nGP   current dv = J·dv_ref
+    std::vector<double> hypoKsp_;          // nGP·9 spatial permeability kc(J)·R·diag(k̄)·Rᵀ
+    std::vector<double> hypoInvQbar_;      // nGP   storage coeff 1/Q̄(n(J))
+    std::vector<double> HcurBlk_;          // nP·nP current-config Darcy H
+    std::vector<double> ScurBlk_;          // nP·nP current-config storage S
 
     // ---- loads --------------------------------------------------------------
     int applyLoad_;
