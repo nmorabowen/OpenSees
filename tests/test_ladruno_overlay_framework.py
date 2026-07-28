@@ -463,7 +463,8 @@ def _run_child(body):
     with open(path, "w") as f:
         f.write(body)
     proc = subprocess.run([sys.executable, "-S", "-u", path],
-                          capture_output=True, text=True, timeout=180)
+                          capture_output=True, text=True, timeout=180,
+                          encoding="utf-8", errors="replace")
     return proc.stdout + proc.stderr, proc.returncode
 
 

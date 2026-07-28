@@ -446,10 +446,12 @@ def _run_child(body, timeout=300, merge=False):
     if merge:
         proc = subprocess.run([sys.executable, "-S", "-u", path],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, timeout=timeout)
+                              text=True, timeout=timeout,
+                              encoding="utf-8", errors="replace")
         return proc.stdout, proc.returncode
     proc = subprocess.run([sys.executable, "-S", "-u", path],
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout,
+                          encoding="utf-8", errors="replace")
     return proc.stdout + proc.stderr, proc.returncode
 
 
