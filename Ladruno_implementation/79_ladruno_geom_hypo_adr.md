@@ -212,7 +212,12 @@ committed state — no accumulation-within-iteration hazard.
   invariants — rigid-increment Δε ≡ 0, polar orthogonality, rotation-of-
   identity-tangent invariance).
 - **P1 — dry solid (this PR):** the hypo lane on `LadrunoBrick` (H8, std).
-  Gates (tests/test_ladrunoBrick_hypo.py):
+  Gates (tests/test_ladrunoBrick_hypo.py) — ALL GREEN; measured:
+  cantilever tip at ~26 % deflection hypo=1.5783 vs corot=1.5738 (0.29 %) vs
+  finite=1.5806 (0.15 %); simultaneous-rotation J2-kin objectivity error
+  6.6e-3 (the predicted O(Δθ·Δε) ≈ 5e-3 scale); rigid 0.5 rad/step to 2.5 rad
+  stress-free at 1e-7·E; uniaxial-strain 25 % exact vs (λ+2μ)lnλ at 5e-4 and
+  the finite+LogStrain ratio = J to 1e-3; shear γ=2 element==oracle at 1e-8:
   1. rigid-rotation zero stress through large multi-step rotation (tight —
      §3 step 3 makes it near-identity, asserted at solver tolerance);
   2. `-geom linear` unchanged + `-geom hypo` ≡ linear at infinitesimal strain;
@@ -223,7 +228,13 @@ committed state — no accumulation-within-iteration hazard.
   5. elastic simple shear to γ = 2 vs the numpy oracle (exact) — documents
      the GN signature (monotone, no Jaumann oscillation);
   6. J2 kinematic-hardening cyclic objectivity in the hypo path's OWN
-     convention (fixed material frame — the corot test pattern).
+     convention (fixed material frame — the corot test pattern): (a)
+     deform-then-rigid-rotate freezes the material-frame stress EXACTLY (the
+     HW rigid-increment property), (b) simultaneous rotation+stretch agrees
+     to the documented incremental-objectivity error scale;
+  7. database round-trip: the guarded Vector(48) feed-strain payload survives
+     save/restore — the post-restore step matches the uninterrupted run to
+     1e-9.
 - **P2 — the u–p element (follow-up PR, after #677 merges):** extend to
   `LadrunoUP` reusing the kernel: the ADR-78 machinery carries over (GN22/GN11
   incremental p-row — the chord-defect findings), the incremental volumetric
