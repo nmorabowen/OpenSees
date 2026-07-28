@@ -211,7 +211,7 @@ const Matrix &
 Element::getDamp(void) 
 {
   if (index  == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   // now compute the damping matrix
@@ -236,7 +236,7 @@ const Matrix &
 Element::getMass(void)
 {
   if (index  == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   // zero the matrix & return it
@@ -249,7 +249,7 @@ const Vector &
 Element::getResistingForceIncInertia(void) 
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   Matrix *theMatrix = theMatrices[index]; 
@@ -312,11 +312,20 @@ Element::getResistingForceIncInertia(void)
 
 
 const Vector &
-Element::getRayleighDampingForces(void) 
+Element::getRayleighDampingForces(void)
 {
 
+  // Ladruno — the `index == -1` self-heal (here and at the 10 sibling sites in
+  // this file) used to call the VIRTUAL setRayleighDampingFactors. An element
+  // that overrides it to ignore Rayleigh damping — six do in this fork
+  // (LadrunoUP, LadrunoRigidBody and the four penalty ties) — never reaches the
+  // base allocator, so `index` stays -1 and the very next line dereferences
+  // theMatrices[-1]: an access violation, not a wrong number. Qualifying the
+  // call lets the base allocate its own scratch slot unconditionally; the
+  // stored factors are untouched, so an element that ignores Rayleigh simply
+  // reports a zero damping force, which is what it means.
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   Matrix *theMatrix = theMatrices[index]; 
@@ -509,7 +518,7 @@ const Vector &
 Element::getResistingForceSensitivity(int gradIndex)
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   Vector *theVector = theVectors1[index];
@@ -522,7 +531,7 @@ const Matrix &
 Element::getTangentStiffSensitivity(int gradIndex)
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   static bool warningShown = false;
@@ -542,7 +551,7 @@ const Matrix &
 Element::getInitialStiffSensitivity(int gradIndex)
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   static bool warningShown = false;
@@ -561,7 +570,7 @@ const Matrix &
 Element::getCommittedStiffSensitivity(int gradIndex)
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   static bool warningShown = false;
@@ -580,7 +589,7 @@ const Matrix &
 Element::getMassSensitivity(int gradIndex)
 {
   if (index == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   Matrix *theMatrix = theMatrices[index];
@@ -610,7 +619,7 @@ const Matrix &
 Element::getDampSensitivity(int gradIndex) 
 {
   if (index  == -1) {
-    this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+    this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
   // now compute the damping matrix
@@ -802,7 +811,7 @@ const Matrix &
 Element::getGeometricTangentStiff()
 {
     if (index == -1) {
-	this->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+	this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
     }
     
     Matrix *theMatrix = theMatrices[index];

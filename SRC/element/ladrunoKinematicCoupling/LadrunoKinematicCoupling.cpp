@@ -38,6 +38,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <math.h>
@@ -757,21 +758,30 @@ Response* LadrunoKinematicCoupling::setResponse(const char** argv, int argc, OPS
 {
   if (argc < 1) return 0;
   int n = (nGap > 0) ? nGap : 1;
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "couplingForce") == 0)
+  if (LadrunoResp::is(argv[0], "force"))
     return new ElementResponse(this, 1, Vector(n));
-  if (strcmp(argv[0], "gap") == 0)
+  if (LadrunoResp::is(argv[0], "gap"))
     return new ElementResponse(this, 2, Vector(n));
-  if (strcmp(argv[0], "kt") == 0 || strcmp(argv[0], "k") == 0)
+  if (LadrunoResp::is(argv[0], "penalty"))      // kt / k / penalty
     return new ElementResponse(this, 3, 0.0);
-  if (strcmp(argv[0], "kr") == 0)
+  if (LadrunoResp::is(argv[0], "rotPenalty"))   // kr
     return new ElementResponse(this, 4, 0.0);
-  if (strcmp(argv[0], "lambda") == 0 || strcmp(argv[0], "augLambda") == 0)
+  if (LadrunoResp::is(argv[0], "lambda"))
     return new ElementResponse(this, 5, Vector(n));
-  if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
+  if (LadrunoResp::is(argv[0], "dtCritical"))
     return new ElementResponse(this, 6, 0.0);
-  if (strcmp(argv[0], "nGap") == 0 || strcmp(argv[0], "tiedDOFs") == 0)
+  if (LadrunoResp::is(argv[0], "tiedDOFs"))
     return new ElementResponse(this, 7, 0.0);
-  return 0;
+  // Ladruno — the tie-family audit pair, present on LadrunoEmbeddedNode/Rebar
+  // but missing here: the ARTIFICIAL penalty energy currently stored (net it
+  // out of a global EnergyBalance) and the constraint violation ||g||.
+  // NOTE: no massPenalty response — this element lumps a per-DOF DIAGONAL
+  // bipenalty mass (*M0), not the single scalar the rest of the family reports.
+  if (LadrunoResp::is(argv[0], "penaltyEnergy"))
+    return new ElementResponse(this, 8, 0.0);
+  if (LadrunoResp::is(argv[0], "constraintViolation"))
+    return new ElementResponse(this, 9, 0.0);
+  return this->Element::setResponse(argv, argc, s);
 }
 
 int LadrunoKinematicCoupling::getResponse(int responseID, Information& eleInfo)
@@ -793,6 +803,19 @@ int LadrunoKinematicCoupling::getResponse(int responseID, Information& eleInfo)
   case 5: return eleInfo.setVector(lambdaAL);
   case 6: { double dt = this->getExplicitCriticalTimeStep(); return eleInfo.setDouble(dt > 0.0 ? dt : 0.0); }
   case 7: return eleInfo.setDouble((double)nGap);
-  default: return -1;
+  case 8: {   // artificial penalty energy 1/2 sum_row k_row g_row^2
+    Vector g(nGap); this->computeGap(g);
+    double E = 0.0;
+    for (int row = 0; row < nGap; row++)
+      E += this->rowPenalty(row) * g(row) * g(row);
+    return eleInfo.setDouble(0.5 * E);
+  }
+  case 9: {   // constraint violation ||g||
+    Vector g(nGap); this->computeGap(g);
+    double g2 = 0.0;
+    for (int row = 0; row < nGap; row++) g2 += g(row) * g(row);
+    return eleInfo.setDouble(sqrt(g2));
+  }
+  default: return this->Element::getResponse(responseID, eleInfo);
   }
 }

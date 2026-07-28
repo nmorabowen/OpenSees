@@ -37,6 +37,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Renderer.h>
 #include <OPS_Globals.h>
 #include <elementAPI.h>
@@ -668,24 +669,27 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
     return new ElementResponse(this, 2, 0.0);
   if (strcmp(argv[0], "axialForce") == 0)
     return new ElementResponse(this, 3, 0.0);
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "localForce") == 0)
+  // Ladruno — GLOBAL-component tie traction (F_ax*dirCur + kt*g_t). It used to
+  // also answer to "localForce"; that spelling is reserved family-wide for a
+  // genuine local/interface frame, which this element does not have.
+  if (LadrunoResp::is(argv[0], "force"))
     return new ElementResponse(this, 4, Vector(ndm));
   // ADR 20 §10.2b diagnostics — the ARTIFICIAL penalty energy currently stored
   // (transverse 1/2 kt|gt|^2, plus the perfect-bond axial 1/2 k s^2 when there
   // is no bond law), the transverse constraint violation |gt|, and the resolved
   // transverse penalty (useful with -kt auto). These let the user net the
   // artificial penalty energy out of a global EnergyBalance and audit the tie.
-  if (strcmp(argv[0], "penaltyEnergy") == 0)
+  if (LadrunoResp::is(argv[0], "penaltyEnergy"))
     return new ElementResponse(this, 5, 0.0);
-  if (strcmp(argv[0], "constraintViolation") == 0)
+  if (LadrunoResp::is(argv[0], "constraintViolation"))
     return new ElementResponse(this, 6, 0.0);
-  if (strcmp(argv[0], "kt") == 0 || strcmp(argv[0], "penalty") == 0)
+  if (LadrunoResp::is(argv[0], "penalty"))      // kt / k / penalty
     return new ElementResponse(this, 7, 0.0);
   // physical bond energy = perimeter*L_trib * (cumulative material bond work),
   // single-sourced from the bond law's own "energy" response (bond-law-agnostic;
   // 0 for perfect bond, where the axial energy is artificial and lives in
   // penaltyEnergy instead). ADR 20 §10.2b.
-  if (strcmp(argv[0], "bondEnergy") == 0 || strcmp(argv[0], "bondDissipation") == 0) {
+  if (LadrunoResp::is(argv[0], "bondEnergy")) {
     if (bondEnergyResp != 0) { delete bondEnergyResp; bondEnergyResp = 0; }
     if (bondMat != 0) {
       const char* a[1] = {"energy"};
@@ -695,23 +699,23 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
   }
   // current working bar axis (the co-rotated dirCur under -corot; the frozen
   // reference dir otherwise) — ADR 20 §10.5.
-  if (strcmp(argv[0], "dir") == 0 || strcmp(argv[0], "barAxis") == 0)
+  if (LadrunoResp::is(argv[0], "barAxis"))      // dir / barAxis
     return new ElementResponse(this, 9, Vector(ndm));
   // AL multiplier and the raw constraint gap (ADR 20 §10.4 diagnostics).
-  if (strcmp(argv[0], "augLambda") == 0 || strcmp(argv[0], "lambda") == 0)
+  if (LadrunoResp::is(argv[0], "lambda"))
     return new ElementResponse(this, 10, Vector(ndm));
-  if (strcmp(argv[0], "gap") == 0)
+  if (LadrunoResp::is(argv[0], "gap"))
     return new ElementResponse(this, 11, Vector(ndm));
   // ADR 20 §10.6 bipenalty diagnostics: the resolved mass penalty m_p, and the
   // element's self-reported critical step dt = 2√(m_p/k_eff) (the bounded penalty
   // mode — 0 when bipenalty is off). This closed-form report is also what
   // getExplicitCriticalTimeStep() feeds into CriticalTimeStep (§10.6.1), since the
   // per-element eigensolve alone sees this coupling element as λ_max=0 (see getMass).
-  if (strcmp(argv[0], "mpenalty") == 0 || strcmp(argv[0], "massPenalty") == 0)
+  if (LadrunoResp::is(argv[0], "massPenalty"))
     return new ElementResponse(this, 12, 0.0);
-  if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
+  if (LadrunoResp::is(argv[0], "dtCritical"))
     return new ElementResponse(this, 13, 0.0);
-  return 0;
+  return this->Element::setResponse(argv, argc, s);
 }
 
 int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
@@ -763,6 +767,6 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
     double dt = this->getExplicitCriticalTimeStep();
     return eleInfo.setDouble(dt > 0.0 ? dt : 0.0);
   }
-  default: return -1;
+  default: return this->Element::getResponse(responseID, eleInfo);
   }
 }

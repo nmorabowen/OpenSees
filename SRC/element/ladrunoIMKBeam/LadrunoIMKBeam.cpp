@@ -41,6 +41,7 @@
 #include <Information.h>
 #include <Parameter.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <Renderer.h>
 #include <classTags.h>
@@ -531,41 +532,51 @@ Response *LadrunoIMKBeam::setResponse(const char **argv, int argc, OPS_Stream &s
 {
   Response *theResponse = 0;
 
+  if (argc < 1) return 0;
+
   s.tag("ElementOutput");
   s.attr("eleType", "LadrunoIMKBeam");
   s.attr("eleTag", this->getTag());
   s.attr("node1", connectedExternalNodes(0));
   s.attr("node2", connectedExternalNodes(1));
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0 ||
-      strcmp(argv[0], "globalForce") == 0 || strcmp(argv[0], "localForce") == 0) {
+  // Ladruno — vocabulary realigned on the DispBeamColumn family: force /
+  // globalForce are the GLOBAL end forces, localForce the element-frame ones
+  // (it used to be a third spelling of the global vector), chordRotation ==
+  // basicDeformation == deformation, plasticRotation == hingeRotation.
+  if (LadrunoResp::is(argv[0], "force") ||
+      LadrunoResp::is(argv[0], "globalForce")) {
     theResponse = new ElementResponse(this, 1, P);
 
-  } else if (strcmp(argv[0], "basicForce") == 0 || strcmp(argv[0], "basicForces") == 0) {
+  } else if (LadrunoResp::is(argv[0], "localForce")) {
+    theResponse = new ElementResponse(this, 6, Vector(12));
+
+  } else if (LadrunoResp::is(argv[0], "basicForce")) {
     theResponse = new ElementResponse(this, 2, Vector(6));
 
-  } else if (strcmp(argv[0], "basicDeformation") == 0 ||
-             strcmp(argv[0], "deformation") == 0 ||
-             strcmp(argv[0], "deformations") == 0) {
+  } else if (LadrunoResp::is(argv[0], "chordRotation")) {
     theResponse = new ElementResponse(this, 3, Vector(6));
 
-  } else if (strcmp(argv[0], "hingeRotation") == 0 ||
-             strcmp(argv[0], "hingeRotations") == 0 ||
-             strcmp(argv[0], "plasticRotation") == 0) {
+  } else if (LadrunoResp::is(argv[0], "plasticRotation")) {
     theResponse = new ElementResponse(this, 4, Vector(4));
 
-  } else if (strcmp(argv[0], "hingeMoment") == 0 ||
-             strcmp(argv[0], "hingeMoments") == 0) {
+  } else if (LadrunoResp::is(argv[0], "hingeMoment")) {
     theResponse = new ElementResponse(this, 5, Vector(4));
 
-  } else if ((strcmp(argv[0], "material") == 0 || strcmp(argv[0], "hinge") == 0) &&
-             argc > 2) {
+  } else if ((LadrunoResp::is(argv[0], "material") ||
+              strcmp(argv[0], "hinge") == 0) && argc > 2) {
     int idx = atoi(argv[1]);
     if (idx >= 0 && idx < 4 && theMat[idx] != 0)
       theResponse = theMat[idx]->setResponse(&argv[2], argc - 2, s);
   }
 
   s.endTag();
+
+  // Ladruno — base vocabulary (dampingForce, dynamicForce, inertialForce);
+  // Element::setResponse opens its own ElementOutput tag, so this MUST come
+  // after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, s);
   return theResponse;
 }
 
@@ -589,7 +600,28 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
     m(0) = q(1);  m(1) = q(2);  m(2) = q(3);  m(3) = q(4);
     return info.setVector(m);
   }
+  case 6: {
+    // Ladruno — local-frame end forces from the basic
+    // q = [N, Mz_i, Mz_j, My_i, My_j, T], same mapping as DispBeamColumn3d.
+    // No element loads on this element, so there is no p0 correction.
+    static Vector Pl(12);
+    const double L = theCoordTransf->getInitialLength();
+    const double oneOverL = (L > 0.0) ? 1.0 / L : 0.0;
+
+    Pl(0)  = -q(0);           Pl(6)  = q(0);          // axial
+    Pl(3)  = -q(5);           Pl(9)  = q(5);          // torsion
+
+    double V = (q(1) + q(2)) * oneOverL;              // Mz -> shear along y
+    Pl(5)  = q(1);            Pl(11) = q(2);
+    Pl(1)  =  V;              Pl(7)  = -V;
+
+    V = (q(3) + q(4)) * oneOverL;                     // My -> shear along z
+    Pl(4)  = q(3);            Pl(10) = q(4);
+    Pl(2)  = -V;              Pl(8)  =  V;
+
+    return info.setVector(Pl);
+  }
   default:
-    return -1;
+    return this->Element::getResponse(responseID, info);
   }
 }

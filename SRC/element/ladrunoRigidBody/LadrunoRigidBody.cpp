@@ -45,6 +45,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <classTags.h>
 #include <OPS_Globals.h>
 #include <math.h>
@@ -696,7 +697,7 @@ int LadrunoRigidBody::recvSelf(int, Channel&, FEM_ObjectBroker&)
 Response* LadrunoRigidBody::setResponse(const char** argv, int argc, OPS_Stream& s)
 {
   if (argc < 1) return 0;
-  if (strcmp(argv[0], "comDisp")  == 0 || strcmp(argv[0], "centroidDisp") == 0)
+  if (LadrunoResp::is(argv[0], "comDisp"))
     return new ElementResponse(this, 1, Vector(3));
   if (strcmp(argv[0], "comVel")   == 0)
     return new ElementResponse(this, 2, Vector(3));
@@ -704,15 +705,20 @@ Response* LadrunoRigidBody::setResponse(const char** argv, int argc, OPS_Stream&
     return new ElementResponse(this, 3, Vector(3));
   if (strcmp(argv[0], "mass")     == 0)
     return new ElementResponse(this, 4, Vector(1));
-  if (strcmp(argv[0], "orientation") == 0 || strcmp(argv[0], "quaternion") == 0)
+  if (LadrunoResp::is(argv[0], "orientation"))
     return new ElementResponse(this, 5, Vector(4));   // (qx, qy, qz, qs)
-  if (strcmp(argv[0], "angularVel") == 0 || strcmp(argv[0], "omega") == 0)
+  if (LadrunoResp::is(argv[0], "angularVel"))
     return new ElementResponse(this, 6, Vector(3));   // spatial ω
-  if (strcmp(argv[0], "angularMom") == 0 || strcmp(argv[0], "L") == 0)
+  if (LadrunoResp::is(argv[0], "angularMom"))
     return new ElementResponse(this, 7, Vector(3));   // spatial angular momentum
-  if (strcmp(argv[0], "omegaBody") == 0 || strcmp(argv[0], "angularVelBody") == 0)
+  if (LadrunoResp::is(argv[0], "omegaBody"))
     return new ElementResponse(this, 8, Vector(3));   // body-frame ω (flip metric)
-  return 0;
+  // Ladruno — answered HERE, not by the base chain below: this element keeps
+  // its own condensed damping (*dampF) and ignores the Rayleigh factors, so the
+  // base's betaK*getTangentStiff() composition would not describe it.
+  if (LadrunoResp::is(argv[0], "dampingForce") && dampF != 0)
+    return new ElementResponse(this, 9, Vector(dampF->Size()));
+  return this->Element::setResponse(argv, argc, s);
 }
 
 int LadrunoRigidBody::getResponse(int responseID, Information& eleInfo)
@@ -760,8 +766,10 @@ int LadrunoRigidBody::getResponse(int responseID, Information& eleInfo)
     for (int k = 0; k < 3; k++) out3(k) = wBody[k];
     return eleInfo.setVector(out3);
   }
+  case 9:
+    return (dampF != 0) ? eleInfo.setVector(*dampF) : -1;
   default:
-    return -1;
+    return this->Element::getResponse(responseID, eleInfo);
   }
 }
 
