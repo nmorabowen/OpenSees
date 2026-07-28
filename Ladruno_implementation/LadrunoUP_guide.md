@@ -10,7 +10,8 @@ partially-drained seismic response, and liquefaction triggering.
 One element covers the whole geometry family through internal, stateless **shape
 providers**: `(ndm, nodeCount)` dispatches. v1 ships **T3, Q4, H8** (equal-order
 linear p, stabilized) and Bézier **T6, Tet10** (Taylor–Hood: quadratic Bernstein
-u, vertex-linear p). Solid formulation is `-formulation std|bbar`, `-geom linear`.
+u, vertex-linear p). Solid formulation is `-formulation std|bbar`, `-geom
+linear|corot` (corot = 3D large-rotation, ADR 78 — see §9b).
 
 The load-bearing divergence from upstream OpenSees's eight UP elements is the
 **honest pressure DOF**: the nodal DOF *is* p (upstream's is ∫p·dt, recorded as a
@@ -36,7 +37,7 @@ element LadrunoUP $tag $n1 … $nk $matTag \
     <-formulation std|bbar> <-pOrder equal|linear> <-lumped> \
     <-stab auto <$alpha0> | off | $alpha>   ;# equal-order default: auto (alpha0=0.25)
     <-dynSeepage on|off>        ;# default OFF (P4 B5 adjudication); on = research opt-in
-    <-geom linear>              ;# only accepted value (axis reserved)
+    <-geom linear|corot>        ;# corot = 3D-only large-rotation u-p (ADR 78); finite reserved
 ```
 
 `(ndm, k)` selects the provider: **(2,3) T3 · (2,4) Q4 · (2,6) Bézier T6 ·
@@ -444,10 +445,44 @@ K₀/H̃ cache-dirty path); MP smoke + serial DB round-trip
 
 ---
 
+## 9b. Geometric nonlinearity: `-geom corot` (ADR 78)
+
+`-geom corot` opens large **rotation** + geometric (load) stiffness on the 3D
+lanes (H8, Bézier Tet10) while reusing the small-strain material library
+unchanged (PDMY01 et al. — the whole point; `-geom finite` stays reserved
+because the LogStrain lifting adaptor assumes a linear-elastic inner law).
+What it buys and what it does not:
+
+- **Buys:** the wedge rotation a bearing mechanism needs; total-stress
+  prestress in the geometric stiffness (pore pressure feeds K_geo); frame-
+  consistent u-p coupling with an **incremental storage-coupling residual**
+  `Qᵀ·Δu_d/Δt` (ADR 78 §3.3 — a velocity-form coupling would accrue a
+  systematic, Q̄-amplified compressive pore pressure from the finite-rotation
+  chord; the incremental form makes a rigidly rotating saturated block
+  generate *exactly zero* excess pore pressure, gated at solver tolerance);
+  seepage gravity drive that follows the rotated skeleton.
+- **Does not buy:** large deformational strain (a developed shear band is
+  outside corot), porosity/permeability evolution with volume change (deferred
+  with `finite`), or 2D (`-geom corot` in 2D is fatal — a planar node cloud
+  has no polar rotation).
+- Composes with `-formulation std|bbar`, `-pOrder`, `-stab`, `-lumped`.
+  `stresses`/`stressesTotal` report in the **corotated material frame**;
+  `darcyFlux` is pushed forward to the **global frame**.
+- **The `-b` trap when twinning against a dry model:** LadrunoUP `-body` is an
+  ACCELERATION (× the material's saturated ρ); `LadrunoBrick -b` is a FORCE
+  PER UNIT VOLUME. Convert (`b_brick = ρ_sat·b_UP`, or buoyant γ′ for a
+  drained twin) and always check the summed base reaction against the expected
+  weight — it catches a mix-up instantly and nothing else does.
+
+Battery: `tests/test_ladruno_up_element_corot.py` (rigid-rotation gates,
+rotated-frame hydrostatic seepage, corot→linear consolidation, and the
+drained-equivalence gate against a dry `LadrunoBrick -geom corot` twin).
+
 ## 10. Limitations and roadmap
 
-- **v1 is `-geom linear`, `-formulation std|bbar` only.** Finite-strain u-p
-  (corot/finite) is a reserved research phase; EAS/URI/hourglass are not u-p axes.
+- **v1 solid part is `-formulation std|bbar`; `-geom linear|corot` (corot 3D
+  lanes, ADR 78).** `-geom finite` u-p is a reserved research phase (material-
+  side blocker, ADR 78 §1.1); EAS/URI/hourglass are not u-p axes.
 - **Equal-order quadratic is a reserved axis** (no theory/gate) — quadratic shapes
   are Taylor–Hood only.
 - **bbar-on-TH is legal but ungated.** The formulation axis was validated at P1/P2

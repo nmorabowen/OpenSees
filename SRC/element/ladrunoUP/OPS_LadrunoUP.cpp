@@ -41,7 +41,13 @@
 //       <-formulation std|bbar> <-pOrder equal|linear> <-lumped>
 //       <-stab auto <$alpha0> | off | $alpha>   ;# equal-order default: auto (a0=0.25)
 //       <-dynSeepage on|off>                 ;# default OFF (P4 B5 adjudication)
-//       <-geom linear>                       ;# only accepted value (axis reserved)
+//       <-geom linear|corot>                 ;# corot is 3D-only (ADR 78); finite reserved
+//
+// -b / -body UNIT CONVENTION (the silent factor-of-rho trap, ADR 78 §5): this
+// element's body values are ACCELERATIONS — multiplied by the material's
+// saturated mixture density getRho() in the residual (the SSPbrickUP
+// convention). LadrunoBrick's -b is a FORCE PER UNIT VOLUME (used directly).
+// A UP-vs-brick twin model must convert: b_brick = rho_sat * b_UP.
 //
 // (ndm, k) selects the shape provider: (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6 ·
 // (3,8) H8 · (3,10) Bézier Tet10. The quadratic Bézier shapes (2,6)/(3,10) are
@@ -63,6 +69,7 @@
 
 #include <LadrunoUP.h>
 #include <NDMaterial.h>
+#include <SolidTransformation.h>   // ADR 78 — -geom method ids
 #include <elementAPI.h>
 #include <ID.h>
 #include <Vector.h>
@@ -196,6 +203,7 @@ void *OPS_LadrunoUP()
   int stabMode = 1;        // 0 = off, 1 = auto, 2 = manual — default auto
   double stabValue = 0.25; // auto: alpha0; manual: alpha
   bool stabGiven = false;
+  int geomMethodID = SolidTransformation::METHOD_LINEAR;   // ADR 78 -geom axis
   bool dynSeepage = false;  // P4 B5 adjudication: default OFF. The u-p
                             // dynamic-seepage drive (b - u_ddot) diverges under
                             // quasi-static dt-refinement (P1, ZS84 sweep) AND
@@ -450,14 +458,34 @@ void *OPS_LadrunoUP()
         return 0;
       }
 
-    } else if (strcmp(opt, "-geom") == 0) {
+    } else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       char g[32];
       upGetTok(g, sizeof(g));
-      if (strcmp(g, "linear") != 0) {
-        opserr << "ERROR LadrunoUP " << tag << " -- -geom '" << g
-               << "' not supported: only 'linear' is accepted (the axis is "
-                  "reserved; finite-strain u-p is a research phase, ADR 71 "
-                  "§2.4)\n";
+      if (strcmp(g, "linear") == 0) {
+        geomMethodID = SolidTransformation::METHOD_LINEAR;
+      } else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0) {
+        // ADR 78: EICR corotational on the solid part — large rotation +
+        // geometric stiffness, small material strain; reuses the small-strain
+        // material library (PDMY01 et al.) unchanged.
+        if (ndm != 3) {
+          opserr << "ERROR LadrunoUP " << tag << " -- -geom corot is 3D-only "
+                    "(H8 / Bezier Tet10): a planar node cloud has a rank-2 "
+                    "Procrustes cross-covariance (det(H) = 0), so the polar "
+                    "rotation is undefined in 2D (ADR 78 §2)\n";
+          return 0;
+        }
+        geomMethodID = SolidTransformation::METHOD_COROT;
+      } else if (strcmp(g, "finite") == 0) {
+        opserr << "ERROR LadrunoUP " << tag << " -- -geom finite is reserved: "
+                  "it needs a FiniteStrainNDMaterial (setTrialF), and the "
+                  "LogStrain lifting adaptor assumes a linear-elastic inner "
+                  "law — no usable soil constitutive path exists yet (ADR 78 "
+                  "§1.1). Use -geom corot for large rotation with the "
+                  "small-strain material library\n";
+        return 0;
+      } else {
+        opserr << "ERROR LadrunoUP " << tag << " -- unknown -geom '" << g
+               << "' (want linear|corot; finite is reserved, ADR 78)\n";
         return 0;
       }
 
@@ -555,10 +583,11 @@ void *OPS_LadrunoUP()
     }
   }
 
-  // ---- build (pinned WP1.A ctor, verbatim) -----------------------------------
+  // ---- build (pinned WP1.A ctor + the ADR-78 geom trailing arg) --------------
   return new LadrunoUP(tag, ndm, nodeTags, *mat,
                        thick, Kf, poro, rhoF, perm,
                        biotAlpha, Ks, body, fluidBody,
                        formulation, pOrder, lumped,
-                       stabMode, stabValue, dynSeepage);
+                       stabMode, stabValue, dynSeepage,
+                       geomMethodID);
 }
