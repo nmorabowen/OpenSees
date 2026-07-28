@@ -64,6 +64,8 @@
 #include <chrono>
 #include <ctime>
 #include <cstdio>
+#include <cstdlib>     // Ladruno ADR-75 P1i: getenv for resolveRunThreads
+#include <thread>      // Ladruno ADR-75 P1i: hardware_concurrency fallback
 
 namespace ops_profiler {
 
@@ -439,12 +441,22 @@ Profiler::buildMeta() const
     m.cpu_ms_total  = (cpuNs  > 0) ? static_cast<double>(cpuNs)  / 1.0e6 : 0.0;
 
     m.timestamp = runClock_.timestamp;
-    m.threads   = static_cast<int64_t>(threads_.size());
+    // Ladruno ADR-75 P1i: NOT threads_.size(). See resolveRunThreads() in the
+    // header for why that number was wrong for every consumer that read it.
+    m.threads   = resolveRunThreads(static_cast<int64_t>(threads_.size()));
 
     // model / engine_sha / integrator / algorithm / solver / units and the
-    // size normalizers (nDOF/nElem/nNode/nnz, dt_cr, oversample_ratio) are
+    // size normalizers (nDOF/nElem/nNode, dt_cr, oversample_ratio) are
     // populated by the P5 command layer from the live SimulationInformation /
-    // SOE / integrator before handing meta to the writer. P1 leaves them defaulted.
+    // SOE / Domain / integrator before handing meta to the writer.
+    //
+    // Ladruno ADR-75 P1i: this comment used to promise nElem/nNode too, but the
+    // command layer only ever filled nDOF -- so both shipped as a hard 0 while a
+    // reader had every reason to trust them (ADR-76 issue report). Now filled at
+    // all four call sites. `nnz` is STILL 0 and is deliberately left out of the
+    // list above: LinearSOE exposes no size-agnostic nnz accessor (only some
+    // concrete SOEs carry the member), so filling it would mean a virtual on an
+    // upstream base class -- out of scope here, and 0 is at least uniform.
     if (config_.perStep) {
         m.nSteps = static_cast<int64_t>(series_.nSteps());
         // dt_min / dt_max from the recorded per-step series (P0#5 inputs; the
@@ -552,6 +564,47 @@ Profiler::recordStep(int64_t step, double t, double dt, int32_t iters)
     for (std::size_t p = 0; p < nPhase; ++p)
         series_.wall_ms.push_back(p == 0 ? static_cast<float>(stepWallNs * 1e-6)
                                          : 0.0f);
+}
+
+// ---- Ladruno ADR-75 P1i ------------------------------------------------------
+// Resolve the thread cap this run could actually use. Contract in Profiler.h.
+//
+// Order is deliberate. MKL_NUM_THREADS beats OMP_NUM_THREADS because the phase
+// this attribute exists to explain is the SOLVE (MKL PARDISO), and MKL honours
+// its own variable first. `registered` is a floor, never a ceiling: if threaded
+// assembly ever registers N worker threads, an env cap of 1 must not erase them.
+//
+// A malformed or non-positive value is treated as UNSET rather than clamped --
+// "MKL_NUM_THREADS=0" means "let MKL decide", not "zero threads".
+int64_t
+resolveRunThreads(int64_t registered) noexcept
+{
+    int64_t resolved = 0;
+
+    const char* srcs[2] = { "MKL_NUM_THREADS", "OMP_NUM_THREADS" };
+    for (int i = 0; i < 2 && resolved <= 0; i++) {
+        const char* v = std::getenv(srcs[i]);
+        if (v == 0 || *v == '\0')
+            continue;
+        // strtol, not atoi: atoi cannot distinguish "abc" from a real 0, and a
+        // list form ("4,2" for nested MKL) must read as its OUTER value, not fail.
+        char* end = 0;
+        const long n = std::strtol(v, &end, 10);
+        if (end != v && n > 0)
+            resolved = static_cast<int64_t>(n);
+    }
+
+    // Nothing declared: fall back to the machine width. This is an ESTIMATE --
+    // MKL defaults to physical cores while hardware_concurrency() reports logical
+    // ones, so on an SMT box this over-reports by the SMT factor. It is still
+    // strictly better than the old hardcoded 1, and the command layers replace it
+    // with mkl_get_max_threads() wherever MKL is compiled in.
+    if (resolved <= 0) {
+        const unsigned hc = std::thread::hardware_concurrency();
+        resolved = (hc > 0) ? static_cast<int64_t>(hc) : 1;
+    }
+
+    return (resolved > registered) ? resolved : registered;
 }
 
 } // namespace ops_profiler

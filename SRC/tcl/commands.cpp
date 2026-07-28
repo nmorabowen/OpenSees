@@ -102,6 +102,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 
 #include <Timer.h>
 #include <Profiler.h>   // Ladruno stack profiler (HDF5 writer comes via Profiler.h)
+#include <ProfilerRunMeta.h>   // Ladruno ADR-75 P1i: nElem/nNode/threads (Tcl twin)
 #include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <ModelBuilder.h>
 #include "commands.h"
@@ -917,6 +918,7 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
     meta.solver     = ops_profilerSolverName;
     if (theSOE != 0)
       meta.nDOF = theSOE->getNumEqn();
+    ops_profiler_fillModelMeta(meta, &theDomain);   // Ladruno ADR-75 P1i
     if (theTransientIntegrator != 0) {
       const double dtcr = theTransientIntegrator->getCriticalTimeStep();
       if (dtcr > 0.0) {
@@ -978,6 +980,7 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
     meta.solver     = ops_profilerSolverName;
     if (theSOE != 0)
       meta.nDOF = theSOE->getNumEqn();
+    ops_profiler_fillModelMeta(meta, &theDomain);   // Ladruno ADR-75 P1i
     if (theTransientIntegrator != 0) {
       const double dtcr = theTransientIntegrator->getCriticalTimeStep();
       if (dtcr > 0.0) {

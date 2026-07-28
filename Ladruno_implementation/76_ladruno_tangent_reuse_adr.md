@@ -399,9 +399,13 @@ Two instrumentation gaps the reporter surfaced were tracked in
 `soe.symbolic` / `soe.factor` / `soe.trisolve`, so on a PARDISO run `linearSolve` was
 one opaque block and factorization could not be separated from substitution without
 differencing two algorithms — PARDISO now has those three plus `soe.cgs` (phase 23),
-`dc.s.fill`/`dc.s.verify`, and a deep `soe.addA`. **The second is still open:** the
-profiler HDF5 run attributes record `threads=1` and `nElem=0` regardless of
-configuration.
+`dc.s.fill`/`dc.s.verify`, and a deep `soe.addA`. **The second is now CLOSED too**
+(ADR-75 P1i, 2026-07-27): the profiler HDF5 run attributes recorded `threads=1`
+and `nElem=0` regardless of configuration — `threads` is now resolved from the
+environment and overridden by `mkl_get_max_threads()` where MKL is compiled in,
+and `nElem`/`nNode` are filled at all four `buildMeta()` call sites. (`nnz` stays
+0 by decision — no size-agnostic `LinearSOE` accessor. `nSteps` was never a bug:
+it derives from the per-step series, so 0 without `-perStep` is correct.)
 
 One non-interaction worth recording: a skipped assembly is bit-identical by
 construction (the matrix is simply not touched), so nothing in this lane —

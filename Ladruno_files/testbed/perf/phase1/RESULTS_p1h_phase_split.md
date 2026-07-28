@@ -121,16 +121,41 @@ re-emission) pays them per `domainChanged`, not per solve — that is where they
   §1–§4 is one model at one size.
 - **One box, one model class** (plastic `LadrunoBrick` + `LadrunoJ2`), `Newton` + `LoadControl`.
 
-## 6. Bug found while measuring — profiler run attributes
+## 6. Bug found while measuring — profiler run attributes (FIXED, P1i)
 
-The HDF5 run attributes are wrong, confirming and **extending** the open item in ADR-75 §9:
+The HDF5 run attributes were wrong, confirming the open item in ADR-75 §9. Measured on a
+`-perStep` probe at `MKL_NUM_THREADS=4` on a 3375-element model:
 
-| attribute | recorded | actual |
-|---|---|---|
-| `threads` | `1` | 4 (`MKL_NUM_THREADS=4`) |
-| `nSteps` | `0` | 15 |
-| `nElem` | `0` | 3375 (per the ADR-76 issue report) |
+| attribute | was | actual | verdict |
+|---|---|---|---|
+| `threads` | `1` | 4 | **bug — fixed** |
+| `nElem` | `0` | 3375 | **bug — fixed** |
+| `nNode` | `0` | 4096 | **bug — fixed** |
+| `nnz` | `0` | — | left 0, deliberately (see below) |
+| `nSteps` | `0` | 15 | **NOT a bug** — see below |
 
-`Profiler.cpp` sets `m.threads = threads_.size()` — profiler-*registered* threads, which is 1 on a
-serial run no matter the MKL thread count. **Every table in this document records the thread count
-from the environment, not from the profile.** Still open; #667 only added brackets.
+**`nSteps` is by design.** It reads 15 *with* `-perStep` and 0 without, because it is derived from
+the per-step series, exactly like `dt_min`/`dt_max`. An earlier draft of this document listed it as
+a defect; that was wrong. A coarse run has no series to count.
+
+**`threads` was the real one.** `Profiler.cpp` set `m.threads = threads_.size()` — the count of
+threads registered with the *profiler*, which is 1 for any run whose command layer is
+single-threaded, no matter what MKL is doing. A wrong positive integer is worse than no answer,
+because it reads as a measurement. Now resolved from `MKL_NUM_THREADS` → `OMP_NUM_THREADS` →
+machine width, then overridden by `mkl_get_max_threads()` wherever MKL is compiled in (which is
+authoritative: it sees a programmatic `mkl_set_num_threads()` and reports physical cores when
+nothing is declared). The registered count remains a floor, so a genuinely threaded run can never
+report fewer threads than it registered.
+
+**`nElem`/`nNode` were promised and never delivered** — a comment in `Profiler.cpp` claimed the
+command layer populated them; it only ever filled `nDOF`. Now filled at all four `buildMeta()` call
+sites (`profiler report` and `profiler checkpoint`, each existing twice — once in the Python ladder
+and once in the completely separate Tcl one).
+
+**`nnz` stays 0 on purpose.** `LinearSOE` exposes no size-agnostic nnz accessor; only some concrete
+SOEs carry the member. Filling it would mean adding a virtual to an upstream base class. A
+normalizer that exists for some solvers and not others is worse than one that never does.
+
+⚠ **The tables in §1–§4 predate the fix**, so they were produced by a binary that recorded
+`threads=1`. Every thread count in this document is the pinned environment value, recorded by the
+sweep, never read from the profile.
