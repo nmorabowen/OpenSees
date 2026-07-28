@@ -95,7 +95,8 @@ def test_isa_survives_wipe_and_repeat(tmp_path):
     try:
         proc = subprocess.run(
             [sys.executable, "-S", str(driver), _DIST],
-            capture_output=True, text=True, timeout=120, env=env)
+            capture_output=True, text=True, timeout=120, env=env,
+            encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:  # heap corruption can hang, not crash
         pytest.fail(
             f"ISA lifetime child hung (>120s) — likely heap corruption:\n{exc}\n"

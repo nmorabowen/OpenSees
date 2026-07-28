@@ -139,9 +139,13 @@ def test_serial_database_roundtrip(tmp_path):
 
     env = dict(os.environ)
     env["PATH"] = DIST_BIN + os.pathsep + env.get("PATH", "")
+    # encoding pinned: the child prints the UTF-8 splash banner; cp1252
+    # text-mode decode raises in the reader thread => proc.stdout is None
+    # and the assert dies with TypeError (quirks ledger).
     proc = subprocess.run(
         [sys.executable, "-S", str(driver), DIST_BIN, db],
-        capture_output=True, text=True, timeout=300, env=env)
+        capture_output=True, text=True, timeout=300, env=env,
+        encoding="utf-8", errors="replace")
 
     assert "ROUNDTRIP-OK" in proc.stdout and proc.returncode == 0, (
         f"serial database round-trip failed (rc={proc.returncode})\n"
@@ -222,7 +226,8 @@ def test_mp_two_rank_smoke(tmp_path):
            DIST_MP, str(tmp_path)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=300, env=env)
+                              timeout=300, env=env,
+                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as exc:  # infra, not the element
         pytest.skip(f"MP launcher failed to run: {exc}")
 
