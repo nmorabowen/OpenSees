@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "solver": "Pardiso",
+    "algorithm": "Newton",
+    "integrator": "LoadControl",
+    "nDOF": 86490,
+    "nSteps": 0,
+    "threads": 4,
+    "wall_ms_total": 168522.1234,
+    "timestamp": "2026-07-27T23:38:27"
+  },
+  "step_ms": 168521.9064,
+  "phases": {
+    "linearSolve": {
+      "ms": 76853.606,
+      "calls": 48,
+      "pct_step": 45.605
+    },
+    "formTangent": {
+      "ms": 74640.948,
+      "calls": 48,
+      "pct_step": 44.292
+    },
+    "formUnbalance": {
+      "ms": 9638.527,
+      "calls": 63,
+      "pct_step": 5.719
+    },
+    "update": {
+      "ms": 6154.69,
+      "calls": 48,
+      "pct_step": 3.652
+    },
+    "newStep": {
+      "ms": 70.633,
+      "calls": 15,
+      "pct_step": 0.042
+    },
+    "commit": {
+      "ms": 274.169,
+      "calls": 15,
+      "pct_step": 0.163
+    },
+    "convTest": {
+      "ms": 67.582,
+      "calls": 48,
+      "pct_step": 0.04
+    }
+  },
+  "solver": {
+    "soe.symbolic": {
+      "ms": 414.422,
+      "calls": 1,
+      "pct_step": 0.246,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.symbolic": 414.422
+      }
+    },
+    "soe.factor": {
+      "ms": 69052.041,
+      "calls": 48,
+      "pct_step": 40.975,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.factor": 69052.041
+      }
+    },
+    "soe.trisolve": {
+      "ms": 7386.645,
+      "calls": 48,
+      "pct_step": 4.383,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.trisolve": 7386.645
+      }
+    }
+  },
+  "setSize": {
+    "dc.s.fill": {
+      "ms": 69.861,
+      "calls": 1,
+      "pct_step": 0.041,
+      "sites": {
+        "root/step/dc.s.fill": 69.861
+      }
+    },
+    "dc.s.verify": {
+      "ms": 4.369,
+      "calls": 1,
+      "pct_step": 0.003,
+      "sites": {
+        "root/step/dc.s.verify": 4.369
+      }
+    }
+  },
+  "deep": {},
+  "split": {
+    "solver_total_ms": 76853.108,
+    "pct_step": 45.604,
+    "pct_solver_factor": 89.85,
+    "pct_solver_trisolve": 9.61,
+    "pct_solver_symbolic": 0.54,
+    "pct_solver_cgs": 0.0,
+    "linearSolve_ms": 76853.606,
+    "attribution_gap_ms": -0.498,
+    "gap_note": "solver total within linearSolve (expected for LoadControl)",
+    "cgs_caveat": null
+  }
+}

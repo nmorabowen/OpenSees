@@ -492,7 +492,11 @@ distributed PARDISO** (P0-decided: MUMPS is mandatory for CMS/FEAST/PFEM regardl
   (reused verbatim so a cross-solver profile lines the phases up), a PARDISO-only `soe.cgs` for
   phase 23, `dc.s.fill`/`dc.s.verify` on the `setSize` CSR build, and a DEEP-gated `soe.addA`.
   Verified by `tests/test_pardiso_solver.py::test_profiler_brackets_present`; measured split
-  published in `Ladruno_files/testbed/perf/phase1/RESULTS_p1h_phase_split.md`.
+  published in `Ladruno_files/testbed/perf/phase1/RESULTS_p1h_phase_split.md`, and its size
+  trend over 11.5k-136k DOF in `RESULTS_p1j_size_trend.md` (P1j): `fac/(fac+tri)` rises
+  **71.4% -> 93.7%**, factorization **15.0% -> 56.2% of step**, driven by a measured exponent
+  gap of ~0.64-0.72 between `soe.factor` and `soe.trisolve`. Every factorization-reuse lever
+  is therefore worth materially more at production scale than the 11.5k gate suggested.
 - ~~**the other half of that item:** the profiler HDF5 run attributes record `threads=1`/`nElem=0`
   regardless of configuration~~ ✅ **CLOSED 2026-07-27 (P1i, this PR).** `Profiler.cpp` set
   `m.threads = threads_.size()` — profiler-*registered* threads, 1 on any single-threaded command

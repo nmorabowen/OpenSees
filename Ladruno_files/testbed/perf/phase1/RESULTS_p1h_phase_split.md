@@ -116,9 +116,13 @@ re-emission) pays them per `domainChanged`, not per solve — that is where they
   standing correction applies and G-L3 quantifies it: the solve is 21.8% of step here at 11.5k DOF
   but **98.5% at 540,675 DOF**. Factorization is superlinear in N while triangular solve is
   ~linear in nnz(L), so **%fac should also rise with N** — both effects push the same way, making
-  factorization-reuse levers *more* valuable at production scale, not less. **Measuring that trend
-  (51k / 136k / 540k DOF) is the single obvious follow-up and is NOT done here** — every number in
-  §1–§4 is one model at one size.
+  factorization-reuse levers *more* valuable at production scale, not less.
+  ✅ **MEASURED in P1j — `RESULTS_p1j_size_trend.md`.** Confirmed over 11.5k → 136k DOF:
+  `fac/(fac+tri)` rises **71.4% → 93.7%**, driven by a measured exponent gap of ~0.64–0.72
+  (`soe.factor` ~N^1.65–1.79 vs `soe.trisolve` ~N^0.94–1.07). Factorization as a share of step
+  goes **15.0% → 56.2%**, so a perfect factorization-reuse lever moves from ~1.18× to ~2.28×,
+  while triangular solve — the part no lever touches — *shrinks* to 3.7% of step. The floor
+  reading was right.
 - **One box, one model class** (plastic `LadrunoBrick` + `LadrunoJ2`), `Newton` + `LoadControl`.
 
 ## 6. Bug found while measuring — profiler run attributes (FIXED, P1i)
