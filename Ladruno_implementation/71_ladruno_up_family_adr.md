@@ -113,7 +113,10 @@ fork-the-element shape.
 4. **Solid part v1 = `-formulation std|bbar`** (mean-dilatation B-bar — the
    BBar*UP precedent; essential near-undrained), `-geom linear` only. EAS/URI/
    hourglass/corot/finite stay out of v1 (finite-strain u-p is a research axis,
-   reserved phase).
+   reserved phase). *Post-v1 amendment: `-geom corot` OPENED by ADR 78
+   (3D lanes; large rotation + geometric stiffness, small material strain —
+   the TIMs bearing-mechanism driver). `finite` stays reserved (material-side
+   blocker, ADR 78 §1.1).*
 5. **Honest pressure-DOF contract** (the load-bearing divergence from upstream,
    §3.2): the nodal DOF *is* p — upstream's DOF is ∫p·dt with p recorded as a
    *velocity*. Ours records/constrains/initializes p directly, matches
@@ -386,7 +389,9 @@ sand plasticity near-undrained is volumetric-constraint-dominated (why upstream
 ships BBar*UP twins); (ii) it composes with *both* pressure axes. Not carried into
 v1: EAS (interaction with the p field is genuinely non-trivial), URI/hourglass,
 `-geom corot|finite` (finite-strain consolidation = reserved research phase; the
-ADR-70 kernel is the natural partner when it opens).
+ADR-70 kernel is the natural partner when it opens). *Post-v1: `-geom corot`
+shipped by ADR 78 (3D lanes, per-block frame decisions recorded there);
+`finite` remains reserved.*
 
 ### 3.5 What we keep vs fix from upstream (code-review findings)
 

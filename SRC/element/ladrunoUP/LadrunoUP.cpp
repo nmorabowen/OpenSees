@@ -40,6 +40,8 @@
 #include <LadrunoUP.h>
 #include <LadrunoUPKernel.h>
 #include <LadrunoUPShapes.h>
+#include <SolidTransformation.h>        // ADR 78 — geometry-method seam
+#include <SolidTransformationLinear.h>  // ADR 78 — identity method / safe fallback
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
@@ -83,7 +85,8 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
                      int pOrder,
                      bool lumped,
                      int stabMode, double stabValue,
-                     bool dynSeepage)
+                     bool dynSeepage,
+                     int geomMethod)
  : Element(tag, ELE_TAG_LadrunoUP),
    ndm_(ndm), nNodes_(nodeTags.Size()), shapeKind_(SHAPE_NONE),
    nGP_(0), nU_(0), nP_(0), nStr_(0), nDof_(0),
@@ -93,6 +96,7 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
    formulation_(formulation), pOrder_(pOrder), lumpedMass_(lumped),
    stabMode_(stabMode), stabValue_(stabValue), dynSeepage_(dynSeepage),
    oneOverQbar_(0.0),
+   theGeom_(0), corotActive_(false),
    applyLoad_(0), Qload_(),
    kInitSolidValid_(false), kcSolidValid_(false),
    k0Valid_(false), k0Dirty_(true), stabAlpha_(0.0), stabDirty_(true),
@@ -110,6 +114,25 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
 
   for (int n = 0; n < nNodes_; n++)
     connectedExternalNodes_(n) = nodeTags(n);
+
+  // ---- geometry method (ADR 78) --------------------------------------------
+  // Parser polices -geom (corot is 3D-only); this is the belt-and-braces guard
+  // for direct-construction callers. Unknown id / 2D corot degrade to linear
+  // loudly rather than running a planar polar into det(H)=0.
+  if (geomMethod == SolidTransformation::METHOD_COROT && ndm_ != 3) {
+    opserr << "LadrunoUP::LadrunoUP - element " << tag
+           << ": -geom corot is 3D-only (planar node cloud has no polar "
+              "rotation); using -geom linear\n";
+    geomMethod = SolidTransformation::METHOD_LINEAR;
+  }
+  theGeom_ = SolidTransformation::create(geomMethod);
+  if (theGeom_ == 0) {
+    opserr << "LadrunoUP::LadrunoUP - element " << tag
+           << ": unknown geometry-method id " << geomMethod
+           << "; using -geom linear\n";
+    theGeom_ = new SolidTransformationLinear();
+  }
+  corotActive_ = (theGeom_->getMethodID() == SolidTransformation::METHOD_COROT);
 
   // ---- parameter intake ------------------------------------------------------
   for (int i = 0; i < ndm_; i++) {
@@ -162,6 +185,7 @@ LadrunoUP::LadrunoUP()
    formulation_(0), pOrder_(0), lumpedMass_(false),
    stabMode_(0), stabValue_(0.0), dynSeepage_(true),
    oneOverQbar_(0.0),
+   theGeom_(new SolidTransformationLinear()), corotActive_(false),
    applyLoad_(0), Qload_(),
    kInitSolidValid_(false), kcSolidValid_(false),
    k0Valid_(false), k0Dirty_(true), stabAlpha_(0.0), stabDirty_(true),
@@ -186,6 +210,8 @@ LadrunoUP::~LadrunoUP()
         delete theMaterials_[i];
     delete[] theMaterials_;
   }
+  if (theGeom_)
+    delete theGeom_;
 }
 
 // ===========================================================================
@@ -266,6 +292,17 @@ void LadrunoUP::configureSizing(void)
   Hblk_.assign(nP_ * nP_, 0.0);
   Sblk_.assign(nP_ * nP_, 0.0);
   HtUnit_.assign(nP_ * nP_, 0.0);
+
+  // corot scratch (ADR 78) — cheap; sized unconditionally so recvSelf-rebuilt
+  // elements are ready regardless of which method the incoming stream carries.
+  refCrdsScratch_.resize(nNodes_, 3);  refCrdsScratch_.Zero();
+  curCrdsScratch_.resize(nNodes_, 3);  curCrdsScratch_.Zero();
+  Rcur_.resize(3, 3);                  Rcur_.Zero();
+  Rcur_(0, 0) = Rcur_(1, 1) = Rcur_(2, 2) = 1.0;
+  zeroFu_.resize(nU_);                 zeroFu_.Zero();
+  QrotBlk_.assign(nU_ * nP_, 0.0);
+  uDcur_.resize(nU_);                  uDcur_.Zero();
+  uDn_.resize(nU_);                    uDn_.Zero();
 }
 
 // ===========================================================================
@@ -555,6 +592,37 @@ void LadrunoUP::setDomain(Domain *theDomain)
   geomValid_ = true;
   this->buildStaticBlocks();
 
+  // corot (ADR 78): initialize the frame + the committed deformational state
+  // from the COMMITTED nodal displacements. Fresh model: disp = 0 ⇒ R = I,
+  // u_d,n = 0. After a DB restore / element migration this REBUILDS u_d,n
+  // (deliberately not serialized) so the incremental storage coupling
+  // differences against the true committed configuration, not zero.
+  if (corotActive_) {
+    for (int a = 0; a < nNodes_; a++) {
+      const Vector &X = theNodes_[a]->getCrds();
+      const Vector &d = theNodes_[a]->getDisp();   // COMMITTED disp
+      for (int i = 0; i < 3; i++) {
+        refCrdsScratch_(a, i) = X(i);
+        curCrdsScratch_(a, i) = X(i) + d(i);
+      }
+    }
+    if (theGeom_->update(nNodes_, refCrdsScratch_, curCrdsScratch_) == 0) {
+      theGeom_->localizeDisp(uDn_, uDn_);
+      uDcur_ = uDn_;
+      theGeom_->getCurrentFrame(Rcur_);
+      for (int a = 0; a < nNodes_; a++)
+        for (int i = 0; i < 3; i++) {
+          int row = a * 3 + i;
+          for (int bb = 0; bb < nP_; bb++) {
+            double s = 0.0;
+            for (int j = 0; j < 3; j++)
+              s += Rcur_(i, j) * Qblk_[(a * 3 + j) * nP_ + bb];
+            QrotBlk_[row * nP_ + bb] = s;
+          }
+        }
+    }
+  }
+
   // fresh geometry ⇒ every derived cache is stale
   stabDirty_ = true;
   k0Valid_ = false;
@@ -605,6 +673,11 @@ void LadrunoUP::buildStaticBlocks(void)
     if (pOrder_ != 1)
       ladruno_up::addHtilde(dNp, nP_, ndm_, 1.0, dv_[gp], HtUnit_.data(), nP_);
   }
+
+  // corot: seed Q_rot = Q (R = I until the first update() refreshes the frame
+  // — reference configuration, so queries before any update are consistent).
+  if (corotActive_)
+    QrotBlk_ = Qblk_;
 }
 
 // lazy auto-α (McGann 2012 eq 73 / 2015 eq 74): α = α₀·h²/(K_s + 4G_s/3) with
@@ -662,6 +735,11 @@ int LadrunoUP::commitState(void)
     this->buildSolidK(KcSolid_, false);
     kcSolidValid_ = true;
   }
+
+  // corot (ADR 78 §3.3): advance the committed deformational displacement —
+  // the state the incremental storage coupling Qᵀ·Δu_d/Δt differences against.
+  if (corotActive_)
+    uDn_ = uDcur_;
   return retVal;
 }
 
@@ -683,21 +761,65 @@ int LadrunoUP::revertToStart(void)
   k0Dirty_ = true;
   kInitSolidValid_ = false;
   kcSolidValid_ = false;
+  if (corotActive_) {                 // rewind the corot committed state too
+    uDn_.Zero();
+    uDcur_.Zero();
+  }
   return retVal;
 }
 
 // update(): trial u → strains → setTrialStrain ONLY. p NEVER enters the
 // constitutive update (the effective-stress seam, ADR §1.4/§3.2) — it acts
 // solely through the Q block in assembly.
+//
+// -geom corot (ADR 78): the per-evaluation frame refresh lives HERE (seam 0),
+// then uSolScratch_ becomes the DEFORMATIONAL displacement u_d = Rᵀx⁰ − X⁰
+// (seam 2) so the same reference-B strain path below feeds the material small
+// strain in the corotated frame. Q_rot = R̄·Q is refreshed alongside R — the
+// one per-evaluation cost the coupling blocks add.
 int LadrunoUP::update(void)
 {
   if (!geomValid_)
     return -1;
 
-  for (int a = 0; a < nNodes_; a++) {
-    const Vector &d = theNodes_[a]->getTrialDisp();
-    for (int i = 0; i < ndm_; i++)
-      uSolScratch_(a * ndm_ + i) = d(i);
+  if (!corotActive_) {
+    for (int a = 0; a < nNodes_; a++) {
+      const Vector &d = theNodes_[a]->getTrialDisp();
+      for (int i = 0; i < ndm_; i++)
+        uSolScratch_(a * ndm_ + i) = d(i);
+    }
+  } else {
+    for (int a = 0; a < nNodes_; a++) {
+      const Vector &X = theNodes_[a]->getCrds();
+      const Vector &d = theNodes_[a]->getTrialDisp();
+      for (int i = 0; i < 3; i++) {
+        refCrdsScratch_(a, i) = X(i);
+        curCrdsScratch_(a, i) = X(i) + d(i);
+      }
+    }
+    if (theGeom_->update(nNodes_, refCrdsScratch_, curCrdsScratch_) != 0) {
+      // collapsed/inverted cloud (det(H) <= 0): the seam degraded to a safe
+      // R=I state; signal the integrator to cut the step rather than march on.
+      return -1;
+    }
+    theGeom_->localizeDisp(uDcur_, uDcur_);   // aliasing is contract-legal
+    uSolScratch_ = uDcur_;                    // strain path below reads uSolScratch_;
+                                              // uDcur_ survives (getRayleighDampingForces
+                                              // clobbers uSolScratch_ with velocities)
+    theGeom_->getCurrentFrame(Rcur_);
+
+    // Q_rot[(a,i), b] = Σ_j R(i,j)·Q[(a,j), b] — rows rotated to the current
+    // frame; pressure columns are scalars and do not rotate (ADR 78 §3.2).
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < 3; i++) {
+        int row = a * 3 + i;
+        for (int bb = 0; bb < nP_; bb++) {
+          double s = 0.0;
+          for (int j = 0; j < 3; j++)
+            s += Rcur_(i, j) * Qblk_[(a * 3 + j) * nP_ + bb];
+          QrotBlk_[row * nP_ + bb] = s;
+        }
+      }
   }
 
   int ret = 0;
@@ -772,6 +894,31 @@ void LadrunoUP::buildSolidK(Matrix &Ks, bool initial)
     const Matrix &D = initial ? theMaterials_[gp]->getInitialTangent()
                               : theMaterials_[gp]->getTangent();
     Ks.addMatrixTripleProduct(1.0, Bscratch_, D, dv_[gp]);
+  }
+}
+
+// core-frame TOTAL solid force fu = ∫Bᵀσ′dV − Q·p_trial (ADR 78 §3.2): the one
+// vector globalizeForce/Stiff consume under corot. Both legs use the same
+// reference-B / core frame, so K/Q frame consistency is structural, and K_geo
+// receives the total-stress (effective + pore) prestress — the physically
+// correct load stiffness for a saturated medium. Both legs are self-
+// equilibrated per component (Σ_a ∇N_a = 0), so the seam's centroid
+// back-reaction stays zero. Fills pScratch_ (trial nodal p) as a side effect.
+void LadrunoUP::buildCoreForce(Vector &fu)
+{
+  fu.Zero();
+  for (int gp = 0; gp < nGP_; gp++) {
+    this->formB(gp, Bscratch_);
+    const Vector &sigma = theMaterials_[gp]->getStress();
+    fu.addMatrixTransposeVector(1.0, Bscratch_, sigma, dv_[gp]);
+  }
+  for (int bb = 0; bb < nP_; bb++)
+    pScratch_(bb) = theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
+  for (int row = 0; row < nU_; row++) {
+    double s = 0.0;
+    for (int bb = 0; bb < nP_; bb++)
+      s += Qblk_[row * nP_ + bb] * pScratch_(bb);
+    fu(row) -= s;
   }
 }
 
@@ -871,17 +1018,28 @@ const Matrix &LadrunoUP::getTangentStiff(void)
     return K_;
 
   this->buildSolidK(KsolScratch_, false);
+
+  // corot (ADR 78 §3.1/§3.2): globalize the core solid K through seam 3 with
+  // the TOTAL core force (∫Bᵀσ′dV − Q·p) so K_geo carries the total-stress
+  // prestress; the u-p column block becomes −R̄Q (dominant term of the exact
+  // ∂[globalizeForce]/∂p, the corot v2.0 tangent policy).
+  if (corotActive_) {
+    this->buildCoreForce(fuScratch_);
+    theGeom_->globalizeStiff(KsolScratch_, fuScratch_, KsolScratch_);
+  }
+
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++)
       for (int c = 0; c < nNodes_; c++)
         for (int j = 0; j < ndm_; j++)
           K_(uOff_[a] + i, uOff_[c] + j) = KsolScratch_(a * ndm_ + i, c * ndm_ + j);
 
+  const double *Quse = corotActive_ ? QrotBlk_.data() : Qblk_.data();
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++) {
       int row = a * ndm_ + i;
       for (int bb = 0; bb < nP_; bb++)
-        K_(uOff_[a] + i, pOff_[carrierNodes_[bb]]) = -Qblk_[row * nP_ + bb];
+        K_(uOff_[a] + i, pOff_[carrierNodes_[bb]]) = -Quse[row * nP_ + bb];
     }
 
   for (int bb = 0; bb < nP_; bb++)
@@ -894,6 +1052,10 @@ const Matrix &LadrunoUP::getTangentStiff(void)
 // [ K₀ , −Q ; 0 , H ] with NONZERO p-rows — a family-idiom copy of upstream's
 // solid-only Ki would make initial-stiffness STATICS structurally singular
 // (ADR §3.2). Cached; invalidated by updateMaterialStage / perm setParameter.
+// Under -geom corot this DELIBERATELY stays the reference-configuration
+// operator (R = I semantics — consistent with "initial" and with LadrunoBrick
+// sweep #7, which forces cur == ref before globalizing K₀; here we simply
+// never let getInitialStiff touch the live frame). ADR 78 §3.6.
 const Matrix &LadrunoUP::getInitialStiff(void)
 {
   if (!geomValid_) {
@@ -938,6 +1100,12 @@ const Matrix &LadrunoUP::getDamp(void)
     return damp_;
 
   this->buildCRaySolid(CRayScratch_);
+  // corot (ADR 78 §3.5): rotate the solid-only Rayleigh block as one —
+  // globalizeStiff with a zero core force is the pure rotation R̄CR̄ᵀ (no
+  // K_geo; damping is material, not load-stiffness). The αM·M part is exactly
+  // invariant (m·I nodal blocks), so this rotates precisely the K-parts.
+  if (corotActive_)
+    theGeom_->globalizeStiff(CRayScratch_, zeroFu_, CRayScratch_);
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++)
       for (int c = 0; c < nNodes_; c++)
@@ -946,12 +1114,17 @@ const Matrix &LadrunoUP::getDamp(void)
 
   // Qᵀ — p-rows, u-cols (the transpose of the tangent's −Q partner: the two
   // Q blocks living in DIFFERENT matrices is what makes the effective
-  // transient tangent unsymmetric — the honest-p price, ADR §3.2)
+  // transient tangent unsymmetric — the honest-p price, ADR §3.2).
+  // corot: (R̄Q)ᵀ — the transpose partner of the tangent's −R̄Q and the
+  // dominant Newton sensitivity of the storage coupling. The RESIDUAL does
+  // not use this block times velocity: getResistingForceIncInertia swaps it
+  // for the incremental Qᵀ·Δu_d/Δt (ADR 78 §3.3 — the chord-defect cure).
+  const double *Quse = corotActive_ ? QrotBlk_.data() : Qblk_.data();
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++) {
       int row = a * ndm_ + i;
       for (int bb = 0; bb < nP_; bb++)
-        damp_(pOff_[carrierNodes_[bb]], uOff_[a] + i) = Qblk_[row * nP_ + bb];
+        damp_(pOff_[carrierNodes_[bb]], uOff_[a] + i) = Quse[row * nP_ + bb];
     }
 
   double al = this->stabAlphaValue();
@@ -993,37 +1166,63 @@ const Vector &LadrunoUP::getResistingForce(void)
   const double *bAct  = (applyLoad_ == 1) ? appliedB_ : b_;
   const double *fbAct = (applyLoad_ == 1) ? appliedFluidBody_ : fluidBody_;
 
-  // ---- u-rows: internal force + body force ----------------------------------
-  fuScratch_.Zero();
-  for (int gp = 0; gp < nGP_; gp++) {
-    this->formB(gp, Bscratch_);
-    const Vector &sigma = theMaterials_[gp]->getStress();
-    fuScratch_.addMatrixTransposeVector(1.0, Bscratch_, sigma, dv_[gp]);
+  // ---- u-rows: internal force + coupling + body force -----------------------
+  if (!corotActive_) {
+    // linear (P1 path, bit-identical): internal + body accumulated per GP,
+    // then −Q·p applied on the assembled u-rows.
+    fuScratch_.Zero();
+    for (int gp = 0; gp < nGP_; gp++) {
+      this->formB(gp, Bscratch_);
+      const Vector &sigma = theMaterials_[gp]->getStress();
+      fuScratch_.addMatrixTransposeVector(1.0, Bscratch_, sigma, dv_[gp]);
 
-    double rho = theMaterials_[gp]->getRho();   // saturated mixture (pinned)
-    if (rho != 0.0) {
+      double rho = theMaterials_[gp]->getRho();   // saturated mixture (pinned)
+      if (rho != 0.0) {
+        const double *Nu = &NuAll_[gp * nNodes_];
+        for (int a = 0; a < nNodes_; a++)
+          for (int i = 0; i < ndm_; i++)
+            fuScratch_(a * ndm_ + i) -= Nu[a] * rho * bAct[i] * dv_[gp];
+      }
+    }
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < ndm_; i++)
+        resid_(uOff_[a] + i) += fuScratch_(a * ndm_ + i);
+
+    // −Q·p on the u-rows (the pore-pressure force on the skeleton — in the
+    // STATIC residual, unlike upstream where it only rides damp·vel)
+    for (int bb = 0; bb < nP_; bb++)
+      pScratch_(bb) = theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < ndm_; i++) {
+        int row = a * ndm_ + i;
+        double s = 0.0;
+        for (int bb = 0; bb < nP_; bb++)
+          s += Qblk_[row * nP_ + bb] * pScratch_(bb);
+        resid_(uOff_[a] + i) -= s;
+      }
+  } else {
+    // corot (ADR 78 §3.2): the CORE-frame total force ∫Bᵀσ′dV − Q·p is
+    // globalized as ONE vector — the K/Q frame consistency is structural.
+    // (buildCoreForce also fills pScratch_, which the p-rows below reuse.)
+    this->buildCoreForce(fuScratch_);
+    theGeom_->globalizeForce(fuScratch_, fuScratch_);
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < ndm_; i++)
+        resid_(uOff_[a] + i) += fuScratch_(a * ndm_ + i);
+
+    // fixed-direction dead body load: a GLOBAL-frame quantity, kept OUT of
+    // the core force and added back unrotated AFTER globalize (the
+    // LadrunoBrick COROT-1 idiom).
+    for (int gp = 0; gp < nGP_; gp++) {
+      double rho = theMaterials_[gp]->getRho();
+      if (rho == 0.0)
+        continue;
       const double *Nu = &NuAll_[gp * nNodes_];
       for (int a = 0; a < nNodes_; a++)
         for (int i = 0; i < ndm_; i++)
-          fuScratch_(a * ndm_ + i) -= Nu[a] * rho * bAct[i] * dv_[gp];
+          resid_(uOff_[a] + i) -= Nu[a] * rho * bAct[i] * dv_[gp];
     }
   }
-  for (int a = 0; a < nNodes_; a++)
-    for (int i = 0; i < ndm_; i++)
-      resid_(uOff_[a] + i) += fuScratch_(a * ndm_ + i);
-
-  // ---- −Q·p on the u-rows (the pore-pressure force on the skeleton — in the
-  //      STATIC residual, unlike upstream where it only rides damp·vel) -------
-  for (int bb = 0; bb < nP_; bb++)
-    pScratch_(bb) = theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
-  for (int a = 0; a < nNodes_; a++)
-    for (int i = 0; i < ndm_; i++) {
-      int row = a * ndm_ + i;
-      double s = 0.0;
-      for (int bb = 0; bb < nP_; bb++)
-        s += Qblk_[row * nP_ + bb] * pScratch_(bb);
-      resid_(uOff_[a] + i) -= s;
-    }
 
   // ---- p-rows: H·p − f_seep --------------------------------------------------
   for (int bb = 0; bb < nP_; bb++) {
@@ -1049,6 +1248,15 @@ const Vector &LadrunoUP::getResistingForce(void)
         acc[0] = acc[1] = acc[2] = 0.0;
       for (int i = 0; i < ndm_; i++)
         drive[i] = fbAct[i] - acc[i];
+      // corot (ADR 78 §3.4): ∇Np is MATERIAL-frame, the gravity/accel drive is
+      // GLOBAL-frame — pull it back: drive_mat = Rᵀ·drive_global.
+      if (corotActive_) {
+        double dm[3];
+        for (int i = 0; i < 3; i++)
+          dm[i] = Rcur_(0, i) * drive[0] + Rcur_(1, i) * drive[1]
+                + Rcur_(2, i) * drive[2];
+        drive[0] = dm[0];  drive[1] = dm[1];  drive[2] = dm[2];
+      }
       ladruno_up::addFseep(&dNpAll_[gp * nP_ * ndm_], nP_, ndm_, kbar_,
                            rhoF_, drive, dv_[gp], fseep);
     }
@@ -1094,6 +1302,55 @@ const Vector &LadrunoUP::getResistingForceIncInertia(void)
   }
   Vector vVec(buf, nDof_);
   resid_.addMatrixVector(1.0, this->getDamp(), vVec, 1.0);
+
+  // corot (ADR 78 §3.3): REPLACE the p-row rate terms wholesale. Two measured
+  // failure modes force this, and they pin the exact shape of the fix:
+  //  (1) THE CHORD DEFECT — (R̄Q)ᵀ·u̇ contracts integrator velocities, and the
+  //      chord of a finite rotation increment carries an apparent volumetric
+  //      rate 2(1−cosΔθ)/Δt per step: always compressive, Q̄-amplified in
+  //      undrained problems (order-1 spurious p at bearing-mechanism
+  //      rotations). No velocity-linear operator can remove it (the chord
+  //      contraction is representable by no spin) — only the INCREMENTAL form
+  //      Qᵀ·(u_d − u_d,committed)/Δt, exactly zero under rigid motion, kills
+  //      it.
+  //  (2) THE MIXED-SCHEME PUMP — swapping ONLY the coupling to incremental
+  //      while leaving S·ṗ on the integrator's Newmark velocity breaks the
+  //      skew-symmetry of the discrete coupling pair and PUMPS the structural
+  //      ringing (measured: the consolidation column's corot run grows a
+  //      ±100·q p-oscillation at Δt = 0.02 where linear decays).
+  // The cure is the Book's canonical u-p pairing (GN22 on u, GN11/backward
+  // difference on the WHOLE p-row): under corot every p-row rate term goes
+  // incremental — Qᵀ·Δu_d/Δt + (S + αH̃)·Δp/Δt — the standard
+  // finite-deformation continuity discretization. Committed p comes from the
+  // nodes (no extra state). getDamp keeps [(R̄Q)ᵀ, S+H̃] as the Newton
+  // sensitivity surrogate (the integrator scales it by c2 = γ/(βΔt) vs the
+  // true 1/Δt — a uniform γ/β factor on the p-row rate block, absorbed as an
+  // inexact-tangent term under the corot v2.0 policy). Δt ≤ 0 (no transient
+  // step context, e.g. post-commit reporting) falls back to the velocity
+  // form, where Δu_d = Δp = 0 anyway.
+  if (corotActive_) {
+    Domain *dom = this->getDomain();
+    double dt = (dom != 0) ? dom->getDT() : 0.0;
+    if (dt > 0.0) {
+      double al = this->stabAlphaValue();
+      for (int bb = 0; bb < nP_; bb++) {
+        double sOld = 0.0, sNew = 0.0;
+        for (int a = 0; a < nNodes_; a++)
+          for (int i = 0; i < 3; i++) {
+            int row = a * 3 + i;
+            sOld += QrotBlk_[row * nP_ + bb] * buf[uOff_[a] + i];
+            sNew += Qblk_[row * nP_ + bb] * (uDcur_(row) - uDn_(row));
+          }
+        for (int cc = 0; cc < nP_; cc++) {
+          double spc = Sblk_[bb * nP_ + cc] + al * HtUnit_[bb * nP_ + cc];
+          Node *nc = theNodes_[carrierNodes_[cc]];
+          sOld += spc * buf[pOff_[carrierNodes_[cc]]];          // Newmark ṗ
+          sNew += spc * (nc->getTrialDisp()(ndm_) - nc->getDisp()(ndm_));
+        }
+        resid_(pOff_[carrierNodes_[bb]]) += sNew / dt - sOld;
+      }
+    }
+  }
 
   return resid_;
 }
@@ -1164,6 +1421,8 @@ const Vector &LadrunoUP::getRayleighDampingForces(void)
     return rayForce_;
 
   this->buildCRaySolid(CRayScratch_);
+  if (corotActive_)   // same one-block rotation as getDamp (ADR 78 §3.5)
+    theGeom_->globalizeStiff(CRayScratch_, zeroFu_, CRayScratch_);
   for (int a = 0; a < nNodes_; a++) {
     const Vector &vn = theNodes_[a]->getTrialVel();
     for (int i = 0; i < ndm_; i++)
@@ -1405,6 +1664,9 @@ int LadrunoUP::getResponse(int responseID, Information &eleInfo)
   if (responseID == 4) {
     // Darcy flux q = −k̄·(∇p − ρ_f·drive), drive = (b_f − ü) with -dynSeepage on
     // (b_f only when off) — consistent with the f_seep residual treatment.
+    // corot (ADR 78 §3.4): computed in the MATERIAL frame (∇p and k̄ live
+    // there; the global drive is pulled back by Rᵀ), then pushed forward by R
+    // so the recorder stays global-frame. Linear: R = I, bit-identical.
     Vector v(nGP_ * ndm_);
     const double *fbAct = (applyLoad_ == 1) ? appliedFluidBody_ : fluidBody_;
     double acc[3];
@@ -1413,13 +1675,32 @@ int LadrunoUP::getResponse(int responseID, Information &eleInfo)
         this->gpAccel(gp, acc);
       else
         acc[0] = acc[1] = acc[2] = 0.0;
+      double drive[3] = {0.0, 0.0, 0.0};
+      for (int i = 0; i < ndm_; i++)
+        drive[i] = fbAct[i] - acc[i];
+      if (corotActive_) {
+        double dm[3];
+        for (int i = 0; i < 3; i++)
+          dm[i] = Rcur_(0, i) * drive[0] + Rcur_(1, i) * drive[1]
+                + Rcur_(2, i) * drive[2];
+        drive[0] = dm[0];  drive[1] = dm[1];  drive[2] = dm[2];
+      }
       const double *dNp = &dNpAll_[gp * nP_ * ndm_];
+      double qmat[3] = {0.0, 0.0, 0.0};
       for (int i = 0; i < ndm_; i++) {
         double gradP = 0.0;
         for (int bb = 0; bb < nP_; bb++)
           gradP += dNp[bb * ndm_ + i] *
                    theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
-        v(gp * ndm_ + i) = -kbar_[i] * (gradP - rhoF_ * (fbAct[i] - acc[i]));
+        qmat[i] = -kbar_[i] * (gradP - rhoF_ * drive[i]);
+      }
+      if (corotActive_) {
+        for (int i = 0; i < 3; i++)
+          v(gp * ndm_ + i) = Rcur_(i, 0) * qmat[0] + Rcur_(i, 1) * qmat[1]
+                           + Rcur_(i, 2) * qmat[2];
+      } else {
+        for (int i = 0; i < ndm_; i++)
+          v(gp * ndm_ + i) = qmat[i];
       }
     }
     return eleInfo.setVector(v);
@@ -1441,6 +1722,7 @@ void LadrunoUP::Print(OPS_Stream &s, int flag)
     s << "\tConnected external nodes:  " << connectedExternalNodes_;
     s << "\tshape: " << shapeNames[shapeKind_]
       << "  formulation: " << (formulation_ == 1 ? "bbar" : "std")
+      << "  geom: " << (theGeom_ ? theGeom_->getName() : "linear")
       << "  pOrder: " << (pOrder_ == 1 ? "linear(TH)" : "equal")
       << "  nP(carriers): " << nP_ << " / " << nNodes_ << " nodes"
       << "  nDof: " << nDof_ << "\n";
@@ -1506,7 +1788,10 @@ void LadrunoUP::Print(OPS_Stream &s, int flag)
 //     (family precedent: LadrunoQuad ships none of it). Reset to the null-ctor
 //     baseline on the receiver.
 // oneOverQbar_ is shipped (not recomputed) for exact identity across the wire.
-static const int UP_NDATA = 29;   // scalar payload width (see layout below)
+// The geometry-method id (ADR 78) is shipped as data(29); the corot wrapper is
+// STATELESS (R is a pure function of current nodal positions), so the id alone
+// reconstructs it — same contract as LadrunoBrick.
+static const int UP_NDATA = 30;   // scalar payload width (see layout below)
 
 int LadrunoUP::sendSelf(int commitTag, Channel &theChannel)
 {
@@ -1544,6 +1829,8 @@ int LadrunoUP::sendSelf(int commitTag, Channel &theChannel)
   data(26) = betaK;
   data(27) = betaK0;
   data(28) = betaKc;
+  data(29) = theGeom_ ? theGeom_->getMethodID()
+                      : SolidTransformation::METHOD_LINEAR;
 
   res = theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1629,6 +1916,20 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
   betaK         = data(26);
   betaK0        = data(27);
   betaKc        = data(28);
+
+  // geometry method (ADR 78): rebuild the stateless wrapper from its id
+  if (theGeom_) {
+    delete theGeom_;
+    theGeom_ = 0;
+  }
+  theGeom_ = SolidTransformation::create((int)data(29));
+  if (theGeom_ == 0) {
+    opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
+           << ": unknown geometry-method id " << (int)data(29)
+           << " in the incoming stream; using linear\n";
+    theGeom_ = new SolidTransformationLinear();
+  }
+  corotActive_ = (theGeom_->getMethodID() == SolidTransformation::METHOD_COROT);
 
   // rebuild every size-derived member + per-instance buffer (the SAME helper
   // the ctor uses — no drift). This sizes uOff_/pOff_/carrierNodes_/nGP_ so the

@@ -3447,3 +3447,36 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 ### `-noMassCache` is per-instance and NOT serialized — the A/B escape hatch is effective on the building rank only
 - **Bites:** under SP/MP/DDM, broker-built remote copies of a cache-bearing element default-construct the cache **enabled** (the flag rides no sendSelf vector — deliberate T7/brick policy). A user running `-noMassCache` as a workaround or as the off-arm of a parallel A/B gets the cache silently re-enabled on every non-building rank, so a "cache-off" parallel comparison is not what it claims to be. Results remain bit-identical by the guard construction (G-BYTE), so this is a diagnostics honesty gap, not a correctness one — but it is precisely the parallel context where an escape hatch matters most.
 - **Workaround/status:** documented in the `LadrunoMassCache.h` contract (review wave); serializing the flag would cost a stream-format change on six elements for a diagnostic — declined. Treat serial runs as the authoritative A/B arena. *2026-07-27 (ADR-77 review wave).*
+
+## The splash banner breaks `subprocess.run(text=True)` test harnesses on cp1252 consoles (ADR 78)
+
+- **Bites:** tests that spawn a python child with `capture_output=True, text=True`
+  and import the engine (`test_ladruno_up_element_th.py` winding gate,
+  `test_ladruno_up_mp_smoke.py` serial roundtrip) die with
+  `TypeError: argument of type 'NoneType' is not iterable` on a cp1252-locale
+  Windows box: the child prints the splash banner, whose UTF-8 art/feature text
+  contains bytes cp1252 cannot map (e.g. the superscript minus in `F0⁻¹`,
+  byte 0x81, present since the StagedDefGrad banner line), the reader thread
+  raises `UnicodeDecodeError`, and `proc.stdout` comes back `None`. Looks like a
+  physics regression; is an encoding trap. Predates ADR 78 (verified: the byte
+  is in the committed `banner_features.txt`).
+- **Workaround/status:** set `LADRUNO_OPENSEES_QUIET=1` in the child env (both
+  tests pass then), or pass `encoding="utf-8", errors="replace"` to
+  `subprocess.run`. Proper fix (harden the harnesses) spun off as its own task.
+  Keep NEW banner-feature lines ASCII-only. *2026-07-28 (ADR 78).*
+
+## u-p storage coupling under corot: velocity contraction is chord-poisoned; incremental-coupling-only is a pump (ADR 78)
+
+- **Bites (two ways, both measured):** (1) contracting the damp p-row `(R̄Q)ᵀ`
+  against integrator velocities of a ROTATING body picks up the chord's
+  apparent volumetric rate `2(1−cosΔθ)/Δt` per step — always compressive,
+  amplified by `Q̄ ≈ K_f/n` undrained (order-1 spurious p at bearing-mechanism
+  rotations); no velocity-linear operator can remove it. (2) Fixing ONLY the
+  coupling to the incremental `QᵀΔu_d/Δt` while leaving `S·ṗ` on the Newmark
+  velocity breaks the skew-symmetry of the discrete coupling pair and PUMPS the
+  structural ringing (consolidation column grew a ±100·q p-oscillation at
+  Δt=0.02 where linear decays).
+- **Workaround/status:** the WHOLE p-row rate block goes incremental under
+  corot — `QᵀΔu_d/Δt + (S+αH̃)Δp/Δt` (the Book's GN22/GN11 pairing);
+  first-order convergent (measured 2.3e-2→4.2e-3 over Δt 0.16→0.02) and
+  rigid-motion exact. Full analysis: ADR 78 §3.3. *2026-07-28 (ADR 78).*
