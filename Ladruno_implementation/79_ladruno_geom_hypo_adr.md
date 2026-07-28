@@ -1,6 +1,6 @@
 # ADR 79 — `-geom hypo`: hypoelastic rate-form updated-Lagrangian geometry method
 
-**Status:** P0+P1 shipped (PR #679, merged); P2 (u–p) shipped (this PR); P3 (PDMY TIMs smoke) pending
+**Status:** COMPLETE — P0+P1 merged (#679), P2 merged (#680), P3 PDMY smoke shipped (3rd PR). The staged program of this ADR is done; the SFIM bearing-limit campaign is analysis work on top of it.
 **Element:** `LadrunoBrick` (ELE 33002) first; `LadrunoUP` (ELE 33017) in P2
 **Seam extended:** `SolidTransformation` gains `METHOD_HYPO = 3` (marker only)
 **Kernel:** `SRC/element/solidTransformation/LadrunoHypoKernel.h` (header-only, OpenSees-free)
@@ -283,8 +283,26 @@ committed state — no accumulation-within-iteration hazard.
     `p ≈ Q̄·α·|ln λ|`. A Gibson-family closed-form large-strain consolidation
     oracle is deferred (demand-driven) — the physics identities above pin the
     same machinery without the PDE oracle.
-- **P3 — PDMY01 smoke** on the TIMs footing regime (`References/SFIM_model/`,
-  bearing limit point) — the driving application, last.
+- **P3 — PDMY01 smoke (SHIPPED, tests/test_ladruno_up_hypo_pdmy.py):** a
+  TIMs-style footing-in-miniature (3×3×3 saturated PDMY box) through the full
+  staging idiom (elastic gravity → `updateMaterialStage 1` → plastic settle →
+  DISPLACEMENT-controlled footing push to 5 % penetration) under `-geom hypo`
+  with `-geom corot` as the anchor twin. Two scoping findings, both recorded
+  in the test docstring:
+  1. the push MUST be displacement-controlled — a force-controlled footing
+     push on stage-1 PDMY diverges from the first increment (near-surface
+     GPs at ~zero confinement, G ∝ p′^d ⇒ near-singular tangent ⇒ unbounded
+     first iterate; hypo correctly refuses the inverted iterate, linear
+     grinds without converging);
+  2. `-geom linear` is not a usable twin on this problem (it grinds even
+     displacement-controlled) — corot anchors, and the hypo-vs-corot gap IS
+     the measured geometric-nonlinearity content: 0.3 % at 0.25 %
+     penetration, 1.8 % at 1 %, 15.4 % at 5 % (hypo STIFFER — UL assembly on
+     the compacted configuration + n(J) storage), J ∈ [0.984, 1.022].
+  Every push step runs through the PDMY-battery substep-fallback policy
+  (KrylovNewton dt/10) — the designed mechanism, not an anomaly. The full
+  bearing-limit-point campaign on the real SFIM mesh is analysis work, not
+  CI.
 
 ---
 
