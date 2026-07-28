@@ -43,6 +43,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Information.h>
 #include <Parameter.h>
 #include <ElementalLoad.h>
@@ -1176,6 +1177,8 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
 {
   Response *theResponse = 0;
 
+  if (argc < 1) return 0;
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoSolidShell");
   output.attr("eleTag", this->getTag());
@@ -1185,7 +1188,7 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
     output.attr(nodeTag, connectedExternalNodes(i));
   }
 
-  if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
+  if (LadrunoResp::is(argv[0], "material")) {
     if (argc >= 2) {
       const int pointNum = atoi(argv[1]);
       if (pointNum > 0 && pointNum <= numGP) {
@@ -1197,28 +1200,42 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
       }
     }
   }
-  else if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0) {
+  else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 1, Vector(6 * numGP));
   }
-  else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0) {
+  else if (LadrunoResp::is(argv[0], "strain")) {
     theResponse = new ElementResponse(this, 2, Vector(6 * numGP));
   }
-  else if (strcmp(argv[0], "alpha") == 0 || strcmp(argv[0], "eas") == 0) {
+  else if (LadrunoResp::is(argv[0], "alpha")) {
     // enhanced-parameter diagnostic (the G6 stability gate reads this)
     theResponse = new ElementResponse(this, 3, Vector(NEAS));
   }
-  else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0 ||
-           strcmp(argv[0], "tangent") == 0) {
+  else if (LadrunoResp::is(argv[0], "stiff")) {
     // condensed tangent stiffness, row-major 24x24 (diagnostic — lets a gate
     // compare against the initial stiffness and check symmetry)  // Ladruno
     theResponse = new ElementResponse(this, 4, Vector(24 * 24));
   }
-  else if (strcmp(argv[0], "stiffInitial") == 0 ||
-           strcmp(argv[0], "initialStiffness") == 0) {
+  else if (LadrunoResp::is(argv[0], "stiffInitial")) {
     theResponse = new ElementResponse(this, 5, Vector(24 * 24));
+  }
+  else if (LadrunoResp::is(argv[0], "force")) {
+    // Ladruno — the element had NO force response at all; the family contract
+    // is force / stress / strain / stiff / stiffInitial / charLength.
+    theResponse = new ElementResponse(this, 6, Vector(24));
+  }
+  else if (LadrunoResp::is(argv[0], "charLength")) {
+    // Ladruno — the IN-PLANE projected size handed to crack-band materials.
+    output.tag("ResponseType", "lch");
+    theResponse = new ElementResponse(this, 7, Vector(1));
   }
 
   output.endTag();
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1253,6 +1270,13 @@ int LadrunoSolidShell::getResponse(int responseID, Information &eleInfo)
         data(24 * i + j) = K(i, j);
     return eleInfo.setVector(data);
   }
+  if (responseID == 6)
+    return eleInfo.setVector(this->getResistingForce());
+  if (responseID == 7) {
+    static Vector lch(1);
+    lch(0) = this->getCharacteristicLength();
+    return eleInfo.setVector(lch);
+  }
 
-  return -1;
+  return this->Element::getResponse(responseID, eleInfo);
 }

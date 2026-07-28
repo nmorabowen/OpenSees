@@ -2664,8 +2664,14 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
 
     if (theResponse == 0)
       theResponse = crdTransf->setResponse(argv, argc, output);
-    
+
   output.endTag();
+
+  // Ladruno — base vocabulary (dampingForce, dynamicForce, inertialForce); the
+  // 2d twin already chained here, this one did not. Element::setResponse opens
+  // its own ElementOutput tag, so this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -2827,7 +2833,7 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
   }
 
   else
-    return -1;
+    return this->Element::getResponse(responseID, eleInfo);
 }
 
 // AddingSensitivity:BEGIN ///////////////////////////////////

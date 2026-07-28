@@ -55,6 +55,7 @@
 #include <LadrunoMassLumping.h>           // Ladruno — shared HRZ lumper (ADR 35, -lumped path)
 #include <Renderer.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Parameter.h>
 #include <ElementalLoad.h>
 
@@ -1003,6 +1004,8 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
   Response *theResponse = 0;
   char outputData[32];
 
+  if (argc < 1) return 0;
+
   // ── LadrunoRecorder geometry self-description (contract Part A) ──────────
   // One class tag carries TWO GP layouts (std 27-pt brcshl / uri 8-pt
   // lexicographic), so the recorder cannot dispatch on the class tag alone:
@@ -1033,7 +1036,7 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.attr(outputData, nodePointers[i - 1]->getTag());
   }
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     for (int i = 1; i <= NEN; i++) {
       sprintf(outputData, "P1_%d", i); output.tag("ResponseType", outputData);
       sprintf(outputData, "P2_%d", i); output.tag("ResponseType", outputData);
@@ -1041,10 +1044,13 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 1, resid);
 
-  } else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
     theResponse = new ElementResponse(this, 2, Matrix(NDOF, NDOF));
 
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 10, Matrix(NDOF, NDOF));
+
+  } else if (LadrunoResp::is(argv[0], "material")) {
     if (argc >= 2) {                      // F5: guard before reading argv[1]
       int pointNum = atoi(argv[1]);
       if (pointNum > 0 && pointNum <= this->nGP()) {
@@ -1055,7 +1061,7 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
       }
     }
 
-  } else if (strcmp(argv[0], "stresses") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     for (int i = 0; i < this->nGP(); i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -1073,7 +1079,7 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 3, Vector(this->nGP() * NSTR));
 
-  } else if (strcmp(argv[0], "strains") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     for (int i = 0; i < this->nGP(); i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -1123,13 +1129,18 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.endTag();
     theResponse = new ElementResponse(this, 7, Vector(NSTR));
 
-  } else if (strcmp(argv[0], "charLength") == 0 ||
-             strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     output.tag("ResponseType", "lch");
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
   output.endTag(); // ElementOutput
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1208,9 +1219,11 @@ LadrunoBrick20::getResponse(int responseID, Information &eleInfo)
     for (int g = 0; g < ngp; g++)
       w(g) = gp[g][3];
     return eleInfo.setVector(w);
-  }
 
-  return -1;
+  } else if (responseID == 10)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int

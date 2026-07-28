@@ -48,6 +48,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <Response.h>
 #include <DummyStream.h>
@@ -1476,21 +1477,24 @@ int LadrunoQuad::displaySelf(Renderer &theViewer, int displayMode, float fact,
 Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   Response *theResponse = 0;
+  if (argc < 1) return 0;
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoQuad");
   output.attr("eleTag", this->getTag());
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     theResponse = new ElementResponse(this, 1, P);
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    // SSP evaluates the material only at the centroid (slot 0).
-    int idx = this->isSinglePoint() ? 0 : (pointNum - 1);
-    if (pointNum > 0 && pointNum <= 4)
-      theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
-  } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      // SSP evaluates the material only at the centroid (slot 0).
+      int idx = this->isSinglePoint() ? 0 : (pointNum - 1);
+      if (pointNum > 0 && pointNum <= 4)
+        theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
+    }
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(12));
-  } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
     // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't
     // expose it); full GaussPoint/NdMaterialOutput tags so XML-driven recorders
     // (Ladruno/MPCO) get real component names instead of the C1..C16 fallback
@@ -1514,13 +1518,25 @@ Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &outp
       output.endTag(); // GaussPoint
     }
     theResponse = new ElementResponse(this, 21, Vector(16));
-  } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     theResponse = new ElementResponse(this, 4, Vector(12));
-  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     theResponse = new ElementResponse(this, 5, 0.0);
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
+    // Ladruno — family-wide diagnostic (FD-tangent checks); LadrunoBrick and
+    // LadrunoSolidShell already exposed it, the plane family did not.
+    theResponse = new ElementResponse(this, 6, Matrix(P.Size(), P.Size()));
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
   }
 
   output.endTag();
+
+  // Ladruno — fall back to the base vocabulary (globalForce, dampingForce,
+  // dynamicForce, inertialForce). Element::setResponse opens its OWN
+  // ElementOutput tag, so this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1561,7 +1577,13 @@ int LadrunoQuad::getResponse(int responseID, Information &eleInfo)
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());
 
-  return -1;
+  if (responseID == 6)
+    return eleInfo.setMatrix(this->getTangentStiff());
+
+  if (responseID == 7)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int LadrunoQuad::setParameter(const char **argv, int argc, Parameter &param)
