@@ -222,8 +222,13 @@ void *OPS_PathSeries() {
                values.empty() == false) {
         Vector thePath(&values[0], (int)values.size());
         Vector theTime(&times[0], (int)times.size());
+        // Ladruno (ADR 79 P2): forward the parsed -useLast (it was silently
+        // DROPPED on this -time/-values route only — the flag parsed at line
+        // ~140 never reached the ctor, so a Path-driven sp snapped to factor 0
+        // when the accumulated domain time overshot the last path point by a
+        // few ulps; see LEDGER_quirks).
         return new PathTimeSeries(tag, thePath, theTime,
-                                  factor);
+                                  factor, useLast);
 
     } else if (fileTime != 0 && filePath != 0) {
         return new PathTimeSeries(tag, filePath, fileTime,

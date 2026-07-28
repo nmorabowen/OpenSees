@@ -42,6 +42,7 @@
 #include <LadrunoUPShapes.h>
 #include <SolidTransformation.h>        // ADR 78 — geometry-method seam
 #include <SolidTransformationLinear.h>  // ADR 78 — identity method / safe fallback
+#include <LadrunoHypoKernel.h>          // ADR 79 P2 — hypo objective increment
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
@@ -76,7 +77,8 @@ static const int UP_MAX_DOF   = 40;   // 10 nodes x (3 + 1)
 // recvSelf — an unguarded stream with corot+ndm==2 would run the 3D-indexed
 // corot loops against 2D-sized buffers (heap overrun), and METHOD_FINITE
 // would silently run linear kinematics while Print reports "finite".
-static int upSanitizeGeomMethod(int geomMethod, int ndm, int tag,
+static int upSanitizeGeomMethod(int geomMethod, int ndm, int nNodes,
+                                int formulation, int pOrder, int tag,
                                 const char *who)
 {
   if (geomMethod == SolidTransformation::METHOD_COROT && ndm != 3) {
@@ -89,6 +91,18 @@ static int upSanitizeGeomMethod(int geomMethod, int ndm, int tag,
     opserr << "LadrunoUP::" << who << " - element " << tag
            << ": -geom finite is reserved on LadrunoUP (no finite-strain u-p "
               "material path, ADR 78 Sec 1.1); using -geom linear\n";
+    return SolidTransformation::METHOD_LINEAR;
+  }
+  // ADR 79 P2: hypo v1 ships the 3D H8 equal-order std lane only (the per-GP
+  // 3×3 kernel + the current-config block rebuilds are validated there; 2D
+  // plane-strain embedding, TH vertex-p and bbar-in-rate-form are reserved).
+  if (geomMethod == SolidTransformation::METHOD_HYPO &&
+      (ndm != 3 || nNodes != 8 || formulation != 0 || pOrder != 0)) {
+    opserr << "LadrunoUP::" << who << " - element " << tag
+           << ": -geom hypo v1 supports the 3D H8 equal-order std lane only "
+              "(got ndm=" << ndm << ", nNodes=" << nNodes
+           << ", formulation=" << formulation << ", pOrder=" << pOrder
+           << "; ADR 79 P2); using -geom linear\n";
     return SolidTransformation::METHOD_LINEAR;
   }
   return geomMethod;
@@ -110,7 +124,8 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
                      bool lumped,
                      int stabMode, double stabValue,
                      bool dynSeepage,
-                     int geomMethod)
+                     int geomMethod,
+                     bool kozenyCarman)
  : Element(tag, ELE_TAG_LadrunoUP),
    ndm_(ndm), nNodes_(nodeTags.Size()), shapeKind_(SHAPE_NONE),
    nGP_(0), nU_(0), nP_(0), nStr_(0), nDof_(0),
@@ -121,6 +136,7 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
    stabMode_(stabMode), stabValue_(stabValue), dynSeepage_(dynSeepage),
    oneOverQbar_(0.0),
    theGeom_(0), corotActive_(false),
+   hypoActive_(false), kozenyCarman_(kozenyCarman),   // ADR 79 P2
    applyLoad_(0), Qload_(),
    kInitSolidValid_(false), kcSolidValid_(false),
    k0Valid_(false), k0Dirty_(true), stabAlpha_(0.0), stabDirty_(true),
@@ -139,11 +155,12 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
   for (int n = 0; n < nNodes_; n++)
     connectedExternalNodes_(n) = nodeTags(n);
 
-  // ---- geometry method (ADR 78) --------------------------------------------
+  // ---- geometry method (ADR 78/79) -----------------------------------------
   // Parser polices -geom; the sanitizer is the belt-and-braces guard for
-  // direct-construction callers (2D corot / reserved finite / unknown ids
-  // degrade to linear loudly rather than corrupting or lying).
-  geomMethod = upSanitizeGeomMethod(geomMethod, ndm_, tag, "LadrunoUP");
+  // direct-construction callers (2D corot / reserved finite / non-H8 hypo /
+  // unknown ids degrade to linear loudly rather than corrupting or lying).
+  geomMethod = upSanitizeGeomMethod(geomMethod, ndm_, nNodes_,
+                                    formulation_, pOrder_, tag, "LadrunoUP");
   theGeom_ = SolidTransformation::create(geomMethod);
   if (theGeom_ == 0) {
     opserr << "LadrunoUP::LadrunoUP - element " << tag
@@ -152,6 +169,7 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
     theGeom_ = new SolidTransformationLinear();
   }
   corotActive_ = (theGeom_->getMethodID() == SolidTransformation::METHOD_COROT);
+  hypoActive_  = (theGeom_->getMethodID() == SolidTransformation::METHOD_HYPO);
 
   // ---- parameter intake ------------------------------------------------------
   for (int i = 0; i < ndm_; i++) {
@@ -205,6 +223,7 @@ LadrunoUP::LadrunoUP()
    stabMode_(0), stabValue_(0.0), dynSeepage_(true),
    oneOverQbar_(0.0),
    theGeom_(new SolidTransformationLinear()), corotActive_(false),
+   hypoActive_(false), kozenyCarman_(false),   // ADR 79 P2
    applyLoad_(0), Qload_(),
    kInitSolidValid_(false), kcSolidValid_(false),
    k0Valid_(false), k0Dirty_(true), stabAlpha_(0.0), stabDirty_(true),
@@ -322,6 +341,22 @@ void LadrunoUP::configureSizing(void)
   QrotBlk_.assign(nU_ * nP_, 0.0);
   uDcur_.resize(nU_);                  uDcur_.Zero();
   uDn_.resize(nU_);                    uDn_.Zero();
+
+  // hypo per-GP state + per-evaluation caches (ADR 79 P2) — sized
+  // unconditionally (same rationale as the corot scratch: recvSelf-rebuilt
+  // elements must be ready regardless of the incoming stream's method).
+  hypoFeed_.assign(nGP_ * 6, 0.0);
+  hypoFeedCommit_.assign(nGP_ * 6, 0.0);
+  hypoR_.assign(nGP_ * 9, 0.0);
+  hypoJ_.assign(nGP_, 1.0);
+  hypoTrDeps_.assign(nGP_, 0.0);
+  hypoDNuX_.assign(nGP_ * nNodes_ * 3, 0.0);
+  hypoDNpX_.assign(nGP_ * nP_ * 3, 0.0);
+  hypoDvCur_.assign(nGP_, 0.0);
+  hypoKsp_.assign(nGP_ * 9, 0.0);
+  hypoInvQbar_.assign(nGP_, 0.0);
+  HcurBlk_.assign(nP_ * nP_, 0.0);
+  ScurBlk_.assign(nP_ * nP_, 0.0);
 }
 
 // ===========================================================================
@@ -764,6 +799,11 @@ int LadrunoUP::commitState(void)
   // the state the incremental storage coupling Qᵀ·Δu_d/Δt differences against.
   if (corotActive_)
     uDn_ = uDcur_;
+
+  // hypo (ADR 79 P2): advance the accumulated feed strain (the only persistent
+  // hypo state; the per-evaluation caches recompute from committed nodes).
+  if (hypoActive_)
+    hypoFeedCommit_ = hypoFeed_;
   return retVal;
 }
 
@@ -778,6 +818,8 @@ int LadrunoUP::revertToLastCommit(void)
   // Rcur_/QrotBlk_ refresh at the next update(), as everywhere else.
   if (corotActive_)
     uDcur_ = uDn_;
+  if (hypoActive_)                    // hypo (ADR 79 P2): rewind the trial feed
+    hypoFeed_ = hypoFeedCommit_;
   return retVal;
 }
 
@@ -795,6 +837,10 @@ int LadrunoUP::revertToStart(void)
     uDn_.Zero();
     uDcur_.Zero();
   }
+  if (hypoActive_) {                  // hypo (ADR 79 P2): reset the feed strain
+    std::fill(hypoFeed_.begin(), hypoFeed_.end(), 0.0);
+    std::fill(hypoFeedCommit_.begin(), hypoFeedCommit_.end(), 0.0);
+  }
   return retVal;
 }
 
@@ -811,6 +857,9 @@ int LadrunoUP::update(void)
 {
   if (!geomValid_)
     return -1;
+
+  if (hypoActive_)                 // ADR 79 P2: rate-form UL — own lane
+    return this->updateHypo();
 
   if (!corotActive_) {
     for (int a = 0; a < nNodes_; a++) {
@@ -867,6 +916,268 @@ int LadrunoUP::update(void)
     ret += theMaterials_[gp]->setTrialStrain(epsScratch_);
   }
   return ret;
+}
+
+// -geom hypo (ADR 79 P2): the per-evaluation heart. Per GP:
+//   1. Hughes–Winget midpoint objective strain increment from committed vs
+//      trial nodal displacements, de-rotated into the fixed unrotated
+//      (Green–Naghdi) material frame (LadrunoHypoKernel.h);
+//   2. accumulate into hypoFeed_ (rewritten from COMMITTED state every call —
+//      Newton iterations never double-accumulate) and drive the UNCHANGED
+//      small-strain material via setTrialStrain;
+//   3. refresh the current-configuration caches all assembly consumes: spatial
+//      solid/pressure gradients (via F_trial⁻¹), dv = J·dV, polar R (stress /
+//      tangent push-forward), tr(Δε) (the Δln J continuity increment), the
+//      porosity-dependent storage coefficient 1/Q̄(n(J)), the spatial
+//      permeability kc(J)·R·diag(k̄)·Rᵀ, and the current-config Q/H/S blocks
+//      (Q reuses the corot QrotBlk_ slot — one "current coupling" cache).
+// A collapsed/inverted trial or midpoint configuration returns −1 (step cut).
+int LadrunoUP::updateHypo(void)
+{
+  double un[UP_MAX_NODES * 3], u1[UP_MAX_NODES * 3];
+  for (int a = 0; a < nNodes_; a++) {
+    const Vector &dc = theNodes_[a]->getDisp();       // committed
+    const Vector &dt = theNodes_[a]->getTrialDisp();  // trial
+    for (int i = 0; i < 3; i++) {
+      un[a * 3 + i] = dc(i);
+      u1[a * 3 + i] = dt(i);
+    }
+  }
+
+  std::fill(QrotBlk_.begin(), QrotBlk_.end(), 0.0);
+  std::fill(HcurBlk_.begin(), HcurBlk_.end(), 0.0);
+  std::fill(ScurBlk_.begin(), ScurBlk_.end(), 0.0);
+
+  int ret = 0;
+  for (int gp = 0; gp < nGP_; gp++) {
+    const double *dNdX = &dNuAll_[gp * nNodes_ * 3];   // reference gradients
+
+    double deps[6], R1[9], J1;
+    if (!ladruno_hypo::hypoIncrement(nNodes_, dNdX, un, u1, deps, R1, J1)) {
+      opserr << "LadrunoUP::updateHypo - collapsed/inverted trial or midpoint "
+                "configuration at GP " << gp << " (element " << this->getTag()
+             << ", det <= 0)\n";
+      return -1;
+    }
+
+    for (int c = 0; c < 6; c++) {
+      hypoFeed_[gp * 6 + c] = hypoFeedCommit_[gp * 6 + c] + deps[c];
+      epsScratch_(c) = hypoFeed_[gp * 6 + c];
+    }
+    ret += theMaterials_[gp]->setTrialStrain(epsScratch_);
+
+    for (int c = 0; c < 9; c++)
+      hypoR_[gp * 9 + c] = R1[c];
+    hypoJ_[gp] = J1;
+    hypoTrDeps_[gp] = deps[0] + deps[1] + deps[2];     // tr is frame-invariant
+    double dvCur = J1 * dv_[gp];
+    hypoDvCur_[gp] = dvCur;
+
+    // spatial gradients via F_trial⁻¹ (solid + pressure shape sets)
+    double H1[9], F1[9], Fi[9];
+    ladruno_hypo::dispGradient(nNodes_, dNdX, u1, H1);
+    for (int c = 0; c < 9; c++) F1[c] = H1[c];
+    F1[0] += 1.0; F1[4] += 1.0; F1[8] += 1.0;
+    ladruno_hypo::inv3(F1, Fi);
+    double *gU = &hypoDNuX_[gp * nNodes_ * 3];
+    for (int a = 0; a < nNodes_; a++)
+      for (int j = 0; j < 3; j++) {
+        double s = 0.0;
+        for (int K = 0; K < 3; K++)
+          s += dNdX[a * 3 + K] * Fi[3 * K + j];
+        gU[a * 3 + j] = s;
+      }
+    const double *dNpRef = &dNpAll_[gp * nP_ * 3];
+    double *gP = &hypoDNpX_[gp * nP_ * 3];
+    for (int bb = 0; bb < nP_; bb++)
+      for (int j = 0; j < 3; j++) {
+        double s = 0.0;
+        for (int K = 0; K < 3; K++)
+          s += dNpRef[bb * 3 + K] * Fi[3 * K + j];
+        gP[bb * 3 + j] = s;
+      }
+
+    // porosity-evolved storage coefficient + spatial permeability
+    double n = this->hypoPorosity(gp);
+    hypoInvQbar_[gp] = (Kf_ > 0.0)
+        ? ladruno_up::oneOverQbar(n, Kf_, biotAlpha_, Ks_) : 0.0;
+    double kc = 1.0;
+    if (kozenyCarman_) {
+      // Kozeny–Carman scaling normalized to 1 at n = n₀; floored so a heavily
+      // compacted GP degrades to near-impermeable without singularizing H.
+      double n0 = poro_;
+      kc = (n * n * n / ((1.0 - n) * (1.0 - n)))
+         * ((1.0 - n0) * (1.0 - n0) / (n0 * n0 * n0));
+      if (kc < 1.0e-6) kc = 1.0e-6;
+    }
+    // k_sp = kc · R · diag(k̄) · Rᵀ — permeability axes are skeleton-attached
+    // (the ADR 78 §3.4 physics), expressed spatially for the current-config H.
+    double ksp[9];
+    for (int i = 0; i < 3; i++)
+      for (int j = 0; j < 3; j++) {
+        double s = 0.0;
+        for (int m = 0; m < 3; m++)
+          s += R1[3 * i + m] * kbar_[m] * R1[3 * j + m];
+        ksp[3 * i + j] = kc * s;
+      }
+    for (int c = 0; c < 9; c++)
+      hypoKsp_[gp * 9 + c] = ksp[c];
+
+    // current-config blocks: Q (into the QrotBlk_ slot), H, S
+    const double *Np = &NpAll_[gp * nP_];
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < 3; i++) {
+        int row = a * 3 + i;
+        double g = gU[row] * biotAlpha_ * dvCur;
+        for (int bb = 0; bb < nP_; bb++)
+          QrotBlk_[row * nP_ + bb] += g * Np[bb];
+      }
+    for (int bb = 0; bb < nP_; bb++)
+      for (int cc = 0; cc < nP_; cc++) {
+        double s = 0.0;
+        for (int i = 0; i < 3; i++)
+          for (int j = 0; j < 3; j++)
+            s += gP[bb * 3 + i] * ksp[3 * i + j] * gP[cc * 3 + j];
+        HcurBlk_[bb * nP_ + cc] += s * dvCur;
+        ScurBlk_[bb * nP_ + cc] += Np[bb] * hypoInvQbar_[gp] * Np[cc] * dvCur;
+      }
+  }
+  return ret;
+}
+
+// n(J) = 1 − (1−n₀)/J — the kinematic porosity update (solid grains
+// incompressible relative to the skeleton; the ADR 78 §3.7 deferral, opened by
+// hypo's J). Clamped away from 0/1 so downstream 1/Q̄ and Kozeny–Carman stay
+// finite on extreme (but not yet inverted) states.
+double LadrunoUP::hypoPorosity(int gp) const
+{
+  double n = 1.0 - (1.0 - poro_) / hypoJ_[gp];
+  if (n < 1.0e-6)        n = 1.0e-6;
+  else if (n > 1.0 - 1.0e-6) n = 1.0 - 1.0e-6;
+  return n;
+}
+
+// hypo u-row internal force: ∫ Bᵀ(σ_sp − αp·m) dv on the current configuration,
+// σ_sp = R·σ_mat·Rᵀ (the unrotated-frame material stress pushed forward). The
+// −αp leg contracted against the SAME spatial gradients is exactly −Q_cur·p, so
+// K/Q frame-and-configuration consistency is structural (the ADR 78 §3.2
+// argument carried to hypo). Fills pScratch_ as a side effect.
+void LadrunoUP::buildCoreForceHypo(Vector &fu)
+{
+  fu.Zero();
+  for (int bb = 0; bb < nP_; bb++)
+    pScratch_(bb) = theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
+
+  for (int gp = 0; gp < nGP_; gp++) {
+    const Vector &sMatV = theMaterials_[gp]->getStress();
+    double sMat[6], sSp[6];
+    for (int c = 0; c < 6; c++) sMat[c] = sMatV(c);
+    ladruno_hypo::pushStress6(&hypoR_[gp * 9], sMat, sSp);
+
+    double p = 0.0;
+    const double *Np = &NpAll_[gp * nP_];
+    for (int bb = 0; bb < nP_; bb++)
+      p += Np[bb] * pScratch_(bb);
+
+    double sig[3][3];
+    sig[0][0] = sSp[0] - biotAlpha_ * p;
+    sig[1][1] = sSp[1] - biotAlpha_ * p;
+    sig[2][2] = sSp[2] - biotAlpha_ * p;
+    sig[0][1] = sig[1][0] = sSp[3];
+    sig[1][2] = sig[2][1] = sSp[4];
+    sig[2][0] = sig[0][2] = sSp[5];
+
+    const double *gU = &hypoDNuX_[gp * nNodes_ * 3];
+    double dvCur = hypoDvCur_[gp];
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < 3; i++) {
+        double s = 0.0;
+        for (int j = 0; j < 3; j++)
+          s += sig[i][j] * gU[a * 3 + j];
+        fu(a * 3 + i) += s * dvCur;
+      }
+  }
+}
+
+// hypo solid tangent: ∫ Bᵀ c B dv (c = the material 6×6 pushed forward by the
+// energy-consistent Voigt bond rotation) + the standard SYMMETRIC initial-
+// stress term δ_ik·∫ ∂Nₐ/∂x_j σ_jl ∂N_b/∂x_l dv built from the TOTAL stress
+// (σ_sp − αp·m — pore pressure feeds the load stiffness, ADR 78 §3.2), all on
+// the current configuration. Rate-convection terms omitted (the "residual
+// exact, tangent dominant-term" policy); Ks stays symmetric.
+void LadrunoUP::buildSolidKHypo(Matrix &Ks)
+{
+  Ks.Zero();
+  for (int gp = 0; gp < nGP_; gp++) {
+    const Matrix &Dm = theMaterials_[gp]->getTangent();
+    double Dmat[36], Dcur[36];
+    for (int r = 0; r < 6; r++)
+      for (int c = 0; c < 6; c++)
+        Dmat[6 * r + c] = Dm(r, c);
+    ladruno_hypo::pushTangent6(&hypoR_[gp * 9], Dmat, Dcur);
+
+    const double *gU = &hypoDNuX_[gp * nNodes_ * 3];
+    double dvCur = hypoDvCur_[gp];
+
+    double Ba[6][3], Bb[6][3], DB[6][3];
+    for (int a = 0; a < nNodes_; a++) {
+      for (int r = 0; r < 6; r++)
+        for (int c = 0; c < 3; c++) Ba[r][c] = 0.0;
+      Ba[0][0] = gU[a*3+0]; Ba[1][1] = gU[a*3+1]; Ba[2][2] = gU[a*3+2];
+      Ba[3][0] = gU[a*3+1]; Ba[3][1] = gU[a*3+0];
+      Ba[4][1] = gU[a*3+2]; Ba[4][2] = gU[a*3+1];
+      Ba[5][0] = gU[a*3+2]; Ba[5][2] = gU[a*3+0];
+
+      for (int bn = 0; bn < nNodes_; bn++) {
+        for (int r = 0; r < 6; r++)
+          for (int c = 0; c < 3; c++) Bb[r][c] = 0.0;
+        Bb[0][0] = gU[bn*3+0]; Bb[1][1] = gU[bn*3+1]; Bb[2][2] = gU[bn*3+2];
+        Bb[3][0] = gU[bn*3+1]; Bb[3][1] = gU[bn*3+0];
+        Bb[4][1] = gU[bn*3+2]; Bb[4][2] = gU[bn*3+1];
+        Bb[5][0] = gU[bn*3+2]; Bb[5][2] = gU[bn*3+0];
+
+        for (int r = 0; r < 6; r++)
+          for (int c = 0; c < 3; c++) {
+            double s = 0.0;
+            for (int q = 0; q < 6; q++)
+              s += Dcur[6 * r + q] * Bb[q][c];
+            DB[r][c] = s;
+          }
+        for (int i = 0; i < 3; i++)
+          for (int k = 0; k < 3; k++) {
+            double s = 0.0;
+            for (int r = 0; r < 6; r++)
+              s += Ba[r][i] * DB[r][k];
+            Ks(3 * a + i, 3 * bn + k) += s * dvCur;
+          }
+      }
+    }
+
+    // geometric / initial-stress term from the TOTAL stress
+    const Vector &sMatV = theMaterials_[gp]->getStress();
+    double sMat[6], sSp[6];
+    for (int c = 0; c < 6; c++) sMat[c] = sMatV(c);
+    ladruno_hypo::pushStress6(&hypoR_[gp * 9], sMat, sSp);
+    double p = this->gpPressure(gp);
+    double sig[3][3];
+    sig[0][0] = sSp[0] - biotAlpha_ * p;
+    sig[1][1] = sSp[1] - biotAlpha_ * p;
+    sig[2][2] = sSp[2] - biotAlpha_ * p;
+    sig[0][1] = sig[1][0] = sSp[3];
+    sig[1][2] = sig[2][1] = sSp[4];
+    sig[2][0] = sig[0][2] = sSp[5];
+
+    for (int a = 0; a < nNodes_; a++)
+      for (int bn = 0; bn < nNodes_; bn++) {
+        double s = 0.0;
+        for (int j = 0; j < 3; j++)
+          for (int l = 0; l < 3; l++)
+            s += gU[a * 3 + j] * sig[j][l] * gU[bn * 3 + l];
+        s *= dvCur;
+        for (int i = 0; i < 3; i++)
+          Ks(3 * a + i, 3 * bn + i) += s;
+      }
+  }
 }
 
 // ===========================================================================
@@ -1055,7 +1366,12 @@ const Matrix &LadrunoUP::getTangentStiff(void)
   if (!geomValid_)
     return K_;
 
-  this->buildSolidK(KsolScratch_, false);
+  // hypo (ADR 79 P2): the spatial solid tangent (pushed-forward c + total-
+  // stress geometric term, current dv) replaces the reference build wholesale.
+  if (hypoActive_)
+    this->buildSolidKHypo(KsolScratch_);
+  else
+    this->buildSolidK(KsolScratch_, false);
 
   // corot (ADR 78 §3.1/§3.2): globalize the core solid K through seam 3 with
   // the TOTAL core force (∫Bᵀσ′dV − Q·p) so K_geo carries the total-stress
@@ -1072,7 +1388,10 @@ const Matrix &LadrunoUP::getTangentStiff(void)
         for (int j = 0; j < ndm_; j++)
           K_(uOff_[a] + i, uOff_[c] + j) = KsolScratch_(a * ndm_ + i, c * ndm_ + j);
 
-  const double *Quse = corotActive_ ? QrotBlk_.data() : Qblk_.data();
+  // hypo shares the QrotBlk_ slot: under hypo it holds the CURRENT-config Q
+  // (rebuilt each updateHypo), under corot the row-rotated R̄Q.
+  const double *Quse = (corotActive_ || hypoActive_) ? QrotBlk_.data()
+                                                     : Qblk_.data();
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++) {
       int row = a * ndm_ + i;
@@ -1080,9 +1399,10 @@ const Matrix &LadrunoUP::getTangentStiff(void)
         K_(uOff_[a] + i, pOff_[carrierNodes_[bb]]) = -Quse[row * nP_ + bb];
     }
 
+  const double *Huse = hypoActive_ ? HcurBlk_.data() : Hblk_.data();
   for (int bb = 0; bb < nP_; bb++)
     for (int cc = 0; cc < nP_; cc++)
-      K_(pOff_[carrierNodes_[bb]], pOff_[carrierNodes_[cc]]) = Hblk_[bb * nP_ + cc];
+      K_(pOff_[carrierNodes_[bb]], pOff_[carrierNodes_[cc]]) = Huse[bb * nP_ + cc];
 
   return K_;
 }
@@ -1142,6 +1462,11 @@ const Matrix &LadrunoUP::getDamp(void)
   // globalizeStiff with a zero core force is the pure rotation R̄CR̄ᵀ (no
   // K_geo; damping is material, not load-stiffness). The αM·M part is exactly
   // invariant (m·I nodal blocks), so this rotates precisely the K-parts.
+  // hypo (ADR 79 P2): C_Ray deliberately stays the REFERENCE-configuration
+  // build — per-GP rotations define no single element frame to rotate it by.
+  // αM·M is exactly invariant; the βK parts carry an O(rotation) frame
+  // approximation in the DAMPING FORCES only (Rayleigh is itself a modeling
+  // artifact; documented, ADR 79 P2 conventions).
   if (corotActive_)
     theGeom_->globalizeStiff(CRayScratch_, zeroFu_, CRayScratch_);
   for (int a = 0; a < nNodes_; a++)
@@ -1157,7 +1482,9 @@ const Matrix &LadrunoUP::getDamp(void)
   // dominant Newton sensitivity of the storage coupling. The RESIDUAL does
   // not use this block times velocity: getResistingForceIncInertia swaps it
   // for the incremental Qᵀ·Δu_d/Δt (ADR 78 §3.3 — the chord-defect cure).
-  const double *Quse = corotActive_ ? QrotBlk_.data() : Qblk_.data();
+  // hypo: QrotBlk_ holds the current-config Q; S evolves with n(J) (ScurBlk_).
+  const double *Quse = (corotActive_ || hypoActive_) ? QrotBlk_.data()
+                                                     : Qblk_.data();
   for (int a = 0; a < nNodes_; a++)
     for (int i = 0; i < ndm_; i++) {
       int row = a * ndm_ + i;
@@ -1166,10 +1493,11 @@ const Matrix &LadrunoUP::getDamp(void)
     }
 
   double al = this->stabAlphaValue();
+  const double *Suse = hypoActive_ ? ScurBlk_.data() : Sblk_.data();
   for (int bb = 0; bb < nP_; bb++)
     for (int cc = 0; cc < nP_; cc++)
       damp_(pOff_[carrierNodes_[bb]], pOff_[carrierNodes_[cc]]) =
-          Sblk_[bb * nP_ + cc] + al * HtUnit_[bb * nP_ + cc];
+          Suse[bb * nP_ + cc] + al * HtUnit_[bb * nP_ + cc];
 
   return damp_;
 }
@@ -1205,7 +1533,26 @@ const Vector &LadrunoUP::getResistingForce(void)
   const double *fbAct = (applyLoad_ == 1) ? appliedFluidBody_ : fluidBody_;
 
   // ---- u-rows: internal force + coupling + body force -----------------------
-  if (!corotActive_) {
+  if (hypoActive_) {
+    // hypo (ADR 79 P2): spatial total-stress internal force on the current
+    // configuration (fills pScratch_). Already global-frame — no globalize.
+    // Body force stays a dead load per REFERENCE volume (the brick/finite
+    // convention — keeps the summed-reaction weight identity exact), on the
+    // pinned saturated mixture rho.
+    this->buildCoreForceHypo(fuScratch_);
+    for (int a = 0; a < nNodes_; a++)
+      for (int i = 0; i < ndm_; i++)
+        resid_(uOff_[a] + i) += fuScratch_(a * ndm_ + i);
+    for (int gp = 0; gp < nGP_; gp++) {
+      double rho = theMaterials_[gp]->getRho();
+      if (rho == 0.0)
+        continue;
+      const double *Nu = &NuAll_[gp * nNodes_];
+      for (int a = 0; a < nNodes_; a++)
+        for (int i = 0; i < ndm_; i++)
+          resid_(uOff_[a] + i) -= Nu[a] * rho * bAct[i] * dv_[gp];
+    }
+  } else if (!corotActive_) {
     // linear (P1 path, bit-identical): internal + body accumulated per GP,
     // then −Q·p applied on the assembled u-rows.
     fuScratch_.Zero();
@@ -1263,11 +1610,15 @@ const Vector &LadrunoUP::getResistingForce(void)
   }
 
   // ---- p-rows: H·p − f_seep --------------------------------------------------
-  for (int bb = 0; bb < nP_; bb++) {
-    double s = 0.0;
-    for (int cc = 0; cc < nP_; cc++)
-      s += Hblk_[bb * nP_ + cc] * pScratch_(cc);
-    resid_(pOff_[carrierNodes_[bb]]) += s;
+  // hypo: the current-config, (optionally) Kozeny–Carman-scaled Darcy block.
+  {
+    const double *Huse = hypoActive_ ? HcurBlk_.data() : Hblk_.data();
+    for (int bb = 0; bb < nP_; bb++) {
+      double s = 0.0;
+      for (int cc = 0; cc < nP_; cc++)
+        s += Huse[bb * nP_ + cc] * pScratch_(cc);
+      resid_(pOff_[carrierNodes_[bb]]) += s;
+    }
   }
 
   // f_seep: drive = fluidBody − ü_trial when -dynSeepage on (SWANDYNE residual
@@ -1295,8 +1646,23 @@ const Vector &LadrunoUP::getResistingForce(void)
                 + Rcur_(2, i) * drive[2];
         drive[0] = dm[0];  drive[1] = dm[1];  drive[2] = dm[2];
       }
-      ladruno_up::addFseep(&dNpAll_[gp * nP_ * ndm_], nP_, ndm_, kbar_,
-                           rhoF_, drive, dv_[gp], fseep);
+      if (hypoActive_) {
+        // hypo: SPATIAL gradients + spatial full-tensor permeability, current
+        // dv — everything already global-frame, no pull-back (the corot Rᵀ
+        // exists because corot assembles in the material frame; hypo does not).
+        const double *gP = &hypoDNpX_[gp * nP_ * 3];
+        const double *ksp = &hypoKsp_[gp * 9];
+        for (int bb = 0; bb < nP_; bb++) {
+          double s = 0.0;
+          for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+              s += gP[bb * 3 + i] * ksp[3 * i + j] * rhoF_ * drive[j];
+          fseep[bb] += s * hypoDvCur_[gp];
+        }
+      } else {
+        ladruno_up::addFseep(&dNpAll_[gp * nP_ * ndm_], nP_, ndm_, kbar_,
+                             rhoF_, drive, dv_[gp], fseep);
+      }
     }
     for (int bb = 0; bb < nP_; bb++)
       resid_(pOff_[carrierNodes_[bb]]) -= fseep[bb];
@@ -1384,6 +1750,39 @@ const Vector &LadrunoUP::getResistingForceIncInertia(void)
           double spc = Sblk_[bb * nP_ + cc] + al * HtUnit_[bb * nP_ + cc];
           Node *nc = theNodes_[carrierNodes_[cc]];
           sOld += spc * buf[pOff_[carrierNodes_[cc]]];          // Newmark ṗ
+          sNew += spc * (nc->getTrialDisp()(ndm_) - nc->getDisp()(ndm_));
+        }
+        resid_(pOff_[carrierNodes_[bb]]) += sNew / dt - sOld;
+      }
+    }
+  }
+
+  // hypo (ADR 79 P2): the SAME whole-p-row incremental replacement (the ADR 78
+  // §3.3 GN22/GN11 pairing carries over verbatim), with the coupling increment
+  // now the TRUE volume change: per GP α·tr(Δε)·dv — tr(Δε) sums to ln J in
+  // the midpoint limit (the Δln J continuity) and is EXACTLY zero on a rigid
+  // increment, so the chord defect cannot arise by construction. S (evolved
+  // with n(J)) and αH̃ go incremental with it — mixing schemes on the p-row is
+  // the measured ADR-78 pump.
+  if (hypoActive_) {
+    Domain *dom = this->getDomain();
+    double dt = (dom != 0) ? dom->getDT() : 0.0;
+    if (dt > 0.0) {
+      double al = this->stabAlphaValue();
+      for (int bb = 0; bb < nP_; bb++) {
+        double sOld = 0.0, sNew = 0.0;
+        for (int a = 0; a < nNodes_; a++)
+          for (int i = 0; i < 3; i++) {
+            int row = a * 3 + i;
+            sOld += QrotBlk_[row * nP_ + bb] * buf[uOff_[a] + i];  // Q_curᵀ·u̇
+          }
+        for (int gp = 0; gp < nGP_; gp++)                          // α·Δln J
+          sNew += NpAll_[gp * nP_ + bb] * biotAlpha_
+                * hypoTrDeps_[gp] * hypoDvCur_[gp];
+        for (int cc = 0; cc < nP_; cc++) {
+          double spc = ScurBlk_[bb * nP_ + cc] + al * HtUnit_[bb * nP_ + cc];
+          Node *nc = theNodes_[carrierNodes_[cc]];
+          sOld += spc * buf[pOff_[carrierNodes_[cc]]];             // Newmark ṗ
           sNew += spc * (nc->getTrialDisp()(ndm_) - nc->getDisp()(ndm_));
         }
         resid_(pOff_[carrierNodes_[bb]]) += sNew / dt - sOld;
@@ -1687,8 +2086,13 @@ Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output
     theResponse = new ElementResponse(this, 10, Vector(this->getNumDOF()));
   } else if (LadrunoResp::is(argv[0], "dynamicForce")) {
     theResponse = new ElementResponse(this, 11, Vector(this->getNumDOF()));
+  } else if (strcmp(argv[0], "hypoState") == 0) {
+    // 12 — ADR 79 P2 (hypo only): per-GP [J, n(J), kcScale] — the kinematic
+    // state the porosity/permeability gates observe. All-[1, n0, 1] under
+    // linear/corot (caches idle at their constructed values).
+    theResponse = new ElementResponse(this, 12, Vector(nGP_ * 3));
   }
-  // IDs 1–11 (pin: chosen clear of the plane-family's 21/stressZZ space).
+  // IDs 1–12 (pin: chosen clear of the plane-family's 21/stressZZ space).
 
   output.endTag();
 
@@ -1812,6 +2216,26 @@ int LadrunoUP::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(v);
   }
 
+  if (responseID == 12) {
+    // ADR 79 P2 — hypo kinematic state: per-GP [J, n(J), kcScale].
+    Vector hs(nGP_ * 3);
+    for (int gp = 0; gp < nGP_; gp++) {
+      double J = hypoJ_[gp];
+      double n = hypoActive_ ? this->hypoPorosity(gp) : poro_;
+      double kc = 1.0;
+      if (hypoActive_ && kozenyCarman_) {
+        double n0 = poro_;
+        kc = (n * n * n / ((1.0 - n) * (1.0 - n)))
+           * ((1.0 - n0) * (1.0 - n0) / (n0 * n0 * n0));
+        if (kc < 1.0e-6) kc = 1.0e-6;
+      }
+      hs(gp * 3 + 0) = J;
+      hs(gp * 3 + 1) = n;
+      hs(gp * 3 + 2) = kc;
+    }
+    return eleInfo.setVector(hs);
+  }
+
   return this->Element::getResponse(responseID, eleInfo);
 }
 
@@ -1897,7 +2321,8 @@ void LadrunoUP::Print(OPS_Stream &s, int flag)
 // The geometry-method id (ADR 78) is shipped as data(29); the corot wrapper is
 // STATELESS (R is a pure function of current nodal positions), so the id alone
 // reconstructs it — same contract as LadrunoBrick.
-static const int UP_NDATA = 30;   // scalar payload width (see layout below)
+static const int UP_NDATA = 31;   // scalar payload width (see layout below)
+                                  // ADR 79 P2 widened 30 -> 31: data(30) = kozenyCarman flag
 
 int LadrunoUP::sendSelf(int commitTag, Channel &theChannel)
 {
@@ -1937,12 +2362,27 @@ int LadrunoUP::sendSelf(int commitTag, Channel &theChannel)
   data(28) = betaKc;
   data(29) = theGeom_ ? theGeom_->getMethodID()
                       : SolidTransformation::METHOD_LINEAR;
+  data(30) = kozenyCarman_ ? 1.0 : 0.0;   // ADR 79 P2
 
   res = theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING LadrunoUP::sendSelf - element " << this->getTag()
            << ": failed to send data Vector\n";
     return res;
+  }
+
+  // hypo (ADR 79 P2): ship the committed accumulated feed strain as an EXTRA
+  // guarded Vector(nGP·6), gated on the geometry-method id in data(29) — the
+  // LadrunoBrick eas-alpha/hypo pattern: non-hypo streams are byte-identical.
+  if (hypoActive_) {
+    Vector hypoData((int)hypoFeedCommit_.size());
+    for (int c = 0; c < (int)hypoFeedCommit_.size(); c++)
+      hypoData(c) = hypoFeedCommit_[c];
+    if (theChannel.sendVector(dataTag, commitTag, hypoData) < 0) {
+      opserr << "WARNING LadrunoUP::sendSelf - element " << this->getTag()
+             << ": failed to send hypo feed strain\n";
+      return -1;
+    }
   }
 
   // ---- topology + per-GP material class/db tags in one ID -------------------
@@ -2022,6 +2462,7 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
   betaK         = data(26);
   betaK0        = data(27);
   betaKc        = data(28);
+  kozenyCarman_ = (data(30) != 0.0);   // ADR 79 P2
 
   // geometry method (ADR 78): rebuild the stateless wrapper from its id.
   // The stream is UNTRUSTED — sanitize against ndm_ (also from the stream)
@@ -2031,7 +2472,8 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
     delete theGeom_;
     theGeom_ = 0;
   }
-  int geomID = upSanitizeGeomMethod((int)data(29), ndm_, this->getTag(),
+  int geomID = upSanitizeGeomMethod((int)data(29), ndm_, nNodes_,
+                                    formulation_, pOrder_, this->getTag(),
                                     "recvSelf");
   theGeom_ = SolidTransformation::create(geomID);
   if (theGeom_ == 0) {
@@ -2041,6 +2483,7 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
     theGeom_ = new SolidTransformationLinear();
   }
   corotActive_ = (theGeom_->getMethodID() == SolidTransformation::METHOD_COROT);
+  hypoActive_  = (theGeom_->getMethodID() == SolidTransformation::METHOD_HYPO);
 
   // rebuild every size-derived member + per-instance buffer (the SAME helper
   // the ctor uses — no drift). This sizes uOff_/pOff_/carrierNodes_/nGP_ so the
@@ -2051,6 +2494,20 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
            << ": illegal (ndm=" << ndm_ << ", nNodes=" << nNodes_
            << ") in the incoming stream\n";
     return -1;
+  }
+
+  // hypo (ADR 79 P2): receive the committed feed strain (sent right after the
+  // data Vector — match that order). Trial = committed; the per-evaluation
+  // caches rebuild at the next update().
+  if (hypoActive_) {
+    Vector hypoData((int)hypoFeedCommit_.size());
+    if (theChannel.recvVector(dataTag, commitTag, hypoData) < 0) {
+      opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
+             << ": failed to recv hypo feed strain\n";
+      return -1;
+    }
+    for (int c = 0; c < (int)hypoFeedCommit_.size(); c++)
+      hypoFeed_[c] = hypoFeedCommit_[c] = hypoData(c);
   }
 
   // transient / cache state → null-ctor baseline (setDomain + first commit
