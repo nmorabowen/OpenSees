@@ -54,6 +54,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <Response.h>
 #include <classTags.h>
@@ -1595,15 +1596,15 @@ int LadrunoUP::updateParameter(int parameterID, Information &info)
 Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   Response *theResponse = 0;
+  if (argc < 1) return 0;
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoUP");
   output.attr("eleTag", this->getTag());
 
-  if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
+  if (LadrunoResp::is(argv[0], "stress")) {
     // 1 — EFFECTIVE stress σ′ per GP (the material's vector, nStr comps each)
     theResponse = new ElementResponse(this, 1, Vector(nGP_ * nStr_));
-  } else if (strcmp(argv[0], "stressesTotal") == 0 ||
-             strcmp(argv[0], "stressTotal") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stressTotal")) {
     // 2 — TOTAL stress σ = σ′ − α·m·p per GP (normal components carry the
     //     pore-pressure correction; ADR §3.1 sign convention)
     theResponse = new ElementResponse(this, 2, Vector(nGP_ * nStr_));
@@ -1611,22 +1612,53 @@ Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output
     // 3 — per-GP pore pressure Np·p_nodal (upstream ships NOTHING like this —
     //     the §3.5 "zero element-level pore-pressure responses" fix)
     theResponse = new ElementResponse(this, 3, Vector(nGP_));
-  } else if (strcmp(argv[0], "flux") == 0 || strcmp(argv[0], "darcyFlux") == 0) {
+  } else if (LadrunoResp::is(argv[0], "flux")) {
     // 4 — per-GP Darcy flux −k̄·(∇p − ρ_f·drive), ndm comps each
     theResponse = new ElementResponse(this, 4, Vector(nGP_ * ndm_));
-  } else if (strcmp(argv[0], "material") == 0 ||
-             strcmp(argv[0], "integrPoint") == 0) {
+  } else if (LadrunoResp::is(argv[0], "material")) {
     // family idiom: material $gpNum <...> forwarding
     if (argc > 1) {
       int pointNum = atoi(argv[1]);
       if (pointNum > 0 && pointNum <= nGP_)
         theResponse = theMaterials_[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
     }
+  // Ladruno — the rest of the family contract (force / strain / stiff /
+  // stiffInitial / charLength), which this element was missing entirely.
+  } else if (LadrunoResp::is(argv[0], "strain")) {
+    // 5 — EFFECTIVE strain ε per GP, same layout as response 1
+    theResponse = new ElementResponse(this, 5, Vector(nGP_ * nStr_));
+  } else if (LadrunoResp::is(argv[0], "force")) {
+    theResponse = new ElementResponse(this, 6, Vector(this->getNumDOF()));
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
+    output.tag("ResponseType", "lch");
+    theResponse = new ElementResponse(this, 7, Vector(1));
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
+    theResponse = new ElementResponse(this, 8,
+                                      Matrix(this->getNumDOF(), this->getNumDOF()));
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 9,
+                                      Matrix(this->getNumDOF(), this->getNumDOF()));
+  // Ladruno — dampingForce/dynamicForce are answered HERE, not by the base
+  // chain below: Element::getRayleighDampingForces would compose
+  // betaK*getTangentStiff() and inject the -Q / H coupling blocks into what it
+  // calls "Rayleigh damping". Rayleigh is SOLID-ONLY on this element (class
+  // header) and this element's own shadowing getRayleighDampingForces is the
+  // one that honours that. inertialForce/globalForce ARE left to the base:
+  // getResistingForceIncInertia is virtual, so the base already gets ours.
+  } else if (LadrunoResp::is(argv[0], "dampingForce")) {
+    theResponse = new ElementResponse(this, 10, Vector(this->getNumDOF()));
+  } else if (LadrunoResp::is(argv[0], "dynamicForce")) {
+    theResponse = new ElementResponse(this, 11, Vector(this->getNumDOF()));
   }
-  // IDs 1–4 only (pin: chosen clear of the plane-family's 21/stressZZ space);
-  // anything else falls through to the null response.
+  // IDs 1–11 (pin: chosen clear of the plane-family's 21/stressZZ space).
 
   output.endTag();
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1706,7 +1738,43 @@ int LadrunoUP::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(v);
   }
 
-  return -1;
+  if (responseID == 5) {
+    Vector v(nGP_ * nStr_);
+    for (int gp = 0; gp < nGP_; gp++) {
+      const Vector &e = theMaterials_[gp]->getStrain();
+      for (int k = 0; k < nStr_; k++)
+        v(gp * nStr_ + k) = e(k);
+    }
+    return eleInfo.setVector(v);
+  }
+
+  if (responseID == 6)
+    return eleInfo.setVector(this->getResistingForce());
+
+  if (responseID == 7) {
+    static Vector lch(1);
+    lch(0) = this->getCharacteristicLength();
+    return eleInfo.setVector(lch);
+  }
+
+  if (responseID == 8)
+    return eleInfo.setMatrix(this->getTangentStiff());
+
+  if (responseID == 9)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  if (responseID == 10)
+    return eleInfo.setVector(this->getRayleighDampingForces());
+
+  if (responseID == 11) {
+    // dynamic = inertia-inclusive resisting − (solid-only) damping − static
+    Vector v(this->getResistingForceIncInertia());
+    v -= this->getRayleighDampingForces();
+    v -= this->getResistingForce();
+    return eleInfo.setVector(v);
+  }
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 // ===========================================================================

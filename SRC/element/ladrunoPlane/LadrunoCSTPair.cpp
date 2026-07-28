@@ -43,6 +43,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <elementAPI.h>
 #include <math.h>
@@ -678,27 +679,44 @@ int LadrunoCSTPair::displaySelf(Renderer &theViewer, int displayMode, float fact
 Response *LadrunoCSTPair::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   Response *theResponse = 0;
+  if (argc < 1) return 0;
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoCSTPair");
   output.attr("eleTag", this->getTag());
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     theResponse = new ElementResponse(this, 1, P);
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    if (pointNum >= 1 && pointNum <= numtri)
-      theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
-  } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      if (pointNum >= 1 && pointNum <= numtri)
+        theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
+    }
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(3 * numtri));
-  } else if (strcmp(argv[0], "Jbar") == 0 || strcmp(argv[0], "jbar") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
+    // Ladruno — the family exposes strain everywhere else; this element had
+    // stress only.
+    theResponse = new ElementResponse(this, 4, Vector(3 * numtri));
+  } else if (LadrunoResp::is(argv[0], "Jbar")) {
     // the shared patch dilatation det(F-bar) = v_patch/V_patch — the quantity
     // the whole element exists to control; prime diagnostic for pressure checks
     theResponse = new ElementResponse(this, 6, 0.0);
-  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     theResponse = new ElementResponse(this, 5, 0.0);
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
+    theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 8, Matrix(P.Size(), P.Size()));
   }
 
   output.endTag();
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -706,16 +724,21 @@ int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)
 {
   if (responseID == 1)
     return eleInfo.setVector(this->getResistingForce());
-  if (responseID == 3) {
+  if (responseID == 3 || responseID == 4) {
     static Vector s6(3 * numtri);
     for (int t = 0; t < numtri; t++) {
-      const Vector &s = theMaterial[t]->getStress();
+      const Vector &s = (responseID == 3) ? theMaterial[t]->getStress()
+                                          : theMaterial[t]->getStrain();
       s6(3 * t) = s(0); s6(3 * t + 1) = s(1); s6(3 * t + 2) = s(2);
     }
     return eleInfo.setVector(s6);
   }
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());
+  if (responseID == 7)
+    return eleInfo.setMatrix(this->getTangentStiff());
+  if (responseID == 8)
+    return eleInfo.setMatrix(this->getInitialStiff());
   if (responseID == 6) {
     using namespace ladruno_fs2d;
     double gradRef[numtri][2 * numnodes], area[numtri];
@@ -731,5 +754,5 @@ int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)
     double J1 = deformationGradient2D(gradRef[1], u, numnodes, F);
     return eleInfo.setDouble((J0 * area[0] + J1 * area[1]) / (area[0] + area[1]));
   }
-  return -1;
+  return this->Element::getResponse(responseID, eleInfo);
 }

@@ -36,6 +36,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <UniaxialMaterial.h>        // ADR 23 Phase 2b (D9) — interface materials
 #include <OPS_Globals.h>
 #include <elementAPI.h>
@@ -1194,52 +1195,53 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
 Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stream& s)
 {
   if (argc < 1) return 0;
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "localForce") == 0)
+  // Ladruno — "force" is the GLOBAL-component tie traction. It used to also
+  // answer to "localForce", which shadowed the D9 local-frame branch below and
+  // left that spelling dead; "localForce" now resolves to the honest one (17).
+  if (LadrunoResp::is(argv[0], "force"))
     return new ElementResponse(this, 1, Vector(ndm));
-  if (strcmp(argv[0], "gap") == 0)
+  if (LadrunoResp::is(argv[0], "gap"))
     return new ElementResponse(this, 2, Vector(ndm));
-  if (strcmp(argv[0], "kt") == 0 || strcmp(argv[0], "penalty") == 0 ||
-      strcmp(argv[0], "k") == 0)
+  if (LadrunoResp::is(argv[0], "penalty"))      // kt / k / penalty
     return new ElementResponse(this, 3, 0.0);
-  if (strcmp(argv[0], "penaltyEnergy") == 0)
+  if (LadrunoResp::is(argv[0], "penaltyEnergy"))
     return new ElementResponse(this, 4, 0.0);
-  if (strcmp(argv[0], "constraintViolation") == 0)
+  if (LadrunoResp::is(argv[0], "constraintViolation"))
     return new ElementResponse(this, 5, 0.0);
-  if (strcmp(argv[0], "augLambda") == 0 || strcmp(argv[0], "lambda") == 0)
+  if (LadrunoResp::is(argv[0], "lambda"))
     return new ElementResponse(this, 6, Vector(ndm));
-  if (strcmp(argv[0], "mpenalty") == 0 || strcmp(argv[0], "massPenalty") == 0)
+  if (LadrunoResp::is(argv[0], "massPenalty"))
     return new ElementResponse(this, 7, 0.0);
-  if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
+  if (LadrunoResp::is(argv[0], "dtCritical"))
     return new ElementResponse(this, 8, 0.0);
   // ADR 23 Phase 1b — pressure-tie (UP) diagnostics.
-  if (strcmp(argv[0], "pgap") == 0 || strcmp(argv[0], "pressureGap") == 0)
+  if (LadrunoResp::is(argv[0], "pressureGap"))
     return new ElementResponse(this, 9, 0.0);
-  if (strcmp(argv[0], "pforce") == 0 || strcmp(argv[0], "pressureForce") == 0)
+  if (LadrunoResp::is(argv[0], "pressureForce"))
     return new ElementResponse(this, 10, 0.0);
-  if (strcmp(argv[0], "plambda") == 0 || strcmp(argv[0], "augLambdaP") == 0)
+  if (LadrunoResp::is(argv[0], "lambdaP"))
     return new ElementResponse(this, 11, 0.0);
   // ADR 23 Phase 2 — rotation-tie (UR) diagnostics (size nrot: 3 in 3D, 1 in 2D).
-  if (strcmp(argv[0], "rgap") == 0 || strcmp(argv[0], "rotationGap") == 0)
+  if (LadrunoResp::is(argv[0], "rotationGap"))
     return new ElementResponse(this, 12, Vector(nrot > 0 ? nrot : 1));
-  if (strcmp(argv[0], "rforce") == 0 || strcmp(argv[0], "moment") == 0)
+  if (LadrunoResp::is(argv[0], "rotationForce"))
     return new ElementResponse(this, 13, Vector(nrot > 0 ? nrot : 1));
-  if (strcmp(argv[0], "rlambda") == 0 || strcmp(argv[0], "augLambdaR") == 0)
+  if (LadrunoResp::is(argv[0], "lambdaR"))
     return new ElementResponse(this, 14, Vector(nrot > 0 ? nrot : 1));
-  if (strcmp(argv[0], "kr") == 0 || strcmp(argv[0], "rotPenalty") == 0)
+  if (LadrunoResp::is(argv[0], "rotPenalty"))   // kr
     return new ElementResponse(this, 15, 0.0);
   // ADR 23 Phase 2b — D9 material interface diagnostics (local-frame components).
-  if (strcmp(argv[0], "localGap") == 0 || strcmp(argv[0], "frameGap") == 0)
+  if (LadrunoResp::is(argv[0], "frameGap"))
     return new ElementResponse(this, 16, Vector(ndm));
-  if (strcmp(argv[0], "localForce") == 0 || strcmp(argv[0], "frameForce") == 0 ||
-      strcmp(argv[0], "interfaceForce") == 0)
+  if (LadrunoResp::is(argv[0], "localForce"))   // frameForce / interfaceForce
     return new ElementResponse(this, 17, Vector(ndm));
   if (strcmp(argv[0], "normal") == 0)
     return new ElementResponse(this, 18, Vector(ndm));
   // ADR 23 — the captured translational initial-gap offset g0 (zero until captured / under
   // -absolute). Diagnostic for staged activation (the relative gap = absolute − initGap).
-  if (strcmp(argv[0], "initGap") == 0 || strcmp(argv[0], "offset") == 0)
+  if (LadrunoResp::is(argv[0], "initGap"))
     return new ElementResponse(this, 19, Vector(ndm));
-  return 0;
+  return this->Element::setResponse(argv, argc, s);
 }
 
 int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
@@ -1335,6 +1337,6 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
     if (g0Computed && g0.Size() == ndm) off = g0;
     return eleInfo.setVector(off);
   }
-  default: return -1;
+  default: return this->Element::getResponse(responseID, eleInfo);
   }
 }

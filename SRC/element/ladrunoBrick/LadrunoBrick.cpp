@@ -52,6 +52,7 @@
 #include <shp3d.h>
 #include <Renderer.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Parameter.h>
 #include <ElementalLoad.h>
 
@@ -3531,6 +3532,8 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
   Response *theResponse = 0;
   char outputData[32];
 
+  if (argc < 1) return 0;
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoBrick");
   output.attr("eleTag", this->getTag());
@@ -3539,7 +3542,7 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.attr(outputData, nodePointers[i - 1]->getTag());
   }
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     for (int i = 1; i <= 8; i++) {
       sprintf(outputData, "P1_%d", i); output.tag("ResponseType", outputData);
       sprintf(outputData, "P2_%d", i); output.tag("ResponseType", outputData);
@@ -3547,22 +3550,27 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 1, resid);
 
-  } else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
     // full 24x24 tangent — used by the FD-tangent verification (and handy generally).
     theResponse = new ElementResponse(this, 2, Matrix(24, 24));
 
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= 8) {
-      // single-point formulations: every GP query resolves to the live slot 0
-      int slot = this->isSinglePoint() ? 0 : pointNum - 1;
-      output.tag("GaussPoint");
-      output.attr("number", pointNum);
-      theResponse = materialPointers[slot]->setResponse(&argv[2], argc - 2, output);
-      output.endTag();
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 10, Matrix(24, 24));
+
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      if (pointNum > 0 && pointNum <= 8) {
+        // single-point formulations: every GP query resolves to the live slot 0
+        int slot = this->isSinglePoint() ? 0 : pointNum - 1;
+        output.tag("GaussPoint");
+        output.attr("number", pointNum);
+        theResponse = materialPointers[slot]->setResponse(&argv[2], argc - 2, output);
+        output.endTag();
+      }
     }
 
-  } else if (strcmp(argv[0], "stresses") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     for (int i = 0; i < 8; i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -3580,7 +3588,7 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 3, Vector(48));
 
-  } else if (strcmp(argv[0], "strains") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     for (int i = 0; i < 8; i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -3630,24 +3638,25 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.endTag();
     theResponse = new ElementResponse(this, 7, Vector(6));
 
-  } else if (strcmp(argv[0], "hourglassEnergy") == 0 ||
-             strcmp(argv[0], "hgEnergy") == 0 ||
-             strcmp(argv[0], "hourglassWork") == 0 ||
-             strcmp(argv[0], "hourglassDissipation") == 0 ||
-             strcmp(argv[0], "hgDissipation") == 0) {
+  } else if (LadrunoResp::is(argv[0], "hourglassEnergy")) {
     // For uri 'stiffness'/ssp this is the STORED stabilization energy; for uri
     // 'viscous' it is the CUMULATIVE DISSIPATED energy (see hourglassEnergy()).
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));
 
-  } else if (strcmp(argv[0], "charLength") == 0 ||
-             strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     // Ladruno — the element size handed to crack-band materials (= cbrt(V)).
     output.tag("ResponseType", "lch");
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
   output.endTag(); // ElementOutput
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -3715,9 +3724,11 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     static Vector lch(1);
     lch(0) = this->getCharacteristicLength();
     return eleInfo.setVector(lch);
-  }
 
-  return -1;
+  } else if (responseID == 10)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int
