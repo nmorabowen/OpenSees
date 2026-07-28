@@ -452,10 +452,16 @@ def test_kinematic_coupling_tokens():
 
 def test_distributing_coupling_tokens():
     def build():
-        # the reference node MUST carry rotations (the element refuses ndf 3 at
-        # setDomain, and a refused element is a hard exit(-1) in FE_Element)
+        # Two constraints on this element, both load-bearing:
+        #  * the reference node MUST carry rotations — the element refuses ndf 3
+        #    at setDomain, and a refused element is a hard exit(-1) in FE_Element;
+        #  * the independent set must be NON-COLLINEAR. With just nodes 5 and 6
+        #    the reference rotation about that line is unconstrained (the element
+        #    says so: "degenerate independent set"), the tangent is singular, and
+        #    whether the solve reports it is platform-dependent — Linux LAPACK
+        #    fails the step, the Windows build did not. 5-6-7 spans a plane.
         ops.node(50, 2.0, 0.5, 0.5, "-ndf", 6)
-        ops.element("LadrunoDistributingCoupling", 1, 50, 2, 5, 6,
+        ops.element("LadrunoDistributingCoupling", 1, 50, 3, 5, 6, 7,
                     "-k", 1.0e7)
     _tie_model(build)
 
