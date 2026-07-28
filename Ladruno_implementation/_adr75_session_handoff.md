@@ -100,6 +100,7 @@ Nothing in ADR-75 or ADR-75b is outstanding as a work item.
 | **2** | MUMPS `-matrixType 2` | ✅ **MEASURED and RECOMMENDED.** 1.7–2.5× faster, factor halved, **bit-identical**. [#640] |
 | **3** | Rebuild the SHARED checkout | ✅ **DONE.** FF `c4631d7e1` → `b8a0457fe`, all 5 targets, `BUILD_EXIT=0`, functionally smoked. |
 | **4** | Lane 3 (ADR-75b) | ✅ **CLOSED for the production path.** G-L3 failed by **~42×**. [#656, #658] |
+| **5** | PARDISO instrumentation parity (§9) | ✅ **CLOSED 2026-07-27.** Brackets + CI in [#667]; **split MEASURED and published** in `phase1/RESULTS_p1h_phase_split.md` (P1h, this PR). ⚠ The *other* half of that §9 item — profiler run attrs `threads`/`nSteps`/`nElem` — is **still open**. |
 
 ### The four headline answers
 

@@ -45,6 +45,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <profiler/Profiler.h>           // Ladruno stack profiler (P5 command)
 #include <profiler/ProfilerHDF5Writer.h>
+#include <profiler/ProfilerRunMeta.h>    // Ladruno ADR-75 P1i: nElem/nNode/threads
 #include <cstdio>                        // Ladruno (ADR-74): checkpoint tmp-file remove/rename
 #include <string>
 #include <UniaxialMaterial.h>
@@ -3802,6 +3803,7 @@ int OPS_profiler()
         ops_profiler::RunMeta meta = P.buildMeta();
         LinearSOE* theSOE = cmds->getSOE();                 // P0#2: nDOF normalizer
         if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        ops_profiler_fillModelMeta(meta, cmds->getDomain());   // Ladruno ADR-75 P1i
 
         // Ladruno: populate the run-header identity (algorithm / integrator /
         // solver names) + the explicit-dynamics dt_cr lever (P0#5). The names are
@@ -3864,6 +3866,7 @@ int OPS_profiler()
         ops_profiler::RunMeta meta = P.buildMeta();
         LinearSOE* theSOE = cmds->getSOE();
         if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        ops_profiler_fillModelMeta(meta, cmds->getDomain());   // Ladruno ADR-75 P1i
         meta.algorithm  = cmds->getAlgorithmName();
         meta.solver     = cmds->getSolverName();
         meta.integrator = cmds->getIntegratorName();

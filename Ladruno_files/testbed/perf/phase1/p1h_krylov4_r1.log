@@ -1,0 +1,5 @@
+pyd OK: C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\opensees-pr-strategy-9c17b8\dist\bin\opensees.pyd
+nElem=3375 nNode=4096 nDOF~=11520
+system: ['Pardiso', '-matrixType', 0, '-krylov', 6]
+prof flags: []
+steps done=15/15  wall=10.84s  report=True  C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\opensees-pr-strategy-9c17b8\Ladruno_files\testbed\perf\phase1\p1h_krylov4_r1.h5

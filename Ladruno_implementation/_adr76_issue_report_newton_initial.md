@@ -180,9 +180,17 @@ provably unchanged, so even the path must be preserved.
 
 ## 7. Unrelated, noticed in passing
 
-- `PARDISOGenLinSolver.cpp` carries no profiler scopes, where `UmfpackGenLinSolver.cpp` has
+- ~~`PARDISOGenLinSolver.cpp` carries no profiler scopes, where `UmfpackGenLinSolver.cpp` has
   `soe.symbolic` / `soe.factor` / `soe.trisolve`. On a PARDISO run `linearSolve` is a single
   opaque block, so factorization cannot be separated from substitution without differencing
-  two algorithms. Instrumentation parity would be welcome.
-- The profiler HDF5 run attributes record `threads=1` and `nElem=0` regardless of the actual
-  run configuration (observed with `MKL_NUM_THREADS=8` and 9 325 elements).
+  two algorithms. Instrumentation parity would be welcome.~~
+  ✅ **FIXED 2026-07-27, [#667](https://github.com/nmorabowen/OpenSees/pull/667)** — this report
+  is what put it on the list. PARDISO now has the three UmfPack names plus `soe.cgs` (phase 23),
+  `dc.s.fill`/`dc.s.verify`, and a deep `soe.addA`.
+- ~~The profiler HDF5 run attributes record `threads=1` and `nElem=0` regardless of
+  the actual run configuration (observed with `MKL_NUM_THREADS=8` and 9 325 elements).~~
+  ✅ **FIXED 2026-07-27 (ADR-75 P1i).** Root cause: `Profiler::buildMeta()` set
+  `m.threads = threads_.size()` — the count of threads registered with the *profiler*, which is 1
+  for any single-threaded command layer no matter what MKL is doing; `nElem`/`nNode` were promised
+  by a comment in the same function and populated by nobody. Both reports in this section were
+  correct and both are now closed.

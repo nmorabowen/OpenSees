@@ -392,13 +392,20 @@ is fine; a user arming both flags gets CGS iterations on every solve of an uncha
 matrix instead of one triangular substitution. The same reasoning applies today to
 `ModifiedNewton -factoronce` + `system Pardiso -krylov`: do not combine them.
 
-Two instrumentation gaps the reporter surfaced remain real and are now tracked in
-[[75_ladruno_sparse_direct_strategy_adr]] (open items): `PARDISOGenLinSolver` carries
-no `OPS_PROFILE` scopes where `UmfpackGenLinSolver` has `soe.symbolic` / `soe.factor`
-/ `soe.trisolve`, so on a PARDISO run `linearSolve` is one opaque block and
-factorization cannot be separated from substitution without differencing two
-algorithms; and the profiler HDF5 run attributes record `threads=1` and `nElem=0`
-regardless of configuration.
+Two instrumentation gaps the reporter surfaced were tracked in
+[[75_ladruno_sparse_direct_strategy_adr]] (open items). **The first is now CLOSED**
+([#667](https://github.com/nmorabowen/OpenSees/pull/667), 2026-07-27):
+`PARDISOGenLinSolver` carried no `OPS_PROFILE` scopes where `UmfpackGenLinSolver` has
+`soe.symbolic` / `soe.factor` / `soe.trisolve`, so on a PARDISO run `linearSolve` was
+one opaque block and factorization could not be separated from substitution without
+differencing two algorithms — PARDISO now has those three plus `soe.cgs` (phase 23),
+`dc.s.fill`/`dc.s.verify`, and a deep `soe.addA`. **The second is now CLOSED too**
+(ADR-75 P1i, 2026-07-27): the profiler HDF5 run attributes recorded `threads=1`
+and `nElem=0` regardless of configuration — `threads` is now resolved from the
+environment and overridden by `mkl_get_max_threads()` where MKL is compiled in,
+and `nElem`/`nNode` are filled at all four `buildMeta()` call sites. (`nnz` stays
+0 by decision — no size-agnostic `LinearSOE` accessor. `nSteps` was never a bug:
+it derives from the per-step series, so 0 without `-perStep` is correct.)
 
 One non-interaction worth recording: a skipped assembly is bit-identical by
 construction (the matrix is simply not touched), so nothing in this lane —

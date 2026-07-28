@@ -438,6 +438,23 @@ inline void countComponentDied(int classTag) noexcept {
 }
 #endif // !OPS_PROFILE_DISABLE
 
+// ---- Ladruno ADR-75 P1i: the `threads` run attribute --------------------------
+// `RunMeta::threads` USED to be threads_.size() -- the count of threads that
+// registered with the PROFILER. Every consumer reads the attribute as "how many
+// threads did this run use", and those are not the same number: OpenSees is
+// single-threaded at the command layer, so the registry holds exactly 1 no matter
+// what MKL_NUM_THREADS says. A PARDISO run at 4 threads reported `threads=1`, and
+// the ADR-76 issue report hit it at 8. A wrong positive integer is worse than no
+// answer, because it reads as a measurement.
+//
+// This resolves the ENVIRONMENT-declared cap, which is what every harness in this
+// fork pins. It is deliberately NOT authoritative: it cannot see a programmatic
+// mkl_set_num_threads(), so the command layers override it with
+// mkl_get_max_threads() where MKL is compiled in (they carry -D_PARDISO; this
+// translation unit does not). `registered` is the floor -- a genuinely threaded
+// profiling run must never report fewer threads than it actually registered.
+int64_t resolveRunThreads(int64_t registered) noexcept;
+
 } // namespace ops_profiler
 
 #endif // Profiler_h
