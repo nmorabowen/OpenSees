@@ -26,99 +26,85 @@
 // LADRUNO-HEADER-END
 
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
-// Created: 06/2026
+// Created: 07/2026
 //
-// SolidTransformationLinear — identity geometry method (v1). See the header.
+// SolidTransformationHypo — hypoelastic rate-form updated-Lagrangian geometry
+// method (ADR 79). See the header: every seam is identity; the element owns
+// the per-GP objective-increment integration (LadrunoHypoKernel.h) and the
+// full current-configuration assembly. The only hypo-specific signal is
+// getMethodID() == METHOD_HYPO.
 
-#include <SolidTransformationLinear.h>
-#include <SolidTransformationFinite.h>   // for the create() factory (v3)
-#include <SolidTransformationCorot.h>    // for the create() factory (v2)
-#include <SolidTransformationHypo.h>     // for the create() factory (v4, ADR 79)
+#include <SolidTransformationHypo.h>
 #include <Matrix.h>
 #include <Vector.h>
 
-SolidTransformationLinear::SolidTransformationLinear()
+SolidTransformationHypo::SolidTransformationHypo()
   : SolidTransformation()
 {
 }
 
-SolidTransformationLinear::~SolidTransformationLinear()
+SolidTransformationHypo::~SolidTransformationHypo()
 {
 }
 
 SolidTransformation *
-SolidTransformationLinear::getCopy() const
+SolidTransformationHypo::getCopy() const
 {
-  return new SolidTransformationLinear();
+  return new SolidTransformationHypo();
 }
 
-// Identity: there is no geometry state to refresh. The reference / current
-// coordinates are unused (corot/finite consume them to build the frame / F).
+// The element computes the midpoint increment per Gauss point from its own
+// shape-function gradients and committed/trial nodal displacements — there is
+// no element-level state to refresh here.
 int
-SolidTransformationLinear::update(int /*numNodes*/, const Matrix & /*refCrds*/,
-                                  const Matrix & /*curCrds*/)
+SolidTransformationHypo::update(int /*numNodes*/, const Matrix & /*refCrds*/,
+                                const Matrix & /*curCrds*/)
 {
   return 0;
 }
 
-// Identity: the core frame IS the global frame — no rigid rotation is stripped.
-// Guard against aliasing so the element may legitimately pass uCore == uGlobal.
+// Identity: the increment is built directly from the global nodal
+// displacements; no whole-element rigid rotation is stripped (per-GP polar
+// rotations handle objectivity inside the element).
 int
-SolidTransformationLinear::localizeDisp(const Vector &uGlobal, Vector &uCore) const
+SolidTransformationHypo::localizeDisp(const Vector &uGlobal, Vector &uCore) const
 {
   if (&uCore != &uGlobal)
     uCore = uGlobal;
   return 0;
 }
 
-// Identity: fGlobal = fCore (no transform, no geometric force contribution).
+// Identity: ∫ Bᵀ σ dv is assembled on the current configuration in global
+// coordinates — there is nothing to rotate.
 int
-SolidTransformationLinear::globalizeForce(const Vector &fCore, Vector &fGlobal) const
+SolidTransformationHypo::globalizeForce(const Vector &fCore, Vector &fGlobal) const
 {
   if (&fGlobal != &fCore)
     fGlobal = fCore;
   return 0;
 }
 
-// Identity: kGlobal = kCore (no transform, K_geo = 0). fCore is ignored; corot
-// uses it for the EICR geometric stiffness.
+// Identity: the element assembles the pushed-forward material tangent
+// ∫ Bᵀ c B dv AND the initial-stress geometric term ∫ Gᵀ Σ G dv in its own
+// Gauss loop (it owns the spatial gradients and the pushed-forward Cauchy
+// stress).
 int
-SolidTransformationLinear::globalizeStiff(const Matrix &kCore, const Vector & /*fCore*/,
-                                          Matrix &kGlobal) const
+SolidTransformationHypo::globalizeStiff(const Matrix &kCore, const Vector & /*fCore*/,
+                                        Matrix &kGlobal) const
 {
   if (&kGlobal != &kCore)
     kGlobal = kCore;
   return 0;
 }
 
-// Identity: the local frame is the global axes, fixed for all time.
+// Stress responses are reported in the (fixed) unrotated material frame; the
+// per-GP rotations do not define an element frame, so the recorder frame is
+// the identity.
 void
-SolidTransformationLinear::getCurrentFrame(Matrix &R) const
+SolidTransformationHypo::getCurrentFrame(Matrix &R) const
 {
   R.Zero();
   R(0, 0) = 1.0;
   R(1, 1) = 1.0;
   R(2, 2) = 1.0;
-}
-
-// ---------------------------------------------------------------------------
-// Factory (declared on the base) — rebuilds a transformation from a serialized
-// method id. v1 ships only the identity; corot/finite register their cases here
-// as they land.
-// ---------------------------------------------------------------------------
-SolidTransformation *
-SolidTransformation::create(int methodID)
-{
-  switch (methodID) {
-  case METHOD_LINEAR:
-    return new SolidTransformationLinear();
-  case METHOD_FINITE:
-    return new SolidTransformationFinite();
-  case METHOD_COROT:
-    return new SolidTransformationCorot();
-  case METHOD_HYPO:
-    return new SolidTransformationHypo();   // Ladruno (ADR 79)
-  default:
-    return 0;
-  }
 }

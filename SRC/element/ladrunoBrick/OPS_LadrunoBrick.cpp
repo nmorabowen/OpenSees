@@ -31,7 +31,7 @@
 // Usage:
 //   element('LadrunoBrick', tag, n1..n8, matTag
 //           [, '-formulation', <std|bbar|uri|ssp|eas>]   # default std
-//           [, '-geom', <linear|corot|finite>]       # default linear
+//           [, '-geom', <linear|corot|finite|hypo>]  # default linear
 //           [, '-hourglass', <viscous|stiffness|physical>, coeff]  # uri only
 //           [, '-bulkViscosity', b1, b2]                # explicit bulk viscosity (alias -bv)
 //           [, '-lumped']
@@ -41,6 +41,11 @@
 // -geom finite needs a finite-strain material (e.g. nDMaterial LogStrain). With
 // -geom finite, -formulation bbar selects the F-bar element (dSNPO eq 15.5), the
 // large-strain volumetric-locking cure; std uses the plain deformation gradient.
+//
+// -geom hypo (ADR 79) is the hypoelastic rate-form updated-Lagrangian path:
+// large strain with an UNCHANGED small-strain material (the route for
+// rate-form soil laws like PressureDependMultiYield, which the LogStrain
+// adaptor cannot lift). v1: -formulation std only; -damp reserved.
 //
 // std + bbar + uri(stiffness|physical|viscous) + ssp + eas (true Simo-Rifai
 // enhanced assumed strain, ADR 19) are all implemented and
@@ -202,9 +207,11 @@ void *OPS_LadrunoBrick()
         geomMethodID = SolidTransformation::METHOD_FINITE;
       else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
         geomMethodID = SolidTransformation::METHOD_COROT;
+      else if (strcmp(g, "hypo") == 0)
+        geomMethodID = SolidTransformation::METHOD_HYPO;   // Ladruno (ADR 79)
       else {
         opserr << "WARNING unknown -geom '" << g << "' for LadrunoBrick "
-               << idata[0] << " (use linear|corot|finite)\n";
+               << idata[0] << " (use linear|corot|finite|hypo)\n";
         return 0;
       }
     }
@@ -305,6 +312,28 @@ void *OPS_LadrunoBrick()
                   "'SparseGEN'); a symmetric system (BandSPD/ProfileSPD) drops the "
                   "coupling term and may not converge.\n";
       }
+    }
+  }
+
+  // -geom hypo (v4, ADR 79): hypoelastic rate-form UL. v1 ships -formulation
+  // std only (the mean-dilatation split in rate form is a documented extension,
+  // not needed by the driving application — ADR 79 §4); -damp is reserved
+  // (mirror of the finite guard: the hypo assembly does not apply element
+  // damping). A finite-strain material is rejected below by the GEOM-1
+  // converse guard (hypo drives setTrialStrain, which a FiniteStrainNDMaterial
+  // disables).  // Ladruno (ADR 79)
+  if (geomMethodID == SolidTransformation::METHOD_HYPO) {
+    if (formulation != LadrunoBrick::Formulation::STD) {
+      opserr << "WARNING LadrunoBrick " << idata[0]
+             << ": -geom hypo supports only -formulation std in v1 "
+                "(bbar/uri/ssp/eas under hypo are reserved)\n";
+      return 0;
+    }
+    if (theDamping != 0) {
+      opserr << "WARNING LadrunoBrick " << idata[0]
+             << ": -damp is not yet supported with -geom hypo (the hypo "
+                "assembly does not apply element damping); reserved follow-up\n";
+      return 0;
     }
   }
 

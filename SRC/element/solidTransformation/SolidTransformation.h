@@ -68,6 +68,13 @@
 //                  element computes the full F and the material is the seam-3
 //                  FiniteStrainNDMaterial adaptor (setTrialF(F) → Cauchy σ +
 //                  spatial tangent). See SRC/material/nD/FiniteStrainNDMaterial.h.
+//   hypo    (v4) — large STRAIN, rate-form (ADR 79). A MARKER like finite: the
+//                  element integrates the Hughes–Winget midpoint objective
+//                  strain increment in the unrotated (Green–Naghdi) material
+//                  frame and drives an UNCHANGED small-strain material by
+//                  accumulate-and-setTrialStrain — so getStrainMeasure() is
+//                  honestly SmallStrain and all seam methods are identity.
+//                  Per-GP machinery lives in the element + LadrunoHypoKernel.h.
 //
 // SERIALIZATION. The wrapper is NOT a MovableObject in v1. A consuming element
 // serializes only the method id (getMethodID(); Linear=0) and rebuilds the
@@ -96,6 +103,7 @@ class SolidTransformation
   static const int METHOD_LINEAR = 0;
   static const int METHOD_COROT  = 1;
   static const int METHOD_FINITE = 2;
+  static const int METHOD_HYPO   = 3;   // Ladruno (ADR 79): rate-form UL marker
 
   SolidTransformation() {}
   virtual ~SolidTransformation() {}

@@ -598,7 +598,7 @@ initopensees(void)
 "        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt + uri 2x2x2 Barlow + HRZ -lumped, reduce-to 20NodeBrick)\n"
 "        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std)\n"
 "        • LadrunoQuad/LadrunoCST/LadrunoLST/LadrunoCSTPair — 2D continuum (Quad std/bbar/ssp/eas; CST + LST-T6 std; -geom finite via shared 2D F-kernel; CSTPair = 2-tri F-bar-Patch macro dSNPO 15.1.9)\n"
-"        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
+"        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)/hypo (rate-form UL, Green-Naghdi)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"

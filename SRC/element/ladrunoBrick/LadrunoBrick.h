@@ -230,6 +230,16 @@ class LadrunoBrick : public Element {
   // receive side.  // Ladruno
   Response *damageResponse;
 
+  // -geom hypo per-GP state (ADR 79 §3/§6): the accumulated feed strain handed
+  // to setTrialStrain (Voigt, engineering shear, unrotated material frame).
+  // hypoFeed is the trial (rewritten from committed state every updateHypo, so
+  // Newton iterations never double-accumulate); hypoFeedCommit is the ONLY
+  // persistent hypo state — advanced by commitState, restored by
+  // revertToLastCommit, zeroed by revertToStart, shipped by sendSelf as a
+  // guarded Vector(48) (non-hypo streams are byte-identical).  // Ladruno
+  double hypoFeed[8][6];
+  double hypoFeedCommit[8][6];
+
   // Geometry-method layer (seam 2/3). v1 = SolidTransformationLinear (identity):
   // localizeDisp / globalizeForce / globalizeStiff are pass-throughs, so routing
   // through it changes nothing. corot (v2) / finite (v3) override on this same
@@ -266,6 +276,17 @@ class LadrunoBrick : public Element {
   // F per GP, drives the material via setTrialF(F), and assembles the spatial
   // internal force + material tangent + geometric (initial-stress) stiffness.  // Ladruno
   bool isFinite(void) const;
+
+  // -geom hypo (v4, ADR 79): hypoelastic rate-form updated-Lagrangian — large
+  // strain with an UNCHANGED small-strain material. Per GP the Hughes–Winget
+  // midpoint objective strain increment is de-rotated into the fixed unrotated
+  // (Green–Naghdi) material frame (LadrunoHypoKernel.h), accumulated into
+  // hypoFeed and fed via setTrialStrain; assembly pushes the material stress /
+  // tangent forward with R = polar(F) on the current configuration and adds
+  // the standard symmetric initial-stress term ∫GᵀΣG dv.  // Ladruno
+  bool isHypo(void) const;
+  int  updateHypo(void);
+  void formResidAndTangentHypo(int tang_flag);
 
   // True for the single-integration-point formulations (ssp, uri with stiffness
   // or viscous hourglass): the constitutive response is evaluated ONCE at the
