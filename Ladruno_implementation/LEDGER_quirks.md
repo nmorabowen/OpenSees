@@ -3469,7 +3469,8 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 
 - **Bites (two ways, both measured):** (1) contracting the damp p-row `(R̄Q)ᵀ`
   against integrator velocities of a ROTATING body picks up the chord's
-  apparent volumetric rate `2(1−cosΔθ)/Δt` per step — always compressive,
+  apparent volumetric rate `2(1−cosΔθ)/Δt` per step — one-signed (a systematic
+  dilation in the current frame; never averages out),
   amplified by `Q̄ ≈ K_f/n` undrained (order-1 spurious p at bearing-mechanism
   rotations); no velocity-linear operator can remove it. (2) Fixing ONLY the
   coupling to the incremental `QᵀΔu_d/Δt` while leaving `S·ṗ` on the Newmark

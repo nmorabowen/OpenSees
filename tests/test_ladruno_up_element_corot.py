@@ -251,7 +251,11 @@ def test_transient_undrained_rigid_rotation_zero_excess_p():
             for k in range(nsteps):
                 th = (k + 1) * (0.5 * math.pi) / nsteps
                 vals.append(float((_rot(th, 0.0) @ X - X)[dof]))
-            ops.timeSeries("Path", ts, "-time", *times, "-values", *vals)
+            # -useLast: at the final step the accumulated domain time can
+            # overshoot the last Path point by 1 ulp, and PathSeries then
+            # returns factor 0 — snapping the block back to u=0 (review F3).
+            ops.timeSeries("Path", ts, "-time", *times, "-values", *vals,
+                           "-useLast")
             ops.pattern("Plain", pat, ts)
             ops.sp(tag, dof + 1, 1.0)
             ts += 1
@@ -624,3 +628,22 @@ def test_drained_equivalence_vs_dry_brick(geom, tol):
     assert rel.max() <= tol, (
         f"[{geom}] drained-equivalence backbone broke: max rel diff "
         f"{rel.max():.3e} (UP {bb_up[-1]:.6e} vs brick {bb_br[-1]:.6e})")
+
+
+def test_drained_equivalence_geometric_shift_matches():
+    # Review F1: at this load level the whole geometric effect (~6e-4 rel) is
+    # far inside the 0.7% corot-leg tolerance, so a corot flag that silently
+    # ran the linear path — or a deleted K_geo — would pass the backbone gate.
+    # Gate the corot ACTIVATION itself: the corot-minus-linear shift of the UP
+    # twin must match the dry brick's (measured agreement 1.4%; assert 25% of
+    # the shift, which a no-op corot (shift -> 0) or a broken K_geo misses).
+    up_shift = _equiv_up("corot") - _equiv_up("linear")
+    br_shift = _equiv_brick("corot") - _equiv_brick("linear")
+    scale = np.abs(br_shift).max()
+    assert scale > 1.0e-7, (
+        f"brick corot-vs-linear shift ~0 ({scale:.3e}) — the probe load no "
+        "longer engages geometric nonlinearity; retune _EQ_F")
+    assert np.abs(up_shift - br_shift).max() <= 0.25 * scale, (
+        "UP corot geometric shift does not track the dry brick twin: "
+        f"max diff {np.abs(up_shift - br_shift).max():.3e} vs shift scale "
+        f"{scale:.3e} (corot silently inactive on the u-p element?)")

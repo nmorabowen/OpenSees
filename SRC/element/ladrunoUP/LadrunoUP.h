@@ -77,7 +77,7 @@
 // pore pressure feeds K_geo — total-stress prestress), rotates the tangent
 // coupling to −R̄Q (damp p-rows (R̄Q)ᵀ), assembles the storage-coupling
 // RESIDUAL in the incremental form Qᵀ·(u_d − u_d,committed)/Δt (velocity
-// contraction sees the chord's O(Δθ²)/step apparent compression, Q̄-amplified
+// contraction sees the chord's one-signed O(Δθ²)/step volumetric defect, Q̄-amplified
 // undrained — ADR 78 §3.3; the incremental form is exactly zero under rigid
 // motion), keeps H/S/H̃ in the reference frame (exact under pure rotation for
 // skeleton-attached k), and pulls the seepage drive back: drive = Rᵀ(b_f − ü).

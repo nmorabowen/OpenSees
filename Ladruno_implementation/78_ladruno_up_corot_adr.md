@@ -122,17 +122,20 @@ and the failure analysis is the load-bearing result of this ADR:
 *The chord defect.* The discrete velocity of a body rotating by Δθ per step is
 dominated by the chord `(R_{n+1} − R_n)X/Δt`. Contracted in any frame F, its
 apparent volumetric rate is `tr(Fᵀ(R_{n+1}−R_n))/Δt`; for F = R_{n+1} that is
-`2(1−cos Δθ)/Δt` — **always compressive**, O(Δθ²) per step, and *not
-removable by any velocity-linear operator*: the chord genuinely contains a
-planar contraction that no instantaneous spin field can represent (spin fields
-are traceless), so subtracting the best-fit rigid velocity (via the seam's Γ)
-does not help, and a geodesic-midpoint frame kills the chord term but picks up
-an equal-order defect from the integrator's velocity-history terms. Cumulative
-over a rotation θ_tot in N steps: `Δε_v ≈ θ_tot²/N`. Amplified by the storage
-modulus `Q̄ ≈ K_f/n` in undrained problems this is **order-1 spurious pore
-pressure at bearing-mechanism rotations** (θ_tot ~ 0.3, N ~ 300, Q̄ ~ 5·10⁶ kPa
-⇒ ~10³ kPa of fictitious compressive p). Unacceptable for the driving
-application — and invisible in drained or small-rotation runs.
+`+2(1−cos Δθ)/Δt` — a **one-signed systematic apparent dilation** (an
+expansion rate in the tension-positive convention, driving spurious undrained
+*suction*; contracting in the committed frame F = R_n flips it to an apparent
+compression — either way the bias never averages out), O(Δθ²) per step, and
+*not removable by any velocity-linear operator*: the chord genuinely contains
+a planar stretch defect that no instantaneous spin field can represent (spin
+fields are traceless), so subtracting the best-fit rigid velocity (via the
+seam's Γ) does not help, and a geodesic-midpoint frame kills the chord term
+but picks up an equal-order defect from the integrator's velocity-history
+terms. Cumulative over a rotation θ_tot in N steps: `Δε_v ≈ θ_tot²/N`.
+Amplified by the storage modulus `Q̄ ≈ K_f/n` in undrained problems this is
+**order-1 spurious pore pressure at bearing-mechanism rotations** (θ_tot ~
+0.3, N ~ 300, Q̄ ~ 5·10⁶ kPa ⇒ ~10³ kPa of fictitious p). Unacceptable for the
+driving application — and invisible in drained or small-rotation runs.
 
 *The cure is incremental — and it must take the WHOLE p-row with it.* First
 attempt: swap only the coupling to `Qᵀ·(u_d − u_d,committed)/Δt` (exactly zero
@@ -166,6 +169,22 @@ inexact-tangent term under the corot v2.0 "residual exact, tangent
 dominant-term" policy; the tangent's −R̄Q u-p block keeps its transpose
 pairing). Under `-geom linear` none of this is active and the P1 velocity
 form runs bit-identically.
+
+*Reporting caveat (review finding 3).* `Domain::commit` zeroes `dT` before
+recorders run, so a **post-commit** `getResistingForceIncInertia` (element
+force recorders, `reactions -dynamic`) takes the `dt ≤ 0` fallback: the
+reported p-row dynamic force uses the velocity form — converged velocities
+are NOT zero, so at finite rotation rates the *reported* (never the solved)
+p-row force carries the chord term. Solve accuracy is unaffected; recorded
+element dynamic forces on rotating saturated elements should be read with
+this in mind.
+
+*Symmetrization caveat (review finding 6, tangent side of §3.5's damping
+note).* The seam's `globalizeStiff` symmetrizes, so a non-associated soil
+tangent (unsymmetric BᵀDB) assembles faithfully under `-geom linear` but as
+`sym(R̄KR̄ᵀ + K_geo)` under corot — an inexact-tangent (convergence-rate)
+difference between the two geom modes, inherited from the LadrunoBrick corot
+lane and consistent with the v2.0 policy; recorded here for the u-p lane.
 
 The rigid-rotation gate therefore asserts excess p at solver-tolerance level
 (note the Q̄ amplification applies to Newton tolerance too: p_noise ~
@@ -211,6 +230,13 @@ stiffness-proportional parts — the corotated K feeding βK·K_s **is** the sam
 object the contract intends, expressed in the frame the global velocities live
 in. `K_geo` is deliberately NOT in the damping (damping is material, not
 load-stiffness). `getRayleighDampingForces` uses the same rotated C.
+
+*Caveat (review #5):* the seam's `globalizeStiff` symmetrizes its output, so
+for a NON-associated material tangent (unsymmetric BᵀDB — the PDMY-class
+regime) the corot damping is `sym(R̄CR̄ᵀ)`, i.e. the skew part of the βK term
+is dropped, where the linear path keeps it. This enters the residual through
+`damp·v`, so it is a (small, βK-scaled) physical damping difference, accepted
+and recorded here rather than silently implied by the equality above.
 
 ### 3.6 M, initial stiffness, and the untouched rest
 

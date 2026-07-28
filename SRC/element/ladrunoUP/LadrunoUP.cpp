@@ -71,6 +71,29 @@
 static const int UP_MAX_NODES = 10;
 static const int UP_MAX_DOF   = 40;   // 10 nodes x (3 + 1)
 
+// Geometry-method legality (ADR 78; review-wave findings 1/4). The parser is
+// the first line; this sanitizer backs BOTH the direct-construction ctor AND
+// recvSelf — an unguarded stream with corot+ndm==2 would run the 3D-indexed
+// corot loops against 2D-sized buffers (heap overrun), and METHOD_FINITE
+// would silently run linear kinematics while Print reports "finite".
+static int upSanitizeGeomMethod(int geomMethod, int ndm, int tag,
+                                const char *who)
+{
+  if (geomMethod == SolidTransformation::METHOD_COROT && ndm != 3) {
+    opserr << "LadrunoUP::" << who << " - element " << tag
+           << ": -geom corot is 3D-only (planar node cloud has no polar "
+              "rotation); using -geom linear\n";
+    return SolidTransformation::METHOD_LINEAR;
+  }
+  if (geomMethod == SolidTransformation::METHOD_FINITE) {
+    opserr << "LadrunoUP::" << who << " - element " << tag
+           << ": -geom finite is reserved on LadrunoUP (no finite-strain u-p "
+              "material path, ADR 78 Sec 1.1); using -geom linear\n";
+    return SolidTransformation::METHOD_LINEAR;
+  }
+  return geomMethod;
+}
+
 // ===========================================================================
 //  ctors / dtor
 // ===========================================================================
@@ -117,15 +140,10 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
     connectedExternalNodes_(n) = nodeTags(n);
 
   // ---- geometry method (ADR 78) --------------------------------------------
-  // Parser polices -geom (corot is 3D-only); this is the belt-and-braces guard
-  // for direct-construction callers. Unknown id / 2D corot degrade to linear
-  // loudly rather than running a planar polar into det(H)=0.
-  if (geomMethod == SolidTransformation::METHOD_COROT && ndm_ != 3) {
-    opserr << "LadrunoUP::LadrunoUP - element " << tag
-           << ": -geom corot is 3D-only (planar node cloud has no polar "
-              "rotation); using -geom linear\n";
-    geomMethod = SolidTransformation::METHOD_LINEAR;
-  }
+  // Parser polices -geom; the sanitizer is the belt-and-braces guard for
+  // direct-construction callers (2D corot / reserved finite / unknown ids
+  // degrade to linear loudly rather than corrupting or lying).
+  geomMethod = upSanitizeGeomMethod(geomMethod, ndm_, tag, "LadrunoUP");
   theGeom_ = SolidTransformation::create(geomMethod);
   if (theGeom_ == 0) {
     opserr << "LadrunoUP::LadrunoUP - element " << tag
@@ -595,9 +613,14 @@ void LadrunoUP::setDomain(Domain *theDomain)
 
   // corot (ADR 78): initialize the frame + the committed deformational state
   // from the COMMITTED nodal displacements. Fresh model: disp = 0 ⇒ R = I,
-  // u_d,n = 0. After a DB restore / element migration this REBUILDS u_d,n
-  // (deliberately not serialized) so the incremental storage coupling
-  // differences against the true committed configuration, not zero.
+  // u_d,n = 0. After a DB restore through the wipe→rebuild branch of
+  // Domain::recvSelf (nodes restored before addElement→setDomain) this
+  // REBUILDS u_d,n (deliberately not serialized) so the incremental storage
+  // coupling differences against the true committed configuration, not zero.
+  // The same-geoTag live-restore branch never re-runs setDomain — but that
+  // branch already bricks this element pre-ADR-78 (geomValid_ stays false ⇒
+  // zero K, loud singular SOE), so corot adds no new hazard there (review
+  // finding 2).
   if (corotActive_) {
     for (int a = 0; a < nNodes_; a++) {
       const Vector &X = theNodes_[a]->getCrds();
@@ -749,6 +772,12 @@ int LadrunoUP::revertToLastCommit(void)
   int retVal = 0;
   for (int i = 0; i < nGP_; i++)
     retVal += theMaterials_[i]->revertToLastCommit();
+  // corot (review #8): rewind the trial deformational state too, so an
+  // evaluate-after-revert flow (non-standard, but legal) differences the
+  // p-row coupling against Δu_d = 0 rather than the abandoned trial.
+  // Rcur_/QrotBlk_ refresh at the next update(), as everywhere else.
+  if (corotActive_)
+    uDcur_ = uDn_;
   return retVal;
 }
 
@@ -799,8 +828,16 @@ int LadrunoUP::update(void)
       }
     }
     if (theGeom_->update(nNodes_, refCrdsScratch_, curCrdsScratch_) != 0) {
-      // collapsed/inverted cloud (det(H) <= 0): the seam degraded to a safe
-      // R=I state; signal the integrator to cut the step rather than march on.
+      // collapsed/inverted cloud (det(H) <= 0): the seam degraded ITSELF to
+      // R=I, Γ=0 — mirror that here so the element caches stay a consistent
+      // pair with the seam if anything evaluates before the step is cut
+      // (review #7: pre-fix, Rcur_/QrotBlk_/uDcur_ kept the PREVIOUS frame
+      // while the seam globalized at R=I — a frame-mixed operator). Then
+      // signal the integrator to cut the step.
+      Rcur_.Zero();
+      Rcur_(0, 0) = Rcur_(1, 1) = Rcur_(2, 2) = 1.0;
+      QrotBlk_ = Qblk_;
+      theGeom_->localizeDisp(uDcur_, uDcur_);   // R=I deformational disp
       return -1;
     }
     theGeom_->localizeDisp(uDcur_, uDcur_);   // aliasing is contract-legal
@@ -1308,7 +1345,8 @@ const Vector &LadrunoUP::getResistingForceIncInertia(void)
   // failure modes force this, and they pin the exact shape of the fix:
   //  (1) THE CHORD DEFECT — (R̄Q)ᵀ·u̇ contracts integrator velocities, and the
   //      chord of a finite rotation increment carries an apparent volumetric
-  //      rate 2(1−cosΔθ)/Δt per step: always compressive, Q̄-amplified in
+  //      rate 2(1−cosΔθ)/Δt per step: one-signed (systematic, never averages
+  //      out), Q̄-amplified in
   //      undrained problems (order-1 spurious p at bearing-mechanism
   //      rotations). No velocity-linear operator can remove it (the chord
   //      contraction is representable by no spin) — only the INCREMENTAL form
@@ -1985,12 +2023,17 @@ int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &th
   betaK0        = data(27);
   betaKc        = data(28);
 
-  // geometry method (ADR 78): rebuild the stateless wrapper from its id
+  // geometry method (ADR 78): rebuild the stateless wrapper from its id.
+  // The stream is UNTRUSTED — sanitize against ndm_ (also from the stream)
+  // exactly like the ctor: an unguarded corot+ndm==2 pair would run the
+  // 3D-indexed corot loops against 2D-sized buffers (review finding 1).
   if (theGeom_) {
     delete theGeom_;
     theGeom_ = 0;
   }
-  theGeom_ = SolidTransformation::create((int)data(29));
+  int geomID = upSanitizeGeomMethod((int)data(29), ndm_, this->getTag(),
+                                    "recvSelf");
+  theGeom_ = SolidTransformation::create(geomID);
   if (theGeom_ == 0) {
     opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
            << ": unknown geometry-method id " << (int)data(29)
