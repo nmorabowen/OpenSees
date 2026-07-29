@@ -1,6 +1,6 @@
 # ADR 79 — `-geom hypo`: hypoelastic rate-form updated-Lagrangian geometry method
 
-**Status:** COMPLETE — P0+P1 merged (#679), P2 merged (#680), P3 PDMY smoke shipped (3rd PR). The staged program of this ADR is done; the SFIM bearing-limit campaign is analysis work on top of it.
+**Status:** COMPLETE — P0+P1 merged (#679), P2 merged (#680), P3 PDMY smoke shipped (#681). The staged program of this ADR is done, and the bearing-limit campaign it was built to answer has been **run and reported in §8**: the geometry ladder produces no bearing limit point and hardens the backbone slightly, refuting the ADR-78 §1 hypothesis.
 **Element:** `LadrunoBrick` (ELE 33002) first; `LadrunoUP` (ELE 33017) in P2
 **Seam extended:** `SolidTransformation` gains `METHOD_HYPO = 3` (marker only)
 **Kernel:** `SRC/element/solidTransformation/LadrunoHypoKernel.h` (header-only, OpenSees-free)
@@ -340,7 +340,64 @@ design).
 
 ---
 
-## 8. References
+## 8. Bearing-backbone campaign — result (2026-07-29)
+
+The ADR-78 §1 question this ADR was built to answer — *does genuine large
+strain bend the PDMY footing backbone toward a bearing limit point, or reduce
+the ~9.3×-Vesic over-hardening?* — has been measured. Full write-up, CSVs and
+plot: `Ladruno_files/testbed/hypo_bearing/RESULTS.md`.
+
+**Answer: no, and no — the ladder hardens the backbone slightly instead.**
+
+The real SFIM model is not in this repo (and is not on the machine), so the
+campaign runs a self-contained graded benchmark built with apeGmsh: B = 2 m
+smooth square footing on a 20 × 20 × 8 m box (4.5 B side clearance, 4 B depth,
+which is what the scoping work showed is required to escape the oedometer
+regime), 2816 `LadrunoUP` H8 at 0.5 m under the footing grading outward,
+13 872 u-p DOF, saturated PDMY (φ = 33°), 10 kPa surcharge, displacement-
+controlled drained push. Three legs, ~3.5 h each.
+
+1. **No limit point on any rung.** Every leg is still hardening where it ends:
+   `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial value and never
+   approaches zero; `q` is monotone with its maximum at the last converged
+   point. hypo reaches 3.62 × Vesic at s/B = 7.6 % and is still climbing
+   (q/q_Vesic = 1.00 / 1.87 / 2.85 / 3.59 at s/B = 1 / 2.5 / 5 / 7.5 %).
+2. **`hypo` is STIFFER than `corot`, and the gap grows** — +2.1 % / +6.2 % /
+   +14.8 % of q at s/B = 1 / 2.5 / 5 %. Same sign and comparable magnitude to
+   the P3 smoke (§5 P3: 0.3 / 1.8 / 15.4 % at 0.25 / 1 / 5 %), so the P3 result
+   was not a small-model artifact. Large strain moves this model *away* from a
+   limit point — the ADR-78 §1 hypothesis that missing large-deformation
+   kinematics was suppressing the limit point is **refuted**.
+3. **`-kozenyCarman` is inert on a drained push** (hypo vs hypo+kc agree to
+   ~1e-4 over the whole backbone), which is the expected physics: k(J) only
+   sets dissipation rate, and the drained backbone is k-independent. Its lever
+   is undrained/rapid loading, which this campaign does not exercise.
+
+No leg reached the s/B = 0.15 target, for two different reasons that
+`RESULTS.md` keeps distinct: `corot` ended on its own at s/B = 0.060 when the
+adaptive increment fell below its floor on a heavily distorted near-footing
+mesh, while the two hypo legs were **stopped by the operator** at s/B ≈ 0.076
+after 4 h, still converging comfortably. Neither ending is a limit load — the
+two are distinguished by `dq/ds`, still clearly positive. So the campaign
+cannot exclude a limit point *past* the last converged step; it does establish
+that none appears in the span the three legs share (s/B ≤ 0.060).
+
+Two things worth carrying forward. `corot` hit its convergence floor at
+s/B = 0.060 while `hypo` was still stepping at 0.076, i.e. the rate-form UL
+lane is better conditioned than rotate-only kinematics once elements are
+genuinely distorted — a small independent point for
+`-geom hypo`. And the over-hardening itself is now pointed at boundary
+confinement rather than kinematics: the same footing at 0.5–1.5 B clearance ran
+to tens of × Vesic as a pure oedometer, versus 2.7–3.4 × here at 4.5 B.
+
+Validation of the campaign model (all in `RESULTS.md`): global vertical
+equilibrium exact to 0.0000 %, mesh volume exact, the closed-form surcharge
+reaction correction exact, commanded ≡ measured settlement to machine
+precision at every step, and Pardiso ≡ UmfPack to 5.2e-13.
+
+---
+
+## 9. References
 
 - Hughes, T.J.R. & Winget, J. (1980), "Finite rotation effects in numerical
   integration of rate constitutive equations arising in large-deformation

@@ -96,16 +96,36 @@ def main():
     except ImportError:
         print("\n(matplotlib unavailable — skipping the plot)")
         return
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
+    # hypo and hypo+kc coincide to ~1e-4, so they MUST be drawn with different
+    # line styles or one hides the other entirely.
+    STYLE = {"corot": dict(color="C0", ls="-", lw=1.8),
+             "hypo": dict(color="C3", ls="-", lw=1.8),
+             "hypo_kc": dict(color="C2", ls="--", lw=1.8)}
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.4))
     for leg, lbl in LEGS:
         d = data.get(leg)
         if d is None:
             continue
-        ax[0].plot(d["s"] / B_FOOT * 100, d["q"], label=lbl, lw=1.6)
-        ax[1].plot(d["s"] / B_FOOT * 100, d["qn"], label=lbl, lw=1.6)
+        x = d["s"] / B_FOOT * 100
+        ax[0].plot(x, d["q"], label=lbl, **STYLE[leg])
+        ax[1].plot(x, d["qn"], label=lbl, **STYLE[leg])
+        # tangent stiffness, smoothed over a sliding window (the raw
+        # difference quotient is noisy because ds itself varies)
+        w = 15
+        if len(x) > 2 * w:
+            k = np.gradient(d["q"], d["s"])
+            ker = np.ones(w) / w
+            ks = np.convolve(k, ker, mode="valid")
+            ax[2].plot(x[w - 1:], ks / ks[0], label=lbl, **STYLE[leg])
+        ax[0].plot(x[-1], d["q"][-1], "o", ms=5, color=STYLE[leg]["color"])
     ax[0].set_ylabel("footing pressure q [kPa]")
     ax[1].set_ylabel("q / q_Vesic")
-    ax[1].axhline(1.0, color="k", ls="--", lw=0.8)
+    ax[2].set_ylabel("tangent dq/ds, normalized to its initial value")
+    ax[1].axhline(1.0, color="k", ls=":", lw=0.9)
+    ax[2].axhline(0.0, color="k", ls=":", lw=0.9)
+    ax[2].set_ylim(bottom=0)
+    ax[0].set_title("markers = last converged point (truncation)", fontsize=8)
+    ax[2].set_title("a limit point would be dq/ds crossing zero", fontsize=8)
     for a in ax:
         a.set_xlabel("settlement s/B [%]")
         a.legend(fontsize=8)
