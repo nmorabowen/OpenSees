@@ -2,7 +2,7 @@
 
 **Run 2026-07-28/29 on the merged `ladruno` state through PR #682
 (`dist/bin` build `10db451c9`), graded 2816-element benchmark mesh, three legs
-in parallel, ~3.5 h each.**
+in parallel, 3.2–4.1 h each.**
 
 ## Verdict
 
@@ -32,7 +32,7 @@ So the ADR-78 §1 over-hardening is **not** a large-deformation-kinematics
 artifact. Scoping finding 3 points at the much bigger lever: boundary
 confinement. The same footing in a box with 0.5–1.5 B of clearance ran to
 27 MPa (tens of × Vesic) purely as an oedometer, whereas this 4.5 B-clearance
-benchmark is at 2.7–3.4 × Vesic at the same penetrations. We cannot attribute
+benchmark is at 2.7–3.6 × Vesic at the same penetrations. We cannot attribute
 a specific share of the reported 9.3 × to the SFIM model's boundaries without
 that model — but the ladder is now excluded as the explanation.
 
