@@ -104,7 +104,7 @@ which is a small independent point in `-geom hypo`'s favour.
 
 ## Validation
 
-Five independent checks, all run against this exact model:
+Six independent checks, all run against this exact model:
 
 | check | result |
 |---|---|
@@ -112,7 +112,7 @@ Five independent checks, all run against this exact model:
 | effective stress at depth | σ'_zz ≈ −80.3 kPa at the base element ≈ γ'·z + q0 (buoyant), K0 = 0.51 vs 1−sinφ = 0.455 — buoyancy is carried by the pore-pressure field, so normalizing Vesic by γ' is the right choice |
 | mesh geometry | volume 3200.000 m³ vs the exact 20 × 20 × 8 box |
 | reaction bookkeeping | R extrapolates to 62.5 kN at s → 0 = q0 × 6.25 m² (the footing-node tributary) — the closed-form surcharge correction is exact |
-| displacement control | commanded `s_m` ≡ measured `s_meas_m` to machine precision at every one of ~2200 recorded steps |
+| displacement control | commanded `s_m` ≡ measured `s_meas_m` to machine precision at every one of the 2527 recorded steps |
 | solver | Pardiso vs UmfPack agree to **5.2e-13** relative on 16 push steps (Pardiso 2.2× faster) — the solver is a wall-clock choice only |
 
 The gravity state is also uniform to 1e-16 across the whole top face
