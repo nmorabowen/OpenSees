@@ -448,3 +448,46 @@ def test_brick_eas_degenerate_element_refused_loudly(mode, capfd):
     assert ops.analyze(1) != 0, (
         "analysis over a degenerate eas brick must FAIL, not run silently"
     )
+
+
+# ===========================================================================
+# 8. no spurious inner-Newton warnings at SI (steel-scale) units — regression
+# ===========================================================================
+def test_eas_no_spurious_inner_newton_warning_at_si_scale(capfd):
+    """Regression (2026-07-29): formEAStrue re-enters on EVERY assembly (update()
+    AND formResidAndTangent), so it routinely starts from an already-converged
+    alpha whose residual sits at the fp noise floor. The old convergence test
+    (`count >= 1` + a fixed tolAbs=1e-12 in force*length^2 units) could then
+    never pass at SI stress scales — ||M^T sigma dV|| roundoff >> 1e-12 — and the
+    maxIters warning fired for every element on every global iteration (GBs of
+    log spam on production runs). Elastic material, so the inner solve is exact in
+    one step and every warning is by construction spurious: a converged run must
+    emit NO 'did not converge' warning. (A plastic material is deliberately NOT
+    used here — upstream J2Plasticity's tangent gives the inner Newton a slow
+    LINEAR rate, so its maxIters warnings are honest, not this regression.)"""
+    E, nu = 200.0e9, 0.3            # SI Pa steel
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    # distorted hex so the enhanced parameters are genuinely active
+    coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1.1, 1.05, 0.0), 4: (0.05, 1, 0),
+              5: (0, 0, 1), 6: (1, 0.05, 1.1), 7: (1.05, 1, 1), 8: (0, 1, 1.05)}
+    for t, c in coords.items():
+        ops.node(t, *[float(x) for x in c])
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu)
+    for n in (1, 4, 5, 8):
+        ops.fix(n, 1, 1, 1)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "eas")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, 0.004)          # imposed x-disp (~0.4% strain, SI stresses)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-10, 50, 0)
+    ops.integrator("LoadControl", 0.25); ops.algorithm("Newton"); ops.analysis("Static")
+    capfd.readouterr()
+    assert ops.analyze(4) == 0
+    out = capfd.readouterr()
+    combined = out.out + out.err
+    assert "did not converge" not in combined, (
+        "spurious eas inner-Newton non-convergence warning at SI scale:\n"
+        + combined[:2000]
+    )
