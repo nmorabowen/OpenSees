@@ -3032,6 +3032,13 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   // fixed 1e-10 is unreachable for steel-scale problems (spurious non-convergence).  // Ladruno
   static const double tolRel = 1.0e-8;
   static const double tolAbs = 1.0e-12;
+  // NOISE floor: residE is the near-cancelling sum of per-GP M^T sigma dV terms,
+  // so its entries carry roundoff proportional to the magnitude of those terms
+  // (rScale = sum of per-GP ||M^T sigma dV||). Below tolNoise*rScale the residual
+  // is fp noise, not signal -- without this the fixed tolAbs floor is unreachable
+  // for large-unit (SI steel/soil) models and every assembly re-entry spins the
+  // full maxIters on noise.  // Ladruno
+  static const double tolNoise = 1.0e-12;
 
   if (easJ0det == 0.0) buildEAStrue();       // safety (normally cached in setDomain)
 
@@ -3080,7 +3087,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   static Matrix B(6, 24), M(6, 9);
   static Matrix dd(6, 6), DB(6, 24), DM(6, 9);
   static Matrix Kaa(9, 9), Kda(24, 9), Kad(9, 24), KaaInvKad(9, 24);
-  static Vector residE(9), dalpha(9), strain(6), stress(6);
+  static Vector residE(9), dalpha(9), strain(6), stress(6), contrib(9);
   static double shp[4][8];
 
   // helper macro-ish: build the compatible 6x24 B at the current saved GP `g`
@@ -3122,9 +3129,11 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
   int count = 0;
   double r0 = -1.0;          // first-iteration ||residE|| (sets the relative scale)
+  double rPrev = -1.0;       // previous-iteration ||residE|| (stagnation detection)
   while (true) {
     residE.Zero();
     Kaa.Zero();
+    double rScale = 0.0;       // sum of per-GP ||M^T sigma dV|| (noise scale)
     for (int g = 0; g < 8; g++) {
       for (int p = 0; p < 4; p++) for (int q = 0; q < 8; q++) shp[p][q] = Shape[p][q][g];
       B.Zero();
@@ -3144,15 +3153,28 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       stress *= dvol[g];
       dd = materialPointers[g]->getTangent();
       dd *= dvol[g];
-      residE.addMatrixTransposeVector(1.0, M, stress, -1.0);   // residE += -(M^T sigma)
+      contrib.addMatrixTransposeVector(0.0, M, stress, 1.0);   // M^T sigma (this GP)
+      rScale += contrib.Norm();
+      residE.addVector(1.0, contrib, -1.0);                    // residE += -(M^T sigma)
       DM.addMatrixProduct(0.0, dd, M, 1.0);
       Kaa.addMatrixTransposeProduct(1.0, M, DM, 1.0);          // Kaa += M^T dd M
     }
     double r = residE.Norm();
     if (count == 0) r0 = r;                          // scale from the first residual
-    // converged (after >=1 update): relative to r0, with a tiny absolute floor for
-    // the alpha-already-satisfies (uniform-strain) case where r0 itself is ~0.
-    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+    // converged: relative to r0, with an absolute + scale-aware noise floor.
+    // Tested from count==0 on purpose: formEAStrue re-enters on EVERY assembly
+    // (update() and formResidAndTangent), so it routinely starts from an
+    // already-converged alpha where r0 is at the noise floor; forcing an update
+    // there solves a pure-roundoff RHS and can never satisfy a test with no
+    // reachable floor -- the maxIters warning then fires on every assembly of
+    // every element.
+    if (r <= tolRel * r0 + tolAbs + tolNoise * rScale)
+      break;
+    // stagnation: a step that fails to reduce ||r|| while no worse than entry means
+    // roundoff dominates -- accept best-available alpha silently (the same
+    // acceptance the maxIters path makes) instead of burning the remaining
+    // iterations on noise.
+    if (count >= 1 && r >= rPrev && r <= r0)
       break;
     if (count >= maxIters) {
       // Not propagated as a hard failure: r is typically already within noise
@@ -3174,6 +3196,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       break;
     }
     alpha += dalpha;
+    rPrev = r;
     count++;
   }
 
