@@ -442,6 +442,13 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
   static const int    maxIters = 12;
   static const double tolRel = 1.0e-8;
   static const double tolAbs = 1.0e-12;
+  // NOISE floor: residE is the near-cancelling sum of per-GP M^T sigma dV terms,
+  // so its entries carry roundoff proportional to the magnitude of those terms
+  // (rScale = sum of per-GP ||M^T sigma dV||). Below tolNoise*rScale the residual
+  // is fp noise, not signal -- without this the fixed tolAbs floor is unreachable
+  // for large-unit (SI steel/soil) models and every assembly re-entry spins the
+  // full maxIters on noise (mirrors LadrunoBrick).  // Ladruno
+  static const double tolNoise = 1.0e-12;
 
   if (easJ0det == 0.0) this->buildEAStrue();   // safety (normally cached in setDomain)
 
@@ -483,7 +490,7 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
 
   static Matrix dd(3, 3), DB(3, 8), DM(3, 4);
   static Matrix Kaa(4, 4), Kda(8, 4), Kad(4, 8), KaaInvKad(4, 8);
-  static Vector residE(4), dalpha(4), strain(3), stress(3);
+  static Vector residE(4), dalpha(4), strain(3), stress(3), contrib(4);
 
   // -------- getInitialStiff: condensed initial elastic tangent at alpha=0 -----
   if (useInitialTangent) {
@@ -511,9 +518,11 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
   int count = 0;
   double r0 = -1.0;
+  double rPrev = -1.0;       // previous-iteration ||residE|| (stagnation detection)
   while (true) {
     residE.Zero();
     Kaa.Zero();
+    double rScale = 0.0;       // sum of per-GP ||M^T sigma dV|| (noise scale)
     for (int i = 0; i < 4; i++) {
       strain.addMatrixVector(0.0, Bgp[i], u, 1.0);       // eps = B*u
       strain.addMatrixVector(1.0, Mgp[i], alpha, 1.0);   //     + M*alpha
@@ -526,13 +535,28 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
       stress *= dvolGP[i];
       dd = theMaterial[i]->getTangent();
       dd *= dvolGP[i];
-      residE.addMatrixTransposeVector(1.0, Mgp[i], stress, -1.0);   // residE += -(M^T sigma)
+      contrib.addMatrixTransposeVector(0.0, Mgp[i], stress, 1.0);   // M^T sigma (this GP)
+      rScale += contrib.Norm();
+      residE.addVector(1.0, contrib, -1.0);                         // residE += -(M^T sigma)
       DM.addMatrixProduct(0.0, dd, Mgp[i], 1.0);
       Kaa.addMatrixTransposeProduct(1.0, Mgp[i], DM, 1.0);          // Kaa += M^T dd M
     }
     double r = residE.Norm();
     if (count == 0) r0 = r;
-    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+    // converged: relative to r0, with an absolute + scale-aware noise floor.
+    // Tested from count==0 on purpose: formEAStrue re-enters on EVERY assembly
+    // (update() and formResidAndTangent), so it routinely starts from an
+    // already-converged alpha where r0 is at the noise floor; forcing an update
+    // there solves a pure-roundoff RHS and can never satisfy a test with no
+    // reachable floor -- the maxIters warning then fires on every assembly of
+    // every element (mirrors LadrunoBrick).
+    if (r <= tolRel * r0 + tolAbs + tolNoise * rScale)
+      break;
+    // stagnation: a step that fails to reduce ||r|| while no worse than entry means
+    // roundoff dominates -- accept best-available alpha silently (the same
+    // acceptance the maxIters path makes) instead of burning the remaining
+    // iterations on noise.
+    if (count >= 1 && r >= rPrev && r <= r0)
       break;
     if (count >= maxIters) {
       // Not propagated as a hard failure: r is typically already within noise
@@ -554,6 +578,7 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
       break;
     }
     alpha += dalpha;
+    rPrev = r;
     count++;
   }
 

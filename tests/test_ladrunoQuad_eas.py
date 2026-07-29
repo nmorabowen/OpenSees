@@ -457,3 +457,43 @@ def test_quad_eas_state_survives_db_restart_continuation():
                   rtol=1e-6, atol=1e-12)
     _assert_close(got_sig, ref_sig, "restart-continuation stresses",
                   rtol=1e-5, atol=1e-9)
+
+
+# --------------------------------------------------------------------------
+# no spurious inner-Newton warnings at SI (steel-scale) units — regression
+# --------------------------------------------------------------------------
+def test_quad_eas_no_spurious_inner_newton_warning_at_si_scale(capfd):
+    """Regression (2026-07-29), twin of the LadrunoBrick test: formEAStrue
+    re-enters on EVERY assembly, so it routinely starts from an already-converged
+    alpha whose residual sits at the fp noise floor. The old convergence test
+    (`count >= 1` + a fixed tolAbs=1e-12 in force*length^2 units) could then never
+    pass at SI stress scales and the maxIters warning fired for every element on
+    every global iteration. Elastic material, so the inner solve is exact in one
+    step and every warning is by construction spurious: a converged run must emit
+    NO 'did not converge' warning. (A plastic material is deliberately NOT used
+    here — upstream J2Plasticity's tangent gives the inner Newton a slow LINEAR
+    rate, so its maxIters warnings are honest, not this regression.)"""
+    E, nu = 200.0e9, 0.3            # SI Pa steel
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, (x, y) in _QNODES.items():
+        ops.node(tag, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu)
+    for n in _QBASE:
+        ops.fix(n, 1, 1)
+    ops.element("LadrunoQuad", 1, *_QCONN, 1, "-thick", _THK,
+                "-type", "PlaneStrain", "-formulation", "eas")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for n in (3, 4):
+        ops.sp(n, 1, 0.004)          # imposed x-disp (~0.4% strain, SI stresses)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-10, 50, 0)
+    ops.integrator("LoadControl", 0.25); ops.algorithm("Newton"); ops.analysis("Static")
+    capfd.readouterr()
+    assert ops.analyze(4) == 0
+    out = capfd.readouterr()
+    combined = out.out + out.err
+    assert "did not converge" not in combined, (
+        "spurious eas inner-Newton non-convergence warning at SI scale:\n"
+        + combined[:2000]
+    )
