@@ -8,28 +8,37 @@ now shipped — linear ⊂ corot (rotation) ⊂ hypo (genuine large strain + n(J
 porosity) ⊂ hypo -kozenyCarman (+ k(J)) — this campaign measures what each
 rung actually does to the bearing backbone of a clean benchmark:
 
-  * box 6B x 6B x 3B of saturated PDMY sand (medium-loose, phi=33), drained
-    (k large, slow push), buoyant conditions via -body accel + hydrostatic p;
-  * square rough footing B x B = the central 2x2-element patch, pushed
-    DISPLACEMENT-controlled (the P3 scoping finding: force control diverges
+  * a GRADED all-hex domain, 20 x 20 m plan x 8 m deep (4.5 B of side
+    clearance, 4 B deep), 0.5 m hexes under and near the footing coarsening
+    outward — built by build_mesh.py with apeGmsh, cached in bearing_mesh.npz.
+    The clearance is what scoping finding 3 demands: every uniform-hex box
+    small enough for a quick run was an OEDOMETER, not a bearing problem;
+  * saturated PDMY sand (medium-loose, phi=33), drained (slow push), buoyant
+    conditions via -body accel + a free-draining top;
+  * 10 kPa surcharge over the top face BESIDE the footing — scoping finding 2:
+    without it the zero-confinement surface DOFs are near-singular under
+    stage-1 PDMY and every geometry method dies on the first push step. It is
+    also the physical Vesic q0, so it enters the normalization;
+  * square SMOOTH footing B x B = 2 x 2 m = the central 4 x 4-element patch,
+    pushed DISPLACEMENT-controlled (scoping finding 1: force control diverges
     at the zero-confinement surface; -geom linear grinds and is excluded) to
-    s = 15% B;
-  * backbone R(s) per method, normalized by the Vesic surface capacity
-    q_ult = 0.5*gamma'*B*Ngamma*s_gamma (phi=33: Nq=26.1, Ngamma=35.2,
-    s_gamma=0.6).
+    s = 15% B in ~2.5 mm steps (finding 4);
+  * backbone R(s) per method, normalized by Vesic
+    q_ult = q0*Nq*sq + 0.5*gamma'*B*Ngamma*s_gamma.
 
-Output: bearing_backbone_results.md next to this script (a table of R(s) and
-q/q_Vesic per method + the verdict), plus raw CSV per leg.
+Output: raw CSV per leg (written incrementally — a killed leg keeps its data)
+plus a truncation-honest summary. A truncated leg NEVER reads as "softening".
 
 Run (worktree, built dist/bin):
-    py -3.12 Ladruno_files/testbed/hypo_bearing/bearing_backbone.py [quick]
-`quick` runs a 1/2-resolution sanity pass first.
+    py -3.12 bearing_backbone.py [corot|hypo|hypo_kc|all]
 """
 import os
 import sys
 import time
 import math
 import csv
+
+import numpy as np
 
 _WT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
@@ -41,7 +50,25 @@ if hasattr(os, "add_dll_directory"):
 sys.path.insert(0, _BIN)
 import opensees as ops  # noqa: E402
 
+# The INSTALLED Ladruno wires `C:\Program Files\Ladruno\...` into every venv it
+# touches through a site .pth (`ladruno_opensees.pth` -> `_ladruno_opensees_boot`)
+# that runs `import opensees` at INTERPRETER STARTUP. In such a venv `opensees`
+# is already in sys.modules before line 1 of this script, so the sys.path
+# insert above is silently ignored and the campaign would run on the installed
+# build — which predates ADR 78/79 and refuses `-geom corot|hypo` (measured:
+# "only 'linear' is accepted"). Use a clean interpreter (the base
+# C:\...\Programs\Python\Python312\python.exe has no such .pth) and let this
+# guard prove which engine is actually loaded.
+if os.path.normcase(os.path.dirname(os.path.abspath(ops.__file__))) != \
+        os.path.normcase(_BIN):
+    raise SystemExit(
+        f"WRONG ENGINE: imported {ops.__file__}\n"
+        f"  expected the worktree build in {_BIN}\n"
+        f"  a site .pth pre-imported another opensees — run this with an "
+        f"interpreter that has no Ladruno .pth (base Python 3.12).")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
+MESH = os.path.join(HERE, "bearing_mesh.npz")
 
 G9 = 9.81
 RHO_SAT, RHO_W = 2.0, 1.0        # Mg/m^3
@@ -55,206 +82,268 @@ PDMY = dict(rho=RHO_SAT, G=5.5e4, B=1.5e5, phi=33.0, gammaPeak=0.1,
             refPress=80.0, d=0.5, PT=27.0, contract=0.05, dil1=0.0, dil2=0.0,
             liq1=0.0, liq2=0.0, liq3=0.0, NYS=20)
 
-QUICK = len(sys.argv) > 1 and sys.argv[1] == "quick"
-# GEOMETRY LESSON (first quick run): a 3 m box under a 2 m footing is an
-# OEDOMETER, not a bearing problem — roller sides + 0.5 m clearance confine
-# the mechanism and q/q_Vesic blows past 2500 with no meaning. The campaign
-# box is 8 m (1.5B clearance each side, depth 4B); still modest — the
-# CROSS-METHOD comparison is the point, not absolute capacity.
-N = 4 if QUICK else 8            # elements per edge (box N x N x N)
-L = 4.0 if QUICK else 8.0        # box edge (m); element size 1 m either way
-SFRAC = 0.15                     # final penetration / footing width B
-# ~2.5 mm per step — the increment size the P3 smoke proved convergent; a
-# 25 mm first increment hard-fails every geometry method (measured).
-NPUSH = int(round(SFRAC * 2.0 / 0.0025))
-DT = 25.0
-
-# footing = central 2x2-element patch => B = 2 m (both resolutions)
 B_FOOT = 2.0
-GAMMA_B = (RHO_SAT - RHO_W) * G9                    # buoyant unit weight kN/m^3
-# Surface SURCHARGE q0 (whole top face, gravity stage): the standard PDMY
-# footing-model regularization. Without it the free LATERAL DOFs of the
-# zero-confinement surface nodes are nearly singular under stage-1 PDMY
-# (G ~ p'^d): Newton limit-cycles at 25 m increments and even KrylovNewton
-# stalls at ~1e-6 — measured on the N=4 quick pass; the N=3 P3 smoke sat
-# just on the convergent side of the same marginality.
+SFRAC = 0.15                     # final penetration / footing width B
 Q_SURCH = 10.0                                      # kPa
+
+# --- push increment (scoping finding 4, RE-MEASURED on the graded mesh) -----
+# P3's 2.5 mm increment was calibrated on 1 m hexes. On this mesh (0.5 m hexes
+# at the surface, 4.5 B of clearance) it does not converge for ANY geometry
+# method — including `-geom linear`, so it is the model/mesh, not the geometry
+# lane — and it is NOT a tolerance artifact: Newton diverges (‖Δu‖ ~ 0.2 m) and
+# KrylovNewton stalls at ‖Δu‖ ~ 3e-5 for every test/tolerance tried down to
+# 1e-4, including relative and energy tests. Measured threshold: 0.05 mm
+# converges 12/12 at ~2.4 s/step, 0.10 mm and above fail. `dt` is irrelevant
+# (2.5 / 25 / 250 s all fail identically at 2.5 mm) — the limit is the
+# DISPLACEMENT increment.
+#
+# So the push is a linear displacement ramp in pseudo-time and the increment is
+# carried by `dt`, which lets it ADAPT: halve on failure, grow back after a run
+# of successes. T_PUSH is chosen so that even the smallest admissible increment
+# still spans a fully DRAINED interval — c_v ≈ k·M/γ_w ≈ 2.3 m²/s, so
+# T_v = c_v·dt/B² ≫ 1 needs dt ≳ 5 s, which DS_MIN maps to exactly.
+DS_BASE, DS_MIN, DS_MAX = 5.0e-5, 6.25e-6, 4.0e-4   # m per step
+GROW_AFTER = 5                   # consecutive good steps before doubling ds
+T_PUSH = (SFRAC * B_FOOT / DS_MIN) * 5.0            # s, => dt(DS_MIN) = 5 s
+# smoke/sizing knob only: cap the step count without touching the increment.
+MAXSTEP = int(os.environ.get("ADR79_MAXSTEP", 200000))
+
+GAMMA_B = (RHO_SAT - RHO_W) * G9                    # buoyant unit weight kN/m^3
 PHI = math.radians(PDMY["phi"])
 NQ = math.exp(math.pi * math.tan(PHI)) * math.tan(math.pi / 4 + PHI / 2) ** 2
 NGAMMA = 2.0 * (NQ + 1.0) * math.tan(PHI)           # Vesic
 SGAMMA = 0.6                                        # square shape factor (Ngamma)
 SQ = 1.0 + math.tan(PHI)                            # square shape factor (Nq)
-# Vesic with the surcharge term: q_ult = q0*Nq*sq + 0.5*gamma'*B*Ngamma*sgamma
 Q_VESIC = Q_SURCH * NQ * SQ + 0.5 * GAMMA_B * B_FOOT * NGAMMA * SGAMMA
 A_FOOT = B_FOOT * B_FOOT
+
+LEGS = {"corot": ("corot", False), "hypo": ("hypo", False),
+        "hypo_kc": ("hypo", True)}
 
 
 def log(*a):
     print(f"[{time.strftime('%H:%M:%S')}]", *a, flush=True)
 
 
-def run_leg(geom, kc=False):
+def load_mesh():
+    if not os.path.exists(MESH):
+        raise SystemExit(f"{MESH} missing — run build_mesh.py first "
+                         "(needs the apeGmsh env, see its docstring)")
+    z = np.load(MESH)
+    return (z["nodes"], z["hexes"], z["tributary"],
+            {k[4:]: z[k] for k in z.files if k.startswith("set_")})
+
+
+def pick_system():
+    """PARDISO if this build has it (LadrunoUP's tangent is UNSYMMETRIC, so no
+    -matrixType), else UmfPack. Both are exact direct solves — this is a
+    wall-clock choice, not a physics one."""
+    try:
+        ops.system("Pardiso")
+        return "Pardiso"
+    except Exception:
+        ops.system("UmfPack")
+        return "UmfPack"
+
+
+def build(geom, kc, nodes, hexes, trib, sets):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 4)
-    tags = {}
-    t = 1
-    for k in range(N + 1):
-        for j in range(N + 1):
-            for i in range(N + 1):
-                ops.node(t, L * i / N, L * j / N, L * k / N)
-                tags[(i, j, k)] = t
-                t += 1
+    for i, (x, y, zz) in enumerate(nodes, start=1):
+        ops.node(i, float(x), float(y), float(zz))
     p = PDMY
     ops.nDMaterial("PressureDependMultiYield", 1, 3, p["rho"], p["G"], p["B"],
                    p["phi"], p["gammaPeak"], p["refPress"], p["d"], p["PT"],
                    p["contract"], p["dil1"], p["dil2"], p["liq1"], p["liq2"],
                    p["liq3"], p["NYS"])
-    conns = []
-    for k in range(N):
-        for j in range(N):
-            for i in range(N):
-                conns.append([tags[(i, j, k)], tags[(i + 1, j, k)],
-                              tags[(i + 1, j + 1, k)], tags[(i, j + 1, k)],
-                              tags[(i, j, k + 1)], tags[(i + 1, j, k + 1)],
-                              tags[(i + 1, j + 1, k + 1)],
-                              tags[(i, j + 1, k + 1)]])
     extra = ["-kozenyCarman"] if kc else []
-    for e, conn in enumerate(conns, start=1):
-        ops.element("LadrunoUP", e, *conn, 1,
+    for e, conn in enumerate(hexes, start=1):
+        ops.element("LadrunoUP", e, *[int(c) + 1 for c in conn], 1,
                     "-Kf", KF, "-poro", PORO, "-rhoF", RHO_W,
                     "-perm", PERM, PERM, PERM, "-stab", "auto", 0.25,
                     "-body", 0.0, 0.0, -G9, "-geom", geom, *extra)
-    for (i, j, k), tt in tags.items():
-        fx = 1 if (i == 0 or i == N) else 0
-        fy = 1 if (j == 0 or j == N) else 0
-        fz = 1 if k == 0 else 0
-        if k == 0:
-            fx = fy = 1
-        fp = 1 if k == N else 0
-        ops.fix(tt, fx, fy, fz, fp)
 
-    # surface surcharge (whole top face, tributary-weighted nodal loads) —
-    # applied WITH gravity so the stage-1 surface tangent is regular.
-    h = L / N
+    # roller sides / fixed base / free-draining top (p = 0 at z = 0)
+    fix = {}
+    for n in sets["xface"]:
+        fix.setdefault(int(n), [0, 0, 0, 0])[0] = 1
+    for n in sets["yface"]:
+        fix.setdefault(int(n), [0, 0, 0, 0])[1] = 1
+    for n in sets["bottom"]:
+        f = fix.setdefault(int(n), [0, 0, 0, 0])
+        f[0] = f[1] = f[2] = 1
+    for n in sets["top"]:
+        fix.setdefault(int(n), [0, 0, 0, 0])[3] = 1
+    for n, f in fix.items():
+        ops.fix(n + 1, *f)
+
+    # surcharge over the WHOLE top face (tributary-weighted nodal loads),
+    # applied WITH gravity so the stage-1 surface tangent is regular — scoping
+    # finding 2, and it must cover the footing patch too (see build_mesh.py).
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
-    for (i, j, k), tt in tags.items():
-        if k != N:
-            continue
-        wx = 0.5 if (i == 0 or i == N) else 1.0
-        wy = 0.5 if (j == 0 or j == N) else 1.0
-        ops.load(tt, 0.0, 0.0, -Q_SURCH * wx * wy * h * h, 0.0)
+    for n in sets["top"]:
+        a = float(trib[n])
+        if a > 0.0:
+            ops.load(int(n) + 1, 0.0, 0.0, -Q_SURCH * a, 0.0)
 
+
+def gravity(tag):
     ops.constraints("Transformation")
     ops.numberer("RCM")
-    ops.system("UmfPack")
+    sysname = pick_system()
     ops.test("NormDispIncr", 1e-7, 100, 0)
     ops.algorithm("KrylovNewton")
     ops.integrator("Newmark", 0.6, 0.3025)
     ops.analysis("Transient")
     for _ in range(10):
-        assert ops.analyze(1, 500.0) == 0, f"{geom} elastic gravity failed"
+        assert ops.analyze(1, 500.0) == 0, f"{tag} elastic gravity failed"
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     for _ in range(10):
-        assert ops.analyze(1, 500.0) == 0, f"{geom} plastic settle failed"
-    log(geom, ("(kc) " if kc else ""), "gravity done")
+        assert ops.analyze(1, 500.0) == 0, f"{tag} plastic settle failed"
+    return sysname
 
-    # displacement-controlled footing push: the central 2x2-element patch =
-    # the 3x3 node square centred on c (N even => a symmetric patch). Smooth
-    # footing (only uz driven) — matches the P3 smoke.
+
+def run_leg(name):
+    geom, kc = LEGS[name]
+    nodes, hexes, trib, sets = load_mesh()
+    t_start = time.time()
+    build(geom, kc, nodes, hexes, trib, sets)
+    log(name, f"model built: {len(nodes)} nodes, {len(hexes)} hex")
+    sysname = gravity(name)
+    log(name, f"gravity done [{sysname}, {time.time() - t_start:.0f}s]")
+
+    foot = [int(n) + 1 for n in sets["footing"]]
+    # nodeReaction at a constrained DOF is (internal - applied), so the raw
+    # sum understates the load through the footing by exactly the surcharge
+    # sitting on the footing patch. Correct it in closed form (= q0 * B^2).
+    r_corr = Q_SURCH * float(trib[sets["footing"]].sum())
+    # settlement datum: the footing nodes have already settled under gravity +
+    # surcharge, and an `sp` value is an ABSOLUTE nodal displacement. Record
+    # both the commanded and the MEASURED settlement so the abscissa is a fact,
+    # not an assumption about sp semantics.
+    uz0 = ops.nodeDisp(foot[0], 3)
     ops.loadConst("-time", 0.0)
-    c = N // 2
-    foot = [tags[(i, j, N)]
-            for i in range(c - 1, c + 2) for j in range(c - 1, c + 2)]
     smax = SFRAC * B_FOOT
-    times = [DT * (s + 1) for s in range(NPUSH)] + [DT * (NPUSH + 5)]
-    vals = [-smax * (s + 1) / NPUSH for s in range(NPUSH)] + [-smax]
-    ops.timeSeries("Path", 2, "-time", *times, "-values", *vals, "-useLast")
+    rate = smax / T_PUSH                       # m of settlement per second
+    # a 2-point linear ramp: settlement is exactly rate * pseudo-time, so the
+    # per-step increment is carried by dt and can be adapted freely.
+    ops.timeSeries("Path", 2, "-time", 0.0, T_PUSH,
+                   "-values", uz0, uz0 - smax, "-useLast")
     ops.pattern("Plain", 2, 2)
     for tt in foot:
         ops.sp(tt, 3, 1.0)
+
     ops.wipeAnalysis()
     ops.constraints("Transformation")
     ops.numberer("RCM")
-    ops.system("UmfPack")
-    ops.test("NormDispIncr", 1e-8, 60, 0)
-    ops.algorithm("Newton")
+    pick_system()
+    # KrylovNewton is the PRIMARY here, not a fallback: on this mesh plain
+    # Newton diverges at every increment tested down to 0.25 mm, while
+    # KrylovNewton converges cleanly at 0.05 mm. The adaptive halving below
+    # replaces P3's fixed dt/10 ladder.
+    ops.test("NormDispIncr", 1e-7, 100, 0)
+    ops.algorithm("KrylovNewton")
     ops.integrator("Newmark", 0.6, 0.3025)
     ops.analysis("Transient")
+
+    path = os.path.join(HERE, f"backbone_{name}.csv")
+    f = open(path, "w", newline="")
+    w = csv.writer(f)
+    w.writerow(["s_m", "s_meas_m", "R_kN", "q_kPa", "q_over_qVesic",
+                "ds_mm", "wall_s"])
     rows = []
+    truncated_at = None
+    ds, good, nfail = DS_BASE, 0, 0
     t0 = time.time()
-    for s in range(NPUSH):
-        ok = ops.analyze(1, DT)
-        if ok != 0:
-            ops.test("NormDispIncr", 1e-7, 100, 0)
-            ops.algorithm("KrylovNewton")
-            ok = 0
-            for _ in range(10):
-                if ops.analyze(1, DT / 10) != 0:
-                    ok = -1
-                    break
-            ops.test("NormDispIncr", 1e-8, 60, 0)
-            ops.algorithm("Newton")
-        if ok != 0:
-            log(geom, ("(kc)" if kc else ""),
-                f"step {s + 1} HARD FAIL at s/B="
-                f"{smax * (s + 1) / NPUSH / B_FOOT:.3f} — backbone TRUNCATED")
+    nstep = 0
+    while nstep < MAXSTEP:
+        s_now = ops.getTime() * rate
+        if s_now >= smax - 1e-12:
             break
+        ds = min(ds, smax - s_now)
+        if ops.analyze(1, ds / rate) != 0:
+            nfail += 1
+            good = 0
+            ds *= 0.5
+            if ds < DS_MIN:
+                truncated_at = s_now
+                log(name, f"NO CONVERGENCE at s/B={s_now / B_FOOT:.4f} even at "
+                    f"ds={ds * 1000:.4f} mm < DS_MIN — backbone TRUNCATED")
+                break
+            continue
+        nstep += 1
+        good += 1
+        if good >= GROW_AFTER and ds < DS_MAX:
+            ds, good = min(2.0 * ds, DS_MAX), 0
         ops.reactions()
-        R = -sum(ops.nodeReaction(tt, 3) for tt in foot)      # kN, compression +
-        sset = smax * (s + 1) / NPUSH
-        rows.append((sset, R, R / A_FOOT, R / A_FOOT / Q_VESIC))
-        if (s + 1) % 5 == 0:
-            log(geom, ("(kc)" if kc else ""), f"s/B={sset / B_FOOT:.3f} "
-                f"q/qV={rows[-1][3]:.2f} [{time.time() - t0:.0f}s]")
-    name = geom + ("_kc" if kc else "")
-    with open(os.path.join(HERE, f"backbone_{name}{'_quick' if QUICK else ''}.csv"),
-              "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["settlement_m", "R_kN", "q_kPa", "q_over_qVesic"])
-        w.writerows(rows)
-    return rows
+        R = -sum(ops.nodeReaction(tt, 3) for tt in foot) + r_corr   # kN, compression +
+        s = ops.getTime() * rate
+        smeas = uz0 - ops.nodeDisp(foot[0], 3)
+        row = (s, smeas, R, R / A_FOOT, R / A_FOOT / Q_VESIC, ds * 1000,
+               time.time() - t0)
+        rows.append(row)
+        w.writerow([f"{v:.9g}" for v in row])
+        f.flush()
+        if nstep % 100 == 0:
+            log(name, f"s/B={s / B_FOOT:.4f} q={row[3]:.1f} kPa "
+                f"q/qV={row[4]:.2f} ds={ds * 1000:.3f}mm "
+                f"[{nstep} steps, {nfail} retries, {row[6]:.0f}s]")
+    f.close()
+    if truncated_at is None and nstep >= MAXSTEP:
+        truncated_at = rows[-1][0] if rows else 0.0
+        log(name, f"hit MAXSTEP={MAXSTEP} — backbone TRUNCATED")
+    log(name, f"leg done: {nstep} steps to s/B="
+        f"{(rows[-1][0] / B_FOOT) if rows else 0:.4f}, {nfail} retries, "
+        f"{time.time() - t_start:.0f}s -> {os.path.basename(path)}")
+    return rows, truncated_at
 
 
-def main():
-    log(f"box {N}x{N}x{N} (L={L} m), footing B={B_FOOT} m, "
-        f"q_Vesic={Q_VESIC:.1f} kPa, push to s/B={SFRAC}")
-    legs = [("corot", False), ("hypo", False), ("hypo", True)]
-    results = {}
-    for geom, kc in legs:
-        name = geom + ("_kc" if kc else "")
-        log("=== leg:", name)
-        results[name] = run_leg(geom, kc)
-    # summary — truncation-honest: checkpoints are only reported for legs
-    # whose backbone actually REACHED them, and the softening verdict only
-    # runs on a completed backbone (a truncated leg reads 'TRUNCATED', never
-    # 'softening' — the first quick run mislabeled a hard-fail freeze).
+def summarize(results):
     log("=== summary (q/q_Vesic at s/B checkpoints; '--' = not reached)")
-    for frac in (0.025, 0.05, 0.10, 0.15):
+    for frac in (0.01, 0.025, 0.05, 0.10, 0.15):
         line = f"s/B={frac:.3f}: "
-        for name, rows in results.items():
+        for name, (rows, _) in results.items():
             tgt = frac * B_FOOT
             if rows and rows[-1][0] >= tgt - 1e-9:
                 best = min(rows, key=lambda r: abs(r[0] - tgt))
-                line += f"{name}={best[3]:.2f}  "
+                line += f"{name}={best[4]:.2f}  "
             else:
                 line += f"{name}=--  "
         log(line)
-    for name, rows in results.items():
+    for name, (rows, trunc) in results.items():
         if not rows:
             log(f"{name}: NO backbone (failed at step 1)")
             continue
-        complete = rows[-1][0] >= SFRAC * B_FOOT - 1e-9
-        q = [r[2] for r in rows]
+        q = [r[3] for r in rows]
+        complete = trunc is None and rows[-1][0] >= SFRAC * B_FOOT - 1e-9
         if not complete:
-            log(f"{name}: TRUNCATED at s/B={rows[-1][0] / B_FOOT:.3f} "
+            log(f"{name}: TRUNCATED at s/B={rows[-1][0] / B_FOOT:.4f} "
                 f"(q={q[-1]:.1f} kPa) — no softening verdict")
             continue
         tail = q[3 * len(q) // 4:]
         soft = tail[-1] < 0.995 * max(tail)
-        log(f"{name}: q_final={q[-1]:.1f} kPa "
-            f"({q[-1] / Q_VESIC:.2f}x Vesic), "
+        log(f"{name}: q_final={q[-1]:.1f} kPa ({q[-1] / Q_VESIC:.2f}x Vesic), "
             f"{'SOFTENING (limit point) in the tail' if soft else 'still hardening'}")
+
+
+def main():
+    which = sys.argv[1] if len(sys.argv) > 1 else "all"
+    names = list(LEGS) if which == "all" else [which]
+    for n in names:
+        if n not in LEGS:
+            raise SystemExit(f"unknown leg {n!r}; pick from {list(LEGS)} or 'all'")
+    log(f"footing B={B_FOOT} m, q_Vesic={Q_VESIC:.1f} kPa "
+        f"(q0*Nq*sq={Q_SURCH * NQ * SQ:.1f} + gamma term="
+        f"{0.5 * GAMMA_B * B_FOOT * NGAMMA * SGAMMA:.1f}), "
+        f"push to s/B={SFRAC} ({SFRAC * B_FOOT * 1000:.0f} mm), adaptive "
+        f"increment base={DS_BASE * 1000:.3f} mm "
+        f"in [{DS_MIN * 1000:.4f}, {DS_MAX * 1000:.3f}] mm")
+    results = {}
+    for n in names:
+        log("=== leg:", n)
+        results[n] = run_leg(n)
+    summarize(results)
 
 
 if __name__ == "__main__":

@@ -3513,3 +3513,53 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Bites:** any Python/interpreter model driving a `Plain` pattern's `sp` with `timeSeries("Path", tag, "-time", ..., "-values", ..., "-useLast")`. The interpreter parse (`OPS_PathSeries`, `SRC/domain/pattern/PathSeries.cpp`) READ `-useLast` but then constructed the `-time` variant as `PathTimeSeries(tag, path, time, factor)` — dropping the flag (5th ctor arg defaults false). Because the DOMAIN time accumulates dt in floating point, the final step's pseudo-time overshoots the last path point by a few ulps, `getFactor` takes the beyond-the-end branch, and with `useLast == false` returns **factor 0**: the constrained DOFs snap back to zero exactly at the last step.
 - **Tell:** a monotone Path-driven quantity that grows correctly for N−1 steps and collapses at step N (the ADR-79 P2 undrained gate saw p: 6.16e5 → 5.2e4 at the final step, top displacement 0.0975 → 0.0000). Invisible when the final state happens to satisfy the assertion anyway — the ADR-78 corot gate-3 test asserts p ≈ 0 under rigid rotation, so its final-step snap-back to u = 0 ALSO read p ≈ 0 and passed.
 - **Workaround/status:** ✅ FIXED (ADR-79 P2 PR) — the parsed `useLast` is forwarded to the `PathTimeSeries` ctor (`// Ladruno` mark; [[LEDGER_vanilla_files]] row). Belt-and-braces for test authors: give the Path an extra terminal point beyond the last analysis time so no route depends on the beyond-the-end branch. *2026-07-28 (ADR-79 P2).*
+
+### An INSTALLED Ladruno hijacks `import opensees` in every venv it has wired — `sys.path.insert` cannot win
+- **Bites:** any script that bootstraps a *worktree* build with the standard
+  `sys.path.insert(0, "<worktree>/dist/bin"); import opensees`. The Ladruno
+  installer writes `ladruno_opensees.pth` into the venv's `site-packages`,
+  which imports `_ladruno_opensees_boot` — and that module prepends
+  `C:\Program Files\Ladruno\OpenSees\bin` to `sys.path` **and runs
+  `import opensees`** (to alias `openseespy` onto it) at INTERPRETER STARTUP.
+  By the time line 1 of your script executes, `sys.modules["opensees"]` is
+  already the installed build; the `sys.path.insert` is a no-op.
+- **Tell:** the feature you just built is "missing". Measured this session:
+  `ERROR LadrunoUP 1 -- -geom 'corot' not supported: only 'linear' is accepted
+  (ADR 71 §2.4)` on a worktree whose own `dist/bin` build accepts it fine. The
+  banner is the giveaway — it prints the *installed* build's commit, not the
+  worktree's.
+- **Workaround:** run campaign/testbed scripts with an interpreter that has no
+  Ladruno `.pth` (the base `C:\Users\<u>\AppData\Local\Programs\Python\Python312\
+  python.exe`), and **assert which engine loaded** — compare
+  `os.path.dirname(opensees.__file__)` against the intended `dist/bin` and
+  `raise SystemExit` on mismatch. `Ladruno_files/testbed/hypo_bearing/
+  bearing_backbone.py` carries that guard as the reference pattern. Note the
+  venvs that DO have the `.pth` (e.g. `opensees_env`) are still the right ones
+  for apeGmsh mesh work — just not for running a worktree build.
+  *2026-07-28 (ADR-79 bearing campaign).*
+
+### A converged push increment is a property of the MESH, not of the problem — recalibrate it after any refinement
+- **Bites:** reusing a step size proven on one discretization. ADR-79 P3 proved
+  2.5 mm push increments on 1 m hexes; on the graded bearing mesh (0.5 m hexes
+  at the surface, 4.5 B clearance, 2816 UP-H8) the same 2.5 mm increment does
+  not converge **for any** geometry method — `-geom linear` included, which is
+  what proves it is the model/mesh and not the geometry lane.
+- **What it is NOT** (all measured, so don't re-derive them): not a tolerance
+  artifact — Newton diverges (‖Δu‖ ≈ 0.2 m) and KrylovNewton stalls at
+  ‖Δu‖ ≈ 3e-5 for *every* test tried, `NormDispIncr` 1e-8…1e-4,
+  `RelativeNormDispIncr`, `EnergyIncr`; not a `dt` effect — 2.5 / 25 / 250 s
+  all fail identically at the same displacement increment; not the u-p
+  stabilization or formulation — `-stab auto 0.10/0.25/0.50`, `-stab off` and
+  `-formulation bbar` all fail identically at 0.25 mm.
+- **What it IS:** a FIRST-LOADING shock off the `updateMaterialStage 1` PDMY
+  state. From the gravity state, 0.05 mm converges 12/12 while 0.10 mm fails —
+  but once a few small increments have been taken, the SAME model happily
+  accepts 0.4 mm (8x). The threshold is transient, so a fixed ladder is the
+  wrong tool.
+- **Rule:** drive displacement-controlled pushes with a 2-point linear ramp
+  (`timeSeries Path -time 0 T -values u0 u1`) so the increment is carried by
+  `dt`, then ADAPT it: halve on failure, grow back after a run of successes,
+  and truncate honestly at a floor. This replaces P3's fixed `dt/10` fallback
+  and self-tunes across the backbone. Also note KrylovNewton is the *primary*
+  algorithm on this problem class, not a fallback — plain Newton diverged at
+  every increment tested. *2026-07-28 (ADR-79 bearing campaign).*

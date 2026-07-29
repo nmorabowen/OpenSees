@@ -1,65 +1,102 @@
-# hypo_bearing — ADR-79 bearing-backbone campaign (scaffold + scoping findings)
+# hypo_bearing — ADR-79 bearing-backbone campaign
 
-**Status: SCAFFOLD + measured scoping findings. The production campaign needs a
-properly sized (graded) mesh or the real SFIM model — see "What blocks the
-verdict" below. Do not read the quick-pass numbers as bearing capacities.**
-
-## Goal
-
-Answer the ADR-78 §1 question with the now-complete geometry ladder
+Answers the ADR-78 §1 question with the now-complete geometry ladder
 (`linear ⊂ corot ⊂ hypo ⊂ hypo -kozenyCarman`, ADR 79): does genuine large
 strain (+ porosity/permeability evolution) bend the PDMY footing backbone
 toward a bearing limit point, or reduce the reported ~9.3×-Vesic
 over-hardening?
 
-`bearing_backbone.py` runs the three viable legs (corot / hypo / hypo+kc) on a
-saturated PDMY box, displacement-controlled central footing push, and reports
-q/q_Vesic checkpoints + a truncation-honest softening verdict, with CSVs per
-leg.
+**Results and the cross-method verdict: `RESULTS.md`.**
 
-## Scoping findings (2026-07-28, all MEASURED on this script)
+## The model
 
-1. **Displacement control is mandatory** (inherited from ADR-79 P3): a
-   force-controlled footing push on stage-1 PDMY diverges from the first
-   increment — near-surface GPs at ~zero confinement make the tangent nearly
-   singular and the first Newton iterate unbounded. `-geom linear` grinds
-   without converging on this problem class and is excluded from the ladder.
-2. **Surface-surcharge regularization is mandatory beyond the P3 smoke size.**
-   On the N=4 box the free LATERAL DOFs of zero-confinement surface nodes are
-   near-singular under stage-1 PDMY: plain Newton limit-cycles (‖Δu‖ ≈ 25 m
-   iterates, residual ~500) and even KrylovNewton stalls at ~1e-6 on the very
-   first 2.5 mm push step, for every geometry method. The N=3 P3 smoke sits
-   just on the convergent side of the same marginality. A 10 kPa whole-surface
-   surcharge (tributary-weighted nodal loads, gravity stage) regularizes it —
-   with it the hypo leg marched 19 × 2.5 mm steps where it previously died at
-   step 1. The Vesic normalization then needs the `q0·Nq·sq` term (in the
-   script).
+A square **B = 2 m** smooth footing at the centre of the top face of a graded
+all-hex box, saturated PDMY sand (medium-loose, φ = 33°), pushed
+displacement-controlled to s/B = 0.15.
+
+| | |
+|---|---|
+| domain | 20 × 20 m plan × 8 m deep = **4.5 B side clearance, 4 B depth** |
+| mesh | 2816 `LadrunoUP` H8, 3468 nodes, 13 872 u-p DOF; 0.5 m hexes under and near the footing, graded outward (r ≈ 1.44 in plan, 1.35 in depth) |
+| footing | the central 4 × 4-element patch (25 driven nodes), smooth (only u_z driven) |
+| surcharge | 10 kPa over the **whole** top face, tributary-weighted, applied with gravity |
+| staging | elastic gravity → `updateMaterialStage 1` → plastic settle → push |
+| legs | `corot`, `hypo`, `hypo -kozenyCarman` (`linear` is excluded — it does not converge on this problem class) |
+
+Normalization is Vesic **with** the surcharge term,
+`q_ult = q0·Nq·sq + 0.5·γ'·B·Nγ·sγ` = 637.5 kPa (430.4 + 207.1).
+
+## Scoping findings
+
+Findings 1–4 were measured on the original uniform-box scaffold (2026-07-28);
+findings 5–7 were measured while bringing the graded mesh up.
+
+1. **Displacement control is mandatory** (from ADR-79 P3): a force-controlled
+   push on stage-1 PDMY diverges from the first increment — near-surface GPs at
+   ~zero confinement make the tangent nearly singular and the first Newton
+   iterate unbounded. `-geom linear` grinds without converging on this problem
+   class and is excluded from the ladder.
+2. **Surface-surcharge regularization is mandatory**, and it must cover the
+   footing patch too. Without it the free lateral DOFs of zero-confinement
+   surface nodes are near-singular under stage-1 PDMY. Re-measured on the
+   graded mesh: an earlier build applied the surcharge only *beside* the
+   footing (to keep q0 a purely adjacent overburden and avoid biasing the
+   reaction) and every leg died on push step 1 — unbounded first Newton
+   iterate, corot reporting inverted elements, then a KrylovNewton stall. The
+   zero-confinement DOFs that need regularizing are the ones *under* the
+   footing. The reaction bias this reintroduces is exactly
+   `q0 × (footing-node tributary area)` and the runner subtracts it in closed
+   form.
 3. **Box confinement dominates every uniform-1 m-hex config that fits a quick
    run.** With roller sides at 0.5–1.5 B clearance the "footing" is an
    oedometer: q grows self-reinforcingly (PDMY G ∝ √p′ under rising
-   confinement) to 27 MPa at s/B = 2.4 % (N=4) and thousands×Vesic (N=3) —
-   physically meaningless as bearing. A credible bearing verdict needs ≥ 4–5 B
-   side clearance and ~3 B depth, i.e. a GRADED mesh (fine under the footing,
-   coarsening outward), not uniform hexes — or the real SFIM mesh, which is
-   NOT in this repo (`References/SFIM_model/` is a private path from the
-   ADR-78 workspace).
-4. Per-step increments must stay ~2.5 mm (the P3-proven size); 25 mm
-   first increments hard-fail every method.
-
-## What blocks the verdict
-
-- The real SFIM footing model (mesh + PDMY calibration + staging) — outside
-  this repo. Point the script's mesh builder at it, or
-- a graded-mesh benchmark builder (apeGmsh is the natural tool) with ≥ 4–5 B
-  clearance, plus the surcharge regularization above.
-
-Runtime estimate at the needed size (≈ 1–2k UP-H8, ~120 steps × 3 legs with
-the substep-fallback policy): hours, not CI — run it as a campaign, keep the
-CSVs.
+   confinement) to 27 MPa at s/B = 2.4 % — physically meaningless as bearing.
+   This is what motivated the graded mesh (`build_mesh.py`); the real SFIM
+   model is not in this repo.
+4. ~~Per-step increments must stay ~2.5 mm~~ — **superseded by finding 6**.
+   The 2.5 mm figure was calibrated on 1 m hexes and does not transfer.
+5. **The engine must be asserted, not assumed.** An installed Ladruno wires a
+   `.pth` into every venv that runs `import opensees` at interpreter startup,
+   so a worktree `sys.path.insert` is a no-op and the campaign silently runs on
+   the *installed* build — which predates ADR 78/79 and refuses
+   `-geom corot|hypo`. Run with the base Python 3.12 (no Ladruno `.pth`); the
+   runner carries a hard guard. See `LEDGER_quirks.md`.
+6. **The converged push increment is a property of the mesh.** On this mesh
+   2.5 mm does not converge for *any* geometry method — including
+   `-geom linear`, which is what proves it is the model/mesh and not the
+   geometry lane. It is **not** a tolerance artifact (Newton diverges at
+   ‖Δu‖ ≈ 0.2 m; KrylovNewton stalls at ‖Δu‖ ≈ 3e-5 for `NormDispIncr`
+   1e-8…1e-4, `RelativeNormDispIncr` and `EnergyIncr` alike), **not** a `dt`
+   effect (2.5 / 25 / 250 s fail identically), and **not** the u-p
+   stabilization or formulation (`-stab auto 0.10/0.25/0.50`, `-stab off`,
+   `-formulation bbar` all fail identically at 0.25 mm).
+7. **The step-size limit is a first-loading shock, and it is transient.** From
+   the stage-1 gravity state 0.05 mm converges 12/12 while 0.10 mm fails; after
+   a few small increments the same model accepts 0.4 mm (8×). So the push uses
+   a 2-point linear ramp (settlement = rate × pseudo-time, increment carried by
+   `dt`) with an **adaptive** increment — halve on failure, double after 5 good
+   steps, truncate honestly at a floor. KrylovNewton is the *primary*
+   algorithm, not a fallback; plain Newton diverged at every increment tested.
 
 ## Files
 
-- `bearing_backbone.py` — the runner (3 legs, staging idiom, surcharge,
-  displacement-controlled push, truncation-honest summary, CSV output).
-  `quick` arg = small-box sanity pass (convergence machinery only — its q
-  values are the finding-3 artifact, not results).
+- `build_mesh.py` — graded all-hex mesh builder (apeGmsh; 3 × 3 × 2 fragmented
+  transfinite blocks, recombined). Writes `bearing_mesh.npz` (nodes, hexes,
+  surcharge tributary areas, node sets). Run it with the **apeGmsh** env
+  (`opensees_env`), which has gmsh + apeGmsh.
+- `bearing_mesh.npz` — the cached mesh, i.e. the exact input to the CSVs here.
+- `bearing_backbone.py` — the runner (staging idiom, surcharge, displacement
+  control, adaptive increment, truncation-honest summary, incremental CSV).
+  Run it with the **base Python 3.12** (finding 5).
+- `backbone_<leg>.csv` — raw backbones, written incrementally.
+- `leg_<leg>.log` — per-leg run logs.
+- `RESULTS.md` — the write-up and the verdict.
+
+```bash
+# mesh (apeGmsh env), then the three legs (clean interpreter)
+C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bearing/build_mesh.py
+```
+
+```bash
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py all
+```
