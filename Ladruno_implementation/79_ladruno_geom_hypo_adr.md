@@ -355,7 +355,7 @@ smooth square footing on a 20 × 20 × 8 m box (4.5 B side clearance, 4 B depth,
 which is what the scoping work showed is required to escape the oedometer
 regime), 2816 `LadrunoUP` H8 at 0.5 m under the footing grading outward,
 13 872 u-p DOF, saturated PDMY (φ = 33°), 10 kPa surcharge, displacement-
-controlled drained push. Three legs, ~3.5 h each.
+controlled drained push. Three legs in parallel, 3.2–4.1 h each.
 
 1. **No limit point on any rung.** Every leg is still hardening where it ends:
    `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial value and never
@@ -388,7 +388,7 @@ lane is better conditioned than rotate-only kinematics once elements are
 genuinely distorted — a small independent point for
 `-geom hypo`. And the over-hardening itself is now pointed at boundary
 confinement rather than kinematics: the same footing at 0.5–1.5 B clearance ran
-to tens of × Vesic as a pure oedometer, versus 2.7–3.4 × here at 4.5 B.
+to tens of × Vesic as a pure oedometer, versus 2.7–3.6 × here at 4.5 B.
 
 Validation of the campaign model (all in `RESULTS.md`): global vertical
 equilibrium exact to 0.0000 %, mesh volume exact, the closed-form surcharge
