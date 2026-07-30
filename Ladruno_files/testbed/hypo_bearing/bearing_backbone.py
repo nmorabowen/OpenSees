@@ -117,8 +117,16 @@ SQ = 1.0 + math.tan(PHI)                            # square shape factor (Nq)
 Q_VESIC = Q_SURCH * NQ * SQ + 0.5 * GAMMA_B * B_FOOT * NGAMMA * SGAMMA
 A_FOOT = B_FOOT * B_FOOT
 
-LEGS = {"corot": ("corot", False), "hypo": ("hypo", False),
-        "hypo_kc": ("hypo", True)}
+# `linear` is the BASE rung: no geometric nonlinearity at all, so the ladder's
+# total content is measured against it. It was excluded by the original scoping
+# (findings 1-2: "grinds without converging") — but that was measured with the
+# PRE-ADAPTIVE machinery, 2.5 mm increments driven by plain Newton, and we now
+# know 2.5 mm fails for every method including linear and that Newton diverges
+# here regardless. The exclusion was plausibly an artifact of the stepper, so
+# it is retested with the adaptive increment + KrylovNewton. If it truncates
+# early, that is reported as its result rather than as a reason to drop it.
+LEGS = {"linear": ("linear", False), "corot": ("corot", False),
+        "hypo": ("hypo", False), "hypo_kc": ("hypo", True)}
 
 
 def log(*a):

@@ -16,8 +16,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 B_FOOT = 2.0
 Q_VESIC = 637.5          # kPa — recomputed below from the runner's constants
-LEGS = [("corot", "-geom corot"), ("hypo", "-geom hypo"),
-        ("hypo_kc", "-geom hypo -kozenyCarman")]
+LEGS = [("linear", "-geom linear (base)"), ("corot", "-geom corot"),
+        ("hypo", "-geom hypo"), ("hypo_kc", "-geom hypo -kozenyCarman")]
+BASE = "linear"          # the rung everything else is measured against
 CHECKPOINTS = (0.01, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15)
 
 
@@ -51,17 +52,23 @@ def main():
     if not have:
         raise SystemExit("no backbones yet")
 
+    idx = {leg: i for i, (leg, _) in enumerate(LEGS)}
     print(f"q_Vesic = {Q_VESIC:.1f} kPa\n")
     print("| s/B | " + " | ".join(lbl for _, lbl in LEGS) +
-          " | hypo/corot |")
-    print("|---|" + "---|" * (len(LEGS) + 1))
+          " | corot/base | hypo/base | hypo/corot |")
+    print("|---|" + "---|" * (len(LEGS) + 3))
     for frac in CHECKPOINTS:
         tgt = frac * B_FOOT
         vals = [at(data[leg], tgt) for leg, _ in LEGS]
         cells = [f"{v:.2f}" if v is not None else "--" for v in vals]
-        ratio = (f"{vals[1] / vals[0]:.3f}"
-                 if vals[0] and vals[1] else "--")
-        print(f"| {frac:.3f} | " + " | ".join(cells) + f" | {ratio} |")
+
+        def rat(a, b):
+            va, vb = vals[idx[a]], vals[idx[b]]
+            return f"{va / vb:.3f}" if va and vb else "--"
+
+        print(f"| {frac:.3f} | " + " | ".join(cells) +
+              f" | {rat('corot', BASE)} | {rat('hypo', BASE)}"
+              f" | {rat('hypo', 'corot')} |")
 
     print("\nper-leg diagnosis (over the span each leg actually reached):")
     for leg, lbl in LEGS:
@@ -98,7 +105,8 @@ def main():
         return
     # hypo and hypo+kc coincide to ~1e-4, so they MUST be drawn with different
     # line styles or one hides the other entirely.
-    STYLE = {"corot": dict(color="C0", ls="-", lw=1.8),
+    STYLE = {"linear": dict(color="0.35", ls="-.", lw=1.8),
+             "corot": dict(color="C0", ls="-", lw=1.8),
              "hypo": dict(color="C3", ls="-", lw=1.8),
              "hypo_kc": dict(color="C2", ls="--", lw=1.8)}
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.4))
