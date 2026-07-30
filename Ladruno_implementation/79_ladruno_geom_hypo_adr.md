@@ -360,10 +360,16 @@ controlled drained push. Three legs in parallel, 3.2–4.1 h each.
 1. **No limit point on any rung.** Every leg is still hardening where it ends:
    `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial value and never
    approaches zero; `q` is monotone with its maximum at the last converged
-   point. hypo reaches 3.62 × Vesic at s/B = 7.6 % and is still climbing
-   (q/q_Vesic = 1.00 / 1.87 / 2.85 / 3.59 at s/B = 1 / 2.5 / 5 / 7.5 %).
+   point. hypo reaches **5.31 × Vesic at the full s/B = 15 % target** and is
+   still climbing (q/q_Vesic = 1.00 / 1.87 / 2.85 / 3.59 / 4.21 / 4.77 / 5.31
+   at s/B = 1 / 2.5 / 5 / 7.5 / 10 / 12.5 / 15 %), with the tangent flat at
+   6847 kPa/m over the final 200 steps.
 2. **`hypo` is STIFFER than `corot`, and the gap grows** — +2.1 % / +6.2 % /
-   +14.8 % of q at s/B = 1 / 2.5 / 5 %. Same sign and comparable magnitude to
+   +14.8 % of q at s/B = 1 / 2.5 / 5 %. *(These, and every other figure in this
+   section, are the geometric content of a volumetrically LOCKED mesh — the
+   whole ladder runs `-formulation std`. See the 2026-07-30 follow-up below,
+   which measures a locking lever several times larger.)* Same sign and
+   comparable magnitude to
    the P3 smoke (§5 P3: 0.3 / 1.8 / 15.4 % at 0.25 / 1 / 5 %), so the P3 result
    was not a small-model artifact. Large strain moves this model *away* from a
    limit point — the ADR-78 §1 hypothesis that missing large-deformation
@@ -389,6 +395,9 @@ genuinely distorted — a small independent point for
 `-geom hypo`. And the over-hardening itself is now pointed at boundary
 confinement rather than kinematics: the same footing at 0.5–1.5 B clearance ran
 to tens of × Vesic as a pure oedometer, versus 2.7–3.6 × here at 4.5 B.
+(Confinement stays a *measured* cause, but it is no longer the only one: the
+2026-07-30 follow-up adds volumetric locking as a second and larger lever, and
+the element probe below raises a third candidate in the Vesić anchoring.)
 
 **Follow-up (same day):** a `-geom linear` BASE rung was added and the hypo
 legs re-run to the full s/B = 0.15 target. Two things changed. Against base,
@@ -412,6 +421,61 @@ factor of 23.7, which EXCEEDS the 16.3× over-strength measured against the
 anchoring artifact. This is a hypothesis — 50.4° was measured in simple shear
 while a bearing mechanism is nearer plane strain — and the rigorous check is a
 limit analysis with the actual cone.
+
+**Follow-up (2026-07-30) — the whole ladder was measured on a LOCKED mesh, and
+locking is the larger lever.** Every rung above runs `-formulation std`, so the
+ladder measures geometry on a volumetrically locked discretisation. `-geom hypo`
+refuses bbar (`OPS_LadrunoUP.cpp`, P2: *"bbar in rate form is reserved"*), but
+that guard sits inside the `METHOD_HYPO` branch and is the parser's only
+`-formulation` guard — **corot composes with bbar unchanged** (ADR 78 §3.1; `Q`
+is barred through the same `dNuBar_`). So corot is where the locking lever is
+measurable today, with no new C++. Legs `corot_std` / `corot_bbar`, drained,
+same mesh / material / push:
+
+| s/B | corot `std` | corot `bbar` | **bbar/std** | hypo/corot | hypo/base | `std` rerun / archived |
+|---|---|---|---|---|---|---|
+| 1.0 % | 0.98 | 0.75 | **0.769** | 1.021 | 1.010 | **1.000** |
+| 2.5 % | 1.76 | 1.16 | **0.657** | 1.062 | 1.033 | **1.000** |
+| 5.0 % | 2.48 | — | — | 1.148 | — | **1.000** |
+
+1. **Locking is ~5.5× the geometry lever.** At s/B = 2.5 % relieving it removes
+   **34.3 %** of q, where the hypo-vs-corot rung adds 6.2 % and the ladder's
+   *entire* content over small strain (hypo/base) is 3.3 %. The largest
+   identified effect on this backbone is the element formulation, not the
+   kinematics — and the lever was still growing (23 % → 34 %) where the data
+   ends.
+2. **The baseline is engine-matched, and that was not free.** `corot_std`
+   re-runs `std` on the current `dist/bin` because the committed
+   `backbone_corot.csv` came from a different build (a fresh worktree's `.pyd`
+   predated ADR-78 and refused `-geom corot` outright — `LEDGER_quirks`). It
+   reproduces the archive to **1.000 at all three checkpoints**, so the locking
+   ratio is clean of engine drift rather than assumed to be.
+3. **Relieving locking COSTS reach.** `corot_bbar` truncated at s/B = 0.0364 —
+   earliest of every leg in the campaign (linear 0.0469, corot_std 0.0550, corot
+   0.0602, hypo complete). Its early retry count was much better than `std`'s
+   (3 at step 100 vs 23 at step 200) and then it walled. So the conditioning
+   argument this section credits to the richer-kinematics lane does **not**
+   generalise to the unlocked formulation, and the comparison span is capped at
+   s/B ≤ 3.64 %.
+4. **The interesting cell remains unmeasurable.** Locking and geometry are not
+   additive — a locked mesh is over-stiff, so it under-develops the deformation
+   geometry feeds on, and the honest reading of item 2 is that the geometric
+   content of an *unlocked* mesh is unknown. It cannot be obtained in the
+   rate-form lane at all while `hypo` refuses bbar. Lifting that is real work,
+   not a flag: the barred volumetric operator must be rebuilt per step in the
+   CURRENT configuration (`dNuBar_` is a precompute-once reference-config array),
+   and the p-row's incremental Δln J with kinematic n(J) must be barred the same
+   way or the discrete mass balance stops matching the volume change the solid
+   sees, breaking the drained/undrained consistency P2 pinned. `Q` already
+   follows `formulation_`; Δln J and n(J) do not. "Reserved" reads as principled,
+   not lazy.
+
+None of this disturbs item 2's refutation of the ADR-78 §1 hypothesis — missing
+large-deformation kinematics still does not explain the over-hardening. It
+demotes the *size* of that result: geometry is a few percent, locking is tens.
+An undrained pair (`*_und`, scoping finding 9) is in flight; undrained loading
+is where bbar's near-incompressibility lever should be largest, and those
+numbers are not in this table.
 
 Validation of the campaign model (all in `RESULTS.md`): global vertical
 equilibrium exact to 0.0000 %, mesh volume exact, the closed-form surcharge

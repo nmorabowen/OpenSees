@@ -21,7 +21,7 @@ displacement-controlled to s/B = 0.15.
 | footing | the central 4 × 4-element patch (25 driven nodes), smooth (only u_z driven) |
 | surcharge | 10 kPa over the **whole** top face, tributary-weighted, applied with gravity |
 | staging | elastic gravity → `updateMaterialStage 1` → plastic settle → push |
-| legs | `linear` (base rung), `corot`, `hypo`, `hypo -kozenyCarman` |
+| legs | ladder: `linear` (base rung), `corot`, `hypo`, `hypo -kozenyCarman`; locking: `corot_std`, `corot_bbar` (+ `_und` undrained pair) |
 
 Normalization is Vesic **with** the surcharge term,
 `q_ult = q0·Nq·sq + 0.5·γ'·B·Nγ·sγ` = 637.5 kPa (430.4 + 207.1).
@@ -30,7 +30,8 @@ Normalization is Vesic **with** the surcharge term,
 
 Findings 1–4 were measured on the original uniform-box scaffold (2026-07-28);
 findings 5–7 were measured while bringing the graded mesh up; finding 8 came
-from the deep-push run (2026-07-29).
+from the deep-push run (2026-07-29); finding 9 from scoping the undrained
+locking pair (2026-07-30).
 
 1. **Displacement control is mandatory** (from ADR-79 P3): a force-controlled
    push on stage-1 PDMY diverges from the first increment — near-surface GPs at
@@ -94,7 +95,10 @@ from the deep-push run (2026-07-29).
 8. **How deep a rung can be pushed is itself an ordered result.** Each rung
    dies at a different penetration, in ladder order:
    `linear` 0.047 (divergence) < `corot` 0.060 (convergence floor) <
-   `hypo` 0.076+ (still stepping). Richer kinematics stay solvable longer on a
+   `hypo` 0.150 (reached the target, still converging comfortably). Note the
+   locking legs invert this within a rung: `corot_bbar` truncates at 0.036,
+   *earlier* than `corot_std`'s 0.060, so relieving locking costs reach.
+   Richer kinematics stay solvable longer on a
    mesh whose near-footing elements are being crushed — an argument for the
    rate-form UL lane that is independent of the backbone values themselves.
    Note `linear` does not taper into its wall: its last successful step was at
@@ -102,6 +106,33 @@ from the deep-push run (2026-07-29).
    75 min because each diverged attempt costs ~10 min in PDMY's *serial*
    return mapping (~1 core busy vs ~5.3 for a healthy leg — a useful tell that
    a leg is diverging rather than merely slow).
+9. **An undrained leg still needs a DRAINED initial state, and undrained-ness
+   costs two knobs, not one.** Measured while scoping the `*_und` pair.
+   *(a) Both knobs are required.* Undrained-ness is `T_v = c_v·t/B²`,
+   `c_v = k·M/γ_w ≈ 2.28e4·k`. The drained legs sit at `T_v ≈ 8.5e4`, and
+   permeability alone does not fix that: even clay-grade `k = 1e-8` only
+   reaches `T_v = 8.5` — still drained — because the adaptive push spends
+   ~1.5e5 s of pseudo-time getting to s/B = 0.06. *(b) The rate has a floor.*
+   `V_s = √(G/ρ) = 166 m/s`, so a shear wave crosses B in 0.0121 s;
+   `T_PUSH/1000` puts `dt` at the smallest increment at 0.005 s = 0.4× transit,
+   and that leg measures inertial stiffening, not undrained locking.
+   `T_PUSH/100` keeps `dt ∈ [0.05, 3.2] s` = 4.1–265× transit. So
+   `tscale = 100` (all the rate the wave floor allows) plus `k = 1e-9` for the
+   rest ⇒ `T_v = 0.0137`. *(c) Gravity must still consolidate.* At `k = 1e-9`
+   the stock 500 s gravity `dt` leaves the GRAVITY stage undrained too: pore
+   pressure carries the overburden, effective stress stays ~0, and
+   `updateMaterialStage 1` then hands PDMY a near-zero-confinement tangent that
+   will not settle (`plastic settle failed`) — finding 2's near-singular
+   surface DOFs, reached through drainage instead of a missing surcharge. The
+   fix is standard practice: consolidate drained, then shear undrained. Gravity
+   `dt` is per-leg (`grav_dt`, 5e4 s undrained ⇒ `T_v = 5.7`), which brings the
+   probe datum to p0 = 9.851 kPa against a hydrostatic 9.810. *(d) Verify the
+   regime, don't assume it.* The runner records EXCESS pore pressure at an
+   interior probe (footing centre, B/2 deep) over the consolidated datum —
+   absolute p is useless here, since the probe sits 1 m down where hydrostatic
+   alone is 9.81 kPa and raw `p/q` reads ~0.6 at ANY permeability. Measured
+   `Δp_exc/Δq`: **0.000 drained** (0.003 kPa over 66.9) vs **0.360 undrained**
+   (6.98 over 19.4).
 
 ## Files
 
@@ -113,9 +144,30 @@ from the deep-push run (2026-07-29).
 - `bearing_backbone.py` — the runner (staging idiom, surcharge, displacement
   control, adaptive increment, truncation-honest summary, incremental CSV).
   Run it with the **base Python 3.12** (finding 5).
-- `backbone_<leg>.csv` — raw backbones (`linear` / `corot` / `hypo` / `hypo_kc`), written incrementally.
+- `backbone_<leg>.csv` — raw backbones (`linear` / `corot` / `hypo` /
+  `hypo_kc`, plus the locking legs below), written incrementally. A run capped
+  with `ADR79_MAXSTEP` is a smoke and writes `backbone_<leg>__smoke.csv`
+  instead, and any leg refuses to open a CSV another process touched in the
+  last 180 s (`ADR79_FORCE=1` overrides). Both guards exist because a smoke of
+  a leg that was already running truncated the live file under it: the live
+  process kept writing at its old offset, leaving the smoke's rows, a block of
+  NUL padding, and only the tail of the real run.
 - `leg_<leg>.log` — per-leg run logs.
 - `RESULTS.md` — the write-up and the verdict.
+
+### Leg groups
+
+- `all` = the geometry ladder (`linear`, `corot`, `hypo`, `hypo_kc`).
+- `pair` = `corot_std` + `corot_bbar`, the LOCKING probe. Every ladder leg runs
+  `-formulation std`, so the ladder's corot→hypo deltas are the geometric
+  content of a volumetrically locked mesh. `-geom hypo` refuses bbar
+  (`OPS_LadrunoUP.cpp`, ADR 79 P2), but corot composes with it unchanged
+  (ADR 78 §3.1), so corot is where the locking lever is measurable today.
+  `corot_std` re-runs the `std` baseline on whatever build is in `dist/bin`, so
+  the ratio is engine-matched rather than mixing formulation with engine — and
+  it leaves the committed `backbone_corot.csv` intact.
+- `pair_und` = the same two legs undrained (finding 9), where bbar's
+  near-incompressibility lever is expected to be largest.
 
 ```bash
 # mesh (apeGmsh env), then the four legs (clean interpreter)
@@ -125,3 +177,14 @@ C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bea
 ```bash
 C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py all
 ```
+
+```bash
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py pair
+```
+
+```bash
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py pair_und
+```
+
+A group runs its legs in sequence. To run them concurrently (the campaign did;
+~3–4 h each either way), launch one process per leg name instead.

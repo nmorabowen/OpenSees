@@ -17,7 +17,8 @@ re-run to the full s/B = 0.15 target. Both change the reading — see
    the tangent `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial
    value but never approaches zero, and `q` is monotone with its maximum at the
    last converged point. Genuine large strain does not bend this backbone over.
-   `hypo` reaches **3.62 × Vesic at s/B = 7.6 %** and is still climbing.
+   `hypo` reaches **5.31 × Vesic at the full s/B = 15 % target** and is still
+   climbing, with the tangent flat at 6847 kPa/m.
 2. **`hypo` is *stiffer* than `corot`, and the gap grows with penetration** —
    +2.1 % at s/B = 1 %, +6.2 % at 2.5 %, +14.8 % at 5 %. The sign matches
    ADR-79 P3's smoke (hypo stiffer; UL assembly on the *compacted*
@@ -33,20 +34,29 @@ re-run to the full s/B = 0.15 target. Both change the reading — see
    *undrained or rapid* loading, and this campaign cannot see it.
 
 So the ADR-78 §1 over-hardening is **not** a large-deformation-kinematics
-artifact. Scoping finding 3 points at the much bigger lever: boundary
-confinement. The same footing in a box with 0.5–1.5 B of clearance ran to
-27 MPa (tens of × Vesic) purely as an oedometer, whereas this 4.5 B-clearance
-benchmark is at 2.7–3.6 × Vesic at the same penetrations. We cannot attribute
-a specific share of the reported 9.3 × to the SFIM model's boundaries without
-that model — but the ladder is now excluded as the explanation.
+artifact. Larger levers exist and have since been measured: volumetric locking
+is worth **34.3 %** of q at s/B = 2.5 % (the locking legs below, ~5.5× the
+geometry lever), and boundary confinement is worth tens of × Vesic when the
+domain is too small — the same footing at 0.5–1.5 B clearance ran to 27 MPa as
+a pure oedometer.
 
-*(A note on what "no limit point" does and does not mean here. A drained,
-smooth, displacement-controlled footing on a hardening PDMY sand with
-confinement-dependent moduli need not exhibit a load maximum at all: as the
-footing sinks, the mechanism mobilizes deeper, better-confined soil whose
-stiffness grows with p′. The campaign's finding is comparative and specific —
-climbing the geometry ladder does not introduce one, and does not reduce the
-over-hardening — not a claim that this model class must have one.)*
+> [!important] The comparison itself was ill-posed — see `cone_probe.py`
+> An interim version of this section argued that a drained footing on a
+> confinement-hardening sand "need not exhibit a load maximum at all". That was
+> too generous to the model and is **retracted**. `PressureDependMultiYield`
+> has a fixed frictional envelope and therefore a BOUNDED collapse load, so a
+> plateau is expected and its absence needs explaining.
+>
+> The explanation is that the model was never near failing, and that the anchor
+> is wrong twice over. The failure surface is a **Drucker–Prager cone**
+> (measured: α constant to 3.9 % across the Lode extremes while the
+> Mohr–Coulomb angle swings 31.5° → 54°), calibrated in triaxial compression;
+> Vesić's `N_γ` is a Mohr–Coulomb formula, and the plane-strain equivalent of
+> the measured cone is 53.7°, giving **10.8 MPa against the 207 kPa anchor — a
+> factor of 52**. The benchmark's 3384 kPa is ~31 % of that. And the failure
+> MODE is punching, not the general shear `N_γ` describes: no heave, no element
+> within 5 % of its strength, plastic strain in a compacting bulb rather than a
+> band. Full analysis in TIMs vault note 17.
 
 ![backbones](bearing_backbone.png)
 
@@ -116,6 +126,41 @@ completed run settles it, and it settles it in favour of the plateau.
 
 `q` crosses the Vesic capacity at s/B ≈ 1 % on every rung and keeps climbing —
 the over-hardening reproduces cleanly on a properly sized benchmark.
+
+## The locking legs (drained) — 2026-07-30
+
+Everything above runs `-formulation std`, so the ladder measures geometry on a
+volumetrically **locked** discretisation. `-geom hypo` refuses bbar (ADR 79 P2),
+but corot composes with it unchanged (ADR 78 §3.1), so corot is where the
+locking lever is measurable without new C++. `corot_std` re-runs the `std`
+baseline on the *current* `dist/bin` so the ratio is engine-matched.
+
+| s/B | corot `std` | corot `bbar` | **bbar/std** | hypo/corot | hypo/base | `std` rerun / archived |
+|---|---|---|---|---|---|---|
+| 1.0 % | 0.98 | 0.75 | **0.769** | 1.021 | 1.010 | **1.000** |
+| 2.5 % | 1.76 | 1.16 | **0.657** | 1.062 | 1.033 | **1.000** |
+| 5.0 % | 2.48 | — | — | 1.148 | — | **1.000** |
+
+- **Locking is ~5.5× the geometry lever.** At s/B = 2.5 % it accounts for
+  **34.3 %** of q, against 6.2 % for the hypo-vs-corot rung and 3.3 % for the
+  ladder's whole content over small strain. Still growing (23 % → 34 %) at the
+  end of the shared span.
+- **Engine match is exact** — 1.000 at all three checkpoints — so the ratio is
+  not contaminated by the build difference that forced the extra leg (a fresh
+  worktree's `.pyd` predated ADR-78 and refused `-geom corot`; `LEDGER_quirks`).
+- **bbar costs reach.** `corot_bbar` truncated at s/B = 0.0364, the earliest of
+  any leg here, after an early retry count much *better* than `std`'s (3 at step
+  100 vs 23 at step 200). Relieving locking does not inherit the conditioning
+  advantage the richer-kinematics lane shows.
+- Locking and geometry are not additive, so the geometric content of an
+  *unlocked* mesh stays unknown, and is unobtainable in the rate-form lane while
+  `hypo` refuses bbar.
+
+An undrained pair (`*_und`, scoping finding 9) is in flight and is NOT in this
+table. Note the `q/q_Vesic` normalization is a *drained* frictional capacity and
+will need replacing before undrained legs are tabulated against it.
+`bearing_backbone.png` has not been regenerated — it would fold in partial
+undrained data.
 
 ## Why the legs stop where they stop
 

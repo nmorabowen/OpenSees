@@ -1,0 +1,87 @@
+{
+  "schema_version": 8,
+  "results_path": "C:\\Users\\nmb\\Documents\\Github\\OpenSees-hypo\\Ladruno_files\\testbed\\hypo_bearing\\bearing_view.ladruno",
+  "fem_snapshot_id": "83b314b9aafe0f8311fccc9e2e203800",
+  "saved_at": "2026-07-30T14:17:35.125903+00:00",
+  "active_geometry_id": "9adc13e3-a25c-4085-b8bf-824aad81ee49",
+  "active_stage_id": "stage_0",
+  "active_step": 21,
+  "model_h5": null,
+  "geometries": [
+    {
+      "id": "9adc13e3-a25c-4085-b8bf-824aad81ee49",
+      "name": "Geometry 1",
+      "deform_enabled": true,
+      "deform_field": "displacement",
+      "deform_scale": 10.0,
+      "offset": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "stage_id": null,
+      "visible": true,
+      "show_mesh": true,
+      "show_nodes": false,
+      "display_opacity": 0.36,
+      "active_composition_id": "99ef2290-8666-4b18-88e8-df87eb604561",
+      "compositions": [
+        {
+          "id": "99ef2290-8666-4b18-88e8-df87eb604561",
+          "name": "Diagram",
+          "layer_indices": [
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "diagrams": [
+    {
+      "kind": "vector_glyph",
+      "selector": {
+        "component": "displacement",
+        "pg": null,
+        "label": null,
+        "selection": null,
+        "ids": null
+      },
+      "style": {
+        "components": [
+          "displacement_x",
+          "displacement_y",
+          "displacement_z"
+        ],
+        "scale": null,
+        "auto_scale_fraction": 0.1,
+        "cmap": "viridis",
+        "clim": null,
+        "color": "#FFB000",
+        "use_magnitude_colors": true,
+        "arrow_tip_fraction": 0.25,
+        "show_scalar_bar": true,
+        "fmt": "%.3g",
+        "scalar_bar_vertical": null,
+        "scalar_bar_scale": 1.0
+      },
+      "stage_id": "stage_0",
+      "visible": true,
+      "label": null
+    }
+  ],
+  "legends": [
+    {
+      "geometry": "",
+      "component": "displacement",
+      "vertical": true,
+      "visible": true,
+      "fmt": "%.3g",
+      "font_scale": 1.0,
+      "slot": 0,
+      "anchor": [
+        0.9211926058437686,
+        0.4080357142857143
+      ]
+    }
+  ]
+}

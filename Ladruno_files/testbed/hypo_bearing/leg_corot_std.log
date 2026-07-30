@@ -1,0 +1,1547 @@
+[22:11:24] footing B=2.0 m, q_Vesic=637.5 kPa (q0*Nq*sq=430.4 + gamma term=207.1), push to s/B=0.15 (300 mm), adaptive increment base=0.050 mm in [0.0063, 0.400] mm
+[22:11:24] === leg: corot_std
+LadrunoUP: unsymmetric tangent — use a general solver (UmfPack/SuperLU/FullGeneral/BandGeneral; MUMPS SYM=0 in MPI); the ProfileSPD default silently drops a coupling block
+[22:11:24] corot_std model built: 3468 nodes, 2816 hex [-geom corot, -formulation std]
+[22:11:48] corot_std gravity done [Pardiso, 24s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 9.50593e-06 (max: 1e-07, Norm deltaR: 0.00211691)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 360
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 4.68317e-06 (max: 1e-07, Norm deltaR: 0.00614749)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 17360
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0016794 (max: 1e-07, Norm deltaR: 3.30084)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 18800
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.32634e-05 (max: 1e-07, Norm deltaR: 0.199393)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 19920
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00270188 (max: 1e-07, Norm deltaR: 0.793532)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 20720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 9.82112e-05 (max: 1e-07, Norm deltaR: 0.303135)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 22160
+OpenSees > analyze failed, returned: -3 error flag
+[22:35:02] corot_std s/B=0.0144 q=798.6 kPa q/qV=1.25 ds=0.400mm [100 steps, 6 retries, 1394s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000644015 (max: 1e-07, Norm deltaR: 1.25898)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 23600
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.80198e-05 (max: 1e-07, Norm deltaR: 0.466475)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 24400
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000168019 (max: 1e-07, Norm deltaR: 0.170981)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 25200
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 5.9761e-07 (max: 1e-07, Norm deltaR: 0.000434062)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 26320
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0103471 (max: 1e-07, Norm deltaR: 2.89249)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 27120
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00100654 (max: 1e-07, Norm deltaR: 3.28284)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 28240
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00311209 (max: 1e-07, Norm deltaR: 6.11933)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 29040
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000424844 (max: 1e-07, Norm deltaR: 4.43271)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 29840
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000247371 (max: 1e-07, Norm deltaR: 1.56768)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 31600
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000247482 (max: 1e-07, Norm deltaR: 1.10583)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 32400
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00080733 (max: 1e-07, Norm deltaR: 2.76886)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 33200
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000361328 (max: 1e-07, Norm deltaR: 1.17156)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 34320
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000421353 (max: 1e-07, Norm deltaR: 2.38697)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 35120
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.36495e-07 (max: 1e-07, Norm deltaR: 6.65958e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 35920
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00319442 (max: 1e-07, Norm deltaR: 22.13)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 38640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00105194 (max: 1e-07, Norm deltaR: 3.41043)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 40720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00858008 (max: 1e-07, Norm deltaR: 47.5515)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 41520
+OpenSees > analyze failed, returned: -3 error flag
+[23:13:17] corot_std s/B=0.0261 q=1149.0 kPa q/qV=1.80 ds=0.200mm [200 steps, 23 retries, 3690s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00893819 (max: 1e-07, Norm deltaR: 55.698)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 42640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00384735 (max: 1e-07, Norm deltaR: 40.9175)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 44400
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00605807 (max: 1e-07, Norm deltaR: 21.1665)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 44240
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 9.27316e-05 (max: 1e-07, Norm deltaR: 0.0179322)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 44800
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0186069 (max: 1e-07, Norm deltaR: 29.4115)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 45360
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0121126 (max: 1e-07, Norm deltaR: 244.263)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 45760
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0154052 (max: 1e-07, Norm deltaR: 15.5234)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 46160
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000254679 (max: 1e-07, Norm deltaR: 0.142737)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 46720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0367752 (max: 1e-07, Norm deltaR: 154.675)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 47280
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 6.91652e-05 (max: 1e-07, Norm deltaR: 0.0497316)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 47680
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0356833 (max: 1e-07, Norm deltaR: 149.632)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 48560
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0230395 (max: 1e-07, Norm deltaR: 137.318)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 49920
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 9.93307e-07 (max: 1e-07, Norm deltaR: 0.00128509)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 50720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0323482 (max: 1e-07, Norm deltaR: 194.081)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 51520
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00827687 (max: 1e-07, Norm deltaR: 2.41578)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 52640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0149583 (max: 1e-07, Norm deltaR: 146.858)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 53440
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00535402 (max: 1e-07, Norm deltaR: 68.59)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 54240
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0141826 (max: 1e-07, Norm deltaR: 82.9266)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 55040
+OpenSees > analyze failed, returned: -3 error flag
+[23:43:00] corot_std s/B=0.0343 q=1328.8 kPa q/qV=2.08 ds=0.200mm [300 steps, 41 retries, 5473s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0152312 (max: 1e-07, Norm deltaR: 125.213)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 55840
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0449652 (max: 1e-07, Norm deltaR: 205.626)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 56960
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0602507 (max: 1e-07, Norm deltaR: 340.702)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 58080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0384339 (max: 1e-07, Norm deltaR: 173.522)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 58880
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.043705 (max: 1e-07, Norm deltaR: 137.65)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 58880
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0438544 (max: 1e-07, Norm deltaR: 205.249)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 59600
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.326059 (max: 1e-07, Norm deltaR: 427.136)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 60160
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0422592 (max: 1e-07, Norm deltaR: 194.725)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 60560
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0304699 (max: 1e-07, Norm deltaR: 154.02)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 61280
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0181709 (max: 1e-07, Norm deltaR: 117.302)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 62640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0354417 (max: 1e-07, Norm deltaR: 103.165)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 62480
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0320509 (max: 1e-07, Norm deltaR: 202.654)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 63040
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0847001 (max: 1e-07, Norm deltaR: 239.844)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 63440
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0121032 (max: 1e-07, Norm deltaR: 94.5464)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 65120
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0269176 (max: 1e-07, Norm deltaR: 255.361)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 65920
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0206322 (max: 1e-07, Norm deltaR: 141.981)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 66720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0394989 (max: 1e-07, Norm deltaR: 279.822)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 67520
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0797407 (max: 1e-07, Norm deltaR: 256.607)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 67360
+OpenSees > analyze failed, returned: -3 error flag
+[00:35:53] corot_std s/B=0.0424 q=1470.3 kPa q/qV=2.31 ds=0.200mm [400 steps, 59 retries, 8645s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0240006 (max: 1e-07, Norm deltaR: 236.574)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 68720
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.107649 (max: 1e-07, Norm deltaR: 198.452)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 69040
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.137065 (max: 1e-07, Norm deltaR: 375.92)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 69920
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.079421 (max: 1e-07, Norm deltaR: 244.3)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 70960
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.118265 (max: 1e-07, Norm deltaR: 555.218)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 71360
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0582518 (max: 1e-07, Norm deltaR: 243.175)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 71760
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.166498 (max: 1e-07, Norm deltaR: 353.501)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 72160
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0659844 (max: 1e-07, Norm deltaR: 235.29)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 72560
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.198211 (max: 1e-07, Norm deltaR: 313.509)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 73120
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.114951 (max: 1e-07, Norm deltaR: 262.116)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 73520
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.193451 (max: 1e-07, Norm deltaR: 438.936)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 73920
+OpenSees > analyze failed, returned: -3 error flag
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+Domain::update - domain failed in update
+Newmark::update() - failed to update the domain
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 74320
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.121781 (max: 1e-07, Norm deltaR: 329.557)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 75200
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.144251 (max: 1e-07, Norm deltaR: 227.864)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 75600
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.158823 (max: 1e-07, Norm deltaR: 344.018)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 76640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0953485 (max: 1e-07, Norm deltaR: 352.919)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 77200
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0973758 (max: 1e-07, Norm deltaR: 451.376)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 77760
+OpenSees > analyze failed, returned: -3 error flag
+[01:39:30] corot_std s/B=0.0486 q=1560.8 kPa q/qV=2.45 ds=0.100mm [500 steps, 76 retries, 12462s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.134599 (max: 1e-07, Norm deltaR: 404.832)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 78640
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0418553 (max: 1e-07, Norm deltaR: 370.766)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 80000
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0415577 (max: 1e-07, Norm deltaR: 310.872)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 80800
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.127491 (max: 1e-07, Norm deltaR: 392.511)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 81120
+OpenSees > analyze failed, returned: -3 error flag
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+Domain::update - domain failed in update
+Newmark::update() - failed to update the domain
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 81680
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.165872 (max: 1e-07, Norm deltaR: 442.918)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 82080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0768891 (max: 1e-07, Norm deltaR: 330.478)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 82480
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.108386 (max: 1e-07, Norm deltaR: 378.397)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 82880
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.120687 (max: 1e-07, Norm deltaR: 347.574)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 83280
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0920345 (max: 1e-07, Norm deltaR: 254.148)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 83680
+OpenSees > analyze failed, returned: -3 error flag
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+Domain::update - domain failed in update
+Newmark::update() - failed to update the domain
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 84080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0868664 (max: 1e-07, Norm deltaR: 295.043)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 84480
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.127993 (max: 1e-07, Norm deltaR: 407.955)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 84880
+OpenSees > analyze failed, returned: -3 error flag
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+Domain::update - domain failed in update
+Newmark::update() - failed to update the domain
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 85280
+OpenSees > analyze failed, returned: -3 error flag
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+SolidTransformationCorot::update - polar decomposition failed (collapsed / inverted element: det(H) <= 0)
+Domain::update - domain failed in update
+Newmark::update() - failed to update the domain
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 85680
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.136772 (max: 1e-07, Norm deltaR: 287.31)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 86080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.11294 (max: 1e-07, Norm deltaR: 365.326)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 86480
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.197955 (max: 1e-07, Norm deltaR: 413.848)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 86880
+OpenSees > analyze failed, returned: -3 error flag
+[02:12:38] corot_std s/B=0.0544 q=1633.6 kPa q/qV=2.56 ds=0.100mm [600 steps, 94 retries, 14451s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0711174 (max: 1e-07, Norm deltaR: 269.7)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 87280
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.0657363 (max: 1e-07, Norm deltaR: 356.253)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 87680
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.113068 (max: 1e-07, Norm deltaR: 460.806)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.330984 (max: 1e-07, Norm deltaR: 417.926)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 5.21939e-07 (max: 1e-07, Norm deltaR: 0.000295982)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.36757e-06 (max: 1e-07, Norm deltaR: 0.000429641)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.28271e-05 (max: 1e-07, Norm deltaR: 0.00125336)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88080
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000418821 (max: 1e-07, Norm deltaR: 0.00846153)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 88075
+OpenSees > analyze failed, returned: -3 error flag
+[02:19:38] corot_std NO CONVERGENCE at s/B=0.0550 even at ds=0.0031 mm < DS_MIN — backbone TRUNCATED
+[02:19:38] corot_std leg done: 615 steps to s/B=0.0550, 102 retries, 14894s -> backbone_corot_std.csv
+[02:19:38] === summary (q/q_Vesic at s/B checkpoints; '--' = not reached)
+[02:19:38] s/B=0.010: corot_std=0.98  
+[02:19:38] s/B=0.025: corot_std=1.76  
+[02:19:38] s/B=0.050: corot_std=2.48  
+[02:19:38] s/B=0.100: corot_std=--  
+[02:19:38] s/B=0.150: corot_std=--  
+[02:19:38] corot_std: TRUNCATED at s/B=0.0550 (q=1640.9 kPa) — no softening verdict

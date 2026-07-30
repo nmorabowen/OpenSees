@@ -566,3 +566,16 @@ apeGmsh.viewers.diagrams._base.NoDataError: IsochroneProfileDiagram: a profile n
 [viewer] dispatch.step_changed  layer='<none>' duration_ms=104.7
 [viewer] dispatch.step_changed  layer='<none>' duration_ms=100.14
 [viewer] dispatch.step_changed  layer='<none>' duration_ms=98.8
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=124.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=131.59
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=139.94
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=130.34
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=139.03
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=121.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=116.91
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=119.38
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=125.31
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=119.75
+[viewer] pick.node  world=tuple#130b20fe980 geometry_id='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] session.close
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=13.17

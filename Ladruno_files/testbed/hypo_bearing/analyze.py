@@ -17,8 +17,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 B_FOOT = 2.0
 Q_VESIC = 637.5          # kPa — recomputed below from the runner's constants
 LEGS = [("linear", "-geom linear (base)"), ("corot", "-geom corot"),
-        ("hypo", "-geom hypo"), ("hypo_kc", "-geom hypo -kozenyCarman")]
+        ("hypo", "-geom hypo"),
+        ("hypo_kc", "-geom hypo -kozenyCarman"),
+        ("corot_std", "-geom corot -form std (rerun)"),
+        ("corot_bbar", "-geom corot -form bbar"),
+        ("corot_std_und", "corot std UNDRAINED"),
+        ("corot_bbar_und", "corot bbar UNDRAINED")]
+# The two levers this campaign can put on the SAME problem. GEOMETRY is the
+# ladder rung (hypo vs corot, both `std`). LOCKING is the formulation
+# (corot bbar vs corot std, both rotation-only). Under displacement control a
+# softer element carries LESS q at the same settlement, so locking < 1 means
+# bbar relieved locking and the std backbone was that much artificial stiffness.
+# The locking ratio uses corot_std, NOT the archived corot: those two legs are
+# the engine-matched pair. corot stays in the table as the §8 baseline.
 BASE = "linear"          # the rung everything else is measured against
+RATIOS = [("corot/base", "corot", BASE),
+          ("hypo/base", "hypo", BASE),
+          ("hypo/corot (geometry)", "hypo", "corot"),
+          ("bbar/std (locking)", "corot_bbar", "corot_std"),
+          ("std rerun/archived", "corot_std", "corot"),
+          ("bbar/std UNDRAINED", "corot_bbar_und", "corot_std_und")]
 CHECKPOINTS = (0.01, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15)
 
 
@@ -35,8 +53,12 @@ def load(leg):
                 continue
     if not rows:
         return None
-    a = np.array(rows)
-    return dict(s=a[:, 0], q=a[:, 3], qn=a[:, 4], ds=a[:, 5], wall=a[:, 6])
+    # legs run before the undrained work wrote 7 columns; p_probe_kPa is the
+    # 8th and only exists on later runs. Tolerate both widths.
+    width = min(len(r) for r in rows)
+    a = np.array([r[:width] for r in rows])
+    return dict(s=a[:, 0], q=a[:, 3], qn=a[:, 4], ds=a[:, 5], wall=a[:, 6],
+                p=a[:, 7] if width > 7 else None)
 
 
 def at(d, target):
@@ -52,23 +74,19 @@ def main():
     if not have:
         raise SystemExit("no backbones yet")
 
-    idx = {leg: i for i, (leg, _) in enumerate(LEGS)}
     print(f"q_Vesic = {Q_VESIC:.1f} kPa\n")
-    print("| s/B | " + " | ".join(lbl for _, lbl in LEGS) +
-          " | corot/base | hypo/base | hypo/corot |")
-    print("|---|" + "---|" * (len(LEGS) + 3))
+    print("| s/B | " + " | ".join(lbl for _, lbl in LEGS) + " | " +
+          " | ".join(lbl for lbl, _, _ in RATIOS) + " |")
+    print("|---|" + "---|" * (len(LEGS) + len(RATIOS)))
     for frac in CHECKPOINTS:
         tgt = frac * B_FOOT
-        vals = [at(data[leg], tgt) for leg, _ in LEGS]
-        cells = [f"{v:.2f}" if v is not None else "--" for v in vals]
-
-        def rat(a, b):
-            va, vb = vals[idx[a]], vals[idx[b]]
-            return f"{va / vb:.3f}" if va and vb else "--"
-
-        print(f"| {frac:.3f} | " + " | ".join(cells) +
-              f" | {rat('corot', BASE)} | {rat('hypo', BASE)}"
-              f" | {rat('hypo', 'corot')} |")
+        vals = {leg: at(data[leg], tgt) for leg, _ in LEGS}
+        cells = [f"{vals[leg]:.2f}" if vals[leg] is not None else "--"
+                 for leg, _ in LEGS]
+        for _, num, den in RATIOS:
+            cells.append(f"{vals[num] / vals[den]:.3f}"
+                         if vals[num] and vals[den] else "--")
+        print(f"| {frac:.3f} | " + " | ".join(cells) + " |")
 
     print("\nper-leg diagnosis (over the span each leg actually reached):")
     for leg, lbl in LEGS:
@@ -108,7 +126,11 @@ def main():
     STYLE = {"linear": dict(color="0.35", ls="-.", lw=1.8),
              "corot": dict(color="C0", ls="-", lw=1.8),
              "hypo": dict(color="C3", ls="-", lw=1.8),
-             "hypo_kc": dict(color="C2", ls="--", lw=1.8)}
+             "hypo_kc": dict(color="C2", ls="--", lw=1.8),
+             "corot_std": dict(color="C0", ls=":", lw=1.4),
+             "corot_bbar": dict(color="C4", ls="-.", lw=1.8),
+             "corot_std_und": dict(color="C1", ls=":", lw=1.6),
+             "corot_bbar_und": dict(color="C5", ls="-.", lw=1.6)}
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.4))
     for leg, lbl in LEGS:
         d = data.get(leg)
@@ -138,8 +160,8 @@ def main():
         a.set_xlabel("settlement s/B [%]")
         a.legend(fontsize=8)
         a.grid(alpha=0.3)
-    fig.suptitle("ADR-79 bearing backbone — geometric-nonlinearity ladder "
-                 "(B=2 m, saturated PDMY, 4.5B clearance)", fontsize=10)
+    fig.suptitle("ADR-79 bearing backbone — geometry ladder + the bbar locking "
+                 "leg (B=2 m, saturated PDMY, 4.5B clearance)", fontsize=10)
     fig.tight_layout()
     out = os.path.join(HERE, "bearing_backbone.png")
     fig.savefig(out, dpi=140)
