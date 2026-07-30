@@ -63,8 +63,9 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    specific, diagnostic way: at 4 / 8 / 16 elements across B the
    non-associated Prandtl leg terminates at s/B = 0.0124 / 0.0030 / 0.0014 with
    the tangent at termination *rising* 26 % → 35 % → 63 % (and the same in a
-   second, independent load case). The CONTROL plateaus at both 4 and 8
-   elements across B, so refinement itself is fine. A perfectly plastic
+   second, independent load case). The CONTROL runs to its full target and
+   hard-plateaus at both 4 and 8 elements across B (1.0020 and 0.9517 of the
+   exact answer), so refinement itself is fine. A perfectly plastic
    non-associated frictional solid is past the Rudnicki–Rice localization
    threshold, so the continuum problem has lost ellipticity and band width is
    set by the element size. The next attempt should add a rate-dependent /

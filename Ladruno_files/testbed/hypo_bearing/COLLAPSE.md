@@ -295,11 +295,13 @@ Read this carefully:
   identically.
 
   **The control does the opposite, and that is the clincher.** The mild cone
-  (φ_ps = 27.47°) plateaus at BOTH resolutions — 1.0020 of the exact answer at
-  4 elements across B, 0.9514 at 8 — with dq/ds of 0 and 3 kPa/m. So
-  refinement is not the problem, and the solver is not the problem: the same
-  machinery is mesh-convergent where non-associativity is mild and loses
-  reach monotonically where it is severe.
+  (φ_ps = 27.47°) runs to its FULL s/B = 0.25 target at both resolutions and
+  hard-plateaus at each (dq/ds = 0 kPa/m): **1.0020** of the exact answer at 4
+  elements across B, **0.9517** at 8. Refinement moves it by 5 % and it stays
+  within 5 % of a result that is exact — an ordinary, small mesh sensitivity.
+  So refinement is not the problem and the solver is not the problem: the same
+  machinery is mesh-convergent where non-associativity is mild and loses reach
+  monotonically where it is severe.
 
   The standard reading fits it. A **perfectly plastic, non-associated**
   frictional solid sits past the Rudnicki–Rice localization threshold: for
