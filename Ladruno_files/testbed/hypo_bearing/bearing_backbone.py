@@ -30,7 +30,10 @@ Output: raw CSV per leg (written incrementally — a killed leg keeps its data)
 plus a truncation-honest summary. A truncated leg NEVER reads as "softening".
 
 Run (worktree, built dist/bin):
-    py -3.12 bearing_backbone.py [corot|hypo|hypo_kc|all]
+    py -3.12 bearing_backbone.py [corot|hypo|hypo_kc|corot_bbar|all]
+
+`all` runs the three original ladder legs. `corot_bbar` is the separate
+LOCKING leg (see LEGS) — it is paired against `corot`, not part of the ladder.
 """
 import os
 import sys
@@ -117,8 +120,65 @@ SQ = 1.0 + math.tan(PHI)                            # square shape factor (Nq)
 Q_VESIC = Q_SURCH * NQ * SQ + 0.5 * GAMMA_B * B_FOOT * NGAMMA * SGAMMA
 A_FOOT = B_FOOT * B_FOOT
 
-LEGS = {"corot": ("corot", False), "hypo": ("hypo", False),
-        "hypo_kc": ("hypo", True)}
+# leg -> (geom, kozenyCarman, formulation). `corot_bbar` is the LOCKING leg:
+# every rung above runs `-formulation std`, so the whole geometry ladder was
+# measured on a volumetrically LOCKED discretisation and the reported
+# corot->hypo deltas are the geometric content of a locked mesh. `-geom hypo`
+# refuses bbar (OPS_LadrunoUP.cpp, ADR 79 P2: "bbar in rate form is reserved"),
+# but corot composes with it unchanged (ADR 78 §3.1 — bbar is a core-frame
+# choice, and Q is barred through the same dNuBar_), so corot is where the
+# locking lever and its cross-term with geometry ARE measurable today. Paired
+# against the `corot` leg, same mesh / material / push.
+# --- undrained pair (see UNDRAINED note below) ------------------------------
+PERM_UND, TSCALE_UND = 1.0e-9, 100.0
+
+
+def _leg(geom, kc=False, form="std", perm=PERM, tscale=1.0, grav_dt=500.0):
+    return dict(geom=geom, kc=kc, form=form, perm=perm, tscale=tscale,
+                grav_dt=grav_dt)
+
+
+# 20 gravity steps must span T_v >> 1 so the initial state is CONSOLIDATED.
+# At k=1e-9, B^2/c_v = 1.8e5 s, so 500 s/step (the drained legs' value) is
+# T_v = 0.06 — undrained, and it breaks the plastic settle. 5e4 s/step gives
+# T_v = 5.7. See gravity() and scoping finding 8.
+GRAV_DT_UND = 5.0e4
+
+
+LEGS = {"corot": _leg("corot"), "hypo": _leg("hypo"),
+        "hypo_kc": _leg("hypo", kc=True),
+        "corot_std": _leg("corot"),
+        "corot_bbar": _leg("corot", form="bbar"),
+        "corot_std_und": _leg("corot", perm=PERM_UND, tscale=TSCALE_UND,
+                              grav_dt=GRAV_DT_UND),
+        "corot_bbar_und": _leg("corot", form="bbar", perm=PERM_UND,
+                               tscale=TSCALE_UND, grav_dt=GRAV_DT_UND)}
+LADDER = ["corot", "hypo", "hypo_kc"]
+# `corot_std` is `corot` re-run on WHATEVER build is in dist/bin right now, so
+# the locking ratio is engine-matched. It exists because the committed
+# backbone_corot.csv came from a different build than a fresh worktree carries,
+# and a ratio that mixes formulation with engine is not a measurement. Run the
+# pair (corot_std, corot_bbar) together; it also keeps backbone_corot.csv — the
+# committed §8 evidence — from being overwritten.
+PAIR = ["corot_std", "corot_bbar"]
+PAIR_UND = ["corot_std_und", "corot_bbar_und"]
+# UNDRAINED pair — why these two numbers and not others. bbar's lever is
+# NEAR-INCOMPRESSIBILITY (the repo's own gate: bbar/std = 2.31 at nu=0.499 but
+# 1.008 at nu=0.3), and undrained loading is what makes the pore fluid impose
+# it. Undrained-ness is the consolidation time factor T_v = c_v*t/B^2 << 1,
+# c_v = k*M/gamma_w, M = B + 4G/3 ~ 2.23e5 kPa => c_v = 2.28e4*k.
+#   * PERMEABILITY ALONE IS NOT ENOUGH. The drained legs sit at T_v ~ 8.5e4;
+#     even clay-grade k=1e-8 only reaches T_v=8.5 (still drained), because the
+#     adaptive push spends ~1.5e5 s of pseudo-time getting to s/B=0.06.
+#   * THE RATE HAS A FLOOR. Vs = sqrt(G/rho) = 166 m/s, so a shear wave crosses
+#     B in 0.0121 s. T_PUSH/1000 would put dt at the SMALLEST increment at
+#     0.005 s = 0.4x transit — that leg would measure inertial stiffening, not
+#     undrained locking. T_PUSH/100 keeps dt in [0.05, 3.2] s = 4.1x..265x
+#     transit, quasi-static throughout.
+# So: tscale=100 (the most rate the wave floor allows) and k=1e-9 supplies the
+# rest => T_v = 8.5e-3. Both knobs are needed; neither alone gets there.
+# The runner logs T_v and records pore pressure under the footing so the
+# undrained claim is MEASURED, not just designed.
 
 
 def log(*a):
@@ -146,7 +206,8 @@ def pick_system():
         return "UmfPack"
 
 
-def build(geom, kc, nodes, hexes, trib, sets):
+def build(cfg, nodes, hexes, trib, sets):
+    geom, kc, form, perm = cfg["geom"], cfg["kc"], cfg["form"], cfg["perm"]
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 4)
     for i, (x, y, zz) in enumerate(nodes, start=1):
@@ -157,10 +218,14 @@ def build(geom, kc, nodes, hexes, trib, sets):
                    p["contract"], p["dil1"], p["dil2"], p["liq1"], p["liq2"],
                    p["liq3"], p["NYS"])
     extra = ["-kozenyCarman"] if kc else []
+    # std is the parser default; pass nothing for it so the three original legs
+    # stay byte-identical to the runs behind the committed CSVs.
+    if form != "std":
+        extra += ["-formulation", form]
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoUP", e, *[int(c) + 1 for c in conn], 1,
                     "-Kf", KF, "-poro", PORO, "-rhoF", RHO_W,
-                    "-perm", PERM, PERM, PERM, "-stab", "auto", 0.25,
+                    "-perm", perm, perm, perm, "-stab", "auto", 0.25,
                     "-body", 0.0, 0.0, -G9, "-geom", geom, *extra)
 
     # roller sides / fixed base / free-draining top (p = 0 at z = 0)
@@ -188,7 +253,16 @@ def build(geom, kc, nodes, hexes, trib, sets):
             ops.load(int(n) + 1, 0.0, 0.0, -Q_SURCH * a, 0.0)
 
 
-def gravity(tag):
+def gravity(tag, grav_dt):
+    """Establish the initial effective-stress state. `grav_dt` MUST be long
+    enough that the gravity + surcharge state has CONSOLIDATED, whatever this
+    leg's permeability is — the initial state is drained even when the push is
+    not (scoping finding 8). At k = 1e-9 the stock 500 s leaves gravity
+    undrained: pore pressure carries the overburden, effective stress stays
+    ~0, and `updateMaterialStage 1` then hands PDMY a near-zero-confinement
+    tangent that will not settle ("plastic settle failed") — the same
+    near-singular surface DOFs as finding 2, reached through drainage instead
+    of a missing surcharge."""
     ops.constraints("Transformation")
     ops.numberer("RCM")
     sysname = pick_system()
@@ -197,20 +271,30 @@ def gravity(tag):
     ops.integrator("Newmark", 0.6, 0.3025)
     ops.analysis("Transient")
     for _ in range(10):
-        assert ops.analyze(1, 500.0) == 0, f"{tag} elastic gravity failed"
+        assert ops.analyze(1, grav_dt) == 0, f"{tag} elastic gravity failed"
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     for _ in range(10):
-        assert ops.analyze(1, 500.0) == 0, f"{tag} plastic settle failed"
+        assert ops.analyze(1, grav_dt) == 0, f"{tag} plastic settle failed"
     return sysname
 
 
 def run_leg(name):
-    geom, kc = LEGS[name]
+    cfg = LEGS[name]
+    geom, kc, form = cfg["geom"], cfg["kc"], cfg["form"]
     nodes, hexes, trib, sets = load_mesh()
     t_start = time.time()
-    build(geom, kc, nodes, hexes, trib, sets)
-    log(name, f"model built: {len(nodes)} nodes, {len(hexes)} hex")
-    sysname = gravity(name)
+    build(cfg, nodes, hexes, trib, sets)
+    log(name, f"model built: {len(nodes)} nodes, {len(hexes)} hex "
+        f"[-geom {geom}, -formulation {form}{', -kozenyCarman' if kc else ''}, "
+        f"k={cfg['perm']:.1e}]")
+    # the drainage regime this leg will actually be in, stated up front:
+    # T_v = c_v*t/B^2 over the whole push, c_v = k*M/gamma_w, M = B + 4G/3.
+    t_push = T_PUSH / cfg["tscale"]
+    c_v = cfg["perm"] * (PDMY["B"] + 4.0 * PDMY["G"] / 3.0) / (RHO_W * G9)
+    t_v = c_v * t_push / B_FOOT ** 2
+    log(name, f"drainage: c_v={c_v:.3g} m2/s, t_push={t_push:.3g} s => "
+        f"T_v={t_v:.3g} ({'UNDRAINED' if t_v < 0.05 else 'partially drained' if t_v < 1 else 'DRAINED'})")
+    sysname = gravity(name, cfg["grav_dt"])
     log(name, f"gravity done [{sysname}, {time.time() - t_start:.0f}s]")
 
     foot = [int(n) + 1 for n in sets["footing"]]
@@ -223,12 +307,32 @@ def run_leg(name):
     # both the commanded and the MEASURED settlement so the abscissa is a fact,
     # not an assumption about sp semantics.
     uz0 = ops.nodeDisp(foot[0], 3)
+    # Undrained-ness must be MEASURED, not inferred from T_v: pick the interior
+    # node nearest (footing centre, B/2 below the surface) and record its pore
+    # pressure. The footing nodes themselves are useless for this — they sit on
+    # the free-draining top face, where dof 4 is fixed to p = 0. Drained => p
+    # stays ~0; undrained => p tracks the applied pressure.
+    fxy = nodes[[n - 1 for n in foot], :]
+    z_top = float(nodes[:, 2].max())
+    probe_xyz = np.array([fxy[:, 0].mean(), fxy[:, 1].mean(),
+                          z_top - 0.5 * B_FOOT])
+    p_node = int(np.argmin(((nodes - probe_xyz) ** 2).sum(axis=1))) + 1
+    # Datum matters: the probe is 1 m down, where HYDROSTATIC p is already
+    # 9.81 kPa, so absolute p is ~10 kPa before the push even starts and a raw
+    # p/q ratio reads as undrained no matter the permeability. Record EXCESS
+    # pore pressure over the consolidated gravity state — that is the part the
+    # push generates, and the part that is ~0 in a drained leg.
+    p0 = ops.nodeDisp(p_node, 4)
+    log(name, f"pore-pressure probe: node {p_node} at "
+        f"({nodes[p_node - 1, 0]:.2f}, {nodes[p_node - 1, 1]:.2f}, "
+        f"{nodes[p_node - 1, 2]:.2f}), datum p0={p0:.3f} kPa "
+        f"(hydrostatic would be {RHO_W * G9 * (z_top - nodes[p_node - 1, 2]):.3f})")
     ops.loadConst("-time", 0.0)
     smax = SFRAC * B_FOOT
-    rate = smax / T_PUSH                       # m of settlement per second
+    rate = smax / t_push                       # m of settlement per second
     # a 2-point linear ramp: settlement is exactly rate * pseudo-time, so the
     # per-step increment is carried by dt and can be adapted freely.
-    ops.timeSeries("Path", 2, "-time", 0.0, T_PUSH,
+    ops.timeSeries("Path", 2, "-time", 0.0, t_push,
                    "-values", uz0, uz0 - smax, "-useLast")
     ops.pattern("Plain", 2, 2)
     for tt in foot:
@@ -247,11 +351,28 @@ def run_leg(name):
     ops.integrator("Newmark", 0.6, 0.3025)
     ops.analysis("Transient")
 
-    path = os.path.join(HERE, f"backbone_{name}.csv")
+    # CSV-collision guard. These legs run for hours, in parallel, writing
+    # incrementally to backbone_<leg>.csv. A short smoke of the SAME leg name
+    # reopens that path with "w", truncates it under the live process, and the
+    # live process then keeps writing at its old file offset — leaving the
+    # smoke's rows, a block of NUL padding, and the tail of the real run, with
+    # the real run's whole early backbone gone. (Measured, the hard way.) So:
+    # a capped run is a smoke and gets its own filename, and any leg refuses to
+    # clobber a file another process is actively appending to.
+    smoke = MAXSTEP < 200000
+    path = os.path.join(HERE,
+                        f"backbone_{name}{'__smoke' if smoke else ''}.csv")
+    if os.path.exists(path) and time.time() - os.path.getmtime(path) < 180 \
+            and os.environ.get("ADR79_FORCE") != "1":
+        raise SystemExit(
+            f"REFUSING to write {os.path.basename(path)}: modified "
+            f"{time.time() - os.path.getmtime(path):.0f}s ago, so another "
+            f"process is probably still appending to it. Wait for it, or set "
+            f"ADR79_FORCE=1 if you are certain it is dead.")
     f = open(path, "w", newline="")
     w = csv.writer(f)
     w.writerow(["s_m", "s_meas_m", "R_kN", "q_kPa", "q_over_qVesic",
-                "ds_mm", "wall_s"])
+                "ds_mm", "wall_s", "p_exc_kPa"])
     rows = []
     truncated_at = None
     ds, good, nfail = DS_BASE, 0, 0
@@ -281,13 +402,13 @@ def run_leg(name):
         s = ops.getTime() * rate
         smeas = uz0 - ops.nodeDisp(foot[0], 3)
         row = (s, smeas, R, R / A_FOOT, R / A_FOOT / Q_VESIC, ds * 1000,
-               time.time() - t0)
+               time.time() - t0, ops.nodeDisp(p_node, 4) - p0)
         rows.append(row)
         w.writerow([f"{v:.9g}" for v in row])
         f.flush()
         if nstep % 100 == 0:
             log(name, f"s/B={s / B_FOOT:.4f} q={row[3]:.1f} kPa "
-                f"q/qV={row[4]:.2f} ds={ds * 1000:.3f}mm "
+                f"q/qV={row[4]:.2f} dp={row[7]:.1f} kPa ds={ds * 1000:.3f}mm "
                 f"[{nstep} steps, {nfail} retries, {row[6]:.0f}s]")
     f.close()
     if truncated_at is None and nstep >= MAXSTEP:
@@ -329,7 +450,10 @@ def summarize(results):
 
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
-    names = list(LEGS) if which == "all" else [which]
+    # "all" = the geometry ladder only; corot_bbar is a paired locking probe and
+    # must be asked for by name so `all` keeps reproducing the §8 campaign.
+    names = (LADDER if which == "all" else PAIR if which == "pair" else
+             PAIR_UND if which == "pair_und" else [which])
     for n in names:
         if n not in LEGS:
             raise SystemExit(f"unknown leg {n!r}; pick from {list(LEGS)} or 'all'")

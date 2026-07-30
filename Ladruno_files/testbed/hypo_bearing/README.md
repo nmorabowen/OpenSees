@@ -77,6 +77,33 @@ findings 5–7 were measured while bringing the graded mesh up.
    `dt`) with an **adaptive** increment — halve on failure, double after 5 good
    steps, truncate honestly at a floor. KrylovNewton is the *primary*
    algorithm, not a fallback; plain Newton diverged at every increment tested.
+8. **An undrained leg still needs a DRAINED initial state, and undrained-ness
+   costs two knobs, not one.** Measured while scoping the `*_und` pair.
+   *(a) Both knobs are required.* Undrained-ness is `T_v = c_v·t/B²`,
+   `c_v = k·M/γ_w ≈ 2.28e4·k`. The drained legs sit at `T_v ≈ 8.5e4`, and
+   permeability alone does not fix that: even clay-grade `k = 1e-8` only
+   reaches `T_v = 8.5` — still drained — because the adaptive push spends
+   ~1.5e5 s of pseudo-time getting to s/B = 0.06. *(b) The rate has a floor.*
+   `V_s = √(G/ρ) = 166 m/s`, so a shear wave crosses B in 0.0121 s;
+   `T_PUSH/1000` puts `dt` at the smallest increment at 0.005 s = 0.4× transit,
+   and that leg measures inertial stiffening, not undrained locking.
+   `T_PUSH/100` keeps `dt ∈ [0.05, 3.2] s` = 4.1–265× transit. So
+   `tscale = 100` (all the rate the wave floor allows) plus `k = 1e-9` for the
+   rest ⇒ `T_v = 0.0137`. *(c) Gravity must still consolidate.* At `k = 1e-9`
+   the stock 500 s gravity `dt` leaves the GRAVITY stage undrained too: pore
+   pressure carries the overburden, effective stress stays ~0, and
+   `updateMaterialStage 1` then hands PDMY a near-zero-confinement tangent that
+   will not settle (`plastic settle failed`) — finding 2's near-singular
+   surface DOFs, reached through drainage instead of a missing surcharge. The
+   fix is standard practice: consolidate drained, then shear undrained. Gravity
+   `dt` is per-leg (`grav_dt`, 5e4 s undrained ⇒ `T_v = 5.7`), which brings the
+   probe datum to p0 = 9.851 kPa against a hydrostatic 9.810. *(d) Verify the
+   regime, don't assume it.* The runner records EXCESS pore pressure at an
+   interior probe (footing centre, B/2 deep) over the consolidated datum —
+   absolute p is useless here, since the probe sits 1 m down where hydrostatic
+   alone is 9.81 kPa and raw `p/q` reads ~0.6 at ANY permeability. Measured
+   `Δp_exc/Δq`: **0.000 drained** (0.003 kPa over 66.9) vs **0.360 undrained**
+   (6.98 over 19.4).
 
 ## Files
 
@@ -88,9 +115,29 @@ findings 5–7 were measured while bringing the graded mesh up.
 - `bearing_backbone.py` — the runner (staging idiom, surcharge, displacement
   control, adaptive increment, truncation-honest summary, incremental CSV).
   Run it with the **base Python 3.12** (finding 5).
-- `backbone_<leg>.csv` — raw backbones, written incrementally.
+- `backbone_<leg>.csv` — raw backbones, written incrementally. A run capped
+  with `ADR79_MAXSTEP` is a smoke and writes `backbone_<leg>__smoke.csv`
+  instead, and any leg refuses to open a CSV another process touched in the
+  last 180 s (`ADR79_FORCE=1` overrides). Both guards exist because a smoke of
+  a leg that was already running truncated the live file under it: the live
+  process kept writing at its old offset, leaving the smoke's rows, a block of
+  NUL padding, and only the tail of the real run.
 - `leg_<leg>.log` — per-leg run logs.
 - `RESULTS.md` — the write-up and the verdict.
+
+### Leg groups
+
+- `all` = the geometry ladder (`corot`, `hypo`, `hypo_kc`) — reproduces §8.
+- `pair` = `corot_std` + `corot_bbar`, the LOCKING probe. Every ladder leg runs
+  `-formulation std`, so the ladder's corot→hypo deltas are the geometric
+  content of a volumetrically locked mesh. `-geom hypo` refuses bbar
+  (`OPS_LadrunoUP.cpp`, ADR 79 P2), but corot composes with it unchanged
+  (ADR 78 §3.1), so corot is where the locking lever is measurable today.
+  `corot_std` re-runs the `std` baseline on whatever build is in `dist/bin`, so
+  the ratio is engine-matched rather than mixing formulation with engine — and
+  it leaves the committed `backbone_corot.csv` intact.
+- `pair_und` = the same two legs undrained (finding 8), where bbar's
+  near-incompressibility lever is expected to be largest.
 
 ```bash
 # mesh (apeGmsh env), then the three legs (clean interpreter)
@@ -100,3 +147,14 @@ C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bea
 ```bash
 C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py all
 ```
+
+```bash
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py pair
+```
+
+```bash
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py pair_und
+```
+
+A group runs its legs in sequence. To run them concurrently (the campaign did;
+~3–4 h each either way), launch one process per leg name instead.
