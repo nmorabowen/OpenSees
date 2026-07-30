@@ -117,6 +117,41 @@ completed run settles it, and it settles it in favour of the plateau.
 `q` crosses the Vesic capacity at s/B ≈ 1 % on every rung and keeps climbing —
 the over-hardening reproduces cleanly on a properly sized benchmark.
 
+## The locking legs (drained) — 2026-07-30
+
+Everything above runs `-formulation std`, so the ladder measures geometry on a
+volumetrically **locked** discretisation. `-geom hypo` refuses bbar (ADR 79 P2),
+but corot composes with it unchanged (ADR 78 §3.1), so corot is where the
+locking lever is measurable without new C++. `corot_std` re-runs the `std`
+baseline on the *current* `dist/bin` so the ratio is engine-matched.
+
+| s/B | corot `std` | corot `bbar` | **bbar/std** | hypo/corot | hypo/base | `std` rerun / archived |
+|---|---|---|---|---|---|---|
+| 1.0 % | 0.98 | 0.75 | **0.769** | 1.021 | 1.010 | **1.000** |
+| 2.5 % | 1.76 | 1.16 | **0.657** | 1.062 | 1.033 | **1.000** |
+| 5.0 % | 2.48 | — | — | 1.148 | — | **1.000** |
+
+- **Locking is ~5.5× the geometry lever.** At s/B = 2.5 % it accounts for
+  **34.3 %** of q, against 6.2 % for the hypo-vs-corot rung and 3.3 % for the
+  ladder's whole content over small strain. Still growing (23 % → 34 %) at the
+  end of the shared span.
+- **Engine match is exact** — 1.000 at all three checkpoints — so the ratio is
+  not contaminated by the build difference that forced the extra leg (a fresh
+  worktree's `.pyd` predated ADR-78 and refused `-geom corot`; `LEDGER_quirks`).
+- **bbar costs reach.** `corot_bbar` truncated at s/B = 0.0364, the earliest of
+  any leg here, after an early retry count much *better* than `std`'s (3 at step
+  100 vs 23 at step 200). Relieving locking does not inherit the conditioning
+  advantage the richer-kinematics lane shows.
+- Locking and geometry are not additive, so the geometric content of an
+  *unlocked* mesh stays unknown, and is unobtainable in the rate-form lane while
+  `hypo` refuses bbar.
+
+An undrained pair (`*_und`, scoping finding 9) is in flight and is NOT in this
+table. Note the `q/q_Vesic` normalization is a *drained* frictional capacity and
+will need replacing before undrained legs are tabulated against it.
+`bearing_backbone.png` has not been regenerated — it would fold in partial
+undrained data.
+
 ## Why the legs stop where they stop
 
 **Both hypo legs reached the s/B = 0.15 target. The two lower rungs did not, and
