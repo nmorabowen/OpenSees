@@ -3611,3 +3611,63 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   env override for the case where you know it is dead. Note Windows does not
   block the second open, so nothing but your own guard prevents this.
   *2026-07-30 (ADR-79 locking leg).*
+### A frictional verification model can be 95 % mobilised by its own gravity state, because the elastic K0 is what sets the initial stress ratio
+- **Bites:** any limit-analysis / bearing-capacity check that picks a "nice
+  easy friction angle" to validate the machinery against a closed-form answer.
+  Under 1-D gravity or surcharge loading the initial stress ratio is the
+  ELASTIC `K0 = nu/(1-nu)`, not `1 - sin(phi)`, so the mobilisation of the
+  yield surface before anything is loaded is
+  `m = (1-K0) / (sqrt(3) * alpha * (1+2*K0))` and depends only on nu and the
+  surface — never on the load magnitude. At PDMY's moduli (`K = 1.5e5`,
+  `G = 5.5e4` => nu = 0.3366, K0 = 0.507) that mobilises 19.1 deg. Validating
+  against a phi_txc = 20 deg cone therefore starts with the WHOLE DOMAIN at
+  **m = 0.950 of yield**, and the "verification" measures its own initial
+  condition: 44.5 % of elements at m > 0.99 after 2 mm of footing settlement,
+  the yielded zone already touching the roller boundary, and no convergence
+  past s/B = 0.0019.
+- **Tell:** a validation leg that dies almost immediately with a large fraction
+  of the mesh yielded and the plastic zone at the boundary, while the SAME
+  machinery runs fine on the (steeper, supposedly harder) real surface.
+- **Rule:** compute `m` of the initial state and print it before the run; treat
+  `m > 0.8` as void. The fix is free — a collapse load of an
+  elastic-perfectly-plastic body does not depend on its elastic constants, so
+  raise nu for the verification legs only (nu = 0.45 gives K0 = 0.818,
+  m = 0.268) and MEASURE the independence with a nu-pair rather than asserting
+  it. *2026-07-30 (ADR-79 collapse study).*
+### `nDMaterial DruckerPrager` cannot have pressure-dependent moduli AND plasticity, and `updateMaterialStage` does not reach it
+- **Bites:** anyone reaching for `DruckerPrager` as a cheap perfectly plastic
+  soil next to PDMY. `mElastFlag` is `0 = elastic+no param update, 1 =
+  elastic+param update, 2 = elastoplastic` (default), and `updateElasticParam`
+  only rescales `K, G` by `sqrt(1 + p/p_atm)` when `mElastFlag == 1` — which is
+  an ELASTIC state. So the PDMY-style `G ~ sqrt(p)` and plasticity are mutually
+  exclusive; a plastic DruckerPrager has constant moduli, full stop. Separately,
+  `setParameter` returns -1 for `"updateMaterialStage"` (it answers to
+  `"materialState"` instead), so the usual `ops.updateMaterialStage(...)` staged
+  gravity idiom silently does nothing here.
+- **Rule:** for a collapse load this does not matter (a limit load is
+  independent of the elastic constants), but the SETTLEMENT at which it arrives
+  is not — so any `q` quoted at a fixed `s/B` criterion is affected, and that
+  must be stated. For the gravity stage, check whether the elastic K0 state is
+  admissible (previous entry) and just solve it plastically in one step rather
+  than hunting for a stage flip that is not wired up. Perfect plasticity needs
+  `Kinf = Ko = delta1 = delta2 = H = theta = 0`; `mHprime = (1-theta)*H` so
+  `H = 0` alone suffices. The conversion from a measured cone is
+  `rho = sqrt(2)*alpha` and the sqrt(J2) cohesion intercept is `sigma_y/sqrt(3)`
+  (yield is `||s|| + rho*I1 - sqrt(2/3)*sigma_y`); the tension cutoff `mTo` is
+  placed exactly at the cone apex, so it adds nothing.
+  *2026-07-30 (ADR-79 collapse study).*
+### Consolidating with a `Linear` time series and then adding a deviatoric pattern applies the deviator AT FULL AMPLITUDE on the first increment
+- **Bites:** every single-element stress-path probe built as "ramp the
+  confinement to lambda = 1, then add a second pattern and keep stepping". Both
+  patterns scale with the SAME load factor, so the first post-consolidation
+  increment (lambda = 1.0025) evaluates the deviatoric pattern at 1.0025x its
+  full amplitude, not at 0.0025x. The probe then reports failure at step 0 with
+  ZERO measured deviator — `cone_probe.py` avoided this with `Path` series keyed
+  to pseudo-time and it is easy to miss when porting the same probe to a
+  different material.
+- **Tell:** every path of a stress probe returns the consolidation state
+  unchanged (`sqrt(J2) = 0`, `alpha = 0`) and "failure at load factor ~1.00".
+- **Rule:** `ops.loadConst("-time", 0.0)` after the consolidation stage, so the
+  held pattern stops scaling and the new pattern ramps from zero. Same rule as
+  the push stage of any displacement-controlled runner.
+  *2026-07-30 (ADR-79 collapse study).*

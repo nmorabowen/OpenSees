@@ -1,0 +1,192 @@
+target cone (measured on PDMY): alpha = 0.24362
+  => DruckerPrager rho = sqrt(2)*alpha = 0.344531
+
+--- sigma_y = 0.2 kPa   rho_bar = 0.3445 (associated)
+  probe  path     p0       p_f    sqrtJ2     alpha    err%  phi_mob     drift
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+ strain   txc     50     86.61     63.42   0.24406    0.18    31.56  1.11e-16
+ strain   txc    100    173.11    126.64   0.24384    0.09    31.54  1.39e-16
+ strain   txc    200    346.11    253.08   0.24373    0.05    31.52  1.39e-16
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 7.77076e+07 (max: 5e-05, Norm deltaX: 76176.3)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc     50     86.50     63.22   0.24362    0.00    31.51 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 1.81266e+08 (max: 0.0001, Norm deltaX: 937.817)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    100    173.00    126.44   0.24362    0.00    31.51 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 1.09556e+07 (max: 0.0002, Norm deltaX: 554.201)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    200    346.00    252.88   0.24362    0.00    31.51 
+ strain   txe     50     35.12     25.78   0.24472    0.45    53.78  1.11e-16
+ strain   txe    100     70.28     51.48   0.24417    0.22    53.56  1.11e-16
+ strain   txe    200    140.60    102.88   0.24389    0.11    53.45  8.33e-17
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 6.5453e+89 (max: 5e-05, Norm deltaX: 7.02339e+85)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9125
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe     50     35.14     25.74   0.24423    0.25    53.58 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 3.74603e+51 (max: 0.0001, Norm deltaX: 6.05485e+46)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.91
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    100     70.36     51.35   0.24327   -0.14    53.20 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 4.20213e+07 (max: 0.0002, Norm deltaX: 23416.9)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.91
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    200    140.71    102.69   0.24327   -0.14    53.20 
+    strain: alpha = 0.24407 (+0.18 % vs target), Lode spread = 0.40 %
+    stress: alpha = 0.24361 (-0.01 % vs target), Lode spread = 0.39 %
+
+--- sigma_y = 0.2 kPa   rho_bar = 0.0000 (non-dilatant)
+  probe  path     p0       p_f    sqrtJ2     alpha    err%  phi_mob     drift
+ strain   txc     50     86.61     63.42   0.24406    0.18    31.56  1.39e-16
+ strain   txc    100    173.11    126.64   0.24384    0.09    31.54  1.11e-16
+ strain   txc    200    346.11    253.08   0.24373    0.05    31.52  5.55e-17
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 3059.99 (max: 5e-05, Norm deltaX: 1.24981e+08)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc     50     86.50     63.22   0.24362    0.00    31.51 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 8239.9 (max: 0.0001, Norm deltaX: 1.11229e+06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    100    173.00    126.44   0.24362    0.00    31.51 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 16.8249 (max: 0.0002, Norm deltaX: 262958)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.55
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    200    346.00    252.88   0.24362    0.00    31.51 
+ strain   txe     50     35.12     25.78   0.24472    0.45    53.78  1.11e-16
+ strain   txe    100     70.28     51.48   0.24417    0.22    53.56  1.39e-16
+ strain   txe    200    140.60    102.88   0.24389    0.11    53.45  1.39e-16
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 1.90305 (max: 5e-05, Norm deltaX: 127.089)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9125
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe     50     35.14     25.74   0.24423    0.25    53.58 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 717.39 (max: 0.0001, Norm deltaX: 3.44777e+07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.91
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    100     70.36     51.35   0.24327   -0.14    53.20 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 552.628 (max: 0.0002, Norm deltaX: 885655)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.91
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    200    140.71    102.69   0.24327   -0.14    53.20 
+    strain: alpha = 0.24407 (+0.18 % vs target), Lode spread = 0.40 %
+    stress: alpha = 0.24361 (-0.01 % vs target), Lode spread = 0.39 %
+
+--- sigma_y = 2.0 kPa   rho_bar = 0.3445 (associated)
+  probe  path     p0       p_f    sqrtJ2     alpha    err%  phi_mob     drift
+ strain   txc     50     87.65     65.22   0.24801    1.80    32.03  1.11e-16
+ strain   txc    100    174.15    128.44   0.24583    0.91    31.77  1.67e-16
+ strain   txc    200    347.15    254.87   0.24473    0.46    31.64  1.11e-16
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 5.78749e+09 (max: 5e-05, Norm deltaX: 4.01739e+06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.565
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc     50     87.50     64.95   0.24744    1.57    31.97 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 4.48903e+06 (max: 0.0001, Norm deltaX: 593.792)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.5575
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    100    174.00    128.17   0.24554    0.79    31.74 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 3.17444e+73 (max: 0.0002, Norm deltaX: 1.27952e+70)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.5525
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    200    346.67    254.03   0.24426    0.26    31.59 
+ strain   txe     50     34.69     26.51   0.25471    4.55    58.11  0.00e+00
+ strain   txe    100     69.86     52.21   0.24913    2.26    55.62  8.33e-17
+ strain   txe    200    140.18    103.61   0.24637    1.13    54.46  5.55e-17
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 9.41202e+83 (max: 5e-05, Norm deltaX: 9.58237e+78)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9375
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe     50     34.73     26.45   0.25389    4.21    57.73 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 9.98853e+85 (max: 0.0001, Norm deltaX: 1.8703e+82)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.925
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    100     69.87     52.20   0.24903    2.22    55.58 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 4.29531 (max: 0.0002, Norm deltaX: 1.67407)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9175
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    200    140.22    103.54   0.24614    1.04    54.36 
+    strain: alpha = 0.24813 (+1.85 % vs target), Lode spread = 4.02 %
+    stress: alpha = 0.24772 (+1.68 % vs target), Lode spread = 3.89 %
+
+--- sigma_y = 2.0 kPa   rho_bar = 0.0000 (non-dilatant)
+  probe  path     p0       p_f    sqrtJ2     alpha    err%  phi_mob     drift
+ strain   txc     50     87.65     65.22   0.24801    1.80    32.03  1.11e-16
+ strain   txc    100    174.15    128.44   0.24583    0.91    31.77  1.11e-16
+ strain   txc    200    347.15    254.87   0.24473    0.46    31.64  8.33e-17
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 246891 (max: 5e-05, Norm deltaX: 4.25521e+07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.565
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc     50     87.50     64.95   0.24744    1.57    31.97 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.428389 (max: 0.0001, Norm deltaX: 3.83395e+06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.5575
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    100    174.00    128.17   0.24554    0.79    31.74 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 145.425 (max: 0.0002, Norm deltaX: 58.5887)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.5525
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txc    200    346.67    254.03   0.24426    0.26    31.59 
+ strain   txe     50     34.69     26.51   0.25471    4.55    58.11  1.67e-16
+ strain   txe    100     69.86     52.21   0.24913    2.26    55.62  1.67e-16
+ strain   txe    200    140.18    103.61   0.24637    1.13    54.46  5.55e-17
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 23.4347 (max: 5e-05, Norm deltaX: 0.127664)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9375
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe     50     34.73     26.45   0.25389    4.21    57.73 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 564.885 (max: 0.0001, Norm deltaX: 1.15533e+07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.925
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    100     69.87     52.20   0.24903    2.22    55.58 
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 176210 (max: 0.0002, Norm deltaX: 16.4137)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.9175
+OpenSees > analyze failed, returned: -3 error flag
+ stress   txe    200    140.22    103.54   0.24614    1.04    54.36 
+    strain: alpha = 0.24813 (+1.85 % vs target), Lode spread = 4.02 %
+    stress: alpha = 0.24772 (+1.68 % vs target), Lode spread = 3.89 %
+

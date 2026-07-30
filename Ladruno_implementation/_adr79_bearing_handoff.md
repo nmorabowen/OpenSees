@@ -1,96 +1,131 @@
-# ADR-79 bearing campaign — session handoff (2026-07-30)
+# ADR-79 bearing campaign — session handoff (updated 2026-07-30, collapse study)
 
-Status: **the campaign is complete and merged.** PRs #684, #686, #689 (this
-line) plus #687/#688 (the concurrent locking line) are all on `ladruno`.
-Nothing is in flight. This note exists so a new session can pick up the
-*follow-on* work without re-reading the campaign.
+Status: **the campaign is complete and merged** (PRs #684, #686, #689, plus
+#687/#688 on the concurrent locking line). The **collapse study — priority 1 of
+the previous handoff — is done**; this note now carries its answer and the
+priorities that survive it.
 
 ## Where everything lives
 
 | what | where |
 |---|---|
 | runner, probes, figure scripts, CSVs | `Ladruno_files/testbed/hypo_bearing/` |
-| fork-side write-up | that folder's `RESULTS.md` and `README.md` |
-| fork decision record | ADR 79 §8 (`79_ladruno_geom_hypo_adr.md`) |
-| **project-facing analysis** | TIMs vault notes **16** and **17**, `C:\Users\nmb\Dropbox\obsidian\Ladruño\TIMs\Reference Model\` |
-| traps | `LEDGER_quirks.md` (2 entries from this line) |
+| geometry-ladder write-up | that folder's `RESULTS.md` |
+| **collapse-study write-up** | that folder's **`COLLAPSE.md`** |
+| fork decision record | ADR 79 **§8** (ladder) and **§9** (collapse) |
+| traps | `LEDGER_quirks.md` (5 entries from this line) |
+| **project-facing analysis** | TIMs vault notes **16** and **17**, `C:\Users\nmb\Dropbox\obsidian\Ladruño\TIMs\Reference Model\` — **both predate the correction below** |
 
 Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
 `claude/adr79-bearing-deeper`, built `dist/bin` current.
 
-## The answer, in three lines
+## The answer, in four lines
 
 1. **The geometry ladder is exonerated.** −5.4 % (corot) to +7.5 % (hypo)
    against a `-geom linear` base, no limit point out to s/B = 15 %, tangent flat
-   at 6847 kPa/m. ADR-61 **OQ8 answered negatively** — the finite-strain soil law
-   it contemplated is not needed. OQ6's second item (`-geom corot` on
-   `LadrunoUP`) is delivered; its first (relax the contact `ndf == 3` guard) is
-   now the blocker for testing the **bonded interface**, the last kinematic
-   candidate.
-2. **The capacity anchor is wrong twice.** PDMY's failure surface is a measured
-   Drucker–Prager cone (α constant to 3.9 % across the Lode extremes while the
-   MC angle swings 31.5° → 54°), calibrated in triaxial compression; Vesić's
-   `N_γ` is Mohr–Coulomb, and the plane-strain equivalent is 53.7° ⇒ 10.8 MPa
-   against the 207 kPa anchor, a factor of 52. And the failure **mode** is
-   punching, not the general shear `N_γ` describes.
-3. **So the "9.3× over-strength" was never a well-posed anomaly.** The model
-   sits at ~31 % of its own collapse load. The defect measurements all stand and
-   still matter for *stiffness* — locking 34.3 % (#688), rate artifact 11.7 %.
+   at 6847 kPa/m. ADR-61 **OQ8 answered negatively**.
+2. **The capacity anchor IS wrong — by ≈ 2.4×, not 52×.** The previous handoff
+   said 52×, from Chen–Han plane-strain matching of the measured cone. That
+   matching assumes **associated flow**, which this non-dilatant PDMY set
+   (`dil1 = dil2 = 0`) violates. With Davis's ψ = 0 reduction the plane-strain
+   equivalent is 38.87°, not 53.72°, and the square-footing anchor is
+   **1525 kPa** — against the 637.5 kPa quoted, and against 26 711 kPa from the
+   associated route.
+3. **The measured collapse load agrees with the corrected anchor.** An
+   elastic–perfectly-plastic Drucker–Prager on the *same measured cone*, same
+   mesh, same footing gives **1140 kPa at the s/B = 10 % criterion** (1406 kPa
+   extrapolated) = 0.75–0.92 of the Davis anchor and **1/23 of the Chen–Han
+   prediction**. The machinery is validated to **1.0020 against the exact
+   Prandtl–Reissner `q₀·N_q`**.
+4. **So the over-strength is re-scaled, NOT dissolved.** The benchmark's
+   3384 kPa at s/B = 15 % is **2.2× the correct anchor and ~3.0× the measured
+   collapse load of its own cone**. The previous handoff's "the model sits at
+   ~31 % of its own collapse load" is **withdrawn** — it is above it. Locking,
+   large-strain embedment, boundary confinement and mesh coarseness still have
+   to account for ~2.2×.
 
 ## What to do next, in priority order
 
-1. **Numerical collapse load with the actual cone.** This is the one calculation
-   that converts §2 above from a strong hypothesis into a measurement. The 52×
-   rests on Chen–Han plane-strain matching, which assumes *associated* flow that
-   this non-dilatant set violates, and treats a square footing as plane strain.
-   Cheap, and it gates the interpretation of every capacity ratio in the vault.
-2. **Re-anchor or annotate the vault ratios** so nobody reads 9.3× as
-   over-strength. Note 17 says this explicitly; the ratios themselves are fine
-   as recorded data.
-3. **A modelling decision for the project:** is a Lode-independent cone the
-   intended constitutive assumption? It over-predicts plane-strain strength by
-   ~50× on bearing capacity. Either calibrate φ for the regime of interest or
-   use a Lode-dependent surface — a deliberate choice, not a solver matter.
-4. **The interface**, once the contact `ndf == 3` guard is relaxed. It is the
-   last untested kinematic candidate and this benchmark cannot speak to it (the
-   footing is a smooth driven node patch, so an interface is absent by
-   construction).
-5. **A refined, unlocked mesh** — the only experiment that separates "this soil
-   genuinely punches" from "four elements across B cannot form a band". Note
-   that `-geom hypo` still refuses `-formulation bbar` (ADR 79 P2 reserved), so
-   locking and large strain cannot yet be measured together on the coupled
-   element; `corot` composes with `bbar` today.
+1. **Re-anchor the vault ratios to 1525 kPa** (notes 16/17 quote the 52× route
+   and the "31 % of capacity" reading; both are superseded). The recorded
+   ratios themselves are fine as data — it is the interpretation that moves.
+2. **A modelling decision for the project, sharpened.** A Lode-independent cone
+   calibrated in triaxial compression is still the constitutive assumption in
+   force, and it still over-predicts plane-strain strength — but by ~2.4× on a
+   correctly-reduced anchor, not ~50×. Either calibrate φ for the regime of
+   interest or use a Lode-dependent surface. Note the Chen–Han matching this
+   model needs is **numerically unstable at this cone**: it has a pole at
+   α = 1/√12 and the cone sits at 84.4 % of it, so ±2 % in α moves N_q by 55 %.
+   That instability is an argument against the cone itself, not just against
+   the formula.
+3. **A refined mesh — now the binding constraint.** `COLLAPSE.md` tried and
+   **failed**: halving the element size to 8 across B makes every leg harder to
+   converge and all such legs truncate earlier than their coarse counterparts.
+   The exact-oracle control shows 4 elements across B suffices at φ_ps = 27.5°;
+   nothing shows it suffices at 53.7°. Everything quantitative in §9 rests on
+   that gap. `-geom hypo` still refuses `-formulation bbar` (ADR 79 P2
+   reserved); `corot` composes with `bbar` today.
+4. **The domain question at collapse.** `build_mesh_big.py` (14.5 B clearance,
+   10 B depth, 8064 hexes) agrees with the campaign mesh to 3 % out to
+   s = 16 mm but has not reached the plateau — it is ~3× the cost per step and
+   needs a long uncontended run.
+5. **The interface**, once the contact `ndf == 3` guard is relaxed. Still the
+   last untested kinematic candidate, and this benchmark cannot speak to it
+   (smooth driven node patch, so an interface is absent by construction).
 
 ## Traps this line paid for — do not rediscover
 
+All five are in `LEDGER_quirks.md`. The ones that cost the most time:
+
 - **An installed Ladruno hijacks `import opensees`** via a site `.pth` that
-  imports at interpreter startup, so a worktree `sys.path.insert` is a no-op and
-  scripts silently run a build that refuses `-geom corot|hypo`. Use base Python
-  3.12 and **assert `opensees.__file__`** (the runner does).
-- **`NormDispIncr` is not evidence of equilibrium.** It reported convergence at
-  σ_zz = +0.26 kPa *tension* under a 100 kPa compressive load once the tangent
-  degenerated. Use `NormUnbalance` where that is possible.
+  imports at interpreter startup, so a worktree `sys.path.insert` is a no-op.
+  Use base Python 3.12 and **assert `opensees.__file__`**. A location guard is
+  necessary but not sufficient — a worktree's `dist/bin` can be months behind
+  its branch, so assert CAPABILITY too.
+- **A frictional verification model can be 95 % mobilised by its own gravity
+  state**, because the ELASTIC `K0 = ν/(1−ν)` sets the initial stress ratio.
+  Compute `m = (1−K0)/(√3·α·(1+2K0))` and print it; `m > 0.8` is void. Raise ν
+  for verification legs — a collapse load does not depend on elastic constants.
+- **`DruckerPrager` cannot have pressure-dependent moduli AND plasticity**
+  (`mElastFlag == 1` is elastic-only), and `updateMaterialStage` does not reach
+  it (it answers to `materialState`). `ρ = √2·α`; perfect plasticity needs
+  `H = 0`.
+- **Consolidate-then-deviator with a `Linear` series applies the deviator at
+  FULL amplitude on the first increment** — both patterns share the load
+  factor. `loadConst("-time", 0.0)` between stages.
+- **`NormDispIncr` is not evidence of equilibrium** (it reported convergence at
+  σ_zz = +0.26 kPa tension under 100 kPa of compression). Use `NormUnbalance`.
 - **A converged push increment is a property of the mesh**, not the problem.
-  P3's 2.5 mm fails here for *every* geometry method including `-geom linear`;
-  it is a transient first-loading shock off the stage-1 PDMY state. Drive with a
-  2-point ramp + adaptive increment; KrylovNewton is the primary algorithm.
+  Drive with a ramp + adaptive increment; KrylovNewton is primary; and for
+  perfectly plastic collapse add an ALGORITHM LADDER per increment
+  (KrylovNewton → NewtonLineSearch → relaxed-tolerance KrylovNewton) before
+  shrinking the step, flagging relaxed steps in the CSV.
 - `remove('sp', node, dof)` does **not** match a constraint made by `fix`.
-  UmfPack `setSize` fails at 4 DOFs (use `FullGeneral`). `sinφ_mob` needs a
-  **tension** guard as well as a confinement one. Field plots must be referenced
-  to the gravity frame. Slab filters need a straddle test.
-- **`Results.from_ladruno` is self-sufficient** — no `model.h5`, no deck↔FEMData
-  tag reconciliation. `from_mpco` would have required both.
-- **`TaskStop` kills the bash wrapper, not the Python child.** Three
-  `field_run` processes once wrote the same `.npz` concurrently.
+  UmfPack `setSize` fails at 4 DOFs (use `FullGeneral`). Field plots must be
+  referenced to the gravity frame.
+- **Two long parallel runs writing incremental CSVs**: re-running one leg's
+  name truncates the live file under it. Smoke runs get their own filename, and
+  a runner refuses to open an output modified in the last 180 s.
+- **`TaskStop` kills the bash wrapper, not the Python child** — but a
+  foreground Bash *timeout* DOES kill the child. Check `Get-CimInstance
+  Win32_Process` either way.
 
 ## Reproducing
 
 ```bash
-C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bearing/build_mesh.py
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py all
 ```
 
 ```bash
-C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/bearing_backbone.py all
+C:/Users/nmb/AppData/Local/Programs/Python/Python312/python.exe Ladruno_files/testbed/hypo_bearing/dp_collapse.py all
+```
+
+`dp_analyze.py` needs matplotlib, which only the apeGmsh venv has — it sets
+`ADR79_NO_ENGINE=1` so it never loads the solver and the venv's hijacking
+`.pth` is harmless.
+
+```bash
+C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bearing/dp_analyze.py
 ```
 
 `.ladruno` recorder output is gitignored — `viewer_run.py` plus the committed
