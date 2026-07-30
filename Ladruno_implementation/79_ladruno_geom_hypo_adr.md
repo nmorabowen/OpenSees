@@ -390,6 +390,29 @@ genuinely distorted — a small independent point for
 confinement rather than kinematics: the same footing at 0.5–1.5 B clearance ran
 to tens of × Vesic as a pure oedometer, versus 2.7–3.6 × here at 4.5 B.
 
+**Follow-up (same day):** a `-geom linear` BASE rung was added and the hypo
+legs re-run to the full s/B = 0.15 target. Two things changed. Against base,
+`corot` is 5.4 % SOFTER and `hypo` 7.5 % STIFFER — opposite signs — so the
+14.8 % hypo-vs-corot gap is not all large-strain hardening; about half is corot
+dropping below small strain. And at full depth `dq/ds` flattens to 6847 kPa/m
+(−2.1 % across s/B 0.125→0.150, a 0.3 % band over the final 200 steps), which
+is a plateau in the TANGENT and therefore the stronger claim that no limit
+point is coming further along either.
+
+A single-element deviatoric probe (`element_probe.py`) then settled the
+material-level question and raised a bigger one. PDMY *does* reach perfect
+plasticity — τ flat to 1.0000 of peak out to γ = 0.6 at every confinement,
+τ_f/σ_v constant at 0.770–0.782 — so the absent limit point is a
+boundary-value artifact, not a constitutive impossibility. But the mobilised
+friction angle at failure is **50.4°, not the 33° supplied**, because the
+failure surface is a Lode-independent cone calibrated in triaxial compression.
+Vesić's N_γ is a Mohr–Coulomb formula: 35.2 at 33° against ~834 at 50.4°, a
+factor of 23.7, which EXCEEDS the 16.3× over-strength measured against the
+γ-term anchor. A large part of the reported over-strength may therefore be an
+anchoring artifact. This is a hypothesis — 50.4° was measured in simple shear
+while a bearing mechanism is nearer plane strain — and the rigorous check is a
+limit analysis with the actual cone.
+
 Validation of the campaign model (all in `RESULTS.md`): global vertical
 equilibrium exact to 0.0000 %, mesh volume exact, the closed-form surcharge
 reaction correction exact, commanded ≡ measured settlement to machine
