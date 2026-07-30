@@ -560,9 +560,12 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
 
 - **Associated legs never plateau.** Every one of them, at every cone, hardens
   without reaching a limit point — `nq20_assoc` walls out 10–12 % *above* its
-  own exact answer. Dilatancy at ψ = φ has to displace the surrounding soil and
-  a bounded mesh resists it. The flow-rule bracket is therefore one-sided: the
-  non-associated number is measured, the associated one is not.
+  own exact answer, and the associated SQUARE leg ends at s/B = 0.0139 still
+  at 66 % of its initial tangent with 64.6 % of the mesh yielded and the
+  plastic zone on both the sides and the base. Dilatancy at ψ = φ = 53.7° has
+  to displace the surrounding soil and a fixed box resists it. The flow-rule
+  bracket is therefore one-sided — but the non-associated rung is the one that
+  matches PDMY's `dil1 = dil2 = 0`, so it is the rung the verdict needs.
 - **A verification cone must be checked against its own initial state.** The
   first attempt (φ_txc = 20° at PDMY's moduli) sits at **m = 0.950 of yield
   under gravity alone**, because the elastic K₀ = ν/(1−ν) = 0.507 mobilises

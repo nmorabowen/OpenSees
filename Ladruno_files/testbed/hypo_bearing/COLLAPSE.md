@@ -163,7 +163,7 @@ Two things that check is worth keeping:
 |---|---|---|---|---|---|---|---|---|
 | `nonassoc` | ψ = 0 | bbar | **0.1500** | 1179.1 | **1140.1** | 302 | 0.006 | collapse, full target |
 | `nonassoc_sy2` (σ_y = 2.0) | ψ = 0 | bbar | **0.1500** | 1275.6 | 1230.7 | 351 | 0.006 | collapse, full target |
-| `assoc` | ψ = φ | bbar | 0.0134 | 2175.1 | — | 69 679 | 0.593 | no limit point |
+| `assoc` | ψ = φ | bbar | 0.0139 | 2236.2 | — | 68 716 | 0.592 | no limit point |
 | `assoc` (pre-ladder run, kept) | ψ = φ | bbar | 0.0244 | 3425.4 | — | ~70 000 | ~0.5 | no limit point |
 | `nonassoc_std` | ψ = 0 | std | 0.0031 | 437.6 | — | — | — | cannot be pushed |
 | `nonassoc_big` (14.5 B) | ψ = 0 | bbar | 0.0130 | 741.1 | — | 10 253 | 0.105 | domain control |
@@ -214,11 +214,16 @@ Note this *inverts* `RESULTS.md` §"locking legs" item 3: there `bbar` cost reac
 against `std` on a hardening PDMY model; on a perfectly plastic cone `std` is
 the formulation that cannot get anywhere.
 
-**The domain IS engaged at collapse.** `nonassoc_sy2` ran to the full
-s/B = 0.15 and its fully-mobilised zone (m > 0.99, 880 of 2816 elements)
-**reaches the roller sides** — 16 of the 352 elements in the outermost column
-are at yield. The base is clear (0 of 256 in the deepest row), so the mechanism
-is spreading laterally, not downward.
+**The domain IS engaged at collapse.** Both non-associated legs ran to the full
+s/B = 0.15 and their fully-mobilised zones (m > 0.99, ~30 % of the mesh)
+**reach the roller sides** — 20 and 16 of the 352 elements in the outermost
+column are at yield. The base is clear (0 of 256 in the deepest row), so the
+mechanism spreads laterally, not downward.
+
+The ASSOCIATED leg is a different animal: 1820 of 2816 elements (**64.6 %**)
+at yield, 88/352 of the outer column AND 60/256 of the base row — a
+domain-filling plastic state, which is what dilating at ψ = φ = 53.7° inside a
+fixed box produces, and why that leg has no limit point to report.
 
 > This corrects the runner's own first verdict, which said "contained". The
 > test was a fraction of the domain extent (centroid within 90 % of 10 m), and
@@ -319,9 +324,13 @@ headline: the exact-oracle control shows 4 elements across B is enough at
   control agrees to 3 % but stops at s = 16 mm, a tenth of the way to the
   plateau, so the size of the boundary contribution is not measured — only its
   sign, which inflates the quoted number.
-- **The associated square leg has no collapse load at all** — it was still
-  hardening at 69 430 kPa/m when stopped. The flow-rule bracket is therefore
-  one-sided: the non-associated number is measured, the associated one is not.
+- **The associated square leg has no collapse load at all.** It ran to its own
+  convergence wall at s/B = 0.0139 (q = 2236 kPa) still hardening at 66 % of
+  its initial tangent, with 64.6 % of the mesh at yield and the plastic zone
+  on both the sides and the base. The flow-rule bracket is therefore
+  one-sided: the non-associated number is measured, the associated one is not
+  — and since the non-associated rung is the one that matches PDMY's
+  `dil1 = dil2 = 0`, that is the rung the verdict needs.
 - **σ_y = 0.2 kPa is a regularizer**, worth +1.11 %; extrapolated out above.
 - **Constant elastic moduli.** `DruckerPrager` cannot combine pressure-dependent
   moduli with plasticity (`mElastFlag == 1` is elastic-only), so PDMY's
