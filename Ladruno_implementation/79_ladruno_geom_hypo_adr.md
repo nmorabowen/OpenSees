@@ -360,8 +360,10 @@ controlled drained push. Three legs in parallel, 3.2–4.1 h each.
 1. **No limit point on any rung.** Every leg is still hardening where it ends:
    `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial value and never
    approaches zero; `q` is monotone with its maximum at the last converged
-   point. hypo reaches 3.62 × Vesic at s/B = 7.6 % and is still climbing
-   (q/q_Vesic = 1.00 / 1.87 / 2.85 / 3.59 at s/B = 1 / 2.5 / 5 / 7.5 %).
+   point. hypo reaches **5.31 × Vesic at the full s/B = 15 % target** and is
+   still climbing (q/q_Vesic = 1.00 / 1.87 / 2.85 / 3.59 / 4.21 / 4.77 / 5.31
+   at s/B = 1 / 2.5 / 5 / 7.5 / 10 / 12.5 / 15 %), with the tangent flat at
+   6847 kPa/m over the final 200 steps.
 2. **`hypo` is STIFFER than `corot`, and the gap grows** — +2.1 % / +6.2 % /
    +14.8 % of q at s/B = 1 / 2.5 / 5 %. *(These, and every other figure in this
    section, are the geometric content of a volumetrically LOCKED mesh — the

@@ -155,3 +155,7 @@ _build_ladrunobrick.log
 Ladruno_scripts/_*.log
 Ladruno_scripts/patch_banner_backups/
 build_p1b*.log
+
+# ADR-79 bearing testbed: .ladruno recorder output is tens of MB of HDF5 and is
+# a DERIVED artifact — viewer_run.py + bearing_mesh.npz reproduce it exactly.
+Ladruno_files/testbed/hypo_bearing/*.ladruno

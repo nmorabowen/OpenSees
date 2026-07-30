@@ -17,7 +17,8 @@ re-run to the full s/B = 0.15 target. Both change the reading — see
    the tangent `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial
    value but never approaches zero, and `q` is monotone with its maximum at the
    last converged point. Genuine large strain does not bend this backbone over.
-   `hypo` reaches **3.62 × Vesic at s/B = 7.6 %** and is still climbing.
+   `hypo` reaches **5.31 × Vesic at the full s/B = 15 % target** and is still
+   climbing, with the tangent flat at 6847 kPa/m.
 2. **`hypo` is *stiffer* than `corot`, and the gap grows with penetration** —
    +2.1 % at s/B = 1 %, +6.2 % at 2.5 %, +14.8 % at 5 %. The sign matches
    ADR-79 P3's smoke (hypo stiffer; UL assembly on the *compacted*
@@ -33,20 +34,29 @@ re-run to the full s/B = 0.15 target. Both change the reading — see
    *undrained or rapid* loading, and this campaign cannot see it.
 
 So the ADR-78 §1 over-hardening is **not** a large-deformation-kinematics
-artifact. Scoping finding 3 points at the much bigger lever: boundary
-confinement. The same footing in a box with 0.5–1.5 B of clearance ran to
-27 MPa (tens of × Vesic) purely as an oedometer, whereas this 4.5 B-clearance
-benchmark is at 2.7–3.6 × Vesic at the same penetrations. We cannot attribute
-a specific share of the reported 9.3 × to the SFIM model's boundaries without
-that model — but the ladder is now excluded as the explanation.
+artifact. Larger levers exist and have since been measured: volumetric locking
+is worth **34.3 %** of q at s/B = 2.5 % (the locking legs below, ~5.5× the
+geometry lever), and boundary confinement is worth tens of × Vesic when the
+domain is too small — the same footing at 0.5–1.5 B clearance ran to 27 MPa as
+a pure oedometer.
 
-*(A note on what "no limit point" does and does not mean here. A drained,
-smooth, displacement-controlled footing on a hardening PDMY sand with
-confinement-dependent moduli need not exhibit a load maximum at all: as the
-footing sinks, the mechanism mobilizes deeper, better-confined soil whose
-stiffness grows with p′. The campaign's finding is comparative and specific —
-climbing the geometry ladder does not introduce one, and does not reduce the
-over-hardening — not a claim that this model class must have one.)*
+> [!important] The comparison itself was ill-posed — see `cone_probe.py`
+> An interim version of this section argued that a drained footing on a
+> confinement-hardening sand "need not exhibit a load maximum at all". That was
+> too generous to the model and is **retracted**. `PressureDependMultiYield`
+> has a fixed frictional envelope and therefore a BOUNDED collapse load, so a
+> plateau is expected and its absence needs explaining.
+>
+> The explanation is that the model was never near failing, and that the anchor
+> is wrong twice over. The failure surface is a **Drucker–Prager cone**
+> (measured: α constant to 3.9 % across the Lode extremes while the
+> Mohr–Coulomb angle swings 31.5° → 54°), calibrated in triaxial compression;
+> Vesić's `N_γ` is a Mohr–Coulomb formula, and the plane-strain equivalent of
+> the measured cone is 53.7°, giving **10.8 MPa against the 207 kPa anchor — a
+> factor of 52**. The benchmark's 3384 kPa is ~31 % of that. And the failure
+> MODE is punching, not the general shear `N_γ` describes: no heave, no element
+> within 5 % of its strength, plastic strain in a compacting bulb rather than a
+> band. Full analysis in TIMs vault note 17.
 
 ![backbones](bearing_backbone.png)
 

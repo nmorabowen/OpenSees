@@ -21,7 +21,7 @@ displacement-controlled to s/B = 0.15.
 | footing | the central 4 × 4-element patch (25 driven nodes), smooth (only u_z driven) |
 | surcharge | 10 kPa over the **whole** top face, tributary-weighted, applied with gravity |
 | staging | elastic gravity → `updateMaterialStage 1` → plastic settle → push |
-| legs | `linear` (base rung), `corot`, `hypo`, `hypo -kozenyCarman` |
+| legs | ladder: `linear` (base rung), `corot`, `hypo`, `hypo -kozenyCarman`; locking: `corot_std`, `corot_bbar` (+ `_und` undrained pair) |
 
 Normalization is Vesic **with** the surcharge term,
 `q_ult = q0·Nq·sq + 0.5·γ'·B·Nγ·sγ` = 637.5 kPa (430.4 + 207.1).
@@ -95,7 +95,10 @@ locking pair (2026-07-30).
 8. **How deep a rung can be pushed is itself an ordered result.** Each rung
    dies at a different penetration, in ladder order:
    `linear` 0.047 (divergence) < `corot` 0.060 (convergence floor) <
-   `hypo` 0.076+ (still stepping). Richer kinematics stay solvable longer on a
+   `hypo` 0.150 (reached the target, still converging comfortably). Note the
+   locking legs invert this within a rung: `corot_bbar` truncates at 0.036,
+   *earlier* than `corot_std`'s 0.060, so relieving locking costs reach.
+   Richer kinematics stay solvable longer on a
    mesh whose near-footing elements are being crushed — an argument for the
    rate-form UL lane that is independent of the backbone values themselves.
    Note `linear` does not taper into its wall: its last successful step was at
