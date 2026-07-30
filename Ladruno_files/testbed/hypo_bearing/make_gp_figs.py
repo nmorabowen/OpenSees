@@ -86,23 +86,29 @@ def read(path):
         order = np.argsort(ids)
         nodes = coords[order]
         nid = ids[order]
+        # The element group carries a single CONNECTIVITY dataset of shape
+        # (nEl, 1 + nodesPerElement): column 0 is the ELEMENT tag and the rest
+        # are its node tags. There is no separate ID dataset here (unlike
+        # MODEL/NODES, which does have one).
         emap = {}
         for grp in M["ELEMENTS"]:
             g = M["ELEMENTS"][grp]
             if "CONNECTIVITY" not in g:
                 continue
-            conn = np.array(g["CONNECTIVITY"])
-            eid = np.array(g["ID"]).ravel()
-            emap[grp] = (eid, conn)
+            raw = np.array(g["CONNECTIVITY"])
+            emap[grp] = (raw[:, 0], raw[:, 1:])
+        # Each result bucket holds ONE DATA dataset of shape
+        # (nSteps, nElements, nGP * nComp) — not a group of per-step datasets.
         R = f[stage]["RESULTS"]["ON_ELEMENTS"]
         out = {}
         for nm in ("stress", "strain"):
             if nm not in R:
                 continue
-            d = R[nm][BUCKET]["DATA"]
-            keys = sorted(d, key=lambda k: int(k.split("_")[-1]))
-            out[nm] = (np.array(d[keys[0]]), np.array(d[keys[-1]]))
-            out[nm + "_nsteps"] = len(keys)
+            bucket = R[nm][next(iter(R[nm]))]
+            d = bucket["DATA"]
+            out[nm] = (np.array(d[0]), np.array(d[-1]))
+            out[nm + "_nsteps"] = d.shape[0]
+            out[nm + "_eid"] = np.array(bucket["ID"]).ravel()
         eid, conn = next(iter(emap.values()))
     # map node ids -> row index
     idx = {int(v): i for i, v in enumerate(nid)}
@@ -152,10 +158,18 @@ def eq_plastic(sig, eps):
 
 
 def slab(nodes, hexes):
+    """ONE element layer straddling y = 0, as (x, z) quads.
+
+    The straddle test matters: a filter that merely keeps y > -0.5 retains
+    every layer from the symmetry plane outward, they all project onto the same
+    (x, z) rectangle, and whichever is drawn last — a far-field element at low
+    strain — paints over the bulb. The result looks like a uniformly zero
+    field, which is exactly what a first version produced.
+    """
     keep, quads = [], []
     for e, h in enumerate(hexes):
         q = nodes[[int(i) for i in h]]
-        if q[:, 1].min() < -0.5 or q[:, 1].max() < -1e-6:
+        if q[:, 1].min() < -0.5 or not (q[:, 1].min() < 1e-6 < q[:, 1].max() + 1e-6):
             continue
         keep.append(e)
         quads.append([(q[:, 0].min(), q[:, 2].min()), (q[:, 0].max(), q[:, 2].min()),
@@ -163,11 +177,22 @@ def slab(nodes, hexes):
     return np.array(keep), quads
 
 
-def panel(ax, quads, v, title, label, cmap="cividis"):
+def panel(ax, quads, v, title, label, cmap="cividis", vmax=None):
+    """One field panel, zoomed to the near field and colour-clipped.
+
+    Both matter. The action is confined to a bulb a couple of B across, so a
+    full-domain view renders it as a dot; and these fields are extremely
+    peaked — plastic strain reaches 4.4 % under the footing while most of the
+    mesh is at ~0 — so a linear scale to the true maximum paints everything
+    else flat dark. The colour range is therefore clipped to a high percentile
+    and the clipping is stated on the colourbar.
+    """
     pc = PolyCollection(quads, array=v, cmap=cmap,
                         edgecolors="#00000018", linewidths=0.2)
+    if vmax is not None:
+        pc.set_clim(0.0, vmax)
     ax.add_collection(pc)
-    ax.set_xlim(-6.5, 6.5); ax.set_ylim(-6.0, 0.4)
+    ax.set_xlim(-4.5, 4.5); ax.set_ylim(-3.5, 0.4)
     ax.set_aspect("equal")
     ax.set_xlabel("x [m]"); ax.set_ylabel("z [m]")
     ax.set_title(title, fontsize=11)
