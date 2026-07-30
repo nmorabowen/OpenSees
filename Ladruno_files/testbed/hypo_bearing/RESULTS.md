@@ -9,6 +9,10 @@ in parallel, 3.2–4.1 h each.**
 **Climbing the geometry ladder does not produce a bearing limit point, and it
 does not shrink the over-hardening — it makes it slightly worse.**
 
+*Updated 2026-07-29: a `-geom linear` base rung was added and the hypo legs were
+re-run to the full s/B = 0.15 target. Both change the reading — see
+"The base rung changes the decomposition" and "The tangent plateaus" below.*
+
 1. **No limit point on any rung.** Every leg is still hardening where it ends:
    the tangent `dq/ds` decays to 15 % (corot) / 25 % (hypo) of its initial
    value but never approaches zero, and `q` is monotone with its maximum at the
@@ -53,54 +57,99 @@ over-hardening — not a claim that this model class must have one.)*
 
 q/q_Vesic at settlement checkpoints (`--` = the leg never reached it):
 
-| s/B | `-geom corot` | `-geom hypo` | `-geom hypo -kozenyCarman` | hypo/corot |
-|---|---|---|---|---|
-| 0.010 | 0.98 | 1.00 | 1.00 | 1.021 |
-| 0.025 | 1.76 | 1.87 | 1.87 | 1.062 |
-| 0.050 | 2.48 | 2.85 | 2.85 | 1.148 |
-| 0.075 | -- | 3.59 | 3.59 | -- |
-| 0.100 | -- | -- | -- | -- |
-| 0.150 | -- | -- | -- | -- |
+| s/B | `linear` (base) | `corot` | `hypo` | `hypo -kozenyCarman` | corot/base | hypo/base | hypo/corot |
+|---|---|---|---|---|---|---|---|
+| 0.010 | 0.99 | 0.98 | 1.00 | 1.00 | 0.990 | 1.010 | 1.021 |
+| 0.025 | 1.81 | 1.76 | 1.87 | 1.87 | 0.972 | 1.033 | 1.062 |
+| 0.050 | -- | 2.48 | 2.85 | 2.85 | -- | -- | 1.148 |
+| 0.075 | -- | -- | 3.59 | 3.59 | -- | -- | -- |
+| 0.100 | -- | -- | 4.21 | 4.21 | -- | -- | -- |
+| 0.125 | -- | -- | 4.77 | 4.77 | -- | -- | -- |
+| 0.150 | -- | -- | 5.31 | 5.31 | -- | -- | -- |
 
 Per leg, over the span each actually covered:
 
 | leg | reached s/B | steps | retries | q_end | q_end/q_Vesic | final dq/ds | ended by |
 |---|---|---|---|---|---|---|---|
-| `-geom corot` | 0.0602 | 677 | 111 | 1695 kPa | 2.66 | 14.8 % of initial | convergence floor |
-| `-geom hypo` | 0.0762 | 927 | 166 | 2306 kPa | 3.62 | 25.2 % of initial | operator stop at 4 h |
-| `-geom hypo -kozenyCarman` | 0.0760 | 923 | 165 | 2303 kPa | 3.61 | 25.2 % of initial | operator stop at 4 h |
+| `-geom linear` (base) | 0.0469 | 407 | 63 | 1626 kPa | 2.55 | 23.5 % of initial | **divergence** |
+| `-geom corot` | 0.0602 | 677 | 111 | 1695 kPa | 2.66 | 14.8 % of initial | adaptive floor |
+| `-geom hypo` | **0.1500** | 2289 | 419 | 3384 kPa | 5.31 | 25.2 % of initial | **reached target** |
+| `-geom hypo -kozenyCarman` | **0.1500** | 2284 | 415 | 3385 kPa | 5.31 | 25.2 % of initial | **reached target** |
+
+### The base rung changes the decomposition
+
+The base rung was added after the first pass and it halves the effect the
+first pass reported. Measured at s/B = 0.0469, the deepest point all four
+rungs share, `corot` is **5.4 % softer** than the small-strain base while
+`hypo` is **7.5 % stiffer**. The two rungs pull in *opposite* directions, so
+the 14.8 % hypo-vs-corot gap at s/B = 5 % is not "hardening due to large
+strain" — roughly half of it is corot dropping below the base. Reporting only
+the hypo-vs-corot gap, as the first pass did, was half wrong about its origin.
+
+Mechanically the signs make sense. Corotational kinematics adds finite rotation
+and geometric stiffness but assumes small deformational strain, contributing
+essentially classical second-order softening. The hypo lane additionally
+updates on the *current, compacted* configuration and carries porosity
+kinematically as n(J) = 1 − (1−n0)/J; under a footing the soil compacts, J < 1,
+and both effects stiffen. The dominant kinematic content here is therefore
+**volumetric compaction, not shear distortion**.
+
+### The tangent plateaus
+
+| s/B | 0.010 | 0.025 | 0.050 | 0.075 | 0.100 | 0.125 | 0.150 |
+|---|---|---|---|---|---|---|---|
+| dq/ds [kPa/m] | 26 382 | 15 701 | 10 704 | 8609 | 7475 | 6993 | 6847 |
+| fraction of initial | 0.617 | 0.367 | 0.250 | 0.201 | 0.175 | 0.163 | 0.160 |
+
+The tangent loses 14 % across s/B 0.050→0.075 but only **2.1 %** across
+0.125→0.150, and over the final 200 steps it lies in a 6840–6861 kPa/m band
+(0.3 % spread) with q strictly monotone. That is a plateau **in the tangent**,
+which is stronger than "no limit point was reached": the backbone is settling
+into a straight line of slope ~6850 kPa/m, so no limit point is coming further
+along either. A limit point requires dq/ds → 0 and a constant positive slope
+cannot get there.
+
+An interim reading of this at s/B = 0.076 claimed a plateau from two points and
+was then apparently contradicted by a later interval reading; the latter turned
+out to be scatter from differencing widely-spaced checkpoints. Only the
+completed run settles it, and it settles it in favour of the plateau.
 
 `q` crosses the Vesic capacity at s/B ≈ 1 % on every rung and keeps climbing —
 the over-hardening reproduces cleanly on a properly sized benchmark.
 
 ## Why the legs stop where they stop
 
-**No leg reached the s/B = 0.15 target, and the two reasons are different — the
-distinction matters, so it is recorded rather than smoothed over.**
+**Both hypo legs reached the s/B = 0.15 target. The two lower rungs did not, and
+they stopped for different reasons — the distinction matters, so it is recorded
+rather than smoothed over.**
 
-- `corot` ended on its own at s/B = 0.0602: the adaptive increment fell below
-  the 6.25 µm floor. That is a convergence failure on a heavily yielded,
-  badly distorted near-footing mesh, *not* a limit load.
-- `hypo` and `hypo -kozenyCarman` were **stopped by the operator** at
-  s/B ≈ 0.076 after 4 h of wall clock, while both were still converging
-  comfortably (0.1–0.2 mm increments). They did not fail; they were cut short.
-  Their backbones are truncated by the campaign's time budget, not by the
-  physics or the solver.
+- `linear` ended at s/B = 0.0469 by genuine **divergence**: displacement-increment
+  norms of order 3e-2 and force residuals of 200–320, three to four orders of
+  magnitude away from tolerance. It does not taper into its wall — its last
+  successful step was at the full 0.4 mm cap — and it then failed to complete
+  the halving ladder in 75 min because each diverged attempt costs ~10 min
+  inside PDMY's *serial* return mapping (~1 busy core against 5.3 for a healthy
+  leg, which is a fast tell for divergence versus mere slowness). Stopped by the
+  operator after 75 min of zero progress.
+- `corot` ended at s/B = 0.0602 on the adaptive floor, having narrowly missed
+  tolerance with norms near 1e-5. That is a convergence limit, not a limit load.
+- `hypo` and `hypo -kozenyCarman` **reached s/B = 0.1500**, in 2289 and 2284
+  steps over 11.1 h each, still converging comfortably at the end.
 
-Neither ending is a limit point, and the two are distinguishable from one: at a
-genuine limit point `dq/ds` → 0, and here it is still 15 % (corot) / 25 %
-(hypo) of its initial value and clearly positive.
+None of these endings is a limit point, and they are distinguishable from one:
+`dq/ds` is 15–25 % of its initial value and clearly positive in every case.
 
-The honest caveat is the converse one: neither a convergence-limited nor a
-time-limited truncation can prove there is no limit point *past* the last
-converged step. What the campaign does establish is that no rung produces one
-**within the span all three legs share** (s/B ≤ 0.060), and that over that span
-the ladder's effect is to harden.
+How deep each rung can be pushed is itself an ordered result — `linear` 0.047 <
+`corot` 0.060 < `hypo` 0.150 — so richer kinematics stays solvable roughly
+three times further on a mesh whose near-footing elements are being crushed.
+That is an argument for the rate-form lane independent of the backbone values,
+and it has a practical consequence: if a locus needs deep penetration, `hypo`
+is the rung that survives the attempt.
 
-Notably `corot` hit its convergence floor at s/B = 0.060 while `hypo` was still
-stepping at 0.076 — the rate-form UL lane is better conditioned than
-rotate-only kinematics once near-footing elements are genuinely distorted,
-which is a small independent point in `-geom hypo`'s favour.
+The cross-rung comparison is bounded at s/B = 0.047 by the base rung's ceiling,
+and no truncation can prove there is no limit point past the last converged
+step — though for the hypo lane the tangent plateau above makes that a much
+weaker caveat than it was at s/B = 0.076.
 
 ## Validation
 

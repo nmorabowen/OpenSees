@@ -16,7 +16,8 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 B_FOOT = 2.0
 Q_VESIC = 637.5          # kPa — recomputed below from the runner's constants
-LEGS = [("corot", "-geom corot"), ("hypo", "-geom hypo"),
+LEGS = [("linear", "-geom linear (base)"), ("corot", "-geom corot"),
+        ("hypo", "-geom hypo"),
         ("hypo_kc", "-geom hypo -kozenyCarman"),
         ("corot_std", "-geom corot -form std (rerun)"),
         ("corot_bbar", "-geom corot -form bbar"),
@@ -29,7 +30,10 @@ LEGS = [("corot", "-geom corot"), ("hypo", "-geom hypo"),
 # bbar relieved locking and the std backbone was that much artificial stiffness.
 # The locking ratio uses corot_std, NOT the archived corot: those two legs are
 # the engine-matched pair. corot stays in the table as the §8 baseline.
-RATIOS = [("hypo/corot (geometry)", "hypo", "corot"),
+BASE = "linear"          # the rung everything else is measured against
+RATIOS = [("corot/base", "corot", BASE),
+          ("hypo/base", "hypo", BASE),
+          ("hypo/corot (geometry)", "hypo", "corot"),
           ("bbar/std (locking)", "corot_bbar", "corot_std"),
           ("std rerun/archived", "corot_std", "corot"),
           ("bbar/std UNDRAINED", "corot_bbar_und", "corot_std_und")]
@@ -119,7 +123,8 @@ def main():
         return
     # hypo and hypo+kc coincide to ~1e-4, so they MUST be drawn with different
     # line styles or one hides the other entirely.
-    STYLE = {"corot": dict(color="C0", ls="-", lw=1.8),
+    STYLE = {"linear": dict(color="0.35", ls="-.", lw=1.8),
+             "corot": dict(color="C0", ls="-", lw=1.8),
              "hypo": dict(color="C3", ls="-", lw=1.8),
              "hypo_kc": dict(color="C2", ls="--", lw=1.8),
              "corot_std": dict(color="C0", ls=":", lw=1.4),

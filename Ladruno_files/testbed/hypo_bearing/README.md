@@ -21,7 +21,7 @@ displacement-controlled to s/B = 0.15.
 | footing | the central 4 × 4-element patch (25 driven nodes), smooth (only u_z driven) |
 | surcharge | 10 kPa over the **whole** top face, tributary-weighted, applied with gravity |
 | staging | elastic gravity → `updateMaterialStage 1` → plastic settle → push |
-| legs | `corot`, `hypo`, `hypo -kozenyCarman` (`linear` is excluded — it does not converge on this problem class) |
+| legs | `linear` (base rung), `corot`, `hypo`, `hypo -kozenyCarman` |
 
 Normalization is Vesic **with** the surcharge term,
 `q_ult = q0·Nq·sq + 0.5·γ'·B·Nγ·sγ` = 637.5 kPa (430.4 + 207.1).
@@ -29,13 +29,28 @@ Normalization is Vesic **with** the surcharge term,
 ## Scoping findings
 
 Findings 1–4 were measured on the original uniform-box scaffold (2026-07-28);
-findings 5–7 were measured while bringing the graded mesh up.
+findings 5–7 were measured while bringing the graded mesh up; finding 8 came
+from the deep-push run (2026-07-29); finding 9 from scoping the undrained
+locking pair (2026-07-30).
 
 1. **Displacement control is mandatory** (from ADR-79 P3): a force-controlled
    push on stage-1 PDMY diverges from the first increment — near-surface GPs at
    ~zero confinement make the tangent nearly singular and the first Newton
-   iterate unbounded. `-geom linear` grinds without converging on this problem
-   class and is excluded from the ladder.
+   iterate unbounded.
+
+   *Amended 2026-07-29 — the `-geom linear` half of this finding was too
+   strong.* The original wording ("grinds without converging, excluded from the
+   ladder") was measured with the pre-adaptive machinery: 2.5 mm increments
+   driven by plain Newton, which we now know fails for **every** geometry
+   method (finding 6). Re-run with the adaptive increment + KrylovNewton,
+   `linear` converges perfectly well and is in fact the *best*-conditioned leg
+   (0.15 retries/step vs 0.16 for hypo) — it is a usable base rung and the
+   ladder is now measured against it. But the original verb was still the right
+   one: it does eventually **grind**, just much later. The adaptive stepper
+   moved the wall from push step 1 to s/B = 0.0469, where it dies by genuine
+   DIVERGENCE (‖Δu‖ ~3e-2, residual 200–320) rather than the tolerance
+   near-miss that ends `corot`. So: `linear` is admitted to the ladder as the
+   base rung, with a hard ceiling at s/B ≈ 0.047.
 2. **Surface-surcharge regularization is mandatory**, and it must cover the
    footing patch too. Without it the free lateral DOFs of zero-confinement
    surface nodes are near-singular under stage-1 PDMY. Re-measured on the
@@ -77,7 +92,18 @@ findings 5–7 were measured while bringing the graded mesh up.
    `dt`) with an **adaptive** increment — halve on failure, double after 5 good
    steps, truncate honestly at a floor. KrylovNewton is the *primary*
    algorithm, not a fallback; plain Newton diverged at every increment tested.
-8. **An undrained leg still needs a DRAINED initial state, and undrained-ness
+8. **How deep a rung can be pushed is itself an ordered result.** Each rung
+   dies at a different penetration, in ladder order:
+   `linear` 0.047 (divergence) < `corot` 0.060 (convergence floor) <
+   `hypo` 0.076+ (still stepping). Richer kinematics stay solvable longer on a
+   mesh whose near-footing elements are being crushed — an argument for the
+   rate-form UL lane that is independent of the backbone values themselves.
+   Note `linear` does not taper into its wall: its last successful step was at
+   the full 0.4 mm cap, and it then failed to complete the halving ladder in
+   75 min because each diverged attempt costs ~10 min in PDMY's *serial*
+   return mapping (~1 core busy vs ~5.3 for a healthy leg — a useful tell that
+   a leg is diverging rather than merely slow).
+9. **An undrained leg still needs a DRAINED initial state, and undrained-ness
    costs two knobs, not one.** Measured while scoping the `*_und` pair.
    *(a) Both knobs are required.* Undrained-ness is `T_v = c_v·t/B²`,
    `c_v = k·M/γ_w ≈ 2.28e4·k`. The drained legs sit at `T_v ≈ 8.5e4`, and
@@ -115,7 +141,8 @@ findings 5–7 were measured while bringing the graded mesh up.
 - `bearing_backbone.py` — the runner (staging idiom, surcharge, displacement
   control, adaptive increment, truncation-honest summary, incremental CSV).
   Run it with the **base Python 3.12** (finding 5).
-- `backbone_<leg>.csv` — raw backbones, written incrementally. A run capped
+- `backbone_<leg>.csv` — raw backbones (`linear` / `corot` / `hypo` /
+  `hypo_kc`, plus the locking legs below), written incrementally. A run capped
   with `ADR79_MAXSTEP` is a smoke and writes `backbone_<leg>__smoke.csv`
   instead, and any leg refuses to open a CSV another process touched in the
   last 180 s (`ADR79_FORCE=1` overrides). Both guards exist because a smoke of
@@ -127,7 +154,7 @@ findings 5–7 were measured while bringing the graded mesh up.
 
 ### Leg groups
 
-- `all` = the geometry ladder (`corot`, `hypo`, `hypo_kc`) — reproduces §8.
+- `all` = the geometry ladder (`linear`, `corot`, `hypo`, `hypo_kc`).
 - `pair` = `corot_std` + `corot_bbar`, the LOCKING probe. Every ladder leg runs
   `-formulation std`, so the ladder's corot→hypo deltas are the geometric
   content of a volumetrically locked mesh. `-geom hypo` refuses bbar
@@ -136,11 +163,11 @@ findings 5–7 were measured while bringing the graded mesh up.
   `corot_std` re-runs the `std` baseline on whatever build is in `dist/bin`, so
   the ratio is engine-matched rather than mixing formulation with engine — and
   it leaves the committed `backbone_corot.csv` intact.
-- `pair_und` = the same two legs undrained (finding 8), where bbar's
+- `pair_und` = the same two legs undrained (finding 9), where bbar's
   near-incompressibility lever is expected to be largest.
 
 ```bash
-# mesh (apeGmsh env), then the three legs (clean interpreter)
+# mesh (apeGmsh env), then the four legs (clean interpreter)
 C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_files/testbed/hypo_bearing/build_mesh.py
 ```
 

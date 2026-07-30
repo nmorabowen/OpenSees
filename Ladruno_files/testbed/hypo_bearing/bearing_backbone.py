@@ -120,7 +120,7 @@ SQ = 1.0 + math.tan(PHI)                            # square shape factor (Nq)
 Q_VESIC = Q_SURCH * NQ * SQ + 0.5 * GAMMA_B * B_FOOT * NGAMMA * SGAMMA
 A_FOOT = B_FOOT * B_FOOT
 
-# leg -> (geom, kozenyCarman, formulation). `corot_bbar` is the LOCKING leg:
+# leg -> config dict. `corot_bbar` is the LOCKING leg:
 # every rung above runs `-formulation std`, so the whole geometry ladder was
 # measured on a volumetrically LOCKED discretisation and the reported
 # corot->hypo deltas are the geometric content of a locked mesh. `-geom hypo`
@@ -145,7 +145,16 @@ def _leg(geom, kc=False, form="std", perm=PERM, tscale=1.0, grav_dt=500.0):
 GRAV_DT_UND = 5.0e4
 
 
-LEGS = {"corot": _leg("corot"), "hypo": _leg("hypo"),
+# `linear` is the BASE rung: no geometric nonlinearity at all, so the ladder's
+# total content is measured against it. It was excluded by the original scoping
+# (findings 1-2: "grinds without converging") — but that was measured with the
+# PRE-ADAPTIVE machinery, 2.5 mm increments driven by plain Newton, and we now
+# know 2.5 mm fails for every method including linear and that Newton diverges
+# here regardless. The exclusion was plausibly an artifact of the stepper, so
+# it is retested with the adaptive increment + KrylovNewton. If it truncates
+# early, that is reported as its result rather than as a reason to drop it.
+LEGS = {"linear": _leg("linear"),
+        "corot": _leg("corot"), "hypo": _leg("hypo"),
         "hypo_kc": _leg("hypo", kc=True),
         "corot_std": _leg("corot"),
         "corot_bbar": _leg("corot", form="bbar"),
@@ -153,7 +162,7 @@ LEGS = {"corot": _leg("corot"), "hypo": _leg("hypo"),
                               grav_dt=GRAV_DT_UND),
         "corot_bbar_und": _leg("corot", form="bbar", perm=PERM_UND,
                                tscale=TSCALE_UND, grav_dt=GRAV_DT_UND)}
-LADDER = ["corot", "hypo", "hypo_kc"]
+LADDER = ["linear", "corot", "hypo", "hypo_kc"]
 # `corot_std` is `corot` re-run on WHATEVER build is in dist/bin right now, so
 # the locking ratio is engine-matched. It exists because the committed
 # backbone_corot.csv came from a different build than a fresh worktree carries,
