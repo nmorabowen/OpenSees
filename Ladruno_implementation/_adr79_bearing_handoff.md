@@ -69,10 +69,14 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    viscoplastic regularization (or run it explicit-dynamic), not just refine.
    Everything quantitative in §9 rests on this gap. `-geom hypo` still refuses
    `-formulation bbar` (ADR 79 P2 reserved); `corot` composes with `bbar` today.
-4. **The domain question at collapse.** `build_mesh_big.py` (14.5 B clearance,
-   10 B depth, 8064 hexes) agrees with the campaign mesh to 3 % out to
-   s = 16 mm but has not reached the plateau — it is ~3× the cost per step and
-   needs a long uncontended run.
+4. **The domain question at collapse — now known to be live.** At the full
+   s/B = 0.15 the fully-mobilised zone **reaches the roller sides** (16 of the
+   352 elements in the outermost column at m > 0.99; the base stays clear).
+   `build_mesh_big.py` (14.5 B clearance, 10 B depth, 8064 hexes) agrees with
+   the campaign mesh to 3 % out to s = 16 mm but has not reached the plateau —
+   it is ~3× the cost per step and needs a long uncontended run. The sign is
+   known (confinement inflates capacity), so finishing it can only widen the
+   gap to PDMY's 3384 kPa.
 5. **The interface**, once the contact `ndf == 3` guard is relaxed. Still the
    last untested kinematic candidate, and this benchmark cannot speak to it
    (smooth driven node patch, so an interface is absent by construction).

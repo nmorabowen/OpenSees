@@ -162,7 +162,7 @@ Two things that check is worth keeping:
 | leg | flow | form | s_end/B | q_max | q(s/B=10 %) | dq/ds end | /initial | verdict |
 |---|---|---|---|---|---|---|---|---|
 | `nonassoc` | ψ = 0 | bbar | 0.1041 | 1144.7 | **1140.1** | 553 | 0.010 | collapse |
-| `nonassoc_sy2` (σ_y = 2.0) | ψ = 0 | bbar | 0.1255 | 1257.5 | 1230.7 | 470 | 0.008 | collapse |
+| `nonassoc_sy2` (σ_y = 2.0) | ψ = 0 | bbar | **0.1500** | 1275.6 | 1230.7 | 350 | 0.008 | collapse, full target |
 | `assoc` | ψ = φ | bbar | 0.0120 | 1989.1 | — | 69 430 | 0.591 | no limit point |
 | `assoc` (pre-ladder run, kept) | ψ = φ | bbar | 0.0244 | 3425.4 | — | ~70 000 | ~0.5 | no limit point |
 | `nonassoc_std` | ψ = 0 | std | 0.0031 | 437.6 | — | — | — | cannot be pushed |
@@ -209,11 +209,26 @@ Note this *inverts* `RESULTS.md` §"locking legs" item 3: there `bbar` cost reac
 against `std` on a hardening PDMY model; on a perfectly plastic cone `std` is
 the formulation that cannot get anywhere.
 
-**The domain is not binding over the span measured.** 14.5 B vs 4.5 B clearance
-(identical near-field, `build_mesh_big.py`) gives big/small = 0.966 → 0.970
-across s = 2 → 16 mm. The large-domain leg has *not* reached the plateau, so
-this does not close the boundary question at collapse; it does show the
-boundary is worth ~3 % where both legs have data.
+**The domain IS engaged at collapse.** `nonassoc_sy2` ran to the full
+s/B = 0.15 and its fully-mobilised zone (m > 0.99, 880 of 2816 elements)
+**reaches the roller sides** — 16 of the 352 elements in the outermost column
+are at yield. The base is clear (0 of 256 in the deepest row), so the mechanism
+is spreading laterally, not downward.
+
+> This corrects the runner's own first verdict, which said "contained". The
+> test was a fraction of the domain extent (centroid within 90 % of 10 m), and
+> the mesh is *graded* — its outermost hex is 3.1 m wide with its centroid at
+> |x| = 8.45 m, i.e. touching the roller while passing a "< 9 m" test. The
+> check is now element-column membership, in both `dp_collapse.py` and
+> `dp_analyze.py`.
+
+Over the span where both domain legs have data (s = 2 → 16 mm) 14.5 B vs 4.5 B
+clearance gives big/small = 0.966 → 0.970, and the ratio is drifting *down*.
+The large-domain leg has not reached the plateau. So the quoted collapse load
+is boundary-influenced, and the sign is known: a confining boundary raises
+capacity, so **1140 kPa is more likely an over-estimate than an under-estimate**
+— which strengthens rather than weakens the verdict, since the anomaly is that
+PDMY delivered *more*.
 
 ## Results — plane strain, and the failed refinement study
 
@@ -275,8 +290,10 @@ headline: the exact-oracle control shows 4 elements across B is enough at
 - **Not a sharp limit point.** The tangent decays as a power law; the quoted
   number depends on the s/B = 10 % criterion, and the extrapolated bracket
   (1406 kPa) is 23 % higher.
-- **The boundary question is open at collapse.** The domain control agrees to
-  3 % but stops at s = 16 mm, a tenth of the way to the plateau.
+- **The plastic zone reaches the lateral boundary at collapse.** The domain
+  control agrees to 3 % but stops at s = 16 mm, a tenth of the way to the
+  plateau, so the size of the boundary contribution is not measured — only its
+  sign, which inflates the quoted number.
 - **The associated square leg has no collapse load at all** — it was still
   hardening at 69 430 kPa/m when stopped. The flow-rule bracket is therefore
   one-sided: the non-associated number is measured, the associated one is not.

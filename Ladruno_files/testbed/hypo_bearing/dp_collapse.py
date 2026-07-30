@@ -453,14 +453,23 @@ def dump_field(name, cfg, nodes, hexes, nrow, ext):
         c = cen[yielded]
         rx, ry, rz = (np.abs(c[:, 0]).max(), np.abs(c[:, 1]).max(),
                       c[:, 2].min())
-        # "reaches the boundary" = a fully-mobilised element centroid within one
-        # far-field element of the roller face or the fixed base.
-        near = (rx > 0.9 * ext["x"] or ry > 0.9 * ext["y"]
-                or rz < 0.9 * ext["zbot"])
+        # "Reaches the boundary" must be tested by ELEMENT COLUMN membership,
+        # not by a fraction of the domain extent. This mesh is graded: the
+        # outermost hex is 3.1 m wide, so its centroid sits at |x| = 8.45 in a
+        # 10 m half-domain — a "within 90 % of the extent" test calls that
+        # contained when the element is in fact touching the roller. (Measured:
+        # nonassoc_sy2 reported "contained" while 16 elements of the
+        # boundary-adjacent column were at m > 0.99.)
+        cols = np.unique(np.round(np.abs(cen[:, 0]), 4))
+        rows = np.unique(np.round(cen[:, 2], 4))
+        touch_x = np.isclose(np.round(rx, 4), cols.max())
+        touch_z = np.isclose(np.round(rz, 4), rows.min())
         log(name, f"  yielded zone reaches |x|<={rx:.2f} m, |y|<={ry:.2f} m, "
             f"z>={rz:.2f} m (domain {ext['x']:.0f}, {ext['y']:.0f}, "
-            f"{ext['zbot']:.0f}) — "
-            f"{'TOUCHES THE BOUNDARY (collapse load is the box)' if near else 'contained'}")
+            f"{ext['zbot']:.0f}; outermost element centroid {cols.max():.2f}, "
+            f"deepest {rows.min():.2f}) — "
+            + ("TOUCHES THE SIDE BOUNDARY" if touch_x else "clear of the sides")
+            + ("; TOUCHES THE BASE" if touch_z else "; clear of the base"))
 
 
 def verdict(name, rows, truncated_at, cfg):

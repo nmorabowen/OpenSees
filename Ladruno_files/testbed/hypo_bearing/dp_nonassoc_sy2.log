@@ -1387,3 +1387,36 @@ after: 25 iterations  current Norm: 25220.6 (max: 0.35392, Norm deltaX: 1.25897)
 AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
 StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.980333
 OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 84754.8 (max: 0.35392, Norm deltaX: 1.07413)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.987
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 281.188 (max: 0.35392, Norm deltaX: 0.0108415)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.987667
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 6195.92 (max: 0.35392, Norm deltaX: 0.171149)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.991
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 3511.64 (max: 0.35392, Norm deltaX: 0.124385)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.994333
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.29941e+06 (max: 0.35392, Norm deltaX: 10.2497)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.997667
+OpenSees > analyze failed, returned: -3 error flag
+[15:03:59] nonassoc_sy2 s/B=0.1497 q=1275.2 kPa ds=0.100 mm [2150 steps, 273 retries, 14136s]
+[15:04:12] nonassoc_sy2 mobilisation: 880 / 2816 elements at m > 0.99 (31.2 %)
+[15:04:12] nonassoc_sy2   yielded zone reaches |x|<=8.45 m, |y|<=8.45 m, z>=-5.71 m (domain: 10, 10, -8) — contained
+[15:04:12] nonassoc_sy2 q_max = 1275.6 kPa at s/B = 0.1499; q_end = 1275.4 kPa at s/B = 0.1500
+[15:04:12] nonassoc_sy2 tail tangent dq/ds = 349.8 kPa/m (0.84 % of initial 41767) => PLATEAU (collapse reached)
+[15:04:12] nonassoc_sy2 vs Vesic(phi_ps=53.72) = 26711 kPa  -> numeric/Vesic_ps = 0.048
+[15:04:12] nonassoc_sy2 vs Vesic(phi_txc=31.51) = 518 kPa  -> numeric/Vesic_txc = 2.461
+[15:04:12] nonassoc_sy2 leg done: 2154 steps, 273 retries, 14151s -> dpcollapse_nonassoc_sy2.csv

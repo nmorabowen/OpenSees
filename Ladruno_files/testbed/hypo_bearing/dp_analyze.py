@@ -274,7 +274,9 @@ def main():
               f"{r['t_last']:8.0f} kPa/m  ({ratio:.3f} of the earlier window), "
               f"{'COLLAPSE' if abs(r['t_last']) < 0.02 * abs(r['t_init']) else 'still hardening'}")
 
-    print("\nyielded-zone extent at the end of each leg:")
+    print("\nyielded-zone extent at the end of each leg (m > 0.99). 'boundary'"
+          " is tested by ELEMENT COLUMN, not by a fraction of the domain — the"
+          " mesh is graded and its outermost hex is 3.1 m wide:")
     for r in sorted(res, key=lambda r: r["name"]):
         f = field(r["name"])
         if f is None:
@@ -285,9 +287,16 @@ def main():
             print(f"  {r['name']:>16}: nothing at m > 0.99")
             continue
         c = cen[y]
+        cols = np.unique(np.round(np.abs(cen[:, 0]), 4))
+        rows = np.unique(np.round(cen[:, 2], 4))
+        outer = np.isclose(np.abs(np.round(cen[:, 0], 4)), cols.max())
+        base = np.isclose(np.round(cen[:, 2], 4), rows.min())
         print(f"  {r['name']:>16}: {y.sum():4d}/{len(mob)} elements "
               f"({100 * y.mean():4.1f} %), |x| <= {np.abs(c[:, 0]).max():5.2f} m, "
-              f"z >= {c[:, 2].min():6.2f} m")
+              f"z >= {c[:, 2].min():6.2f} m  |  outermost column "
+              f"{(y & outer).sum():3d}/{outer.sum():3d} yielded, base row "
+              f"{(y & base).sum():3d}/{base.sum():3d}"
+              + ("  <-- REACHES THE SIDE" if (y & outer).any() else ""))
 
     # --- the regularizer's price -----------------------------------------
     # sigma_y is a numerical apex offset, not a soil property, so the collapse

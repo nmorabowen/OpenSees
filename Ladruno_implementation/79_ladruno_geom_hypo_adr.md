@@ -594,9 +594,17 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
   cannot be pushed at all (walls out at s/B = 0.0031 even with an algorithm
   ladder), where on hardening PDMY it was `bbar` that cost reach. Over the
   shared span std/bbar runs 1.063 → 1.150 across s = 1 → 6 mm, still growing.
-- **The boundary question is open at collapse.** A 14.5 B-clearance control
-  mesh (`build_mesh_big.py`, 8064 hexes) agrees with the 4.5 B campaign mesh to
-  3 % out to s = 16 mm, but has not reached the plateau.
+- **The plastic zone REACHES the lateral boundary at collapse.** At the full
+  s/B = 0.15 the fully-mobilised zone (880 of 2816 elements) puts 16 of the 352
+  elements in the outermost column at yield; the base stays clear. A
+  14.5 B-clearance control mesh (`build_mesh_big.py`, 8064 hexes) agrees with
+  the campaign mesh to 3 % out to s = 16 mm but has not reached the plateau, so
+  the size of the boundary contribution is unmeasured — only its sign, which
+  *inflates* the quoted collapse load and therefore widens the gap to PDMY's
+  3384 kPa rather than closing it. (The runner's first verdict said
+  "contained"; that test compared the centroid to 90 % of the domain extent,
+  and on a graded mesh the outermost hex is 3.1 m wide with its centroid at
+  8.45 m of 10. Now tested by element-column membership.)
 
 ---
 
