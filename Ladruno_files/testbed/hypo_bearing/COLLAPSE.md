@@ -227,9 +227,11 @@ is spreading laterally, not downward.
 > check is now element-column membership, in both `dp_collapse.py` and
 > `dp_analyze.py`.
 
-Over the span where both domain legs have data (s = 2 → 16 mm) 14.5 B vs 4.5 B
-clearance gives big/small = 0.966 → 0.970, and the ratio is drifting *down*.
-The large-domain leg has not reached the plateau. So the quoted collapse load
+Over the span where both domain legs have data, 14.5 B vs 4.5 B clearance
+gives big/small = 0.974 (s = 5 mm) → 0.964 (s = 57 mm, s/B = 2.9 %), drifting
+*down* but slowly — about 1 point per 50 mm. The large-domain leg has not
+reached the plateau, so the boundary contribution at collapse is not
+measured, but the trend puts it at a few percent rather than a factor. So the quoted collapse load
 is boundary-influenced, and the sign is known: a confining boundary raises
 capacity, so **1140 kPa is more likely an over-estimate than an under-estimate**
 — which strengthens rather than weakens the verdict, since the anomaly is that
@@ -267,9 +269,27 @@ Read this carefully:
   | 0.250 | 8 | 782 | 0.0030 | 140.8 | 35.2 % |
   | 0.125 | 16 | 1702 | 0.0014 | 88.2 | 62.6 % |
 
+  and the same series with self-weight on (`full_nonassoc`, γ' and q₀ both
+  active), which is an INDEPENDENT family:
+
+  | h₀ | el/B | s_end/B | q_num | tail dq/ds, % of initial |
+  |---|---|---|---|---|
+  | 0.500 | 4 | 0.0520 | 1678.1 | 19.1 % |
+  | 0.250 | 8 | 0.0198 | 832.0 | 26.3 % |
+  | 0.125 | 16 | 0.0060 | 364.7 | 68.9 % |
+
   Each halving of h₀ terminates the run **2–4× earlier in settlement**, and the
-  tangent at termination *rises* — 26 % → 35 % → 63 % of initial. This is not a
-  sequence converging to a collapse load; it is a monotone loss of reach.
+  tangent at termination *rises* — 26 → 35 → 63 % in the first family, 19 → 26
+  → 69 % in the second. This is not a sequence converging to a collapse load;
+  it is a monotone loss of reach, and two independent load cases show it
+  identically.
+
+  **The control does the opposite, and that is the clincher.** The mild cone
+  (φ_ps = 27.47°) plateaus at BOTH resolutions — 1.0020 of the exact answer at
+  4 elements across B, 0.9514 at 8 — with dq/ds of 0 and 3 kPa/m. So
+  refinement is not the problem, and the solver is not the problem: the same
+  machinery is mesh-convergent where non-associativity is mild and loses
+  reach monotonically where it is severe.
 
   The standard reading fits it. A **perfectly plastic, non-associated**
   frictional solid sits past the Rudnicki–Rice localization threshold: for

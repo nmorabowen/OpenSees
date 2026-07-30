@@ -573,10 +573,15 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
 ### Limits of this result
 
 - **No refined collapse load, and the way refinement fails is diagnostic.** The
-  non-associated Prandtl series at the real cone terminates *earlier* at every
-  refinement — s/B = 0.0124 / 0.0030 / 0.0014 at 4 / 8 / 16 elements across B,
-  with the tangent at termination *rising* 26 % → 35 % → 63 % of initial. That
-  is not a sequence converging on a collapse load. A perfectly plastic
+  non-associated series at the real cone terminates *earlier* at every
+  refinement, in BOTH load cases independently — weightless Prandtl at
+  s/B = 0.0124 / 0.0030 / 0.0014 with the termination tangent rising
+  26 → 35 → 63 % of initial, and full (γ' + q₀) at s/B = 0.0520 / 0.0198 /
+  0.0060 rising 19 → 26 → 69 %, at 4 / 8 / 16 elements across B. That
+  is not a sequence converging on a collapse load. The CONTROL does the
+  opposite — the mild cone plateaus at both 4 and 8 elements across B (1.0020
+  and 0.9514 of the exact answer), so neither refinement nor the solver is the
+  problem. A perfectly plastic
   **non-associated** frictional solid is past the Rudnicki–Rice localization
   threshold (the critical hardening modulus for banding is positive under
   non-associated flow), so the continuum problem has lost ellipticity, band
