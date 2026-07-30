@@ -1,0 +1,568 @@
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: 53c50ebac3db0ce987594995ff565735f82fc1e7
+      Ladruno fork — active features:
+        • OpenSeesPyMP — import openseesmp (MPI-parallel Python)
+        • EnergyBalance recorder (per-region sidecar; -v2 channels: E_inject, E_lnvd, E_modal, E_hg, KE_ms; -ownedNodes MPI gate + per-rank files)
+        • ExplicitBathe — Noh–Bathe explicit (-lnvd FLAC damping, -sms [-consistent] mass scaling)
+        • CentralDifferenceLadruno — robust explicit central difference
+        • CentralDifferenceSMS — selective mass scaling (DT2MS-style, explicit)
+        • CentralDifferenceSMSConsistent — consistent (Olovsson) mass scaling (explicit)
+        • HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        • Queryable critical time step (dt_cr)
+        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
+        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)
+        • LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)
+        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt + uri 2x2x2 Barlow + HRZ -lumped, reduce-to 20NodeBrick)
+        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std)
+        • LadrunoQuad/LadrunoCST/LadrunoLST/LadrunoCSTPair — 2D continuum (Quad std/bbar/ssp/eas; CST + LST-T6 std; -geom finite via shared 2D F-kernel; CSTPair = 2-tri F-bar-Patch macro dSNPO 15.1.9)
+        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)
+        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2
+        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)
+        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss
+        • StagedDefGrad/InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)
+        • StagedStrain — small-strain (2D+3D) stress-free staged activation (ε_rel=ε−ε0)
+        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
+        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
+        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)
+        • LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage view (-geom finite)
+        • LadrunoConcrete3D — CDPM2-grade solid concrete (Menétrey-Willam + dual damage; 3D/plane/axisym/shell)
+        • LadrunoBondSlip — 1D bond-slip τ–s (CEB-FIP MC2010)
+        • LadrunoCohesiveHinge — discrete cohesive moment–rotation hinge (Gf per hinge, ∫M dθ=Gf)
+        • LadrunoCohesiveHingeBiaxial — coupled Mz–My cohesive interaction-surface hinge (elliptical onset, per-axis Gf)
+        • LadrunoEmbeddedRebar — rebar in non-matching mesh (bond/penalty/AL)
+        • LadrunoEmbeddedNode — stress-free node-to-host embed tie (penalty/AL, implicit+explicit)
+        • LadrunoDistributingCoupling — RBE3 distributing coupling (ndf-mismatch moment transfer)
+        • LadrunoKinematicCoupling — RBE2 rigid kinematic coupling (selectable -dof, transport)
+        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
+        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
+        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)
+        • LadrunoHHT — sensitivity/DDM HHT (reliability/fragility/FORM on damped α)
+        • LadrunoGeneralizedAlpha — sensitivity/DDM Chung-Hulbert generalized-α (DDM)
+        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
+        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)
+        • LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar, -dual sparse biorthogonal basis; solid + ndf-6 shell rotational DOFs, -hermite rotation-consistent w–θ edge transfer, -shellSolid plane-section shell-edge↔solid-face tie; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)
+        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership)
+        • stressesPlaneStrain — exact out-of-plane σ_zz element response (plane strain)
+        • Ladruno — modular HDF5 .ladruno recorder
+        • LadrunoMonitor — live SWMR-HDF5 analysis monitor (recorder Monitor; -every/-hz gated streaming)
+        • LadrunoRigidBody — 6-DOF rigid body (condensed mass + side-channel SO(3); finite-rotation slaving + moment gather; rocking-foundation MVP)
+        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)
+        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)
+        • FeastEigen — band-targeted eigensolver: eigen -feast fmin fmax (ALL modes in the band, MKL contour integration; -certify = Sturm/inertia completeness; -rci = dfeast_srci RCI, distributed dmumps inner solve under openseesmp)
+        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel or -load nodal-force pattern w/ -series; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)
+        • modal combination — responseSpectrumAnalysis -combine SRSS|CQC|ABS|TenPercent (native CQC/SRSS/ABS/Ten-Percent of the per-mode response-spectrum fields; -damp/-modalDamp for CQC zeta)
+        • modal frequency domain — frequencyResponse / steadyStateDynamics / randomResponse: modal FRF H_a(Om) sweep, steady-state harmonic amplitude + stationary random response PSD->RMS (one-sided Hz input PSD; RMS/nu0/Davenport peak -stats; base-accel or -load nodal-force pattern; lin/log/resonance-biased grid; disp/vel/accel)
+        • LadrunoUP — unified Biot u-p saturated-porous element (33017): honest pore-pressure DOF (p IS p — statics well-posed: drained + steady seepage), T3/Q4/H8 equal-order + McGann auto-stab, Bezier T6/Tet10 Taylor-Hood vertex-p (heterogeneous ndf), -formulation bbar, -dynSeepage; needs a general solver (unsymmetric tangent)
+        • LadrunoPorousOverlay — persistent-fluid staggered u-p overlay (pattern LadrunoPorousOverlay 33022): pore-pressure field OUTSIDE the DOF graph over any T3/Q4/H8 solid region (zero element changes, symmetric solvers legal again); fixed-stress RATE-form fs1 (default L=classic alpha^2/K_dr, -fsL oedometric opt-in), fluid survives remove element (-onRemoval keep|drain), -subcycle auto, -staticMode hold|steady; LadrunoStaggeredAnalyze iterated fixed-stress driver (-tol/-maxIter/-pScale/-verbose/-stats) + parameter-route moduli/stage transport (parameter ... loadPattern E|nu|layerE|layerNu); explicit lane -fsL zero (L=0 under CD at dt<=0.5x the undrained pencil) + overlay-aware criticalTimeStep (undrained Qe*Se^-1*Qe^T pencil); p-field recorder channels (recorder ladruno -overlay / Monitor -overlay + MODEL/OVERLAYS topology rows); -fluidUpdate explicit fully matrix-free lane (lumped-S* forward fluid step at load-application time, dual-CFL advisory with diffusion-slack report) + SMS undrained-pencil composability (lumped CentralDifferenceSMS certified; consistent Olovsson priced-but-warned)
+        • system Pardiso — threaded MKL PARDISO desktop sparse-direct solver (symbolic/numeric/solve split for factorization reuse; -matrixType 1|2 symmetric upper-triangle half-storage = 1.35x faster + 42% less peak memory, exact; -krylov L factorization-preconditioned CGS reuses the L/U across a CHANGED tangent = 1.51x under full Newton at 51k DOF, 1.57x stacked with -matrixType 1, SPD/unsym only; -stats peak-memory counters; Tcl + Python)
+        • system Mumps — distributed MUMPS cluster sparse-direct solver (Ladruno additions: -BLR <eps> Block Low-Rank approximate factorization ICNTL(35)+CNTL(7), APPROXIMATE so keep it OFF on oracle paths; -stats dumps INFOG/RINFOG incl. INFOG(21) peak MB/proc; -ICNTL35/-CNTL7 expert overrides; -matrixType 0|1|2 symmetric half-storage — all of these Tcl + Python since ADR-75 P2h, which fixed a Tcl ladder that DROPPED them silently; -commSplit sub-communicator groups is Python/openseesmp ONLY)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+
+ \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557  \u2588\u2588\u2557
+\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d \u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2551  \u2588\u2588\u2551
+\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551  \u2588\u2588\u2588\u2557\u2588\u2588\u2554\u2588\u2588\u2588\u2588\u2554\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551
+\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u255d \u2588\u2588\u2554\u2550\u2550\u255d  \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2554\u255d\u2588\u2588\u2551\u255a\u2550\u2550\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551
+\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551     \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551 \u255a\u2550\u255d \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551
+\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d     \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d     \u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d
+\u2588\u2588\u2557      \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557   \u2588\u2588\u2557\u2588\u2588\u2588\u2557   \u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557
+\u2588\u2588\u2551     \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557
+\u2588\u2588\u2551     \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2588\u2588\u2557 \u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551
+\u2588\u2588\u2551     \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551
+\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551  \u2588\u2588\u2551\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2551\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d
+\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d
+  apeGmsh v2.0.0
+
+loading bearing_view.ladruno (23.7 MB) ...
+model: MeshInfo(n_nodes=3468, n_elems=2816, bandwidth=0, types=['ladrunoup'])
+
+Benchmark: B = 2 m square smooth footing, 20 x 20 x 8 m graded domain,
+2816 LadrunoUP H8, saturated PDMY (phi = 33 deg nominal), -geom hypo,
+drained displacement-controlled push to s/B = 3 % (q = 1337 kPa).
+
+Fields recorded: nodal displacement; per-Gauss-point EFFECTIVE stress
+and porePressure. 24 frames.
+
+Note for reading the stress fields: the material's failure surface is a
+Drucker-Prager CONE and it mobilises sin(phi) = 0.770 at failure, not
+sin(33 deg) = 0.545 -- see vault note 17. Peak mobilisation anywhere in
+this run is ~0.69, i.e. ~89 % of strength, and NO element is within 5 %
+of failure.
+
+opening the desktop viewer (close the window to exit) ...
+[viewer] session.start  apeGmsh=2.0.0 log=C:\Users\nmb\.apegmsh\viewer-logs\session-20260730-014146.log
+[viewer] session.open  file='C:\\Users\\nmb\\Documents\\Github\\OpenSees-hypo\\Ladruno_files\\testbed\\hypo_bearing\\bearing_view.ladruno'
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=2.36
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=14.99
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=12.3
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=27.9
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=35.49
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=22.94
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=6.62
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=6.77
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=6.78
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=6.89
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=7.46
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=13.37
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=2.46
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.59
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=13.83
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=16.3
+[viewer] ui.settings.add_layer  kind='contour' component='displacement_z' layer=ContourDiagram#1302c981970
+[viewer] dispatch.diagram_attached  layer='ContourDiagram#1302c981970' duration_ms=33.17
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.59
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.37
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.88
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.89
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.39
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.14
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.4
+[viewer] ui.outline.geometry_selected  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] ui.geometry.deform_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' enabled=True field='displacement'
+[viewer] dispatch.geometry_deform_changed  layer='<none>' duration_ms=18.5
+[viewer] ui.geometry.deform_scale_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' scale=10.0
+[viewer] dispatch.geometry_deform_changed  layer='<none>' duration_ms=4.27
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.44
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.28
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.29
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.28
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.01
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.83
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.57
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.0
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.52
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.01
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.5
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.73
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.03
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.38
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.18
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.46
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.47
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.79
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.51
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.48
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.88
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.94
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.48
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.58
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.65
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.89
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.46
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.42
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.56
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.67
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.98
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.33
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.7
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.83
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.9
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.97
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.5
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.61
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.31
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.4
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.27
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.52
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.64
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.92
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.65
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.35
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.05
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.3
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.79
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.09
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.18
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.58
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.86
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.38
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.89
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.81
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.07
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.03
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.45
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.28
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.57
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.94
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.84
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.73
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.72
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.53
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.92
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.81
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.04
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.91
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.07
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.56
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.73
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.34
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.84
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.75
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.0
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.63
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=11.97
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=11.74
+[viewer] ui.outline.layer_selected  layer='ContourDiagram'
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.65
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.62
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.5
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.37
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.94
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.91
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.33
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.63
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.57
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=5.45
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.66
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.71
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.55
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.46
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.75
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.57
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.57
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.53
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.6
+[viewer] DiagramSettingsTab._on_creation_apply raised NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+Traceback (most recent call last):
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\ui\_diagram_settings_tab.py", line 957, in _on_creation_apply
+    self._director.registry.add(diagram)
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_registry.py", line 278, in add
+    diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 110, in attach
+    rows, node_ids, axis = self._resolve_path(scene)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 328, in _resolve_path
+    raise NoDataError(
+apeGmsh.viewers.diagrams._base.NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+[viewer] error.DiagramSettingsTab._on_creation_apply  exc=NoDataError(NoDataError("IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering."))
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=2.5
+[viewer] ui.settings.delete_layer  layer=ContourDiagram#1302c981970
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=2.17
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=13.95
+[viewer] dispatch.diagram_detached  layer='<none>' duration_ms=33.2
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.08
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.49
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.46
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.32
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.98
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.81
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=3.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.13
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.22
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=4.47
+[viewer] ui.outline.geometry_selected  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.73
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.98
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.71
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.16
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.7
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.96
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.69
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.04
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.68
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.91
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.67
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.32
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.66
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.76
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.65
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.91
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.64
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.0
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.63
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=3.9
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.62
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.43
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.61
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=6.38
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.6
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.39
+[viewer] ui.geometry.show_nodes_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=False
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.16
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=False
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=4.11
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=True
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=2.92
+[viewer] pick.node  world=tuple#1302c1beb80 geometry_id='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] pick.node  world=tuple#1302cc66080 geometry_id='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] ui.shortcut.escape
+[viewer] ui.outline.composition_selected  comp='99ef2290-8666-4b18-88e8-df87eb604561'
+[viewer] ui.outline.geometry_selected  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] ui.outline.composition_selected  comp='99ef2290-8666-4b18-88e8-df87eb604561'
+[viewer] DiagramSettingsTab._on_creation_apply raised NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+Traceback (most recent call last):
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\ui\_diagram_settings_tab.py", line 957, in _on_creation_apply
+    self._director.registry.add(diagram)
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_registry.py", line 278, in add
+    diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 110, in attach
+    rows, node_ids, axis = self._resolve_path(scene)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 328, in _resolve_path
+    raise NoDataError(
+apeGmsh.viewers.diagrams._base.NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+[viewer] error.DiagramSettingsTab._on_creation_apply  exc=NoDataError(NoDataError("IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering."))
+[viewer] DiagramSettingsTab._on_creation_apply raised NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+Traceback (most recent call last):
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\ui\_diagram_settings_tab.py", line 957, in _on_creation_apply
+    self._director.registry.add(diagram)
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_registry.py", line 278, in add
+    diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 110, in attach
+    rows, node_ids, axis = self._resolve_path(scene)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 328, in _resolve_path
+    raise NoDataError(
+apeGmsh.viewers.diagrams._base.NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+[viewer] error.DiagramSettingsTab._on_creation_apply  exc=NoDataError(NoDataError("IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering."))
+[viewer] ui.shortcut.escape
+[viewer] DiagramSettingsTab._on_creation_apply raised NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+Traceback (most recent call last):
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\ui\_diagram_settings_tab.py", line 957, in _on_creation_apply
+    self._director.registry.add(diagram)
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_registry.py", line 278, in add
+    diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 110, in attach
+    rows, node_ids, axis = self._resolve_path(scene)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nmb\Documents\Github\apeGmsh\src\apeGmsh\viewers\diagrams\_isochrone_profile.py", line 328, in _resolve_path
+    raise NoDataError(
+apeGmsh.viewers.diagrams._base.NoDataError: IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering.
+[viewer] error.DiagramSettingsTab._on_creation_apply  exc=NoDataError(NoDataError("IsochroneProfileDiagram: a profile needs an explicit path � select a physical group, label, or node id set. 'All nodes' has no meaningful ordering."))
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.56
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=14.04
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=16.57
+[viewer] ui.settings.add_layer  kind='sand' component='displacement_z' layer=SandDiagram#1302cc6d700
+[viewer] dispatch.diagram_attached  layer='SandDiagram#1302cc6d700' duration_ms=33.03
+[viewer] ui.settings.apply_clicked  layer=SandDiagram#1302cc6d700 n_appliers=8
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.57
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=15.81
+[viewer] dispatch.diagram_modified  layer='SandDiagram#1302cc6d700' duration_ms=16.41
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=5.15
+[viewer] ui.settings.delete_layer  layer=SandDiagram#1302cc6d700
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=8.14
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=15.42
+[viewer] dispatch.diagram_detached  layer='<none>' duration_ms=33.18
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.57
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=13.75
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=16.52
+[viewer] ui.settings.add_layer  kind='vector_glyph' component='displacement' layer=VectorGlyphDiagram#1302cc6c170
+[viewer] dispatch.diagram_attached  layer='VectorGlyphDiagram#1302cc6c170' duration_ms=116.36
+[viewer] ui.outline.geometry_selected  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49'
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=False
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=49.48
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=96.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=94.86
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=93.75
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=92.14
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=91.51
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.57
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.04
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=101.75
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=99.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=97.85
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=93.8
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.79
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=105.27
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=92.16
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=108.47
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.96
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.3
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.74
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=104.52
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=99.66
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.96
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.86
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.76
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=99.69
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.83
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=100.59
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.0
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=96.43
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=99.68
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=100.35
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.61
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=47.18
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.7
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=45.41
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.78
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=41.51
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.79
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=50.74
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.92
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=37.65
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.96
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.86
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=1.0
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.82
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.99
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=42.89
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.98
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=45.49
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.94
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.1
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.88
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.6
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.82
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.68
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.79
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=50.34
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.73
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.98
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.74
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=41.3
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.82
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=45.63
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.93
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.58
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.96
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.76
+[viewer] ui.geometry.show_nodes_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=True
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=44.83
+[viewer] ui.geometry.show_nodes_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=False
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.63
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=True
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=48.74
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=False
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=44.58
+[viewer] ui.geometry.show_mesh_toggled  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' show=True
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=48.48
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.91
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=44.99
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.9
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=43.86
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.85
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=54.39
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.81
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=57.67
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.78
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=41.62
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.77
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=50.49
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.71
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=52.77
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.68
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=41.33
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.67
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=50.38
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.61
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=52.58
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.59
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.87
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.58
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=50.56
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.5
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=53.67
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.46
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=39.94
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.42
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.87
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.41
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=49.48
+[viewer] ui.geometry.opacity_changed  geom='9adc13e3-a25c-4085-b8bf-824aad81ee49' opacity=0.36
+[viewer] dispatch.geometries_changed  layer='<none>' duration_ms=40.12
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.65
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=8.51
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=16.51
+[viewer] ui.settings.add_layer  kind='contour' component='displacement_z' layer=ContourDiagram#1302ccc8950
+[viewer] dispatch.diagram_attached  layer='ContourDiagram#1302ccc8950' duration_ms=33.06
+[viewer] ui.settings.apply_clicked  layer=ContourDiagram#1302ccc8950 n_appliers=8
+2026-07-30 01:50:06.595 ( 499.988s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:06.608 ( 500.001s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=16.62
+2026-07-30 01:50:06.635 ( 500.027s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.diagram_modified  layer='ContourDiagram#1302ccc8950' duration_ms=15.97
+[viewer] ui.settings.apply_clicked  layer=ContourDiagram#1302ccc8950 n_appliers=8
+2026-07-30 01:50:09.140 ( 502.533s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.diagram_modified  layer='ContourDiagram#1302ccc8950' duration_ms=5.51
+2026-07-30 01:50:12.268 ( 505.660s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.306 ( 505.699s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.351 ( 505.744s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=107.62
+2026-07-30 01:50:12.521 ( 505.914s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.560 ( 505.953s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.601 ( 505.994s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=105.11
+2026-07-30 01:50:12.769 ( 506.161s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.807 ( 506.200s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:12.852 ( 506.245s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=107.25
+2026-07-30 01:50:13.020 ( 506.413s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.059 ( 506.452s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.101 ( 506.494s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=106.25
+2026-07-30 01:50:13.269 ( 506.662s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.309 ( 506.702s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.351 ( 506.744s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=106.83
+2026-07-30 01:50:13.519 ( 506.912s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.558 ( 506.951s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.602 ( 506.994s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=106.36
+2026-07-30 01:50:13.766 ( 507.159s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.806 ( 507.198s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:13.852 ( 507.245s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=110.23
+2026-07-30 01:50:14.018 ( 507.411s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:14.057 ( 507.450s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:14.101 ( 507.494s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=107.17
+2026-07-30 01:50:14.269 ( 507.662s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:14.308 ( 507.700s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+2026-07-30 01:50:14.351 ( 507.744s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=107.05
+[viewer] ui.settings.apply_clicked  layer=ContourDiagram#1302ccc8950 n_appliers=8
+2026-07-30 01:50:18.013 ( 511.406s) [A68567C43533749E]     vtkLookupTable.cxx:162    ERR| vtkLookupTable (00000130BCD613D0): Bad table range: [-0.060564, -1]
+[viewer] dispatch.diagram_modified  layer='ContourDiagram#1302ccc8950' duration_ms=5.53
+[viewer] dispatch.composition_changed  layer='<none>' duration_ms=2.35
+[viewer] ui.settings.delete_layer  layer=ContourDiagram#1302ccc8950
+[viewer] dispatch.legend_changed  layer='<none>' duration_ms=12.8
+[viewer] dispatch.comp_active_changed  layer='<none>' duration_ms=10.36
+[viewer] dispatch.diagram_detached  layer='<none>' duration_ms=33.17
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=97.91
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=98.7
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=103.17
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.44
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=94.25
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=98.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=101.81
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=101.53
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=108.45
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=105.25
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.62
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.07
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=102.62
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=99.09
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=101.28
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=95.38
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=106.65
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=104.64
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=93.94
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=104.6
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=104.34
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=104.7
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=100.14
+[viewer] dispatch.step_changed  layer='<none>' duration_ms=98.8

@@ -66,12 +66,12 @@ def slab(nodes, hexes):
     return np.array(keep), quads
 
 
-def deformed_quads(nodes, hexes, keep, u):
+def deformed_quads(nodes, hexes, keep, u, mag):
     """Same slab but with nodal displacement (magnified) applied."""
     out = []
     for e in keep:
         h = [int(i) for i in hexes[e]]
-        q = nodes[h] + MAG * u[h, :3]
+        q = nodes[h] + mag * u[h, :3]
         x0, x1 = q[:, 0].min(), q[:, 0].max()
         z0, z1 = q[:, 2].min(), q[:, 2].max()
         out.append([(x0, z0), (x1, z0), (x1, z1), (x0, z1)])
@@ -91,26 +91,36 @@ def main():
     last = cps[-1]
     tag = f"{last:.4f}"
     print(f"checkpoints available: {cps}; plotting s/B = {last}")
-    u = z[f"u_{tag}"]
+    # Displacements are measured FROM THE GRAVITY STATE. nodeDisp is cumulative
+    # and the whole surface has already settled ~1.8 mm under gravity plus the
+    # surcharge, so plotting the raw field shows the datum rather than the
+    # mechanism and makes the heave measure meaningless (a first version
+    # reported "max heave -1.675 mm", which is just that settlement).
+    u = z[f"u_{tag}"] - z["u_grav"]
     sig = z[f"sig_{tag}"]
     sphi = z[f"sphi_{tag}"]
     sin_fail = float(z["sin_fail"])
     keep, quads = slab(nodes, hexes)
 
     # ---------------------------------------------------------- deformation
+    # Magnification is scaled to the settlement so the picture reads the same
+    # at every checkpoint: a fixed x8 is invisible at s/B = 0.5 % (10 mm on a
+    # 12 m view) and far too large at 10 %. Target ~0.5 m of drawn movement.
+    s_foot = abs(u[:, 2].min())
+    mag = max(1.0, min(80.0, 0.5 / max(s_foot, 1e-6)))
     fig, ax = plt.subplots(1, 2, figsize=(13.8, 4.6))
     ax[0].add_collection(PolyCollection(quads, facecolors="none",
-                                        edgecolors="#C8C8C8", linewidths=0.5))
+                                        edgecolors="#B0B0B0", linewidths=0.8))
     ax[0].add_collection(PolyCollection(
-        deformed_quads(nodes, hexes, keep, u), facecolors="none",
-        edgecolors=CB["blue"], linewidths=0.7))
-    ax[0].plot([-B / 2, B / 2], [MAG * u[:, 2].min() * 0 + 0, 0], lw=0)
-    ax[0].set_xlim(-6.5, 6.5); ax[0].set_ylim(-6.0, 1.2)
+        deformed_quads(nodes, hexes, keep, u, mag), facecolors="none",
+        edgecolors=CB["blue"], linewidths=0.9))
+    ax[0].set_xlim(-4.2, 4.2); ax[0].set_ylim(-3.6, 0.9)
     ax[0].set_aspect("equal")
     ax[0].set_xlabel("x [m]"); ax[0].set_ylabel("z [m]")
-    ax[0].set_title(f"Deformed section at $s/B$ = {last:.0%}, "
-                    f"displacement x{MAG:g}\ngrey = undeformed, "
-                    f"blue = deformed", fontsize=11)
+    ax[0].set_title(f"Near field at $s/B$ = {last:.1%} "
+                    f"(footing {s_foot * 1000:.0f} mm), displacement "
+                    f"x{mag:.0f} from the gravity state\n"
+                    f"grey = undeformed, blue = deformed", fontsize=11)
 
     top = np.abs(nodes[:, 2]) < 1e-6
     band = top & (np.abs(nodes[:, 1]) < 1e-6)
@@ -158,8 +168,11 @@ def main():
     # ------------------------------------------------------ mobilised friction
     fig, ax = plt.subplots(1, 2, figsize=(13.8, 4.6))
     v = sphi[keep] / sin_fail
-    pc = PolyCollection(quads, array=v, cmap="cividis", vmin=0.0, vmax=1.0,
+    # this matplotlib's PolyCollection does not accept vmin/vmax in the
+    # constructor; set the limits afterwards.
+    pc = PolyCollection(quads, array=v, cmap="cividis",
                         edgecolors="#00000018", linewidths=0.2)
+    pc.set_clim(0.0, 1.0)
     ax[0].add_collection(pc)
     ax[0].set_xlim(-6.5, 6.5); ax[0].set_ylim(-6.0, 0.4)
     ax[0].set_aspect("equal")

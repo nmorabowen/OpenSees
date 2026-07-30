@@ -1,0 +1,7 @@
+LadrunoUP: unsymmetric tangent — use a general solver (UmfPack/SuperLU/FullGeneral/BandGeneral; MUMPS SYM=0 in MPI); the ProfileSPD default silently drops a coupling block
+[01:49:35] viewer run: 3468 nodes, 2816 hex, target s/B=0.03, 24 frames -> bearing_gp.ladruno
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.14975e-06 (max: 1e-07, Norm deltaR: 0.00140194)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1800
+OpenSees > analyze failed, returned: -3 error flag

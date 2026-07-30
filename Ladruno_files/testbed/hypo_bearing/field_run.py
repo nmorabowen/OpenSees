@@ -54,13 +54,17 @@ def fields(nodes, nel):
             T = np.array([[xx, xy, zx], [xy, yy, yz], [zx, yz, zz]])
             w = np.sort(np.linalg.eigvalsh(T))[::-1]                # s1>=s3
             den = -(w[0] + w[2])
-            # sin(phi_mob) is only meaningful under real confinement. At the
-            # free surface den -> 0 and the ratio explodes (a first version
-            # reported "sphi max = 50", which is impossible for a sine and is
-            # purely this artifact). Require a physically meaningful mean
-            # stress and mark the rest NaN so the plots mask them instead of
-            # being dominated by them.
-            vals.append((w[0] - w[2]) / den if den > 2.0 else np.nan)
+            # sin(phi_mob) = (s1-s3)/-(s1+s3) is only meaningful for a
+            # CONFINED, NON-TENSILE state, and near the footing edge neither
+            # holds. Two separate pathologies, both met in practice here:
+            #   den -> 0 at the free surface, where the ratio explodes; and
+            #   s1 > 0 (tension), where the numerator can exceed the
+            #     denominator outright and the "sine" runs past 1.
+            # A first version guarded only the first and still reported
+            # "sphi max = 41.8", which is impossible for a sine. Mask both so
+            # the plots show real mobilisation instead of edge artifacts.
+            ok = den > 2.0 and w[0] < 0.5
+            vals.append((w[0] - w[2]) / den if ok else np.nan)
         sphi[e - 1] = np.nanmean(vals) if np.any(np.isfinite(vals)) else np.nan
         try:
             hs = np.array(ops.eleResponse(e, "hypoState")).reshape(-1, 3)
