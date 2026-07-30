@@ -58,13 +58,17 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    α = 1/√12 and the cone sits at 84.4 % of it, so ±2 % in α moves N_q by 55 %.
    That instability is an argument against the cone itself, not just against
    the formula.
-3. **A refined mesh — now the binding constraint.** `COLLAPSE.md` tried and
-   **failed**: halving the element size to 8 across B makes every leg harder to
-   converge and all such legs truncate earlier than their coarse counterparts.
-   The exact-oracle control shows 4 elements across B suffices at φ_ps = 27.5°;
-   nothing shows it suffices at 53.7°. Everything quantitative in §9 rests on
-   that gap. `-geom hypo` still refuses `-formulation bbar` (ADR 79 P2
-   reserved); `corot` composes with `bbar` today.
+3. **A refined mesh — now the binding constraint, and it needs REGULARIZATION,
+   not more elements.** `COLLAPSE.md` tried refinement and it failed in a
+   specific, diagnostic way: at 4 / 8 / 16 elements across B the
+   non-associated Prandtl leg terminates at s/B = 0.0124 / 0.0030 / 0.0014 with
+   the tangent at termination *rising* 26 % → 35 % → 63 %. A perfectly plastic
+   non-associated frictional solid is past the Rudnicki–Rice localization
+   threshold, so the continuum problem has lost ellipticity and band width is
+   set by the element size. The next attempt should add a rate-dependent /
+   viscoplastic regularization (or run it explicit-dynamic), not just refine.
+   Everything quantitative in §9 rests on this gap. `-geom hypo` still refuses
+   `-formulation bbar` (ADR 79 P2 reserved); `corot` composes with `bbar` today.
 4. **The domain question at collapse.** `build_mesh_big.py` (14.5 B clearance,
    10 B depth, 8064 hexes) agrees with the campaign mesh to 3 % out to
    s = 16 mm but has not reached the plateau — it is ~3× the cost per step and

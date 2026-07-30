@@ -571,11 +571,20 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
 
 ### Limits of this result
 
-- **No refined collapse load.** Halving the element size to 8 across B makes
-  every leg *harder* to converge and all such legs truncate earlier in
-  settlement than their coarse counterparts. The exact-oracle control shows 4
-  elements across B suffices at φ_ps = 27.5°; nothing here shows it suffices at
-  53.7°. This is the honest limit of the study.
+- **No refined collapse load, and the way refinement fails is diagnostic.** The
+  non-associated Prandtl series at the real cone terminates *earlier* at every
+  refinement — s/B = 0.0124 / 0.0030 / 0.0014 at 4 / 8 / 16 elements across B,
+  with the tangent at termination *rising* 26 % → 35 % → 63 % of initial. That
+  is not a sequence converging on a collapse load. A perfectly plastic
+  **non-associated** frictional solid is past the Rudnicki–Rice localization
+  threshold (the critical hardening modulus for banding is positive under
+  non-associated flow), so the continuum problem has lost ellipticity, band
+  width is set by the element size, and refinement resolves ever-thinner bands
+  in a progressively worse-conditioned discrete problem. A mesh-converged
+  number at this cone needs regularization (viscoplastic, gradient, Cosserat)
+  or an explicit dynamic solve — not a finer mesh. The exact-oracle control
+  shows 4 elements across B suffices at φ_ps = 27.5°; nothing here shows it
+  suffices at 53.7°. This is the honest limit of the study.
 - **Not a sharp limit point.** dq/ds decays as a power law in settlement
   (∝ s^−1.42, 41 432 → 605 kPa/m over s/B = 0.5 → 10 %), which is a punching
   signature — now reproduced by a *perfectly plastic* material, which rules out
@@ -612,6 +621,10 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
 - Davis, E.H. (1968), "Theories of plasticity and the failure of soil masses",
   in *Soil Mechanics: Selected Topics* — the non-associated reduction
   tan φ* = cos ψ sin φ / (1 − sin φ sin ψ), which is what the §9 anchor uses.
+- Rudnicki, J.W. & Rice, J.R. (1975), "Conditions for the localization of
+  deformation in pressure-sensitive dilatant materials", JMPS 23 — why a
+  perfectly plastic NON-associated solid is already past the banding threshold,
+  which is the diagnosis §9 gives for the failed refinement series.
 - Prandtl (1920) / Reissner (1924) — the weightless surcharge-bearing problem
   `q_u = q₀·N_q`, whose coincident upper and lower bounds make it the exact
   oracle §9's validation leg is checked against.

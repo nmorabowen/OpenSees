@@ -238,16 +238,34 @@ Read this carefully:
   Davis plane-strain oracle of 550 kPa and only 6.5 % of the associated 6731 —
   i.e. even truncated, the cone legs sit an order of magnitude below the
   Chen–Han route and in the neighbourhood of the Davis-reduced one.
-- **The mesh-refinement study did not succeed.** Halving h₀ to 0.25 m (8
-  elements across B, 782 hexes) makes every leg *harder* to converge, and all
-  the h₀ = 0.25 rows truncate earlier in settlement than their h₀ = 0.5
-  counterparts. No refined collapse load was obtained, so the h₀ = 0.5 numbers
-  are **not** demonstrated to be mesh-converged. The h₀ = 0.125 rungs are still
-  running and are not in this table.
+- **The mesh-refinement study did not succeed, and how it failed is
+  diagnostic.** The full non-associated Prandtl series at the real cone:
 
-That last point is the honest limit of this study, and it matters most for the
-square-footing headline: the exact-oracle control shows 4 elements across B is
-enough at φ_ps = 27.5°, and nothing here shows it is enough at 53.7°.
+  | h₀ | el/B | hexes | s_end/B | q_num | tail dq/ds, % of initial |
+  |---|---|---|---|---|---|
+  | 0.500 | 4 | 390 | 0.0124 | 434.2 | 25.8 % |
+  | 0.250 | 8 | 782 | 0.0030 | 140.8 | 35.2 % |
+  | 0.125 | 16 | 1702 | 0.0014 | 88.2 | 62.6 % |
+
+  Each halving of h₀ terminates the run **2–4× earlier in settlement**, and the
+  tangent at termination *rises* — 26 % → 35 % → 63 % of initial. This is not a
+  sequence converging to a collapse load; it is a monotone loss of reach.
+
+  The standard reading fits it. A **perfectly plastic, non-associated**
+  frictional solid sits past the Rudnicki–Rice localization threshold: for
+  non-associated flow the critical hardening modulus for shear-band formation
+  is *positive*, so a zero-hardening non-associated solid is already localizing.
+  The continuum problem loses ellipticity, band width is set by the element
+  size rather than by the material, and the discrete problem becomes
+  mesh-dependent and progressively worse-conditioned — exactly the signature
+  above. Getting a mesh-converged collapse load at this cone would need
+  regularization (rate-dependent/viscoplastic, gradient, or Cosserat) or an
+  explicit dynamic solve, not a finer mesh.
+
+So the h₀ = 0.5 numbers are **not** demonstrated to be mesh-converged, and that
+is the honest limit of this study. It matters most for the square-footing
+headline: the exact-oracle control shows 4 elements across B is enough at
+φ_ps = 27.5°, and nothing here shows it is enough at 53.7°.
 
 ## Caveats
 
