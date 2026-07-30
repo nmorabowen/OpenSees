@@ -74,11 +74,13 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
 4. **The domain question at collapse — now known to be live.** At the full
    s/B = 0.15 the fully-mobilised zone **reaches the roller sides** (16 of the
    352 elements in the outermost column at m > 0.99; the base stays clear).
-   `build_mesh_big.py` (14.5 B clearance, 10 B depth, 8064 hexes) agrees with
-   the campaign mesh to 3 % out to s = 16 mm but has not reached the plateau —
-   it is ~3× the cost per step and needs a long uncontended run. The sign is
-   known (confinement inflates capacity), so finishing it can only widen the
-   gap to PDMY's 3384 kPa.
+   `build_mesh_big.py` (14.5 B clearance, 10 B depth, 8064 hexes) puts the
+   cost at about **3.4 %** and, importantly, big/small BOTTOMS OUT near 0.964
+   at s = 80 mm and turns back up rather than diverging. It has not reached
+   the full plateau (s/B = 5.6 % of 15 %) and is ~3× the cost per step, so
+   finishing it is worth doing — but the boundary now looks like a few percent,
+   not a factor, and it moves the collapse load DOWN, widening the gap to
+   PDMY's 3384 kPa.
 5. **The interface**, once the contact `ndf == 3` guard is relaxed. Still the
    last untested kinematic candidate, and this benchmark cannot speak to it
    (smooth driven node patch, so an interface is absent by construction).

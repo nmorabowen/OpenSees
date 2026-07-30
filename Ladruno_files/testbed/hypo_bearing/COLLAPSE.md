@@ -232,11 +232,16 @@ fixed box produces, and why that leg has no limit point to report.
 > check is now element-column membership, in both `dp_collapse.py` and
 > `dp_analyze.py`.
 
-Over the span where both domain legs have data, 14.5 B vs 4.5 B clearance
-gives big/small = 0.974 (s = 5 mm) → 0.964 (s = 57 mm, s/B = 2.9 %), drifting
-*down* but slowly — about 1 point per 50 mm. The large-domain leg has not
-reached the plateau, so the boundary contribution at collapse is not
-measured, but the trend puts it at a few percent rather than a factor. So the quoted collapse load
+How much does that cost? 14.5 B vs 4.5 B clearance (identical near-field,
+`build_mesh_big.py`, 8064 hexes) gives big/small = 0.974 (s = 5 mm) → 0.9686
+(20 mm) → 0.9647 (50 mm) → **0.9643** (80 mm) → 0.9663 (110 mm). The ratio
+**bottoms out near 0.964 and turns back up** rather than diverging, so the
+campaign box over-predicts by about **3.4 %** and the effect is bounded, not
+growing. The large-domain leg has still not reached the full plateau
+(s/B = 5.6 % of 15 %), so this is a strong indication rather than a closed
+measurement — but it is enough to say the boundary is worth a few percent,
+not a factor, and it moves the quoted collapse load DOWN, which widens the
+gap to PDMY's 3384 kPa. So the quoted collapse load
 is boundary-influenced, and the sign is known: a confining boundary raises
 capacity, so **1140 kPa is more likely an over-estimate than an under-estimate**
 — which strengthens rather than weakens the verdict, since the anomaly is that
@@ -320,10 +325,10 @@ headline: the exact-oracle control shows 4 elements across B is enough at
 - **Not a sharp limit point.** The tangent decays as a power law; the quoted
   number depends on the s/B = 10 % criterion, and the extrapolated bracket
   (1362 kPa) is 19 % higher.
-- **The plastic zone reaches the lateral boundary at collapse.** The domain
-  control agrees to 3 % but stops at s = 16 mm, a tenth of the way to the
-  plateau, so the size of the boundary contribution is not measured — only its
-  sign, which inflates the quoted number.
+- **The plastic zone reaches the lateral boundary at collapse**, and the
+  domain control prices that at ~3.4 % (bounded, not growing). The control
+  leg is at s/B = 5.6 % of the 15 % target, so this is an indication rather
+  than a closed measurement.
 - **The associated square leg has no collapse load at all.** It ran to its own
   convergence wall at s/B = 0.0139 (q = 2236 kPa) still hardening at 66 % of
   its initial tangent, with 64.6 % of the mesh at yield and the plastic zone

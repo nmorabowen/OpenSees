@@ -606,11 +606,13 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
 - **The plastic zone REACHES the lateral boundary at collapse.** At the full
   s/B = 0.15 the fully-mobilised zone (880 of 2816 elements) puts 16 of the 352
   elements in the outermost column at yield; the base stays clear. A
-  14.5 B-clearance control mesh (`build_mesh_big.py`, 8064 hexes) agrees with
-  the campaign mesh to 3 % out to s = 16 mm but has not reached the plateau, so
-  the size of the boundary contribution is unmeasured — only its sign, which
-  *inflates* the quoted collapse load and therefore widens the gap to PDMY's
-  3384 kPa rather than closing it. (The runner's first verdict said
+  14.5 B-clearance control mesh (`build_mesh_big.py`, 8064 hexes) puts the cost
+  at about **3.4 %**: big/small runs 0.974 → 0.9686 → 0.9647 → 0.9643 → 0.9663
+  over s = 5 → 110 mm, i.e. it BOTTOMS OUT and turns back up rather than
+  diverging. It has not reached the full plateau (s/B = 5.6 % of 15 %), so this
+  is a strong indication rather than a closed measurement — but the boundary is
+  worth a few percent, not a factor, and it moves the quoted collapse load DOWN,
+  widening the gap to PDMY's 3384 kPa rather than closing it. (The runner's first verdict said
   "contained"; that test compared the centroid to 90 % of the domain extent,
   and on a graded mesh the outermost hex is 3.1 m wide with its centroid at
   8.45 m of 10. Now tested by element-column membership.)
