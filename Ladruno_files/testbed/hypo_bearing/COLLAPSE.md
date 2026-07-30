@@ -6,11 +6,11 @@ campaign) and to `cone_probe.py` (which measured the failure surface).*
 > **State of the runs.** Every number below is read off `dp_analyze.log` at the
 > point that file was written. The legs that carry the verdict are complete
 > through the settlement they are quoted at: `nonassoc` and `nonassoc_sy2` both
-> passed the s/B = 10 % criterion, and `nq20_nonassoc` ran to its full
-> s/B = 0.25 target. Still in flight when this was written, and quoted only as
-> the truncated lower bounds they are: `assoc`, `nonassoc_big`, and the
-> h₀ = 0.25 / 0.125 refinement rungs. Re-run `dp_analyze.py` to refresh the
-> tables against whatever has since landed.
+> ran to the full s/B = 0.15 target and plateaued there, `nq20_nonassoc` ran to
+> its full s/B = 0.25 target, and the refinement series is complete. Still in
+> flight when this was written, and quoted only as
+> the truncated lower bounds they are: `assoc` and `nonassoc_big`. Re-run
+> `dp_analyze.py` to refresh the tables against whatever has since landed.
 
 ## Verdict
 
@@ -30,7 +30,7 @@ That estimate does not survive being measured.
    `q_u` of **1525 kPa** against the quoted 637.5 kPa.
 2. **The measured collapse load agrees with that anchor, not with 26.7 MPa.**
    The 3D square footing on the actual cone, non-associated and unlocked,
-   reaches **1140 kPa at the s/B = 10 % ultimate criterion** (1406 kPa
+   reaches **1140 kPa at the s/B = 10 % ultimate criterion** (1362 kPa
    extrapolated) — 0.75–0.92 of the Davis anchor, and **1/23 of what the
    Chen–Han route predicted**.
 3. **So the over-strength is NOT dissolved.** The benchmark's PDMY backbone
@@ -80,8 +80,8 @@ N_q from 673 to 55 — a factor of **12.2** on its own.
 
 **(c) Its coefficients are far outside their calibration range**, and this
 model says so directly. Sweeping the numerical cohesion measures the collapse
-load's sensitivity to c at **62.6 kPa per kPa of σ_y**. Vesić's `c·N_c·s_c` at
-φ_ps = 53.72° (N_c = 493, s_c = 2.36) predicts **565** — **9× too large**.
+load's sensitivity to c at **53.7 kPa per kPa of σ_y**. Vesić's `c·N_c·s_c` at
+φ_ps = 53.72° (N_c = 493, s_c = 2.36) predicts **565** — **11× too large**.
 
 ## The instrument
 
@@ -161,9 +161,9 @@ Two things that check is worth keeping:
 
 | leg | flow | form | s_end/B | q_max | q(s/B=10 %) | dq/ds end | /initial | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `nonassoc` | ψ = 0 | bbar | 0.1041 | 1144.7 | **1140.1** | 553 | 0.010 | collapse |
-| `nonassoc_sy2` (σ_y = 2.0) | ψ = 0 | bbar | **0.1500** | 1275.6 | 1230.7 | 350 | 0.008 | collapse, full target |
-| `assoc` | ψ = φ | bbar | 0.0120 | 1989.1 | — | 69 430 | 0.591 | no limit point |
+| `nonassoc` | ψ = 0 | bbar | **0.1500** | 1179.1 | **1140.1** | 302 | 0.006 | collapse, full target |
+| `nonassoc_sy2` (σ_y = 2.0) | ψ = 0 | bbar | **0.1500** | 1275.6 | 1230.7 | 351 | 0.006 | collapse, full target |
+| `assoc` | ψ = φ | bbar | 0.0134 | 2175.1 | — | 69 679 | 0.593 | no limit point |
 | `assoc` (pre-ladder run, kept) | ψ = φ | bbar | 0.0244 | 3425.4 | — | ~70 000 | ~0.5 | no limit point |
 | `nonassoc_std` | ψ = 0 | std | 0.0031 | 437.6 | — | — | — | cannot be pushed |
 | `nonassoc_big` (14.5 B) | ψ = 0 | bbar | 0.0130 | 741.1 | — | 10 253 | 0.105 | domain control |
@@ -181,12 +181,15 @@ magnitude:
 |---|---|---|---|---|---|---|---|---|
 | dq/ds [kPa/m] | 41 432 | 19 087 | 8 669 | 4 299 | 2 219 | 1 200 | 771 | 605 |
 
-It decays as a **power law in settlement**, dq/ds ∝ s^−1.42, rather than to
+and continues 451 (11-13 %) -> 302 kPa/m (13-15 %), i.e. **0.6 % of its
+initial value** at the full target.
+
+It decays as a **power law in settlement**, dq/ds ∝ s^−1.48, rather than to
 zero at a finite s. That is a punching signature, not general shear — the same
 qualitative behaviour the campaign saw on PDMY, now reproduced by a *perfectly
 plastic* material, which rules out hardening as its cause. So two numbers are
 reported: q at the s/B = 10 % settlement criterion conventional for punching,
-and the tail extrapolation q_inf = q_ref + C·s^(1−p)/(p−1) = **1406 kPa**,
+and the tail extrapolation q_inf = q_ref + C·s^(1−p)/(p−1) = **1362 kPa**,
 which is an extrapolation off a two-decade fit and is quoted as a bracket.
 
 Against the Davis-reduced anchor of 1525 kPa:
@@ -194,12 +197,14 @@ Against the Davis-reduced anchor of 1525 kPa:
 | | kPa | × anchor |
 |---|---|---|
 | measured, q at s/B = 10 % | 1140.1 | 0.748 |
-| measured, tail extrapolation | 1405.8 | 0.922 |
+| measured, tail extrapolation | 1362.1 | 0.893 |
 | **PDMY benchmark backbone at s/B = 15 %** | **3384.0** | **2.219** |
 
-**The numerical-cohesion regularizer is cheap.** q_max = 1144.7 kPa at
-σ_y = 0.2 and 1257.5 at 2.0 → 62.6 kPa per kPa, so σ_y → 0 gives 1132.2 kPa and
-the base leg is inflated by **1.11 %**.
+**The numerical-cohesion regularizer is cheap.** With both legs at the full
+s/B = 0.15: q_max = 1179.1 kPa at σ_y = 0.2 and 1275.6 at 2.0 → **53.7 kPa per
+kPa**, so σ_y → 0 gives **1168.3 kPa** and the base leg is inflated by
+**0.92 %**. Vesić's `c·N_c·s_c` at φ_ps = 53.72° predicts 565 kPa per kPa —
+**11× the measured slope**.
 
 **Locking cannot be measured at collapse here, and that is itself the result.**
 `std` elements with isochoric plastic flow cannot be pushed: the leg walls out
@@ -289,7 +294,7 @@ headline: the exact-oracle control shows 4 elements across B is enough at
   was attempted and did not converge.
 - **Not a sharp limit point.** The tangent decays as a power law; the quoted
   number depends on the s/B = 10 % criterion, and the extrapolated bracket
-  (1406 kPa) is 23 % higher.
+  (1362 kPa) is 19 % higher.
 - **The plastic zone reaches the lateral boundary at collapse.** The domain
   control agrees to 3 % but stops at s = 16 mm, a tenth of the way to the
   plateau, so the size of the boundary contribution is not measured — only its

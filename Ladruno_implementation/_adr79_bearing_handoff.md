@@ -13,7 +13,7 @@ priorities that survive it.
 | geometry-ladder write-up | that folder's `RESULTS.md` |
 | **collapse-study write-up** | that folder's **`COLLAPSE.md`** |
 | fork decision record | ADR 79 **§8** (ladder) and **§9** (collapse) |
-| traps | `LEDGER_quirks.md` (5 entries from this line) |
+| traps | `LEDGER_quirks.md` (6 entries from this line) |
 | **project-facing analysis** | TIMs vault notes **16** and **17**, `C:\Users\nmb\Dropbox\obsidian\Ladruño\TIMs\Reference Model\` — **both predate the correction below** |
 
 Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
@@ -33,7 +33,7 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    associated route.
 3. **The measured collapse load agrees with the corrected anchor.** An
    elastic–perfectly-plastic Drucker–Prager on the *same measured cone*, same
-   mesh, same footing gives **1140 kPa at the s/B = 10 % criterion** (1406 kPa
+   mesh, same footing gives **1140 kPa at the s/B = 10 % criterion** (1362 kPa
    extrapolated) = 0.75–0.92 of the Davis anchor and **1/23 of the Chen–Han
    prediction**. The machinery is validated to **1.0020 against the exact
    Prandtl–Reissner `q₀·N_q`**.
@@ -83,7 +83,7 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
 
 ## Traps this line paid for — do not rediscover
 
-All five are in `LEDGER_quirks.md`. The ones that cost the most time:
+All six are in `LEDGER_quirks.md`. The ones that cost the most time:
 
 - **An installed Ladruno hijacks `import opensees`** via a site `.pth` that
   imports at interpreter startup, so a worktree `sys.path.insert` is a no-op.
@@ -114,6 +114,11 @@ All five are in `LEDGER_quirks.md`. The ones that cost the most time:
 - **Two long parallel runs writing incremental CSVs**: re-running one leg's
   name truncates the live file under it. Smoke runs get their own filename, and
   a runner refuses to open an output modified in the last 180 s.
+- **"Is the plastic zone clear of the boundary?" cannot be a fraction of the
+  domain extent on a GRADED mesh** — the outermost hex here is 3.1 m wide with
+  its centroid at 8.45 m of 10, so an element touching the roller passes a
+  "< 90 %" test. Test element-COLUMN membership and report
+  `n_yielded / n_in_column`.
 - **`TaskStop` kills the bash wrapper, not the Python child** — but a
   foreground Bash *timeout* DOES kill the child. Check `Get-CimInstance
   Win32_Process` either way.

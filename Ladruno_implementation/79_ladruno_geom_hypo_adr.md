@@ -533,14 +533,15 @@ measured txc-equivalent and its supplied φ = 33° is not a probe artifact.
    from 673 to 55, a factor of **12.2** by itself.
 3. **Its coefficients are far outside their calibration range**, and the model
    says so: the measured sensitivity of the collapse load to cohesion is
-   62.6 kPa per kPa of σ_y, where Vesić's `c·N_c·s_c` at 53.72° predicts 565 —
-   **9× too large**.
+   53.7 kPa per kPa of σ_y, where Vesić's `c·N_c·s_c` at 53.72° predicts 565 —
+   **11× too large**.
 
 ### What was measured
 
 Square footing, actual cone, non-associated, `-formulation bbar`, campaign mesh:
-**q = 1140 kPa at the s/B = 10 % ultimate criterion** (q_max 1144.7 at
-s/B = 0.104; tail extrapolation 1406 kPa; σ_y → 0 costs 1.11 %). That is
+**q = 1140 kPa at the s/B = 10 % ultimate criterion** (q_max 1179.1 at the
+full s/B = 0.15, where it plateaus at 0.6 % of its initial tangent; tail
+extrapolation 1362 kPa; σ_y → 0 costs 0.92 %). That is
 0.75–0.92 of the Davis anchor and **1/23 of the Chen–Han prediction**.
 
 So the benchmark's PDMY backbone — 3384 kPa at s/B = 15 % — is **2.2× the
@@ -586,7 +587,7 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
   shows 4 elements across B suffices at φ_ps = 27.5°; nothing here shows it
   suffices at 53.7°. This is the honest limit of the study.
 - **Not a sharp limit point.** dq/ds decays as a power law in settlement
-  (∝ s^−1.42, 41 432 → 605 kPa/m over s/B = 0.5 → 10 %), which is a punching
+  (∝ s^−1.48, 41 432 → 302 kPa/m over s/B = 0.5 → 15 %), which is a punching
   signature — now reproduced by a *perfectly plastic* material, which rules out
   hardening as its cause.
 - **Locking cannot be measured at collapse**, and that inverts §8's
