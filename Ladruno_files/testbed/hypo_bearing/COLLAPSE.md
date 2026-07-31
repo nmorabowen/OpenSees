@@ -301,12 +301,20 @@ Read this carefully:
   identically.
 
   **The control does the opposite, and that is the clincher.** The mild cone
-  (φ_ps = 27.47°) runs to its FULL s/B = 0.25 target at both resolutions and
-  hard-plateaus at each (dq/ds = 0 kPa/m): **1.0020** of the exact answer at 4
-  elements across B, **0.9517** at 8. Refinement moves it by 5 % and it stays
-  within 5 % of a result that is exact — an ordinary, small mesh sensitivity.
-  So refinement is not the problem and the solver is not the problem: the same
-  machinery is mesh-convergent where non-associativity is mild and loses reach
+  (φ_ps = 27.47°) runs to its FULL s/B = 0.25 target at every resolution and
+  plateaus at each — a proper convergence sequence against an EXACT answer:
+
+  | h₀ | el/B | q_num | num/exact | tail dq/ds |
+  |---|---|---|---|---|
+  | 0.500 | 4 | 139.2 | 1.0020 | 0 kPa/m |
+  | 0.250 | 8 | 132.2 | 0.9517 | 0 kPa/m |
+  | 0.125 | 16 | 128.6 | 0.9260 | −23 kPa/m |
+
+  Successive differences −5.03 % then −2.57 %, a ratio of 0.51, so it is
+  converging cleanly (geometric limit ≈ 0.90 of exact) and the finest rung
+  even shows mild post-peak softening — a real limit point. So refinement is
+  not the problem and the solver is not the problem: the same machinery is
+  mesh-convergent where non-associativity is mild and loses reach
   monotonically where it is severe.
 
   The standard reading fits it. A **perfectly plastic, non-associated**
@@ -349,10 +357,15 @@ headline: the exact-oracle control shows 4 elements across B is enough at
   G ∝ √p is not reproduced. A collapse load does not depend on elastic
   constants, but the *settlement* at which it arrives does, and so therefore
   does q at any fixed s/B criterion.
-- **Davis's reduction is a heuristic**, not a theorem — and the control leg
-  shows it is conservative for `N_q`: at the mild cone the measured
-  non-associated collapse equalled the *associated* oracle (1.0020), where
-  Davis would have predicted 104 kPa against the measured 139.
+- **Davis's reduction is a heuristic, not a theorem, and it is conservative
+  for `N_q` — now quantified.** The mild-cone control converges to ≈ 0.90 of
+  the ASSOCIATED exact answer (1.0020 / 0.9517 / 0.9260 at 4 / 8 / 16
+  elements across B), i.e. non-associativity costs about **10 %** there.
+  Davis charges **25 %** (104 against 138.9). So the 1525 kPa anchor is
+  itself likely conservative, and the true anchor sits somewhere between it
+  and the associated value — which only widens the gap to PDMY's 3384 kPa.
+  This is measured at φ_ps = 27.5° and need not carry to 53.7°, where
+  non-associativity is far more severe.
 
 ## Reproducing
 

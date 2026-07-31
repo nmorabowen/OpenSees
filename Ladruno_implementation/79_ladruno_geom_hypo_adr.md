@@ -585,9 +585,11 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
   26 → 35 → 63 % of initial, and full (γ' + q₀) at s/B = 0.0520 / 0.0198 /
   0.0060 rising 19 → 26 → 69 %, at 4 / 8 / 16 elements across B. That
   is not a sequence converging on a collapse load. The CONTROL does the
-  opposite — the mild cone runs to its full target and hard-plateaus at both 4
-  and 8 elements across B (1.0020 and 0.9517 of the exact answer, dq/ds = 0),
-  so neither refinement nor the solver is the problem. A perfectly plastic
+  opposite — the mild cone runs to its full target and plateaus at 4, 8 AND 16
+  elements across B (1.0020 / 0.9517 / 0.9260 of the exact answer, successive
+  differences −5.0 % then −2.6 %, and mild post-peak softening on the finest
+  rung), i.e. a clean convergence sequence. Neither refinement nor the solver
+  is the problem. A perfectly plastic
   **non-associated** frictional solid is past the Rudnicki–Rice localization
   threshold (the critical hardening modulus for banding is positive under
   non-associated flow), so the continuum problem has lost ellipticity, band
