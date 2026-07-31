@@ -8,9 +8,9 @@ campaign) and to `cone_probe.py` (which measured the failure surface).*
 > through the settlement they are quoted at: `nonassoc` and `nonassoc_sy2` both
 > ran to the full s/B = 0.15 target and plateaued there, `nq20_nonassoc` ran to
 > its full s/B = 0.25 target, and the refinement series is complete. Still in
-> flight when this was written, and quoted only as
-> the truncated lower bounds they are: `assoc` and `nonassoc_big`. Re-run
-> `dp_analyze.py` to refresh the tables against whatever has since landed.
+> flight when this was written, and quoted as the truncated lower bound it is:
+> `assoc`, which has no collapse load to report in any case. Re-run
+> `dp_analyze.py` to refresh the tables.
 
 ## Verdict
 
@@ -29,16 +29,18 @@ That estimate does not survive being measured.
    reduction for ψ = 0 after the matching gives φ* = 38.87° and a square-footing
    `q_u` of **1525 kPa** against the quoted 637.5 kPa.
 2. **The measured collapse load agrees with that anchor, not with 26.7 MPa.**
-   The 3D square footing on the actual cone, non-associated and unlocked,
-   reaches **1140 kPa at the s/B = 10 % ultimate criterion** (1362 kPa
-   extrapolated) — 0.75–0.92 of the Davis anchor, and **1/23 of what the
-   Chen–Han route predicted**.
+   The 3D square footing on the actual cone, non-associated and unlocked, on a
+   domain large enough that the mechanism is demonstrably CONTAINED, reaches
+   **1108 kPa at the s/B = 10 % ultimate criterion and 1152 kPa at s/B = 15 %**,
+   where it plateaus at 0.7 % of its initial tangent — 0.73–0.76 of the Davis
+   anchor, and **1/23 of what the Chen–Han route predicted**.
 3. **So the over-strength is NOT dissolved.** The benchmark's PDMY backbone
-   delivered 3384 kPa at s/B = 15 %: **2.2× the correct anchor and ~3.0× the
+   delivered 3384 kPa at s/B = 15 %: **2.2× the correct anchor and 2.9× the
    measured collapse load of its own cone.** Re-anchoring removes a factor of
    2.4 from the 5.31× the campaign reported; it does not remove the anomaly.
-   Locking, large-strain embedment, boundary confinement and mesh coarseness
-   still have to account for the remaining ~2.2×.
+   Locking, large-strain embedment and mesh coarseness still have to account
+   for the remaining ~2.2× — boundary confinement is now measured and is only
+   2.3–2.8 %.
 
 ## The anchor ladder
 
@@ -166,7 +168,7 @@ Two things that check is worth keeping:
 | `assoc` | ψ = φ | bbar | 0.0139 | 2236.2 | — | 68 716 | 0.592 | no limit point |
 | `assoc` (pre-ladder run, kept) | ψ = φ | bbar | 0.0244 | 3425.4 | — | ~70 000 | ~0.5 | no limit point |
 | `nonassoc_std` | ψ = 0 | std | 0.0031 | 437.6 | — | — | — | cannot be pushed |
-| `nonassoc_big` (14.5 B) | ψ = 0 | bbar | 0.0130 | 741.1 | — | 10 253 | 0.105 | domain control |
+| **`nonassoc_big`** (14.5 B, contained) | ψ = 0 | bbar | **0.1500** | **1152.0** | **1108.2** | 354 | 0.007 | **collapse, mechanism contained** |
 | `verify_phi20`, `verify_phi20_na` | — | — | — | — | — | — | — | **void**, m₀ = 0.950 |
 
 (`dpcollapse_assoc__noladder.csv` is the associated leg's first run, before the
@@ -196,8 +198,9 @@ Against the Davis-reduced anchor of 1525 kPa:
 
 | | kPa | × anchor |
 |---|---|---|
-| measured, q at s/B = 10 % | 1140.1 | 0.748 |
-| measured, tail extrapolation | 1362.1 | 0.893 |
+| measured, contained domain, q at s/B = 10 % | **1108.2** | **0.727** |
+| measured, contained domain, q at s/B = 15 % | **1152.0** | **0.755** |
+| measured, campaign mesh, q at s/B = 10 % | 1140.1 | 0.748 |
 | **PDMY benchmark backbone at s/B = 15 %** | **3384.0** | **2.219** |
 
 **The numerical-cohesion regularizer is cheap.** With both legs at the full
@@ -232,20 +235,23 @@ fixed box produces, and why that leg has no limit point to report.
 > check is now element-column membership, in both `dp_collapse.py` and
 > `dp_analyze.py`.
 
-How much does that cost? 14.5 B vs 4.5 B clearance (identical near-field,
-`build_mesh_big.py`, 8064 hexes) gives big/small = 0.974 (s = 5 mm) → 0.9686
-(20 mm) → 0.9647 (50 mm) → **0.9643** (80 mm) → 0.9663 (110 mm). The ratio
-**bottoms out near 0.964 and turns back up** rather than diverging, so the
-campaign box over-predicts by about **3.4 %** and the effect is bounded, not
-growing. The large-domain leg has still not reached the full plateau
-(s/B = 5.6 % of 15 %), so this is a strong indication rather than a closed
-measurement — but it is enough to say the boundary is worth a few percent,
-not a factor, and it moves the quoted collapse load DOWN, which widens the
-gap to PDMY's 3384 kPa. So the quoted collapse load
-is boundary-influenced, and the sign is known: a confining boundary raises
-capacity, so **1140 kPa is more likely an over-estimate than an under-estimate**
-— which strengthens rather than weakens the verdict, since the anomaly is that
-PDMY delivered *more*.
+How much does that cost? The control mesh answers it outright. On 14.5 B
+clearance and 10 B depth (identical near-field, `build_mesh_big.py`, 8064
+hexes) the same leg runs to the full s/B = 0.15, plateaus at 0.7 % of its
+initial tangent, and its yielded zone is **fully contained** — **0 of 672** in
+the outermost element column, **0 of 576** in the base row, reaching only
+|x| = 7.27 m of 30 and z = −7.49 m of −20.
+
+| | campaign mesh (4.5 B) | control mesh (14.5 B) | ratio |
+|---|---|---|---|
+| q at s/B = 10 % | 1140.1 | **1108.2** | 0.972 |
+| q at s/B = 15 % | 1179.1 | **1152.0** | 0.977 |
+| yielded fraction | 30.8 % | 16.4 % | — |
+| outer column at yield | 20/352 | **0/672** | — |
+
+So the campaign box costs **2.3–2.8 %**, and the contained-domain number is the
+one to quote: **1108 kPa** at the s/B = 10 % criterion, **1152 kPa** at
+s/B = 15 %. The boundary question is closed, not merely bounded.
 
 ## Results — plane strain, and the failed refinement study
 
@@ -327,10 +333,9 @@ headline: the exact-oracle control shows 4 elements across B is enough at
 - **Not a sharp limit point.** The tangent decays as a power law; the quoted
   number depends on the s/B = 10 % criterion, and the extrapolated bracket
   (1362 kPa) is 19 % higher.
-- **The plastic zone reaches the lateral boundary at collapse**, and the
-  domain control prices that at ~3.4 % (bounded, not growing). The control
-  leg is at s/B = 5.6 % of the 15 % target, so this is an indication rather
-  than a closed measurement.
+- ~~The boundary question~~ — **closed.** On the campaign mesh the plastic zone
+  does reach the roller sides, but the 14.5 B control mesh contains it fully
+  (0/672 outer column) and prices the difference at 2.3–2.8 %.
 - **The associated square leg has no collapse load at all.** It ran to its own
   convergence wall at s/B = 0.0139 (q = 2236 kPa) still hardening at 66 % of
   its initial tangent, with 64.6 % of the mesh at yield and the plastic zone

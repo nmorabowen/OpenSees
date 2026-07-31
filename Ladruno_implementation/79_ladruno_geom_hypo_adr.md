@@ -538,14 +538,17 @@ measured txc-equivalent and its supplied φ = 33° is not a probe artifact.
 
 ### What was measured
 
-Square footing, actual cone, non-associated, `-formulation bbar`, campaign mesh:
-**q = 1140 kPa at the s/B = 10 % ultimate criterion** (q_max 1179.1 at the
-full s/B = 0.15, where it plateaus at 0.6 % of its initial tangent; tail
-extrapolation 1362 kPa; σ_y → 0 costs 0.92 %). That is
-0.75–0.92 of the Davis anchor and **1/23 of the Chen–Han prediction**.
+Square footing, actual cone, non-associated, `-formulation bbar`, on a domain
+large enough that the mechanism is demonstrably CONTAINED (14.5 B clearance,
+10 B depth; 0 of 672 elements in the outermost column at yield):
+**q = 1108 kPa at the s/B = 10 % ultimate criterion and 1152 kPa at
+s/B = 15 %**, plateauing at 0.7 % of its initial tangent. The 4.5 B campaign
+mesh gives 1140 / 1179 kPa, so the box is worth 2.3–2.8 %; σ_y → 0 costs a
+further 0.92 %. That is 0.73–0.76 of the Davis anchor and **1/23 of the
+Chen–Han prediction**.
 
 So the benchmark's PDMY backbone — 3384 kPa at s/B = 15 % — is **2.2× the
-correct anchor and ~3.0× the measured collapse load of its own cone.**
+correct anchor and 2.9× the measured collapse load of its own cone.**
 Re-anchoring removes a factor of 2.4 from the 5.31× §8 reported. It does not
 remove the anomaly; locking, large-strain embedment, boundary confinement and
 mesh coarseness still have to carry the remaining ~2.2×.
@@ -603,19 +606,17 @@ dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
   cannot be pushed at all (walls out at s/B = 0.0031 even with an algorithm
   ladder), where on hardening PDMY it was `bbar` that cost reach. Over the
   shared span std/bbar runs 1.063 → 1.150 across s = 1 → 6 mm, still growing.
-- **The plastic zone REACHES the lateral boundary at collapse.** At the full
-  s/B = 0.15 the fully-mobilised zone (880 of 2816 elements) puts 16 of the 352
-  elements in the outermost column at yield; the base stays clear. A
-  14.5 B-clearance control mesh (`build_mesh_big.py`, 8064 hexes) puts the cost
-  at about **3.4 %**: big/small runs 0.974 → 0.9686 → 0.9647 → 0.9643 → 0.9663
-  over s = 5 → 110 mm, i.e. it BOTTOMS OUT and turns back up rather than
-  diverging. It has not reached the full plateau (s/B = 5.6 % of 15 %), so this
-  is a strong indication rather than a closed measurement — but the boundary is
-  worth a few percent, not a factor, and it moves the quoted collapse load DOWN,
-  widening the gap to PDMY's 3384 kPa rather than closing it. (The runner's first verdict said
-  "contained"; that test compared the centroid to 90 % of the domain extent,
-  and on a graded mesh the outermost hex is 3.1 m wide with its centroid at
-  8.45 m of 10. Now tested by element-column membership.)
+- **The boundary question is CLOSED.** On the campaign mesh the fully-mobilised
+  zone does reach the roller sides (20 of the 352 elements in the outermost
+  column; the base stays clear). The 14.5 B / 10 B control mesh
+  (`build_mesh_big.py`, 8064 hexes) runs the same leg to the full s/B = 0.15,
+  plateaus, and contains the mechanism completely — **0 of 672** in the outer
+  column, **0 of 576** in the base row. The campaign box is therefore worth
+  **2.3–2.8 %**, and the contained-domain value is the one quoted above.
+  (The runner's first verdict said "contained" on the campaign mesh too; that
+  test compared the centroid to 90 % of the domain extent, and on a graded mesh
+  the outermost hex is 3.1 m wide with its centroid at 8.45 m of 10. Now tested
+  by element-column membership.)
 
 ---
 

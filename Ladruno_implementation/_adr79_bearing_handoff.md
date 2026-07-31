@@ -33,16 +33,16 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    associated route.
 3. **The measured collapse load agrees with the corrected anchor.** An
    elastic–perfectly-plastic Drucker–Prager on the *same measured cone*, same
-   mesh, same footing gives **1140 kPa at the s/B = 10 % criterion** (1362 kPa
-   extrapolated) = 0.75–0.92 of the Davis anchor and **1/23 of the Chen–Han
-   prediction**. The machinery is validated to **1.0020 against the exact
+   mesh, same footing, on a domain that demonstrably CONTAINS the mechanism,
+   gives **1108 kPa at the s/B = 10 % criterion and 1152 kPa at s/B = 15 %** =
+   0.73–0.76 of the Davis anchor and **1/23 of the Chen–Han prediction**. The machinery is validated to **1.0020 against the exact
    Prandtl–Reissner `q₀·N_q`**.
 4. **So the over-strength is re-scaled, NOT dissolved.** The benchmark's
-   3384 kPa at s/B = 15 % is **2.2× the correct anchor and ~3.0× the measured
+   3384 kPa at s/B = 15 % is **2.2× the correct anchor and 2.9× the measured
    collapse load of its own cone**. The previous handoff's "the model sits at
    ~31 % of its own collapse load" is **withdrawn** — it is above it. Locking,
-   large-strain embedment, boundary confinement and mesh coarseness still have
-   to account for ~2.2×.
+   large-strain embedment and mesh coarseness still have to account for ~2.2× —
+   boundary confinement is now measured and is only 2.3–2.8 %.
 
 ## What to do next, in priority order
 
@@ -72,16 +72,13 @@ Worktree `C:\Users\nmb\Documents\Github\OpenSees-hypo`, branch
    viscoplastic regularization (or run it explicit-dynamic), not just refine.
    Everything quantitative in §9 rests on this gap. `-geom hypo` still refuses
    `-formulation bbar` (ADR 79 P2 reserved); `corot` composes with `bbar` today.
-4. **The domain question at collapse — now known to be live.** At the full
-   s/B = 0.15 the fully-mobilised zone **reaches the roller sides** (16 of the
-   352 elements in the outermost column at m > 0.99; the base stays clear).
-   `build_mesh_big.py` (14.5 B clearance, 10 B depth, 8064 hexes) puts the
-   cost at about **3.4 %** and, importantly, big/small BOTTOMS OUT near 0.964
-   at s = 80 mm and turns back up rather than diverging. It has not reached
-   the full plateau (s/B = 5.6 % of 15 %) and is ~3× the cost per step, so
-   finishing it is worth doing — but the boundary now looks like a few percent,
-   not a factor, and it moves the collapse load DOWN, widening the gap to
-   PDMY's 3384 kPa.
+4. ~~The domain question at collapse~~ — **CLOSED, no action needed.** The
+   14.5 B / 10 B control mesh (`build_mesh_big.py`, 8064 hexes) ran the same
+   leg to the full s/B = 0.15, plateaued, and **contained the mechanism
+   completely** (0 of 672 elements in the outermost column at yield, 0 of 576
+   in the base row). The 4.5 B campaign box is worth **2.3–2.8 %**, and the
+   contained-domain collapse load — **1108 kPa at s/B = 10 %, 1152 at 15 %** —
+   is the number to quote.
 5. **The interface**, once the contact `ndf == 3` guard is relaxed. Still the
    last untested kinematic candidate, and this benchmark cannot speak to it
    (smooth driven node patch, so an interface is absent by construction).
