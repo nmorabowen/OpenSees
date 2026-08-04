@@ -5,7 +5,9 @@
 > (Hermite w–θ shell edge transfer `-hermite`, #467) all merged; `LadrunoTie` is the
 > auto-generator.** Backlog: shell-to-solid (the P4 rung — its own decision record,
 > **ADR-64** `64_ladruno_shell_to_solid_tie_adr.md`, planned/awaiting sign-off), and
-> mortar-Hermite (P3.1b, needs a kernel per-GP hook). See `kinematic_tie_handoff.md`.
+> mortar-Hermite (P3.1b, needs a kernel per-GP hook). Quadratic (quad8/tri6)
+> mortar facets are **ADR-78** (`78_ladruno_quadratic_mortar_tie_adr.md`, accepted
+> 2026-08-04 — the apeGmsh ADR 0086 D2 "both" follow-up). See `kinematic_tie_handoff.md`.
 > The constructive successor to the shelved ADR-61.
 > Family: ADR-30 (LadrunoProjectionHandler — the enforcement, SHIPPED) · ADR-41 (mortar
 > D/M + `-tie` C4 — the pairing) · ADR-39 (ContactDomain bucket-sort + projection) ·
