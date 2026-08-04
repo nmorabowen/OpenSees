@@ -1,10 +1,13 @@
 # LadrunoTie quadratic mortar — quad8/tri6 (serendipity) facets for the integral-mortar mesh-tie
 
-> ADR-78. Status: **IMPLEMENTED (2026-08-04) — Q0–Q3 shipped same day; Q4
-> (apeGmsh cross-check) gated on apeGmsh ADR 0086 S1 merging.** Oracle
-> `proto_p2_2_quad8_mortar.py` 25/25; FE `tests/test_ladrunoTie_mortar_quad8.py`
-> 9/9; all shipped tie suites (40) + contact suites (91) green unchanged.
-> Signed off same day. OQ-1 refuse
+> ADR-78. Status: **IMPLEMENTED + ADVERSARIALLY GATED (2026-08-04) — Q0–Q3
+> shipped same day; Q4 (apeGmsh cross-check) gated on apeGmsh ADR 0086 S1
+> merging.** Oracle `proto_p2_2_quad8_mortar.py` 31/31; FE
+> `tests/test_ladrunoTie_mortar_quad8.py` 13/13; all shipped tie suites (40) +
+> contact suites (91) green unchanged. Gate: 2 independent refute-oriented
+> reviews + 2 killed mutations; 3 MAJORs found and fixed (master self-overlap
+> false-accept, negative-mass false-pass, unverified quadratic-master basis) —
+> see "Adversarial gate — RUN". Signed off same day. OQ-1 refuse
 > tri6 slaves in both bases, OQ-3 degree-6 rule for quadratic pairs only, OQ-4
 > new ADR-78, all as recommended; **OQ-2 resolved as "unify"** — the sign-free
 > guards (per-facet area coverage, per-facet L1 gap, total-area zero-overlap,
@@ -95,12 +98,15 @@ is **untouched** — `projectFull` is called with the corner facet, and the kern
 evaluates the quadratic master `φ` itself at the returned `(ξ,η)`.
 
 Why this is exact, not an approximation, in scope: when the midside nodes sit at
-the edge midpoints of a flat facet, the serendipity isoparametric map **reduces
-identically to the corner map** (the quadratic terms cancel), so the corner-based
-`(ξ,η)` IS the quadratic facet's parametrization. That precondition becomes a
-**guard**: each quadratic facet is checked once for (a) midside-at-midpoint
-(`|X_mid − (X_a+X_b)/2| ≤ tol·edge`) and (b) coplanarity of all nps nodes with
-the corner plane. A violating facet is a **named refusal, not a silent skip** —
+the edge midpoints, the serendipity isoparametric map **reduces identically to
+the corner map** (the quadratic terms cancel — review-verified numerically to
+~1e-15 **including warped corner sets**), so the corner-based `(ξ,η)` IS the
+quadratic facet's parametrization. The **guard** checks midside-at-midpoint only
+(`|X_mid − (X_a+X_b)/2| ≤ tol·edge`, a 3D distance, so a midside lifted off its
+straight edge is caught); corner coplanarity is deliberately NOT checked — a
+warped quad8 degrades exactly like the shipped warped quad4 (the documented
+~0.7 % constant-J area bias), no new wrongness. A violating facet is a **named
+refusal, not a silent skip** —
 `integratePair` today returns −1 for both "empty overlap" (fine, skip) and
 "degenerate" (silent); quadratic-geometry violations get a distinct **status −2**
 which `generateMortar` converts to a hard error naming the facet and the remedy
@@ -137,20 +143,35 @@ unchanged for linear inputs (guards never touch the weights):
 
 1. **Zero-overlap detection** (`maxCover ≤ 0` today): use total integrated
    overlap **area** (Σ `pr.area`), which is basis-independent and positive.
-   `facetScale = sqrt(totalArea / nfS)`.
 2. **Coverage / protrusion** (per-node `cover/fullCov ≥ 1−1e-3` today — the
    inequality *flips* for negative row-sums): per-**facet area** coverage
    instead — Σ_fm `pr.area` vs the self-clip `prSelf.area`, refuse below
-   `1−1e-3`. Facet-complete coverage ⇒ node-complete tributary integrals, so
-   detection power is equivalent, and area is sign-free.
+   `1−1e-3`. Facet-complete coverage ⇒ node-complete tributary integrals —
+   equivalent detection **given a non-self-overlapping master surface**, which
+   item 5 makes a checked precondition (the area sum counts multiplicity).
 3. **Conforming-gap** (per-node `|gap|/cover` today — divides by ~0 at quad8
    corners): the kernel additionally accumulates `gapL1 = ∫|g_N| dΓ` per pair;
-   the guard becomes per-facet `gapL1/area ≤ tolFrac·facetScale`. (Strictly
-   stronger than the signed nodal average — no cancellation blind spot.)
+   the guard becomes per-facet `gapL1/areaCov ≤ tolFrac·facetScale` with
+   `facetScale = 0.5·sqrt(areaFull)` — the 0.5 restores the shipped per-node
+   tributary scale (`sqrt(A/4)` for a quad; a bare `sqrt(A)` would have been 2×
+   LOOSER than the old guard — review finding). The L1 numerator has no
+   cancellation blind spot (an accordion surface whose shared-node signed gaps
+   cancel to ~1e-20 reads d/2 in L1 — oracle T11).
 4. **Dual mass refusal** (`Ddual[I] ≤ 1e-300` today — would refuse every
-   legitimate negative corner): sign-aware, `|Ddual[I]| ≤ 1e-12·(A_tributary)`
-   refuses; a negative corner dual mass is **correct**, the sign cancels in
-   `P = Mdual/Ddual`.
+   legitimate negative corner): sign-aware AND relative,
+   `|Ddual[I]| ≤ 1e-12·max_J|Ddual[J]|` refuses; a negative corner dual mass is
+   **correct**, the sign cancels in `P = Mdual/Ddual`. (Relative, because a
+   near-cancelled dual mass produces huge P rows that the partition-of-unity
+   backstop provably cannot catch — dual rowsums are identically 1.)
+5. **Master self-overlap refusal** (review fix MAJOR-1, new): before assembly,
+   any pair of master facets with a finite **coincident** mutual overlap (clip
+   area > dust, mean gap within the conforming tolerance) is a named refusal —
+   a doubly-listed master facet double-counts item 2's area sum and can exactly
+   mask an uncovered slave strip (probed: the old per-node guard refused that
+   input; the unified guard without this check accepted it). The mean-gap gate
+   keeps legitimately curved master surfaces (large-gap shadow overlaps on the
+   aux plane) out of the refusal; edge-adjacent facets clip to slivers and are
+   skipped.
 
 The two backstops that are already basis-valid stay for all orders: the
 post-solve **partition-of-unity** check (`P·1 = D⁻¹D·1 = 1` holds algebraically
@@ -184,13 +205,17 @@ policy:
 ## Design-gate BLOCKERs
 
 **BLOCKER-1 — hex20 slave-node lumped mass (the inherited ADR-62 BLOCKER-2,
-sharpened).** The projection handler requires nonzero lumped mass on every tied
-slave DOF, and the per-DOF scan (`ltScanMassedDOFs` / `ltCheckTiedDofMass`)
-already refuses violations by name. The sharp edge: **row-sum lumping of a
-serendipity element gives zero/negative corner masses** — a hex20 slave surface
-only satisfies the check under **HRZ lumping (ADR-35)**. Gate: the refusal
-message for a massless quadratic-face slave node must name HRZ as the remedy.
-No code change beyond the message; the check itself already catches it.
+sharpened).** The projection handler requires positive lumped mass on every tied
+slave DOF. The sharp edge: **row-sum lumping of a serendipity element gives
+zero/NEGATIVE corner masses** — a hex20 slave surface only satisfies the check
+under **HRZ lumping (ADR-35, `LadrunoBrick20 -lumped`)**. Review finding
+(MAJOR-2): the shipped check tested `fabs(m) > 0`, so a NEGATIVE assembled
+diagonal *passed* and would have poisoned the projection handler (whose own R5
+guard scans off-diagonals only). Fix shipped with this ADR: `ltScanMassedDOFs`
+now accumulates the SIGNED per-DOF element-mass sum, `ltCheckTiedDofMass`
+refuses a negative total with the HRZ remedy by name (all tie modes — a
+negative tied diagonal is broken for the handler everywhere), and the mortar
+path adds the serendipity hint on any mass refusal of a quadratic slave face.
 
 **BLOCKER-2 — no silent zero-force path for invalid quadratic geometry.** A
 curved or midside-displaced quad8 facet must not quietly integrate as its corner
@@ -235,14 +260,49 @@ now refuse).
   Record the numbers in both repos (this oracle here, the S1 unit tests there).
   Until that merge, Q4 is a named TODO in the oracle, not a silent gap.
 
-## Adversarial gate decision
+## Adversarial gate — RUN (2026-08-04), findings fixed
 
-Q1/Q2 is novel math on a shipped, gated kernel — it earns the full treatment:
-the numpy oracle FIRST (Q0), then one focused adversarial pass on the C++ delta
-with the known trap-list from this design (sign-flipped coverage inequality,
-`Ddual ≤ 0` false-refusal, silent −1 vs named −2, order-4 under-integration,
-`MAXGP` buffer, the `LadrunoContactFE` recompile). BLOCKER-3's byte-identity
-suite is the regression fence.
+Q1/Q2 is novel math on a shipped, gated kernel — it got the full treatment:
+oracle first, then **two independent refute-oriented review agents** (mortar
+math; robustness/API) on the C++ delta, plus **mutation testing** of the FE
+suite. Results:
+
+* **Mutations (both killed):** (A) a corrupted quad8 midside shape function →
+  the 3 quad8 correctness tests fail loudly (surfaces as a 0.33 mean-gap
+  refusal), linear tests untouched; (C) reverting `|Ddual|` to the signed
+  pre-ADR-78 guard → exactly the two `-dual` quad8 tests fail with the false
+  "zero dual mass" corner refusal. The suite discriminates.
+* **MAJOR-1 (fixed, D3 item 5):** overlapping/duplicated master facets defeated
+  the per-facet area-coverage sum — a false-accept REGRESSION vs the old
+  per-node guard (probed with an exactly-masking duplicated master half). Fixed
+  with the master self-overlap refusal + regression test.
+* **MAJOR-2 (fixed, BLOCKER-1):** negative lumped mass passed `fabs(m) > 0`;
+  the HRZ hint was unreachable in the scenario it named. Fixed with the signed
+  mass scan + negative-mass named refusal (all tie modes).
+* **MAJOR-3 (fixed):** the C++ tri6/quad8 MASTER basis was verified by nothing
+  — a cyclic tri6-midside permutation preserves Σφ=1, passes every internal
+  gate, and leaves a 0.15 patch error. Fixed with oracle T10 (tri6-master,
+  quad8-master, tri3-on-quad8 patches, ≤3e-15) + the FE spring-rig transfer
+  tests (`test_tri6_master_linear_field_exact`,
+  `test_quad8_master_linear_field_exact`) + an explicit-`LadrunoProjection`
+  quad8 test (no test had ever met the handler the emitted message names).
+* **MINOR (fixed):** gap-guard scale was 2× looser than shipped (`0.5·sqrt(A)`
+  restores parity — D3 item 3); `|Ddual|` threshold shipped absolute instead of
+  the signed-off relative form (D3 item 4); the oracle had a dead quadrature
+  branch and lacked the kernel's step-converged projection escape; the D1
+  "coplanarity guarded" wording was overstated (guard checks midsides only —
+  reviewer verified the corner-map identity holds for warped corners, so the
+  behaviour matches the shipped warped-quad4 path); collocation silently
+  dropped a stray `-slaveFacets` (now a named refusal); the quad8+`-hermite`
+  advice loop was circular (message now states no quadratic Hermite exists).
+* **Accepted (documented, not fixed):** a degenerate (collapsed-edge) slave
+  facet is exempt from the coverage guard via its failed self-clip — it still
+  ends in a named D-singular/dual refusal downstream (inherited); the
+  `LadrunoContactFE` mortar-contact route would swallow a −2 but is unreachable
+  (contact surfaces are nps 3/4 by construction — cross-subsystem invariant,
+  noted); refusal tests use bare `pytest.raises` (opserr text is not carried in
+  the Python exception); a consistent-mass hex20 passes BLOCKER-1 with positive
+  diagonals and is later refused by the handler's R5 with its generic message.
 
 ## Ledger / bookkeeping
 

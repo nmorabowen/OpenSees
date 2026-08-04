@@ -38,6 +38,11 @@ Gates (falsifiable, numeric):
       M share Gauss points); reported deltas justify degree-6 as the quadratic
       default (OQ-3).
 
+SCOPE (review 2026-08-04): this oracle gates the KERNEL MATH — bases, quadrature,
+D/M assembly, condensation, and the guard MEASURES (area, gapL1). The generator's
+refusal LOGIC (thresholds, guard ordering, -2 hard-error vs skip, master-overlap
+refusal) is C++-only and gated by tests/test_ladrunoTie_mortar_quad8.py.
+
 Q4 TODO (gated on apeGmsh ADR 0086 S1 merging): run apeGmsh's numpy kernel
 (_kernel/resolvers/_mortar.py) on THIS patch geometry and compare P row-by-row
 to <=1e-12. The reference P is printed at the end for that cross-check.
@@ -181,9 +186,9 @@ def dedupe(P, tol=1e-12):
 
 # ===================================================================== quadrature
 def tri_rule(order):
-    """Barycentric points + weights SUMMING TO 1 (area applied separately)."""
-    if order <= 2:
-        b = np.array([[2, 1, 1], [1, 2, 1], [1, 1, 2]]) / 4.0  # placeholder, unused
+    """Barycentric points + weights SUMMING TO 1 (area applied separately).
+    Mirrors the kernel's order<=4 (6-pt degree-4) and >4 (12-pt degree-6) rules;
+    the kernel's order<=2 3-pt rule is NOT mirrored (unused on the tie path)."""
     if order <= 4:
         a1, b1, w1 = 0.445948490915965, 0.108103018168070, 0.223381589678011
         a2, b2, w2 = 0.091576213509771, 0.816847572980459, 0.109951743655322
@@ -208,7 +213,7 @@ def tri_rule(order):
 
 
 # ===================================================================== projection (corner geometry)
-def project_corner(npc, Xc, xs, tolR=1e-12, maxit=20):
+def project_corner(npc, Xc, xs, tolR=1e-12, maxit=20, tolP=1e-8):
     xi, eta = (0.0, 0.0) if npc == 4 else (1 / 3, 1 / 3)
     for _ in range(maxit):
         N, dNx, dNe = shape_lin(npc, xi, eta)
@@ -222,8 +227,15 @@ def project_corner(npc, Xc, xs, tolR=1e-12, maxit=20):
         detK = K00 * K11 - K01 * K01
         if abs(detK) < 1e-14 * (K00 * K11 + 1e-300):
             return xi, eta, -1
-        xi += (K11 * R0 - K01 * R1) / detK
-        eta += (-K01 * R0 + K00 * R1) / detK
+        dxi = (K11 * R0 - K01 * R1) / detK
+        deta = (-K01 * R0 + K00 * R1) / detK
+        xi += dxi
+        eta += deta
+        # the kernel's SCALE-FREE step-converged escape (LadrunoContactProjection
+        # project(), 2026-07 large-coordinate fix) — without it the oracle silently
+        # drops GPs at facet scales >~2000 length units where the C++ integrates.
+        if abs(dxi) + abs(deta) < tolP:
+            return xi, eta, 0
     return xi, eta, -1
 
 
@@ -255,7 +267,10 @@ def inverse_isomap2d(npc, UV, q, tolR=1e-13, maxit=20):
 
 # ===================================================================== the pair integral (ADR-78 kernel mirror)
 def check_quadratic_facet(nps, X, tol=1e-6):
-    """ADR-78 D1 guard: midsides at edge midpoints + coplanar. True = valid."""
+    """ADR-78 D1 guard: midsides at their (3D) edge midpoints. True = valid.
+    Corner coplanarity is deliberately NOT checked — the serendipity map reduces
+    to the corner map for midpoint midsides even with warped corners, so a warped
+    quad8 degrades exactly like the shipped warped quad4 (~0.7% area bias)."""
     npc = ncorner(nps)
     if npc == nps:
         return True
@@ -591,6 +606,71 @@ check("patch exact under order 4 too (quadrature-independent)", e4s < TOL and e4
 dD = np.abs(D - D4).max()
 print(f"       (D drift order4->order6: {dD:.3e} — the degree-4 rule under-integrates "
       f"the degree-6 serendipity products; order 6 is the quadratic default per OQ-3)")
+
+print("\nT10 cross-order patches: tri6 MASTER and quad8-on-quad8")
+# (a) quad4 slave on TWO tri6 masters covering the unit square — exercises the
+# quadratic-master phi path (serendipity evaluated at the corner-map projection),
+# which T3-T6 (quad4 masters) never touch. Linear patch must be exact.
+t6c = {}
+t6coords = []
+def _t6(x, y):
+    key = (round(x, 12), round(y, 12))
+    if key not in t6c:
+        t6c[key] = len(t6coords)
+        t6coords.append([x, y, 0.0])
+    return t6c[key]
+tri_a = [_t6(0, 0), _t6(1, 0), _t6(1, 1),
+         _t6(0.5, 0), _t6(1, 0.5), _t6(0.5, 0.5)]
+tri_b = [_t6(0, 0), _t6(1, 1), _t6(0, 1),
+         _t6(0.5, 0.5), _t6(0.5, 1), _t6(0, 0.5)]
+mc6 = np.array(t6coords, float)
+sc4, sf4 = quad4_mesh(2, 2)                # 2x2 quad4 slave, non-matching with the tri split
+D6, M6, facet6 = assemble(sc4, sf4, 4, mc6, [tri_a, tri_b], 6, refDir)
+P6 = condense_standard(D6, M6)
+Pd6 = condense_dual(facet6, len(sc4), len(mc6))
+e6s = np.abs(P6 @ lin(mc6) - lin(sc4)).max()
+e6d = np.abs(Pd6 @ lin(mc6) - lin(sc4)).max()
+check("quad4-on-TRI6-MASTER linear patch exact (std + dual)", e6s < TOL and e6d < TOL,
+      f"std {e6s:.2e} dual {e6d:.2e}")
+# (b) quad8 slave on a NON-MATCHING quad8 master mesh — both bases quadratic.
+mc8, mf8 = quad8_mesh(3, 3)
+D88, M88, facet88 = assemble(sc, sf, 8, mc8, mf8, 8, refDir)
+P88 = condense_standard(D88, M88)
+Pd88 = condense_dual(facet88, len(sc), len(mc8))
+e88s = np.abs(P88 @ lin(mc8) - lin(sc)).max()
+e88d = np.abs(Pd88 @ lin(mc8) - lin(sc)).max()
+check("quad8-on-QUAD8-MASTER linear patch exact (std + dual)", e88s < TOL and e88d < TOL,
+      f"std {e88s:.2e} dual {e88d:.2e}")
+# (c) tri3 slave on quad8 master — the remaining mixed pairing.
+sc3 = np.array([[0.2, 0.2, 0], [0.8, 0.2, 0], [0.2, 0.8, 0]], float)
+D38, M38, facet38 = assemble(sc3, [[0, 1, 2]], 3, mc8, mf8, 8, refDir)
+P38 = condense_standard(D38, M38)
+e38 = np.abs(P38 @ lin(mc8) - lin(sc3)).max()
+check("tri3-on-QUAD8-MASTER linear patch exact", e38 < TOL, f"err {e38:.2e}")
+
+print("\nT11 the L1 gap guard is strictly stronger than the signed average")
+# An accordion slave (two facets tilted oppositely, ridge on the master plane):
+# the SIGNED weighted gap of the shared ridge nodes cancels across facets (the
+# pre-ADR-78 per-node guard signal there is ~0), while the per-facet L1 measure
+# sees the full |gap| everywhere. Quantifies the OQ-2 quirks-ledger claim.
+d = 5e-3
+acc = np.array([[0, 0, -d], [0.5, 0, 0], [0.5, 1, 0], [0, 1, -d],      # facet A (tilted down)
+                [1, 0, d], [1, 1, d]], float)                          # facet B (tilted UP)
+facA = [0, 1, 2, 3]
+facB = [1, 4, 5, 2]                          # shares the ridge nodes 1, 2 (z = 0)
+mcA, mfA = quad4_mesh(1, 1)                  # one flat master covering [0,1]^2
+gsigned = np.zeros(len(acc))
+L1_over_area = []
+for fs in (facA, facB):
+    pr = integrate_pair(4, acc[fs], 4, mcA[mfA[0]], refDir, order=6)
+    for a, I in enumerate(fs):
+        gsigned[I] += pr["g"][a]
+    L1_over_area.append(pr["gapL1"] / pr["area"])
+ridge_cancel = max(abs(gsigned[1]), abs(gsigned[2]))
+check("ridge nodes' SIGNED gap cancels (old per-node signal ~0)",
+      ridge_cancel < 1e-4 * d, f"|signed| {ridge_cancel:.2e} vs d {d:.0e}")
+check("per-facet L1 gap sees the tilt (guard fires at tol < ~d/2)",
+      min(L1_over_area) > 0.2 * d, f"gapL1/area {L1_over_area}")
 
 # ---------------------------------------------------------------- cross-check reference
 print("\nQ4 cross-check reference (vs apeGmsh _kernel/resolvers/_mortar.py, once merged):")

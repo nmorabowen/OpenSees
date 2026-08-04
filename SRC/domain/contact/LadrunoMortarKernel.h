@@ -329,10 +329,15 @@ inline void shapeFull(int nps, double xi, double eta, double N[MAXN]) {
 }
 
 // ADR-78 D1 guard: a quadratic facet is admissible ONLY when every midside node sits at
-// its edge midpoint (3D distance ≤ tol · max corner-edge length — this also catches an
-// out-of-plane lift, i.e. a curved facet). Then the serendipity map ≡ the corner map and
-// the corner-polygon geometry below is EXACT. Linear facets are trivially valid. A
-// violation must surface as status -2 (hard error at the caller), never a silent skip.
+// its edge midpoint (3D distance ≤ tol · max corner-edge length — this catches a midside
+// lifted off its straight edge, i.e. a genuinely curved EDGE). It deliberately does NOT
+// check corner coplanarity: the serendipity map reduces identically to the corner
+// (bilinear) map for midpoint midsides EVEN WITH warped corners (adversarial review
+// 2026-08-04, verified numerically to ~1e-15 over random non-planar corner sets), so a
+// warped quad8 degrades exactly like the shipped warped quad4 — the documented ~0.7%
+// constant-J area bias (ADR-41 C1 scope note), no new wrongness. Linear facets are
+// trivially valid. A violation must surface as status -2 (hard error at the caller),
+// never a silent skip.
 inline bool validQuadraticFacet(int nps, const double X[MAXN][3], double tol = 1e-6) {
     int npc = ncorner(nps);
     if (npc == nps) return true;

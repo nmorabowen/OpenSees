@@ -92,7 +92,7 @@ ltDefaultDofs(Node *s0, ID &dofs)
 // mass matrix orders each node's rows by getNumberDOF() in external-node order, so global
 // DOF d of the node at external position k sits at diagonal (offset + d - 1).
 static void
-ltScanMassedDOFs(Domain *dom, std::map<int, std::set<int> > &massedDOF)
+ltScanMassedDOFs(Domain *dom, std::map<int, std::map<int, double> > &massedDOF)
 {
     ElementIter &eIter = dom->getElements();
     Element *elePtr;
@@ -107,28 +107,43 @@ ltScanMassedDOFs(Domain *dom, std::map<int, std::set<int> > &massedDOF)
             int ndf = (nd != 0) ? nd->getNumberDOF() : 0;
             for (int d = 0; d < ndf && (off + d) < n; d++)
                 if (std::fabs(M(off + d, off + d)) > 0.0)
-                    massedDOF[en(k)].insert(d + 1);      // 1-based DOF index
+                    massedDOF[en(k)][d + 1] += M(off + d, off + d);   // 1-based DOF, SIGNED sum
             off += ndf;
         }
     }
 }
 
-// True if slave node `s` carries lumped mass on EVERY tied DOF; else emit a named
-// refusal (first massless DOF; rotational DOFs get the shell rotary-mass hint) and
-// return false. `massedDOF` is from ltScanMassedDOFs; nodal mass is OR'd in per DOF.
+// True if slave node `s` carries POSITIVE lumped mass on EVERY tied DOF; else emit a
+// named refusal and return false. `massedDOF` holds the SIGNED per-DOF element-mass
+// diagonal sum (ltScanMassedDOFs); nodal mass is added per DOF. ADR-78 review fix: a
+// NEGATIVE assembled diagonal (serendipity row-sum lumping — hex20 corners get -M/8)
+// previously PASSED the old fabs(m)>0 test and poisoned the projection handler
+// downstream; it is now a named refusal with the HRZ remedy.
 static bool
 ltCheckTiedDofMass(int s, Node *sNode, const ID &dofs,
-                   std::map<int, std::set<int> > &massedDOF, const char *ctx)
+                   std::map<int, std::map<int, double> > &massedDOF, const char *ctx)
 {
-    std::map<int, std::set<int> >::iterator it = massedDOF.find(s);
-    const std::set<int> *emass = (it != massedDOF.end()) ? &it->second : 0;
+    std::map<int, std::map<int, double> >::iterator it = massedDOF.find(s);
+    const std::map<int, double> *emass = (it != massedDOF.end()) ? &it->second : 0;
     const Matrix &Mn = sNode->getMass();
     for (int di = 0; di < dofs.Size(); di++) {
         int dof1 = dofs(di);                             // 1-based
-        bool massed = (emass != 0 && emass->count(dof1) != 0);
-        if (!massed && (dof1 - 1) < Mn.noRows() && std::fabs(Mn(dof1 - 1, dof1 - 1)) > 0.0)
-            massed = true;
-        if (!massed) {
+        double total = 0.0;
+        if (emass != 0) {
+            std::map<int, double>::const_iterator jt = emass->find(dof1);
+            if (jt != emass->end()) total += jt->second;
+        }
+        if ((dof1 - 1) < Mn.noRows()) total += Mn(dof1 - 1, dof1 - 1);
+        if (total < 0.0) {
+            opserr << "WARNING LadrunoTie" << ctx << " - tied slave node " << s
+                   << " carries NEGATIVE lumped mass " << total << " on DOF " << dof1
+                   << " (serendipity row-sum lumping gives negative corner masses - "
+                      "e.g. a hex20 corner gets -M/8). The projection handler needs a "
+                      "positive-definite diagonal mass: use HRZ lumping "
+                      "(LadrunoBrick20 -lumped, ADR-35) or add nodal mass.\n";
+            return false;
+        }
+        if (!(total > 0.0)) {
             opserr << "WARNING LadrunoTie" << ctx << " - tied slave node " << s
                    << " carries no mass on DOF " << dof1;
             if (dof1 >= 4)
@@ -348,7 +363,9 @@ LadrunoTie::generate(Domain *dom,
     if (nps != 3 && nps != 4) {
         opserr << "WARNING LadrunoTie - nps must be 3 (tri-3) or 4 (quad-4), got " << nps
                << ". Collocation onto a quadratic facet needs the quadratic closest-point "
-                  "projection - use -mortar, which handles quad8/tri6 masters (ADR-78).\n";
+                  "projection - use -mortar, which handles quad8/tri6 masters (ADR-78). "
+                  "Note -hermite is collocation-only AND linear-facet-only: a quadratic "
+                  "Hermite tie does not exist in either mode.\n";
         return -1;
     }
     if (slaves.Size() == 0) {
@@ -425,7 +442,7 @@ LadrunoTie::generate(Domain *dom,
     //     model-build the element mass is already formable from rho+geometry (same call the
     //     projection handler's consistentMassGuard makes at handle() time). P3: per-DOF so a
     //     shell tie's rotational DOFs are checked against the shell's (zero) rotary mass. ---
-    std::map<int, std::set<int> > massedDOF;
+    std::map<int, std::map<int, double> > massedDOF;
     ltScanMassedDOFs(dom, massedDOF);
 
     std::set<int> doneSlaves;
@@ -668,6 +685,53 @@ LadrunoTie::generateMortar(Domain *dom,
     }
     for (int d = 0; d < 3; d++) refDir[d] /= Lr;
 
+    // --- ADR-78 review fix (MAJOR-1): refuse a SELF-OVERLAPPING master surface ---
+    // The per-facet coverage guard below sums clip areas over the master facets, so two
+    // masters covering the same region double-count coverage and can MASK a genuine
+    // hole (probed: a doubly-listed master half exactly cancels a same-size slave
+    // protrusion and the tie emits with extrapolated rows; the old per-node guard
+    // refused that input). Adjacent facets sharing an edge clip to a sliver (skipped);
+    // a finite COINCIDENT overlap (near-zero mean gap — duplicate or doubly-listed
+    // facets, overlapping patches) is a modeling error => named refusal. The gap gate
+    // keeps a legitimately CURVED master surface (distant facets can shadow-overlap on
+    // each other's aux planes, but with a large mean gap) out of the refusal.
+    for (int fa = 0; fa < nfM; fa++) {
+        double Xa[8][3];
+        for (int i = 0; i < npsM; i++)
+            for (int d = 0; d < 3; d++) Xa[i][d] = segM[((size_t)fa*npsM+i)*3+d];
+        LadrunoMortarKernel::PairResult prA;
+        int rcA = LadrunoMortarKernel::integratePair(npsM, Xa, npsM, Xa, refDir, prA, 2);
+        if (rcA == -2) {
+            opserr << "WARNING LadrunoTie -mortar - master facet " << fa << " (first node "
+                   << mfn(fa*npsM) << ") is an INVALID quadratic facet: a midside node is off "
+                      "its edge midpoint (curved or distorted face). ADR-78 v1 requires flat, "
+                      "straight-edged serendipity facets (midsides at midpoints).\n";
+            return -1;
+        }
+        double areaA = (rcA == 0) ? prA.area : 0.0;
+        if (areaA <= 1e-300) continue;                  // degenerate facet: caught elsewhere
+        for (int fb = fa + 1; fb < nfM; fb++) {
+            double Xb[8][3];
+            for (int i = 0; i < npsM; i++)
+                for (int d = 0; d < 3; d++) Xb[i][d] = segM[((size_t)fb*npsM+i)*3+d];
+            LadrunoMortarKernel::PairResult pr;
+            if (LadrunoMortarKernel::integratePair(npsM, Xa, npsM, Xb, refDir, pr, 2) != 0)
+                continue;                               // disjoint / edge-sliver / degenerate
+            if (pr.area <= 1e-6 * areaA)
+                continue;                               // numerical dust
+            double gbar = pr.gapL1 / pr.area;           // mean separation over the overlap
+            if (gbar <= tolFrac * 0.5 * std::sqrt(areaA)) {
+                opserr << "WARNING LadrunoTie -mortar - master facets " << fa << " and " << fb
+                       << " (first nodes " << mfn(fa*npsM) << ", " << mfn(fb*npsM)
+                       << ") OVERLAP coincidently (shared area " << pr.area << ", mean gap "
+                       << gbar << "). The master surface must be non-self-overlapping: a "
+                          "duplicated or doubly-listed facet double-counts the coverage guard "
+                          "and can mask an uncovered slave region. Remove the duplicate/overlap.\n";
+                return -1;
+            }
+        }
+    }
+
     // --- assemble global D (Ns x Ns), M (Ns x Nm) + per-facet guard measures ---
     // Brute-force slave x master facet pairs: the clip returns instantly for a non-
     // overlapping pair, and an exhaustive sweep guarantees the mortar integral captures
@@ -746,7 +810,10 @@ LadrunoTie::generateMortar(Domain *dom,
             return -1;
         }
         if (areaCov > 1e-300) {
-            double facetScale = std::sqrt((areaFull > 1e-300) ? areaFull : areaCov);
+            // ADR-78 review fix (MINOR-4): 0.5*sqrt(A) ~ the old per-node tributary scale
+            // sqrt(maxCover) ~ sqrt(A/4) for a quad — keeps the refusal threshold at the
+            // shipped strictness (a bare sqrt(A) was 2x looser than the pre-ADR-78 guard).
+            double facetScale = 0.5 * std::sqrt((areaFull > 1e-300) ? areaFull : areaCov);
             double gbar = gapL1 / areaCov;             // mean |gap| over the bonded area
             if (gbar > tolFrac * facetScale) {
                 opserr << "WARNING LadrunoTie -mortar - slave facet " << fs << " (first node "
@@ -766,7 +833,7 @@ LadrunoTie::generateMortar(Domain *dom,
 
     // --- BLOCKER-2 (PER-DOF): every tied slave node carries lumped mass on every tied DOF
     //     (P3: a shell tie's rotational DOFs are checked against the shell's rotary mass) ---
-    std::map<int, std::set<int> > massedDOF;
+    std::map<int, std::map<int, double> > massedDOF;
     ltScanMassedDOFs(dom, massedDOF);
     for (int I = 0; I < Ns; I++) {
         Node *nd = dom->getNode(sTag[I]);
@@ -774,8 +841,8 @@ LadrunoTie::generateMortar(Domain *dom,
         if (!ltCheckTiedDofMass(sTag[I], nd, dofs, massedDOF, " -mortar")) {
             if (npsS > 4)
                 opserr << "HINT LadrunoTie -mortar - serendipity (hex20/quad8) slave surfaces "
-                          "need HRZ lumped mass (ADR-35): plain row-sum lumping gives zero/"
-                          "negative corner masses, which this check refuses.\n";
+                          "need HRZ lumped mass (LadrunoBrick20 -lumped, ADR-35): plain row-sum "
+                          "lumping gives zero or NEGATIVE corner masses; both are refused above.\n";
             return -1;
         }
     }
@@ -846,12 +913,21 @@ LadrunoTie::generateMortar(Domain *dom,
                 for (int k = 0; k < Nm; k++) Mdual(I,k) += cRow[a] * Y(a,k);
             }
         }
+        // ADR-78: sign-AWARE — quad8 corner dual masses are negative by construction,
+        // only a (near-)ZERO dual mass means an uncovered / cancellation-degenerate node.
+        // Review fix (MINOR-5): the threshold is RELATIVE to the largest dual mass (the
+        // signed-off 1e-12·tributary form) — an absolute 1e-300 passed near-cancelled
+        // masses whose huge P rows the partition-of-unity check provably cannot catch
+        // (dual rowsums are identically 1).
+        double maxAbsDdual = 0.0;
+        for (int I = 0; I < Ns; I++)
+            if (std::fabs(Ddual[I]) > maxAbsDdual) maxAbsDdual = std::fabs(Ddual[I]);
         for (int I = 0; I < Ns; I++) {
-            // ADR-78: sign-AWARE — quad8 corner dual masses are negative by construction,
-            // only a (near-)ZERO dual mass means an uncovered node.
-            if (std::fabs(Ddual[I]) <= 1e-300) {
+            if (std::fabs(Ddual[I]) <= 1e-12 * maxAbsDdual) {
                 opserr << "WARNING LadrunoTie -mortar -dual - slave node " << sTag[I]
-                       << " has zero dual mass (uncovered). Extend the master surface.\n";
+                       << " has (near-)zero dual mass " << Ddual[I] << " (uncovered, or a "
+                          "corner/midside cancellation). Extend the master surface or check "
+                          "the slave facet geometry.\n";
                 return -1;
             }
             for (int k = 0; k < Nm; k++) P(I,k) = Mdual(I,k) / Ddual[I];
@@ -1042,7 +1118,7 @@ LadrunoTie::generateShellSolid(Domain *dom,
     //     set, so the master edge's theta_x/theta_y still need a small nodal rotary
     //     mass under LadrunoProjection - generic to every rotational tie, rigidLink
     //     -beam precedent; static Lagrange needs none.) ---
-    std::map<int, std::set<int> > massedDOF;
+    std::map<int, std::map<int, double> > massedDOF;
     ltScanMassedDOFs(dom, massedDOF);
     ID dofs(3);
     for (int d = 0; d < 3; d++) dofs(d) = d + 1;
@@ -1395,6 +1471,11 @@ int OPS_LadrunoTie()
         if (dual) {
             opserr << "WARNING LadrunoTie -dual - the dual/biorthogonal basis applies only to the "
                       "integral-mortar mode; add -mortar (collocation has no D to diagonalize).\n";
+            return -1;
+        }
+        if (haveSlaveFacets) {   // ADR-78 review: refuse rather than silently drop the facets
+            opserr << "WARNING LadrunoTie - -slaveFacets is the -mortar vocabulary (collocation "
+                      "ties NODES: -slaveNodes). Add -mortar, or list the nodes instead.\n";
             return -1;
         }
         if (!haveSlaveNodes || !haveMaster) {
