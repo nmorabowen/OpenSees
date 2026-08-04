@@ -3611,3 +3611,81 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   env override for the case where you know it is dead. Note Windows does not
   block the second open, so nothing but your own guard prevents this.
   *2026-07-30 (ADR-79 locking leg).*
+### `Vector::operator()` is UNCHECKED outside `_G3DEBUG` — a mis-sized `static Vector` in `getResponse` is a silent heap overrun, not a caught index error
+- **Bites:** any `getResponse` that fills a fixed-size scratch `Vector` in a
+  Gauss-point loop. Found in vanilla `TenNodeTetrahedron::getResponse`, where
+  `static Vector stresses(6)` — copy-pasted from `FourNodeTetrahedron`, which
+  has ONE Gauss point so 6 is right there — is written by BOTH the `stresses`
+  and `strains` branches looping over all `NumGaussPoints=4` points × 6
+  components = **24 doubles into a 6-double block**. 18 doubles / 144 bytes past
+  the end, on every recorder step. `Brick` gets it right (`stresses(48)` for
+  8 GP), so the pattern is fine — only the size was left behind when the loop
+  bound was edited.
+- **Why it is invisible:** `Vector::operator()` bounds-checks ONLY under
+  `_G3DEBUG` (`SRC/matrix/Vector.h`), which release builds do not define — the
+  checked accessor is `operator[]`, which nobody uses in element code. And the
+  buffer is `static`, so it is heap-allocated once on first call and the SAME
+  144 bytes past it are stomped forever after. The crash therefore surfaces at
+  whatever the allocator placed next — often a later `free`/alloc far from the
+  write — so the backtrace does not point at the element.
+- **Second-order damage even without a crash:** `Information::setVector` does
+  `*theVector = newVector`, and `Vector::operator=` REALLOCATES on size
+  mismatch. So the `ElementResponse`'s advertised `Vector(6*nGP)` gets silently
+  shrunk to the scratch size, while `ElementRecorder` already sized its columns
+  from the advertised size at setup (`ElementRecorder.cpp`) and then copies
+  `eleData.Size()` per element — the column layout desynchronises across
+  elements. Garbage output, no diagnostic.
+- **Measured A/B** (one tet10, uniform-strain patch, `eleResponse(ele,'stresses')`):
+  pre-fix build returns **6** values, post-fix returns **24** — so the cheap,
+  deterministic tell is a response list that is a WHOLE FRACTION of the
+  advertised length, one GP block instead of nGP. Both builds report
+  `σxx = 10000.0 = E·ε` exactly, i.e. the physics was never wrong — only the
+  buffer. Note the 1-element control did NOT crash: the overrun is real on
+  every call but whether it segfaults depends on what the allocator put after
+  the block, so a small repro proving "no crash" proves nothing. Trust the
+  length, not the absence of a crash.
+- **Rule:** size the scratch from the same expression `setResponse` advertises
+  (`6*NumGaussPoints`, never a literal), and treat any `static Vector`/`Matrix`
+  in a response path as a place to check the loop bound against the declared
+  size. When a new element is derived by copy-paste from one with a different
+  Gauss-point count, audit every fixed size in the file, not just the loops.
+  Cross-ref [[ladruno-adr79-geom-hypo]] (tet10 was the recorder in use).
+  *2026-08-04 (tet10 recorder segfault).*
+### A numpy ORACLE can silently lag a reviewed C++ fix — a red zone_a gate may indict the reference, not the shipped code
+- **Bites:** any subsystem gated by a hand-written numpy oracle that mirrors a
+  C++ kernel (`concrete3d_ref.py`↔`LadrunoConcrete3DKernel.h`, and the same
+  pattern in the J2/logstrain/up/hypo `*_reference.py` pairs). A fix applied to
+  the kernel during PR review does NOT propagate to the oracle, and nothing in
+  CI notices: the kernel-vs-oracle test compares them on a COMMITTED FIXTURE of
+  paths that may never exercise the diverging branch.
+- **The case:** `test_p2i_multiaxial_apportioning_gate` asserts
+  `I3_pure_compression_wt < 1e-9` (no spurious compression→tension damage) and
+  measured **0.997**. It looks like a formulation bug in the tensile damage
+  gate. It is not — the gate `sig_t_drive = E*et if max(w) > 1e-6*ft else 0`
+  is CORRECT and opens legitimately, because the effective stress handed to it
+  genuinely IS tensile: under uniaxial-STRAIN compression the hardening Newton
+  overshoots to `rho<0`, the apex branch teleports to the hydrostatic-TENSION
+  vertex, and a trial with max principal **−23.76** returns **[+2.94,+2.94,+2.94]**
+  with `conv=True`. `f==0` holds at the apex BY CONSTRUCTION, so the oracle's
+  `(converged or apex) and |f_indep|<tol` reports success for a sign-flipped,
+  inadmissible state. `kp` also jumps 0.034→0.182 in one step.
+- **The kernel was already right.** PR #249's adversarial review added to
+  `returnMapHardening` an admissibility test (`dlam>=0 && kp>=kp_n`), refusal to
+  report converged, and a fallback to the ELASTIC PREDICTOR so the caller cuts
+  the step — with the comment "this deliberately diverges from the numpy
+  oracle's (equally-arbitrary) apex teleport — the kernel is the safe reference
+  here." The oracle received only the HONEST-f-recompute half of that fix and
+  kept the literal pre-fix expression the C++ comment calls out as lying. So
+  **the shipped material never had the bug**; only the reference did.
+- **It shipped red and stayed red.** The gate produces the byte-identical
+  0.9971183764898133 at `c349e8763` (#336), the very commit that introduced it —
+  #336 landed AFTER #249, so the gate was authored against an oracle that
+  already lagged the kernel. It has never passed.
+- **Rule:** when a zone_a gate goes red on a subsystem that has BOTH a numpy
+  oracle and a C++ kernel, diff the two implementations of the disputed branch
+  BEFORE touching the assertion — the oracle is as likely to be stale as the
+  code. And when a PR-review fix lands in a kernel, port it to the oracle in the
+  SAME PR, because the fixture-based agreement test will not catch the drift.
+  Do not "fix" a gate by weakening its assertion until you have established
+  which side is wrong. Cross-ref [[ladruno-adr79-geom-hypo]].
+  *2026-08-04 (P2i apex-teleport hunt).*

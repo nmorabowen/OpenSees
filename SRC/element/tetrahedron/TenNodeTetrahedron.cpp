@@ -1842,7 +1842,19 @@ TenNodeTetrahedron::setResponse(const char **argv, int argc, OPS_Stream &output)
 int
 TenNodeTetrahedron::getResponse(int responseID, Information &eleInfo)
 {
-    static Vector stresses(6);
+    // Ladruno BUGFIX: this buffer was sized 6 (copy-pasted from
+    // FourNodeTetrahedron, which has a single Gauss point) but BOTH the
+    // "stresses" (responseID 3) and "strains" (responseID 4) branches below
+    // loop over all NumGaussPoints=4 points and write 6 components each = 24
+    // doubles. Vector::operator() is bounds-checked only under _G3DEBUG, so a
+    // release build silently wrote 18 doubles (144 bytes) past the end of this
+    // static heap block on every recorder step -> heap corruption / segfault.
+    // 24 is also what setResponse() already advertises: ElementResponse(...,
+    // Vector(6*4)). Sizing it correctly additionally stops Information::
+    // setVector() from reallocating the response Vector down to 6 (Vector::
+    // operator= resizes on mismatch), which was desynchronising the
+    // ElementRecorder column layout even when it did not crash.
+    static Vector stresses(6 * NumGaussPoints);
 
     if (responseID == 1)
         return eleInfo.setVector(this->getResistingForce());
@@ -2146,7 +2158,7 @@ TenNodeTetrahedron::shp3d( const double zeta[4], double &xsj, double shp[4][NumN
     double Jdet = (t1*(t5*t9-t6*t8) - t2*(t4*t9-t6*t7) + t3*(t4*t8-t5*t7))/6.0;
 
     // Saving the Jacobians Determinant
-    // BUGFIX: Jdet above already carries the tetrahedral 1/6 factor (it is the
+    // Ladruno BUGFIX: Jdet above already carries the tetrahedral 1/6 factor (it is the
     // element VOLUME, not the raw 3x3 determinant). The Gauss weights wg[]
     // sum to 1/6 (the natural-tet volume), so using xsj = Jdet applied the
     // 1/6 factor TWICE -> every reaction/stiffness came out 6x too soft

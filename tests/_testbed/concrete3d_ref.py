@@ -677,7 +677,23 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
     # an off-surface point.
     f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
                       fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
-    converged = bool((converged or apex) and abs(f_indep) < 1.0e-7 * (fc + 1.0))
+    # ADMISSIBILITY + SAFE FALLBACK — ported from the C++ kernel (PR #249 adversarial-review fix,
+    # LadrunoConcrete3DKernel.h returnMapHardening). The oracle had the HONEST f-recompute above but
+    # NOT this half, so it still reported converged for the apex teleport: the hardening Newton
+    # overshoots to rho<0 on a deep-COMPRESSION trial, the apex branch projects to the hydrostatic-
+    # TENSION vertex, and f==0 holds there BY CONSTRUCTION -> `(converged or apex) and |f|<tol`
+    # returns True for a sign-flipped, inadmissible state. Measured: a trial with max principal
+    # -23.76 returned [+2.94,+2.94,+2.94] with conv=True, which then drove the P2i tensile damage
+    # gate to wt=0.997 under pure compression (test_p2i_multiaxial_apportioning_gate, red since the
+    # commit that introduced it). A valid plastic return needs dlam>=0 AND a non-decreasing
+    # hardening variable kp>=kp_n; otherwise hand back the ELASTIC PREDICTOR rather than the
+    # garbage iterate (kp<kp_n would poison the committed history) and report NOT converged so the
+    # caller can cut the step. The rigorous vertex sub-algorithm (Koiter multi-surface, ADR 4.2)
+    # remains deferred — this makes the failure honest, it does not make the apex return correct.
+    admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
+    converged = bool((converged or apex) and abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible)
+    if not converged:
+        return np.array(sig_tr, float), kp_n, True, f_indep, False
     return sig_new, kp, True, f_indep, converged
 
 
