@@ -3689,3 +3689,17 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   Do not "fix" a gate by weakening its assertion until you have established
   which side is wrong. Cross-ref [[ladruno-adr79-geom-hypo]].
   *2026-08-04 (P2i apex-teleport hunt).*
+### quad8 mortar dual masses are NEGATIVE at corners (−A/12) by construction — sign-aware guards, do not "fix"
+- **Bites:** the serendipity quad8 corner shape functions integrate to **−A/12** over the facet (mids +A/3; the total is still A), so the ADR-62 P2.1 dual condensation `Aᵉ=diag(∫N)(Dᵉ)⁻¹` legitimately produces NEGATIVE diagonal dual masses at every quad8 corner node. The sign cancels exactly in `P = Mdual/Ddual` (partition of unity `P·1=1` holds algebraically), but any guard, recorder, or future reader that assumes `Ddual > 0` — the shipped `Ddual[I] <= 1e-300` "uncovered node" refusal did exactly this — false-refuses every valid quad8 tie. Same trap wherever a rowsum `∫N_I ≥ 0` assumption hides: the pre-ADR-78 coverage ratio (`cover/fullCov ≥ 1−1e-3` FLIPS for negative rowsums) and the `|gap|/cover` normalization.
+- **Rule:** for serendipity bases, node-wise rowsum measures are SIGNED; guards must be sign-free (areas, L1 integrals) or sign-aware (`|Ddual|`). ADR-78 D3 unified the mortar-tie guards on per-facet AREA coverage + per-facet `∫|g_N|/area`.
+- **Workaround/status:** ✅ shipped that way (ADR-78). *2026-08-04.*
+
+### tri6 SLAVE facets are structurally incompatible with the dual mortar — corner ∫N = 0, refused by name
+- **Bites:** on the reference triangle the tri6 CORNER shape functions integrate to exactly ZERO (the three midsides carry the whole area). The dual scaling divides by the per-facet corner rowsum ⇒ division by zero, and no tolerance rescues it — it is structural, not conditioning. The rowsum-based coverage machinery is equally meaningless there. quad8 corners (−A/12 ≠ 0) are fine.
+- **Rule:** `LadrunoTie -mortar` refuses `npsS == 6` in BOTH bases (ADR-78 D2, mirroring apeGmsh ADR 0086 v1); tri6 MASTER facets are fully supported. Remedy in the message: swap master/slave, or put quad8/hex20 faces on the slave side. Revisit only if a tet10-interface user materializes.
+- **Workaround/status:** ✅ named refusal shipped (ADR-78). *2026-08-04.*
+
+### ADR-78 unified the mortar-tie guards for ALL facet orders — linear decks with cancelling gap fields now refuse (by design)
+- **Bites:** the pre-ADR-78 conforming-gap guard tested the per-node SIGNED weighted gap `|Σ∫N_I g_N|/cover`, which a gap field that cancels inside a node's support could slip through (a warp/antisymmetric offset reading as "conforming"). The ADR-78 per-facet `∫|g_N|/area` L1 guard has no cancellation blind spot and — per the OQ-2 "unify" sign-off — applies to tri3/quad4 decks too. A linear deck that previously built its tie may now refuse with the conforming-gap message. The emitted P (weights) is byte-identical for linear inputs; only refusal behaviour changed.
+- **Rule:** if a formerly-working linear tie now refuses on the gap guard, the geometry genuinely is off the master surface somewhere — fix the interface or consciously relax `-tol`.
+- **Workaround/status:** ✅ intentional behaviour change, documented here + ADR-78 D3/BLOCKER-3. *2026-08-04.*

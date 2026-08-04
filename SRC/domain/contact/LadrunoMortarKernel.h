@@ -60,8 +60,19 @@
 //     only converges under heavy refinement — why the clip is in the MVP, not deferred.
 //   - weighted gap g̃ linear-exact (uniform + tilted-plane gap); FD d g̃/d(coord) check.
 //
-// See Ladruno_implementation/{41_ladruno_mortar_alm_contact,48_ladruno_contact_capstone}
-// _adr.md and _adr41_c1_design.md.
+// ADR-78 (quadratic mortar facets): the kernel additionally accepts SERENDIPITY facets —
+// quad8 (nps 8) and tri6 (nps 6), corners-first node ordering (gmsh / OpenSees 20-node-
+// brick face convention). ALL GEOMETRY stays on the CORNER polygon (aux plane, clip,
+// inverse isomap, projectFull — the shipped, gated code paths); only the BASIS EVALUATION
+// changes: shapeFull() evaluates the full serendipity N/φ at the mapped Gauss points.
+// Exact (not approximate) in scope, because a flat facet with midsides AT the edge
+// midpoints has a serendipity map that reduces IDENTICALLY to the corner map — and that
+// precondition is a GUARD: a curved / midside-displaced quadratic facet returns the new
+// status -2 (INVALID GEOMETRY — the caller must hard-error, never silently skip; -1 stays
+// "empty overlap, skip"). Oracle: kinematic_tie_validation/proto_p2_2_quad8_mortar.py.
+//
+// See Ladruno_implementation/{41_ladruno_mortar_alm_contact,48_ladruno_contact_capstone,
+// 78_ladruno_quadratic_mortar_tie}_adr.md and _adr41_c1_design.md.
 
 #ifndef LadrunoMortarKernel_h
 #define LadrunoMortarKernel_h
@@ -73,19 +84,27 @@ namespace LadrunoMortarKernel {
 
 namespace LP = LadrunoContactProjection;   // shipped projection (projectFull, shape, ...)
 
-// limits: a facet has ≤4 nodes; a convex tri/quad ∩ tri/quad clip has ≤8 vertices; the
-// fan triangulation has ≤8 sub-triangles; the GP rule has ≤6 points per sub-triangle.
+// limits: a facet has ≤8 nodes (serendipity, ADR-78) but its CORNER polygon has ≤4; the
+// clip runs on corner polygons, so a convex tri/quad ∩ tri/quad clip still has ≤8
+// vertices and ≤8 fan sub-triangles; the GP rule has ≤12 points per sub-triangle
+// (degree-6 Dunavant for quadratic pairs, ADR-78 D4).
+static const int MAXN  = 8;    // max facet nodes (serendipity quad8)
 static const int MAXV  = 8;    // max clip-polygon vertices
-static const int MAXGP = 6;    // max Gauss points per sub-triangle
+static const int MAXGP = 12;   // max Gauss points per sub-triangle
+
+// corner count of a facet: tri3/quad4 are all corners; tri6/quad8 are corners-first.
+inline int ncorner(int nps) { return (nps <= 4) ? nps : nps / 2; }
 
 // ------------------------------------------------------------------ result of one pair
 struct PairResult {
-    int    status;     // 0 contribution accumulated, -1 empty/degenerate overlap (skip)
+    int    status;     // 0 accumulated, -1 empty/degenerate overlap (skip),
+                       // -2 INVALID quadratic facet geometry (caller must hard-error)
     int    ngp;        // number of Gauss points integrated (0 ⇒ no contribution)
     double area;       // ∫ dΓ over the overlap (slave-surface measure)
-    double D[4][4];    // slave–slave mortar  D_IJ   (rows/cols = slave nodes)
-    double M[4][4];    // slave–master mortar M_IK   (rows = slave, cols = master nodes)
-    double g[4];       // weighted gap g̃_I           (one per slave node)
+    double gapL1;      // ∫ |g_N| dΓ over the overlap (the ADR-78 sign-free gap guard)
+    double D[MAXN][MAXN]; // slave–slave mortar  D_IJ   (rows/cols = slave nodes)
+    double M[MAXN][MAXN]; // slave–master mortar M_IK   (rows = slave, cols = master nodes)
+    double g[MAXN];    // weighted gap g̃_I           (one per slave node)
 };
 
 // =============================================================== small 2D helpers
@@ -279,59 +298,142 @@ inline bool inverseIsomap2D(int nps, const double UV[4][2], const double q[2],
     return conv;
 }
 
+// =============================================================== full (serendipity) basis
+// ADR-78: evaluate the FULL facet basis at parent (ξ,η) — tri3/quad4 delegate to LP::shape
+// (byte-identical values on the linear path); tri6/quad8 are the standard serendipity
+// functions, corners-first. N must hold MAXN entries. Derivatives are NOT provided — all
+// geometry (tangents/normals/isomaps) runs on the corner polygon by design (ADR-78 D1).
+inline void shapeFull(int nps, double xi, double eta, double N[MAXN]) {
+    if (nps <= 4) {
+        double dNxi[4], dNeta[4];
+        LP::shape(nps, xi, eta, N, dNxi, dNeta);
+        for (int i = nps; i < MAXN; i++) N[i] = 0.0;
+        return;
+    }
+    if (nps == 8) {
+        const double xs[4] = {-1.0, 1.0, 1.0, -1.0};
+        const double es[4] = {-1.0, -1.0, 1.0, 1.0};
+        for (int i = 0; i < 4; i++)
+            N[i] = 0.25 * (1 + xi*xs[i]) * (1 + eta*es[i]) * (xi*xs[i] + eta*es[i] - 1);
+        N[4] = 0.5 * (1 - xi*xi) * (1 - eta);    // mid 0-1
+        N[5] = 0.5 * (1 + xi) * (1 - eta*eta);   // mid 1-2
+        N[6] = 0.5 * (1 - xi*xi) * (1 + eta);    // mid 2-3
+        N[7] = 0.5 * (1 - xi) * (1 - eta*eta);   // mid 3-0
+        return;
+    }
+    // tri6: area coords λ0=1-ξ-η, λ1=ξ, λ2=η; corners λ(2λ-1), mids 4λaλb.
+    double l0 = 1 - xi - eta, l1 = xi, l2 = eta;
+    N[0] = l0 * (2*l0 - 1);  N[1] = l1 * (2*l1 - 1);  N[2] = l2 * (2*l2 - 1);
+    N[3] = 4*l0*l1;          N[4] = 4*l1*l2;          N[5] = 4*l2*l0;
+    N[6] = 0.0;              N[7] = 0.0;
+}
+
+// ADR-78 D1 guard: a quadratic facet is admissible ONLY when every midside node sits at
+// its edge midpoint (3D distance ≤ tol · max corner-edge length — this also catches an
+// out-of-plane lift, i.e. a curved facet). Then the serendipity map ≡ the corner map and
+// the corner-polygon geometry below is EXACT. Linear facets are trivially valid. A
+// violation must surface as status -2 (hard error at the caller), never a silent skip.
+inline bool validQuadraticFacet(int nps, const double X[MAXN][3], double tol = 1e-6) {
+    int npc = ncorner(nps);
+    if (npc == nps) return true;
+    double scale = 0.0;
+    for (int a = 0; a < npc; a++) {
+        int b = (a + 1) % npc;
+        double e[3] = { X[b][0]-X[a][0], X[b][1]-X[a][1], X[b][2]-X[a][2] };
+        double L = LP::norm3(e);
+        if (L > scale) scale = L;
+    }
+    if (scale < 1e-300) return false;
+    for (int k = 0; k < npc; k++) {                     // midside k lies on edge (k, k+1)
+        int a = k, b = (k + 1) % npc;
+        double d[3] = { X[npc+k][0] - 0.5*(X[a][0]+X[b][0]),
+                        X[npc+k][1] - 0.5*(X[a][1]+X[b][1]),
+                        X[npc+k][2] - 0.5*(X[a][2]+X[b][2]) };
+        if (LP::norm3(d) > tol * scale) return false;
+    }
+    return true;
+}
+
 // barycentric triangle Gauss rule, weights SUM TO 1 (area applied separately). order<=2
-// ⇒ 3-pt (degree 2); else the 6-pt degree-4 rule. Returns the point count.
+// ⇒ 3-pt (degree 2); order<=4 ⇒ the 6-pt degree-4 rule; else the 12-pt degree-6
+// Dunavant rule (ADR-78 D4 — serendipity N·φ products reach degree 6). Returns the count.
 inline int triQuadrature(int order, double bary[MAXGP][3], double w[MAXGP]) {
     if (order <= 2) {
         const double b[3][3] = {{2./3,1./6,1./6},{1./6,2./3,1./6},{1./6,1./6,2./3}};
         for (int i = 0; i < 3; i++) { for (int k = 0; k < 3; k++) bary[i][k] = b[i][k]; w[i] = 1./3; }
         return 3;
     }
-    const double a1 = 0.445948490915965, b1 = 0.108103018168070, w1 = 0.223381589678011;
-    const double a2 = 0.091576213509771, b2 = 0.816847572980459, w2 = 0.109951743655322;
-    const double b[6][3] = {{b1,a1,a1},{a1,b1,a1},{a1,a1,b1},{b2,a2,a2},{a2,b2,a2},{a2,a2,b2}};
-    const double ww[6]   = {w1,w1,w1,w2,w2,w2};
-    for (int i = 0; i < 6; i++) { for (int k = 0; k < 3; k++) bary[i][k] = b[i][k]; w[i] = ww[i]; }
-    return 6;
+    if (order <= 4) {
+        const double a1 = 0.445948490915965, b1 = 0.108103018168070, w1 = 0.223381589678011;
+        const double a2 = 0.091576213509771, b2 = 0.816847572980459, w2 = 0.109951743655322;
+        const double b[6][3] = {{b1,a1,a1},{a1,b1,a1},{a1,a1,b1},{b2,a2,a2},{a2,b2,a2},{a2,a2,b2}};
+        const double ww[6]   = {w1,w1,w1,w2,w2,w2};
+        for (int i = 0; i < 6; i++) { for (int k = 0; k < 3; k++) bary[i][k] = b[i][k]; w[i] = ww[i]; }
+        return 6;
+    }
+    // Dunavant degree-6, 12 points, weights sum to 1 (oracle-verified exact to p+q≤6).
+    const double p1 = 0.501426509658179, q1 = 0.249286745170910, w1 = 0.116786275726379;
+    const double p2 = 0.873821971016996, q2 = 0.063089014491502, w2 = 0.050844906370207;
+    const double p3 = 0.053145049844817, q3 = 0.310352451033784;
+    const double r3 = 1.0 - p3 - q3,     w3 = 0.082851075618374;
+    const double b[12][3] = {
+        {p1,q1,q1},{q1,p1,q1},{q1,q1,p1},
+        {p2,q2,q2},{q2,p2,q2},{q2,q2,p2},
+        {p3,q3,r3},{p3,r3,q3},{q3,p3,r3},{q3,r3,p3},{r3,p3,q3},{r3,q3,p3}};
+    const double ww[12] = {w1,w1,w1,w2,w2,w2,w3,w3,w3,w3,w3,w3};
+    for (int i = 0; i < 12; i++) { for (int k = 0; k < 3; k++) bary[i][k] = b[i][k]; w[i] = ww[i]; }
+    return 12;
 }
 
 // =============================================================== the mortar pair
 // Integrate ONE slave/master facet pair (the ADR-39 broad phase supplies the pairing).
-// Accumulates D, M, g̃ into `out` (zeroed here). Returns 0 if a contribution was added,
-// -1 if the overlap is empty / a sliver / degenerate (caller simply skips it).
-inline int integratePair(int nps_s, const double Xs[4][3],
-                         int nps_m, const double Xm[4][3],
+// Accumulates D, M, g̃, area, gapL1 into `out` (zeroed here). Returns 0 if a contribution
+// was added, -1 if the overlap is empty / a sliver / degenerate (caller simply skips it),
+// -2 if a QUADRATIC facet violates the midside-at-midpoint guard (ADR-78 D1 — the caller
+// MUST hard-error with a named message; silently skipping -2 would drop the bond).
+//
+// ADR-78: quadratic (tri6/quad8, corners-first) facets are admitted; all geometry below
+// runs on the CORNER polygon (counts ncs/ncm) and only the basis evaluation (shapeFull)
+// sees the full node set — exact in scope because the guard pins midsides to midpoints.
+inline int integratePair(int nps_s, const double Xs[MAXN][3],
+                         int nps_m, const double Xm[MAXN][3],
                          const double refDir[3], PairResult &out, int order = 2) {
-    out.status = -1; out.ngp = 0; out.area = 0.0;
-    for (int i = 0; i < 4; i++) { out.g[i] = 0.0;
-        for (int j = 0; j < 4; j++) { out.D[i][j] = 0.0; out.M[i][j] = 0.0; } }
+    out.status = -1; out.ngp = 0; out.area = 0.0; out.gapL1 = 0.0;
+    for (int i = 0; i < MAXN; i++) { out.g[i] = 0.0;
+        for (int j = 0; j < MAXN; j++) { out.D[i][j] = 0.0; out.M[i][j] = 0.0; } }
+
+    if (!validQuadraticFacet(nps_s, Xs) || !validQuadraticFacet(nps_m, Xm)) {
+        out.status = -2;
+        return -2;                                      // invalid quadratic geometry
+    }
+    const int ncs = ncorner(nps_s), ncm = ncorner(nps_m);
 
     double x0[3], n0[3], e1[3], e2[3], n_s[3];
-    if (!auxPlane(nps_m, Xm, refDir, x0, n0, e1, e2)) return -1;
-    if (!facetNormal(nps_s, Xs, refDir, n_s)) return -1;
+    if (!auxPlane(ncm, Xm, refDir, x0, n0, e1, e2)) return -1;
+    if (!facetNormal(ncs, Xs, refDir, n_s)) return -1;
     double cos_t = std::fabs(LP::dot3(n_s, n0));
     if (cos_t < 1e-12) return -1;                       // slave ⟂ aux plane: ill-posed
 
-    // slave nodes in aux 2D — NODE order (for the GP back-map) and a CCW copy (clip subj)
+    // slave CORNERS in aux 2D — NODE order (for the GP back-map) and a CCW copy (clip subj)
     double UVs[4][2], subj[4][2], clip[4][2];
-    for (int i = 0; i < nps_s; i++) { to2d(Xs[i], x0, e1, e2, UVs[i]);
+    for (int i = 0; i < ncs; i++) { to2d(Xs[i], x0, e1, e2, UVs[i]);
         subj[i][0] = UVs[i][0]; subj[i][1] = UVs[i][1]; }
-    for (int i = 0; i < nps_m; i++) to2d(Xm[i], x0, e1, e2, clip[i]);
-    ensureCCW(subj, nps_s);
-    ensureCCW(clip, nps_m);
-    // C1 scope = flat, CONVEX tri/quad facets. A concave/bow-tie or strongly-warped facet
-    // projects to a non-convex polygon ⇒ Sutherland-Hodgman would silently integrate the
-    // slave over its convex hull and truncate the clip buffer (diverging from the oracle).
-    // REFUSE the pair rather than return a wrong area (gate, ADR-41 C1 review).
-    if (!isConvex2(subj, nps_s) || !isConvex2(clip, nps_m)) return -1;
+    for (int i = 0; i < ncm; i++) to2d(Xm[i], x0, e1, e2, clip[i]);
+    ensureCCW(subj, ncs);
+    ensureCCW(clip, ncm);
+    // C1 scope = flat, CONVEX facets (corner polygons). A concave/bow-tie or strongly-
+    // warped facet projects to a non-convex polygon ⇒ Sutherland-Hodgman would silently
+    // integrate the slave over its convex hull and truncate the clip buffer (diverging
+    // from the oracle). REFUSE the pair rather than return a wrong area (ADR-41 C1 review).
+    if (!isConvex2(subj, ncs) || !isConvex2(clip, ncm)) return -1;
 
     double poly[MAXV][2];
-    int np = clipPolygon(subj, nps_s, clip, nps_m, poly);
+    int np = clipPolygon(subj, ncs, clip, ncm, poly);
     np = dedupe(poly, np);
     if (np < 3) return -1;
 
-    double A_s = std::fabs(signedArea2(subj, nps_s));
-    double A_m = std::fabs(signedArea2(clip, nps_m));
+    double A_s = std::fabs(signedArea2(subj, ncs));
+    double A_m = std::fabs(signedArea2(clip, ncm));
     double A_min = (A_s < A_m) ? A_s : A_m;
     double A_poly = std::fabs(signedArea2(poly, np));
     if (A_poly < 1e-12 * A_min) return -1;              // sliver guard
@@ -356,26 +458,33 @@ inline int integratePair(int nps_s, const double Xs[4][3],
                 bary[gp][0]*triP[0][0] + bary[gp][1]*triP[1][0] + bary[gp][2]*triP[2][0],
                 bary[gp][0]*triP[0][1] + bary[gp][1]*triP[1][1] + bary[gp][2]*triP[2][1] };
             double xi_s, eta_s;
-            if (!inverseIsomap2D(nps_s, UVs, q, xi_s, eta_s)) continue;  // back-map failed
-            double Ns[4], dN1[4], dN2[4];
-            LP::shape(nps_s, xi_s, eta_s, Ns, dN1, dN2);
+            if (!inverseIsomap2D(ncs, UVs, q, xi_s, eta_s)) continue;    // back-map failed
+            double Ns[MAXN];
+            shapeFull(nps_s, xi_s, eta_s, Ns);          // full slave basis at the mapped GP
             double x_s[3] = {0,0,0};
             for (int i = 0; i < nps_s; i++) for (int d = 0; d < 3; d++) x_s[d] += Ns[i]*Xs[i][d];
 
             LP::Projection p;
-            int st = LP::projectFull(nps_m, Xm, x_s, refDir, p);
+            int st = LP::projectFull(ncm, Xm, x_s, refDir, p);
             if (st < 0) continue;                        // no valid projection: skip GP
+            // master basis at the projection: linear masters use p.phi verbatim (the
+            // shipped path, byte-identical); quadratic masters evaluate the serendipity
+            // basis at the SAME corner-map (ξ,η) — exact under the midside guard.
+            double phi[MAXN];
+            if (nps_m <= 4) { for (int k = 0; k < 4; k++) phi[k] = p.phi[k]; }
+            else            shapeFull(nps_m, p.xi, p.eta, phi);
             double x_m[3] = {0,0,0};
-            for (int k = 0; k < nps_m; k++) for (int d = 0; d < 3; d++) x_m[d] += p.phi[k]*Xm[k][d];
+            for (int k = 0; k < nps_m; k++) for (int d = 0; d < 3; d++) x_m[d] += phi[k]*Xm[k][d];
             double dx[3] = { x_s[0]-x_m[0], x_s[1]-x_m[1], x_s[2]-x_m[2] };
             double gN = LP::dot3(p.n, dx);
 
             double wJ = w[gp] * A_phys;
             out.area += wJ;
+            out.gapL1 += wJ * std::fabs(gN);
             for (int i = 0; i < nps_s; i++) {
                 out.g[i] += wJ * Ns[i] * gN;
                 for (int j = 0; j < nps_s; j++) out.D[i][j] += wJ * Ns[i] * Ns[j];
-                for (int k = 0; k < nps_m; k++) out.M[i][k] += wJ * Ns[i] * p.phi[k];
+                for (int k = 0; k < nps_m; k++) out.M[i][k] += wJ * Ns[i] * phi[k];
             }
             out.ngp++;
         }
