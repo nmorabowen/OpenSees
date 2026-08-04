@@ -97,7 +97,7 @@ GmshRecorder hex20 output format.
 ### Wave 0 — vanilla bug fixes (small PRs, first; ~1 week of porting)
 | # | Package | Content |
 |---|---|---|
-| 0.0 | **TenNodeTetrahedron 6× stiffness fix** | `shp3d` double-applied 1/6 Jacobian factor → all stiffness/reactions 6× too soft (jaabell's own element; found unledgered by the 2026-07-22 audit). Single-hunk, patch-test-verified — the ideal first PR |
+| 0.0 | **TenNodeTetrahedron: 6× stiffness fix + `getResponse` heap overrun** | Two independent defects in jaabell's own element, both single-hunk and both still live upstream. **(a)** `shp3d` double-applied 1/6 Jacobian factor → all stiffness/reactions 6× too soft (found unledgered by the 2026-07-22 audit); patch-test-verified. **(b)** `getResponse`'s `static Vector stresses(6)` is written 4 GP × 6 = **24 doubles** by both the `stresses` and `strains` branches — a 144-byte heap overrun per recorder step (unchecked `Vector::operator()` outside `_G3DEBUG`); fix to `6*NumGaussPoints`, which is what `setResponse` already advertises. Copy-paste slip from `FourNodeTetrahedron` (1 GP). Ship as one PR (same file, same author, both trivially reviewable) — the ideal first PR |
 | 0.1 | Portability & latent-crash fixes | **SCOPED DOWN to 3 pure non-behavioral fixes** (shipped): FE_Element subtype-ctor scratch guard; PythonStream `"%s"` format; DistributedSuperLU `stat`→`superlu_stat` MSVC collision. *H5DRM `stuff[12]` init moved to 0.5 (H5DRM is build-gated + its work is behavioral); GmshRecorder hex20 moved to a recorder-fixes PR (needs the type-17 permutation table)* |
 | 0.2 | Serialization fixes | quad/Tri31 element-rho send/recv (wire-format change — flag); missing broker entries audit; **+ GmshRecorder hex20 type-17 + mid-edge permutation (moved here from 0.1)** |
 | 0.3 | Error-contract fixes | DirectIntegrationAnalysis + TransientDomainDecomposition return honoring; `Domain::clearAll()` EQ leak; Mumps `-opt` parse guard |
@@ -172,9 +172,10 @@ the `classTags.h` 33000+ band, and the ADR index. **Result: 100% bucketed.**
 
 > [!warning] Port-list process note
 > The `// Ladruno` marker grep is NOT a complete port list — the audit found
-> **19 modified vanilla files with no marker** (TenNodeTet 6× fix,
-> DistributedSuperLU MSVC fix, the ASDPlastic extension set, profiler-macro
-> hooks, `TransientIntegrator.h getCriticalTimeStep` virtual, build wiring).
+> **19 modified vanilla files with no marker** (TenNodeTet 6× fix — *marker
+> since added, see 0.0*; DistributedSuperLU MSVC fix, the ASDPlastic extension
+> set, profiler-macro hooks, `TransientIntegrator.h getCriticalTimeStep`
+> virtual, build wiring).
 > The authoritative port list for every package is
 > `git diff --name-only e1237189a origin/ladruno`, classified by this table.
 
