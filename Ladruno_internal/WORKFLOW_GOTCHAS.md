@@ -232,7 +232,7 @@ force on both files.
   `LEDGER_vanilla_files` row for a big-numstat interpreter file must quote the
   strip-trailing-cr count, not the raw numstat, or the fork looks far more
   divergent from upstream than it is.
-- **Fixed for the registration surface (PR #704).** The eight files every fork
+- **Fixed for the registration surface (PR #706).** The eight files every fork
   feature touches to register a class — `OpenSeesCommands.{cpp,h}`,
   `{Python,Tcl}Wrapper.cpp`, `OpenSees{Element,Pattern}Commands.cpp`,
   `tcl/commands.cpp`, `classTags.h` — now carry an explicit `text` override at the
