@@ -395,6 +395,14 @@ PressureDependMultiYield::PressureDependMultiYield (int tag, int nd,
   oppoPrePPZStrainOctaCommitted = oppoPrePPZStrainOcta = 0.;
   maxPress = 0.;
 
+  // Ladruno: plastic-strain accumulators start at zero
+  equivPlastStrainCommitted = equivPlastStrain = 0.;
+  elasticShearMod = elasticBulkMod = 0.;
+  for (int j=0; j<6; j++) {
+    plastStrainCommitted[j] = plastStrain[j] = 0.;
+    subStepStress[j] = 0.;
+  }
+
   theSurfaces = new MultiYieldSurface[numOfSurfaces+1]; //first surface not used
   committedSurfaces = new MultiYieldSurface[numOfSurfaces+1];
 
@@ -410,7 +418,13 @@ PressureDependMultiYield::PressureDependMultiYield ()
   PPZPivotCommitted(), PPZCenterCommitted(),
   lockStressCommitted(), theSurfaces(0), committedSurfaces(0)
 {
-  //does nothing
+  // Ladruno: recvSelf() fills these, but zero them so a never-received copy is sane
+  equivPlastStrainCommitted = equivPlastStrain = 0.;
+  elasticShearMod = elasticBulkMod = 0.;
+  for (int j=0; j<6; j++) {
+    plastStrainCommitted[j] = plastStrain[j] = 0.;
+    subStepStress[j] = 0.;
+  }
 }
 
 PressureDependMultiYield::PressureDependMultiYield (const PressureDependMultiYield & a)
@@ -450,6 +464,17 @@ PressureDependMultiYield::PressureDependMultiYield (const PressureDependMultiYie
   oppoPrePPZStrainOcta    = a.oppoPrePPZStrainOcta;
   initPress = a.initPress;
   maxPress = a.maxPress;
+
+  // Ladruno: plastic-strain accumulators are per-instance state -- copy them
+  equivPlastStrain          = a.equivPlastStrain;
+  equivPlastStrainCommitted = a.equivPlastStrainCommitted;
+  elasticShearMod = a.elasticShearMod;
+  elasticBulkMod  = a.elasticBulkMod;
+  for (int j=0; j<6; j++) {
+    plastStrain[j]          = a.plastStrain[j];
+    plastStrainCommitted[j] = a.plastStrainCommitted[j];
+    subStepStress[j]        = a.subStepStress[j];
+  }
 
   theSurfaces = new MultiYieldSurface[numOfSurfaces+1];  //first surface not used
   committedSurfaces = new MultiYieldSurface[numOfSurfaces+1];
@@ -744,6 +769,11 @@ PressureDependMultiYield::getStress (void)
   if (loadStage == 1 && e2p == 0)
     elast2Plast();
 
+  // Ladruno: this routine re-integrates the whole step from the committed state
+  // on every call, so the plastic-strain accumulators must restart there too.
+  equivPlastStrain = equivPlastStrainCommitted;
+  for (i=0; i<6; i++) plastStrain[i] = plastStrainCommitted[i];
+
   if (loadStage!=1) {  //linear elastic
     //trialStrain.setData(currentStrain.t2Vector() + strainRate.t2Vector());
     getTangent();
@@ -768,6 +798,8 @@ PressureDependMultiYield::getStress (void)
     lockStress = lockStressCommitted;
 
     subStrainRate = strainRate;
+    // Ladruno: sigma at the start of this (single, full-step) sub-step
+    for (i=0; i<6; i++) subStepStress[i] = currentStress.t2Vector()[i];
     setTrialStress(currentStress);
     if (activeSurfaceNum>0 && isLoadReversal(currentStress)) {
       updateInnerSurface();
@@ -778,6 +810,8 @@ PressureDependMultiYield::getStress (void)
  	    workV6 = currentStrain.t2Vector();
 	    workV6.addVector(1.0, strainRate.t2Vector(), 1.0);
 	    trialStrain.setData(workV6);
+	    // Ladruno: elastic step -- picks up only the p <= 0 tension cut-off
+	    accumPlasticStrain(subStepStress);
 		}
 		else {
       int numSubIncre = setSubStrainRate();
@@ -790,11 +824,15 @@ PressureDependMultiYield::getStress (void)
 	      trialStrain.setData(workV6);
 
 		if (i==0)  {
+			  // Ladruno: sigma at the start of this sub-step (workT2V is scratch
+			  // that isLoadReversal() clobbers, so keep our own copy)
+			  for (int k=0; k<6; k++) subStepStress[k] = currentStress.t2Vector()[k];
 			  setTrialStress(currentStress);
               is = isLoadReversal(currentStress);
 		}
 		else {
 			workT2V.setData(trialStress.t2Vector());
+			for (int k=0; k<6; k++) subStepStress[k] = trialStress.t2Vector()[k];  // Ladruno
 			setTrialStress(trialStress);
             is = isLoadReversal(workT2V);
 		}
@@ -802,10 +840,14 @@ PressureDependMultiYield::getStress (void)
           updateInnerSurface();
           activeSurfaceNum = 0;
 		}
-        if (activeSurfaceNum==0 && !isCrossingNextSurface()) continue;
+        if (activeSurfaceNum==0 && !isCrossingNextSurface()) {
+          accumPlasticStrain(subStepStress);   // Ladruno: elastic sub-step
+          continue;
+        }
         if (activeSurfaceNum==0) activeSurfaceNum++;
         int lock = stressCorrection(0);
         if(lock==0) updateActiveSurface();
+        accumPlasticStrain(subStepStress);     // Ladruno: after the return map
 		//opserr<<i<<" "<<activeSurfaceNum<<" "<<is<<" "<<subStrainRate.t2Vector()[3]<<endln;
 		}
     }
@@ -859,6 +901,9 @@ PressureDependMultiYield::commitState (void)
     PPZCenterCommitted = PPZCenter;
     lockStressCommitted = lockStress;
 	if (currentStress.volume() < maxPress) maxPress = currentStress.volume();
+    // Ladruno: plastic-strain accumulators
+    equivPlastStrainCommitted = equivPlastStrain;
+    for (int i=0; i<6; i++) plastStrainCommitted[i] = plastStrain[i];
   }
 
   return 0;
@@ -997,7 +1042,9 @@ PressureDependMultiYield::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  Vector data(70+numOfSurfaces*8);
+  // Ladruno: slots 70..76 carry the plastic-strain accumulators, so the yield
+  // surfaces now start at 77 (recvSelf below matches).
+  Vector data(77+numOfSurfaces*8);
   data(0) = rho;
   data(1) = einit;
   data(2) = refShearModulus;
@@ -1051,8 +1098,12 @@ PressureDependMultiYield::sendSelf(int commitTag, Channel &theChannel)
   workV6 = reversalStressCommitted.t2Vector();
   for(i = 0; i < 6; i++) data(i+63) = workV6[i];
 
+  // Ladruno: plastic-strain accumulators
+  for(i = 0; i < 6; i++) data(i+70) = plastStrainCommitted[i];
+  data(76) = equivPlastStrainCommitted;
+
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 70 + i*8;
+    int k = 77 + i*8;
     data(k) = committedSurfaces[i+1].size();
     data(k+1) = committedSurfaces[i+1].modulus();
     workV6 = committedSurfaces[i+1].center();
@@ -1093,7 +1144,7 @@ PressureDependMultiYield::recvSelf(int commitTag, Channel &theChannel,
   int ndm = idData(3);
   matN = idData(4);
 
-  Vector data(70+idData(1)*8);
+  Vector data(77+idData(1)*8);   // Ladruno: +7 for the plastic-strain accumulators
   res += theChannel.recvVector(this->getDbTag(), commitTag, data);
   if (res < 0) {
     opserr << "PressureDependMultiYield::recvSelf -- could not recv Vector\n";
@@ -1159,8 +1210,13 @@ PressureDependMultiYield::recvSelf(int commitTag, Channel &theChannel,
   theSurfaces = new MultiYieldSurface[numOfSurfaces+1]; //first surface not used
   committedSurfaces = new MultiYieldSurface[numOfSurfaces+1];
 
+  // Ladruno: plastic-strain accumulators (trial restarts from committed anyway,
+  // but keep both in step so a recorder read before the next getStress() is right)
+  for(i = 0; i < 6; i++) plastStrainCommitted[i] = plastStrain[i] = data(i+70);
+  equivPlastStrainCommitted = equivPlastStrain = data(76);
+
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 70 + i*8;
+    int k = 77 + i*8;
     workV6(0) = data(k+2);
     workV6(1) = data(k+3);
     workV6(2) = data(k+4);
@@ -1325,6 +1381,22 @@ PressureDependMultiYield::setResponse (const char **argv, int argc, OPS_Stream &
     }
     return new MaterialResponse(this, 4, curv);
   }
+
+  // Ladruno: plastic-strain outputs.  See accumPlasticStrain() for the split.
+  else if (strcmp(argv[0],"plasticStrain") == 0 || strcmp(argv[0],"plasticStrains") == 0) {
+    int ndm = ndmx[matN];
+    if (ndmx[matN] == 0) ndm = 2;
+    return new MaterialResponse(this, 10, Vector(ndm==3 ? 6 : 3));
+  }
+  else if (strcmp(argv[0],"equivalentPlasticStrain") == 0 ||
+           strcmp(argv[0],"plasticStrainEq") == 0 ||
+           strcmp(argv[0],"ebarP") == 0)
+    return new MaterialResponse(this, 11, Vector(1));
+
+  else if (strcmp(argv[0],"volumetricPlasticStrain") == 0 ||
+           strcmp(argv[0],"plasticStrainVol") == 0)
+    return new MaterialResponse(this, 12, Vector(1));
+
   else
     return 0;
 }
@@ -1416,6 +1488,37 @@ PressureDependMultiYield::getResponse (int responseID, Information &matInfo)
       *(matInfo.theVector) = getStressToRecord(7);
     return 0;
 	// end change by Alborz Ghofrani UW
+
+  // Ladruno: plastic strain.  plastStrainCommitted is TENSORIAL; the recorder
+  // convention here (see getCommittedStrain) is ENGINEERING shear, so double
+  // the off-diagonals.  2D returns [xx, yy, gxy] like the strain recorder.
+  case 10:
+    if (matInfo.theVector != 0) {
+      Vector & v = *(matInfo.theVector);
+      int ndm = ndmx[matN];
+      if (ndmx[matN] == 0) ndm = 2;
+      if (ndm==3) {
+        for (int i=0; i<3; i++) {
+          v(i)   = plastStrainCommitted[i];
+          v(i+3) = 2.*plastStrainCommitted[i+3];
+        }
+      } else {
+        v(0) = plastStrainCommitted[0];
+        v(1) = plastStrainCommitted[1];
+        v(2) = 2.*plastStrainCommitted[3];
+      }
+    }
+    return 0;
+  case 11:
+    if (matInfo.theVector != 0)
+      (*(matInfo.theVector))(0) = equivPlastStrainCommitted;
+    return 0;
+  case 12:
+    if (matInfo.theVector != 0)
+      (*(matInfo.theVector))(0) = plastStrainCommitted[0] + plastStrainCommitted[1]
+                                + plastStrainCommitted[2];
+    return 0;
+
   default:
     return -1;
   }
@@ -1856,6 +1959,53 @@ PressureDependMultiYield::setTrialStress(T2Vector & stress)
 
   if (volume > 0.) volume = 0.;
   trialStress.setData(workV6, volume);
+
+  // Ladruno: remember the moduli this sub-step's elastic predictor used, so
+  // accumPlasticStrain() can invert exactly the same hypoelastic law.
+  elasticShearMod = refShearModulus*modulusFactor;
+  elasticBulkMod  = B;
+}
+
+// Ladruno: plastic part of the current sub-step's strain increment.
+// PDMY01 is hypoelastic (pressure-dependent G, B), so the elastic part is
+// recovered with the SAME moduli setTrialStress() just used:
+//     d_eps^p = d_eps - dev(d_sigma)/(2G) - (d_p/(3B)) I
+// Everything here is TENSORIAL (shear strains are eps_ij, not gamma_ij), which
+// is how T2Vector stores strain internally.  Anything the elastic predictor did
+// not produce is plastic by construction: surface return in stressCorrection(),
+// dilation/contraction through the plastic potential, and the p <= 0 tension
+// cut-off in setTrialStress().
+void
+PressureDependMultiYield::accumPlasticStrain(const double * stressStart)
+{
+  if (elasticShearMod <= 0. || elasticBulkMod <= 0.) return;
+
+  const Vector & sigNew = trialStress.t2Vector();
+  const Vector & dEps   = subStrainRate.t2Vector();
+
+  double dSig[6];
+  for (int i=0; i<6; i++) dSig[i] = sigNew[i] - stressStart[i];
+
+  double dP    = (dSig[0] + dSig[1] + dSig[2])/3.;
+  double dEpsVolElast = dP/(3.*elasticBulkMod);
+  double twoG  = 2.*elasticShearMod;
+
+  double dEpsP[6];
+  for (int i=0; i<3; i++) {
+    dEpsP[i]   = dEps[i]   - (dSig[i] - dP)/twoG - dEpsVolElast;
+    dEpsP[i+3] = dEps[i+3] - dSig[i+3]/twoG;
+  }
+
+  // deviatoric part -> von Mises equivalent measure (same convention as LadrunoJ2)
+  double dEpsPVol = (dEpsP[0] + dEpsP[1] + dEpsP[2])/3.;
+  double devNorm2 = 0.;
+  for (int i=0; i<3; i++) {
+    double d = dEpsP[i] - dEpsPVol;
+    devNorm2 += d*d + 2.*dEpsP[i+3]*dEpsP[i+3];
+  }
+
+  equivPlastStrain += sqrt(2./3.*devNorm2);
+  for (int i=0; i<6; i++) plastStrain[i] += dEpsP[i];
 }
 
 int
