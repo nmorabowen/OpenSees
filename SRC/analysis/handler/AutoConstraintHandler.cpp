@@ -423,6 +423,20 @@ AutoConstraintHandler::handle(const ID* nodesLast)
 
 	// first standard elements
 	while ((elePtr = theEle()) != 0) {
+		// Ladruno (ADR-80 S2): remember whether this element touches an
+		// SP-constrained node, so applyLoad() can updateElement() it after
+		// enforceSPs. Same membership rule TransformationConstraintHandler uses.
+		bool touchesConstrainedNode = false;
+		{
+			const ID& elenodes = elePtr->getExternalNodes();
+			for (int i = 0; i < elenodes.Size(); ++i) {
+				if (sp_map.find(elenodes(i)) != sp_map.end()) {
+					touchesConstrainedNode = true;
+					break;
+				}
+			}
+		}
+
 		// only create an FE_Element for a subdomain element if it does not
 		// do independent analysis .. then subdomain part of this analysis so create
 		// an FE_element & set subdomain to point to it.
@@ -432,12 +446,16 @@ AutoConstraintHandler::handle(const ID* nodesLast)
 				fePtr = new FE_Element(numFeEle++, elePtr);
 				theModel->addFE_Element(fePtr);
 				theSub->setFE_ElementPtr(fePtr);
+				if (touchesConstrainedNode)          // Ladruno (ADR-80 S2)
+					theFEs.push_back(fePtr);
 			}
 		}
 		else {
 			// just a regular element .. create an FE_Element for it & add to AnalysisModel
 			fePtr = new FE_Element(numFeEle++, elePtr);
 			theModel->addFE_Element(fePtr);
+			if (touchesConstrainedNode)              // Ladruno (ADR-80 S2)
+				theFEs.push_back(fePtr);
 		}
 	}
 
@@ -527,6 +545,7 @@ AutoConstraintHandler::clearAll(void)
 	// reset the TransformationDOF_Group vector
 	// don't delete the pointer inside the vector (owned by the model)
 	theDOFs.clear();
+	theFEs.clear();   // Ladruno (ADR-80 S2): also model-owned, clear only
 
 	// for the nodes reset the DOF_Group pointers to 0
 	Domain* theDomain = this->getDomainPtr();
@@ -580,6 +599,17 @@ AutoConstraintHandler::applyLoad(void)
 		theDOFs[numDOF - i]->enforceSPs(1);
 	for (std::size_t i = 1; i <= numDOF; i++)
 		theDOFs[numDOF - i]->enforceSPs(0);
+
+	// Ladruno (ADR-80 S2): the SP'd DOF is eliminated (setID(dof,-1)), so the ONLY
+	// way a non-homogeneous prescribed value reaches the RHS is through the state
+	// of the elements attached to the constrained node. Without this loop the
+	// first residual of every step is stale => dU ~ 0 => a dU-based convergence
+	// test (NormDispIncr, EnergyIncr) reports convergence at iteration 1 and the
+	// step commits with only the driven layer moved: a SILENT WRONG ANSWER.
+	// Mirrors TransformationConstraintHandler::enforceSPs. See ADR-80 / LEDGER_quirks.
+	for (std::size_t i = 0; i < theFEs.size(); i++)
+		theFEs[i]->updateElement();
+
 	return 0;
 }
 
