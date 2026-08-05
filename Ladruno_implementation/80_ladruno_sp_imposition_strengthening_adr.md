@@ -207,13 +207,40 @@ uncitable — do not repeat that).
   `Newton -initial`: substitutes the elastic tangent for the collapsed one
   while keeping the spurious residual. Recovery ⇒ tangent half dominates;
   no recovery ⇒ residual half dominates (Abaqus doctrine predicts the
-  latter). **Bounds the predictor's ceiling.**
+  latter). ~~**Bounds the predictor's ceiling.**~~
+  > ⚠ **CORRECTED 2026-08-04 after running it** — see
+  > [[80b_sp_gates_g1g2g3_2026-08-04]] §G3. **G3 does NOT bound the predictor's
+  > ceiling, and the original sentence ("a predictor attacks the residual half
+  > directly") is wrong.** The two halves are not independent remedies to be
+  > split: the tangent half is *downstream of the same overstrain* — the
+  > consistent tangent collapses **because** the layer spuriously yields, and it
+  > yields **because** it was overstrained. A predictor that removes the
+  > overstrain removes the spurious yielding, hence the collapsed tangent too.
+  > G3 measures how the cost **decomposes given the overstrain happens**; the
+  > predictor's ceiling is the **full** excess over the elastic control.
+  > Measured synthetically: tangent 58 %, residual 42 % — so scoping S1 to the
+  > residual half would have set a target wrong by >2×.
 - **G4 — reproduce the `AutoConstraintHandler` defect.** One brick,
   prescribed face displacement, `constraints Auto` vs `Transformation`,
   `test NormDispIncr`. Expected signature: iteration-1 "convergence" with
   only the boundary layer moved. Gates S2.
 
-### S1 acceptance gates (from findings §5, unchanged)
+### S1 acceptance gates
+
+**Primary (fast, deterministic, no external decks) — added 2026-08-04 after P0.**
+Use the synthetic harness `sp_gates/g123_predictor_gates.tcl` as S1's inner loop:
+
+- `-extrapolate 0` reproduces the G0 disp/J2 row **exactly** (60 iterations at
+  `N` = 20, 10 steps) — the bit-identical-to-stock requirement.
+- `-extrapolate 1.0` drives that row from **60 toward the elastic 20**
+  (×3.00 → ×1.00). Judge against the **full** excess, not the 42 % residual
+  share — see the G3 correction above.
+- Run the acceptance model **in or above** G1's saturation plateau (`N` ≥ 20),
+  or the gate understates what the predictor achieved.
+- **Do not quote ×28.6 as the target.** That figure is a different model *with
+  52 cutbacks*; the synthetic ceiling is ×3.00.
+
+**Field validation (deferred until the Cerro Lindo decks are available):**
 
 - `-extrapolate 0` reproduces the recorded stock march increment for
   increment (δ = 0.0312 → … → 1.0726 mm ladder; 70 increments, 0 cutbacks).
@@ -237,9 +264,9 @@ uncitable — do not repeat that).
 
 | phase | deliverable | gate to proceed | est. size |
 |---|---|---|---|
-| **P0** | G1–G4 runs + JSON artifacts + short results report (`80a_sp_predictor_gates_<date>.md`) | G1 confirms Δδ/h scaling; G3 read | scripts only |
+| ~~**P0**~~ **DONE** | G4 → [[80a_sp_gate_g4_auto_handler_2026-08-04]]; G1/G2/G3 → [[80b_sp_gates_g1g2g3_2026-08-04]] (synthetic re-derivation + JSON artifacts) | G1 confirmed (monotone, **saturating**); G2 settled; G3 run **and its stated inference corrected** | done |
 | **P1** | S2: reproducer → fix → regression test (own small PR; **fork-only**) | G4 reproduces | ~5 lines C++ + 1 test |
-| **P2** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | P0 complete, G3 does not kill the ceiling | ~2 new files + 5 ledgered touch-points |
+| **P2** **← next** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | **P0 complete; G3 did NOT kill the ceiling — S1 is GO** | ~2 new files + 5 ledgered touch-points |
 | **P3** | S3 diagnostics; C (`getTangForce`) only if P2's big gate fails | demand | deferred |
 
 P0 needs the Cerro Lindo fuse decks

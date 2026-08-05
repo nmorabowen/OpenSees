@@ -1,0 +1,33 @@
+{
+  "gates": "ADR-80 G1/G2/G3 — synthetic Cerro Lindo re-derivation",
+  "L": 100.0, "E": 200000.0, "nu": 0.0, "fy": 379.5, "Hiso": 2000.0, "delta": 0.15,
+  "converged_sigma": 300.0,
+  "rows": [
+  {"gate": "G0", "N": 20, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G0", "N": 20, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G0", "N": 20, "nsteps": 10, "drive": "trac", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G0", "N": 20, "nsteps": 10, "drive": "trac", "mat": "j2", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 5, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 5, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 28, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 10, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 10, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 48, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 20, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 20, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 40, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 40, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 80, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G1", "N": 80, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 5, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 10, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 5, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 30, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 20, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 40, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 20, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 96, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 40, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 80, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G2", "N": 20, "nsteps": 40, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 116, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G3", "N": 20, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "krylov", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G3", "N": 20, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "krylov", "iters": 60, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G3", "N": 20, "nsteps": 10, "drive": "disp", "mat": "elastic", "algo": "initial", "iters": 20, "failed_steps": 0, "u_top": 0.15},
+  {"gate": "G3", "N": 20, "nsteps": 10, "drive": "disp", "mat": "j2", "algo": "initial", "iters": 37, "failed_steps": 0, "u_top": 0.15}
+  ]
+}
