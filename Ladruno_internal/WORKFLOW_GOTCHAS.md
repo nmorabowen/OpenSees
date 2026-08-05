@@ -103,6 +103,35 @@ That presents to a human as a vague "ledger CI issue."
 6. Churn can re-bite between fetch and push — just merge again; the second
    conflict is usually tiny.
 
+### 2a. The ledgers carry `merge=union`, so a clean auto-merge can SILENTLY DUPLICATE a row
+
+`.gitattributes` gives `merge=union` to `LEDGER_vanilla_files.md`,
+`LEDGER_implementations.md`, `LEDGER_quirks.md` and `banner_features.txt`. Union
+takes **both** sides of every hunk with no conflict markers — exactly right for
+the pure appends these files normally get, and exactly wrong when one side
+**edits a row in place**. Neither side deleted a line, so you get the old row
+*and* the new one, a green merge, and no signal at all.
+
+Measured (PR #704, 2026-08-05): that branch had merged `ladruno` while #703 was
+in but #706 was not, so it carried the ORIGINAL LadrunoLoadControl registration
+row; `ladruno` carried the same row edited in place by #706. `git merge` reported
+"Merge made by the 'ort' strategy", no conflict — and left **both** copies, one
+still asserting the mechanism #706 had just retracted. A knowingly-wrong ledger
+claim would have shipped under a clean merge.
+
+- **`merge=union` does not fix ledger conflicts — it converts them into silent
+  duplicates.** Do not read the attribute as making these files safe.
+- **After ANY merge that touches a ledger, count.** For a row you own,
+  `grep -c '<distinctive phrase from your row>' <ledger>` must be **1**. If a
+  sibling PR corrected a row you also carry, the correction and the stale
+  original will both be present — delete the stale one.
+- Same trap in `banner_features.txt`: a duplicated line prints twice in the
+  splash banner.
+- GitHub's `mergeable` field does **not** apply these merge drivers, so a PR can
+  read `CONFLICTING` on the ledgers yet merge clean locally (#704 did). Trust a
+  local `git merge origin/ladruno` over the GitHub flag — then run the duplicate
+  check above, because "clean" is precisely when this bites.
+
 NB cross-namespace classTags do NOT collide in `check_classtags` (family = text
 before the final `_<Name>`), so e.g. `ELE_TAG_BezierTri6`=33000 and
 `MAT_TAG_LadrunoUniaxialJ2`=33000 coexist fine.
