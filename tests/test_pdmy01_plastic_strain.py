@@ -157,6 +157,94 @@ def run():
         n_flip=n_flip, n_load=n_load)
 
 
+def test_sendself_recvself_round_trip(tmp_path):
+    """`sendSelf`/`recvSelf` carry the accumulators, and the yield surfaces
+    still land on their upstream offsets.
+
+    The accumulators are APPENDED past the surfaces (slots 70+n*8 .. 76+n*8),
+    so the vanilla layout stays a strict prefix of ours -- the minimal-and-
+    additive rule for vanilla files.  An earlier revision inserted them at 70
+    and pushed every surface to 77; that was self-consistent (send and recv
+    agreed) and therefore invisible to a pure round-trip.
+
+    Mutation-verified: shifting ONLY the recvSelf surface offset by one slot
+    (70 -> 71) is caught by gate (b) below -- the mobilised ratio goes to `inf`,
+    because the surface size gets read out of the middle of a stress vector.
+    Gate (c) then drives the model forward as a second, independent net.
+
+    Honest scope: this gates the format against future edits.  It would not
+    have caught the offset choice itself, which was a layout-policy defect, not
+    a correctness one.
+
+    Uses plain `Newton`, not the module default `KrylovNewton`: restoring a
+    database resets the algorithm, and Krylov's accumulator restarts with it.
+    PDMY commits `currentStress = trialStress` from the LAST getStress(), which
+    is the second-to-last Newton iterate, so the committed state is
+    iteration-path dependent -- a restarted Krylov run diverges by ~6e-4
+    relative even though every byte of material state round-tripped. Memoryless
+    Newton takes the identical path and reproduces to ~4e-14, which is what lets
+    this assert a real tolerance instead of a decorative one.
+    """
+    def _to_plastic_state():
+        _build()
+        ops.algorithm("Newton")           # memoryless -- see the docstring
+        n_flip = 40
+        for s in range(80):
+            assert ops.analyze(1) == 0
+            if s + 1 == n_flip:
+                ops.updateMaterialStage("-material", 1, "-stage", 1)
+
+    def _snapshot():
+        return dict(
+            stress=np.array(ops.eleResponse(1, "material", "1", "stress")),
+            strain=np.array(ops.eleResponse(1, "material", "1", "strain")),
+            epl=np.array(ops.eleResponse(1, "material", "1", "plasticStrain")),
+            ebar=ops.eleResponse(1, "material", "1", "equivalentPlasticStrain")[0],
+            evol=ops.eleResponse(1, "material", "1", "volumetricPlasticStrain")[0])
+
+    # reference: uninterrupted run, 10 steps past the save point
+    _to_plastic_state()
+    for _ in range(10):
+        assert ops.analyze(1) == 0
+    reference = _snapshot()
+
+    # same run, but save/restore at the 80-step mark before continuing
+    _to_plastic_state()
+    before = _snapshot()
+    db = str(tmp_path / "pdmy")
+    ops.database("File", db)
+    ops.save(1)
+    ops.restore(1)
+    after = _snapshot()
+
+    # (a) every channel survives the round-trip bit-identically
+    for k in ("epl", "ebar", "evol"):
+        assert np.array_equal(np.asarray(before[k]), np.asarray(after[k])), \
+            f"{k} changed across save/restore"
+    assert np.array_equal(before["stress"][:6], after["stress"][:6])
+    assert np.array_equal(before["strain"], after["strain"])
+
+    # (b) the mobilised stress ratio is derived from committedSurfaces[NYS].size(),
+    #     so it is a direct probe of the surface block landing on the right offset
+    assert abs(before["stress"][6] - after["stress"][6]) < 1e-12, \
+        "mobilised ratio moved -- the surface block did not round-trip"
+
+    # (c) the real gate: keep driving.  Wrong surface offsets survive (a) and (b)
+    #     but diverge as soon as the model has to use the surfaces again.
+    for _ in range(10):
+        assert ops.analyze(1) == 0
+    continued = _snapshot()
+    for k in ("ebar", "evol"):
+        assert abs(continued[k] - reference[k]) <= 1e-10 * max(abs(reference[k]), 1e-30), \
+            f"{k} diverged after restore: {continued[k]:.12e} vs {reference[k]:.12e}"
+    # atol scaled to each tensor's own magnitude: the zero components here carry
+    # ~1e-24 of noise against a ~1e-7 signal, and atol=0 would gate on that noise
+    assert np.allclose(continued["epl"], reference["epl"], rtol=1e-10,
+                       atol=1e-10 * np.abs(reference["epl"]).max())
+    assert np.allclose(continued["stress"][:6], reference["stress"][:6], rtol=1e-10,
+                       atol=1e-10 * np.abs(reference["stress"][:6]).max())
+
+
 def test_channels_exist_and_are_sized(run):
     assert run["epl"].shape[1] == 6          # 3D -> 6 components
     assert np.isfinite(run["ebar"]).all()
