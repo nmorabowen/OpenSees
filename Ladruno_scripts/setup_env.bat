@@ -26,8 +26,19 @@ REM build) can locate Visual Studio.
 set "VSWHERE_DIR=C:\Program Files (x86)\Microsoft Visual Studio\Installer"
 if exist "%VSWHERE_DIR%\vswhere.exe" set "PATH=%VSWHERE_DIR%;%PATH%"
 
-set "VS_VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+REM Ladruno: locate vcvars64.bat machine-agnostically via vswhere instead of a
+REM hardcoded VS 2022 path. Works across VS editions/years (2022, 2026/v18, ...)
+REM by asking vswhere for the newest install carrying the C++ x64 toolset. Falls
+REM back to the historical hardcoded 2022 Community path if vswhere is absent.
+set "VS_VCVARS="
+if exist "%VSWHERE_DIR%\vswhere.exe" (
+    for /f "usebackq delims=" %%I in (`"%VSWHERE_DIR%\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+        if exist "%%I\VC\Auxiliary\Build\vcvars64.bat" set "VS_VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+    )
+)
+if not defined VS_VCVARS set "VS_VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 if not exist "%VS_VCVARS%" goto :err_vs
+echo === Using MSVC: %VS_VCVARS% ===
 call "%VS_VCVARS%"
 if errorlevel 1 goto :err_vcvars
 

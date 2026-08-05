@@ -501,3 +501,35 @@ cmd /c "call `"$O\compiler\2026.1\env\vars.bat`" >nul & call `"$O\mkl\2026.1\env
 $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -notmatch 'Ladruno\\OpenSees\\bin' }) -join ';'
 $env:TCL_LIBRARY = "C:\Users\nmb\.conan2\p\b\tcl1fa6686758830\p\lib\tcl8.6"
 ```
+---
+
+## 13. Building on a non-VS2022 box (VS 2026 / v18 verified 2026-07)
+
+Everything above assumes the original VS **2022** machine. The fork now also
+builds on VS **2026 (v18, MSVC 19.5x)**. Three deltas were needed; two are baked
+into the scripts, one is a per-shell env var:
+
+1. **`setup_env.bat` finds vcvars64 via `vswhere`** (not a hardcoded 2022 path):
+   `vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+   -property installationPath`, falling back to the old 2022 Community path. Works
+   across editions/years unchanged.
+2. **The conan profile's MSVC version is env-overridable.**
+   `opensees-msvc-static.profile` renders
+   `compiler.version={{ os.getenv("LADRUNO_MSVC_VERSION", "194") }}`. Default `194`
+   preserves the VS 2022 box. On a VS 2026 box **`set LADRUNO_MSVC_VERSION=195`**
+   before `build.bat`, else conan dies in the zlib `generate()` step with
+   `VS non-existing installation: Visual Studio 17` (it maps 194→VS17, which isn't
+   installed). Confirm the target maps: `conan profile detect` prints
+   `Found msvc 18` / `compiler.version=195` on a v18 box.
+3. **Toolchain-on-PATH quirks on a fresh winget bootstrap:**
+   - System CMake from `winget Kitware.CMake` is **4.x** — the §2 hazard. Install
+     the pinned line via `py -3.12 -m pip install --user "cmake~=3.31.0"`; it lands
+     in `%APPDATA%\Python\Python312\Scripts` (the dir `setup_env` prepends for
+     conan), so it wins for the pre-conan MUMPS step too.
+   - `winget Ninja-build.Ninja` installs to
+     `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ninja-build.Ninja_*\` with **no**
+     Links symlink → not on PATH. Prepend that dir before `build.bat`.
+
+With `LongPathsEnabled=1` (default on Win11) the deep `.claude\worktrees\...`
+build tree is fine — the `CMAKE_NINJA_FORCE_RESPONSE_FILE=ON` flag in `build.bat`
+already covers the command-line-length side.
