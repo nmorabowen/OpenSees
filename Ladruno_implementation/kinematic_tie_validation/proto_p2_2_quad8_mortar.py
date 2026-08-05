@@ -37,18 +37,37 @@ Gates (falsifiable, numeric):
   T9  order-4 vs order-6 quadrature: the linear patch is exact under BOTH (D and
       M share Gauss points); reported deltas justify degree-6 as the quadratic
       default (OQ-3).
+  T10 cross-order patches: tri6 MASTER, quad8-on-quad8, tri3-on-quad8 — the
+      quadratic-MASTER basis paths T3-T6 never touch (adversarial MAJOR-3).
+  T11 the L1 gap guard is strictly stronger than the signed per-node average.
+  T12 the NON-AFFINE cross-check patch (R7 case B): the same 2x2 quad8 / 3x3
+      quad4 topology bilinearly mapped onto a trapezoid. Elements stay planar
+      with straight edges and midpoint midsides (so the R2 guard still passes)
+      but stop being parallelograms, which makes the pullback integrand RATIONAL
+      instead of polynomial. Linear-patch exactness survives; P does not.
+  T13 quadrature discrimination (why T12 exists): Dunavant-12 and a Duffy-
+      collapsed 5x5 tensor rule are BOTH exact on triangle monomials p+q<=6, so
+      on the affine R7 patch they agree to ~1e-15 — the affine patch cannot tell
+      two adequate rules apart. On T12's non-affine patch they part company at
+      ~1e-7. (A rule of INSUFFICIENT degree is caught either way — see T9.)
 
 SCOPE (review 2026-08-04): this oracle gates the KERNEL MATH — bases, quadrature,
 D/M assembly, condensation, and the guard MEASURES (area, gapL1). The generator's
 refusal LOGIC (thresholds, guard ordering, -2 hard-error vs skip, master-overlap
 refusal) is C++-only and gated by tests/test_ladrunoTie_mortar_quad8.py.
 
-Q4 TODO (gated on apeGmsh ADR 0086 S1 merging): run apeGmsh's numpy kernel
-(_kernel/resolvers/_mortar.py) on THIS patch geometry and compare P row-by-row
-to <=1e-12. The reference P is printed at the end for that cross-check.
+Q4 CROSS-CHECK — CLOSED 2026-08-04 (apeGmsh PR #898, ADR 0086 S1 merged).
+apeGmsh's numpy kernel (_kernel/resolvers/_mortar.py) reproduces case A below:
+||P_dual||_F to |diff| = 5.0e-13 and the reference corner row to every quoted
+digit, using a DIFFERENT quadrature rule (Duffy 5x5) — which is exactly why T13
+and case B now exist. Full-precision reference P matrices for both cases are
+written to `mortar_crosscheck_reference.json` beside this file; the agreed
+numbers are also recorded in `78_apegmsh_mortar_crosscheck_requirements.md` R7.
 
 Run: python proto_p2_2_quad8_mortar.py   (numpy only, no build)
 """
+import json
+import os
 import sys
 import numpy as np
 
@@ -419,6 +438,39 @@ def quad4_mesh(nx, ny, Lx=1.0, Ly=1.0, z=0.0, x1=0.0):
     return np.array(coords, float), facets
 
 
+def map_trapezoid(coords):
+    """R7 case B: bilinear map of [0,1]^2 onto (0,0),(1,0),(0.8,1),(0.2,1).
+
+    x = u + 0.2 v - 0.4 u v, y = v. Because x is linear in u at fixed v and
+    linear in v at fixed u, every mesh line stays STRAIGHT and every edge
+    midpoint maps to the midpoint of the mapped edge -- so the R2 midside guard
+    still passes and the facets stay planar. What the map destroys is
+    parallelogram-ness: opposite edges of a mapped element are no longer equal,
+    so the isoparametric pullback is rational rather than polynomial and NO
+    finite quadrature rule is exact any more (T13).
+    """
+    out = np.array(coords, float).copy()
+    u, v = out[:, 0].copy(), out[:, 1].copy()
+    out[:, 0] = u + 0.2 * v - 0.4 * u * v
+    out[:, 1] = v
+    return out
+
+
+def duffy_rule(n=5):
+    """Duffy-collapsed n x n Gauss tensor rule on the reference triangle, in the
+    kernel's convention (barycentric points, weights summing to 1). NOT a fork
+    rule -- this is apeGmsh's rule, mirrored here so T13 can measure the
+    cross-implementation quadrature gap the R7 protocol has to cover."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    x, w = 0.5 * (x + 1.0), 0.5 * w          # -> [0,1], weights sum to 1
+    bary, wt = [], []
+    for a, wa in zip(x, w):
+        for b, wb in zip(x, w):
+            bary.append([1.0 - a, a * (1.0 - b), a * b])
+            wt.append(wa * wb * a * 2.0)     # /(1/2) = INT_[0,1]^2 a da db
+    return np.array(bary), np.array(wt)
+
+
 def assemble(sc, sf, nps_s, mc, mf, nps_m, refDir, order=6):
     Ns, Nm = len(sc), len(mc)
     D, M = np.zeros((Ns, Ns)), np.zeros((Ns, Nm))
@@ -672,12 +724,119 @@ check("ridge nodes' SIGNED gap cancels (old per-node signal ~0)",
 check("per-facet L1 gap sees the tilt (guard fires at tol < ~d/2)",
       min(L1_over_area) > 0.2 * d, f"gapL1/area {L1_over_area}")
 
+print("\nT12 NON-AFFINE cross-check patch (R7 case B: the trapezoid)")
+scT, mcT = map_trapezoid(sc), map_trapezoid(mc)
+check("R2 midside guard still passes on the mapped mesh",
+      all(check_quadratic_facet(8, scT[f]) for f in sf))
+# opposite edges of a mapped master facet must DIFFER, else the map was affine
+_q = mcT[mf[0]]
+_par = np.abs((_q[1] - _q[0]) - (_q[2] - _q[3])).max()
+check("mapped facets are NOT parallelograms", _par > 1e-3,
+      f"opposite-edge mismatch {_par:.4f}")
+DT, MT, facetT = assemble(scT, sf, 8, mcT, mf, 4, refDir)
+PT = condense_standard(DT, MT)
+PdT = condense_dual(facetT, len(scT), len(mcT))
+eTs = np.abs(PT @ lin(mcT) - lin(scT)).max()
+eTd = np.abs(PdT @ lin(mcT) - lin(scT)).max()
+check("linear patch STILL exact on non-affine facets (std + dual)",
+      eTs < TOL and eTd < TOL, f"std {eTs:.2e} dual {eTd:.2e}")
+check("P_dual.1 = 1 on the trapezoid", np.allclose(PdT.sum(axis=1), 1.0, atol=1e-9))
+print(f"       ||P_dual||_F = {np.linalg.norm(PdT):.12f}, ||P_std||_F = {np.linalg.norm(PT):.12f}")
+
+print("\nT13 quadrature discrimination: WHY the affine patch is not enough")
+_dun = tri_rule(6)
+_duf = duffy_rule(5)
+ok = True
+for bary_r, w_r in (_dun, _duf):
+    for p in range(7):
+        for qd in range(7 - p):
+            exact = math.factorial(p) * math.factorial(qd) / math.factorial(p + qd + 2)
+            num = sum(0.5 * wt * (b[1] ** p) * (b[2] ** qd) for b, wt in zip(bary_r, w_r))
+            ok &= abs(num - exact) < 1e-14
+check("Dunavant-12 AND Duffy-5x5 are both exact to degree 6", ok,
+      f"{len(_dun[1])} vs {len(_duf[1])} points")
+_saved_rule = tri_rule
+deltas = {}
+for _label, _s, _m in (("affine", sc, mc), ("non-affine", scT, mcT)):
+    _Pd = {}
+    for _rname, _r in (("dunavant", _dun), ("duffy", _duf)):
+        tri_rule = (lambda order, _rr=_r: _rr)      # noqa: F811 - swap the rule in integrate_pair
+        _D, _M, _f = assemble(_s, sf, 8, _m, mf, 4, refDir)
+        _Pd[_rname] = condense_dual(_f, len(_s), len(_m))
+    tri_rule = _saved_rule
+    deltas[_label] = np.abs(_Pd["dunavant"] - _Pd["duffy"]).max()
+check("two degree-6-exact rules AGREE on the affine patch (<=1e-12)",
+      deltas["affine"] <= 1e-12, f"max |dP_dual| {deltas['affine']:.2e}")
+check("the same two rules DISAGREE on the non-affine patch (>=1e-9)",
+      deltas["non-affine"] >= 1e-9, f"max |dP_dual| {deltas['non-affine']:.2e}")
+print(f"       => a porter can ignore R3's rule and still pass an affine-only R7 "
+      f"({deltas['affine']:.1e}); case B closes that hole ({deltas['non-affine']:.1e}).")
+
 # ---------------------------------------------------------------- cross-check reference
-print("\nQ4 cross-check reference (vs apeGmsh _kernel/resolvers/_mortar.py, once merged):")
-print(f"  slave nodes {len(sc)}, master nodes {len(mc)}; ||P_dual||_F = {np.linalg.norm(Pd):.12f}, "
-      f"||P_std||_F = {np.linalg.norm(P):.12f}")
-print(f"  P_dual row 0 (slave node 0 at {sc[0][:2]}): "
-      f"{[(k, round(Pd[0, k], 9)) for k in np.nonzero(np.abs(Pd[0]) > 1e-12)[0]]}")
+print("\nQ4 cross-check reference (vs apeGmsh _kernel/resolvers/_mortar.py — CLOSED,")
+print("apeGmsh PR #898: case A reproduced to |diff| = 5.0e-13 on ||P_dual||_F):")
+
+
+def _row_by_coord(Prow, mcoords, tol=1e-12):
+    """Reference rows keyed by (x, y) MASTER COORDINATES, not node indices.
+
+    Node indices here are the oracle's nid() CREATION order (the order the
+    `for ey: for ex:` walk first meets each coordinate), which is NOT row-major
+    and is not something a porter should have to reverse-engineer. Coordinates
+    are numbering-agnostic.
+    """
+    return [(round(float(mcoords[k][0]), 12), round(float(mcoords[k][1]), 12), float(Prow[k]))
+            for k in np.nonzero(np.abs(Prow) > tol)[0]]
+
+
+ref = {
+    "generated_by": "proto_p2_2_quad8_mortar.py (ADR-78 fork oracle)",
+    "contract": "Ladruno_implementation/78_apegmsh_mortar_crosscheck_requirements.md (R7)",
+    "conventions": {
+        "facet_ordering": "serendipity corners-first (R1)",
+        "refDir": [0.0, 0.0, 1.0],
+        "rule": "12-point degree-6 Dunavant (R3)",
+        "node_indices": "oracle nid() CREATION order, NOT row-major — prefer the "
+                        "coordinate-keyed rows below",
+    },
+    "cases": {},
+}
+for _cname, _desc, _s, _m, _P, _Pd in (
+        ("A_affine",
+         "2x2 quad8 slave (21 nodes) on a 3x3 quad4 master (16 nodes), [0,1]^2, z=0",
+         sc, mc, P, Pd),
+        ("B_trapezoid",
+         "same topology bilinearly mapped onto (0,0),(1,0),(0.8,1),(0.2,1) — "
+         "non-affine, forces the R3 rule",
+         scT, mcT, PT, PdT)):
+    ref["cases"][_cname] = {
+        "description": _desc,
+        "slave_coords": [[float(v) for v in x] for x in _s],
+        "slave_facets": [[int(i) for i in f] for f in sf],
+        "master_coords": [[float(v) for v in x] for x in _m],
+        "master_facets": [[int(i) for i in f] for f in mf],
+        "norms": {"P_dual_F": float(np.linalg.norm(_Pd)),
+                  "P_std_F": float(np.linalg.norm(_P))},
+        "P_dual": [[float(v) for v in r] for r in _Pd],
+        "P_std": [[float(v) for v in r] for r in _P],
+        "reference_row_slave_at_origin": {
+            "slave_node_xy": [float(_s[0][0]), float(_s[0][1])],
+            "P_dual_entries_xyw": _row_by_coord(_Pd[0], _m),
+        },
+    }
+    print(f"  case {_cname}: ||P_dual||_F = {np.linalg.norm(_Pd):.17g}, "
+          f"||P_std||_F = {np.linalg.norm(_P):.17g}")
+    print(f"    P_dual row for the slave node at "
+          f"({_s[0][0]:.4g}, {_s[0][1]:.4g}), keyed by MASTER (x, y):")
+    for _x, _y, _w in _row_by_coord(_Pd[0], _m):
+        print(f"      ({_x:.12g}, {_y:.12g})  {_w!r}")
+
+_refpath = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "mortar_crosscheck_reference.json")
+with open(_refpath, "w", encoding="utf-8") as _fh:
+    json.dump(ref, _fh, indent=1)
+print(f"  full-precision P for both cases written to {os.path.basename(_refpath)} "
+      f"(round-trip-exact repr floats; verify R7 against THIS, not the printed digits)")
 
 print("\n" + "=" * 78)
 print(f"{'ALL GATES PASS' if _fails == 0 else f'{_fails} GATE(S) FAILED'}")
