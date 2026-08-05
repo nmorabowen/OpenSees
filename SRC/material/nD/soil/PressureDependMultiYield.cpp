@@ -1042,9 +1042,12 @@ PressureDependMultiYield::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  // Ladruno: slots 70..76 carry the plastic-strain accumulators, so the yield
-  // surfaces now start at 77 (recvSelf below matches).
-  Vector data(77+numOfSurfaces*8);
+  // Ladruno: the plastic-strain accumulators are APPENDED after the yield
+  // surfaces (slots 70+n*8 .. 76+n*8), NOT inserted at 70.  Keeping the
+  // surfaces on their upstream offset makes the vanilla layout a strict prefix
+  // of ours -- the minimal-and-additive rule for vanilla files.  recvSelf below
+  // reads the same way.
+  Vector data(70+numOfSurfaces*8+7);
   data(0) = rho;
   data(1) = einit;
   data(2) = refShearModulus;
@@ -1098,12 +1101,8 @@ PressureDependMultiYield::sendSelf(int commitTag, Channel &theChannel)
   workV6 = reversalStressCommitted.t2Vector();
   for(i = 0; i < 6; i++) data(i+63) = workV6[i];
 
-  // Ladruno: plastic-strain accumulators
-  for(i = 0; i < 6; i++) data(i+70) = plastStrainCommitted[i];
-  data(76) = equivPlastStrainCommitted;
-
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 77 + i*8;
+    int k = 70 + i*8;
     data(k) = committedSurfaces[i+1].size();
     data(k+1) = committedSurfaces[i+1].modulus();
     workV6 = committedSurfaces[i+1].center();
@@ -1114,6 +1113,11 @@ PressureDependMultiYield::sendSelf(int commitTag, Channel &theChannel)
     data(k+6) = workV6(4);
     data(k+7) = workV6(5);
   }
+
+  // Ladruno: plastic-strain accumulators, appended past the surfaces
+  int pOff = 70 + numOfSurfaces*8;
+  for(i = 0; i < 6; i++) data(pOff+i) = plastStrainCommitted[i];
+  data(pOff+6) = equivPlastStrainCommitted;
 
   res += theChannel.sendVector(this->getDbTag(), commitTag, data);
   if (res < 0) {
@@ -1144,7 +1148,8 @@ PressureDependMultiYield::recvSelf(int commitTag, Channel &theChannel,
   int ndm = idData(3);
   matN = idData(4);
 
-  Vector data(77+idData(1)*8);   // Ladruno: +7 for the plastic-strain accumulators
+  // Ladruno: +7 appended past the surfaces -- see the sendSelf note
+  Vector data(70+idData(1)*8+7);
   res += theChannel.recvVector(this->getDbTag(), commitTag, data);
   if (res < 0) {
     opserr << "PressureDependMultiYield::recvSelf -- could not recv Vector\n";
@@ -1210,13 +1215,15 @@ PressureDependMultiYield::recvSelf(int commitTag, Channel &theChannel,
   theSurfaces = new MultiYieldSurface[numOfSurfaces+1]; //first surface not used
   committedSurfaces = new MultiYieldSurface[numOfSurfaces+1];
 
-  // Ladruno: plastic-strain accumulators (trial restarts from committed anyway,
-  // but keep both in step so a recorder read before the next getStress() is right)
-  for(i = 0; i < 6; i++) plastStrainCommitted[i] = plastStrain[i] = data(i+70);
-  equivPlastStrainCommitted = equivPlastStrain = data(76);
+  // Ladruno: plastic-strain accumulators, appended past the surfaces (trial
+  // restarts from committed anyway, but keep both in step so a recorder read
+  // before the next getStress() is right)
+  int pOff = 70 + numOfSurfaces*8;
+  for(i = 0; i < 6; i++) plastStrainCommitted[i] = plastStrain[i] = data(pOff+i);
+  equivPlastStrainCommitted = equivPlastStrain = data(pOff+6);
 
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 77 + i*8;
+    int k = 70 + i*8;
     workV6(0) = data(k+2);
     workV6(1) = data(k+3);
     workV6(2) = data(k+4);
