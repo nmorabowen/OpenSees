@@ -229,15 +229,16 @@ uncitable — do not repeat that).
 - Reproducer demonstrates the wrong answer (or refutes the inference — also
   a valid outcome; record it and close S2 as no-defect).
 - Post-fix: `Auto` matches `Transformation` on the reproducer; regression
-  test added; consider upstreaming (adjacent precedent: the
-  `sp -subtractInit` no-op fix, same code path).
+  test added. **Stays in the fork — not offered upstream** (decided
+  2026-08-04; see S2 above). The adjacent `sp -subtractInit` no-op fix on the
+  same code path also lives fork-side.
 
 ## Implementation plan
 
 | phase | deliverable | gate to proceed | est. size |
 |---|---|---|---|
 | **P0** | G1–G4 runs + JSON artifacts + short results report (`80a_sp_predictor_gates_<date>.md`) | G1 confirms Δδ/h scaling; G3 read | scripts only |
-| **P1** | S2: reproducer → fix → regression test (own small PR; upstream candidate) | G4 reproduces | ~5 lines C++ + 1 test |
+| **P1** | S2: reproducer → fix → regression test (own small PR; **fork-only**) | G4 reproduces | ~5 lines C++ + 1 test |
 | **P2** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | P0 complete, G3 does not kill the ceiling | ~2 new files + 5 ledgered touch-points |
 | **P3** | S3 diagnostics; C (`getTangForce`) only if P2's big gate fails | demand | deferred |
 
