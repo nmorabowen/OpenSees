@@ -38,7 +38,12 @@ gates have run**:
    collision).
 2. **S2 (independent bug): `AutoConstraintHandler::applyLoad()` missing the
    `updateElement()` loop** — reproduce first, then the ~5-line ledgered
-   vanilla fix + regression test. Upstream-offerable.
+   vanilla fix + regression test. **DONE — see [[80a_sp_gate_g4_auto_handler_2026-08-04]].**
+   **Fork-only (decided 2026-08-04): NOT offered upstream.** The fix is
+   self-contained and would apply cleanly upstream, but upstreaming is its own
+   workstream (their review cadence, their regression bar, a behaviour-changing
+   fix to a handler other people's decks depend on) and this ADR is not
+   authorized to open it. Revisit deliberately, not as a side effect.
 3. **S3 (gated diagnostics): iterate-level visibility** — an opt-in
    per-iterate dump (residual norm, ‖dU‖, count of Gauss points plastic in
    the iterate but elastic in committed state). Deferred until S1's gates
