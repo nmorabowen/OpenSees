@@ -1,7 +1,7 @@
 ---
 title: Non-homogeneous SP imposition strengthening — a static predictor, not a new handler
 project: Ladruno
-status: proposed
+status: accepted (P0 complete, S1 GO)
 priority: medium
 owner: nmora
 tags:
@@ -103,16 +103,28 @@ constitutive law should not be evaluated before that distribution happens.*
   converged answer** (trial states are rebuilt from committed state each
   iteration).
 - **D4 — gates before C++.** Phase 0 (below) runs the findings' §5 gates
-  first. Gate 3 (`Newton -initial` discrimination) **bounds what a predictor
+  first. ~~Gate 3 (`Newton -initial` discrimination) **bounds what a predictor
   can buy** — if the collapsed-tangent half dominates, the expected win
-  shrinks and this ADR must say so rather than tune toward the preferred
+  shrinks~~ and this ADR must say so rather than tune toward the preferred
   conclusion.
-- **D5 — S2 is fixed only after reproduction.** The
+  > ⚠ **CORRECTED 2026-08-04 (P0 complete).** The struck clause was wrong and
+  > is repeated in the G3 gate description below — see that note and
+  > [[80b_sp_gates_g1g2g3_2026-08-04]] §G3 for the argument. In short: the
+  > collapsed tangent is *downstream of the same overstrain* the predictor
+  > removes, so G3's split (measured: tangent 58 %, residual 42 %) describes
+  > how the cost decomposes, **not** a cap on the remedy. The decision itself
+  > — gates before C++ — stands and was honoured; only its stated rationale
+  > was faulty. **P0 is now complete and S1 is GO.**
+- **D5 — S2 is fixed only after reproduction.** ✅ **HONOURED AND CLOSED.** The
   [AutoConstraintHandler.cpp:573-584](../SRC/analysis/handler/AutoConstraintHandler.cpp)
-  omission is currently a source-level inference of a **silent wrong answer**
-  (stale first residual + `CTestNormDispIncr` with no minimum-iteration
-  guard ⇒ converged-at-iteration-1). It gets a one-brick reproducer, then the
-  fix, then a regression test in the style of `tests/test_sp_subtract_init.py`.
+  omission was a source-level inference of a **silent wrong answer** (stale
+  first residual + `CTestNormDispIncr` with no minimum-iteration guard ⇒
+  converged-at-iteration-1). Reproduced at G4, then fixed, then gated by
+  `tests/test_auto_handler_sp_update.py` — see
+  [[80a_sp_gate_g4_auto_handler_2026-08-04]]. **The inference understated it:
+  `EnergyIncr` is fooled too (anything built on `dU` is), and test-dependence
+  turned out to *be* the mechanism — the same deck is right or wrong purely by
+  choice of convergence test.**
 - **D6 — measure, then decide on C/D.** `TransformationFE::getTangForce()`
   (the stub at
   [TransformationFE.cpp:447-453](../SRC/analysis/fe_ele/transformation/TransformationFE.cpp))
@@ -207,13 +219,40 @@ uncitable — do not repeat that).
   `Newton -initial`: substitutes the elastic tangent for the collapsed one
   while keeping the spurious residual. Recovery ⇒ tangent half dominates;
   no recovery ⇒ residual half dominates (Abaqus doctrine predicts the
-  latter). **Bounds the predictor's ceiling.**
+  latter). ~~**Bounds the predictor's ceiling.**~~
+  > ⚠ **CORRECTED 2026-08-04 after running it** — see
+  > [[80b_sp_gates_g1g2g3_2026-08-04]] §G3. **G3 does NOT bound the predictor's
+  > ceiling, and the original sentence ("a predictor attacks the residual half
+  > directly") is wrong.** The two halves are not independent remedies to be
+  > split: the tangent half is *downstream of the same overstrain* — the
+  > consistent tangent collapses **because** the layer spuriously yields, and it
+  > yields **because** it was overstrained. A predictor that removes the
+  > overstrain removes the spurious yielding, hence the collapsed tangent too.
+  > G3 measures how the cost **decomposes given the overstrain happens**; the
+  > predictor's ceiling is the **full** excess over the elastic control.
+  > Measured synthetically: tangent 58 %, residual 42 % — so scoping S1 to the
+  > residual half would have set a target wrong by >2×.
 - **G4 — reproduce the `AutoConstraintHandler` defect.** One brick,
   prescribed face displacement, `constraints Auto` vs `Transformation`,
   `test NormDispIncr`. Expected signature: iteration-1 "convergence" with
   only the boundary layer moved. Gates S2.
 
-### S1 acceptance gates (from findings §5, unchanged)
+### S1 acceptance gates
+
+**Primary (fast, deterministic, no external decks) — added 2026-08-04 after P0.**
+Use the synthetic harness `sp_gates/g123_predictor_gates.tcl` as S1's inner loop:
+
+- `-extrapolate 0` reproduces the G0 disp/J2 row **exactly** (60 iterations at
+  `N` = 20, 10 steps) — the bit-identical-to-stock requirement.
+- `-extrapolate 1.0` drives that row from **60 toward the elastic 20**
+  (×3.00 → ×1.00). Judge against the **full** excess, not the 42 % residual
+  share — see the G3 correction above.
+- Run the acceptance model **in or above** G1's saturation plateau (`N` ≥ 20),
+  or the gate understates what the predictor achieved.
+- **Do not quote ×28.6 as the target.** That figure is a different model *with
+  52 cutbacks*; the synthetic ceiling is ×3.00.
+
+**Field validation (deferred until the Cerro Lindo decks are available):**
 
 - `-extrapolate 0` reproduces the recorded stock march increment for
   increment (δ = 0.0312 → … → 1.0726 mm ladder; 70 increments, 0 cutbacks).
@@ -237,9 +276,9 @@ uncitable — do not repeat that).
 
 | phase | deliverable | gate to proceed | est. size |
 |---|---|---|---|
-| **P0** | G1–G4 runs + JSON artifacts + short results report (`80a_sp_predictor_gates_<date>.md`) | G1 confirms Δδ/h scaling; G3 read | scripts only |
+| ~~**P0**~~ **DONE** | G4 → [[80a_sp_gate_g4_auto_handler_2026-08-04]]; G1/G2/G3 → [[80b_sp_gates_g1g2g3_2026-08-04]] (synthetic re-derivation + JSON artifacts) | G1 confirmed (monotone, **saturating**); G2 settled; G3 run **and its stated inference corrected** | done |
 | **P1** | S2: reproducer → fix → regression test (own small PR; **fork-only**) | G4 reproduces | ~5 lines C++ + 1 test |
-| **P2** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | P0 complete, G3 does not kill the ceiling | ~2 new files + 5 ledgered touch-points |
+| **P2** **← next** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | **P0 complete; G3 did NOT kill the ceiling — S1 is GO** | ~2 new files + 5 ledgered touch-points |
 | **P3** | S3 diagnostics; C (`getTangForce`) only if P2's big gate fails | demand | deferred |
 
 P0 needs the Cerro Lindo fuse decks
