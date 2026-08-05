@@ -1,7 +1,7 @@
 ---
 title: Non-homogeneous SP imposition strengthening — a static predictor, not a new handler
 project: Ladruno
-status: proposed
+status: accepted (P0 complete, S1 GO)
 priority: medium
 owner: nmora
 tags:
@@ -103,16 +103,28 @@ constitutive law should not be evaluated before that distribution happens.*
   converged answer** (trial states are rebuilt from committed state each
   iteration).
 - **D4 — gates before C++.** Phase 0 (below) runs the findings' §5 gates
-  first. Gate 3 (`Newton -initial` discrimination) **bounds what a predictor
+  first. ~~Gate 3 (`Newton -initial` discrimination) **bounds what a predictor
   can buy** — if the collapsed-tangent half dominates, the expected win
-  shrinks and this ADR must say so rather than tune toward the preferred
+  shrinks~~ and this ADR must say so rather than tune toward the preferred
   conclusion.
-- **D5 — S2 is fixed only after reproduction.** The
+  > ⚠ **CORRECTED 2026-08-04 (P0 complete).** The struck clause was wrong and
+  > is repeated in the G3 gate description below — see that note and
+  > [[80b_sp_gates_g1g2g3_2026-08-04]] §G3 for the argument. In short: the
+  > collapsed tangent is *downstream of the same overstrain* the predictor
+  > removes, so G3's split (measured: tangent 58 %, residual 42 %) describes
+  > how the cost decomposes, **not** a cap on the remedy. The decision itself
+  > — gates before C++ — stands and was honoured; only its stated rationale
+  > was faulty. **P0 is now complete and S1 is GO.**
+- **D5 — S2 is fixed only after reproduction.** ✅ **HONOURED AND CLOSED.** The
   [AutoConstraintHandler.cpp:573-584](../SRC/analysis/handler/AutoConstraintHandler.cpp)
-  omission is currently a source-level inference of a **silent wrong answer**
-  (stale first residual + `CTestNormDispIncr` with no minimum-iteration
-  guard ⇒ converged-at-iteration-1). It gets a one-brick reproducer, then the
-  fix, then a regression test in the style of `tests/test_sp_subtract_init.py`.
+  omission was a source-level inference of a **silent wrong answer** (stale
+  first residual + `CTestNormDispIncr` with no minimum-iteration guard ⇒
+  converged-at-iteration-1). Reproduced at G4, then fixed, then gated by
+  `tests/test_auto_handler_sp_update.py` — see
+  [[80a_sp_gate_g4_auto_handler_2026-08-04]]. **The inference understated it:
+  `EnergyIncr` is fooled too (anything built on `dU` is), and test-dependence
+  turned out to *be* the mechanism — the same deck is right or wrong purely by
+  choice of convergence test.**
 - **D6 — measure, then decide on C/D.** `TransformationFE::getTangForce()`
   (the stub at
   [TransformationFE.cpp:447-453](../SRC/analysis/fe_ele/transformation/TransformationFE.cpp))
