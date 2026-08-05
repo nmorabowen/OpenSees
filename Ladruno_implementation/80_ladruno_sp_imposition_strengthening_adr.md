@@ -230,6 +230,18 @@ uncitable — do not repeat that).
   > overstrain removes the spurious yielding, hence the collapsed tangent too.
   > G3 measures how the cost **decomposes given the overstrain happens**; the
   > predictor's ceiling is the **full** excess over the elastic control.
+  >
+  > **SCOPE LIMIT (added 2026-08-04, second pass).** That last sentence holds
+  > **only where the yielding is entirely spurious** — which is how the G0/G3
+  > model is deliberately built (converged σ = 300 MPa against `f_y` = 379.5,
+  > nothing yields physically). **In a model that genuinely yields, part of the
+  > tangent collapse is real** — the material *is* plastic at the converged
+  > state — and no predictor can recover that part. There the predictor's
+  > ceiling is the excess attributable to the *spurious* fraction only, which
+  > is not what G3 measures and which this ADR has **not** measured. Do not
+  > quote "the predictor recovers the full excess" for a plastically-hinging
+  > model. The Cerro Lindo case happens to sit on the safe side of this line
+  > (the cover never yields, §1), so S1's field target is unaffected.
   > Measured synthetically: tangent 58 %, residual 42 % — so scoping S1 to the
   > residual half would have set a target wrong by >2×.
 - **G4 — reproduce the `AutoConstraintHandler` defect.** One brick,
