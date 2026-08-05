@@ -316,6 +316,35 @@ suite. Results:
   the Python exception); a consistent-mass hex20 passes BLOCKER-1 with positive
   diagonals and is later refused by the handler's R5 with its generic message.
 
+### Post-merge amendment (2026-08-04) — the gate's own "FE 13/13" was pivot luck
+
+`test_quad8_split_bar_equivalence_dual` went red on `ladruno` from the merge of
+PR #694 onward and was the only Zone-A failure. **Not a kernel defect** — the
+split-bar rig was the one test in the file that did *not* skip `fix(t,0,1,1)` on
+the tied facet nodes, so the 8 tied nodes carried an SP on y/z that the tie's own
+EQ rows already impose (the masters' y/z are fixed and `Σ P_m = 1`, so
+`EQ_row = SP_slave − Σ P_m·SP_master` identically). Under `constraints Lagrange`
+that is 16 linearly dependent multiplier rows.
+
+Measured on the merged tip: KKT 176×176, **rank 160 → deficiency exactly 16**
+(= 8 tied nodes × 2 redundantly-fixed DOFs), `cond = 1.1e20`; with the redundant
+`fix` removed, 160×160 at full rank, `cond = 5.9e6`. The displacement block was
+never affected — `|u − U/2| = 4.5e-16` and `σ_xx = 10` exactly in *both* — only
+the multipliers were indeterminate. So solvability rode entirely on pivot order:
+`numberer Plain` on an MKL desktop build solved (hence the gate's honest-looking
+"FE 13/13"), while `RCM` and `AMD` locally, and CI, all failed with
+`U(i,i) = 0`. The suite's other 12 tests never tripped it because each already
+skips `fix` on `SLAVE_IFACE`, and the projection/transformation handlers condense
+the slave DOF rather than multiply it, absorbing the redundancy outright.
+
+Fix: drop the redundant `fix` on the tied facet and parametrize the test over
+`numberer` `Plain`/`RCM`, so an over-constrained rig fails loudly rather than
+intermittently. **Assertions unchanged** — they were correct throughout, and they
+pass tighter on the well-posed system (`4.16e-17`). Lesson recorded in
+`LEDGER_quirks.md`; note that the "diff the oracle against the kernel before
+touching a red gate" rule had nothing to diff here, because the oracle scopes
+itself to kernel math while the disputed branch was enforcement (C++-only).
+
 ## Ledger / bookkeeping
 
 * `LEDGER_implementations.md` — extend the LadrunoTie row: quadratic (quad8/tri6)

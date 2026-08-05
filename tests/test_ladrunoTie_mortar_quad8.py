@@ -63,9 +63,9 @@ def _mesh(E=1000.0, nu=0.0, rho=1.0, dual=True):
     ops.LadrunoTie(*args)
 
 
-def _static_solve(handler="Lagrange"):
+def _static_solve(handler="Lagrange", numberer="Plain"):
     ops.constraints(handler)
-    ops.numberer("Plain")
+    ops.numberer(numberer)
     ops.system("FullGeneral")
     ops.test("NormDispIncr", 1e-12, 20)
     ops.algorithm("Linear")
@@ -132,19 +132,31 @@ def test_quad8_patch_linear_exact_standard():
 # --------------------------------------------------------------------------
 # SPLIT — quad8-tied series column == the series-bar solution
 # --------------------------------------------------------------------------
-def test_quad8_split_bar_equivalence_dual():
+@pytest.mark.parametrize("numberer", ["Plain", "RCM"])
+def test_quad8_split_bar_equivalence_dual(numberer):
+    """Series-bar equivalence through the quad8 tie.
+
+    The two numberers are the well-posedness gate, not decoration: this rig once
+    fixed y/z on the TIED nodes as well, which the tie already ties to masters
+    whose y/z are fixed — 16 linearly dependent Lagrange rows (EQ = SP_slave −
+    Σ P_m·SP_master). u was still exact, only the multipliers were indeterminate,
+    so LAPACK failed or not purely on pivot order: green on Plain/MKL, `U(i,i)=0`
+    on CI. A second DOF ordering makes that class of over-constraint fail loudly
+    instead of intermittently. See LEDGER_quirks (redundant SP on a tied DOF).
+    """
     E, U = 1000.0, 0.02
     _mesh(E=E, nu=0.0, dual=True)
     x2_face = [t for t, (x, y, z) in _S.items() if abs(x - 2.0) < 1e-12]
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
     for t, (x, y, z) in _ALL.items():
-        ops.fix(t, 0, 1, 1)
+        if t not in SLAVE_IFACE:      # tied: y/z arrive through the mortar tie,
+            ops.fix(t, 0, 1, 1)       # fixing them too is a redundant constraint
         if abs(x) < 1e-12:
             ops.sp(t, 1, 0.0)
         elif t in x2_face:
             ops.sp(t, 1, U)
-    _static_solve("Lagrange")
+    _static_solve("Lagrange", numberer)
 
     # equal E, A, L on both sides ⇒ the interface sits at U/2; the tied quad8 face
     # (master facet node 2 is free, pulled by the tie) must land there too
