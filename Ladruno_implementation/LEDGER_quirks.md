@@ -3611,6 +3611,86 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   env override for the case where you know it is dead. Note Windows does not
   block the second open, so nothing but your own guard prevents this.
   *2026-07-30 (ADR-79 locking leg).*
+### A frictional verification model can be 95 % mobilised by its own gravity state, because the elastic K0 is what sets the initial stress ratio
+- **Bites:** any limit-analysis / bearing-capacity check that picks a "nice
+  easy friction angle" to validate the machinery against a closed-form answer.
+  Under 1-D gravity or surcharge loading the initial stress ratio is the
+  ELASTIC `K0 = nu/(1-nu)`, not `1 - sin(phi)`, so the mobilisation of the
+  yield surface before anything is loaded is
+  `m = (1-K0) / (sqrt(3) * alpha * (1+2*K0))` and depends only on nu and the
+  surface — never on the load magnitude. At PDMY's moduli (`K = 1.5e5`,
+  `G = 5.5e4` => nu = 0.3366, K0 = 0.507) that mobilises 19.1 deg. Validating
+  against a phi_txc = 20 deg cone therefore starts with the WHOLE DOMAIN at
+  **m = 0.950 of yield**, and the "verification" measures its own initial
+  condition: 44.5 % of elements at m > 0.99 after 2 mm of footing settlement,
+  the yielded zone already touching the roller boundary, and no convergence
+  past s/B = 0.0019.
+- **Tell:** a validation leg that dies almost immediately with a large fraction
+  of the mesh yielded and the plastic zone at the boundary, while the SAME
+  machinery runs fine on the (steeper, supposedly harder) real surface.
+- **Rule:** compute `m` of the initial state and print it before the run; treat
+  `m > 0.8` as void. The fix is free — a collapse load of an
+  elastic-perfectly-plastic body does not depend on its elastic constants, so
+  raise nu for the verification legs only (nu = 0.45 gives K0 = 0.818,
+  m = 0.268) and MEASURE the independence with a nu-pair rather than asserting
+  it. *2026-07-30 (ADR-79 collapse study).*
+### `nDMaterial DruckerPrager` cannot have pressure-dependent moduli AND plasticity, and `updateMaterialStage` does not reach it
+- **Bites:** anyone reaching for `DruckerPrager` as a cheap perfectly plastic
+  soil next to PDMY. `mElastFlag` is `0 = elastic+no param update, 1 =
+  elastic+param update, 2 = elastoplastic` (default), and `updateElasticParam`
+  only rescales `K, G` by `sqrt(1 + p/p_atm)` when `mElastFlag == 1` — which is
+  an ELASTIC state. So the PDMY-style `G ~ sqrt(p)` and plasticity are mutually
+  exclusive; a plastic DruckerPrager has constant moduli, full stop. Separately,
+  `setParameter` returns -1 for `"updateMaterialStage"` (it answers to
+  `"materialState"` instead), so the usual `ops.updateMaterialStage(...)` staged
+  gravity idiom silently does nothing here.
+- **Rule:** for a collapse load this does not matter (a limit load is
+  independent of the elastic constants), but the SETTLEMENT at which it arrives
+  is not — so any `q` quoted at a fixed `s/B` criterion is affected, and that
+  must be stated. For the gravity stage, check whether the elastic K0 state is
+  admissible (previous entry) and just solve it plastically in one step rather
+  than hunting for a stage flip that is not wired up. Perfect plasticity needs
+  `Kinf = Ko = delta1 = delta2 = H = theta = 0`; `mHprime = (1-theta)*H` so
+  `H = 0` alone suffices. The conversion from a measured cone is
+  `rho = sqrt(2)*alpha` and the sqrt(J2) cohesion intercept is `sigma_y/sqrt(3)`
+  (yield is `||s|| + rho*I1 - sqrt(2/3)*sigma_y`); the tension cutoff `mTo` is
+  placed exactly at the cone apex, so it adds nothing.
+  *2026-07-30 (ADR-79 collapse study).*
+### Consolidating with a `Linear` time series and then adding a deviatoric pattern applies the deviator AT FULL AMPLITUDE on the first increment
+- **Bites:** every single-element stress-path probe built as "ramp the
+  confinement to lambda = 1, then add a second pattern and keep stepping". Both
+  patterns scale with the SAME load factor, so the first post-consolidation
+  increment (lambda = 1.0025) evaluates the deviatoric pattern at 1.0025x its
+  full amplitude, not at 0.0025x. The probe then reports failure at step 0 with
+  ZERO measured deviator — `cone_probe.py` avoided this with `Path` series keyed
+  to pseudo-time and it is easy to miss when porting the same probe to a
+  different material.
+- **Tell:** every path of a stress probe returns the consolidation state
+  unchanged (`sqrt(J2) = 0`, `alpha = 0`) and "failure at load factor ~1.00".
+- **Rule:** `ops.loadConst("-time", 0.0)` after the consolidation stage, so the
+  held pattern stops scaling and the new pattern ramps from zero. Same rule as
+  the push stage of any displacement-controlled runner.
+  *2026-07-30 (ADR-79 collapse study).*
+### "Is the plastic zone clear of the boundary?" cannot be tested as a fraction of the domain extent on a GRADED mesh
+- **Bites:** any field post-processing that asks whether a mechanism is
+  contained. The obvious test — is the outermost yielded element's centroid
+  within 90 % of the half-width? — is silently wrong when the mesh grades
+  outward, because the far-field element is enormous. On the `hypo_bearing`
+  benchmark the x-columns run `..., 4.00, 5.83, 8.45` in a 10 m half-domain:
+  the LAST element is 3.1 m wide and its centroid sits at 8.45 m, so an element
+  physically TOUCHING the roller passes a "< 9 m" test. Measured: the collapse
+  leg reported "contained" while 16 of the 352 elements in the
+  boundary-adjacent column were at m > 0.99.
+- **Tell:** the reported extent equals one of the coarse outer centroids
+  exactly, and equals it for several different legs — because it is a mesh
+  coordinate, not a mechanism coordinate.
+- **Rule:** test **element-column / row membership**, not distance. Build
+  `np.unique(np.round(np.abs(centroid[:,0]), 4))` and compare against
+  `cols.max()`; report `n_yielded / n_in_column` so the reader sees how much of
+  the boundary layer is engaged rather than a yes/no. Same trap applies to any
+  "did the wave reach the absorbing boundary" or "is the damage localized"
+  check on a graded or adaptively refined mesh.
+  *2026-07-30 (ADR-79 collapse study).*
 ### `Vector::operator()` is UNCHECKED outside `_G3DEBUG` — a mis-sized `static Vector` in `getResponse` is a silent heap overrun, not a caught index error
 - **Bites:** any `getResponse` that fills a fixed-size scratch `Vector` in a
   Gauss-point loop. Found in vanilla `TenNodeTetrahedron::getResponse`, where
@@ -3699,6 +3779,12 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Rule:** `LadrunoTie -mortar` refuses `npsS == 6` in BOTH bases (ADR-78 D2, mirroring apeGmsh ADR 0086 v1); tri6 MASTER facets are fully supported. Remedy in the message: swap master/slave, or put quad8/hex20 faces on the slave side. Revisit only if a tet10-interface user materializes.
 - **Workaround/status:** ✅ named refusal shipped (ADR-78). *2026-08-04.*
 
+### An SP on a DOF a tie already ties is a REDUNDANT Lagrange row — the KKT goes rank-deficient, `u` stays exact, and whether LAPACK notices is pure pivot luck
+- **Bites:** `LadrunoTie` emits one EQ_Constraint per tied node per tied DOF (all 3 by default). `fix`/`sp` that same DOF — directly, or transitively when the retained masters are themselves fixed — and the constraint rows become linearly dependent: `EQ_row = SP_slave − Σ P_m·SP_master` **exactly**, because partition of unity gives `Σ P_m = 1`. Under `constraints Lagrange` every constraint is its own multiplier row, so each such pair costs one unit of rank. Measured on the ADR-78 quad8 split-bar rig (which applied `fix(t,0,1,1)` to the 8 tied facet nodes as well): KKT 176×176, **rank 160, deficiency exactly 16** = 8 tied nodes × 2 redundantly-fixed DOFs, `cond = 1.1e20`. Dropping the redundant `fix` gives 160×160 at full rank, `cond = 5.9e6`.
+- **Why it hides:** the *displacement* block stays uniquely determined — only the multipliers live on a 16-dim null space. So every physics assertion still passes (`|u − U/2| = 4.5e-16`, `σ_xx = 10` exactly) and the run is "green" whenever LU lands a denormal pivot instead of an exact zero. That makes detection **ordering- and BLAS-dependent, not deterministic**: same commit, same source, `numberer Plain` on an MKL desktop build solved fine while `RCM`/`AMD` — and CI — died with `FullGenLinLapackSolver ... matrix singular U(i,i) = 0`. A suite can be 13/13 locally and 12/13 on CI with nothing wrong in the kernel.
+- **Rule:** never `fix`/`sp` a DOF a tie already ties — let the tie carry it (the masters' own SPs propagate through `P`). **When a Lagrange system dies on a zero pivot, measure the rank before suspecting the kernel:** assemble with `system FullGeneral`, then `numpy.linalg.svd(numpy.array(ops.printA("-ret")).reshape(n, n))` and count singular values under `σ₀·n·eps`. A deficiency that is an exact multiple of (tied nodes × tied DOFs) names the culprit on the spot. Re-running under a second `numberer` is the cheap version of the same test — an over-constrained model flips, a well-posed one does not. `LadrunoProjection`/`Transformation` **absorb** the redundancy (the slave DOF is condensed, never multiplied), which is why the sibling projection tests never saw it and why the tie's own emitted message recommends that handler.
+- **Workaround/status:** ✅ rig fixed; `test_quad8_split_bar_equivalence_dual` is now parametrized over `Plain`/`RCM` so this class of over-constraint fails loudly instead of intermittently. Assertions unchanged (they were never the problem). Note for the "diff the oracle against the kernel before touching a red gate" rule: here it had **nothing to diff** — the numpy oracle scopes itself to kernel math (bases/quadrature/`P`) and says so in its header, while the disputed branch was *enforcement*, which is C++-only. Widen the first question from "which of the two implementations is wrong" to "**is the disputed branch one the oracle covers at all**". *2026-08-04.*
+
 ### ADR-78 unified the mortar-tie guards for ALL facet orders — linear decks with cancelling gap fields now refuse (by design)
 - **Bites:** the pre-ADR-78 conforming-gap guard tested the per-node SIGNED weighted gap `|Σ∫N_I g_N|/cover`, which a gap field that cancels inside a node's support could slip through (a warp/antisymmetric offset reading as "conforming"). The ADR-78 per-facet `∫|g_N|/area` L1 guard has no cancellation blind spot and — per the OQ-2 "unify" sign-off — applies to tri3/quad4 decks too. A linear deck that previously built its tie may now refuse with the conforming-gap message. The emitted P (weights) is byte-identical for linear inputs; only refusal behaviour changed.
 - **Rule:** if a formerly-working linear tie now refuses on the gap guard, the geometry genuinely is off the master surface somewhere — fix the interface or consciously relax `-tol`.
@@ -3741,3 +3827,8 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Why it bites derived quantities so much harder than stress:** at working confinement the elastic strain is ~99% of the total, so the plastic part is a small difference of two large numbers. A 1.5e-3 relative error in `G` lands almost entirely in that difference; against a plastic increment of the same order it is a several-hundred-percent error. Stress, which is *not* a difference, absorbs the same error as a harmless 0.15%.
 - **Diagnostic that pins it fast:** drive a path that yields, then **reverse it**. During the elastic unload window the model drops to `activeSurfaceNum = 0` and every sub-step is purely elastic, so a correct hypoelastic inversion returns **exactly** zero plastic strain (measured 1e-19 against a 1e-6 scale). If the unload window leaks plastic strain, the moduli are wrong — the test isolates the moduli from every other part of the algebra.
 - **Workaround/status:** no code change; the defaults are upstream's and changing them would silently move every existing model. Recorded here, and encoded in `tests/test_pdmy01_plastic_strain.py` (whose G4 oracle carries both corrections in-line with a comment). *2026-08-04.*
+### A REJECTING parser and a DEGRADING sanitizer can guard the same option — citing the sanitizer as user-facing behaviour inverts the advice you give an emitter
+- **Bites:** `LadrunoUP` guards `-geom` in two places that behave **oppositely**, and reading the wrong one produces confident, backwards documentation. `upSanitizeGeomMethod()` (`SRC/element/ladrunoUP/LadrunoUP.cpp`) prints a warning and **returns `METHOD_LINEAR`** for `corot`+`ndm!=3`, `finite`, and any out-of-lane `hypo` — it reads exactly like "out-of-lane silently degrades, it does not fail". It does not. `OPS_LadrunoUP.cpp` **rejects every one of those cases as a fatal parse error** before the ctor is ever reached (`return 0`), and says so in its own comment: *"Reject rather than degrade so the user learns why."* Real instance: PR #574 shipped a row into `ladruno_apegmsh_contract.md` telling the apeGmsh team that acceptance is not evidence the requested lane is active and that they must pre-gate `-geom` client-side. The truth is the reverse — a successful parse **is** proof, and no client-side gate is needed. Corrected in the same PR as this row.
+- **Why:** the two guards have different threat models. The parser serves the **interpreter** path (Tcl/Python), where a typo should be loud. The sanitizer serves **direct C++ construction and `recvSelf`**, where there is no user to shout at and the real hazard is memory safety — an unguarded stream carrying `corot`+`ndm==2` would run the 3D-indexed corot loops over 2D-sized buffers (heap overrun), and a streamed `METHOD_FINITE` would run linear kinematics while `Print` reported `"finite"`. Degrading is the *correct* behaviour there precisely because failing is not an option mid-deserialization.
+- **Rule:** before documenting what a flag does when misused, find **every** guard on it and identify which one the caller's path actually reaches. `grep` the option string across the parser *and* the ctor *and* `recvSelf` — the presence of a `using -geom linear\n` warning proves only that *some* path degrades, never that the user's does. Same shape wherever a fork element pairs a strict parser with a defensive ctor sanitizer (the `-formulation`/`-pOrder` legality matrix has the same split).
+- **Workaround/status:** ✅ documented — `OPS_LadrunoUP.cpp` now carries a `-geom LANES` block stating the reject-not-degrade contract and explicitly warning not to cite the sanitizer as parser behaviour; the contract row and its maintenance log carry the correction. *2026-08-05.*

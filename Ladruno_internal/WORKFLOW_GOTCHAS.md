@@ -203,6 +203,26 @@ Different change budgets by surface, all in service of long-term upstreamability
 additive hook that makes our feature work?" If a change belongs in our own code,
 put it there, not in the vanilla file.
 
+### 6a. Trailing-CR churn inflates the recorded footprint ~170x — measure with `--strip-trailing-cr`
+
+An editor that rewrites line endings turns a few-line registration hook into a
+whole-file rewrite in git's eyes, and the footprint audit above then reads a
+routine change as a core rewrite. Measured case: PR #700 records **10,543**
+changed lines across `SRC/interpreter/OpenSeesCommands.{cpp,h}`; the real change
+is **63 lines**. Both blobs are CRLF, so `grep -c $'\r$'` says nothing — the
+parent carried a trailing CR *before* the CRLF on every line and the commit
+normalized it.
+
+- **Detect:** `diff --strip-trailing-cr <(git show REV^:path) <(git show REV:path)`.
+  If that number is tiny and `git show --numstat` is huge, it is ending churn.
+- **Audit with it:** any footprint review, upstream-port sizing, or
+  `LEDGER_vanilla_files` row for a big-numstat interpreter file must quote the
+  strip-trailing-cr count, not the raw numstat, or the fork looks far more
+  divergent from upstream than it is.
+- **Avoid causing it:** `.gitattributes` governs endings; if your editor
+  disagrees, fix the editor rather than committing the normalization mixed in
+  with a feature — it makes the feature's real diff unreviewable.
+
 ## `gh pr merge --auto` on this repo merges IMMEDIATELY (auto-merge is disabled), and ledger-placeholder fills race the squash
 
 Repo settings have GitHub auto-merge DISABLED (`enablePullRequestAutoMerge`

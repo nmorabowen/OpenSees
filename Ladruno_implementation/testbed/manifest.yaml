@@ -1814,3 +1814,47 @@ features:
       original-pencil subspace iteration. Two Building 1A base runs and one
       retention-enriched run publish modes below the strict 1e-8 residual gate.
       P2c PASS; status remains remediation pending P3/P4 and shipment review.
+
+  - feature: LadrunoLoadControl
+    classtag: 33015          # INTEGRATOR family; per-registry band (33015 is independently reused as ND_TAG_LadrunoRCConcrete — no collision, bands are per-registry)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoLoadControl
+    pr: 700
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoLoadControl_integrator.py   # NOT WRITTEN YET — S1 shipped with Tcl/Python sp_gates only (see notes)
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; S1 exercised via Ladruno_implementation/sp_gates/s1_extrapolate_acceptance.tcl + s1_idiomC_runtime_cmd.py)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/analysis/integrator/CMakeLists.txt
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/interpreter/PythonWrapper.cpp
+      - SRC/interpreter/TclWrapper.cpp
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Static integrator: a strict superset of stock LoadControl adding an optional
+      linear displacement predictor (-extrapolate <frac>, the Abaqus
+      EXTRAPOLATION=LINEAR analogue), plus a `ladrunoLoadControl setDeltaLambda`
+      runtime command so a caller-driven adaptive ladder can resize the step
+      WITHOUT reconstructing the object (reconstruction destroys the predictor
+      state and leaves it inert — found by measurement, ADR-80 S1). Derives from
+      StaticIntegrator per the LadrunoArcLength precedent, so the vanilla
+      footprint is registration-only; -extrapolate 0.0 (default) is bit-identical
+      to stock.
+      status=remediation, NOT active, for two honest reasons: (1) no Zone-A pytest
+      exists yet — S1 landed with Tcl/Python sp_gates under
+      Ladruno_implementation/sp_gates/ instead; (2) per PR #700's own commit
+      message the S1 ACCEPTANCE GATE FAILED (cutbacks 23 -> 23, unchanged; the
+      gate required zero), so the feature is built + safe + off by default but must
+      NOT be billed as the ADR-80 fix. ADR-80 D6 (getTangForce/b -= K*du_D) is the
+      triggered follow-up. Row owner flips to active once a pytest lands and the
+      capability question is settled.
+      Backfilled here because the classTag went in without a G9 row and broke the
+      classTag+manifest gate on the ladruno default branch itself — the same
+      inherited-debt pattern already recorded on the LadrunoArcLength and
+      LadrunoDynamicRelaxation rows. See
+      Ladruno_implementation/80_ladruno_sp_imposition_strengthening_adr.md and
+      80c_s1_extrapolate_verdict_2026-08-04.md.

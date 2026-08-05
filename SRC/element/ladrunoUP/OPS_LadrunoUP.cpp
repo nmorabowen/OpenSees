@@ -41,7 +41,7 @@
 //       <-formulation std|bbar> <-pOrder equal|linear> <-lumped>
 //       <-stab auto <$alpha0> | off | $alpha>   ;# equal-order default: auto (a0=0.25)
 //       <-dynSeepage on|off>                 ;# default OFF (P4 B5 adjudication)
-//       <-geom linear|corot>                 ;# corot is 3D-only (ADR 78); finite reserved
+//       <-geom linear|corot|hypo>            ;# lanes are NARROWER than the token list — see below
 //
 // -b / -body UNIT CONVENTION (the silent factor-of-rho trap, ADR 78 §5): this
 // element's body values are ACCELERATIONS — multiplied by the material's
@@ -55,6 +55,32 @@
 // -pOrder equal (or omitted) on a quadratic shape is fatal — equal-order
 // quadratic is a reserved axis with no theory/gate (ADR §3.3, §4.1 legality
 // matrix). Linear shapes accept equal (linear is a documented synonym).
+//
+// -geom LANES (ADR 78; ADR 79 P2). The token list above is WIDER than the legal
+// combinations, so read this table before emitting -geom:
+//   linear — always legal; the default.
+//   corot  — 3D ONLY (ADR 78 §2): a planar node cloud has a rank-2 Procrustes
+//            cross-covariance (det(H) = 0), so the polar rotation is undefined.
+//   hypo   — 3D H8 EQUAL-ORDER std ONLY (ADR 79 P2): ndm==3, 8 nodes,
+//            -formulation std, -pOrder equal. Rate-form updated-Lagrangian large
+//            strain against the UNCHANGED small-strain material library.
+//            -kozenyCarman requires this lane (and is refused without it).
+//   finite — RESERVED (ADR 78 §1.1): needs a FiniteStrainNDMaterial, and the
+//            LogStrain lifting adaptor assumes a linear-elastic inner law, so no
+//            usable soil constitutive path exists yet. Use hypo instead.
+//
+// THIS PARSER REJECTS RATHER THAN DEGRADES: every out-of-lane -geom request is a
+// FATAL parse error (see the ndm guards in the flag loop and the hypo
+// combination guards after it — "reject rather than degrade so the user learns
+// why"). A generator therefore does NOT need to pre-gate -geom to know what it
+// got: a successful parse means the requested lane is the active one.
+//
+// Do NOT cite upSanitizeGeomMethod() in LadrunoUP.cpp as parser behaviour. That
+// sanitizer DOES downgrade to linear with a warning, but it exists to back
+// DIRECT ctor construction and recvSelf — an unguarded stream carrying
+// corot+ndm==2 would run the 3D-indexed corot loops over 2D-sized buffers (heap
+// overrun), and a streamed METHOD_FINITE would run linear kinematics while Print
+// reported "finite". Neither path goes through this file.
 //
 // UNKNOWN FLAGS ARE FATAL — a deliberate break from the family's
 // warn-and-continue idiom (ADR 71 §4.1): a mistyped u-p flag silently changes
