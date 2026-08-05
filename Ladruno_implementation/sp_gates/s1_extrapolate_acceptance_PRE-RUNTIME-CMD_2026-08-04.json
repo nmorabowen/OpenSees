@@ -1,0 +1,19 @@
+{
+  "gate": "ADR-80 S1 acceptance — LadrunoLoadControl -extrapolate",
+  "rows": [
+  {"idiom": "reissue", "config": "stock LoadControl", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15},
+  {"idiom": "reissue", "config": "stock LoadControl", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 224, "u_top": 0.15},
+  {"idiom": "reissue", "config": "Ladruno frac=0", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15},
+  {"idiom": "reissue", "config": "Ladruno frac=0", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 224, "u_top": 0.15},
+  {"idiom": "reissue", "config": "Ladruno frac=1", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15},
+  {"idiom": "reissue", "config": "Ladruno frac=1", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 224, "u_top": 0.15},
+  {"idiom": "persist", "config": "stock LoadControl", "mat": "elastic", "increments": 10, "cutbacks": 0, "iters": 20, "u_top": 0.15},
+  {"idiom": "persist", "config": "stock LoadControl", "mat": "j2", "increments": 10, "cutbacks": 0, "iters": 60, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=0", "mat": "elastic", "increments": 10, "cutbacks": 0, "iters": 20, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=0", "mat": "j2", "increments": 10, "cutbacks": 0, "iters": 60, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=0.5", "mat": "elastic", "increments": 10, "cutbacks": 0, "iters": 20, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=0.5", "mat": "j2", "increments": 10, "cutbacks": 0, "iters": 56, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=1", "mat": "elastic", "increments": 10, "cutbacks": 0, "iters": 15, "u_top": 0.15},
+  {"idiom": "persist", "config": "Ladruno frac=1", "mat": "j2", "increments": 10, "cutbacks": 0, "iters": 35, "u_top": 0.15}
+  ]
+}

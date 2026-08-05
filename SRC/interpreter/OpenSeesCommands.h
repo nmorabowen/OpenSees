@@ -295,6 +295,7 @@ int OPS_printModelGID();
 int OPS_getCTestNorms();
 int OPS_getCTestIter();
 int OPS_LadrunoArcLengthCmd();   // Ladruno: Layer-B reduceStep/revert runtime command
+int OPS_LadrunoLoadControlCmd();   // Ladruno (ADR-80 S1): setDeltaLambda without reconstructing
 int OPS_LadrunoDRCmd();          // Ladruno: rung-5 DR settling/micro-burst query command
 int OPS_Recorder();
 int OPS_eleForce();
@@ -572,6 +573,7 @@ void* OPS_HarmonicSteadyState();
 void* OPS_ArcLength();
 void* OPS_ArcLength1();
 void* OPS_LadrunoArcLength();   // Ladruno
+void* OPS_LadrunoLoadControl();   // Ladruno (ADR-80 S1)
 void* OPS_LadrunoIndirectControl();   // Ladruno
 void* OPS_HSConstraint();
 void* OPS_MinUnbalDispNorm();

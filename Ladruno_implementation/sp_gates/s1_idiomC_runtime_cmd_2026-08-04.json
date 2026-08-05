@@ -1,0 +1,85 @@
+{
+  "gate": "ADR-80 S1 idiom C \u2014 runtime setDeltaLambda keeps the predictor alive",
+  "rows": [
+    {
+      "mode": "reissue",
+      "frac": 0.0,
+      "mat": "elastic",
+      "increments": 6,
+      "cutbacks": 0,
+      "iters": 12,
+      "armed_steps": 0,
+      "u_top": 0.15
+    },
+    {
+      "mode": "reissue",
+      "frac": 0.0,
+      "mat": "j2",
+      "increments": 43,
+      "cutbacks": 23,
+      "iters": 224,
+      "armed_steps": 0,
+      "u_top": 0.14999999999999994
+    },
+    {
+      "mode": "reissue",
+      "frac": 1.0,
+      "mat": "elastic",
+      "increments": 6,
+      "cutbacks": 0,
+      "iters": 12,
+      "armed_steps": 0,
+      "u_top": 0.15
+    },
+    {
+      "mode": "reissue",
+      "frac": 1.0,
+      "mat": "j2",
+      "increments": 43,
+      "cutbacks": 23,
+      "iters": 224,
+      "armed_steps": 0,
+      "u_top": 0.14999999999999994
+    },
+    {
+      "mode": "cmd",
+      "frac": 0.0,
+      "mat": "elastic",
+      "increments": 6,
+      "cutbacks": 0,
+      "iters": 12,
+      "armed_steps": 0,
+      "u_top": 0.15
+    },
+    {
+      "mode": "cmd",
+      "frac": 0.0,
+      "mat": "j2",
+      "increments": 43,
+      "cutbacks": 23,
+      "iters": 224,
+      "armed_steps": 0,
+      "u_top": 0.14999999999999994
+    },
+    {
+      "mode": "cmd",
+      "frac": 1.0,
+      "mat": "elastic",
+      "increments": 6,
+      "cutbacks": 0,
+      "iters": 9,
+      "armed_steps": 5,
+      "u_top": 0.15
+    },
+    {
+      "mode": "cmd",
+      "frac": 1.0,
+      "mat": "j2",
+      "increments": 42,
+      "cutbacks": 23,
+      "iters": 201,
+      "armed_steps": 63,
+      "u_top": 0.14999999999999994
+    }
+  ]
+}

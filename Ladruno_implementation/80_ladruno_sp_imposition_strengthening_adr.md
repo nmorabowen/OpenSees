@@ -1,7 +1,7 @@
 ---
 title: Non-homogeneous SP imposition strengthening — a static predictor, not a new handler
 project: Ladruno
-status: accepted (P0 complete, S1 GO)
+status: S1 BUILT but its acceptance gate FAILED — D6 (getTangForce) triggered
 priority: medium
 owner: nmora
 tags:
@@ -290,8 +290,8 @@ Use the synthetic harness `sp_gates/g123_predictor_gates.tcl` as S1's inner loop
 |---|---|---|---|
 | ~~**P0**~~ **DONE** | G4 → [[80a_sp_gate_g4_auto_handler_2026-08-04]]; G1/G2/G3 → [[80b_sp_gates_g1g2g3_2026-08-04]] (synthetic re-derivation + JSON artifacts) | G1 confirmed (monotone, **saturating**); G2 settled; G3 run **and its stated inference corrected** | done |
 | **P1** | S2: reproducer → fix → regression test (own small PR; **fork-only**) | G4 reproduces | ~5 lines C++ + 1 test |
-| **P2** **← next** | S1: `LadrunoLoadControl` + parsing + acceptance gates + ledgers + banner | **P0 complete; G3 did NOT kill the ceiling — S1 is GO** | ~2 new files + 5 ledgered touch-points |
-| **P3** | S3 diagnostics; C (`getTangForce`) only if P2's big gate fails | demand | deferred |
+| ~~**P2**~~ **DONE — GATE FAILED** | S1 `LadrunoLoadControl` (tag 33015) + `ladrunoLoadControl` runtime cmd shipped; `-extrapolate 0` bit-identical to stock | **Acceptance gate FAILED: cutbacks 23 → 23, iterations −10 %. Predictor demonstrably fired (armed=63) — a capability failure, not a wiring one.** See [[80c_s1_extrapolate_verdict_2026-08-04]] | done |
+| **P3** **← next** | **C (`getTangForce`) — NOW LIVE, D6 triggered by P2's failure**; S3 diagnostics still deferred | P2's gate failed | the principled route: eliminates the overstrain instead of reducing it |
 
 P0 needs the Cerro Lindo fuse decks
 (`C:\nmb\My Libraries\Cerro Lindo\Informe No3\Models\Fuse FEM\04_solid_fuse\`)

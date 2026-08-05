@@ -240,6 +240,7 @@ extern void *OPS_ExplicitBatheSMSConsistent(void);   // Ladruno
 extern void *OPS_ExplicitBatheLNVDSMS(void);   // Ladruno
 extern void *OPS_ExplicitBatheLNVDSMSConsistent(void);   // Ladruno
 extern void *OPS_LadrunoArcLength(void);   // Ladruno
+extern void *OPS_LadrunoLoadControl(void);   // Ladruno (ADR-80 S1)
 extern void *OPS_LadrunoIndirectControl(void);   // Ladruno
 extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
 extern void *OPS_ExplicitDifferenceStatic(void);
@@ -5297,6 +5298,14 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
       theStaticAnalysis->setIntegrator(*theStaticIntegrator);
   }
 
+  else if (strcmp(argv[1],"LadrunoLoadControl") == 0) {   // Ladruno (ADR-80 S1)
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoLoadControl();
+    if (theStaticIntegrator == 0)
+      return TCL_ERROR;
+    // if the analysis exists - we want to change the Integrator
+    if (theStaticAnalysis != 0)
+      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+  }
   else if (strcmp(argv[1],"LadrunoIndirectControl") == 0) {   // Ladruno
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoIndirectControl();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
