@@ -5343,3 +5343,21 @@ Ladruno_implementation/LEDGER_vanilla_files.md     merge=union
 Ladruno_implementation/LEDGER_implementations.md   merge=union
 Ladruno_implementation/LEDGER_quirks.md            merge=union
 Ladruno_scripts/banner_features.txt                merge=union
+
+# --- Ladruno: re-enable EOL normalization on the shared registration surface ---
+# The 5,323 legacy `-text` lines above are a CVS/SVN-conversion artifact: `-text`
+# tells git to store bytes VERBATIM, so these files have no canonical line ending
+# and any contributor whose editor disagrees rewrites the whole file. That is how
+# PR #700 recorded 10,543 changed lines in OpenSeesCommands.{cpp,h} for 63 real
+# ones (CRLF -> LF). These are the files EVERY fork feature touches to register a
+# class, so they collide constantly. All are already LF in the blob, so turning
+# normalization back on here is a ZERO-DIFF change that just makes it permanent.
+# Last matching line wins, so this block overrides the `-text` entries above.
+SRC/interpreter/OpenSeesCommands.cpp                 text
+SRC/interpreter/OpenSeesCommands.h                   text
+SRC/interpreter/PythonWrapper.cpp                    text
+SRC/interpreter/TclWrapper.cpp                       text
+SRC/interpreter/OpenSeesElementCommands.cpp          text
+SRC/interpreter/OpenSeesPatternCommands.cpp          text
+SRC/tcl/commands.cpp                                 text
+SRC/classTags.h                                      text
