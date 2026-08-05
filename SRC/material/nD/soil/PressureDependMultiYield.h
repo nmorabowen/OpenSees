@@ -181,6 +181,15 @@ private:
      T2Vector PPZCenter;
      T2Vector lockStress;
 
+     // Ladruno: plastic-strain accounting (recordable, does not feed the response)
+     double plastStrain[6];             // trial accumulated plastic strain, TENSORIAL
+     double plastStrainCommitted[6];
+     double equivPlastStrain;           // trial  int sqrt(2/3 de^p_dev : de^p_dev)
+     double equivPlastStrainCommitted;
+     double elasticShearMod;            // G and B setTrialStress() last used --
+     double elasticBulkMod;             //   the hypoelastic moduli of the sub-step
+     double subStepStress[6];           // stress at the start of the current sub-step
+
      double pressureDCommitted;
      T2Vector reversalStressCommitted;
      int onPPZCommitted;
@@ -218,7 +227,9 @@ private:
      void PPZTranslation(const T2Vector & contactStress);
      double getPPZLimits(int which, const T2Vector & contactStress);
      double getPlasticPotential(const T2Vector & stress, const T2Vector & surfaceNormal);
-     void setTrialStress(T2Vector & stress); 
+     void setTrialStress(T2Vector & stress);
+     // Ladruno: add this sub-step's plastic strain increment to the accumulators
+     void accumPlasticStrain(const double * stressStart);
      double getLoadingFunc(const T2Vector & contact, const T2Vector & surfaceNormal,
 			   double plasticPotential,int crossedSurface);
      //return 1 if stress locked; o/w return 0.
