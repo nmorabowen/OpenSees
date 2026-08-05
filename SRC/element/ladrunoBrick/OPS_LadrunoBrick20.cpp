@@ -26,21 +26,22 @@
 
 // Author: N. Mora-Bowen (Ladruno), 07/2026
 //
-// Factory for the LadrunoBrick20 element (Tcl + Python). ADR 72 P1.
+// Factory for the LadrunoBrick20 element (Tcl + Python). ADR 72 P1/P2.
 //
 // Usage:
 //   element('LadrunoBrick20', tag, n1..n20, matTag
-//           [, '-formulation', <std|uri>]   # default std; uri lands P2
-//           [, '-lumped']                   # HRZ lumped mass (lands P3)
+//           [, '-formulation', <std|uri>]   # default std
+//           [, '-lumped']                   # HRZ lumped mass (P3; default consistent)
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
-// v1 (P1) accepts -formulation std only; 'uri' is recognized but REJECTED with
-// a "lands P2" diagnostic (the enum ordinal is reserved). '-hourglass' is a
-// HARD error by design: the H20@2x2x2 spurious modes are non-communicable in
-// solid meshes and no hourglass control exists on this element (ADR 72 §2.2 —
-// deliberate asymmetry with LadrunoBrick -formulation uri, whose H8@1-pt modes
-// ARE communicable and MUST be stabilized).  // Ladruno
+// -formulation std = full 27-pt Gauss; uri (alias: reduced) = uniform 2x2x2
+// reduced integration, the C3D20R analog (P2) — prefer std for eigen /
+// single-element-thick / point-loaded / soft-support cases (ADR 72 §3.2).
+// '-hourglass' is a HARD error by design: the H20@2x2x2 spurious modes are
+// non-communicable in solid meshes and no hourglass control exists on this
+// element (ADR 72 §2.2 — deliberate asymmetry with LadrunoBrick -formulation
+// uri, whose H8@1-pt modes ARE communicable and MUST be stabilized).  // Ladruno
 
 #include "LadrunoBrick20.h"
 
@@ -56,7 +57,7 @@ void *OPS_LadrunoBrick20()
   if (OPS_GetNumRemainingInputArgs() < 22) {
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoBrick20 eleTag? n1? ... n20? matTag? "
-              "<-formulation std> <-lumped> <-b bx by bz> <-damp dampTag>\n";
+              "<-formulation std|uri> <-lumped> <-b bx by bz> <-damp dampTag>\n";
     return 0;
   }
 
@@ -106,16 +107,11 @@ void *OPS_LadrunoBrick20()
       const char *f = OPS_GetString();
       if (strcmp(f, "std") == 0 || strcmp(f, "standard") == 0)
         formulation = LadrunoBrick20::Formulation::STD;
-      else if (strcmp(f, "uri") == 0 || strcmp(f, "reduced") == 0) {
-        opserr << "WARNING LadrunoBrick20 " << idata[0]
-               << ": -formulation uri (uniform 2x2x2 reduced integration, the "
-                  "C3D20R analog) lands P2 (ADR 72) — not available in this "
-                  "build; use -formulation std\n";
-        return 0;
-      }
+      else if (strcmp(f, "uri") == 0 || strcmp(f, "reduced") == 0)
+        formulation = LadrunoBrick20::Formulation::URI;
       else {
         opserr << "WARNING unknown -formulation '" << f << "' for LadrunoBrick20 "
-               << idata[0] << " (use std; uri lands P2)\n";
+               << idata[0] << " (use std or uri)\n";
         return 0;
       }
     }
@@ -133,17 +129,10 @@ void *OPS_LadrunoBrick20()
       return 0;
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
+      // HRZ lumped mass (ADR 72 §3.5, P3): positive-by-construction diagonal
+      // lump of the 27-pt consistent mass. Row-sum lumping of an H20 gives
+      // NEGATIVE corner masses, so HRZ is the ONLY lumping this element offers.  // Ladruno
       massType = 1;
-      // F4: parse-time honesty so static-only runs (which never call getMass)
-      // learn immediately. Process-once.  // Ladruno
-      static bool noticedLumped = false;
-      if (!noticedLumped) {
-        noticedLumped = true;
-        opserr << "NOTICE LadrunoBrick20: -lumped is accepted for API "
-                  "stability, but the HRZ lumped-mass path lands P3 (ADR 72) - "
-                  "THIS BUILD USES THE CONSISTENT MASS. (printed once per "
-                  "process)\n";
-      }
     }
     else if (strcmp(opt, "-b") == 0 || strcmp(opt, "-bodyForce") == 0) {
       int n3 = 3;

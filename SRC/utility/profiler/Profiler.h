@@ -349,7 +349,11 @@ public:
     // ---- report assembly (cold path, single-threaded) ----
     // Fold all per-thread live trees into one merged live root, lower it into the
     // POD wire ProfileNode, and return it (cached, owned by Profiler).
-    const ProfileNode& mergedRollup();
+    // quietLive=true suppresses the still-enabled warning — used by the
+    // `profiler checkpoint` verb, which deliberately snapshots mid-run from the
+    // single-threaded command layer between analyze calls (all scopes closed,
+    // no worker threads => the H1 precondition holds; see the verb's comment).
+    const ProfileNode& mergedRollup(bool quietLive = false);
     RunMeta            buildMeta() const;
     const Series&      series() const noexcept { return series_; }
     MemorySnapshot     buildMemorySnapshot() const;
@@ -383,6 +387,17 @@ private:
     Series                       series_;          // optional per-step buffer (perStep)
     RunClock                     runClock_;
     int64_t                      warmupRemaining_ = 0;
+
+    // Anchor for the per-step wall column (see recordStep). Holds the wall_ns of
+    // the previous recordStep call, so each row's wall_ms is the FULL step —
+    // including the untimed region of the analysis step loop (domainChanged,
+    // first touch, first MPI collective). The "step" ScopedTimer bracket reports
+    // that region only as a max-over-calls and cannot say WHICH step it was.
+    int64_t                      lastStepWallNs_ = 0;
+
+    // Seed series_.phases with the wall_ms column set. Called from start() and
+    // reset(), because reset() clears series_ wholesale.
+    void seedSeriesPhases();
 };
 
 // Process-global accessor.
@@ -422,6 +437,23 @@ inline void countComponentDied(int classTag) noexcept {
     --ts.componentLive[classTag];
 }
 #endif // !OPS_PROFILE_DISABLE
+
+// ---- Ladruno ADR-75 P1i: the `threads` run attribute --------------------------
+// `RunMeta::threads` USED to be threads_.size() -- the count of threads that
+// registered with the PROFILER. Every consumer reads the attribute as "how many
+// threads did this run use", and those are not the same number: OpenSees is
+// single-threaded at the command layer, so the registry holds exactly 1 no matter
+// what MKL_NUM_THREADS says. A PARDISO run at 4 threads reported `threads=1`, and
+// the ADR-76 issue report hit it at 8. A wrong positive integer is worse than no
+// answer, because it reads as a measurement.
+//
+// This resolves the ENVIRONMENT-declared cap, which is what every harness in this
+// fork pins. It is deliberately NOT authoritative: it cannot see a programmatic
+// mkl_set_num_threads(), so the command layers override it with
+// mkl_get_max_threads() where MKL is compiled in (they carry -D_PARDISO; this
+// translation unit does not). `registered` is the floor -- a genuinely threaded
+// profiling run must never report fewer threads than it actually registered.
+int64_t resolveRunThreads(int64_t registered) noexcept;
 
 } // namespace ops_profiler
 

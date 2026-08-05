@@ -85,4 +85,10 @@ target_include_directories(OPS_Domain PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
 add_subdirectory(drm)
 
+# N. Mora-Bowen (Ladruno) ADR 73: pore-fluid staggered u-p overlay pattern.
+# The subdir's CMakeLists adds its sources to OPS_Domain and puts its own dir on
+# OPS_Domain's PUBLIC include path (target_include_directories, mirroring drm/),
+# so <LadrunoPorousOverlay.h> resolves for Domain.cpp and the ObjectBroker.
+add_subdirectory(ladrunoPorousOverlay)
+
 

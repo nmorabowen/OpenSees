@@ -1,0 +1,31 @@
+{
+  "gate": "ADR-80 G5 — adaptive march with cutbacks (closes the fixed-march blind spot)",
+  "delta": 0.15, "fy": 379.5, "converged_sigma": 300.0,
+  "maxIter": 8,
+  "rows": [
+  {"maxIter": 3, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 3, "N": 20, "drive": "disp", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 178, "u_top": 0.15, "completed": true},
+  {"maxIter": 3, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 3, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 4, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 4, "N": 20, "drive": "disp", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 201, "u_top": 0.15, "completed": true},
+  {"maxIter": 4, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 4, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 5, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 5, "N": 20, "drive": "disp", "mat": "j2", "increments": 43, "cutbacks": 23, "iters": 224, "u_top": 0.15, "completed": true},
+  {"maxIter": 5, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 5, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 6, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 6, "N": 20, "drive": "disp", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 36, "u_top": 0.15, "completed": true},
+  {"maxIter": 6, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 6, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 8, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 8, "N": 20, "drive": "disp", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 36, "u_top": 0.15, "completed": true},
+  {"maxIter": 8, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 8, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 12, "N": 20, "drive": "disp", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 12, "N": 20, "drive": "disp", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 36, "u_top": 0.15, "completed": true},
+  {"maxIter": 12, "N": 20, "drive": "trac", "mat": "elastic", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true},
+  {"maxIter": 12, "N": 20, "drive": "trac", "mat": "j2", "increments": 6, "cutbacks": 0, "iters": 12, "u_top": 0.15, "completed": true}
+  ]
+}

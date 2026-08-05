@@ -1,0 +1,25 @@
+WARNING - ForceBeamColumn2d::update - failed to get compatible element forces & deformations for element: 20(dW: << 15265.5)
+WARNING - ForceBeamColumn2d::update - failed to get compatible element forces & deformations for element: 32(dW: << 9034.96)
+Domain::update - domain failed in update
+DisplacementControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.27015
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0270584 (max: 1e-08, Norm deltaR: 60.5317)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.187673
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 25 iterations  current Norm: 7.3385e-06 (max: 1e-08, Norm deltaR: 0.000132652)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.183231
+OpenSees > analyze failed, returned: -3 error flag
+pyd OK: C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\dist\bin\opensees.pyd
+nodes=279 elements=510 (cols=270) free_dof~=810
+gravity ok: 0 (0.25s)
+pushover: ctrl node 271, dU=0.3456 in/step, target roof disp=51.84 in
+prof flags: ['-perStep']
+  FAILED at step 86, stopping
+pushover done: 86 steps, roof disp=29.722 in (drift=0.69%), wall=7.60s
+report written: True C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\Ladruno_files\testbed\perf\lane3\overhead\laneA_coarse_r5.h5

@@ -33,6 +33,7 @@
 #include <SolidTransformationLinear.h>
 #include <SolidTransformationFinite.h>   // for the create() factory (v3)
 #include <SolidTransformationCorot.h>    // for the create() factory (v2)
+#include <SolidTransformationHypo.h>     // for the create() factory (v4, ADR 79)
 #include <Matrix.h>
 #include <Vector.h>
 
@@ -115,6 +116,8 @@ SolidTransformation::create(int methodID)
     return new SolidTransformationFinite();
   case METHOD_COROT:
     return new SolidTransformationCorot();
+  case METHOD_HYPO:
+    return new SolidTransformationHypo();   // Ladruno (ADR 79)
   default:
     return 0;
   }

@@ -1238,6 +1238,42 @@ features:
       the consistent-pressure side-61 typo fix. Plan:
       70_ladruno_plane_finite_triangles_adr.md.
 
+  - feature: LadrunoPorousOverlay              # ADR 73 P1 persistent-fluid staggered u-p overlay
+    classtag: 33022          # PATTERN_TAG family; numerically = EigenSOE 33022 FeastEigenSOE (per-registry, not a collision)
+    tag_symbol: PATTERN_TAG_LadrunoPorousOverlay
+    pr: 576
+    feature_class: loadpattern
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_overlay_physics.py   # Zone-B physics: Terzaghi/analytic + toy fs1_extrap anchor (3.5e-7), two-leg vs monolithic LadrunoUP (order>=1), sequencing contract p(0+)=0.55q (kills fluid-first p=0 trap), rate-vs-fixed-point contract, E4 remove-element crack (both -onRemoval + subcycle-forced sync), -fsL floor warning. Sibling: tests/test_ladruno_overlay_framework.py (bit-constancy Static/Newmark/CD, revert consistency, 8 region-validation fatals, pInit hydro/steady node-exact, DB round-trip of pCommitted_ AND dpCommitted_, -record everyN; 6c deformable-restart = HARD GATE since #577 fixed the upstream quad/tri rho serialization bug)
+    tcl: WAIVED(pattern LadrunoPorousOverlay ...; TclPatternCommand.cpp + OpenSeesPatternCommands.cpp OPS_LadrunoPorousOverlay dispatch serve both interpreters; verified via the Zone-B pytest batteries + Tcl parse smoke)
+    core_files:
+      - SRC/classTags.h
+      - SRC/domain/pattern/TclPatternCommand.cpp
+      - SRC/domain/pattern/CMakeLists.txt
+      - SRC/interpreter/OpenSeesPatternCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/domain/domain/Domain.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Persistent-fluid staggered u-p overlay (ADR 73 P1, PR #576). LoadPattern
+      domain engine owning the pore-pressure field OUTSIDE the DOF graph over
+      any T3/Q4/H8 solid region; fluid blocks via the shared LadrunoUPKernel;
+      fixed-stress RATE-form fs1 (P0 E7.1 pin: the fixed-POINT L form is
+      O(1)-wrong single-pass), reference rule committed-dp/trial-dp -> the
+      monolithic BE fixed point; default L=classic alpha^2/Kdr (KTJ), -fsL
+      oedometric opt-in (floored). SPD Jacobi-PCG (symmetric solvers legal
+      again). Fluid survives remove element (-onRemoval keep|drain),
+      -subcycle auto theta=0.089, -staticMode hold|steady (A-3: LoadControl
+      hands dT=Delta-lambda -> loud one-time march advisory). Opus x3 panel:
+      math PASS (partial-window rescale hypothesis refuted by measurement),
+      framework+robustness PASS-with-fixes (A-3 advisory, region-dedup +
+      poro/alpha fatals, INERT-message reconcile, recvSelf clamps) all landed.
+      Deformable transient DB restart SUPPORTED + hard-gated since #577 (upstream
+      quad/tri element-rho serialization bug; LEDGER_quirks). Deferred:
+      P2 iterated driver LadrunoStaggeredAnalyze, P3 explicit lane, P4 recorder
+      channels + guide.
+
   - feature: LadrunoCSTPair                    # ADR 70 P4a triangle volumetric cure
     classtag: 33021          # ELE_TAG family; after LadrunoSolidShell=33020 (33019 pencilled H27)
     tag_symbol: ELE_TAG_LadrunoCSTPair
@@ -1610,7 +1646,7 @@ features:
     pr: 548
     feature_class: element
     required_tiers: [T0, T1]
-    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. (The P0 kernel gate tests/test_hex20_kernel_cpp.py stays green as the kernel anchor.)
+    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. Companions: tests/test_ladrunoBrick20_uri.py (P2 uri contract S0-S9), tests/test_ladrunoBrick20_dynamics.py (P3 HRZ -lumped fractions 7/248 & 2/31, eigen bracketing, criticalTimeStep==numpy pencil, CDL wave bar + ADR-69 energy closure, betaK clobber x4, massType DB round-trip), tests/test_hex20_kernel_cpp.py (P0 kernel anchor).
     tcl: WAIVED(element LadrunoBrick20 ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
     zone_b: []
     core_files:
@@ -1633,10 +1669,148 @@ features:
       20-node serendipity quadratic hex, ADR 72. P0 (PR #548) = pure
       LadrunoHex20Shape.h kernel + sympy oracle + g++ cross-check + 33018
       reservation; R1 blind ordering verify + R2 oracle-independence audit
-      both PASS. P1 = the element (-formulation std, 27-pt full) + factory +
-      broker/interpreter/Tcl registrations + 4 viz-recorder vtktypes +
-      Ladruno_ElementResults rule reuse (Hexahedron_GaussLegendre_3 / 20N
+      both PASS. P1 (PR #561) = the element (-formulation std, 27-pt full) +
+      factory + broker/interpreter/Tcl registrations + 4 viz-recorder vtktypes
+      + Ladruno_ElementResults rule reuse (Hexahedron_GaussLegendre_3 / 20N
       basis, brcshl GP pairing) + the Zone-A element battery; headline gate =
-      reduce-to Twenty_Node_Brick ~1e-12. uri (2x2x2 C3D20R analog) lands P2;
-      HRZ -lumped lands P3 (flag parsed + serialized, getMass errors honestly).
+      reduce-to Twenty_Node_Brick ~1e-12. P2 = -formulation uri (2x2x2 C3D20R
+      analog, alias 'reduced'): oracle-anchored contract battery
+      tests/test_ladrunoBrick20_uri.py (S0-S9 per the signed
+      _adr72_p2_test_specs) + the recorder basisInfo seam (uri elements
+      rerouted per element to Hexahedron_GaussLegendre_2). P3 = HRZ -lumped
+      live (positive-by-construction diagonal via Ladruno::hrzLump; one M0
+      cache drives getMass + inertia unbalance + inertia residual) + explicit
+      proof-of-life battery tests/test_ladrunoBrick20_dynamics.py.
       U1 RESOLVED BOTH: one-time opserr damage-channel advisory at setDomain.
+
+  - feature: LadrunoParallelNumberer          # ADR-74 T0 — the O(V) gather-merge numberer
+    classtag: 33000          # NUMBERER family (its own registry band; first ladruno numberer)
+    tag_symbol: NUMBERER_TAG_LadrunoParallelNumberer
+    pr: 591                  # N1 skeleton; own-body T0 engine #592; setSize companion fix #593
+    feature_class: numberer
+    required_tiers: []
+    pytest: tests/test_adr74_numberer_1.py    # two-deck G1 oracle (Mumps strict + MPIDiagonal end-state) + G1b bijection/same-physics + G1c hash-fallback + mutation tests; 18/18
+    tcl: WAIVED(numberer; verbs LadrunoParallelRCM/LadrunoParallelPlain wired in commands.cpp _PARALLEL_INTERPRETERS + OpenSeesCommands, validated by the Zone-A pytest through mpiexec decks)
+    core_files:
+      - SRC/classTags.h
+      - SRC/analysis/numberer/LadrunoParallelNumberer.h
+      - SRC/analysis/numberer/LadrunoParallelNumberer.cpp
+      - SRC/analysis/numberer/ParallelNumberer.h   # vanilla: ledgered private->protected promotion + tag-forwarding ctors
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR-74 (supersedes ADR-30): subclass of ParallelNumberer that replaces the
+      O(V^2_global) rank-0 gather-merge linear scans with a dense refToLoc
+      direct-address table (kappa-guarded hash fallback), per-subgraph pass-2
+      maps, a seen-flag plain branch (tag-0 quirk fixed, G1b), a
+      constrainedNode->MPs index for the -4 fixup, and dc.n.* profiler
+      sub-scopes. RCM verb bit-identical to stock ParallelRCM (G1, np2+np8,
+      both decks); measured dc.numberDOF N^2.01 -> N^1.10 (23x/76x/150x on the
+      0.25/1/2 M-hex np8 rungs). Companion PR #593 killed the next wall in the
+      same first-step path: MPIDiagonalSOE::setSize's leftmost-pivot quicksort
+      on already-sorted input (O((N/P)^2)/rank, 161x at 2 M) — in-place
+      ledgered vanilla edit, not part of this class. Manifest row added in
+      #593 (the N1/N2 PRs predated gate enforcement on this tag).
+
+  - feature: LadrunoCMSEigenSOE                 # ADR 1000 independent hierarchical CMS
+    classtag: 33025
+    tag_symbol: EigenSOE_TAGS_LadrunoCMS
+    pr: 596
+    feature_class: derivative
+    required_tiers: [T0, T1, T2]
+    pytest: tests/test_ladrunoCMS_oracle.py
+    tcl: eigen -ladrunoCMS (OpenSeesMP only; gated by LADRUNO_CMS=ON)
+    zone_b:
+      - Ladruno_implementation/ladruno_cms_building_1A_acceptance.md
+    core_files:
+      - CMakeLists.txt
+      - SRC/classTags.h
+      - SRC/system_of_eqn/CMakeLists.txt
+      - SRC/tcl/commands.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/analysis/analysis/StaticAnalysis.cpp
+      - SRC/analysis/analysis/DirectIntegrationAnalysis.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      ADR 1000. New opt-in OPS_LadrunoCMS library; owns contribution capture,
+      equation ownership, two-level reduction and OpenSees-compatible output.
+      P1, P2a and P2b are implemented: assembly/CSR, distributed MUMPS,
+      coordinate-aligned mass-nullspace condensation, private thick-restart
+      Lanczos, mandatory T2-S2-T1-S1, hierarchical reconstruction, original-pencil
+      subspace refinement and Tcl/Python MP lifecycle. Unit, MPI np=1/2/4 and
+      repeated OpenSees solves pass. Building 1A P2c now passes twice at the
+      strict original-pencil gate (k2=24,k1=48,q=16,rD=486:
+      rho_max=9.09852e-9 and 9.81460e-9); a k2=48,k1=96 retention ablation also
+      passes. Feature remains remediation until P3/P4 scaling and shipment review,
+      and is absent from the banner. Merge-time note (#596 review): the
+      classTag-vs-object-identity setEigenSOE vanilla edit is exercised by
+      Zone-A; the manifest conflict with the ADR-74 numberer row was a
+      tail-append collision, both rows kept. Fixed at merge: (1) enrichment
+      retry deadlock — the "is smaller than numberOfModes" reason string is
+      rank-0-only, so the rank-local retry match desynced ranks and hung the
+      next collective; verdict now MPI_Bcast from rank 0; (2) the -refine
+      none uncertified-result warning was verbose-gated, now unconditional;
+      (3) scipy added to Zone-A CI installs (oracle import broke collection).
+      KNOWN remediation debts from the 3-lane merge review (all fail-loud or
+      opt-in-only, none silent-wrong): rank-local error returns before the
+      first hierarchy/refiner collective (buildOwnedLocalPencil -6,
+      refinement-path buildSymmetricCSR -10) can strand other ranks in a
+      collective — funnel through collectiveFailure; repeated eigen
+      -ladrunoCMS with NO analysis object leaks the (heavy) SOE per call
+      (inherited FEAST 5-arg eigen seam); a subdomain interior with zero
+      dynamic coordinates aborts (-9) instead of degrading to a Guyan-only
+      subdomain; local Lanczos plateau/cluster caps hard-abort (-10/-11/-14)
+      instead of passing best-so-far to the authoritative refiner gate;
+      and (build-required, still open) local Lanczos plateau/cluster caps
+      hard-abort (-10/-11/-14) instead of passing best-so-far to the
+      authoritative refiner gate. CI-COVERAGE debt ADDRESSED: the nightly
+      self-hosted Zone-B lane now configures LADRUNO_CMS=ON, compiles the full
+      library, and runs the mumps/lanczos/hierarchy/subspace numerical checks
+      under mpiexec -n 4 (build.bat LADRUNO_CMS_BUILD=1; see BUILD_GOTCHAS.md
+      #7). Default Zone-A still builds LADRUNO_CMS=OFF (only LadrunoCMSOptions.cpp
+      g++-compiled by the zone_a core test), so a regression still lands green on
+      a PR and is caught next nightly, not pre-merge.
+      REMEDIATION Tier-1 partial (inspection + syntax-checked; runtime rides the
+      nightly CMS lane): (4) cross-rank option-consistency gate ADDED — an
+      additive symmetric Allreduce(MIN/MAX) on numberOfModes/denseMax/modesLevel2
+      /modesLevel1 right after the entry failure Allreduce, fail-loud-collective
+      on mismatch, closing the numberOfModes-Bcast UB; (6) Bathe-rule
+      misattribution FIXED in-comment (q=max(p+8,2p) is a conservative variant of
+      Bathe's min(2p,p+8), not Bathe verbatim) + residual-metric comment naming
+      the combined backward error. STILL OPEN (need a working LADRUNO_CMS=ON
+      build to validate dimensional/collective flow — deadlock-risk if wrong):
+      (1) zero-dynamic-interior -9 -> Guyan-only degrade; (2) Lanczos best-so-far
+      pass-through; (3) collectiveFailure funnel for the pre-collective rank-local
+      returns; (5) no-analysis per-call SOE leak.
+
+  - feature: LadrunoCMSEigenSolver              # twin of EigenSOE tag 33025
+    classtag: 33026
+    tag_symbol: EigenSOLVER_TAGS_LadrunoCMS
+    pr: 596
+    feature_class: derivative
+    required_tiers: [T0, T1, T2]
+    pytest: tests/test_ladrunoCMS_oracle.py
+    tcl: eigen -ladrunoCMS (constructed together with LadrunoCMSEigenSOE)
+    zone_b:
+      - Ladruno_implementation/ladruno_cms_building_1A_acceptance.md
+    core_files:
+      - CMakeLists.txt
+      - SRC/classTags.h
+      - SRC/system_of_eqn/CMakeLists.txt
+      - SRC/tcl/commands.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/analysis/analysis/StaticAnalysis.cpp
+      - SRC/analysis/analysis/DirectIntegrationAnalysis.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      ADR 1000 twin solver. The public solve is wired and verified on analytical
+      MP fixtures, including repeated calls. The Building 1A validation reaches
+      the complete two-level path and uses the reconstructed CMS vectors to seed
+      original-pencil subspace iteration. Two Building 1A base runs and one
+      retention-enriched run publish modes below the strict 1e-8 residual gate.
+      P2c PASS; status remains remediation pending P3/P4 and shipment review.

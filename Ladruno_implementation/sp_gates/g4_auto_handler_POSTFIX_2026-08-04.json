@@ -1,0 +1,26 @@
+{
+  "gate": "ADR-80 G4 — AutoConstraintHandler missing updateElement()",
+  "expected_interior": 1.5,
+  "delta": 3.0,
+  "reference_handler": "Transformation",
+  "rows": [
+  {"model": "truss", "handler": "Transformation", "test": "NormDispIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "truss", "handler": "Auto", "test": "NormDispIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "truss", "handler": "Plain", "test": "NormDispIncr", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false},
+  {"model": "truss", "handler": "Transformation", "test": "EnergyIncr", "analyze_rc": 0, "interior": 1.5, "iters": 1, "matches_expected": true},
+  {"model": "truss", "handler": "Auto", "test": "EnergyIncr", "analyze_rc": 0, "interior": 1.5, "iters": 1, "matches_expected": true},
+  {"model": "truss", "handler": "Plain", "test": "EnergyIncr", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false},
+  {"model": "truss", "handler": "Transformation", "test": "NormUnbalance", "analyze_rc": 0, "interior": 1.5, "iters": 1, "matches_expected": true},
+  {"model": "truss", "handler": "Auto", "test": "NormUnbalance", "analyze_rc": 0, "interior": 1.5, "iters": 1, "matches_expected": true},
+  {"model": "truss", "handler": "Plain", "test": "NormUnbalance", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false},
+  {"model": "brick", "handler": "Transformation", "test": "NormDispIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Auto", "test": "NormDispIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Plain", "test": "NormDispIncr", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false},
+  {"model": "brick", "handler": "Transformation", "test": "EnergyIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Auto", "test": "EnergyIncr", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Plain", "test": "EnergyIncr", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false},
+  {"model": "brick", "handler": "Transformation", "test": "NormUnbalance", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Auto", "test": "NormUnbalance", "analyze_rc": 0, "interior": 1.5, "iters": 2, "matches_expected": true},
+  {"model": "brick", "handler": "Plain", "test": "NormUnbalance", "analyze_rc": 0, "interior": 0, "iters": 1, "matches_expected": false}
+  ]
+}

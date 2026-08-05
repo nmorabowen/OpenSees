@@ -1,0 +1,10 @@
+﻿P1e -krylov bench | MKL_NUM_THREADS=4 | REPEATS=3 | sizes [20] | 15 steps, full Newton
+
+=== grid 20^3  (8000 bricks, ~26.5k DOF) ===
+  config       median_s  vs direct   tip rel err
+  direct         24.459     1.000x   0.00e+00
+  krylov6        18.851     0.771x   0.00e+00
+  spd            18.224     0.745x   0.00e+00
+  spd+krylov6     15.615     0.638x   0.00e+00
+
+wrote C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\opensees-pr-strategy-9c17b8\Ladruno_files\testbed\perf\phase1\p1e_krylov_t4.json

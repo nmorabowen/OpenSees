@@ -67,11 +67,28 @@ ParallelNumberer::ParallelNumberer()
 }
 
 
-ParallelNumberer::ParallelNumberer(GraphNumberer &theGraphNumberer) 
+ParallelNumberer::ParallelNumberer(GraphNumberer &theGraphNumberer)
   :DOF_Numberer(NUMBERER_TAG_ParallelNumberer), theNumberer(&theGraphNumberer),
    processID(0), numChannels(0), theChannels(0)
 {
-  
+
+}
+
+// Ladruno (ADR-74 N1, ledgered): tag-forwarding ctors for subclasses —
+// identical to the GraphNumberer& / default ctors except the classTag flows
+// through. The no-numberer form serves the plain verb (subdomain ordering).
+ParallelNumberer::ParallelNumberer(int classTag, GraphNumberer &theGraphNumberer)
+  :DOF_Numberer(classTag), theNumberer(&theGraphNumberer),
+   processID(0), numChannels(0), theChannels(0)
+{
+
+}
+
+ParallelNumberer::ParallelNumberer(int classTag)
+  :DOF_Numberer(classTag), theNumberer(0),
+   processID(0), numChannels(0), theChannels(0)
+{
+
 }
 
 

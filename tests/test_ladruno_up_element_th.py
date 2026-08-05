@@ -578,8 +578,12 @@ def test_v_btet10_winding_acceptance(tmp_path):
     driver.write_text(_WINDING_DRIVER)
     env = dict(os.environ)
     env["PATH"] = _DIST + os.pathsep + env.get("PATH", "")
+    # encoding pinned: the child prints the UTF-8 splash banner, and cp1252
+    # text-mode decode raises in the reader thread => proc.stdout is None and
+    # the assert dies with TypeError instead of a diagnosis (quirks ledger).
     proc = subprocess.run([sys.executable, "-S", str(driver), _DIST],
-                          capture_output=True, text=True, timeout=200, env=env)
+                          capture_output=True, text=True, timeout=200, env=env,
+                          encoding="utf-8", errors="replace")
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")
     assert "WINDING-PARITY-OK" in proc.stdout and proc.returncode == 0, (
         f"winding parity gate failed (rc={proc.returncode})\n{out}")

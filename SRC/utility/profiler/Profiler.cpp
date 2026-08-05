@@ -64,6 +64,8 @@
 #include <chrono>
 #include <ctime>
 #include <cstdio>
+#include <cstdlib>     // Ladruno ADR-75 P1i: getenv for resolveRunThreads
+#include <thread>      // Ladruno ADR-75 P1i: hardware_concurrency fallback
 
 namespace ops_profiler {
 
@@ -271,6 +273,15 @@ Profiler::registerThread()
 // ---------------------------------------------------------------------------
 
 void
+Profiler::seedSeriesPhases()
+{
+    // One wall_ms column: the full wall of each committed step. Established here
+    // (not lazily in recordStep) so nPhase() is fixed before the first row is
+    // pushed and wall_ms stays exactly nSteps()*nPhase() as the writer asserts.
+    series_.phases.assign(1, std::string("step"));
+}
+
+void
 Profiler::start()
 {
     runClock_.startWallNs = PerfClock::wall_ns();
@@ -293,6 +304,8 @@ Profiler::start()
     }
 
     warmupRemaining_ = config_.warmupSteps;
+    lastStepWallNs_  = runClock_.startWallNs;   // row 0 spans start() -> end of step 1
+    seedSeriesPhases();
     setEnabled(true);
 }
 
@@ -330,6 +343,8 @@ Profiler::reset()
     series_ = Series{};
     runClock_ = RunClock{};
     warmupRemaining_ = config_.warmupSteps;
+    lastStepWallNs_  = PerfClock::wall_ns();
+    seedSeriesPhases();          // series_ was cleared wholesale above
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +392,7 @@ void lowerNode(const ProfileNodeLive& live, ProfileNode& out)
 } // namespace
 
 const ProfileNode&
-Profiler::mergedRollup()
+Profiler::mergedRollup(bool quietLive)
 {
     // PRECONDITION (correctness review H1): the caller must guarantee no worker
     // thread is currently inside a profiled scope. The per-thread live trees are
@@ -387,11 +402,13 @@ Profiler::mergedRollup()
     // thread registration, NOT tree mutation. In practice report is called from the
     // single-threaded command layer after profiler('stop'); P5 must enforce that the
     // active analysis is idle before reporting (assert/guard added when seams land).
-    if (enabled_) {
+    if (enabled_ && !quietLive) {
         // Reporting while still accumulating is a usage error under any parallel
         // solver; warn rather than risk a silent race. (Coarse single-thread runs
         // are safe, so this is a warning, not a hard stop.) fprintf keeps the core
         // dependency-free (no OPS_Globals/opserr) so it stays standalone-compilable.
+        // quietLive: the checkpoint verb snapshots deliberately while enabled —
+        // between analyze calls, single-threaded — and suppresses this.
         std::fprintf(stderr, "[profiler] mergedRollup() called while still enabled; "
                      "call profiler('stop') first to avoid racing live worker threads.\n");
     }
@@ -424,12 +441,22 @@ Profiler::buildMeta() const
     m.cpu_ms_total  = (cpuNs  > 0) ? static_cast<double>(cpuNs)  / 1.0e6 : 0.0;
 
     m.timestamp = runClock_.timestamp;
-    m.threads   = static_cast<int64_t>(threads_.size());
+    // Ladruno ADR-75 P1i: NOT threads_.size(). See resolveRunThreads() in the
+    // header for why that number was wrong for every consumer that read it.
+    m.threads   = resolveRunThreads(static_cast<int64_t>(threads_.size()));
 
     // model / engine_sha / integrator / algorithm / solver / units and the
-    // size normalizers (nDOF/nElem/nNode/nnz, dt_cr, oversample_ratio) are
+    // size normalizers (nDOF/nElem/nNode, dt_cr, oversample_ratio) are
     // populated by the P5 command layer from the live SimulationInformation /
-    // SOE / integrator before handing meta to the writer. P1 leaves them defaulted.
+    // SOE / Domain / integrator before handing meta to the writer.
+    //
+    // Ladruno ADR-75 P1i: this comment used to promise nElem/nNode too, but the
+    // command layer only ever filled nDOF -- so both shipped as a hard 0 while a
+    // reader had every reason to trust them (ADR-76 issue report). Now filled at
+    // all four call sites. `nnz` is STILL 0 and is deliberately left out of the
+    // list above: LinearSOE exposes no size-agnostic nnz accessor (only some
+    // concrete SOEs carry the member), so filling it would mean a virtual on an
+    // upstream base class -- out of scope here, and 0 is at least uniform.
     if (config_.perStep) {
         m.nSteps = static_cast<int64_t>(series_.nSteps());
         // dt_min / dt_max from the recorded per-step series (P0#5 inputs; the
@@ -496,6 +523,14 @@ Profiler::recordStep(int64_t step, double t, double dt, int32_t iters)
     if (!config_.perStep)
         return;
 
+    // Close the per-step wall interval FIRST, and re-anchor on every path
+    // (including the warmup drop) so a dropped step never inflates the next
+    // row's delta.
+    const int64_t nowWallNs = PerfClock::wall_ns();
+    const int64_t stepWallNs =
+        (nowWallNs > lastStepWallNs_) ? (nowWallNs - lastStepWallNs_) : 0;
+    lastStepWallNs_ = nowWallNs;
+
     // Honor warmup: silently drop the first K recorded steps (P1#8) so the
     // first-touch outlier + turbo ramp don't pollute the series/rollup window.
     if (warmupRemaining_ > 0) {
@@ -521,14 +556,55 @@ Profiler::recordStep(int64_t step, double t, double dt, int32_t iters)
     series_.mem_live_bytes.push_back(live);
     series_.mem_peak_bytes.push_back(peak);
 
-    // Per-phase wall_ms row: the phase column set is fixed (series_.phases) and
-    // is established by the P2 driver wiring. In P1 phases is empty (nPhase()==0)
-    // so we append a zero-width row — wall_ms stays consistent at
-    // nSteps()*nPhase(). Once phases is populated, append one float per phase in
-    // the fixed column order.
+    // Per-phase wall_ms row, in the fixed series_.phases column order. Column 0
+    // ("step", seeded by seedSeriesPhases) is the full wall of this step — the
+    // whole point of -perStep for stall hunting: a single pathological step is
+    // invisible in the max-over-calls rollup but is one obvious row here.
     const std::size_t nPhase = series_.phases.size();
     for (std::size_t p = 0; p < nPhase; ++p)
-        series_.wall_ms.push_back(0.0f);
+        series_.wall_ms.push_back(p == 0 ? static_cast<float>(stepWallNs * 1e-6)
+                                         : 0.0f);
+}
+
+// ---- Ladruno ADR-75 P1i ------------------------------------------------------
+// Resolve the thread cap this run could actually use. Contract in Profiler.h.
+//
+// Order is deliberate. MKL_NUM_THREADS beats OMP_NUM_THREADS because the phase
+// this attribute exists to explain is the SOLVE (MKL PARDISO), and MKL honours
+// its own variable first. `registered` is a floor, never a ceiling: if threaded
+// assembly ever registers N worker threads, an env cap of 1 must not erase them.
+//
+// A malformed or non-positive value is treated as UNSET rather than clamped --
+// "MKL_NUM_THREADS=0" means "let MKL decide", not "zero threads".
+int64_t
+resolveRunThreads(int64_t registered) noexcept
+{
+    int64_t resolved = 0;
+
+    const char* srcs[2] = { "MKL_NUM_THREADS", "OMP_NUM_THREADS" };
+    for (int i = 0; i < 2 && resolved <= 0; i++) {
+        const char* v = std::getenv(srcs[i]);
+        if (v == 0 || *v == '\0')
+            continue;
+        // strtol, not atoi: atoi cannot distinguish "abc" from a real 0, and a
+        // list form ("4,2" for nested MKL) must read as its OUTER value, not fail.
+        char* end = 0;
+        const long n = std::strtol(v, &end, 10);
+        if (end != v && n > 0)
+            resolved = static_cast<int64_t>(n);
+    }
+
+    // Nothing declared: fall back to the machine width. This is an ESTIMATE --
+    // MKL defaults to physical cores while hardware_concurrency() reports logical
+    // ones, so on an SMT box this over-reports by the SMT factor. It is still
+    // strictly better than the old hardcoded 1, and the command layers replace it
+    // with mkl_get_max_threads() wherever MKL is compiled in.
+    if (resolved <= 0) {
+        const unsigned hc = std::thread::hardware_concurrency();
+        resolved = (hc > 0) ? static_cast<int64_t>(hc) : 1;
+    }
+
+    return (resolved > registered) ? resolved : registered;
 }
 
 } // namespace ops_profiler

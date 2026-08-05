@@ -146,7 +146,12 @@ BandSPDLinLapackSolver::solve(void)
       if (info > 0) {
 	opserr << "WARNING BandSPDLinLapackSolver::solve() -";
 	opserr << "factorization failed, matrix singular U(i,i) = 0, i= " << info-1 << endln;
-	return -info+1;
+	// Ladruno: was `return -info+1;` == (-info)+1, so info==1 (all-zero A)
+	// returned 0 == SUCCESS and the caller consumed the un-solved RHS as the
+	// answer. See the long note in BandGenLinLapackSolver.cpp. Note this file's
+	// own 1x1 guard at :98 masks the defect for a single-DOF system — a minimal
+	// repro must use n >= 2 or it will falsely read as clean.
+	return -info;
       } else {
 	opserr << "WARNING BandSPDLinLapackSolver::solve() - OpenSees code error\n";
 	return info;

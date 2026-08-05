@@ -1,0 +1,57 @@
+{
+  "threads": "4",
+  "repeats": 3,
+  "nsteps": 15,
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\opensees-pr-strategy-9c17b8\\dist\\bin\\opensees.pyd",
+  "sizes": {
+    "20": {
+      "ndof": 26460,
+      "results": {
+        "direct": {
+          "median_s": 24.45890229998622,
+          "ratio_vs_direct": 1.0,
+          "tip_ux": 2.9521177538217653,
+          "tip_rel_err": 0.0,
+          "samples": [
+            24.457124100008514,
+            24.45890229998622,
+            24.55049890000373
+          ]
+        },
+        "krylov6": {
+          "median_s": 18.850766199990176,
+          "ratio_vs_direct": 0.7707118646939767,
+          "tip_ux": 2.9521177538217653,
+          "tip_rel_err": 0.0,
+          "samples": [
+            18.848708499979693,
+            18.850766199990176,
+            18.85496399999829
+          ]
+        },
+        "spd": {
+          "median_s": 18.224273000028916,
+          "ratio_vs_direct": 0.7450977470906036,
+          "tip_ux": 2.9521177538217653,
+          "tip_rel_err": 0.0,
+          "samples": [
+            18.2036276999861,
+            18.224273000028916,
+            18.226116899983026
+          ]
+        },
+        "spd+krylov6": {
+          "median_s": 15.61498140002368,
+          "ratio_vs_direct": 0.6384170969125004,
+          "tip_ux": 2.9521177538217653,
+          "tip_rel_err": 0.0,
+          "samples": [
+            15.598940500000026,
+            15.61498140002368,
+            15.669257200032007
+          ]
+        }
+      }
+    }
+  }
+}

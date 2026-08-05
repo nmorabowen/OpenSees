@@ -43,6 +43,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Information.h>
 #include <Parameter.h>
 #include <ElementalLoad.h>
@@ -840,7 +841,25 @@ void LadrunoSolidShell::formInertiaTerms(int tangFlag)
 
 const Matrix &LadrunoSolidShell::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h;
+  // this element is the brick pattern verbatim (formInertiaTerms(1) into a
+  // CLASS-STATIC `mass`), so it gets the brick treatment. Signature = the
+  // numGP (= 4*nz) material rhos; coords guarded inside; massType fixed at
+  // construction. Bounded stack signature: numGP > 64 (nz > 16) falls back to
+  // the uncached path rather than allocating -- far beyond any real nz.
+  double mcSig[64];
+  const bool mcOk = (numGP <= 64);
+  if (mcOk) {
+    for (int i = 0; i < numGP; i++)
+      mcSig[i] = materialPointers[i]->getRho();
+    if (const Matrix *Mc = massCache.lookup(mcSig, numGP, nodePointers, 8, 3))
+      return *Mc;
+  }
+
   formInertiaTerms(1);
+
+  if (mcOk)
+    massCache.fill(mass, mcSig, numGP, nodePointers, 8, 3);
   return mass;
 }
 
@@ -869,7 +888,9 @@ int LadrunoSolidShell::addInertiaLoadToUnbalance(const Vector &accel)
   if (!haveRho)
     return 0;
 
-  formInertiaTerms(1);   // fills mass
+  // Ladruno (ADR-77 G2 ext): route through getMass() so the cached M is used
+  // (this function reads only the mass matrix; ra is overwritten below).
+  const Matrix &M = this->getMass();
 
   static Vector ra(24);
   for (int i = 0; i < 8; i++) {
@@ -879,7 +900,7 @@ int LadrunoSolidShell::addInertiaLoadToUnbalance(const Vector &accel)
 
   if (load == 0)
     load = new Vector(24);
-  load->addMatrixVector(1.0, mass, ra, -1.0);
+  load->addMatrixVector(1.0, M, ra, -1.0);
   return 0;
 }
 
@@ -1100,6 +1121,11 @@ int LadrunoSolidShell::recvSelf(int commitTag, Channel &theChannel,
   // drop any cached initial stiffness: nz/formulation/material class may all
   // differ from the pre-recv element, so a stale Ki would be wrong.  // Ladruno
   if (Ki != 0) { delete Ki; Ki = 0; }
+  // same for the mass cache: massType/quadz are sig-exempt (construction-fixed
+  // in normal flows) but a restore into a live element CAN flip them with rho
+  // and coords unchanged -- a guard hit would then serve the pre-recv mass
+  // (ADR-77 review wave).  // Ladruno
+  massCache.invalidate();
   return res;
 }
 
@@ -1151,6 +1177,8 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
 {
   Response *theResponse = 0;
 
+  if (argc < 1) return 0;
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoSolidShell");
   output.attr("eleTag", this->getTag());
@@ -1160,7 +1188,7 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
     output.attr(nodeTag, connectedExternalNodes(i));
   }
 
-  if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
+  if (LadrunoResp::is(argv[0], "material")) {
     if (argc >= 2) {
       const int pointNum = atoi(argv[1]);
       if (pointNum > 0 && pointNum <= numGP) {
@@ -1172,28 +1200,42 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
       }
     }
   }
-  else if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0) {
+  else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 1, Vector(6 * numGP));
   }
-  else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0) {
+  else if (LadrunoResp::is(argv[0], "strain")) {
     theResponse = new ElementResponse(this, 2, Vector(6 * numGP));
   }
-  else if (strcmp(argv[0], "alpha") == 0 || strcmp(argv[0], "eas") == 0) {
+  else if (LadrunoResp::is(argv[0], "alpha")) {
     // enhanced-parameter diagnostic (the G6 stability gate reads this)
     theResponse = new ElementResponse(this, 3, Vector(NEAS));
   }
-  else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0 ||
-           strcmp(argv[0], "tangent") == 0) {
+  else if (LadrunoResp::is(argv[0], "stiff")) {
     // condensed tangent stiffness, row-major 24x24 (diagnostic — lets a gate
     // compare against the initial stiffness and check symmetry)  // Ladruno
     theResponse = new ElementResponse(this, 4, Vector(24 * 24));
   }
-  else if (strcmp(argv[0], "stiffInitial") == 0 ||
-           strcmp(argv[0], "initialStiffness") == 0) {
+  else if (LadrunoResp::is(argv[0], "stiffInitial")) {
     theResponse = new ElementResponse(this, 5, Vector(24 * 24));
+  }
+  else if (LadrunoResp::is(argv[0], "force")) {
+    // Ladruno — the element had NO force response at all; the family contract
+    // is force / stress / strain / stiff / stiffInitial / charLength.
+    theResponse = new ElementResponse(this, 6, Vector(24));
+  }
+  else if (LadrunoResp::is(argv[0], "charLength")) {
+    // Ladruno — the IN-PLANE projected size handed to crack-band materials.
+    output.tag("ResponseType", "lch");
+    theResponse = new ElementResponse(this, 7, Vector(1));
   }
 
   output.endTag();
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1228,6 +1270,13 @@ int LadrunoSolidShell::getResponse(int responseID, Information &eleInfo)
         data(24 * i + j) = K(i, j);
     return eleInfo.setVector(data);
   }
+  if (responseID == 6)
+    return eleInfo.setVector(this->getResistingForce());
+  if (responseID == 7) {
+    static Vector lch(1);
+    lch(0) = this->getCharacteristicLength();
+    return eleInfo.setVector(lch);
+  }
 
-  return -1;
+  return this->Element::getResponse(responseID, eleInfo);
 }

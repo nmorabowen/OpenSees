@@ -5,7 +5,8 @@ Run: pythoncore-3.12-64\python.exe -S laneD_model.py
 """
 import sys, os, time, math
 
-DIST = r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\dist\bin"
+# Ladruno ADR-75b (L3-0): DIST/OUT env-overridable; defaults reproduce ADR-40b verbatim.
+DIST = os.environ.get("OPS_PYD") or r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\dist\bin"
 sys.path.insert(0, DIST)
 os.add_dll_directory(DIST)
 os.environ["PMI_RANK"] = "0"
@@ -16,7 +17,8 @@ import opensees as ops
 assert ops.__file__.lower().startswith(DIST.lower()), f"WRONG PYD: {ops.__file__}"
 print("pyd OK:", ops.__file__)
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "laneD_prof.h5")
+OUT = os.environ.get("OPS_PROF_OUT") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "laneD_prof.h5")
 if os.path.exists(OUT):
     os.remove(OUT)
 
@@ -94,7 +96,13 @@ ops.numberer("Plain")
 ops.system("Diagonal")
 ops.test("NormDispIncr", 1e-12, 1)
 ops.algorithm("Linear")
-ops.integrator("CentralDifferenceLadruno", "-cfl")
+# Ladruno ADR-75b (L3-0, review M2): CDL_FLAGS lets the SAME deck run with ADR-67 P-NEW-2
+# `-commitSolveState`, which skips the SECOND constitutive pass. Without it lane D books the
+# rate-independent double pass twice and loop A reads 54% instead of 38% -- the Lane-3 gate
+# then passes on redundant work a shipped, bit-identical flag deletes.
+_cdl = (os.environ.get("CDL_FLAGS") or "").split()
+ops.integrator("CentralDifferenceLadruno", "-cfl", *_cdl)
+print("integrator flags:", ["-cfl"] + _cdl)
 ops.analysis("Transient")
 
 # --- critical dt: estimate c = sqrt((K+4G/3)/rho) (dilatational), dt = 0.5 h/c ---
@@ -116,7 +124,12 @@ print(f"using dt = {dt:.3e} s")
 NSTEPS = 2500
 
 # ---------------- profile ONLY the analyze block ----------------
-ops.profiler("start", "-deep", "-perStep")
+# Ladruno ADR-75b (L3-0): OPS_PROF_FLAGS lets the SAME run be repeated without -deep so the
+# deep-scope instrumentation tax can be MEASURED rather than argued about (ADR-40b banked
+# ~0.5 us per scope instance). Default is the original "-deep -perStep".
+_pf = (os.environ.get("OPS_PROF_FLAGS", "-deep -perStep")).split()
+ops.profiler("start", *_pf)
+print("prof flags:", _pf)
 t0 = time.perf_counter()
 nfail = 0
 for _ in range(NSTEPS):

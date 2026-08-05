@@ -459,6 +459,22 @@ Parsers: the band path is **added** beside the existing flag map in **both**
 `SRC/interpreter/OpenSeesCommands.cpp:270` (legacy/parallel) — selecting
 `EigenSOE_TAGS_FeastEigenSOE` and stashing `fmin/fmax/m0` on the SOE.
 
+> **Classic-Tcl parity added later (2026-07-16, apeGmsh ADR 0077).** The
+> original FEAST line wired only the interpreter parser
+> (`OpenSeesCommands.cpp` → openseespy / interpreter-Tcl / PyMP); the
+> **classic Tcl** parser `SRC/tcl/commands.cpp:eigenAnalysis()` did *not*
+> parse `-feast`, so a partitioned **Tcl** deck run under classic
+> `OpenSeesMP.exe` — the deck target of apeGmsh's HPC path (ADR 0060/0061)
+> — could not invoke FEAST. `eigenAnalysis()` now carries a `-feast` branch
+> mirroring `OPS_eigenFeast` (band parsed up front since it replaces
+> `numModes`; builds the `FeastEigenSOE`/`FeastEigenSolver` pair; found-mode
+> reconcile via `getNumFoundModes()`). `commands.cpp` compiles into
+> `OpenSees` (serial), `OpenSeesSP` (`_PARALLEL_PROCESSING`) and
+> `OpenSeesMP` (`_PARALLEL_INTERPRETERS`, which links
+> `LadrunoDistBlockZKernel` — so classic `OpenSeesMP.exe -feast … -rci`
+> reaches the distributed dmumps L3 kernel). The **xara** parser
+> (`analysis.cpp`) remains unwired. See `LEDGER_vanilla_files.md`.
+
 ### 5.5 The SP/MP split — resolved by de-scoping SP, not by unifying it
 
 > [!important] **DECISION 2026-07-08: MP is the single blessed parallel

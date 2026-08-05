@@ -154,10 +154,10 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)\n"
-"        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt, reduce-to 20NodeBrick)\n"
+"        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt + uri 2x2x2 Barlow + HRZ -lumped, reduce-to 20NodeBrick)\n"
 "        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std)\n"
 "        • LadrunoQuad/LadrunoCST/LadrunoLST/LadrunoCSTPair — 2D continuum (Quad std/bbar/ssp/eas; CST + LST-T6 std; -geom finite via shared 2D F-kernel; CSTPair = 2-tri F-bar-Patch macro dSNPO 15.1.9)\n"
-"        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
+"        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)/hypo (rate-form UL, Green-Naghdi)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
@@ -183,7 +183,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoGeneralizedAlpha — sensitivity/DDM Chung-Hulbert generalized-α (DDM)\n"
 "        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
-"        • LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar, -dual sparse biorthogonal basis; solid + ndf-6 shell rotational DOFs, -hermite rotation-consistent w–θ edge transfer, -shellSolid plane-section shell-edge↔solid-face tie; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)\n"
+"        • LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar incl. quad8/tri6-master quadratic facets, -dual sparse biorthogonal basis; solid + ndf-6 shell rotational DOFs, -hermite rotation-consistent w–θ edge transfer, -shellSolid plane-section shell-edge↔solid-face tie; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership)\n"
 "        • stressesPlaneStrain — exact out-of-plane σ_zz element response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
@@ -195,7 +195,10 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel or -load nodal-force pattern w/ -series; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)\n"
 "        • modal combination — responseSpectrumAnalysis -combine SRSS|CQC|ABS|TenPercent (native CQC/SRSS/ABS/Ten-Percent of the per-mode response-spectrum fields; -damp/-modalDamp for CQC zeta)\n"
 "        • modal frequency domain — frequencyResponse / steadyStateDynamics / randomResponse: modal FRF H_a(Om) sweep, steady-state harmonic amplitude + stationary random response PSD->RMS (one-sided Hz input PSD; RMS/nu0/Davenport peak -stats; base-accel or -load nodal-force pattern; lin/log/resonance-biased grid; disp/vel/accel)\n"
-"        • LadrunoUP — unified Biot u-p saturated-porous element (33017): honest pore-pressure DOF (p IS p — statics well-posed: drained + steady seepage), T3/Q4/H8 equal-order + McGann auto-stab, Bezier T6/Tet10 Taylor-Hood vertex-p (heterogeneous ndf), -formulation bbar, -dynSeepage; needs a general solver (unsymmetric tangent)\n"
+"        • LadrunoUP — unified Biot u-p saturated-porous element (33017): honest pore-pressure DOF (p IS p — statics well-posed: drained + steady seepage), T3/Q4/H8 equal-order + McGann auto-stab, Bezier T6/Tet10 Taylor-Hood vertex-p (heterogeneous ndf), -formulation bbar, -dynSeepage; -geom corot 3D large-rotation u-p (core-frame total force through the SolidTransformation seam, H/S reference-frame, R^T seepage drive); -geom hypo H8 large-STRAIN u-p (rate-form UL, delta-lnJ continuity, kinematic n(J) porosity + opt-in -kozenyCarman k(J)); needs a general solver (unsymmetric tangent)\n"
+"        • LadrunoPorousOverlay — persistent-fluid staggered u-p overlay (pattern LadrunoPorousOverlay 33022): pore-pressure field OUTSIDE the DOF graph over any T3/Q4/H8 solid region (zero element changes, symmetric solvers legal again); fixed-stress RATE-form fs1 (default L=classic alpha^2/K_dr, -fsL oedometric opt-in), fluid survives remove element (-onRemoval keep|drain), -subcycle auto, -staticMode hold|steady; LadrunoStaggeredAnalyze iterated fixed-stress driver (-tol/-maxIter/-pScale/-verbose/-stats) + parameter-route moduli/stage transport (parameter ... loadPattern E|nu|layerE|layerNu); explicit lane -fsL zero (L=0 under CD at dt<=0.5x the undrained pencil) + overlay-aware criticalTimeStep (undrained Qe*Se^-1*Qe^T pencil); p-field recorder channels (recorder ladruno -overlay / Monitor -overlay + MODEL/OVERLAYS topology rows); -fluidUpdate explicit fully matrix-free lane (lumped-S* forward fluid step at load-application time, dual-CFL advisory with diffusion-slack report) + SMS undrained-pencil composability (lumped CentralDifferenceSMS certified; consistent Olovsson priced-but-warned)\n"
+"        • system Pardiso — threaded MKL PARDISO desktop sparse-direct solver (symbolic/numeric/solve split for factorization reuse; -matrixType 1|2 symmetric upper-triangle half-storage = 1.35x faster + 42% less peak memory, exact; -krylov L factorization-preconditioned CGS reuses the L/U across a CHANGED tangent = 1.51x under full Newton at 51k DOF, 1.57x stacked with -matrixType 1, SPD/unsym only; -stats peak-memory counters; Tcl + Python)\n"
+"        • system Mumps — distributed MUMPS cluster sparse-direct solver (Ladruno additions: -BLR <eps> Block Low-Rank approximate factorization ICNTL(35)+CNTL(7), APPROXIMATE so keep it OFF on oracle paths; -stats dumps INFOG/RINFOG incl. INFOG(21) peak MB/proc; -ICNTL35/-CNTL7 expert overrides; -matrixType 0|1|2 symmetric half-storage — all of these Tcl + Python since ADR-75 P2h, which fixed a Tcl ladder that DROPPED them silently; -commSplit sub-communicator groups is Python/openseesmp ONLY)\n"
 "\n";
     // FEATURES-END
 

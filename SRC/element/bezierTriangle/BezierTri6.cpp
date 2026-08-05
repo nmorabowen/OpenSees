@@ -599,6 +599,17 @@ const Matrix &BezierTri6::getMass()
     //  own density (NDMaterial::getRho) is used, matching FourNodeQuad.
     // ═══════════════════════════════════════════════════════════
 
+    // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
+    // Signature = rho override + per-GP material rhos + thickness; coords
+    // guarded inside. cMass fixed at construction, omitted.
+    double mcSig[2 + NGAUSS];
+    mcSig[0] = rho;
+    mcSig[1] = thickness;
+    for (int i = 0; i < NGAUSS; i++)
+        mcSig[2 + i] = theMaterial[i]->getRho();
+    if (const Matrix *Mc = massCache.lookup(mcSig, 2 + NGAUSS, theNodes, NEN, 2))
+        return *Mc;
+
     M_return.Zero();
 
     // Effective density (element rho overrides material rho)
@@ -609,8 +620,10 @@ const Matrix &BezierTri6::getMass()
             sum += theMaterial[i]->getRho();
         rhoEff = sum / NGAUSS;
     }
-    if (rhoEff == 0.0)
+    if (rhoEff == 0.0) {
+        massCache.fill(M_return, mcSig, 2 + NGAUSS, theNodes, NEN, 2);   // Ladruno (ADR-77 G2 ext)
         return M_return;
+    }
 
     if (!cMass) {
         // ─── Lumped mass (Kadapa Eq. 56) ──────────────────────
@@ -626,6 +639,7 @@ const Matrix &BezierTri6::getMass()
             M_return(2*a,   2*a)   = m;
             M_return(2*a+1, 2*a+1) = m;
         }
+        massCache.fill(M_return, mcSig, 2 + NGAUSS, theNodes, NEN, 2);   // Ladruno (ADR-77 G2 ext)
         return M_return;
     }
 
@@ -661,6 +675,7 @@ const Matrix &BezierTri6::getMass()
         }
     }
 
+    massCache.fill(M_return, mcSig, 2 + NGAUSS, theNodes, NEN, 2);   // Ladruno (ADR-77 G2 ext)
     return M_return;
 }
 
@@ -1253,6 +1268,11 @@ int BezierTri6::recvSelf(int commitTag, Channel &theChannel,
         theMaterial[i]->setDbTag(matDbTag);
         res += theMaterial[i]->recvSelf(commitTag, theChannel, theBroker);
     }
+
+    // Ladruno (ADR-77 review wave): cMass (a mass-formula branch) is
+    // sig-exempt as construction-fixed, but recvSelf just rewrote it -- a
+    // guard hit on a live element would serve the pre-recv mass structure.
+    massCache.invalidate();
 
     return res;
 }

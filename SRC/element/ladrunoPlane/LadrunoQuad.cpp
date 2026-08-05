@@ -48,6 +48,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <Response.h>
 #include <DummyStream.h>
@@ -350,15 +351,21 @@ void LadrunoQuad::buildEAStrue(void)
 
   easJ0det = J00 * J11 - J01 * J10;
 
-  // Scale-invariant degeneracy test: the dimensionless volume ratio
-  // |det J0| / (||col0|| ||col1||) is 1 for an orthogonal Jacobian and ->0 only
-  // as the two natural axes become collinear (a genuinely flat/degenerate
-  // element), independent of element SIZE. An absolute threshold on |det J0|
-  // alone would false-positive a valid but small element (det scales as L^2),
-  // hard-failing e.g. a sub-mm quad in SI-metre coordinates.
+  // Scale-invariant degeneracy test — normalize by max-column SQUARED, not the
+  // column product. |det| / (||c0|| ||c1||) = |sin(angle)| detects only axis
+  // COLLINEARITY and is BLIND to axis COLLAPSE: a quad squashed onto a line has
+  // one microscopic (fp-residue) column, so det and the column product shrink
+  // TOGETHER and the old ratio stays ~1 while easJ0inv = adj/det blows up to
+  // ~1/||c_min|| and the enhanced Newton silently NaNs (found by the post-merge
+  // adversarial battery, 2026-07-20 — analyze() even returned 0 on the NaN).
+  // |det| / max(||c0||,||c1||)^2 = (||c_min||/||c_max||) * |sin(angle)| catches
+  // BOTH modes, stays size-invariant, and still passes healthy high-aspect
+  // elements (100:1 rectangle -> 1e-2 >> 1e-10; the ratio is then an honest
+  // conditioning estimate of the eas mode map).  // Ladruno
   double col0 = sqrt(J00 * J00 + J10 * J10);
   double col1 = sqrt(J01 * J01 + J11 * J11);
-  double scale = col0 * col1;
+  double cmax = (col0 > col1) ? col0 : col1;
+  double scale = cmax * cmax;
   easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
   if (easDegenerate) {
     opserr << "WARNING LadrunoQuad::buildEAStrue() - element " << this->getTag()
@@ -435,6 +442,13 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
   static const int    maxIters = 12;
   static const double tolRel = 1.0e-8;
   static const double tolAbs = 1.0e-12;
+  // NOISE floor: residE is the near-cancelling sum of per-GP M^T sigma dV terms,
+  // so its entries carry roundoff proportional to the magnitude of those terms
+  // (rScale = sum of per-GP ||M^T sigma dV||). Below tolNoise*rScale the residual
+  // is fp noise, not signal -- without this the fixed tolAbs floor is unreachable
+  // for large-unit (SI steel/soil) models and every assembly re-entry spins the
+  // full maxIters on noise (mirrors LadrunoBrick).  // Ladruno
+  static const double tolNoise = 1.0e-12;
 
   if (easJ0det == 0.0) this->buildEAStrue();   // safety (normally cached in setDomain)
 
@@ -476,7 +490,7 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
 
   static Matrix dd(3, 3), DB(3, 8), DM(3, 4);
   static Matrix Kaa(4, 4), Kda(8, 4), Kad(4, 8), KaaInvKad(4, 8);
-  static Vector residE(4), dalpha(4), strain(3), stress(3);
+  static Vector residE(4), dalpha(4), strain(3), stress(3), contrib(4);
 
   // -------- getInitialStiff: condensed initial elastic tangent at alpha=0 -----
   if (useInitialTangent) {
@@ -504,9 +518,11 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
   int count = 0;
   double r0 = -1.0;
+  double rPrev = -1.0;       // previous-iteration ||residE|| (stagnation detection)
   while (true) {
     residE.Zero();
     Kaa.Zero();
+    double rScale = 0.0;       // sum of per-GP ||M^T sigma dV|| (noise scale)
     for (int i = 0; i < 4; i++) {
       strain.addMatrixVector(0.0, Bgp[i], u, 1.0);       // eps = B*u
       strain.addMatrixVector(1.0, Mgp[i], alpha, 1.0);   //     + M*alpha
@@ -519,13 +535,28 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
       stress *= dvolGP[i];
       dd = theMaterial[i]->getTangent();
       dd *= dvolGP[i];
-      residE.addMatrixTransposeVector(1.0, Mgp[i], stress, -1.0);   // residE += -(M^T sigma)
+      contrib.addMatrixTransposeVector(0.0, Mgp[i], stress, 1.0);   // M^T sigma (this GP)
+      rScale += contrib.Norm();
+      residE.addVector(1.0, contrib, -1.0);                         // residE += -(M^T sigma)
       DM.addMatrixProduct(0.0, dd, Mgp[i], 1.0);
       Kaa.addMatrixTransposeProduct(1.0, Mgp[i], DM, 1.0);          // Kaa += M^T dd M
     }
     double r = residE.Norm();
     if (count == 0) r0 = r;
-    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+    // converged: relative to r0, with an absolute + scale-aware noise floor.
+    // Tested from count==0 on purpose: formEAStrue re-enters on EVERY assembly
+    // (update() and formResidAndTangent), so it routinely starts from an
+    // already-converged alpha where r0 is at the noise floor; forcing an update
+    // there solves a pure-roundoff RHS and can never satisfy a test with no
+    // reachable floor -- the maxIters warning then fires on every assembly of
+    // every element (mirrors LadrunoBrick).
+    if (r <= tolRel * r0 + tolAbs + tolNoise * rScale)
+      break;
+    // stagnation: a step that fails to reduce ||r|| while no worse than entry means
+    // roundoff dominates -- accept best-available alpha silently (the same
+    // acceptance the maxIters path makes) instead of burning the remaining
+    // iterations on noise.
+    if (count >= 1 && r >= rPrev && r <= r0)
       break;
     if (count >= maxIters) {
       // Not propagated as a hard failure: r is typically already within noise
@@ -547,6 +578,7 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
       break;
     }
     alpha += dalpha;
+    rPrev = r;
     count++;
   }
 
@@ -798,12 +830,29 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
 
 const Matrix &LadrunoQuad::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
+  // Signature = rho override + 4 material rhos + thickness; coords guarded
+  // inside. NOTE (review wave): the coord guard buys cached==uncached
+  // bit-identity only -- after setNodeCoord the re-form still uses the SSP
+  // J0/J1/J2 snapshot from setDomain (computeSSP is not re-run), the same
+  // stale-geometry behavior the uncached element always had.
+  // Formulation fixed at construction, omitted (recvSelf invalidates).
+  double mcSig[6];
+  mcSig[0] = rho;
+  mcSig[1] = thickness;
+  for (int i = 0; i < 4; i++)
+    mcSig[2 + i] = theMaterial[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(mcSig, 6, theNodes, 4, 2))
+    return *Mc;
+
   K.Zero();
 
   if (formulation == Formulation::SSP) {
     double density = (rho == 0.0) ? theMaterial[0]->getRho() : rho;
-    if (density == 0.0)
+    if (density == 0.0) {
+      massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
       return K;
+    }
     const double xi[4]  = {-1.0,  1.0, 1.0, -1.0};
     const double eta[4] = {-1.0, -1.0, 1.0,  1.0};
     for (int i = 0; i < 4; i++) {
@@ -811,6 +860,7 @@ const Matrix &LadrunoQuad::getMass(void)
       K(2 * i,     2 * i)     += m;
       K(2 * i + 1, 2 * i + 1) += m;
     }
+    massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
   }
 
@@ -820,8 +870,10 @@ const Matrix &LadrunoQuad::getMass(void)
     rhoi[i] = (rho == 0.0) ? theMaterial[i]->getRho() : rho;
     sum += rhoi[i];
   }
-  if (sum == 0.0)
+  if (sum == 0.0) {
+    massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
 
   for (int i = 0; i < 4; i++) {
     double rhodvol = this->shapeFunction(pts[i][0], pts[i][1]);
@@ -832,6 +884,7 @@ const Matrix &LadrunoQuad::getMass(void)
       K(ia + 1, ia + 1) += Nrho;
     }
   }
+  massCache.fill(K, mcSig, 6, theNodes, 4, 2);   // Ladruno (ADR-77 G2 ext)
   return K;
 }
 
@@ -879,9 +932,15 @@ int LadrunoQuad::addInertiaLoadToUnbalance(const Vector &accel)
     ra[2 * a + 1] = Raccel(1);
   }
 
-  this->getMass();
+// Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 8; i++)
-    Q(i) += -K(i, i) * ra[i];
+    Q(i) += -Mq(i, i) * ra[i];
   return 0;
 }
 
@@ -1030,9 +1089,15 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   }
 
   this->getResistingForce();
-  this->getMass();
+  // Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 8; i++)
-    P(i) += K(i, i) * a[i];
+    P(i) += Mq(i, i) * a[i];
 
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
@@ -1376,6 +1441,11 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     alpha = alphaCommit;
   }
 
+  // Ladruno (ADR-77 review wave): formulation (a mass-formula branch, SSP
+  // vs std lumping) is sig-exempt as construction-fixed, but recvSelf just
+  // rewrote it -- a guard hit on a live element would serve the pre-recv mass.
+  massCache.invalidate();
+
   return res;
 }
 
@@ -1432,21 +1502,24 @@ int LadrunoQuad::displaySelf(Renderer &theViewer, int displayMode, float fact,
 Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   Response *theResponse = 0;
+  if (argc < 1) return 0;
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoQuad");
   output.attr("eleTag", this->getTag());
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     theResponse = new ElementResponse(this, 1, P);
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    // SSP evaluates the material only at the centroid (slot 0).
-    int idx = this->isSinglePoint() ? 0 : (pointNum - 1);
-    if (pointNum > 0 && pointNum <= 4)
-      theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
-  } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      // SSP evaluates the material only at the centroid (slot 0).
+      int idx = this->isSinglePoint() ? 0 : (pointNum - 1);
+      if (pointNum > 0 && pointNum <= 4)
+        theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
+    }
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(12));
-  } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
     // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't
     // expose it); full GaussPoint/NdMaterialOutput tags so XML-driven recorders
     // (Ladruno/MPCO) get real component names instead of the C1..C16 fallback
@@ -1470,13 +1543,25 @@ Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &outp
       output.endTag(); // GaussPoint
     }
     theResponse = new ElementResponse(this, 21, Vector(16));
-  } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     theResponse = new ElementResponse(this, 4, Vector(12));
-  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     theResponse = new ElementResponse(this, 5, 0.0);
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
+    // Ladruno — family-wide diagnostic (FD-tangent checks); LadrunoBrick and
+    // LadrunoSolidShell already exposed it, the plane family did not.
+    theResponse = new ElementResponse(this, 6, Matrix(P.Size(), P.Size()));
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
   }
 
   output.endTag();
+
+  // Ladruno — fall back to the base vocabulary (globalForce, dampingForce,
+  // dynamicForce, inertialForce). Element::setResponse opens its OWN
+  // ElementOutput tag, so this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -1517,7 +1602,13 @@ int LadrunoQuad::getResponse(int responseID, Information &eleInfo)
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());
 
-  return -1;
+  if (responseID == 6)
+    return eleInfo.setMatrix(this->getTangentStiff());
+
+  if (responseID == 7)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int LadrunoQuad::setParameter(const char **argv, int argc, Parameter &param)

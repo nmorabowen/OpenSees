@@ -1,0 +1,33 @@
+{
+  "threads": 4,
+  "steps": 15,
+  "repeats": 1,
+  "rows": [
+    {
+      "n": 35,
+      "ndof": 136080,
+      "nele": 42875,
+      "config": "unsym4rev",
+      "walls_s": [
+        294.4667595999781
+      ],
+      "ux": 4.982673583081445,
+      "rel_err_vs_ref": 0.0
+    },
+    {
+      "n": 35,
+      "ndof": 136080,
+      "nele": 42875,
+      "config": "sym4rev",
+      "walls_s": [
+        189.55219640000723
+      ],
+      "ux": 4.982673583081445,
+      "rel_err_vs_ref": 0.0
+    }
+  ],
+  "wall_by_run": {
+    "p1j_unsym4rev_n35_r1": 294.4667595999781,
+    "p1j_sym4rev_n35_r1": 189.55219640000723
+  }
+}

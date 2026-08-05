@@ -55,6 +55,7 @@
 #define EigenSOE_TAGS_SparsePythonCompressedEigenSOE 	8
 #define EigenSOE_TAGS_SparsePythonCOOEigenSOE 	9
 #define EigenSOE_TAGS_FeastEigenSOE 33022 // N. Mora-Bowen (Ladruno) — FEAST band-targeted eigensolver SOE (CSR K,M; MKL Extended Eigensolver); ADR 43
+#define EigenSOE_TAGS_LadrunoCMS 33025 // Ladruno ADR 1000 — independent two-level hierarchical CMS EigenSOE
 #define EigenSOLVER_TAGS_BandArpackSolver 	1
 #define EigenSOLVER_TAGS_SymArpackSolver 	2
 #define EigenSOLVER_TAGS_SymBandEigenSolver     3
@@ -65,6 +66,7 @@
 #define EigenSOLVER_TAGS_SparsePythonCompressedEigenSolver  8
 #define EigenSOLVER_TAGS_SparsePythonCOOEigenSolver  9
 #define EigenSOLVER_TAGS_FeastEigenSolver 33023 // N. Mora-Bowen (Ladruno) — FEAST band-targeted eigensolver twin (MKL dfeast_scsrgv); ADR 43
+#define EigenSOLVER_TAGS_LadrunoCMS 33026 // Ladruno ADR 1000 — independent two-level hierarchical CMS EigenSolver
 
 #define EigenALGORITHM_TAGS_Frequency 1
 #define EigenALGORITHM_TAGS_Standard  2
@@ -638,6 +640,7 @@
 #define PATTERN_TAG_PBowlLoading          4
 #define PATTERN_TAG_DRMLoadPattern        5
 #define PATTERN_TAG_H5DRM                 6
+#define PATTERN_TAG_LadrunoPorousOverlay  33022 // N. Mora-Bowen (Ladruno) — ADR-73 persistent-fluid staggered u-p overlay (LoadPattern-subclass domain engine owning the pore-pressure field OUTSIDE the DOF graph; fixed-stress split, fluid life-cycle survives `remove element`). PATTERN registry; ladruno private band >=33000. Numerically equals EigenSOE_TAGS_FeastEigenSOE 33022 (ADR 43) — per-registry namespaces, deliberately NOT a collision (see Ladruno_implementation/73_ladruno_porous_overlay_adr.md §5)
 
 #define LOAD_TAG_Beam2dUniformLoad        3
 #define LOAD_TAG_Beam2dPointLoad          4
@@ -1047,6 +1050,7 @@
 #define NUMBERER_TAG_DOF_Numberer      	1
 #define NUMBERER_TAG_PlainNumberer 	2
 #define NUMBERER_TAG_ParallelNumberer 	3
+#define NUMBERER_TAG_LadrunoParallelNumberer 33000 // N. Mora-Bowen (Ladruno) — ADR-74: O(V) gather/merge numberer (subclass of ParallelNumberer via ledgered promotion; verbs LadrunoParallelRCM/LadrunoParallelPlain). N1 = delegate mode (bit-identical, G1-gated); T0/T1 replace the O(V^2) mergeSubGraph scans + map-backed graph build. ladruno numberer band >=33000. See Ladruno_implementation/74_ladruno_parallel_numberer_adr.md.
 
 #define GraphNUMBERER_TAG_RCM   		1
 
@@ -1164,6 +1168,7 @@
 #define INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent   33012 // N. Mora-Bowen (Ladruno) — CONSISTENT (Olovsson) selective mass scaling on the Noh-Bathe + FLAC-LNVD ExplicitBatheLNVD (sibling of ExplicitBatheSMSConsistent=33010); centroidal M_bar + matrix-free PCG at BOTH sub-step solves via the base refineAccel hook; ladruno integrator band >=33000. See Ladruno_implementation/38_ladruno_consistent_mass_scaling_adr.md. ADR-52 W1-E2: DEPRECATED alias of the collapsed ExplicitBathe (-lnvd -sms -consistent); tag retained for serialization (recvSelf -> ExplicitBathe::makeForBroker), do NOT free/reuse.
 #define INTEGRATOR_TAGS_LadrunoHHT                       33013 // N. Mora-Bowen (Ladruno) — sensitivity-carrying (DDM) subclass of HHT: adds the 5-method sensitivity seam with the α-weighted M/C terms + the extra K·(1-α)·dU_n stiffness term absent from Newmark (α=1); unblocks reliability/fragility/FORM on the numerically-damped HHT integrator. Requires the HHT.h private→protected promotion (ledgered). ladruno integrator band >=33000. See Ladruno_implementation/52_ladruno_integrator_strengthening_adr.md (W3-I2).
 #define INTEGRATOR_TAGS_LadrunoGeneralizedAlpha          33014 // N. Mora-Bowen (Ladruno) — sensitivity-carrying (DDM) subclass of GeneralizedAlpha (Chung-Hulbert): strict superset of LadrunoHHT with TWO α's (αF on K/C at Ualpha/Ualphadot, αM on M at Ualphadotdot); sensitivity seam with αF/αM-weighted M/C terms + the extra K·(1-αF)·dU_n term; reduces to Newmark at αM=αF=1. Requires the GeneralizedAlpha.h private→protected promotion (ledgered). ladruno integrator band >=33000. See Ladruno_implementation/52_ladruno_integrator_strengthening_adr.md (W3-I2).
+#define INTEGRATOR_TAGS_LadrunoLoadControl                33015 // N. Mora-Bowen (Ladruno) — strict superset of stock LoadControl adding an optional linear DISPLACEMENT PREDICTOR (-extrapolate <frac>, the Abaqus EXTRAPOLATION=LINEAR analogue). Fixes the ADR-80 mechanism: stock LoadControl has nothing in front of applyLoadDomain, so with a non-homogeneous sp the driven element layer's first constitutive evaluation of every increment is overstrained by L/h — harmless elastically, x18.7 iterations + 23 cutbacks for a path-dependent law (ADR-80 G5). NOT a subclass of LoadControl (its members are private); derives from StaticIntegrator per the LadrunoArcLength precedent, so the vanilla footprint is ZERO. -extrapolate 0.0 (default) is bit-identical to stock. ladruno integrator band >=33000. NB 33015 is independently reused in the ND registry (ND_TAG_LadrunoRCConcrete) — tag bands are PER-REGISTRY, no collision. See Ladruno_implementation/80_ladruno_sp_imposition_strengthening_adr.md (S1).
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1
@@ -1236,6 +1241,13 @@
 #define SOLVER_TAGS_PFEMDiaSolver                       33
 #define SOLVER_TAGS_SparsePythonCompressedLinSolver     100201
 #define SOLVER_TAGS_SparsePythonCOOLinSolver            100202
+// Ladruno ADR-75 P1: PARDISOGenLinSolver's tag is USED at
+// PARDISOGenLinSolver.cpp:27 but was never defined upstream (which is why that
+// contributed 2019 prototype has never compiled). Defined here in the fork's
+// private band (>=33000) rather than beside the upstream SOE tag 99990, so a
+// future upstream definition cannot collide. The upstream
+// LinSOE_TAGS_PARDISOGenLinSOE 99990 is deliberately left untouched.
+#define SOLVER_TAGS_PARDISOGenLinSolver                 33000
 
 #define RECORDER_TAGS_ElementRecorder		1
 #define RECORDER_TAGS_NodeRecorder		2

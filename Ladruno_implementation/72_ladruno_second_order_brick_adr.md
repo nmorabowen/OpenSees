@@ -1,6 +1,6 @@
 ---
 title: "ADR 72 — Second-order bricks: LadrunoBrick20 (20-node serendipity hex) + the quadratic-hex strategy"
-status: draft — planning, NO code
+status: implemented — P0–P3 shipped (#548, #561, #564, #573, #583, #584); P4 demand-gated (parked, §6)
 ---
 
 # ADR 72 — Second-order bricks on the Ladruno solid family
@@ -582,3 +582,36 @@ Each phase is one PR off `ladruno`.
   (`71_ladruno_up_family_adr.md`, LadrunoUP Biot u-p, uncommitted on its own
   worktree) first and claimed ELE 33017 → this element moved to 33018, the H27
   pencil to 33019.
+- 2026-07-10 — **P0 shipped** ([#548]): `LadrunoHex20Shape.h` kernel + sympy
+  oracle + g++ cross-check; R1 blind-ordering + R2 oracle-independence audits
+  passed; 33018 reserved; Irons-14 rank-sufficient (note kept).
+- 2026-07-13 — **P1 shipped** ([#561]): `-formulation std`, reduce-to
+  `Twenty_Node_Brick` ~1e-15, battery 23/23, R3 8-angle review F1–F17 fixed,
+  U1 resolved BOTH (guide caveat + process-once advisory). **Gmsh hex20 fix**
+  ([#564]): MSH type 17 + write permutation, upstream Twenty_Node_Brick
+  included.
+- 2026-07-14 — **P2 shipped** ([#573]): `-formulation uri|reduced`, S0–S9
+  signed-spec battery (mode census 12, non-communicability, single-stack
+  pathology, Oñate bending, ν=0.4999 relief-by-contrast, Barlow
+  superconvergence 3.7e-10 vs 3.9e-2); debts a/b/c paid (basisInfo recorder
+  seam, blocked BᵀDB, oracle-import dedup). Escalation 2.4 not triggered.
+  **F-1 fixed** ([#583]): rho-parameter-aware mass cache (`refreshMassState`
+  signature; updateParameter hook unreachable — updates go directly to the
+  material clones).
+- 2026-07-19 — **P3 shipped** ([#584]): HRZ `-lumped` (single M0 cache per
+  active mass model, tangent ≡ residual by construction), dynamics battery 16
+  (HRZ fractions ~3e-15 through the element path, `criticalTimeStep()` ==
+  numpy 60-DOF pencil ~3e-16, eigen bracketing, explicit wave bar at
+  0.9×pencil, **measured Δt ratio vs equal-node H8 = 0.50** — 3-D HRZ corner
+  masses, not the 1-D 0.82 ballpark; energy closure; betaK gate ×4). NO
+  element-side criticalTimeStep() override (ADR-65 central pencil; a
+  self-report replaces, not min-folds). CI round 1 found a REAL cross-cutting
+  bug credited to this battery: ADR-69 EnergyChannelRegistry cross-model
+  poisoning (non-finite publications + finite-precision absorption) → fixed
+  in-PR (finiteness guard + `Domain::clearAll` reset; ledgered).
+  **Independent Opus adversarial panel** (post-CI, pre-merge): T1 registry
+  semantics / T2 mass-path composition / T3 P2 solo-gate spot-check — ALL
+  CLEAN (1 LOW/PLAUSIBLE noted: static `warnedLumped` silences
+  second-and-later HRZ guard trips; contrived per-GP-rho route only). The P2
+  solo-gate review debt is PAID. **ADR-72 planned scope COMPLETE; P4 items
+  remain demand-gated (§6).**

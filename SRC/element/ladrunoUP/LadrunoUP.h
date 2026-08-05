@@ -70,6 +70,20 @@
 // The effective-stress seam: update() maps trial u → strains → setTrialStrain
 // ONLY. p never enters the constitutive update; it acts through Q in assembly.
 //
+// GEOMETRY METHOD (ADR 78): -geom linear|corot through the SolidTransformation
+// seam. corot (3D lanes only — a planar cloud has det(H)=0 in the polar) feeds
+// the material the deformational strain B·u_d, globalizes the core-frame TOTAL
+// force ∫Bᵀσ′dV − Q·p as ONE vector (K/Q frame consistency is structural, and
+// pore pressure feeds K_geo — total-stress prestress), rotates the tangent
+// coupling to −R̄Q (damp p-rows (R̄Q)ᵀ), assembles the storage-coupling
+// RESIDUAL in the incremental form Qᵀ·(u_d − u_d,committed)/Δt (velocity
+// contraction sees the chord's one-signed O(Δθ²)/step volumetric defect, Q̄-amplified
+// undrained — ADR 78 §3.3; the incremental form is exactly zero under rigid
+// motion), keeps H/S/H̃ in the reference frame (exact under pure rotation for
+// skeleton-attached k), and pulls the seepage drive back: drive = Rᵀ(b_f − ü).
+// Rayleigh C is rotated as one block (M-part invariant). Linear is
+// bit-identical to pre-ADR-78.
+//
 // The price of honesty: the effective transient tangent is UNSYMMETRIC (−Q and
 // Qᵀ live in different matrices) ⇒ general solver required (UmfPack / SuperLU /
 // FullGeneral / BandGeneral; MUMPS SYM=0 under MPI). The default ProfileSPD
@@ -90,6 +104,7 @@
 class Node;
 class NDMaterial;
 class Response;
+class SolidTransformation;
 
 class LadrunoUP : public Element
 {
@@ -110,7 +125,11 @@ class LadrunoUP : public Element
               int pOrder,                                  // 0=equal (P1); 1=TH reserved P3
               bool lumped,
               int stabMode, double stabValue,              // 0=off,1=auto(alpha0),2=manual(alpha)
-              bool dynSeepage);                            // default true
+              bool dynSeepage,                             // default true
+              int geomMethod = 0,                          // SolidTransformation method id
+                                                           // (ADR 78: 0=linear, 1=corot 3D-only;
+                                                           //  ADR 79: 3=hypo, H8-only)
+              bool kozenyCarman = false);                  // ADR 79 P2: opt-in k(J) evolution (hypo)
     LadrunoUP();                                           // broker
     ~LadrunoUP();
 
@@ -193,6 +212,11 @@ class LadrunoUP : public Element
     double shapeGPWeight(int gp) const;
 
     // ---- assembly helpers ---------------------------------------------------
+    // core-frame TOTAL solid force fu = ∫Bᵀσ′dV − Q·p_trial (ADR 78 §3.2) —
+    // the single force vector globalizeForce/Stiff consume under -geom corot,
+    // making the K/Q frame consistency structural. Fills pScratch_ as a side
+    // effect (trial nodal p).
+    void buildCoreForce(Vector &fu);
     void formB(int gp, Matrix &B) const;      // solid B (mean-dilatation B-bar if formulation==1)
     void buildSolidK(Matrix &Ks, bool initial);         // ∑ BᵀDB dv (current|initial tangent)
     void buildSolidMass(Matrix &Ms) const;    // consistent | HRZ row-sum (lumped_)
@@ -229,6 +253,53 @@ class LadrunoUP : public Element
     double stabValue_;               // alpha0 (auto) | alpha (manual)
     bool dynSeepage_;
     double oneOverQbar_;             // storage coefficient (kernel)
+
+    // ---- geometry method (ADR 78) -------------------------------------------
+    // The SolidTransformation seam (ADR 09/10): linear (identity, the P1 path,
+    // bit-identical) or corot (3D-only; polar R from the nodal cloud). Every
+    // corot branch below is behind corotActive_ so -geom linear stays the
+    // pre-ADR-78 float-op sequence exactly.
+    SolidTransformation *theGeom_;
+    bool corotActive_;
+
+    // ---- geometry method: hypo (ADR 79 P2) ----------------------------------
+    // Rate-form updated-Lagrangian on the u-p family: per GP the Hughes–Winget
+    // midpoint objective strain increment is de-rotated into the fixed
+    // unrotated (Green–Naghdi) material frame (LadrunoHypoKernel.h),
+    // accumulated (hypoFeed_) and fed via setTrialStrain; assembly runs on the
+    // CURRENT configuration (spatial gradients via F⁻¹, dv = J·dV) with the
+    // material stress/tangent pushed forward by R = polar(F_trial). The p-row
+    // continuity coupling becomes the per-GP α·tr(Δε)·dv/Δt increment — the
+    // Δln J form (tr(Δε) sums to ln J in the midpoint limit and is EXACTLY
+    // zero on a rigid increment, so the ADR-78 chord defect cannot arise by
+    // construction). Porosity evolves kinematically, n(J) = 1 − (1−n₀)/J,
+    // feeding the storage coefficient per GP; permeability evolution
+    // (Kozeny–Carman scaling on k) is a constitutive CHOICE and therefore
+    // OPT-IN via -kozenyCarman. Every hypo branch is behind hypoActive_ so
+    // -geom linear|corot stay bit-identical. v1: 3D H8 equal-order std only.
+    bool hypoActive_;
+    bool kozenyCarman_;
+
+    int  updateHypo(void);                 // the hypo update + per-eval caches
+    void buildSolidKHypo(Matrix &Ks);      // spatial ∫BᵀcB + ∫GᵀΣ_tot G (current dv)
+    void buildCoreForceHypo(Vector &fu);   // ∫Bᵀ(σ′_pushed − αp·m) dv (fills pScratch_)
+    double hypoPorosity(int gp) const;     // n(J) = 1 − (1−n₀)/J, clamped
+
+    // hypo per-GP state (COMMITTED feed strain is the only persistent state —
+    // serialized as a guarded extra Vector(nGP·6)) + per-evaluation caches
+    // refreshed by updateHypo() (sized in configureSizing when hypo, else empty)
+    std::vector<double> hypoFeed_;         // nGP·6 trial accumulated feed strain
+    std::vector<double> hypoFeedCommit_;   // nGP·6 committed
+    std::vector<double> hypoR_;            // nGP·9 polar(F_trial), row-major
+    std::vector<double> hypoJ_;            // nGP   det F_trial
+    std::vector<double> hypoTrDeps_;       // nGP   tr(Δε) of the step increment
+    std::vector<double> hypoDNuX_;         // nGP·nNodes·3 spatial solid gradients
+    std::vector<double> hypoDNpX_;         // nGP·nP·3 spatial pressure gradients
+    std::vector<double> hypoDvCur_;        // nGP   current dv = J·dv_ref
+    std::vector<double> hypoKsp_;          // nGP·9 spatial permeability kc(J)·R·diag(k̄)·Rᵀ
+    std::vector<double> hypoInvQbar_;      // nGP   storage coeff 1/Q̄(n(J))
+    std::vector<double> HcurBlk_;          // nP·nP current-config Darcy H
+    std::vector<double> ScurBlk_;          // nP·nP current-config storage S
 
     // ---- loads --------------------------------------------------------------
     int applyLoad_;
@@ -284,6 +355,22 @@ class LadrunoUP : public Element
     Vector uSolScratch_;             // nU
     Vector fuScratch_;               // nU
     Vector pScratch_;                // nP
+
+    // corot scratch (ADR 78; sized in configureSizing, idle under linear)
+    Matrix refCrdsScratch_;          // nNodes × 3 (seam update input)
+    Matrix curCrdsScratch_;          // nNodes × 3
+    Matrix Rcur_;                    // 3×3 current frame, refreshed in update()
+    Vector zeroFu_;                  // nU zeros (pure-rotation globalizeStiff)
+    std::vector<double> QrotBlk_;    // nU × nP  R̄·Q (rows rotated; refreshed in update())
+
+    // incremental storage-coupling state (ADR 78 §3.3): the p-row coupling
+    // residual is Qᵀ·(u_d − u_d,committed)/Δt — NOT (R̄Q)ᵀ·u̇, whose
+    // contraction of integrator velocities sees the O(Δθ²)-per-step chord
+    // contraction of a rotating body, Q̄-amplified in undrained problems.
+    // uDn_ is COMMITTED state; not serialized — setDomain rebuilds it from
+    // the committed nodal displacements on the receiver.
+    Vector uDcur_;                   // nU  trial deformational disp (update())
+    Vector uDn_;                     // nU  committed deformational disp
 };
 
 #endif

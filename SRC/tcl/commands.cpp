@@ -102,6 +102,8 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 
 #include <Timer.h>
 #include <Profiler.h>   // Ladruno stack profiler (HDF5 writer comes via Profiler.h)
+#include <ProfilerRunMeta.h>   // Ladruno ADR-75 P1i: nElem/nNode/threads (Tcl twin)
+#include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <ModelBuilder.h>
 #include "commands.h"
 
@@ -238,6 +240,7 @@ extern void *OPS_ExplicitBatheSMSConsistent(void);   // Ladruno
 extern void *OPS_ExplicitBatheLNVDSMS(void);   // Ladruno
 extern void *OPS_ExplicitBatheLNVDSMSConsistent(void);   // Ladruno
 extern void *OPS_LadrunoArcLength(void);   // Ladruno
+extern void *OPS_LadrunoLoadControl(void);   // Ladruno (ADR-80 S1)
 extern void *OPS_LadrunoIndirectControl(void);   // Ladruno
 extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
 extern void *OPS_ExplicitDifferenceStatic(void);
@@ -378,6 +381,13 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #endif
 #endif
 
+// Ladruno ADR-75 P1d: MKL PARDISO — the desktop (shared-memory) sparse-direct
+// back-end, reachable from Tcl as `system Pardiso`.
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
+
 #ifdef _PETSC
 #include <PetscSOE.h>
 #include <PetscSolver.h>
@@ -402,6 +412,18 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #include <SymBandEigenSolver.h>
 #include <FullGenEigenSOE.h>
 #include <FullGenEigenSolver.h>
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+#include <LadrunoCMSOptions.h>
+#include <LadrunoCMSEigenSOE.h>
+#include <LadrunoCMSEigenSolver.h>
+#endif
+// Ladruno ADR-43 (apeGmsh ADR 0077): classic-Tcl parity for band-targeted
+// FEAST — reachable from OpenSees.exe / OpenSeesMP.exe (the interpreter
+// parser OPS_eigenFeast was openseespy/PyMP-only). Under _PARALLEL_INTERPRETERS
+// (OpenSeesMP) the inner contour solve routes through the distributed
+// LadrunoDistBlockZKernel (dmumps L3), exactly as the interpreter path.
+#include <FeastEigenSOE.h>
+#include <FeastEigenSolver.h>
 
 #ifdef _CUDA
 #include <BandGenLinSOE_Single.h>
@@ -477,6 +499,7 @@ ModelBuilder *theBuilder =0;
 #include <StaticDomainDecompositionAnalysis.h>
 #include <TransientDomainDecompositionAnalysis.h>
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 
 //  parallel soe & solvers
 #include <DistributedBandSPDLinSOE.h>
@@ -513,6 +536,7 @@ bool setMPIDSOEFlag = false;
 
 // parallel analysis
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 #include <DistributedDisplacementControl.h>
 
 //  parallel soe & solvers
@@ -856,7 +880,7 @@ int
 TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   if (argc < 2) {
-    opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+    opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|checkpoint|memory\n";
     return TCL_ERROR;
   }
   ops_profiler::Profiler& P = ops_profiler::theProfiler();
@@ -895,6 +919,7 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
     meta.solver     = ops_profilerSolverName;
     if (theSOE != 0)
       meta.nDOF = theSOE->getNumEqn();
+    ops_profiler_fillModelMeta(meta, &theDomain);   // Ladruno ADR-75 P1i
     if (theTransientIntegrator != 0) {
       const double dtcr = theTransientIntegrator->getCriticalTimeStep();
       if (dtcr > 0.0) {
@@ -922,6 +947,91 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
     return TCL_OK;
   }
 
+  // Ladruno (ADR-74 pre-G3 hardening): `profiler checkpoint <file> [-run <id>]`
+  // — a mid-run snapshot so a walltime-killed/crashed run yields data instead of
+  // nothing (the profiler otherwise writes only at `profiler report`, run end).
+  // Call it from the deck's analyze loop every N steps: between analyze calls
+  // every profiled scope is closed. The mergedRollup H1 precondition (no worker
+  // thread inside a profiled scope) is thus satisfied BY CONVENTION for the
+  // current decks — each MPI rank runs a single Tcl thread, so threads_.size()
+  // ==1 and the lockless tree read cannot race. It is NOT enforced by a barrier;
+  // re-audit this call site before the OpenMP element-loop lane (ADR-68) lands,
+  // where a live worker could race mergedRollup. quietLive only mutes the
+  // still-enabled warning. Unlike report, checkpoint OVERWRITES: it writes
+  // <file>.tmp fresh and renames it over <file> (atomic replace on POSIX; on
+  // Windows a failed rename falls back to remove+rename — if killed inside that
+  // window the freshest data is at <file>.tmp while <file> holds a staler
+  // snapshot, so RECOVERY MUST READ BOTH and take the newer). The final
+  // `profiler report` is unchanged and remains the canonical artifact.
+  if (strcmp(sub, "checkpoint") == 0) {
+    if (argc < 3) {
+      opserr << "WARNING profiler checkpoint <filename> [-run <id>]\n";
+      return TCL_ERROR;
+    }
+    const char* fname = argv[2];
+    const char* runid = "run0";
+    for (int i = 3; i < argc; i++) {
+      if (strcmp(argv[i], "-run") == 0 && i + 1 < argc)
+        runid = argv[++i];
+    }
+    const ops_profiler::ProfileNode& rollup = P.mergedRollup(true);
+    ops_profiler::RunMeta meta = P.buildMeta();
+    meta.algorithm  = ops_profilerAlgorithmName;
+    meta.integrator = ops_profilerIntegratorName;
+    meta.solver     = ops_profilerSolverName;
+    if (theSOE != 0)
+      meta.nDOF = theSOE->getNumEqn();
+    ops_profiler_fillModelMeta(meta, &theDomain);   // Ladruno ADR-75 P1i
+    if (theTransientIntegrator != 0) {
+      const double dtcr = theTransientIntegrator->getCriticalTimeStep();
+      if (dtcr > 0.0) {
+        meta.dt_cr = dtcr;
+        if (meta.dt_max > 0.0)
+          meta.oversample_ratio = dtcr / meta.dt_max;
+      }
+    }
+    ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+    const ops_profiler::Series& ser = P.series();
+
+    std::string tmpname = std::string(fname) + ".tmp";
+    // Ladruno (ADR-74 review A2): the HDF5 writer APPENDS to an existing file, so
+    // a stale .tmp we fail to clear would make writeRun hit its immutability guard
+    // and every future checkpoint fail with a MISLEADING "writeRun failed". Detect
+    // a failed clear (locked / permission-denied tmp) and report the real cause.
+    remove(tmpname.c_str());               // stale tmp from a prior kill
+    { FILE* stale = fopen(tmpname.c_str(), "rb");
+      if (stale != 0) {
+        fclose(stale);
+        opserr << "WARNING profiler checkpoint - could not clear stale '"
+               << tmpname.c_str() << "' (locked or permission-denied); skipping "
+               << "this checkpoint so the last good '" << fname << "' is preserved\n";
+        return TCL_ERROR;
+      }
+    }
+    ops_profiler::ProfilerHDF5Writer w;
+    if (!w.open(tmpname.c_str())) {
+      opserr << "WARNING profiler checkpoint - could not open '" << tmpname.c_str() << "'\n";
+      return TCL_ERROR;
+    }
+    bool ok = w.writeRun(runid, rollup, meta,
+                         (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                         snap);
+    w.close();
+    if (!ok) {
+      opserr << "WARNING profiler checkpoint - writeRun failed for '" << tmpname.c_str() << "'\n";
+      return TCL_ERROR;
+    }
+    if (rename(tmpname.c_str(), fname) != 0) {        // Windows: no replace-existing
+      remove(fname);
+      if (rename(tmpname.c_str(), fname) != 0) {
+        opserr << "WARNING profiler checkpoint - could not move '" << tmpname.c_str()
+               << "' over '" << fname << "' (snapshot left at the .tmp name)\n";
+        return TCL_ERROR;
+      }
+    }
+    return TCL_OK;
+  }
+
   if (strcmp(sub, "memory") == 0) {
     ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
     char buffer[32];
@@ -932,6 +1042,138 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
 
   opserr << "WARNING profiler - unknown subcommand '" << sub << "'\n";
   return TCL_ERROR;
+}
+
+// Ladruno (ADR-74 N0): dump the assigned equation numbering of this process.
+//   ladrunoNumbering <filename>
+// One line per domain node, sorted by node tag:
+//   <nodeTag> <ndf> <id0> <id1> ...
+// The ids are the DOF_Group equation numbers as assigned by the numberer —
+// call AFTER analysis setup (>=1 analyze so domainChanged has run); an
+// unnumbered model dumps the -2/-3/-4 placeholders, which the harness rejects
+// via its bijection assertion. MP-SPMD-safe: each rank writes only its own
+// view (pass a rank-suffixed name, e.g. numbering_[getPID].txt); shared
+// boundary nodes appear in every owning rank's file and must carry IDENTICAL
+// ids — asserted by the harness. This verb is the G1 byte-identity oracle for
+// LadrunoParallelNumberer (ADR-74): dumps are bit-compared across numberers.
+int
+TclCommand_ladrunoNumbering(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc < 2) {
+    opserr << "WARNING ladrunoNumbering <filename>\n";
+    return TCL_ERROR;
+  }
+
+  // collect (tag, dof ids) then sort explicitly — NodeIter order is storage
+  // order, which is NOT guaranteed to be tag order.
+  std::vector<std::pair<int, std::vector<int> > > rows;
+  NodeIter &theNodes = theDomain.getNodes();
+  Node *nodePtr;
+  while ((nodePtr = theNodes()) != 0) {
+    DOF_Group *dofPtr = nodePtr->getDOF_GroupPtr();
+    if (dofPtr == 0)
+      continue;                       // no DOF group yet (pre-analysis node)
+    const ID &ids = dofPtr->getID();
+    std::vector<int> row(ids.Size());
+    for (int i = 0; i < ids.Size(); i++)
+      row[i] = ids(i);
+    rows.push_back(std::make_pair(nodePtr->getTag(), row));
+  }
+  std::sort(rows.begin(), rows.end());
+
+  FILE *fp = fopen(argv[1], "w");
+  if (fp == 0) {
+    opserr << "WARNING ladrunoNumbering - could not open '" << argv[1] << "'\n";
+    return TCL_ERROR;
+  }
+  for (std::size_t r = 0; r < rows.size(); r++) {
+    fprintf(fp, "%d %d", rows[r].first, (int)rows[r].second.size());
+    for (std::size_t i = 0; i < rows[r].second.size(); i++)
+      fprintf(fp, " %d", rows[r].second[i]);
+    fprintf(fp, "\n");
+  }
+  fclose(fp);
+  return TCL_OK;
+}
+
+// Ladruno (ADR-73 P2): classic-Tcl bridge for the iterated fixed-stress overlay
+// driver. Forms:
+//   LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
+//     -> integer result (0 / negative, the `analyze` convention)
+//   LadrunoStaggeredAnalyze -stats
+//     -> {nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}
+// TRANSIENT-only; uses the classic analysis globals theTransientAnalysis /
+// theStaticAnalysis and the global theDomain.
+int
+TclCommand_ladrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc >= 2 && strcmp(argv[1], "-stats") == 0) {
+    const ladruno_overlay::LadrunoStaggeredStats& st =
+        ladruno_overlay::LadrunoStaggeredLastStats();
+    char buffer[512];
+    sprintf(buffer, "%ld %ld %.17g %ld %.17g %.17g",
+            st.nSteps, st.totalFluidSolves, st.meanIters,
+            st.maxIters, st.lastResidual, st.maxResidual);
+    Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+    return TCL_OK;
+  }
+
+  if (argc < 3) {
+    opserr << "WARNING LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> "
+              "<-pScale $s> <-verbose> | -stats\n";
+    return TCL_ERROR;
+  }
+  int nSteps;
+  if (Tcl_GetInt(interp, argv[1], &nSteps) != TCL_OK)
+    return TCL_ERROR;
+  double dt;
+  if (Tcl_GetDouble(interp, argv[2], &dt) != TCL_OK)
+    return TCL_ERROR;
+
+  double tol = 1e-6, pScale = 1.0;
+  int    maxIter = 500;
+  bool   verbose = false;
+  for (int i = 3; i < argc; i++) {
+    if (strcmp(argv[i], "-tol") == 0 && i + 1 < argc) {
+      if (Tcl_GetDouble(interp, argv[++i], &tol) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-maxIter") == 0 && i + 1 < argc) {
+      if (Tcl_GetInt(interp, argv[++i], &maxIter) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-pScale") == 0 && i + 1 < argc) {
+      if (Tcl_GetDouble(interp, argv[++i], &pScale) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-verbose") == 0) {
+      verbose = true;
+    } else {
+      opserr << "WARNING LadrunoStaggeredAnalyze -- unknown option '"
+             << argv[i] << "'\n";
+      return TCL_ERROR;
+    }
+  }
+
+  if (theStaticAnalysis != 0) {
+    opserr << "ERROR LadrunoStaggeredAnalyze -- a static analysis is active. The "
+              "driver is TRANSIENT-only: under a static analysis the domain "
+              "\"time\" is the load factor and an iterated dLambda fluid march is "
+              "silently wrong physics (ADR-73 A-3). Build a transient analysis, "
+              "or use -staticMode hold|steady on the overlay.\n";
+    return TCL_ERROR;
+  }
+  if (theTransientAnalysis == 0) {
+    opserr << "ERROR LadrunoStaggeredAnalyze -- no transient analysis has been "
+              "constructed (need an `analysis Transient` first)\n";
+    return TCL_ERROR;
+  }
+
+  int result = ladruno_overlay::LadrunoStaggeredRun(
+      theTransientAnalysis, &theDomain, nSteps, dt, tol, maxIter, pScale, verbose);
+
+  if (result < 0)
+    opserr << "OpenSees > LadrunoStaggeredAnalyze failed, returned: " << result
+           << " error flag\n";
+
+  char buffer[16];
+  sprintf(buffer, "%d", result);
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+  return TCL_OK;
 }
 
 
@@ -980,6 +1222,12 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 
     Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
+
+    Tcl_CreateCommand(interp, "ladrunoNumbering", &TclCommand_ladrunoNumbering,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-74 N0)
+
+    Tcl_CreateCommand(interp, "LadrunoStaggeredAnalyze", &TclCommand_ladrunoStaggeredAnalyze,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-73 P2)
 
     Tcl_CreateCommand(interp, "wipe", &wipeModel,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -3657,9 +3905,103 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     }
     
     UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver();
-    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);      
-    theSOE = new UmfpackGenLinSOE(*theSolver);      
+    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);
+    theSOE = new UmfpackGenLinSOE(*theSolver);
   }
+
+#ifdef _PARDISO
+  // Ladruno ADR-75 P1d: `system Pardiso` in the TCL interpreter.
+  //
+  // P1b wired the verb into SRC/interpreter/OpenSeesCommands.cpp only, so the
+  // threaded desktop solver was reachable from OpenSeesPy but NOT from
+  // OpenSees.exe — this Tcl `system` chain is a separate if-ladder. Options and
+  // defaults are identical to OPS_PARDISOGenLinSolver(); see the long note
+  // there for why the default stays unsymmetric.
+  else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
+
+    int matType = 0;   // 0 unsym (default) / 1 SPD / 2 symmetric general
+    int statsFlag = 0; // -stats: dump PARDISO's peak-memory counters once
+    int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
+    int count = 2;
+
+    // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
+    // from the openseespy one in two ways that BOTH recreate the exact failure
+    // this feature was written to kill — an option that looks applied but is
+    // not. `-symetric` (typo) fell through silently, and a trailing
+    // `-matrixType` with no value failed `count+1 < argc` and vanished. Both
+    // now warn. Parse failure still returns TCL_ERROR here rather than
+    // degrading like the Python path: in Tcl a bad `system` argument is a
+    // script bug and stopping is the honest response, whereas the Python path
+    // degrades because returning 0 there silently selects ProfileSPDLinSOE.
+    while (count < argc) {
+      if (strcmp(argv[count],"-matrixType") == 0) {
+	if (count+1 >= argc) {
+	  opserr << "Pardiso Warning: -matrixType given with no value. "
+		 << "Unsymmetric matrix assumed\n";
+	  count++;
+	  continue;
+	}
+	if (Tcl_GetInt(interp, argv[count+1], &matType) != TCL_OK)
+	  return TCL_ERROR;
+	if (matType < 0 || matType > 2) {
+	  opserr << "Pardiso Warning: wrong -matrixType value (" << matType
+		 << "). Unsymmetric matrix assumed\n";
+	  matType = 0;
+	}
+	count++;
+      } else if (strcmp(argv[count],"-symmetric") == 0) {
+	matType = 2;
+      } else if (strcmp(argv[count],"-spd") == 0) {
+	matType = 1;
+      } else if (strcmp(argv[count],"-stats") == 0) {
+	statsFlag = 1;
+      } else if (strcmp(argv[count],"-krylov") == 0) {
+	// Ladruno ADR-75 P1e: factorization-preconditioned CGS. Takes Intel's L
+	// (eps_CGS = 10^-L). Same missing-value handling as -matrixType above.
+	if (count+1 >= argc) {
+	  opserr << "Pardiso Warning: -krylov given with no value. "
+		 << "CGS preconditioning disabled\n";
+	  count++;
+	  continue;
+	}
+	if (Tcl_GetInt(interp, argv[count+1], &krylovDigits) != TCL_OK)
+	  return TCL_ERROR;
+	count++;
+      } else {
+	opserr << "Pardiso Warning: unknown option " << argv[count]
+	       << ", ignored\n";
+      }
+      count++;
+    }
+
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    theSolver->setStats(statsFlag);
+    theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
+    theSOE = new PARDISOGenLinSOE(*theSolver, matType);
+  }
+#else
+  // Ladruno ADR-75 P1d (adversarial review): REFUSE explicitly in builds without
+  // PARDISO, rather than letting `Pardiso` fall off the end of this if-ladder.
+  //
+  // `theSOE` is a file-scope global here. With the branch above compiled out
+  // nothing assigns it, so a script that already ran e.g. `system UmfPack` keeps
+  // a NON-NULL theSOE, the tail's `if (theSOE != 0)` is satisfied, and
+  // specifySOE returns TCL_OK — silently continuing with the PREVIOUS solver.
+  // The `is unknown or not installed` warning only fires when no system was ever
+  // set. So `system UmfPack; ...; system Pardiso; analyze` under OpenSeesMP.exe
+  // would run entirely on UmfPack without a word. (Structural to this ladder —
+  // Mumps/Petsc/Itpack share it — but P1d is what makes it reachable in a
+  // realistic way: the SAME script under OpenSees.exe vs OpenSeesSP/MP.exe.)
+  else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
+    opserr << "WARNING system Pardiso is not available in this build.\n"
+              "  PARDISO is wired into the SERIAL OpenSees/OpenSeesPy targets "
+              "only; the parallel\n"
+              "  targets link the SEQUENTIAL MKL layer, so there is no "
+              "shared-memory win to be had.\n"
+              "  Use `system Mumps` for OpenSeesSP/OpenSeesMP.\n";
+    return TCL_ERROR;
+  }
+#endif
 
 #ifdef _ITPACK
   else if (strcmp(argv[1],"Itpack") == 0) {
@@ -3761,44 +4103,139 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
   else if (strcmp(argv[1],"Mumps") == 0) {
 
-    int icntl14 = 20;    
+    int icntl14 = 20;
     int icntl7 = 7;
     int matType = 0; // 0: unsymmetric, 1: symmetric positive definite, 2: symmetric general
+    // Ladruno ADR-75 P2h: the BLR + stats controls shipped by P2/P2b existed
+    // ONLY in the OpenSeesCommands.cpp (Python) `system' ladder. OpenSeesMP is
+    // Tcl-driven, so on the cluster -- the one place MUMPS actually runs -- they
+    // were unreachable, AND the `else currentArg++' arm below dropped them
+    // SILENTLY: `system Mumps -BLR 1e-8 -stats' produced a plain full-rank solve
+    // with no stats, which reads as "BLR does not move INFOG(21)" -- a false
+    // negative that would have been recorded as a measurement. Names, defaults
+    // and semantics below mirror OpenSeesCommands.cpp exactly so the two
+    // ladders cannot drift.
+    int icntl35 = 0;      // BLR off by default => byte-identical to the pre-BLR solver
+    double cntl7 = 0.0;   // BLR dropping tolerance
+    int mumpsStats = 0;   // -stats dumps INFOG/RINFOG after the factorization
 
     int currentArg = 2;
     while (currentArg < argc) {
-      if (argc > 2) {
-	if (strcmp(argv[currentArg],"-ICNTL14") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &icntl14) != TCL_OK)	
-	    ;
-	  currentArg += 2;
-	} else  if (strcmp(argv[currentArg],"-ICNTL7") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &icntl7) != TCL_OK)	
-	    ;
-	  currentArg += 2;
-	} else  if (strcmp(argv[currentArg],"-matrixType") == 0) {
-	  if (Tcl_GetInt(interp, argv[currentArg+1], &matType) != TCL_OK)
-		  opserr << "Mumps Warning: failed to get -matrixType. Unsymmetric matrix assumed\n";
-	  if (matType < 0 || matType > 2) {
-		  opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
-		  matType = 0;
-	  }
-	  currentArg += 2;
-	} else 
-	  currentArg++;
-      }    
+      const char *opt = argv[currentArg];
+
+      // Ladruno ADR-75 P2h: every value-taking option reads argv[currentArg+1],
+      // so its existence must be proven FIRST. The old ladder never checked, so
+      // a trailing `-ICNTL14' read one past the end of argv.
+      bool needsValue = (strcmp(opt, "-ICNTL14") == 0 ||
+			 strcmp(opt, "-ICNTL7") == 0 ||
+			 strcmp(opt, "-matrixType") == 0 ||
+			 strcmp(opt, "-ICNTL35") == 0 ||
+			 strcmp(opt, "-CNTL7") == 0 ||
+			 strcmp(opt, "-BLR") == 0);
+      if (needsValue && currentArg + 1 >= argc) {
+	opserr << "Mumps Warning: " << opt << " needs a value -- ignored\n";
+	currentArg++;
+	continue;
+      }
+
+      if (strcmp(opt, "-ICNTL14") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl14) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL14 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-ICNTL7") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl7) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL7 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-matrixType") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &matType) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -matrixType. Unsymmetric matrix assumed\n";
+	if (matType < 0 || matType > 2) {
+	  opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
+	  matType = 0;
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-BLR") == 0) {
+	// `-BLR <eps>' = ICNTL(35)=1 + CNTL(7)=eps. This is an APPROXIMATE
+	// factorization: it must stay OFF on byte-identical/oracle lanes.
+	// A bit-identical answer at a loose eps means BLR never engaged.
+	double eps = 0.0;
+	if (Tcl_GetDouble(interp, argv[currentArg+1], &eps) != TCL_OK) {
+	  opserr << "Mumps Warning: failed to get -BLR tolerance -- BLR NOT enabled\n";
+	} else if (eps < 0.0) {
+	  opserr << "Mumps Warning: -BLR tolerance must be >= 0 -- BLR NOT enabled\n";
+	} else {
+	  cntl7 = eps;
+	  icntl35 = 1;   // BLR factorization + solve
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-ICNTL35") == 0) {
+	if (Tcl_GetInt(interp, argv[currentArg+1], &icntl35) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -ICNTL35 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-CNTL7") == 0) {
+	if (Tcl_GetDouble(interp, argv[currentArg+1], &cntl7) != TCL_OK)
+	  opserr << "Mumps Warning: failed to get -CNTL7 value\n";
+	currentArg += 2;
+      } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-mumpsStats") == 0) {
+	// Ladruno ADR-75 P2h: bare FLAG -- consumes no value. The Python ladder
+	// had to relax its `> 1' loop guard for the same reason.
+	mumpsStats = 1;
+	currentArg++;
+      } else {
+	// Ladruno ADR-75 P2h: this arm used to skip SILENTLY, so a mistyped or
+	// not-yet-wired option cost you the setting without a trace -- which is
+	// precisely how -BLR/-stats were lost on the cluster. Still non-fatal
+	// (a deck may legitimately carry options this build does not know), but
+	// it now leaves a mark in the log.
+	opserr << "Mumps Warning: unrecognized option '" << opt << "' -- ignored\n";
+	currentArg++;
+      }
+    }
+
+    // Ladruno ADR-75 P2h: -commSplit (ADR-43 P3a) is deliberately NOT wired
+    // here -- it is collective (every rank must call MPI_Comm_split with a
+    // colour or the run deadlocks) and its gate is a Python test, so porting
+    // it blind was out of scope. But apeGmsh's typed emitter CAN put it in a
+    // Tcl deck (`ops.system.Mumps(comm_split=...)` -> `-commSplit <color>`,
+    // apeGmsh src/apeGmsh/opensees/analysis/system.py), so this is a LIVE
+    // mismatch, not a theoretical one -- and the failure is silent-wrong: the
+    // user believes they have concurrent solve groups and instead every rank
+    // solves one system on WORLD. Call that out specifically rather than let
+    // it blend into the generic "unrecognized option" line above.
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-commSplit") == 0) {
+	opserr << "Mumps ERROR: -commSplit is NOT supported by the Tcl `system Mumps' command "
+	       << "(openseespy/openseesmp only). The sub-communicator split will NOT happen and "
+	       << "every rank will solve on MPI_COMM_WORLD -- which is a DIFFERENT analysis from "
+	       << "the one you asked for, not a slower one. Use the Python interpreter for "
+	       << "-commSplit, or drop it.\n";
+	break;
+      }
     }
 
 #ifdef _PARALLEL_PROCESSING
-    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14);
+    // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
+    // untouched here) -- say so rather than drop it silently.
+    if (matType != 0)
+      opserr << "Mumps Warning: -matrixType is not honoured on the _PARALLEL_PROCESSING (SP) path -- ignored\n";
+    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
+							     icntl35, cntl7,
+							     mumpsStats);
     theSOE = new MumpsParallelSOE(*theSolver);
 #elif _PARALLEL_INTERPRETERS
-    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14);
+    MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
+							     icntl35, cntl7,
+							     mumpsStats);
     MumpsParallelSOE *theParallelSOE = new MumpsParallelSOE(*theSolver, matType);
     theParallelSOE->setProcessID(OPS_rank);
     theParallelSOE->setChannels(numChannels, theChannels);
     theSOE = theParallelSOE;
 #else
+    // Ladruno ADR-75 P2h: the serial MumpsSolver ctor carries no BLR/stats
+    // parameters, so these would be dropped here. Checked where we DEPEND on
+    // it, not where it happens to be true today.
+    if (icntl35 != 0 || cntl7 != 0.0 || mumpsStats != 0)
+      opserr << "Mumps Warning: -BLR/-ICNTL35/-CNTL7/-stats are not supported by the serial MumpsSolver -- ignored\n";
     MumpsSolver *theSolver = new MumpsSolver(icntl7, icntl14);
     theSOE = new MumpsSOE(*theSolver, matType);
 #endif
@@ -3942,12 +4379,27 @@ specifyNumberer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     theParallelNumberer->setProcessID(OPS_rank);
     theParallelNumberer->setChannels(numChannels, theChannels);
   } else if (strcmp(argv[1],"ParallelRCM") == 0) {
-    RCM *theRCM = new RCM(false);	
-    ParallelNumberer *theParallelNumberer = new ParallelNumberer(*theRCM);    	
-    theNumberer = theParallelNumberer;       
+    RCM *theRCM = new RCM(false);
+    ParallelNumberer *theParallelNumberer = new ParallelNumberer(*theRCM);
+    theNumberer = theParallelNumberer;
     theParallelNumberer->setProcessID(OPS_rank);
     theParallelNumberer->setChannels(numChannels, theChannels);
-  }   
+  }
+
+  // Ladruno (ADR-74): the O(V) numberer verbs. N1 = delegate (bit-identical
+  // to the stock verbs above, G1-gated); T0/T1 swap the engine underneath.
+  else if (strcmp(argv[1],"LadrunoParallelRCM") == 0) {
+    RCM *theRCM = new RCM(false);
+    LadrunoParallelNumberer *theLadrunoNumberer = new LadrunoParallelNumberer(*theRCM);
+    theNumberer = theLadrunoNumberer;
+    theLadrunoNumberer->setProcessID(OPS_rank);
+    theLadrunoNumberer->setChannels(numChannels, theChannels);
+  } else if (strcmp(argv[1],"LadrunoParallelPlain") == 0) {
+    LadrunoParallelNumberer *theLadrunoNumberer = new LadrunoParallelNumberer();
+    theNumberer = theLadrunoNumberer;
+    theLadrunoNumberer->setProcessID(OPS_rank);
+    theLadrunoNumberer->setChannels(numChannels, theChannels);
+  }
 
 #endif
 
@@ -4846,6 +5298,14 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
       theStaticAnalysis->setIntegrator(*theStaticIntegrator);
   }
 
+  else if (strcmp(argv[1],"LadrunoLoadControl") == 0) {   // Ladruno (ADR-80 S1)
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoLoadControl();
+    if (theStaticIntegrator == 0)
+      return TCL_ERROR;
+    // if the analysis exists - we want to change the Integrator
+    if (theStaticAnalysis != 0)
+      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+  }
   else if (strcmp(argv[1],"LadrunoIndirectControl") == 0) {   // Ladruno
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoIndirectControl();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
@@ -6007,7 +6467,119 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
   int loc = 1;
   double shift = 0.0;
   bool findSmallest = true;
-  
+
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+  bool cms = strcmp(argv[1], "-ladrunoCMS") == 0 ||
+             strcmp(argv[1], "ladrunoCMS") == 0;
+  ladruno_cms::Options cmsOptions;
+  if (cms) {
+    std::vector<std::string> arguments;
+    for (int argument = 2; argument < argc; ++argument)
+      arguments.emplace_back(argv[argument]);
+    std::string message;
+    if (ladruno_cms::parseCommandOptions(
+            arguments, cmsOptions, numEigen, message) < 0) {
+      opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+      return TCL_ERROR;
+    }
+    int worldSize = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+    if (cmsOptions.validate(worldSize, numEigen, message) < 0) {
+      opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+      return TCL_ERROR;
+    }
+    typeSolver = EigenSOE_TAGS_LadrunoCMS;
+  }
+#else
+  const bool cms = false;
+#endif
+
+  // Ladruno ADR-43 (apeGmsh ADR 0077): band-targeted FEAST classic-Tcl parity.
+  //   eigen -feast fmin fmax [-m0 n][-nq n][-tol exp][-maxiter n]
+  //         [-verbose][-certify][-blockZGate][-rci]
+  // Mirrors OPS_eigenFeast (SRC/interpreter/OpenSeesCommands.cpp): the band
+  // (Hz) defines the mode count (no trailing numModes), so it cannot share the
+  // ARPACK "eigen [flags] numModes" arg shape and is parsed up front.
+  bool   feast = false;
+  double feastFmin = 0.0, feastFmax = 0.0;
+  int    feastM0 = 0, feastNq = 0, feastMaxRefine = 0;
+  double feastTolExp = 0.0;
+  bool   feastVerbose = false, feastCertify = false;
+  bool   feastBlockZGate = false, feastRci = false;
+  for (int fl = 1; fl < argc; fl++) {
+    if (strcmp(argv[fl], "-feast") == 0 || strcmp(argv[fl], "feast") == 0) {
+      feast = true;
+      break;
+    }
+  }
+
+  if (feast) {
+    typeSolver = EigenSOE_TAGS_FeastEigenSOE;
+    int p = 1;
+    while (p < argc) {
+      if (strcmp(argv[p], "-feast") == 0 || strcmp(argv[p], "feast") == 0) {
+        if (p + 2 >= argc ||
+            Tcl_GetDouble(interp, argv[p+1], &feastFmin) != TCL_OK ||
+            Tcl_GetDouble(interp, argv[p+2], &feastFmax) != TCL_OK) {
+          opserr << "WARNING eigen -feast fmin fmax - need the frequency band (Hz)\n";
+          return TCL_ERROR;
+        }
+        p += 3;
+      } else if (strcmp(argv[p], "-m0") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastM0) != TCL_OK || feastM0 < 1) {
+          opserr << "WARNING eigen -feast: bad -m0 value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-nq") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastNq) != TCL_OK || feastNq < 2) {
+          opserr << "WARNING eigen -feast: bad -nq value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-tol") == 0 && p + 1 < argc) {
+        // the value is the stopping EXPONENT (fpm[2] = 10^-exp); a raw
+        // tolerance like 1e-8 would truncate to 0 and silently mean 10^0 = 1.
+        if (Tcl_GetDouble(interp, argv[p+1], &feastTolExp) != TCL_OK ||
+            feastTolExp < 1.0) {
+          opserr << "WARNING eigen -feast: -tol takes the stopping EXPONENT "
+                 << "(e.g. 12 for a 1e-12 trace tolerance), not a raw tolerance\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-maxiter") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastMaxRefine) != TCL_OK ||
+            feastMaxRefine < 1) {
+          opserr << "WARNING eigen -feast: bad -maxiter value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-verbose") == 0) {
+        feastVerbose = true;    p += 1;
+      } else if (strcmp(argv[p], "-certify") == 0) {
+        feastCertify = true;    p += 1;
+      } else if (strcmp(argv[p], "-blockZGate") == 0) {
+        feastBlockZGate = true; p += 1;
+      } else if (strcmp(argv[p], "-rci") == 0) {
+        feastRci = true;        p += 1;
+      } else {
+        opserr << "WARNING eigen -feast: unknown option '" << argv[p] << "'\n";
+        return TCL_ERROR;
+      }
+    }
+    if (feastFmin < 0.0 || feastFmax <= feastFmin) {
+      opserr << "WARNING eigen -feast: invalid band [" << feastFmin << ", "
+             << feastFmax << "] Hz - need 0 <= fmin < fmax\n";
+      return TCL_ERROR;
+    }
+    // analysis-side mode-loop cap; the reconcile below trims to the found
+    // count. NOT tied to m0 (the FEAST subspace seed auto-enlarges on
+    // saturation, so a small user m0 must not cap the report).
+    numEigen = (feastM0 > 128) ? feastM0 : 128;
+
+  } else if (cms) {
+    // Parsed in one pass above; numEigen and options are already validated.
+  } else {
   // Check type of eigenvalue analysis
   while (loc < (argc-1)) {
     if ((strcmp(argv[loc],"frequency") == 0) || 
@@ -6051,9 +6623,10 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     // check argv[loc] for number of modes
   //    int numEigen;
     if ((Tcl_GetInt(interp, argv[loc], &numEigen) != TCL_OK) || numEigen < 0) {
-      opserr << "WARNING eigen numModes?  - illegal numModes\n";    
-      return TCL_ERROR;	
+      opserr << "WARNING eigen numModes?  - illegal numModes\n";
+      return TCL_ERROR;
     }
+    } // end else (non-FEAST arg parse)
 
     //
     // create a transient analysis if no analysis exists
@@ -6104,11 +6677,57 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 
     bool setEigen = false;
     if (theEigenSOE != 0) {
-      if (theEigenSOE->getClassTag() != typeSolver) {
+      if (cms || theEigenSOE->getClassTag() != typeSolver) {
 	//	delete theEigenSOE;
 	theEigenSOE = 0;
 	setEigen = true;
+      } else if (typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+	// Ladruno ADR-43: FEAST carries per-call command parameters (the
+	// band, m0, nq, tol, flags) on the SOE, unlike ARPACK/SymBand/
+	// FullGen. The classic reuse-on-classTag-match pattern would
+	// silently solve a SECOND `eigen -feast` with the FIRST call's
+	// band. Forcing a fresh SOE is a TRAP: the persistent analysis's
+	// setEigenSOE also keeps its OLD SOE on classTag match, silently
+	// dropping (and leaking) the new one while solve() runs stale.
+	// Correct minimal fix: MUTATE the existing SOE in place —
+	// re-apply every parameter, using the constructor defaults
+	// (FeastEigenSOE.cpp) for flags absent from this call so call-1
+	// settings cannot bleed into call 2.
+	FeastEigenSOE *f = static_cast<FeastEigenSOE *>(theEigenSOE);
+	const double twoPi = 8.0 * atan(1.0);
+	f->setBand((twoPi*feastFmin)*(twoPi*feastFmin),
+		   (twoPi*feastFmax)*(twoPi*feastFmax));
+	f->setSubspaceSize(feastM0);                        // 0 = auto seed
+	f->setNumQuad(feastNq > 0 ? feastNq : 8);
+	f->setTol(feastTolExp > 0.0 ? feastTolExp : 12.0);
+	f->setMaxRefine(feastMaxRefine > 0 ? feastMaxRefine : 20);
+	f->setVerbose(feastVerbose);
+	f->setCertify(feastCertify);
+	f->setBlockZGate(feastBlockZGate);
+	f->setRci(feastRci);
       }
+#ifdef _PARALLEL_INTERPRETERS
+      else if (typeSolver == EigenSOE_TAGS_ArpackSOE) {
+	// Ladruno ADR-1000 §31.5 (apeGmsh ADR 0077 F1): re-gate on REUSE.
+	// The SOE is reused across `system` changes, so a deck that
+	// switches between a serial system and Mumps between eigen calls
+	// must re-gate the MP wiring here; setProcessID(-1) restores the
+	// serial semantics (merge and lockstep guard go dormant).
+	// NOTE (PR #668 review): that `else` is correct for a REPLICATED
+	// deck on a serial system, but it is the old broken path on a
+	// PARTITIONED deck with a non-Mumps distributed system
+	// (DistributedProfileSPD, MPIDiagonal are also reachable here) —
+	// recorded as a known scope hole in ADR-1000 §34.4.
+	ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
+	if (theSOE != 0 &&
+	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {
+	  theArpSOE->setProcessID(OPS_rank);
+	  theArpSOE->setChannels(numChannels, theChannels);
+	} else {
+	  theArpSOE->setProcessID(-1);
+	}
+      }
+#endif
     }
 
 	
@@ -6123,9 +6742,53 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	FullGenEigenSolver *theEigenSolver = new FullGenEigenSolver();
 	theEigenSOE = new FullGenEigenSOE(*theEigenSolver, *theAnalysisModel);
 
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+      } else if (typeSolver == EigenSOE_TAGS_LadrunoCMS) {
+
+	LadrunoCMSEigenSolver *cmsSolver = new LadrunoCMSEigenSolver();
+	theEigenSOE = new LadrunoCMSEigenSOE(*cmsSolver, cmsOptions);
+#endif
+
+      } else if (typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+
+	// Ladruno ADR-43 (apeGmsh ADR 0077): band-targeted FEAST. Mirrors
+	// OPS_eigenFeast; under _PARALLEL_INTERPRETERS (OpenSeesMP) the -rci
+	// inner contour solve routes through the distributed dmumps kernel.
+	FeastEigenSolver *theFeastSolver = new FeastEigenSolver();
+	FeastEigenSOE *theFeastSOE = new FeastEigenSOE(*theFeastSolver);
+	const double twoPi = 8.0 * atan(1.0);
+	theFeastSOE->setBand((twoPi*feastFmin)*(twoPi*feastFmin),
+			     (twoPi*feastFmax)*(twoPi*feastFmax));
+	if (feastM0 > 0)        theFeastSOE->setSubspaceSize(feastM0);
+	if (feastNq > 0)        theFeastSOE->setNumQuad(feastNq);
+	if (feastTolExp > 0.0)  theFeastSOE->setTol(feastTolExp);
+	if (feastMaxRefine > 0) theFeastSOE->setMaxRefine(feastMaxRefine);
+	theFeastSOE->setVerbose(feastVerbose);
+	theFeastSOE->setCertify(feastCertify);
+	theFeastSOE->setBlockZGate(feastBlockZGate);
+	theFeastSOE->setRci(feastRci);
+	theEigenSOE = theFeastSOE;
+
       } else {
 
-	theEigenSOE = new ArpackSOE(shift);    
+	theEigenSOE = new ArpackSOE(shift);
+
+#ifdef _PARALLEL_INTERPRETERS
+	// Ladruno ADR-1000 §31.5 (apeGmsh ADR 0077 F1): vanilla MP `eigen`
+	// left ArpackSOE at processID -1, so the M*v merge and the ido
+	// lockstep guard in ArpackSolver stayed dormant -- on a partitioned
+	// deck every rank ran a private Lanczos over global-K/local-M.
+	// Wire the P0-star collectives ONLY when the analysis LinearSOE is
+	// the distributed MUMPS SOE: with a serial system each rank already
+	// holds the full replicated problem and the merge would sum np
+	// copies of M*v.
+	if (theSOE != 0 &&
+	    theSOE->getClassTag() == LinSOE_TAGS_MumpsParallelSOE) {
+	  ArpackSOE *theArpSOE = (ArpackSOE *)theEigenSOE;
+	  theArpSOE->setProcessID(OPS_rank);
+	  theArpSOE->setChannels(numChannels, theChannels);
+	}
+#endif
 
       }
       
@@ -6180,24 +6843,62 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     if (theStaticAnalysis != 0) {
       result = theStaticAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);      
     } else if (theTransientAnalysis != 0) {
-      result = theTransientAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);      
+      result = theTransientAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);
+    }
+
+    // Ladruno ADR-43 (apeGmsh ADR 0077): FEAST — the band defines the count,
+    // but the analysis loop ran with a requested cap. Trim the domain's
+    // eigenvalue list to the found count (mirrors OpenSeesCommands::eigen) so
+    // scripts and modalProperties see exactly the modes in the band; entries
+    // beyond the found count are solver zeros, never real modes.
+    if (result == 0 && theEigenSOE != 0 &&
+	theEigenSOE->getClassTag() == EigenSOE_TAGS_FeastEigenSOE) {
+      FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
+      const int mFound = fsoe->getNumFoundModes();
+      if (mFound < numEigen) {
+	const Vector &lam = theDomain.getEigenvalues();
+	Vector trimmed(mFound);
+	for (int i = 0; i < mFound; i++)
+	  trimmed(i) = lam(i);
+	theDomain.setEigenvalues(trimmed);
+	numEigen = mFound;
+      }
     }
 
     if (result == 0) {
-      //      char *eigenvalueS = new char[15 * numEigen];    
+      //      char *eigenvalueS = new char[15 * numEigen];
       const Vector &eigenvalues = theDomain.getEigenvalues();
       int cnt = 0;
       for (int i=0; i<numEigen; i++) {
 	cnt += sprintf(&resDataPtr[cnt], "%35.20f  ", eigenvalues[i]);
       }
-      
+      // Ladruno ADR-43: terminate even when ZERO modes printed (an empty
+      // FEAST band trims numEigen to 0 — the loop then never runs and the
+      // '\n'-prefilled buffer has no NUL, so Tcl_SetResult reads past it
+      // into heap garbage). A no-op overwrite for every non-empty case.
+      resDataPtr[cnt] = '\0';
+
       Tcl_SetResult(interp, resDataPtr, TCL_STATIC);
     }
-    
+
+    // Ladruno ADR-43: a FEAST failure (including a -certify Sturm/inertia
+    // REFUSE) must stop the deck — mirroring OPS_eigenFeast's "analysis
+    // failed" error. Upstream classic swallows ARPACK failures (falls
+    // through to TCL_OK); that behavior is kept byte-identical for the
+    // non-FEAST solvers.
+    if (result != 0 && typeSolver == EigenSOE_TAGS_LadrunoCMS) {
+      opserr << "WARNING eigen -ladrunoCMS: analysis failed\n";
+      return TCL_ERROR;
+    }
+    if (result != 0 && typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+      opserr << "WARNING eigen -feast: analysis failed\n";
+      return TCL_ERROR;
+    }
+
     return TCL_OK;
 }
 
-int 
+int
 modalProperties(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);

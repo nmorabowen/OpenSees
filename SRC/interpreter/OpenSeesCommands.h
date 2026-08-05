@@ -295,6 +295,7 @@ int OPS_printModelGID();
 int OPS_getCTestNorms();
 int OPS_getCTestIter();
 int OPS_LadrunoArcLengthCmd();   // Ladruno: Layer-B reduceStep/revert runtime command
+int OPS_LadrunoLoadControlCmd();   // Ladruno (ADR-80 S1): setDeltaLambda without reconstructing
 int OPS_LadrunoDRCmd();          // Ladruno: rung-5 DR settling/micro-burst query command
 int OPS_Recorder();
 int OPS_eleForce();
@@ -465,6 +466,7 @@ int OPS_restore();
 int OPS_startTimer();
 int OPS_stopTimer();
 int OPS_profiler();
+int OPS_LadrunoStaggeredAnalyze();   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 int OPS_modalDamping();
 int OPS_modalDampingQ();
 int OPS_neesMetaData();
@@ -494,11 +496,14 @@ void* OPS_ExpressNewton();
 
 void* OPS_ParallelNumberer();
 void* OPS_ParallelRCM();
+void* OPS_LadrunoParallelRCM();     // Ladruno (ADR-74)
+void* OPS_LadrunoParallelPlain();   // Ladruno (ADR-74)
 
 void* OPS_ParallelDisplacementControl();
 
 void* OPS_ItpackLinSolver();
 void* OPS_MumpsSolver();
+void* OPS_PARDISOGenLinSolver();   // Ladruno ADR-75 P1b (desktop MKL PARDISO)
 
 // Sensitivity:BEGIN /////////////////////////////////////////////
 int OPS_computeGradients();
@@ -568,6 +573,7 @@ void* OPS_HarmonicSteadyState();
 void* OPS_ArcLength();
 void* OPS_ArcLength1();
 void* OPS_LadrunoArcLength();   // Ladruno
+void* OPS_LadrunoLoadControl();   // Ladruno (ADR-80 S1)
 void* OPS_LadrunoIndirectControl();   // Ladruno
 void* OPS_HSConstraint();
 void* OPS_MinUnbalDispNorm();

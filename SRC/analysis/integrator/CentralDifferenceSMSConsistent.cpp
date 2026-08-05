@@ -233,6 +233,15 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
                << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                << " (governing un-scaled element step; AFTER scaling the run is stable "
                   "at dt <= dtTarget=" << dtTarget << ")\n";
+        // Ladruno (ADR-73 P3b, panel battery-critic m-9): the line above is NOT
+        // honored for overlay-owned cells — the Olovsson centroid-preserving
+        // blocks under-scale the undrained coupling mode (measured; the loud
+        // builder warning owns the details). Qualify rather than contradict.
+        if (rep.nOverlayAugScaled > 0)
+            opserr << "  EXCEPT " << rep.nOverlayAugScaled
+                   << " porous-overlay element(s): consistent scaling does NOT "
+                      "deliver dtTarget for them (see the under-delivery "
+                      "warning; ADR-73 §12 P3b item 5)\n";
     }
     if (rep.nSelfReport > 0)
         opserr << "WARNING CentralDifferenceSMSConsistent: " << rep.nSelfReport

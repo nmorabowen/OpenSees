@@ -1,0 +1,90 @@
+
+anchor ladder for the 2 x 2 m square footing (q0 = 10.0 kPa, gamma' = 9.81 kN/m3)
+                                         basis     phi       N_q    N_gamma    q-term  gamma-term        q_u
+------------------------------------------------------------------------------------------------------------
+Vesic at the nominal phi = 33 (what is quoted)   33.00      26.1       35.2     430.4       207.1      637.5
+         cone, triaxial-compression equivalent   31.51      21.9       28.1     353.1       165.2      518.3
+      cone, plane-strain equivalent (Chen-Han)   53.72     673.1     1836.6   15900.3     10810.5    26710.8
+         cone, plane-strain THEN Davis psi = 0   38.87      55.0       90.3     993.5       531.5     1525.0
+
+Chen-Han plane-strain matching, sensitivity at alpha = 0.24362
+  the matching has a POLE at alpha = 1/sqrt(12) = 0.28868; this cone is at 84.4 % of it
+    alpha  d(alpha)   phi_ps        N_q    N_gamma  q_u square
+  0.22900     -6.0 %    48.45      240.7      545.4        8333
+  0.23875     -2.0 %    51.87      458.5     1171.0       17320
+  0.24362     +0.0 %    53.72      673.1     1836.6       26711
+  0.24849     +2.0 %    55.68     1045.1     3064.5       43796
+  0.25824     +6.0 %    60.02     3231.3    11205.3      154277
+  0.26798    +10.0 %    65.18    18420.6    79668.6     1051456
+
+             strip leg     h0  el/B   flow     m0  s_end/B     q_num    oracle  num/orc     dq/ds   /init  plateau
+------------------------------------------------------------------------------------------------------------------
+              nq_assoc  0.500     4  assoc  0.163   0.1014    2911.6    6730.6   0.4326     13013   0.809       NO
+           nq_nonassoc  0.500     4    non  0.163   0.0159     290.0    6730.6   0.0431      9960   0.617       NO
+            nq20_assoc  0.500     4  assoc  0.268   0.0076     155.2     138.9   1.1171      6223   0.386       NO
+         nq20_nonassoc  0.500     4    non  0.268   0.2500     139.2     138.9   1.0020         0   0.000      yes
+            full_assoc  0.500     4  assoc  0.163   0.1166    3531.4   24748.2   0.1427     14661   0.908       NO
+         full_nonassoc  0.500     4    non  0.163   0.1621    2409.9   24748.2   0.0974      7732   0.479       NO
+        nq20_assoc_h25  0.250     8  assoc  0.268   0.0051     115.0     138.9   0.8281      7210   0.454       NO
+          nq_assoc_h25  0.250     8  assoc  0.579   0.0138    1021.3    6730.6   0.1517     35667   0.840       NO
+     full_nonassoc_h25  0.250     8    non  0.579   0.0198     832.0   24748.2   0.0336     11193   0.263       NO
+       nq_nonassoc_h25  0.250     8    non  0.579   0.0030     140.8    6730.6   0.0209     14899   0.358       NO
+     nq20_nonassoc_h25  0.250     8    non  0.268   0.2500     132.2     138.9   0.9517         0   0.000      yes
+    full_nonassoc_h125  0.125    16    non  0.579   0.0060     364.7   24748.2   0.0147     29065   0.689       NO
+      nq_nonassoc_h125  0.125    16    non  0.579   0.0014      88.2    6730.6   0.0131     26345   0.637       NO
+    nq20_nonassoc_h125  0.125    16    non  0.268   0.2500     128.6     138.9   0.9260       -23  -0.006      yes
+        nq_nonassoc_h5  0.500     4    non  0.579   0.0124     434.2    6730.6   0.0645     11064   0.262       NO
+         nq20_assoc_h5  0.500     4  assoc  0.268   0.0075     153.0     138.9   1.1014      6326   0.392       NO
+           nq_assoc_h5  0.500     4  assoc  0.579   0.0343    2479.3    6730.6   0.3684     34070   0.853       NO
+      full_nonassoc_h5  0.500     4    non  0.579   0.0520    1678.1   24748.2   0.0678      8195   0.191       NO
+  m0 = how close the 1-D initial state already is to yield; a leg with m0 > 0.8 is void.
+  'NO' in plateau means the leg walled out on convergence, so q_num is a LOWER bound on that mesh, not a collapse load.
+Vesic at the NOMINAL phi = 33 deg (what the project quotes): q_u = 637.5 kPa  (q-term 430.4 + gamma-term 207.1)
+PDMY benchmark backbone, -geom hypo, s/B = 0.15: 3384 kPa
+
+             leg   flow  form  phi_ps  s_end/B     q_max  dq/ds_end   /init  q/Vesic_ps   q/PDMY
+------------------------------------------------------------------------------------------------
+           assoc  assoc  bbar   53.72   0.0139    2236.2      68716   0.592       0.084    0.661
+        nonassoc    non  bbar   53.72   0.1500    1179.1        302   0.006       0.044    0.348
+    nonassoc_big    non  bbar   53.72   0.1500    1152.0        354   0.007       0.043    0.340
+    nonassoc_sy2    non  bbar   53.72   0.1500    1275.6        351   0.006       0.048    0.377
+    verify_phi20  assoc  bbar   27.47   0.0019     228.7      32274   0.419       0.757    0.068
+ verify_phi20_na    non  bbar   27.47   0.0063     180.3       1528   0.030       0.596    0.053
+
+collapse estimate — q at the s/B = 10 % ultimate-capacity criterion, and the tail extrapolation:
+             assoc: q(s/B=10 %) = -- kPa, dq/ds ~ s^-nan -> q_inf = no finite limit (p <= 1)
+          nonassoc: q(s/B=10 %) =   1140.1 kPa, dq/ds ~ s^-1.48 -> q_inf =     1362 kPa
+      nonassoc_big: q(s/B=10 %) =   1108.2 kPa, dq/ds ~ s^-1.39 -> q_inf =     1407 kPa
+      nonassoc_sy2: q(s/B=10 %) =   1230.7 kPa, dq/ds ~ s^-1.47 -> q_inf =     1492 kPa
+      verify_phi20: q(s/B=10 %) = -- kPa, dq/ds ~ s^-nan -> q_inf = no finite limit (p <= 1)
+   verify_phi20_na: q(s/B=10 %) = -- kPa, dq/ds ~ s^-nan -> q_inf = no finite limit (p <= 1)
+
+plateau evidence (tangent over the last 10 % of settlement vs the 70-80 % window):
+             assoc: dq/ds =    69220 ->    68716 kPa/m  (0.993 of the earlier window), still hardening
+          nonassoc: dq/ds =      451 ->      302 kPa/m  (0.670 of the earlier window), COLLAPSE
+      nonassoc_big: dq/ds =      499 ->      354 kPa/m  (0.709 of the earlier window), COLLAPSE
+      nonassoc_sy2: dq/ds =      516 ->      351 kPa/m  (0.679 of the earlier window), COLLAPSE
+      verify_phi20: dq/ds =    39346 ->    32274 kPa/m  (0.820 of the earlier window), still hardening
+   verify_phi20_na: dq/ds =     2510 ->     1528 kPa/m  (0.609 of the earlier window), still hardening
+
+yielded-zone extent at the end of each leg (m > 0.99). 'boundary' is tested by ELEMENT COLUMN, not by a fraction of the domain — the mesh is graded and its outermost hex is 3.1 m wide:
+             assoc: 1820/2816 elements (64.6 %), |x| <=  8.45 m, z >=  -7.16 m  |  outermost column  88/352 yielded, base row  60/256  <-- REACHES THE SIDE
+          nonassoc:  868/2816 elements (30.8 %), |x| <=  8.45 m, z >=  -5.71 m  |  outermost column  20/352 yielded, base row   0/256  <-- REACHES THE SIDE
+      nonassoc_big: 1320/8064 elements (16.4 %), |x| <=  7.27 m, z >=  -7.49 m  |  outermost column   0/672 yielded, base row   0/576
+      nonassoc_sy2:  880/2816 elements (31.2 %), |x| <=  8.45 m, z >=  -5.71 m  |  outermost column  16/352 yielded, base row   0/256  <-- REACHES THE SIDE
+      verify_phi20: 1252/2816 elements (44.5 %), |x| <=  5.83 m, z >=  -7.16 m  |  outermost column   0/352 yielded, base row  96/256
+
+numerical-cohesion sweep: q_max = 1179.1 kPa at sigma_y = 0.2, 1275.6 at 2.0
+  slope 53.7 kPa per kPa of sigma_y -> extrapolated to sigma_y = 0: q_u = 1168.3 kPa (+0.92 % on the base leg)
+  Vesic would predict c*N_c*s_c = 565 kPa per kPa of sigma_y (N_c = 493, s_c = 2.36) — 11x the measured slope
+
+non-associated / associated = 0.527 — the size of the flow-rule assumption Chen & Han's matching makes
+Chen-Han plane-strain Vesic said 26711 kPa; the 3D square footing measures 1179 kPa (non-associated) / 2236 kPa (associated)
+benchmark PDMY backbone / measured collapse load = 2.870 (non-assoc), 1.513 (assoc)
+
+against the Davis-reduced anchor (1525 kPa):
+               q at s/B = 10 % =   1140.1 kPa -> 0.748 x
+      tail extrapolation q_inf =   1362.1 kPa -> 0.893 x
+   PDMY backbone at s/B = 15 % =   3384.0 kPa -> 2.219 x
+
+[fig] C:\Users\nmb\Documents\Github\OpenSees-hypo\Ladruno_files\testbed\hypo_bearing\dp_collapse.png

@@ -66,6 +66,16 @@ public:
                            const char *filename,
                            int everyK,
                            double hz);
+    // Overlay-pressure mode (ADR-73 P4): stream the committed p field of one
+    // LadrunoPorousOverlay (pattern tag `overlayTag`) at a region-node subset
+    // (empty nodalSubsetTags = all region nodes). Exclusive of the
+    // disp/vel/accel node channels; columns are overlay<tag>.p.node<n>.
+    LadrunoMonitorRecorder(int overlayTag,
+                           const ID &nodalSubsetTags,
+                           Domain &theDomain,
+                           const char *filename,
+                           int everyK,
+                           double hz);
     ~LadrunoMonitorRecorder();
 
     int record(int commitTag, double timeStamp);
@@ -87,6 +97,12 @@ private:
                                     // removal cannot dangle (see record()).
     int dataFlag;          // 0 disp, 1 vel, 2 accel; 7/8/9 reaction
                            // (static / inclInertia / +Rayleigh)
+    // -overlay mode (ADR-73 P4): overlayMode selects the branch (an explicit
+    // bool, not the sign of the tag — panel F-2: a negative pattern tag is
+    // pathological but legal); overlayTag = the LadrunoPorousOverlay pattern
+    // whose committed p is streamed at theNodalTags (empty => all region nodes).
+    bool overlayMode;
+    int overlayTag;
     std::string respName;
     std::string filename;
     Domain *theDomain;

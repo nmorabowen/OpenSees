@@ -362,3 +362,132 @@ def test_eas_drives_j2_lemaitre_damage():
     assert abs(eas_d - bbar_d) < 0.05, (
         f"EAS damage {eas_d:.3f} should track bbar {bbar_d:.3f} on a homogeneous push"
     )
+
+
+# --------------------------------------------------------------------------
+# post-merge adversarial-review regressions (2026-07-19) — 3D twins of the
+# quad suite's degeneracy pins (see test_ladrunoQuad_eas.py tail comment):
+# det(J0) scales as L^3 in 3D, so the absolute-threshold failure mode is
+# three orders WORSE per decade of mesh scale here.
+# --------------------------------------------------------------------------
+def _cube(scale, flat=False):
+    z = 1.0e-16 * scale if flat else scale
+    return {1: (0, 0, 0), 2: (scale, 0, 0), 3: (scale, scale, 0),
+            4: (0, scale, 0), 5: (0, 0, z), 6: (scale, 0, z),
+            7: (scale, scale, z), 8: (0, scale, z)}
+
+
+@pytest.mark.parametrize("scale", [1.0e-6, 1.0e6])
+def test_brick_eas_degeneracy_check_is_scale_invariant(scale, capfd):
+    """A healthy cube at 1e-6 / 1e+6 scale must build and solve under eas
+    with NO degeneracy warning (det(J0) = (scale/2)^3 = 1.25e-19 at 1e-6 —
+    any absolute threshold is hopeless in 3D; the volume-ratio == 1)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _cube(scale).items():
+        ops.node(t, *c)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    capfd.readouterr()
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1, "-formulation", "eas")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (5, 6, 7, 8):
+        ops.load(n, 0.0, 0.0, -1.0)
+    ops.system("FullGeneral"); ops.numberer("Plain"); ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0); ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    out = capfd.readouterr()
+    assert "degenerate" not in (out.out + out.err).lower(), (
+        f"healthy scale-{scale} cube flagged degenerate"
+    )
+    import math as _m
+    assert all(_m.isfinite(d) for d in ops.nodeDisp(7))
+
+
+def _coplanar_skew_cube():
+    """Healthy-length columns, but the zeta axis lies (almost) in the
+    xi-eta plane: top face = bottom face + (1, 1, 1e-12)."""
+    base = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0)}
+    out = dict(base)
+    for k in range(4):
+        x, y, z = base[k + 1]
+        out[k + 5] = (x + 1.0, y + 1.0, z + 1e-12)
+    return out
+
+
+@pytest.mark.parametrize("mode", ["collapsed-flat", "coplanar-skew"])
+def test_brick_eas_degenerate_element_refused_loudly(mode, capfd):
+    """BOTH 3D degeneracy modes must warn 'near-degenerate' at setDomain and
+    FAIL the analysis: axis COLLAPSE (flat brick, z-faces coincident up to an
+    fp residue — invisible to the old column-product ratio, silent NaN with
+    rc=0) and axis COPLANARITY (healthy columns, zeta in the xi-eta plane)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    nodes = _cube(1.0, flat=True) if mode == "collapsed-flat" \
+        else _coplanar_skew_cube()
+    for t, c in nodes.items():
+        ops.node(t, *c)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    capfd.readouterr()
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1, "-formulation", "eas")
+    out = capfd.readouterr()
+    assert "near-degenerate" in (out.out + out.err), (
+        "flat brick must be flagged near-degenerate at setDomain"
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(7, 1.0, 0.0, 0.0)
+    ops.system("FullGeneral"); ops.numberer("Plain"); ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0); ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) != 0, (
+        "analysis over a degenerate eas brick must FAIL, not run silently"
+    )
+
+
+# ===========================================================================
+# 8. no spurious inner-Newton warnings at SI (steel-scale) units — regression
+# ===========================================================================
+def test_eas_no_spurious_inner_newton_warning_at_si_scale(capfd):
+    """Regression (2026-07-29): formEAStrue re-enters on EVERY assembly (update()
+    AND formResidAndTangent), so it routinely starts from an already-converged
+    alpha whose residual sits at the fp noise floor. The old convergence test
+    (`count >= 1` + a fixed tolAbs=1e-12 in force*length^2 units) could then
+    never pass at SI stress scales — ||M^T sigma dV|| roundoff >> 1e-12 — and the
+    maxIters warning fired for every element on every global iteration (GBs of
+    log spam on production runs). Elastic material, so the inner solve is exact in
+    one step and every warning is by construction spurious: a converged run must
+    emit NO 'did not converge' warning. (A plastic material is deliberately NOT
+    used here — upstream J2Plasticity's tangent gives the inner Newton a slow
+    LINEAR rate, so its maxIters warnings are honest, not this regression.)"""
+    E, nu = 200.0e9, 0.3            # SI Pa steel
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    # distorted hex so the enhanced parameters are genuinely active
+    coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1.1, 1.05, 0.0), 4: (0.05, 1, 0),
+              5: (0, 0, 1), 6: (1, 0.05, 1.1), 7: (1.05, 1, 1), 8: (0, 1, 1.05)}
+    for t, c in coords.items():
+        ops.node(t, *[float(x) for x in c])
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu)
+    for n in (1, 4, 5, 8):
+        ops.fix(n, 1, 1, 1)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "eas")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, 0.004)          # imposed x-disp (~0.4% strain, SI stresses)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-10, 50, 0)
+    ops.integrator("LoadControl", 0.25); ops.algorithm("Newton"); ops.analysis("Static")
+    capfd.readouterr()
+    assert ops.analyze(4) == 0
+    out = capfd.readouterr()
+    combined = out.out + out.err
+    assert "did not converge" not in combined, (
+        "spurious eas inner-Newton non-convergence warning at SI scale:\n"
+        + combined[:2000]
+    )

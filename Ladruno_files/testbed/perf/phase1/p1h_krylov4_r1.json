@@ -1,0 +1,115 @@
+{
+  "meta": {
+    "solver": "Pardiso",
+    "algorithm": "Newton",
+    "integrator": "LoadControl",
+    "nDOF": 11520,
+    "nSteps": 0,
+    "threads": 1,
+    "wall_ms_total": 10840.4019,
+    "timestamp": "2026-07-27T10:42:17"
+  },
+  "step_ms": 10840.0986,
+  "phases": {
+    "linearSolve": {
+      "ms": 1533.745,
+      "calls": 44,
+      "pct_step": 14.149
+    },
+    "formTangent": {
+      "ms": 7429.917,
+      "calls": 44,
+      "pct_step": 68.541
+    },
+    "formUnbalance": {
+      "ms": 1080.994,
+      "calls": 59,
+      "pct_step": 9.972
+    },
+    "update": {
+      "ms": 654.318,
+      "calls": 44,
+      "pct_step": 6.036
+    },
+    "newStep": {
+      "ms": 10.803,
+      "calls": 15,
+      "pct_step": 0.1
+    },
+    "commit": {
+      "ms": 39.35,
+      "calls": 15,
+      "pct_step": 0.363
+    },
+    "convTest": {
+      "ms": 7.577,
+      "calls": 44,
+      "pct_step": 0.07
+    }
+  },
+  "solver": {
+    "soe.symbolic": {
+      "ms": 173.987,
+      "calls": 1,
+      "pct_step": 1.605,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.symbolic": 173.987
+      }
+    },
+    "soe.factor": {
+      "ms": 145.846,
+      "calls": 1,
+      "pct_step": 1.345,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.factor": 145.846
+      }
+    },
+    "soe.trisolve": {
+      "ms": 26.056,
+      "calls": 1,
+      "pct_step": 0.24,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.trisolve": 26.056
+      }
+    },
+    "soe.cgs": {
+      "ms": 1187.549,
+      "calls": 43,
+      "pct_step": 10.955,
+      "sites": {
+        "root/step/solveCurrentStep/linearSolve/soe.cgs": 1187.549
+      }
+    }
+  },
+  "setSize": {
+    "dc.s.fill": {
+      "ms": 16.25,
+      "calls": 1,
+      "pct_step": 0.15,
+      "sites": {
+        "root/step/dc.s.fill": 16.25
+      }
+    },
+    "dc.s.verify": {
+      "ms": 0.51,
+      "calls": 1,
+      "pct_step": 0.005,
+      "sites": {
+        "root/step/dc.s.verify": 0.51
+      }
+    }
+  },
+  "deep": {},
+  "split": {
+    "solver_total_ms": 1533.438,
+    "pct_step": 14.146,
+    "pct_solver_factor": 9.51,
+    "pct_solver_trisolve": 1.7,
+    "pct_solver_symbolic": 11.35,
+    "pct_solver_cgs": 77.44,
+    "linearSolve_ms": 1533.745,
+    "attribution_gap_ms": -0.307,
+    "gap_note": "solver total within linearSolve (expected for LoadControl)",
+    "cgs_caveat": "soe.cgs > 0: soe.factor UNDERSTATES factorization -- a CGS give-up refactorizes inside phase 23 and bills to soe.cgs"
+  }
+}

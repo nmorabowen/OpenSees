@@ -57,6 +57,27 @@ struct CTSResult {
     int    undamped_tag;   // governing element tag (undamped); -1 if none
     int    n_contributing; // elements that produced a finite, positive estimate
     int    n_scanned;      // elements iterated
+    // Ladruno (ADR-73 P3): overlay-aware undrained pencil. When a
+    // LadrunoPorousOverlay owns elements of the domain, their per-element
+    // pencils are augmented by dK_e = Q_e S_e^-1 Q_e^T (the element-local
+    // undrained condensation), so undamped_dt/damped_dt above are the
+    // UNDRAINED (corrected) limits. governing_drained_dt is the governing
+    // (undamped) element's skeleton-only value, kept so reports can print
+    // both and the implied factor; +inf when unknown (no augmentation, or
+    // the governing element lives on another MPI rank).
+    bool   overlayAugmented;      // any element's pencil was augmented
+    double governing_drained_dt;  // drained 2/omega_max of the governing element
+    // Ladruno (ADR-73 P3b): dual-CFL advisory for the EXPLICIT fluid lane
+    // (-fluidUpdate explicit). When any FU_EXPLICIT overlay reports a finite
+    // forward-Euler diffusion bound Δt_diff = h_min²/(2·ndm·c_v,max),
+    // explicitFluid is set and fluid_diffusion_dt carries the min over
+    // overlays; the bound is then min-folded into BOTH damped_dt and
+    // undamped_dt (if diffusion ever governs — absurd k̄ — the returned
+    // advisory is honest; the governing TAGS stay the solid element's, the
+    // report clarifies). At realistic k̄ the slack is ~7e3× (E7.4), so this
+    // advises rather than governs. Bounds the -subcycle window: N·Δt ≤ Δt_diff.
+    bool   explicitFluid;         // any FU_EXPLICIT overlay contributed
+    double fluid_diffusion_dt;    // min Δt_diff over overlays; +inf if none
 };
 
 // Scan all elements of theModel's domain and return the governing critical step.
@@ -100,8 +121,13 @@ void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
 // account for an element's self-reported bound (getExplicitCriticalTimeStep);
 // callers that need the authoritative per-element step must use
 // elementCriticalDt (below), not this directly.
+//   Kadd (Ladruno, ADR-73 P3): optional state-independent ADDITIVE stiffness
+//   (n x n) folded into K before the eigensolve — the porous-overlay undrained
+//   augmentation dK_e = Q_e S_e^-1 Q_e^T. Null (the default) preserves the
+//   drained pencil bit-exactly for every pre-P3 call site.
 double elementLambdaMax(Element *ele, bool useTangent,
-                        const double *mdiag, int n);
+                        const double *mdiag, int n,
+                        const Matrix *Kadd = 0);
 
 // Authoritative UNDAMPED per-element critical step, with the same precedence
 // computeCriticalTimeStep applies: a positive self-reported bound
@@ -111,8 +137,20 @@ double elementLambdaMax(Element *ele, bool useTangent,
 // returns 2/sqrt(lambda_max). Returns < 0 if neither is available. This is the
 // accessor the selective mass-scaling integrator (CentralDifferenceSMS, ADR 36)
 // must call to size its per-element scale factor.
+//   Kadd (Ladruno, ADR-73 P3 seam, WIRED at P3b): same optional additive
+//   stiffness as elementLambdaMax. Callers: computeCriticalTimeStep (P3) and
+//   BOTH SMS builders (LadrunoMassScaling::buildMassScaling /
+//   buildMassScalingConsistent, P3b §3b.4) — SMS sizing now prices the
+//   UNDRAINED per-element pencil for overlay-owned elements. The closed-form
+//   scale s = T² + 2Tc is unchanged and remains exact: dK_e is mass- and
+//   state-independent, so λ_max still scales as 1/s under mass injection.
+//   A positive self-report still wins UNCORRECTED (the scan advises loudly
+//   for that combo). History: pre-P3b no caller passed Kadd and SMS +
+//   LadrunoPorousOverlay was UNSUPPORTED (blanket warning, since retired) —
+//   ADR-73 §12 P3/P3b entries + LEDGER_quirks row.
 double elementCriticalDt(Element *ele, bool useTangent,
-                         const double *mdiag, int n);
+                         const double *mdiag, int n,
+                         const Matrix *Kadd = 0);
 
 // Total STIFFNESS-proportional Rayleigh coefficient of an element, for the
 // damped stable-step estimate and the SMS damped sizing. The element damping is

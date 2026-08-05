@@ -60,6 +60,7 @@
 #define LadrunoQuad_h
 
 #include <Element.h>
+#include <LadrunoMassCache.h>   // Ladruno (ADR-77 G2 ext)
 #include <Matrix.h>
 #include <Vector.h>
 #include <ID.h>
@@ -71,6 +72,9 @@ class Response;
 class LadrunoQuad : public Element
 {
   public:
+      // Ladruno (ADR-77 G2 ext): escape = -noMassCache
+      void setMassCache(bool s) { massCache.setEnabled(s); }
+
     enum class Formulation { STD = 0, BBAR = 1, SSP = 2, EAS = 3 };
     // geometry axis (ADR 70). LINEAR = small strain; FINITE = updated-Lagrangian
     // large strain (setTrialF path). Values mirror LadrunoBrick (2 = finite).
@@ -132,6 +136,9 @@ class LadrunoQuad : public Element
     NDMaterial **theMaterial;          // 4 material points
     ID connectedExternalNodes;         // tags of the 4 nodes
     Node *theNodes[4];
+  LadrunoMassCache massCache;   // Ladruno (ADR-77 G2 ext): per-instance mass cache,
+                  // guard-checked (rho/thickness/coords); -noMassCache escape
+
 
     static double matrixData[64];
     static Matrix K;                   // 8x8 element matrix (shared scratch)

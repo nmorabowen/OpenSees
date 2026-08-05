@@ -48,6 +48,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <ElementalLoad.h>
 #include <elementAPI.h>
 #include <math.h>
@@ -316,6 +317,17 @@ const Matrix &LadrunoLST::getInitialStiff(void)
 
 const Matrix &LadrunoLST::getMass(void)
 {
+  // Ladruno (ADR-77 G2 ext): per-instance mass cache -- LadrunoMassCache.h.
+  // Signature = rho override + numgp material rhos + thickness; coords
+  // guarded inside.
+  double mcSig[2 + numgp];
+  mcSig[0] = rho;
+  mcSig[1] = thickness;
+  for (int i = 0; i < numgp; i++)
+    mcSig[2 + i] = theMaterial[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(mcSig, 2 + numgp, theNodes, numnodes, 2))
+    return *Mc;
+
   K.Zero();
 
   static double rhoi[numgp];
@@ -324,8 +336,10 @@ const Matrix &LadrunoLST::getMass(void)
     rhoi[i] = (rho == 0.0) ? theMaterial[i]->getRho() : rho;
     sum += rhoi[i];
   }
-  if (sum == 0.0)
+  if (sum == 0.0) {
+    massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
 
   // Ladruno (ADR 70 P3, deliberate divergence from SixNodeTri): HRZ lumping.
   // Upstream's plain N-lumping (Σ N_a ρ dV) gives EXACTLY ZERO corner masses
@@ -346,14 +360,17 @@ const Matrix &LadrunoLST::getMass(void)
   }
   double dsum = 0.0;
   for (int a = 0; a < numnodes; a++) dsum += d[a];
-  if (dsum <= 0.0)
+  if (dsum <= 0.0) {
+    massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
     return K;
+  }
   double scale = total / dsum;
   for (int a = 0, ia = 0; a < numnodes; a++, ia += 2) {
     double Nrho = scale * d[a];
     K(ia, ia)         = Nrho;
     K(ia + 1, ia + 1) = Nrho;
   }
+  massCache.fill(K, mcSig, 2 + numgp, theNodes, numnodes, 2);   // Ladruno (ADR-77 G2 ext)
   return K;
 }
 
@@ -400,9 +417,15 @@ int LadrunoLST::addInertiaLoadToUnbalance(const Vector &accel)
     ra[2 * a]     = Raccel(0);
     ra[2 * a + 1] = Raccel(1);
   }
-  this->getMass();
+// Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 2 * numnodes; i++)
-    Q(i) += -K(i, i) * ra[i];
+    Q(i) += -Mq(i, i) * ra[i];
   return 0;
 }
 
@@ -509,9 +532,15 @@ const Vector &LadrunoLST::getResistingForceIncInertia(void)
     a[2 * n + 1] = accel(1);
   }
   this->getResistingForce();
-  this->getMass();
+  // Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
+  // called getMass() for its side effect of filling the class-static K and
+  // then read K(i,i) directly -- with the per-instance cache a HIT returns
+  // *Mi without touching K (which still holds the last TANGENT), so the
+  // side-effect contract is dead. Caught by
+  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  const Matrix &Mq = this->getMass();
   for (int i = 0; i < 2 * numnodes; i++)
-    P(i) += K(i, i) * a[i];
+    P(i) += Mq(i, i) * a[i];
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     res += this->getRayleighDampingForces();
@@ -768,6 +797,10 @@ int LadrunoLST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
       if (res < 0) return res;
     }
   }
+  // Ladruno (ADR-77 review wave): defensive, keeps the cache lifecycle uniform
+  // across the G2 family -- nothing sig-exempt that recvSelf rewrites may
+  // survive a re-receive into a live element.
+  massCache.invalidate();
   return res;
 }
 
@@ -823,19 +856,22 @@ int LadrunoLST::displaySelf(Renderer &theViewer, int displayMode, float fact,
 Response *LadrunoLST::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   Response *theResponse = 0;
+  if (argc < 1) return 0;
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoLST");
   output.attr("eleTag", this->getTag());
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     theResponse = new ElementResponse(this, 1, P);
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= numgp)
-      theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
-  } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      if (pointNum > 0 && pointNum <= numgp)
+        theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
+    }
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(3 * numgp));
-  } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
     // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material
     // doesn't expose it); full GaussPoint/NdMaterialOutput tags so XML-driven
     // recorders (Ladruno/MPCO) get real component names instead of C1..C12
@@ -858,13 +894,23 @@ Response *LadrunoLST::setResponse(const char **argv, int argc, OPS_Stream &outpu
       output.endTag(); // GaussPoint
     }
     theResponse = new ElementResponse(this, 21, Vector(4 * numgp));
-  } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     theResponse = new ElementResponse(this, 4, Vector(3 * numgp));
-  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     theResponse = new ElementResponse(this, 5, 0.0);
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
+    theResponse = new ElementResponse(this, 6, Matrix(P.Size(), P.Size()));
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
   }
 
   output.endTag();
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -901,7 +947,13 @@ int LadrunoLST::getResponse(int responseID, Information &eleInfo)
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());
 
-  return -1;
+  if (responseID == 6)
+    return eleInfo.setMatrix(this->getTangentStiff());
+
+  if (responseID == 7)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int LadrunoLST::setParameter(const char **argv, int argc, Parameter &param)

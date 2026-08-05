@@ -26,16 +26,75 @@ REM build) can locate Visual Studio.
 set "VSWHERE_DIR=C:\Program Files (x86)\Microsoft Visual Studio\Installer"
 if exist "%VSWHERE_DIR%\vswhere.exe" set "PATH=%VSWHERE_DIR%;%PATH%"
 
-set "VS_VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+REM Ladruno: locate vcvars64.bat machine-agnostically via vswhere instead of a
+REM hardcoded VS 2022 path. Works across VS editions/years (2022, 2026/v18, ...)
+REM by asking vswhere for the newest install carrying the C++ x64 toolset. Falls
+REM back to the historical hardcoded 2022 Community path if vswhere is absent.
+set "VS_VCVARS="
+if exist "%VSWHERE_DIR%\vswhere.exe" (
+    for /f "usebackq delims=" %%I in (`"%VSWHERE_DIR%\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+        if exist "%%I\VC\Auxiliary\Build\vcvars64.bat" set "VS_VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+    )
+)
+if not defined VS_VCVARS set "VS_VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 if not exist "%VS_VCVARS%" goto :err_vs
+echo === Using MSVC: %VS_VCVARS% ===
 call "%VS_VCVARS%"
 if errorlevel 1 goto :err_vcvars
 
 REM ---- 2-4. Intel oneAPI components --------------------------------------
 set "ONEAPI_ROOT=C:\Program Files (x86)\Intel\oneAPI"
 
-call "%ONEAPI_ROOT%\compiler\latest\env\vars.bat" intel64
+REM ---- 2a. Pick a FORTRAN-CAPABLE compiler (Ladruno ADR-75 / oneAPI 2026) --
+REM  oneAPI 2026.1 ships NO Fortran: `compiler\2026.1` has neither ifx.exe nor
+REM  ifconsol.lib (Intel split Fortran into its own package). The moment an
+REM  update re-points the `compiler\latest` junction to 2026.x, this fork's
+REM  builds break in two different places, and the second one only bites MPI:
+REM     * no ifx      -> "CMAKE_Fortran_COMPILER: ifx ... was not found in the
+REM                       PATH" at the MUMPS configure (Step 1 of build.bat)
+REM     * no ifconsol -> "LINK : fatal error LNK1104: cannot open file
+REM                       'ifconsol.lib'" when linking OpenSeesMP/SP/PyMP,
+REM                       because MKL's ScaLAPACK/BLACS import libraries still
+REM                       carry a /DEFAULTLIB:ifconsol directive. Serial targets
+REM                       never link ScaLAPACK, so they keep building fine --
+REM                       which is exactly why this hides until an MP build.
+REM  This was observed LIVE: an update flipped `latest` 2025.1 -> 2026.1 between
+REM  two builds in one session (the earlier log shows
+REM  "Fortran compiler identification is IntelLLVM 2025.1.1" from latest\bin).
+REM  Fix: prefer `latest`, but if it has no ifx.exe fall back to the
+REM  newest installed compiler that does, and source THAT vars.bat.
+REM  NB: written FLAT (labels, no parenthesized read-after-write) because this
+REM  script must not `setlocal` -- it exports the environment to its caller --
+REM  so delayed expansion (!VAR!) is unavailable here.
+set "OPS_ICC_DIR=%ONEAPI_ROOT%\compiler\latest"
+if exist "%OPS_ICC_DIR%\bin\ifx.exe" goto :icc_chosen
+set "OPS_ICC_DIR="
+for /f "delims=" %%D in ('dir /b /ad /o-n "%ONEAPI_ROOT%\compiler" 2^>nul') do if not defined OPS_ICC_DIR if exist "%ONEAPI_ROOT%\compiler\%%D\bin\ifx.exe" set "OPS_ICC_DIR=%ONEAPI_ROOT%\compiler\%%D"
+if defined OPS_ICC_DIR goto :icc_fallback
+echo ERROR: no installed oneAPI compiler provides ifx.exe ^(Fortran^).
+echo        oneAPI 2026+ ships Fortran separately - install the Fortran
+echo        package, or keep a 2025.x compiler alongside it.
+goto :err_compiler
+:icc_fallback
+echo   [fortran] compiler\latest has no ifx.exe - falling back to %OPS_ICC_DIR%
+:icc_chosen
+call "%OPS_ICC_DIR%\env\vars.bat" intel64
 if errorlevel 1 goto :err_compiler
+
+REM ---- 2b. ifconsol.lib fallback -----------------------------------------
+REM  Same root cause; kept separate because a compiler CAN have ifx but not
+REM  ifconsol. Purely additive to LIB.
+if exist "%OPS_ICC_DIR%\lib\ifconsol.lib" goto :ifconsol_ok
+set "_IFCONSOL_DIR="
+for /f "delims=" %%D in ('dir /b /ad /o-n "%ONEAPI_ROOT%\compiler" 2^>nul') do if not defined _IFCONSOL_DIR if exist "%ONEAPI_ROOT%\compiler\%%D\lib\ifconsol.lib" set "_IFCONSOL_DIR=%ONEAPI_ROOT%\compiler\%%D\lib"
+if defined _IFCONSOL_DIR goto :ifconsol_add
+echo   [ifconsol] WARNING: no installed compiler provides ifconsol.lib;
+echo              MPI targets ^(OpenSeesMP/SP/PyMP^) will fail to link ^(LNK1104^).
+goto :ifconsol_ok
+:ifconsol_add
+echo   [ifconsol] active compiler lacks ifconsol.lib - adding %_IFCONSOL_DIR%
+set "LIB=%_IFCONSOL_DIR%;%LIB%"
+:ifconsol_ok
 
 call "%ONEAPI_ROOT%\mkl\latest\env\vars.bat" intel64
 if errorlevel 1 goto :err_mkl

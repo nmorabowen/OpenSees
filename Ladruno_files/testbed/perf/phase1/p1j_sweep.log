@@ -1,0 +1,25 @@
+Lane-B SIZE TREND | sizes=[15, 20, 25, 30, 35] steps=15 repeats=2 MKL_NUM_THREADS=4
+configs: ['sym4', 'unsym4']
+  n= 15 ndof=  11520 sym4     r1 wall=   13.50s -> p1j_sym4_n15_r1.h5
+  n= 15 ndof=  11520 sym4     r2 wall=   13.07s -> p1j_sym4_n15_r2.h5
+  n= 15 ndof=  11520 unsym4   r1 wall=   15.86s -> p1j_unsym4_n15_r1.h5
+  n= 15 ndof=  11520 unsym4   r2 wall=   15.36s -> p1j_unsym4_n15_r2.h5
+  n= 20 ndof=  26460 sym4     r1 wall=   34.81s -> p1j_sym4_n20_r1.h5
+  n= 20 ndof=  26460 sym4     r2 wall=   40.73s -> p1j_sym4_n20_r2.h5
+  n= 20 ndof=  26460 unsym4   r1 wall=   48.74s -> p1j_unsym4_n20_r1.h5
+  n= 20 ndof=  26460 unsym4   r2 wall=   42.89s -> p1j_unsym4_n20_r2.h5
+  n= 25 ndof=  50700 sym4     r1 wall=   78.76s -> p1j_sym4_n25_r1.h5
+  n= 25 ndof=  50700 sym4     r2 wall=   80.75s -> p1j_sym4_n25_r2.h5
+  n= 25 ndof=  50700 unsym4   r1 wall=  104.99s -> p1j_unsym4_n25_r1.h5
+  n= 25 ndof=  50700 unsym4   r2 wall=  100.33s -> p1j_unsym4_n25_r2.h5
+  n= 30 ndof=  86490 sym4     r1 wall=  173.42s -> p1j_sym4_n30_r1.h5
+  n= 30 ndof=  86490 sym4     r2 wall=  168.52s -> p1j_sym4_n30_r2.h5
+  n= 30 ndof=  86490 unsym4   r1 wall=  210.37s -> p1j_unsym4_n30_r1.h5
+  n= 30 ndof=  86490 unsym4   r2 wall=  209.10s -> p1j_unsym4_n30_r2.h5
+  n= 35 ndof= 136080 sym4     r1 wall=  310.31s -> p1j_sym4_n35_r1.h5
+  n= 35 ndof= 136080 sym4     r2 wall=  288.70s -> p1j_sym4_n35_r2.h5
+  n= 35 ndof= 136080 unsym4   r1 wall=  282.97s -> p1j_unsym4_n35_r1.h5
+  n= 35 ndof= 136080 unsym4   r2 wall=  297.53s -> p1j_unsym4_n35_r2.h5
+
+wrote C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\opensees-pr-strategy-9c17b8\Ladruno_files\testbed\perf\phase1\p1j_size_trend.json
+now parse: p1h_parse_split.py p1j_*.h5 --json <same>.json  (opensees_env)

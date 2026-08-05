@@ -9,6 +9,7 @@ target_sources(OPS_Analysis
        ExplicitDifference.cpp
        ArcLength.cpp
        LadrunoArcLength.cpp
+       LadrunoLoadControl.cpp
        LadrunoIndirectControl.cpp
        ArcLength1.cpp
        BackwardEuler.cpp

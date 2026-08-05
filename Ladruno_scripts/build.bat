@@ -65,6 +65,38 @@ set "MUMPS_ARCHIVE=%ROOT%\mumps-archive"
 
 set "MKL_BIN=C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin"
 set "ICOMP_BIN=C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
+
+REM Ladruno ADR-75: mirror MKL runtime DLLs by BASE NAME, never by full
+REM filename. Intel version-stamps the SONAME and BUMPS it across releases --
+REM oneMKL 2025.x shipped mkl_core.2.dll / mkl_intel_thread.2.dll, oneMKL
+REM 2026.1 ships mkl_core.3.dll / mkl_intel_thread.3.dll (scalapack + blacs
+REM stayed at .2). The previous hardcoded ".2.dll" list was guarded by
+REM `if exist`, so after an MKL upgrade it silently copied NOTHING and left the
+REM old version's DLLs in dist\ -- a shipped package that either fails to load
+REM (mkl_core.3.dll not found, since the newly linked import libs reference the
+REM .3 SONAME) or runs a different MKL than it was built against. The copy
+REM loops glob "<base>.*.dll" and purge dist\mkl_*.dll first, so a version bump
+REM can neither be missed nor leave two generations behind.
+REM See BUILD_GOTCHAS.md 9 (companion to 8, the oneAPI-2026 Fortran split).
+REM Ladruno ADR-75 P1d: `mkl_avx10` added — oneMKL 2026.1 ships mkl_avx10.3.dll as
+REM a NEW CPU-dispatch kernel alongside mkl_avx512/mkl_mc3. Absent on 2025, where
+REM the glob simply matches nothing; missing on AVX10 hardware it would either
+REM fail to dispatch or silently fall back to a slower kernel.
+set "MKL_RUNTIME_DLLS=mkl_intel_thread mkl_core mkl_def mkl_avx2 mkl_avx512 mkl_avx10 mkl_mc3 mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64"
+
+REM Same hazard for the OpenMP runtime: `compiler\latest` can point at a
+REM runtime-only Intel package (see setup_env.bat 2a) -- that one DOES carry
+REM libiomp5md.dll, but if a future one doesn't, fall back to the newest
+REM compiler dir that has it rather than silently shipping no OpenMP runtime.
+set "ONEAPI_COMPILER=C:\Program Files (x86)\Intel\oneAPI\compiler"
+if exist "%ICOMP_BIN%\libiomp5md.dll" goto :iomp_ok
+for /f "delims=" %%D in ('dir /b /ad /o-n "%ONEAPI_COMPILER%" 2^>nul') do (
+    if not defined ICOMP_HIT if exist "%ONEAPI_COMPILER%\%%D\bin\libiomp5md.dll" (
+        set "ICOMP_HIT=1"
+        set "ICOMP_BIN=%ONEAPI_COMPILER%\%%D\bin"
+    )
+)
+:iomp_ok
 set "IMPI_BIN=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
 set "IMPI_LIBFABRIC=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\opt\mpi\libfabric\bin"
 
@@ -203,9 +235,44 @@ if defined CONAN_CMAKE if exist "%BUILD_DIR%\CMakeCache.txt" (
     )
 )
 
+REM ----- 2d. Heal a cache pointing at a VANISHED compiler -------------------
+REM Ladruno ADR-75: CMake caches the RESOLVED ABSOLUTE path of each compiler.
+REM oneAPI updates re-point the `compiler\latest` junction, and 2026.x ships no
+REM Fortran at all -- so a cache written while `latest` was 2025.x holds
+REM   CMAKE_Fortran_COMPILER=...\compiler\latest\bin\ifx.exe
+REM which simply stops existing after the update, and configure dies with
+REM   "is not a full path to an existing compiler tool".
+REM Passing -DCMAKE_Fortran_COMPILER=ifx does NOT fix it: the cached absolute
+REM path wins. setup_env.bat already fell back to a Fortran-capable compiler;
+REM here we just drop a cache that names a compiler which no longer exists.
+REM Compiled objects survive (ninja re-runs only what its hashes say changed).
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+    for /f "usebackq tokens=2 delims==" %%F in (`findstr /b /i /c:"CMAKE_Fortran_COMPILER:" "%BUILD_DIR%\CMakeCache.txt"`) do (
+        if not exist "%%F" (
+            echo   CMakeCache.txt names a vanished Fortran compiler:
+            echo     %%F
+            echo   ^(likely a oneAPI update re-pointed compiler\latest^) -- deleting cache
+            del /q "%BUILD_DIR%\CMakeCache.txt"
+        )
+    )
+)
+
 REM ----- 3. CMake configure ------------------------------------------------
 echo.
 echo === Step 3: CMake configure ===
+REM Ladruno ADR-1000: the isolated OPS_LadrunoCMS library is OFF by default (a
+REM Pattern-B opt-in subsystem, see Ladruno_internal/BUILD_GOTCHAS.md #7). Set
+REM LADRUNO_CMS_BUILD=1 before invoking to configure it + its standalone C++
+REM numerical checks (MP targets only; needs the oneAPI MPI+MUMPS toolchain this
+REM script already sets up). Used by the nightly CMS CI lane. Default => zero
+REM footprint on installer/dev builds.
+REM Pass the flag EXPLICITLY both ways so a prior CMS-on configure never sticks
+REM in the shared CMakeCache and silently poisons the next default build.
+if defined LADRUNO_CMS_BUILD (
+    set "CMS_FLAGS=-DLADRUNO_CMS=ON -DLADRUNO_CMS_BUILD_TESTS=ON"
+) else (
+    set "CMS_FLAGS=-DLADRUNO_CMS=OFF -DLADRUNO_CMS_BUILD_TESTS=OFF"
+)
 REM CMAKE_NINJA_FORCE_RESPONSE_FILE=ON: push include/object/library lists into .rsp files so a
 REM DEEP source path (e.g. a .claude\worktrees\<name> build tree) can't blow a cl.exe command line
 REM past the Windows ~32 KB CreateProcess limit ("CreateProcess failed. The parameter is incorrect"
@@ -217,10 +284,42 @@ cmake --preset conan-release ^
     -DPython_EXECUTABLE="%PYEXE%" ^
     -DMUMPS_DIR="%MUMPS_INSTALL%/lib" ^
     -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include" ^
+    %CMS_FLAGS% ^
     -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON
 set "RC=%errorlevel%"
 popd
 if not "%RC%"=="0" (echo CMake configure failed & exit /b 1)
+
+REM ----- 3b. CMS CI lane: build+run ONLY the isolated library's checks --------
+REM When LADRUNO_CMS_BUILD=1 this is a self-contained CMS coverage run: build the
+REM standalone numerical checks (which compile the whole OPS_LadrunoCMS library
+REM as a dependency), run them under mpiexec -n 4 (the checks skip their 4-rank
+REM distributed leg at other sizes), and exit. We deliberately do NOT build the
+REM full MP target here -- it is slow and can hit an unrelated MSVC ICE on
+REM ASDPlasticMaterial3D. See Ladruno_internal/BUILD_GOTCHAS.md #7.
+REM Flattened with a goto guard (not an if(...) wrapper) so the for-loops sit at
+REM the SAME nesting depth as the proven Step-4 build loop — batch is fragile
+REM about `|| (... & exit /b 1)` nested one level deeper inside an if-paren.
+if not defined LADRUNO_CMS_BUILD goto :after_cms_ci
+echo.
+echo === CMS: building isolated OPS_LadrunoCMS library + numerical checks ===
+for %%C in (mumps lanczos hierarchy subspace assembly) do (
+    cmake --build "%BUILD_DIR%" --target ladruno_cms_%%C_check -j 8 || (echo CMS check build %%C failed & exit /b 1)
+)
+REM The unescaped "(mpiexec -n 4)" in this echo used to sit INSIDE the for-body
+REM parens: cmd closed the block on that inner ")" and then choked on the
+REM trailing "---" with "--- was unexpected at this time", killing the run loop
+REM AFTER a fully successful build. Parens inside a parenthesized block must be
+REM escaped as ^( ^). — Ladruno build fix.
+for %%C in (mumps lanczos hierarchy subspace assembly) do (
+    echo.
+    echo --- running ladruno_cms_%%C_check ^(mpiexec -n 4^) ---
+    "%IMPI_BIN%\mpiexec.exe" -n 4 "%BUILD_DIR%\SRC\system_of_eqn\ladrunoCMS\ladruno_cms_%%C_check.exe" || (echo CMS check %%C FAILED & exit /b 1)
+)
+echo.
+echo === CMS library compiled and all numerical checks passed ===
+exit /b 0
+:after_cms_ci
 
 REM ----- 4. Build each target ----------------------------------------------
 echo.
@@ -274,12 +373,9 @@ for %%M in (impi.dll mpiexec.exe hydra_bstrap_proxy.exe hydra_pmi_proxy.exe hydr
 )
 if exist "%IMPI_LIBFABRIC%\libfabric.dll" copy /y "%IMPI_LIBFABRIC%\libfabric.dll" "%DIST%\openseesmp\" >nul
 echo   mirroring MKL runtime into openseesmp\ (self-contained off oneAPI shell)
-for %%D in (
-    mkl_intel_thread.2.dll mkl_core.2.dll mkl_def.2.dll
-    mkl_avx2.2.dll mkl_avx512.2.dll mkl_mc3.2.dll
-    mkl_scalapack_lp64.2.dll mkl_blacs_intelmpi_lp64.2.dll
-) do (
-    if exist "%MKL_BIN%\%%D" copy /y "%MKL_BIN%\%%D" "%DIST%\openseesmp\" >nul
+del /q "%DIST%\openseesmp\mkl_*.dll" 2>nul
+for %%B in (%MKL_RUNTIME_DLLS%) do (
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\openseesmp\" >nul
 )
 if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\openseesmp\" >nul
 :no_openseesmp
@@ -289,15 +385,12 @@ REM  Tcl-only via OpenSeesSP.exe. See Ladruno Patch 9 docs.)
 
 REM Intel MKL runtime DLLs. mkl_intel_thread + mkl_core are link-time
 REM dependencies; mkl_def / mkl_avx* / mkl_mc3 are CPU kernel DLLs that MKL
-REM dlopens at runtime (FATAL "mkl_def.2.dll not found" otherwise).
+REM dlopens at runtime (FATAL "mkl_def.<N>.dll not found" otherwise).
 REM mkl_scalapack_lp64 + mkl_blacs_intelmpi_lp64 are needed by OpenSeesSP/MP.
 echo   copying Intel MKL runtime DLLs
-for %%D in (
-    mkl_intel_thread.2.dll mkl_core.2.dll mkl_def.2.dll
-    mkl_avx2.2.dll mkl_avx512.2.dll mkl_mc3.2.dll
-    mkl_scalapack_lp64.2.dll mkl_blacs_intelmpi_lp64.2.dll
-) do (
-    if exist "%MKL_BIN%\%%D" copy /y "%MKL_BIN%\%%D" "%DIST%\bin\" >nul
+del /q "%DIST%\bin\mkl_*.dll" 2>nul
+for %%B in (%MKL_RUNTIME_DLLS%) do (
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\bin\" >nul
 )
 if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\bin\" >nul
 

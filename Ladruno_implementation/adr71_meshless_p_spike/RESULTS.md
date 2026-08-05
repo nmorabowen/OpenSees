@@ -110,3 +110,100 @@ diverges — do not undershoot).
 
 Plots: `infsup_spectra.png`, `terzaghi_profiles.png`, `footing_maps.png`,
 `removal_flowpath.png`, `perf_scaling.png`, `staggered_seam.png`.
+
+## E7 — dynamic pins for ADR-73 P0 (2026-07-14, `staggered_pins_e7.py`)
+
+ADR-73 P0 extension: the toy imported **as a frozen library**, plus the one
+thing it lacked — **solid inertia** (row-sum lumped M, central-difference
+solid loop). Protocol: every experiment printed its quantitative prediction
+before measuring; refutations recorded, not smoothed. Machinery anchor: the
+E6 fs1(resolve, oed, 400 steps) number reproduces to 8.88e-4 (E6 recorded
+9e-4). Numbers: `e7_summary.json`; log: `e7_run_full.log`.
+
+- **E7.1 — v1 sequencing [plan prediction REFUTED → pin changed].** The plan
+  predicted fs1-without-resolve = O(Δt), ≤2× of fs1-with-resolve. Measured
+  (relL2 vs same-Δt monolithic, Δt-halving ×5, both regimes): **both plan
+  flavors sit on O(1) floors** — plain 0.61 at every Δt (both L), resolve
+  +classic 0.41, resolve+oed 5.7e-4 (late-window floor; a special-case match
+  where L ≈ true Schur compliance, column only). Root cause: single-pass
+  fixed-POINT L double-counts compliance (effective storage S*+L+C instead
+  of S*+C; only iteration cancels L). **Repair measured and pinned**: the
+  fixed-stress **RATE form** `(S*+L)Δp + ΔtH p₁ = −QᵀΔu + L·Δp_prev` —
+  same plain-analyze flow, no driver, no second solid solve, one extra
+  stored vector. Late-window orders +1.00…+1.04 (both L, both regimes;
+  L=oed near-deadbeat, 5.6e-6 at the finest Δt). The step-load initial layer
+  is a one-step O(1) effect (full-history norm reads O(√Δt)) — harmless,
+  documented. E6's "fs1 stable with O(Δt) splitting error" survives only as
+  "resolve+oed is accurate at one Δt"; it is not a rate statement.
+- **E7.2 — CD + implicit fluid envelope [stability CONFIRMED, with an
+  accuracy rider and a rate-form carve-out].** Boundaries via Δt-bisection
+  (noise IC, 6000 steps, energy blow-up detector), stab OFF, k̄ realistic:
+  fixed-point L=classic **0.987×** the drained pencil 2/ω_max(M⁻¹K) —
+  the ⟨A-7⟩-hedged drained-CFL claim CONFIRMED; oed 0.934×, half-oed 0.780×,
+  **L=0 exactly 1.000× the undrained pencil**. Riders: (1) the drained-CFL
+  fixed-point-L lane carries the same O(1) storage artifact on diffusion
+  physics (0.673 relL2 vs exact, E7.3a ref) — stability true, accuracy
+  false; (2) the E7.1 rate form is **UNSTABLE under CD** at every tested Δt
+  (extrapolation feeds oscillatory p back as negative damping). Dynamic
+  default pinned: **L=0 at Δt ≤ 0.5× the undrained pencil** (consistent +
+  stable, 1.5e-3 vs exact at N=1).
+- **E7.3a — subcycle (L=0 lane) [CONFIRMED].** err ~ N^1.2 (slopes
+  +1.17…+1.23), all N ∈ {1…50} stable; error doubles at N ≈ 1.8 →
+  **θ = N·Δt/(h²/c_v) = 0.089** pins `-subcycle auto`
+  N = max(1, floor(0.09·h²/(c_v·Δt))). Artifact refs at N=1: fixed-point
+  classic-L 0.673; rate form 66.8 (no blow-up, useless).
+- **E7.3b — substep [REFUTED].** Coarse-Δt (Tv=0.05/step) step-load
+  Terzaghi, M ∈ {1,2,5,10} ramped-Δu BE sub-steps: 0.2452 / 0.2489 /
+  0.2521 / 0.2534 — flat. The binding error is the coarse-Δt splitting/lag,
+  not fluid time resolution; `-substep` buys no accuracy here. Demoted from
+  the P1 accuracy claim. (First-run bonus: chaining the rate-form reference
+  per SUB-step explodes at M ≥ 5 — the reference must be the coarse
+  increment split /M.)
+- **E7.4 — fully-explicit fluid dual CFL [class CONFIRMED; ±20 % factor
+  gate REFUTED, safe direction].** Coupled boundary tracks the undrained
+  PENCIL: dt_cr = **1.32×** pencil on BOTH soils (5.567e-4 / 5.531e-4 s vs
+  4.206e-4 / 4.196e-4). The ⟨A-1⟩ material factor √(1+K_f/(n·M_oed))
+  (21.4 / 12.8) over-predicts the penalty ~1.85× (measured effective 11.6 /
+  6.97): the discrete undrained pencil sits below the material formula
+  (15.36 vs 21.43 on this mesh) and lagged staggering adds ~1.32×. Diffusion
+  CFL slack 7.2e3× at realistic k̄ — the coupled boundary governs, as
+  predicted. L=0 throughout (no iteration needed) ✓. Advisory pinned to the
+  discrete pencil (≈25 % conservative vs measured); the material formula is
+  documentation-only (~2× conservative).
+- **E7.5 — removal under inertia [(i) CONFIRMED under the revised metric;
+  original formulation refuted benignly; (ii) CONFIRMED].** E4 crack (8
+  cells) dropped mid-CD-march, fluid persists. (i) The commit-jump VANISHES
+  as ~dt^2.6 — no 1/Δt impulse artifact; the original "dt-independent
+  commit jump" prediction was wrong in the benign direction (redistribution
+  spreads over the physical transient; one commit samples ever less of it).
+  The dt-independent invariant is the fixed-window jump (20·dt₀ after
+  removal): spread 1.47 % across dt-halving ×4. Removal gates in
+  P1/P3 tests must use the window metric. (ii) `-onRemoval drain` kFactor
+  {1,10,100}: probe drainage Tv90 = 1.004 / 0.938 / 0.933 — strictly
+  monotone ✓.
+- **E7.6 — `-fsL` decision pair ⟨A-2⟩ [CONFIRMED; footing gain smaller than
+  predicted].** Iterated fixed-stress, tol 1e-6, maxit 500, both geometries
+  × both regimes: **classic never diverges and never hits maxit** (means
+  11.2 / 4.3 / 11.3 / 4.3, max ≤ 18) — the KTJ-proof prediction holds; oed
+  also converges everywhere (3.3 / 2.8 / 3.3 / 2.8, max ≤ 10). Ratios:
+  column **3.4×** (E6's 3.2× reproduced), footing **1.6×** (the open
+  measurement — under the ~3× prediction). 0.5×oed cliff: maxit-hit
+  (E6 "diverges" reproduced under relative-tol semantics). Default `-fsL`
+  classic, oed opt-in, never undershoot oed.
+
+### E7 bottom line (what P1–P3 inherit)
+
+- **Quasi-static v1 (P1):** fluid advance = the **rate-form** fs1 in the
+  plain-analyze flow. No driver, no extra solid solve. The fixed-point form
+  the toy used must not ship single-pass.
+- **Dynamic lane (P3):** default **L=0 at Δt ≤ 0.5× undrained pencil**;
+  the drained-CFL fixed-point-L mode is stability-true but
+  accuracy-degraded (O(1) diffusion-rate error) — opt-in, documented;
+  the rate form is quasi-static-only. `-subcycle auto` θ = 0.09; explicit
+  fluid boundary = 1.32× undrained pencil, advisory uses the pencil.
+- **P2 driver:** iterated fixed-stress unchanged; classic L default is
+  divergence-proof on both geometries, oed 1.6–3.4× faster opt-in.
+
+Plots: `e71_sequencing.png`, `e72_cfl_envelope.png`, `e73_multirate.png`,
+`e74_explicit_fluid.png`, `e75_removal_dynamic.png`,
+`e76_lvariant_iters.png`.

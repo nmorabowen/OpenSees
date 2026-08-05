@@ -206,6 +206,10 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
   int stamp = the_Domain->hasDomainChanged();
   if (stamp != domainStamp) {
     domainStamp = stamp;	
+    // Ladruno: the one-time analysis setup (handle/number/setSize) runs INSIDE the
+    // "step" bracket but outside newStep/solveCurrentStep/commit, so on a stalled
+    // step the rollup showed the cost only as an unattributed remainder. Bracket it.
+    OPS_PROFILE_SCOPE("domainChanged");
     if (this->domainChanged() < 0) {
       opserr << "DirectIntegrationAnalysis::analyze() - domainChanged() failed\n";
       return -1;
@@ -420,15 +424,22 @@ DirectIntegrationAnalysis::domainChanged(void)
     // LadrunoProjectionHandler's chain/double-constraint/SP-on-slave diagnostics)
     // printed its error but the analysis ran on anyway. Additive: every handler
     // returns >=0 on success and <0 only on a genuine error.
+    { OPS_PROFILE_SCOPE("dc.handle");
     if (theConstraintHandler->handle() < 0) {
         opserr << "DirectIntegrationAnalysis::domainChanged() - ConstraintHandler::handle() failed\n";
         return -1;
+    }
     }
 
     // we now invoke number() on the numberer which causes
     // equation numbers to be assigned to all the DOFs in the
     // AnalysisModel.
+    // Ladruno: the prime suspect for a multi-hour first-step stall under MPI —
+    // ParallelNumberer gathers every rank's DOF graph onto P0 and merges them with
+    // a linear ID::getLocation scan, so P0 works alone while the others block.
+    { OPS_PROFILE_SCOPE("dc.numberDOF");
     theDOF_Numberer->numberDOF();
+    }
 
     if (theConstraintHandler->doneNumberingDOF() < 0) {   // Ladruno (ADR-30): same contract
         opserr << "DirectIntegrationAnalysis::domainChanged() - ConstraintHandler::doneNumberingDOF() failed\n";
@@ -437,7 +448,14 @@ DirectIntegrationAnalysis::domainChanged(void)
 
     // we invoke setGraph() on the LinearSOE which
     // causes that object to determine its size
-    Graph &theGraph = theAnalysisModel->getDOFGraph();
+    { OPS_PROFILE_SCOPE("dc.setSize");
+    // Ladruno (ADR-74 setSize investigation): attribute DOF-graph construction
+    // separately from the SOE's own setSize — both live inside this bracket.
+    Graph *theGraphPtr;
+    { OPS_PROFILE_SCOPE("dc.s.graph");
+    theGraphPtr = &theAnalysisModel->getDOFGraph();
+    }
+    Graph &theGraph = *theGraphPtr;
 
     int result = theSOE->setSize(theGraph);
     if (result < 0) {
@@ -453,6 +471,7 @@ DirectIntegrationAnalysis::domainChanged(void)
 	opserr << "EigenSOE::setSize() failed";
 	return -3;
       }	    
+    }
     }
 
     theAnalysisModel->clearDOFGraph();
@@ -570,12 +589,12 @@ DirectIntegrationAnalysis::setLinearSOE(LinearSOE &theNewSOE)
 int 
 DirectIntegrationAnalysis::setEigenSOE(EigenSOE &theNewSOE)
 {
-  // invoke the destructor on the old one if not the same!
-  if (theEigenSOE != 0) {
-    if (theEigenSOE->getClassTag() != theNewSOE.getClassTag()) {
-      delete theEigenSOE;
-      theEigenSOE = 0;
-    }
+  // LADRUNO: object identity, not classTag, defines ownership. Two separately
+  // configured SOEs of the same family are distinct objects and the new one
+  // must replace the analysis-owned instance.
+  if (theEigenSOE != 0 && theEigenSOE != &theNewSOE) {
+    delete theEigenSOE;
+    theEigenSOE = 0;
   }
 
   if (theEigenSOE == 0) {
@@ -658,7 +677,6 @@ DirectIntegrationAnalysis::getConvergenceTest(void)
 {
   return theTest;
 }
-
 
 
 

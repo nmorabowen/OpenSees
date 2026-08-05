@@ -59,15 +59,21 @@ private:
 	int writeModelNodes();
 	int writeModelElements();
 	int writeModelSets();
+	// Ladruno (ADR-73 P4): write-once MODEL/OVERLAYS topology rows for the
+	// -overlay channels (resolves the overlay pattern list; fatal-if-none for
+	// bare -overlay). Mirrors writeModelSets().
+	int writeModelOverlays();
 	int writeModelLocalAxes();
 	int writeSections();
 
 	int initNodeSources();
 	int initElementSources();
 	int initDomainSources();
+	int initOverlaySources();          // Ladruno (ADR-73 P4)
 	int recordResultsOnNodes();
 	int recordResultsOnElements();
 	int recordResultsOnDomain();
+	int recordResultsOnOverlays();     // Ladruno (ADR-73 P4)
 
 	// helpers (operate on the channel at the given index in m_data, so the
 	// header never has to name private_data's nested channel types)

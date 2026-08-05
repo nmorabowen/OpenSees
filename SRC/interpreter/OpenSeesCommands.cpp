@@ -45,6 +45,9 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <profiler/Profiler.h>           // Ladruno stack profiler (P5 command)
 #include <profiler/ProfilerHDF5Writer.h>
+#include <profiler/ProfilerRunMeta.h>    // Ladruno ADR-75 P1i: nElem/nNode/threads
+#include <cstdio>                        // Ladruno (ADR-74): checkpoint tmp-file remove/rename
+#include <string>
 #include <UniaxialMaterial.h>
 #include <NDMaterial.h>
 #include <SectionForceDeformation.h>
@@ -86,6 +89,12 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <SymmGeneralizedEigenSolver.h>
 #include <SymmGeneralizedEigenSOE.h>
 #include <ArpackSOE.h>
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+#include <LadrunoCMSOptions.h>
+#include <LadrunoCMSEigenSOE.h>
+#include <LadrunoCMSEigenSolver.h>
+#include <mpi.h>
+#endif
 // Ladruno ADR43: FEAST band-targeted eigensolver
 #include <FeastEigenSOE.h>
 #include <FeastEigenSolver.h>
@@ -96,7 +105,9 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <Element.h>                  // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <ElementIter.h>             // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
+#include <LadrunoLoadControl.h>       // Ladruno (ADR-80 S1): -extrapolate predictor
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
+#include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
@@ -122,6 +133,13 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <MumpsSolver.h>
 #include <MumpsSOE.h>
 #endif
+// Ladruno ADR-75 P1b: MKL PARDISO — the DESKTOP (shared-memory) sparse-direct
+// solver. Complements, does not replace, MUMPS (which owns the MPI/cluster
+// lane). Only compiled when the build found MKL.
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
 #include <BackgroundMesh.h>
 
 #ifdef _ITPACK
@@ -135,6 +153,7 @@ bool setMPIDSOEFlag = false;
 #include <mpi.h>
 #include <MPI_MachineBroker.h>
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 #include <DistributedDisplacementControl.h>
 #include <DistributedBandSPDLinSOE.h>
 #include <DistributedSparseGenColLinSOE.h>
@@ -367,7 +386,15 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
     //
     // set the eigen soe in the system if reassigned/created
     //
-    if (eigenSOEUpdated && theEigenSOE != 0) {
+    // Ladruno: also (re)attach when the analysis is the ephemeral one built
+    // above. The ephemeral DirectIntegrationAnalysis is deleted after every
+    // eigen call (its destructor frees nothing, so the cached theEigenSOE
+    // survives), and the NEXT no-analysis call builds a fresh analysis whose
+    // internal EigenSOE is null. With a same-type cached SOE eigenSOEUpdated
+    // stays false and upstream never re-attaches -> "no EigenSOE has been
+    // set" on every second consecutive eigen. Classic Tcl re-attaches, so it
+    // never had the bug; upstream openseespy does (upstream candidate).
+    if ((eigenSOEUpdated || newanalysis) && theEigenSOE != 0) {
         if (theStaticAnalysis != 0) {
             theStaticAnalysis->setEigenSOE(*theEigenSOE);
         } else if (theTransientAnalysis != 0) {
@@ -1556,6 +1583,11 @@ int OPS_System()
     } else if (strcmp(type,"Mumps") == 0) {
         theSOE = (LinearSOE*)OPS_MumpsSolver();
 #endif
+#ifdef _PARDISO
+    // Ladruno ADR-75 P1b: `system Pardiso` — threaded MKL PARDISO for desktop.
+    } else if (strcmp(type,"Pardiso") == 0 || strcmp(type,"PARDISO") == 0) {
+        theSOE = (LinearSOE*)OPS_PARDISOGenLinSolver();
+#endif
 #ifdef _ITPACK
     } else if (strcmp(type,"Itpack") == 0) {
         theSOE = (LinearSOE*)OPS_ItpackLinSolver();
@@ -1604,6 +1636,15 @@ int OPS_Numberer()
     } else if (strcmp(type, "ParallelRCM") == 0) {
 
         theNumberer = (DOF_Numberer*)OPS_ParallelRCM();
+
+    // Ladruno (ADR-74): the O(V) numberer verbs (N1 = delegate, G1-gated)
+    } else if (strcmp(type, "LadrunoParallelRCM") == 0) {
+
+        theNumberer = (DOF_Numberer*)OPS_LadrunoParallelRCM();
+
+    } else if (strcmp(type, "LadrunoParallelPlain") == 0) {
+
+        theNumberer = (DOF_Numberer*)OPS_LadrunoParallelPlain();
 
     } else {
     	opserr<<"WARNING unknown numberer type "<<type<<"\n";
@@ -1760,6 +1801,9 @@ int OPS_Integrator()
 
     } else if (strcmp(type,"LadrunoArcLength") == 0) {   // Ladruno
 	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
+    } else if (strcmp(type,"LadrunoLoadControl") == 0) {   // Ladruno (ADR-80 S1)
+	si = (StaticIntegrator*)OPS_LadrunoLoadControl();
 
     } else if (strcmp(type,"LadrunoIndirectControl") == 0) {   // Ladruno
 	si = (StaticIntegrator*)OPS_LadrunoIndirectControl();
@@ -2008,11 +2052,22 @@ int OPS_Algorithm()
 	opserr<<"WARNING unknown algorithm type "<<type<<"\n";
     }
 
-    // set algorithm
-    if (theAlgo != 0) {
-	if (cmds != 0) {
-	    cmds->setAlgorithm(theAlgo);
-	}
+    // Ladruno ADR-76 (adversarial review): a null factory result must be an ERROR.
+    //
+    // This used to fall through to `return 0`, i.e. openseespy reported SUCCESS
+    // while silently leaving the PREVIOUS algorithm in force — a wrong-answer
+    // path with no Python exception. Every algorithm factory can return null on
+    // a bad option (OPS_ModifiedNewton, OPS_NewtonRaphsonAlgorithm:85,
+    // OPS_ExpressNewton:64/71, ...), so fixing it HERE closes the hole for all of
+    // them at once. The classic Tcl path never had this bug — commands.cpp:4469
+    // already does `if (theNewtonAlgo == 0) return TCL_ERROR` — so this restores
+    // parity rather than inventing a new behaviour.
+    if (theAlgo == 0) {
+	opserr << "WARNING failed to create the algorithm - previous algorithm left unchanged\n";
+	return -1;
+    }
+    if (cmds != 0) {
+	cmds->setAlgorithm(theAlgo);
     }
 
     return 0;
@@ -2307,6 +2362,47 @@ static int OPS_eigenFeast()
     return 0;
 }
 
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+// LADRUNO ADR 1000: the independent two-level CMS command consumes every
+// remaining token, including the final numModes, through its tested parser.
+static int OPS_eigenLadrunoCMS()
+{
+    std::vector<std::string> arguments;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        char argumentBuffer[128];
+        const char *argument = OPS_GetStringFromAll(
+            argumentBuffer, static_cast<int>(sizeof(argumentBuffer)));
+        if (argument == nullptr) {
+            opserr << "WARNING eigen -ladrunoCMS: invalid argument type" << endln;
+            return -1;
+        }
+        arguments.emplace_back(argument);
+    }
+    ladruno_cms::Options options;
+    int numberOfModes = 0;
+    std::string message;
+    if (ladruno_cms::parseCommandOptions(
+            arguments, options, numberOfModes, message) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+        return -1;
+    }
+    int worldSize = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+    if (options.validate(worldSize, numberOfModes, message) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+        return -1;
+    }
+    LadrunoCMSEigenSolver *solver = new LadrunoCMSEigenSolver();
+    LadrunoCMSEigenSOE *soe = new LadrunoCMSEigenSOE(*solver, options);
+    cmds->setNumEigen(numberOfModes);
+    if (cmds->eigen(EigenSOE_TAGS_LadrunoCMS, 0.0, true, true, soe) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: analysis failed" << endln;
+        return -1;
+    }
+    return 0;
+}
+#endif
+
 int OPS_eigenAnalysis()
 {
     static bool warning_displayed = false;
@@ -2380,6 +2476,13 @@ int OPS_eigenAnalysis()
         // (a frequency band instead of a mode count)
         return OPS_eigenFeast();
     }
+
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+    else if ((strcmp(type, "-ladrunoCMS") == 0) ||
+             (strcmp(type, "ladrunoCMS") == 0)) {
+        return OPS_eigenLadrunoCMS();
+    }
+#endif
 
     else if (strcmp(type,"PythonSparse") == 0) {
         pythonSparseEigen = true;
@@ -3401,6 +3504,65 @@ int OPS_getCTestIter()
     return -1;
 }
 
+// Ladruno (ADR-80 S1): runtime control of the active LadrunoLoadControl.
+// WHY THIS EXISTS. `integrator LadrunoLoadControl ...` CONSTRUCTS A NEW OBJECT,
+// so a caller-driven adaptive ladder that re-issues it every step destroys the
+// predictor state and the predictor never fires -- measured, not theorised
+// (80c: frac=1 was byte-identical to frac=0 under that idiom). Resize the step
+// through this command instead and the object, and its prediction, survive:
+//   ok = analyze(1)
+//   while ok != 0:
+//       ladrunoLoadControl('setDeltaLambda', dl*0.5);  ok = analyze(1)
+// Subcommands: setDeltaLambda v | deltaLambda | extrapolate | armed
+// With no subcommand returns deltaLambda.
+int OPS_LadrunoLoadControlCmd()
+{
+    if (cmds == 0) return 0;
+    StaticIntegrator *si = cmds->getStaticIntegrator();
+    if (si == 0 || si->getClassTag() != INTEGRATOR_TAGS_LadrunoLoadControl) {
+        opserr << "WARNING ladrunoLoadControl - the active static integrator is not a LadrunoLoadControl (set `integrator LadrunoLoadControl ...` first)\n";
+        return -1;
+    }
+    LadrunoLoadControl *lc = (LadrunoLoadControl *)si;
+
+    double out;
+    int numData = 1;
+
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        out = lc->getDeltaLambda();
+        if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+        return 0;
+    }
+
+    const char *sub = OPS_GetString();
+
+    if (strcmp(sub, "setDeltaLambda") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING ladrunoLoadControl setDeltaLambda - needs a value\n";
+            return -1;
+        }
+        double v;
+        if (OPS_GetDoubleInput(&numData, &v) < 0) {
+            opserr << "WARNING ladrunoLoadControl setDeltaLambda - bad value\n";
+            return -1;
+        }
+        lc->setDeltaLambda(v);
+        out = lc->getDeltaLambda();
+        if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+        return 0;
+    }
+
+    if (strcmp(sub, "deltaLambda") == 0)      out = lc->getDeltaLambda();
+    else if (strcmp(sub, "extrapolate") == 0) out = lc->getExtrapolate();
+    else if (strcmp(sub, "armed") == 0)       out = lc->predictorArmed() ? 1.0 : 0.0;
+    else {
+        opserr << "WARNING ladrunoLoadControl - unknown subcommand (want setDeltaLambda|deltaLambda|extrapolate|armed)\n";
+        return -1;
+    }
+    if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+    return 0;
+}
+
 // Ladruno: runtime control of the active LadrunoArcLength static integrator
 // (Layer-B cut-and-retry, ADR-20 §4.3). Exposes the scalar radius mutators and
 // read-only state to a script so a failed step can be re-attempted without
@@ -3666,7 +3828,7 @@ int OPS_profiler()
 {
     if (cmds == 0) return 0;
     if (OPS_GetNumRemainingInputArgs() < 1) {
-        opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+        opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|checkpoint|memory\n";
         return -1;
     }
     const char* sub = OPS_GetString();
@@ -3704,6 +3866,7 @@ int OPS_profiler()
         ops_profiler::RunMeta meta = P.buildMeta();
         LinearSOE* theSOE = cmds->getSOE();                 // P0#2: nDOF normalizer
         if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        ops_profiler_fillModelMeta(meta, cmds->getDomain());   // Ladruno ADR-75 P1i
 
         // Ladruno: populate the run-header identity (algorithm / integrator /
         // solver names) + the explicit-dynamics dt_cr lever (P0#5). The names are
@@ -3748,6 +3911,78 @@ int OPS_profiler()
         return 0;
     }
 
+    // Ladruno (ADR-74 pre-G3 hardening): mid-run snapshot; see the classic-Tcl
+    // twin in tcl/commands.cpp for the full rationale. Overwrites via tmp+rename.
+    if (strcmp(sub, "checkpoint") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING profiler checkpoint <filename> [-run <id>]\n";
+            return -1;
+        }
+        const char* fname = OPS_GetString();
+        const char* runid = "run0";
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char* opt = OPS_GetString();
+            if (strcmp(opt, "-run") == 0 && OPS_GetNumRemainingInputArgs() > 0)
+                runid = OPS_GetString();
+        }
+        const ops_profiler::ProfileNode& rollup = P.mergedRollup(true);
+        ops_profiler::RunMeta meta = P.buildMeta();
+        LinearSOE* theSOE = cmds->getSOE();
+        if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        ops_profiler_fillModelMeta(meta, cmds->getDomain());   // Ladruno ADR-75 P1i
+        meta.algorithm  = cmds->getAlgorithmName();
+        meta.solver     = cmds->getSolverName();
+        meta.integrator = cmds->getIntegratorName();
+        TransientIntegrator* theTI = cmds->getTransientIntegrator();
+        if (theTI != 0) {
+            const double dtcr = theTI->getCriticalTimeStep();
+            if (dtcr > 0.0) {
+                meta.dt_cr = dtcr;
+                if (meta.dt_max > 0.0)
+                    meta.oversample_ratio = dtcr / meta.dt_max;
+            }
+        }
+        ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+        const ops_profiler::Series& ser = P.series();
+
+        std::string tmpname = std::string(fname) + ".tmp";
+        // Ladruno (ADR-74 review A2): writer appends to an existing file, so a
+        // stale .tmp we fail to clear wedges every future checkpoint behind a
+        // misleading "writeRun failed". Detect the failed clear, report the cause.
+        remove(tmpname.c_str());               // stale tmp from a prior kill
+        { FILE* stale = fopen(tmpname.c_str(), "rb");
+          if (stale != 0) {
+              fclose(stale);
+              opserr << "WARNING profiler checkpoint - could not clear stale '"
+                     << tmpname.c_str() << "' (locked or permission-denied); skipping "
+                     << "this checkpoint so the last good '" << fname << "' is preserved\n";
+              return -1;
+          }
+        }
+        ops_profiler::ProfilerHDF5Writer w;
+        if (!w.open(tmpname.c_str())) {
+            opserr << "WARNING profiler checkpoint - could not open '" << tmpname.c_str() << "'\n";
+            return -1;
+        }
+        bool ok = w.writeRun(runid, rollup, meta,
+                             (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                             snap);
+        w.close();
+        if (!ok) {
+            opserr << "WARNING profiler checkpoint - writeRun failed for '" << tmpname.c_str() << "'\n";
+            return -1;
+        }
+        if (rename(tmpname.c_str(), fname) != 0) {        // Windows: no replace-existing
+            remove(fname);
+            if (rename(tmpname.c_str(), fname) != 0) {
+                opserr << "WARNING profiler checkpoint - could not move '" << tmpname.c_str()
+                       << "' over '" << fname << "' (snapshot left at the .tmp name)\n";
+                return -1;
+            }
+        }
+        return 0;
+    }
+
     if (strcmp(sub, "memory") == 0) {
         ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
         int value   = (int) snap.peak_bytes;                // v1: peak bytes as int
@@ -3761,6 +3996,133 @@ int OPS_profiler()
 
     opserr << "WARNING profiler - unknown subcommand '" << sub << "'\n";
     return -1;
+}
+
+// Ladruno (ADR-73 P2): LadrunoStaggeredAnalyze — the iterated fixed-stress driver
+// for LadrunoPorousOverlay. TRANSIENT-only. Two forms:
+//   LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
+//     -> int return (0 / negative, the `analyze` convention)
+//   LadrunoStaggeredAnalyze -stats
+//     -> {nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}
+//        (last run's telemetry; zeros before any run)
+int OPS_LadrunoStaggeredAnalyze()
+{
+    if (cmds == 0) return 0;
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- expected `$n $dt "
+                  "<-tol $t> <-maxIter $k> <-pScale $s> <-verbose>` or `-stats`\n";
+        return -1;
+    }
+
+    // peek the first token (must be OPS_GetStringFromAll — under openseespy a
+    // bare-int arg makes OPS_GetString return "Invalid String Input!").
+    char firstBuf[64];
+    const char* first = OPS_GetStringFromAll(firstBuf, 64);
+    if (first == 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- could not read the first argument\n";
+        return -1;
+    }
+
+    // ---- `-stats` form: return the last run's telemetry list -----------------
+    if (strcmp(first, "-stats") == 0) {
+        const ladruno_overlay::LadrunoStaggeredStats& st =
+            ladruno_overlay::LadrunoStaggeredLastStats();
+        double out[6];
+        out[0] = (double)st.nSteps;
+        out[1] = (double)st.totalFluidSolves;
+        out[2] = st.meanIters;
+        out[3] = (double)st.maxIters;
+        out[4] = st.lastResidual;
+        out[5] = st.maxResidual;
+        int numdata = 6;
+        if (OPS_SetDoubleOutput(&numdata, out, false) < 0) {
+            opserr << "WARNING LadrunoStaggeredAnalyze -stats -- failed to set output\n";
+            return -1;
+        }
+        return 0;
+    }
+
+    // ---- analyze form: the first token was $n; put it back and read it as int --
+    OPS_ResetCurrentInputArg(-1);
+    int nSteps = 0;
+    int numdata = 1;
+    if (OPS_GetIntInput(&numdata, &nSteps) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- invalid numSteps\n";
+        return -1;
+    }
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- need `$n $dt ...` (dt missing)\n";
+        return -1;
+    }
+    double dt = 0.0;
+    if (OPS_GetDoubleInput(&numdata, &dt) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- invalid dt\n";
+        return -1;
+    }
+
+    double tol = 1e-6, pScale = 1.0;
+    int    maxIter = 500;
+    bool   verbose = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        if (strcmp(opt, "-tol") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetDoubleInput(&numdata, &tol) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -tol needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-maxIter") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetIntInput(&numdata, &maxIter) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -maxIter needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-pScale") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetDoubleInput(&numdata, &pScale) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -pScale needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-verbose") == 0) {
+            verbose = true;
+        } else {
+            opserr << "WARNING LadrunoStaggeredAnalyze -- unknown option '"
+                   << opt << "'\n";
+            return -1;
+        }
+    }
+
+    // TRANSIENT-only (⟨A-3⟩): a static analysis is a hard fatal. Mirror
+    // OPS_analyze's dispatch — creating a transient analysis nulls the static one.
+    if (cmds->getStaticAnalysis() != 0) {
+        opserr << "ERROR LadrunoStaggeredAnalyze -- a static analysis is active. "
+                  "The driver is TRANSIENT-only: under a static analysis the domain "
+                  "\"time\" is the load factor and an iterated dLambda fluid march is "
+                  "silently wrong physics (ADR-73 A-3). Build a transient analysis, "
+                  "or use -staticMode hold|steady on the overlay.\n";
+        return -1;
+    }
+    DirectIntegrationAnalysis* dia = cmds->getTransientAnalysis();
+    if (dia == 0) {
+        opserr << "ERROR LadrunoStaggeredAnalyze -- no transient analysis has been "
+                  "constructed (need `analysis Transient` first)\n";
+        return -1;
+    }
+    Domain* domain = cmds->getDomain();
+
+    int result = ladruno_overlay::LadrunoStaggeredRun(
+        dia, domain, nSteps, dt, tol, maxIter, pScale, verbose);
+
+    if (result < 0)
+        opserr << "OpenSees > LadrunoStaggeredAnalyze failed, returned: " << result
+               << " error flag\n";
+
+    numdata = 1;
+    if (OPS_SetIntOutput(&numdata, &result, true) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- failed to set output\n";
+        return -1;
+    }
+    return 0;
 }
 
 int OPS_modalDamping()
@@ -4474,6 +4836,54 @@ void* OPS_ParallelRCM() {
 
 }
 
+// Ladruno (ADR-74): factory twins of OPS_ParallelRCM for the O(V) numberer.
+void* OPS_LadrunoParallelRCM() {
+
+#ifdef _PARALLEL_INTERPRETERS
+    LadrunoParallelNumberer *theLadrunoNumberer = 0;
+    if (cmds == 0) return theLadrunoNumberer;
+
+    MachineBroker* machine = cmds->getMachineBroker();
+    Channel** channels = cmds->getChannels();
+    int numChannels = cmds->getNumChannels();
+
+    int rank = machine->getPID();
+
+    RCM *theRCM = new RCM(false);
+    theLadrunoNumberer = new LadrunoParallelNumberer(*theRCM);
+    theLadrunoNumberer->setProcessID(rank);
+    theLadrunoNumberer->setChannels(numChannels, channels);
+
+    return theLadrunoNumberer;
+#else
+    return 0;
+#endif
+
+}
+
+void* OPS_LadrunoParallelPlain() {
+
+#ifdef _PARALLEL_INTERPRETERS
+    LadrunoParallelNumberer *theLadrunoNumberer = 0;
+    if (cmds == 0) return theLadrunoNumberer;
+
+    MachineBroker* machine = cmds->getMachineBroker();
+    Channel** channels = cmds->getChannels();
+    int numChannels = cmds->getNumChannels();
+
+    int rank = machine->getPID();
+
+    theLadrunoNumberer = new LadrunoParallelNumberer();
+    theLadrunoNumberer->setProcessID(rank);
+    theLadrunoNumberer->setChannels(numChannels, channels);
+
+    return theLadrunoNumberer;
+#else
+    return 0;
+#endif
+
+}
+
 void* OPS_ParallelNumberer() {
 
 #ifdef _PARALLEL_INTERPRETERS
@@ -4555,16 +4965,129 @@ void* OPS_ParallelDisplacementControl() {
 
 }
 
+// Ladruno ADR-75 P1b: `system Pardiso`.
+//
+// Threading is deliberately NOT an option here: MKL takes its thread count from
+// MKL_NUM_THREADS / OMP_NUM_THREADS (set before the process starts), which is
+// the documented mechanism and keeps this free of <mkl_service.h>. Note the
+// solver itself threads only the FACTOR/SOLVE — assembly and element state
+// determination stay single-threaded (ADR-75 Lane 3 is the axis for those), so
+// expect a win only on solve-bound models (the 3D-solid lane).
+//
+// Ladruno ADR-75 P1d: `-matrixType 0|1|2` selects the factorization mode, using
+// the SAME numbering as `system Mumps -matrixType`:
+//
+//   0  unsymmetric        (default)  full CSR,             PARDISO mtype  11
+//   1  symmetric pos.def.            upper-triangle CSR,   PARDISO mtype   2
+//   2  symmetric general              upper-triangle CSR,   PARDISO mtype  -2
+//
+// `-symmetric` is an alias for 2 and `-spd` for 1. Type 2 (indefinite, LDL^T
+// with Bunch-Kaufman pivoting) is the right symmetric choice for structural
+// tangents — a softening or buckling model IS indefinite and type 1 will fail
+// on it with a zero pivot.
+//
+// The default stays UNSYMMETRIC on purpose. ADR-75 §3 requires the symmetric
+// win to be measured rather than assumed: the one symmetric solver already
+// measurable in this fork (`SparseSYM`) is 2.10x SLOWER than unsymmetric
+// UmfPack on Lane B. And the fork's contact / non-associated-flow / follower-
+// load tangents are genuinely unsymmetric, where half-storage silently solves
+// the WRONG system (only the col >= row half is read — see PARDISOGenLinSOE.h).
+void* OPS_PARDISOGenLinSolver() {
+#ifdef _PARDISO
+    int matType = 0;      // Ladruno ADR-75 P1d: unsymmetric unless asked
+    int statsFlag = 0;    // Ladruno ADR-75 P1d: -stats dumps PARDISO memory
+    int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
+
+    // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
+    // bare flags (-symmetric/-spd/-stats) take no value, so a "> 1" bound would
+    // silently drop a trailing one.
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        int num = 1;
+        if (strcmp(opt, "-matrixType") == 0) {
+            // Ladruno ADR-75 P1d: a parse failure must NOT return 0 here.
+            // Returning 0 leaves `theSOE` null, and OpenSees then falls back to
+            // the DEFAULT ProfileSPDLinSOE with only a warning — on a 3D solid
+            // mesh that is catastrophically slow (skyline storage), so the run
+            // appears to work and silently reports a different solver's cost.
+            // Found the hard way: openseespy `system('Pardiso','-matrixType','2')`
+            // with a STRING value fails OPS_GetIntInput and sent a Lane-B bench
+            // into ProfileSPD for 25 minutes. Degrade to unsymmetric instead —
+            // which is what the warning has always claimed. (`system Mumps` has
+            // the same self-contradictory return-0-after-"assumed" path.)
+            if (OPS_GetIntInput(&num, &matType) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -matrixType "
+                          "(pass it as an INT, not a string). Unsymmetric "
+                          "matrix assumed\n";
+                matType = 0;
+                continue;
+            }
+            if (matType < 0 || matType > 2) {
+                opserr << "WARNING system Pardiso - wrong -matrixType value ("
+                       << matType << "). Unsymmetric matrix assumed\n";
+                matType = 0;
+            }
+        } else if (strcmp(opt, "-symmetric") == 0) {
+            matType = 2;
+        } else if (strcmp(opt, "-spd") == 0) {
+            matType = 1;
+        } else if (strcmp(opt, "-stats") == 0) {
+            statsFlag = 1;      // bare flag — consumes no value
+        } else if (strcmp(opt, "-krylov") == 0) {
+            // Ladruno ADR-75 P1e: takes an INT (Intel's L, eps_CGS = 10^-L).
+            // Deliberately value-taking rather than a bare flag with a default:
+            // the useful L is model-dependent, and the same "degrade, never
+            // return 0" rule as -matrixType applies to a parse failure.
+            if (OPS_GetIntInput(&num, &krylovDigits) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -krylov "
+                          "digits (pass an INT, e.g. -krylov 6). CGS "
+                          "preconditioning disabled\n";
+                krylovDigits = 0;
+                continue;
+            }
+        } else {
+            opserr << "WARNING system Pardiso - unknown option " << opt
+                   << ", ignored\n";
+        }
+    }
+
+    // NB: `theSOE` is a MEMBER of OpenSeesCommands (OpenSeesCommands.h:178), not
+    // a file-scope global, so a free factory like this one cannot assign it —
+    // the caller stores what we return. (The serial `#else` branch of
+    // OPS_MumpsSolver() below still does `theSOE = new MumpsSOE(...)`, which is
+    // the same undeclared-identifier bug; it survives only because _MUMPS is
+    // never defined without _PARALLEL_INTERPRETERS — i.e. more evidence the
+    // serial MUMPS path has never been compiled. Ladruno ADR-75.)
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    theSolver->setStats(statsFlag);
+    theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
+    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    return thePardisoSOE;
+#else
+    opserr << "WARNING system Pardiso - this build has no MKL; "
+              "use UmfPack (or rebuild with MKL)\n";
+    return 0;
+#endif
+}
+
 void* OPS_MumpsSolver() {
     int icntl14 = 20;
     int icntl7 = 7;
     int matType = 0; // 0: unsymmetric, 1: symmetric positive definite, 2: symmetric general
     int commColor = -1;        // Ladruno ADR43 P3a: -commSplit color (>=0 enables)
+    int icntl35 = 0;           // Ladruno ADR-75 P2: BLR off by default
+    double cntl7 = 0.0;        // Ladruno ADR-75 P2: BLR dropping tolerance
+    int mumpsStats = 0;        // Ladruno ADR-75 P2b: -stats dumps INFOG/RINFOG
     // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
     // when exactly one "-opt value" pair remained (the common openseespy
-    // system('Mumps','-ICNTL14',n) spelling) — every option needs opt+value,
-    // so "> 1" is the correct bound.
-    while (OPS_GetNumRemainingInputArgs() > 1) {
+    // system('Mumps','-ICNTL14',n) spelling) — every option needed opt+value,
+    // so "> 1" was the correct bound at the time.
+    // Ladruno ADR-75 P2b: that "every option takes a value" premise no longer
+    // holds — `-stats` is a bare FLAG, and with "> 1" a trailing `-stats` (the
+    // natural place to put it) would never be parsed. "> 0" is now correct: a
+    // value-taking option still reads its value inside the body, and the loop
+    // simply re-checks afterwards.
+    while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetString();
         int num = 1;
         if (strcmp(opt, "-ICNTL14") == 0) {
@@ -4585,6 +5108,37 @@ void* OPS_MumpsSolver() {
             if (matType < 0 || matType > 2) {
                 opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
                 matType = 0;
+            }
+        } else if (strcmp(opt, "-BLR") == 0) {
+            // Ladruno ADR-75 P2: `-BLR <eps>` turns on Block Low-Rank
+            // compression of the factors with dropping tolerance eps (e.g.
+            // 1e-9). ADR-75 P1c measured memory -- not time -- as the binding
+            // constraint on large 3D solid models, and BLR is the cheapest
+            // relief. NOTE: BLR is an APPROXIMATE factorization; it must stay
+            // off for byte-identical/oracle lanes. Experts can instead drive
+            // -ICNTL35/-CNTL7 directly.
+            if (OPS_GetDoubleInput(&num, &cntl7) < 0) {
+                opserr << "WARNING: failed to get -BLR tolerance\n";
+                return 0;
+            }
+            if (cntl7 < 0.0) {
+                opserr << "WARNING: -BLR tolerance must be >= 0\n";
+                return 0;
+            }
+            icntl35 = 1;   // BLR factorization + solve
+        } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-mumpsStats") == 0) {
+            // Ladruno ADR-75 P2b: no value token -- consume nothing further.
+            mumpsStats = 1;
+            continue;
+        } else if (strcmp(opt, "-ICNTL35") == 0) {
+            if (OPS_GetIntInput(&num, &icntl35) < 0) {
+                opserr << "WARNING: failed to get icntl35\n";
+                return 0;
+            }
+        } else if (strcmp(opt, "-CNTL7") == 0) {
+            if (OPS_GetDoubleInput(&num, &cntl7) < 0) {
+                opserr << "WARNING: failed to get cntl7\n";
+                return 0;
             }
         } else if (strcmp(opt, "-commSplit") == 0) {
             // Ladruno ADR43 P3a: split MPI_COMM_WORLD by color; this rank's
@@ -4608,7 +5162,9 @@ void* OPS_MumpsSolver() {
 #ifdef _MUMPS
     MumpsParallelSOE* soe = 0;
 
-    MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14);
+    MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14,
+							 icntl35, cntl7,
+							 mumpsStats);
     soe = new MumpsParallelSOE(*solver, matType);
 
     if (commColor >= 0) {

@@ -110,6 +110,7 @@ class LadrunoBrick : public Element {
   // Ladruno (ADR-68 T7): toggle the residual inertia no-op skip (default on).
   // Transient perf flag, set by the parser (-noInertiaSkip); NOT serialized.
   void setInertiaSkip(bool s) { inertiaSkip = s; }
+  void setMassCache(bool s) { massCache = s; }   // Ladruno (ADR-77 T2/G2): escape = -noMassCache
 
   // domain
   void setDomain(Domain *theDomain);
@@ -202,6 +203,16 @@ class LadrunoBrick : public Element {
 
   Vector *load;
   Matrix *Ki;
+  // Ladruno (ADR-77 T2/G2): per-instance mass-matrix cache, the Ki idiom applied
+  // to M. Guards hold the ONLY mutable inputs of formInertiaTerms(1) -- per-GP
+  // rho (mutable via material setParameter "rho") and nodal coords (mutable via
+  // setNodeCoord) -- compared on every getMass() call, so invariance is CHECKED,
+  // never assumed (ADR-76 App. A.4). ~4.6 KB + 256 B per element. Not serialized
+  // (same policy as inertiaSkip; the cache re-forms on first use after recv).
+  Matrix *Mi;
+  double MiRho[8];                    // guard: per-GP rho at cache fill
+  double MiCrd[24];                   // guard: nodal coords at cache fill
+  bool massCache;                     // default true; escape = -noMassCache
   int massType;                       // 0 consistent, 1 lumped
   bool inertiaSkip;                   // Ladruno (ADR-68 T7): skip the residual (tangFlag==0) inertia pass when every nodal trial accel is exactly 0 (CDL Azero); default true, not serialized
 
@@ -218,6 +229,16 @@ class LadrunoBrick : public Element {
   // original constant elastic Kstab). Not serialized — rebuilt in setDomain on the
   // receive side.  // Ladruno
   Response *damageResponse;
+
+  // -geom hypo per-GP state (ADR 79 §3/§6): the accumulated feed strain handed
+  // to setTrialStrain (Voigt, engineering shear, unrotated material frame).
+  // hypoFeed is the trial (rewritten from committed state every updateHypo, so
+  // Newton iterations never double-accumulate); hypoFeedCommit is the ONLY
+  // persistent hypo state — advanced by commitState, restored by
+  // revertToLastCommit, zeroed by revertToStart, shipped by sendSelf as a
+  // guarded Vector(48) (non-hypo streams are byte-identical).  // Ladruno
+  double hypoFeed[8][6];
+  double hypoFeedCommit[8][6];
 
   // Geometry-method layer (seam 2/3). v1 = SolidTransformationLinear (identity):
   // localizeDisp / globalizeForce / globalizeStiff are pass-throughs, so routing
@@ -255,6 +276,17 @@ class LadrunoBrick : public Element {
   // F per GP, drives the material via setTrialF(F), and assembles the spatial
   // internal force + material tangent + geometric (initial-stress) stiffness.  // Ladruno
   bool isFinite(void) const;
+
+  // -geom hypo (v4, ADR 79): hypoelastic rate-form updated-Lagrangian — large
+  // strain with an UNCHANGED small-strain material. Per GP the Hughes–Winget
+  // midpoint objective strain increment is de-rotated into the fixed unrotated
+  // (Green–Naghdi) material frame (LadrunoHypoKernel.h), accumulated into
+  // hypoFeed and fed via setTrialStrain; assembly pushes the material stress /
+  // tangent forward with R = polar(F) on the current configuration and adds
+  // the standard symmetric initial-stress term ∫GᵀΣG dv.  // Ladruno
+  bool isHypo(void) const;
+  int  updateHypo(void);
+  void formResidAndTangentHypo(int tang_flag);
 
   // True for the single-integration-point formulations (ssp, uri with stiffness
   // or viscous hourglass): the constitutive response is evaluated ONCE at the

@@ -96,15 +96,23 @@ TransientIntegrator::formTangent(int statFlag)
 
 
     // loop through the DOF_Groups and add the unbalance
+    // Ladruno ADR-77 T0: this loop carries the NODAL mass/damping into A and exists
+    // ONLY on the transient path (IncrementalIntegrator::formTangent has no DOF_Group
+    // loop at all). It is not element-keyed, so it gets a coarse scope rather than the
+    // deep per-classTag treatment the element loop below gets — without it the step
+    // anatomy silently attributes nodal-mass time to "the rest of formTangent".
+    {
+    OPS_PROFILE_SCOPE("dof.tangent");   // Ladruno ADR-77 T0
     DOF_GrpIter &theDOFs = theModel->getDOFs();
     DOF_Group *dofPtr;
-    
+
     while ((dofPtr = theDOFs()) != 0) {
 	if (theLinSOE->addA(dofPtr->getTangent(this),dofPtr->getID()) <0) {
 	    opserr << "TransientIntegrator::formTangent() - failed to addA:dof\n";
 	    result = -1;
 	}
-    }    
+    }
+    }
 
     // loop through the FE_Elements getting them to add the tangent
     // Ladruno P3: deep per-element-type tangent timing (transient path; the DOF_Group

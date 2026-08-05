@@ -821,7 +821,7 @@ FourNodeQuad3d::sendSelf(int commitTag, Channel &theChannel)
   
   // Quad packs its data into a Vector and sends this to theChannel
   // along with its dbTag and the commitTag passed in the arguments
-  static Vector data(10);
+  static Vector data(11); // Ladruno: grew 10->11 to carry element rho
   data(0) = this->getTag();
   data(1) = thickness;
   data(3) = b[0];
@@ -832,7 +832,8 @@ FourNodeQuad3d::sendSelf(int commitTag, Channel &theChannel)
   data(7) = betaK;
   data(8) = betaK0;
   data(9) = betaKc;
-  
+  data(10) = rho; // Ladruno: serialize element rho
+
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING FourNodeQuad3d::sendSelf() - " << this->getTag() << " failed to send Vector\n";
@@ -892,7 +893,7 @@ FourNodeQuad3d::recvSelf(int commitTag, Channel &theChannel,
 
   // Quad creates a Vector, receives the Vector and then sets the 
   // internal data with the data in the Vector
-  static Vector data(10);
+  static Vector data(11); // Ladruno: grew 10->11 to carry element rho
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING FourNodeQuad3d::recvSelf() - failed to receive Vector\n";
@@ -909,6 +910,7 @@ FourNodeQuad3d::recvSelf(int commitTag, Channel &theChannel,
   betaK = data(7);
   betaK0 = data(8);
   betaKc = data(9);
+  rho = data(10); // Ladruno: restore element rho
 
   static ID idData(12);
   // Quad now receives the tags of its four external nodes

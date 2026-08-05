@@ -53,6 +53,7 @@
 #include <Timer.h>
 #include <elementAPI.h>
 #include <string>
+#include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
 
 void *OPS_ExpressNewton()
 {
@@ -104,6 +105,12 @@ ExpressNewton::~ExpressNewton()
 }
 
 int 
+// Ladruno ADR-77 (C0-5): P3 profiler scopes. Profiling-only, zero
+// behaviour change -- OPS_PROFILE_SCOPE is an RAII timer. Only Linear,
+// ModifiedNewton and NewtonRaphson carried these, so every other solution
+// algorithm produced a step the profiler could not decompose (the solve
+// time fell into the unattributed remainder of solveCurrentStep). Shape
+// copied from NewtonRaphson.cpp.
 ExpressNewton::solveCurrentStep(void)
 {
     // set up some pointers and check they are valid
@@ -120,10 +127,12 @@ ExpressNewton::solveCurrentStep(void)
     }
 
 	if (factorOnce != 2) {
+		{ OPS_PROFILE_SCOPE("formTangent");
 		if (theIntegrator->formTangent(HALL_TANGENT, kMultiplier1, kMultiplier2) < 0) {
 		  opserr << "WARNING ExpressNewton::solveCurrentStep() -";
 		  opserr << "the Integrator failed in formTangent()\n";
 		  return -1;
+		}
 		}
 		if (factorOnce == 1)
 			factorOnce = 2;
@@ -131,22 +140,28 @@ ExpressNewton::solveCurrentStep(void)
 
     for (int iter = 0; iter <nIter; ++iter)
     {
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIntegrator->formUnbalance() < 0) {
 	opserr << "WARNING ExpressNewton::solveCurrentStep() -";
 	opserr << "the Integrator failed in formUnbalance()\n";	
 	return -2;
     }
+    }
 
+    { OPS_PROFILE_SCOPE("linearSolve");
     if (theSOE->solve() < 0) {
 	opserr << "WARNING ExpressNewton::solveCurrentStep() -";
 	opserr << "the LinearSOE failed in solve()\n";	
 	return -3;
     }
+    }
 
+    { OPS_PROFILE_SCOPE("update");
     if (theIntegrator->update(theSOE->getX()) < 0) {
 	opserr << "WARNING ExpressNewton::solveCurrentStep() -";
 	opserr << "the Integrator failed in update()\n";	
 	return -4;
+    }
     }
     }
 

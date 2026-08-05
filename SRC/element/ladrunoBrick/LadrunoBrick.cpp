@@ -52,6 +52,7 @@
 #include <shp3d.h>
 #include <Renderer.h>
 #include <ElementResponse.h>
+#include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <Parameter.h>
 #include <ElementalLoad.h>
 
@@ -62,6 +63,7 @@
 #include <Information.h>
 #include <profiler/ProfilerMacros.h>  // Ladruno (ADR-68 T3 drill): brick.geo/brick.inertia deep scopes
 #include <DummyStream.h>
+#include <LadrunoHypoKernel.h>        // Ladruno (ADR 79): -geom hypo objective increment
 
 // Ladruno — Tier-A damage-scaled hourglass stabilization: residual fraction of
 // the elastic Kstab kept in a fully-damaged element so it never goes completely
@@ -125,7 +127,9 @@ LadrunoBrick::LadrunoBrick()
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
-   applyLoad(0), load(0), Ki(0), massType(0),
+   applyLoad(0), load(0), Ki(0),
+   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
+   massType(0),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -148,6 +152,11 @@ LadrunoBrick::LadrunoBrick()
   hgDissipated = 0.0;
   hgPrevValid  = false;
   for (int i = 0; i < 24; i++) uPrevCommit[i] = 0.0;
+
+  // Ladruno (ADR 79) — -geom hypo accumulated feed strain
+  for (int g = 0; g < 8; g++)
+    for (int c = 0; c < 6; c++)
+      hypoFeed[g][c] = hypoFeedCommit[g][c] = 0.0;
 }
 
 //full constructor
@@ -167,7 +176,9 @@ LadrunoBrick::LadrunoBrick(int tag,
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
-   applyLoad(0), load(0), Ki(0), massType(matype),
+   applyLoad(0), load(0), Ki(0),
+   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
+   massType(matype),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -208,6 +219,11 @@ LadrunoBrick::LadrunoBrick(int tag,
   hgPrevValid  = false;
   for (int i = 0; i < 24; i++) uPrevCommit[i] = 0.0;
 
+  // Ladruno (ADR 79) — -geom hypo accumulated feed strain
+  for (int g = 0; g < 8; g++)
+    for (int c = 0; c < 6; c++)
+      hypoFeed[g][c] = hypoFeedCommit[g][c] = 0.0;
+
   if (damping) {
     for (int i = 0; i < 8; i++) {
       theDamping[i] = (*damping).getCopy();
@@ -228,6 +244,7 @@ LadrunoBrick::~LadrunoBrick()
 
   if (load != 0) delete load;
   if (Ki != 0) delete Ki;
+  if (Mi != 0) delete Mi;   // Ladruno (ADR-77 T2/G2)
 
   for (int i = 0; i < 8; i++) {
     if (theDamping[i]) {
@@ -369,6 +386,13 @@ int  LadrunoBrick::commitState(void)
   if (formulation == Formulation::EAS)
     alphaCommit = alpha;
 
+  // Ladruno (ADR 79) — hypo: advance the accumulated feed strain (the trial
+  // value updateHypo computed for the converged state).
+  if (this->isHypo())
+    for (int g = 0; g < 8; g++)
+      for (int c = 0; c < 6; c++)
+        hypoFeedCommit[g][c] = hypoFeed[g][c];
+
   // Ladruno — accumulate viscous-hourglass dissipation. The FB viscous force
   // stores no energy, so we integrate the work done against it over committed
   // steps. The first commit (or the first after a parallel recv) only seeds the
@@ -397,6 +421,10 @@ int  LadrunoBrick::revertToLastCommit(void)
     if (theDamping[i]) success += theDamping[i]->revertToLastCommit();
   if (formulation == Formulation::EAS)   // Ladruno — eas: restore enhanced params
     alpha = alphaCommit;
+  if (this->isHypo())                    // Ladruno (ADR 79) — hypo: restore feed
+    for (int g = 0; g < 8; g++)
+      for (int c = 0; c < 6; c++)
+        hypoFeed[g][c] = hypoFeedCommit[g][c];
   return success;
 }
 
@@ -416,6 +444,11 @@ int  LadrunoBrick::revertToStart(void)
   // Ladruno — eas: reset enhanced parameters to the unstrained state
   alpha.Zero();
   alphaCommit.Zero();
+
+  // Ladruno (ADR 79) — hypo: reset the accumulated feed strain
+  for (int g = 0; g < 8; g++)
+    for (int c = 0; c < 6; c++)
+      hypoFeed[g][c] = hypoFeedCommit[g][c] = 0.0;
 
   return success;
 }
@@ -457,9 +490,63 @@ const Matrix &  LadrunoBrick::getTangentStiff(void)
 }
 
 //mass
+// Ladruno (ADR-77 T2/G2): per-instance mass-matrix cache -- the Ki idiom
+// applied to M. Motivation is measured, not assumed: T2 timed the mass
+// re-formation at 214 ms / 4 steps on the n=15 deck, DOUBLING to 477 ms under
+// alphaM-Rayleigh because Element::getDamp() calls getMass() every iteration
+// on top of the addMtoTang call -- 10.9% of step wall at the 4-thread PARDISO
+// operating point (G2 gate >= 10%, passed).
+//
+// Bit-identity (G-BYTE): the cache returns a byte-copy of a formation whose
+// every input is either immutable (sg/wg/shp3d constants, massType fixed at
+// construction) or GUARDED below -- per-GP rho (mutable via the material's
+// setParameter "rho", e.g. LadrunoJ2.cpp:622) and nodal coordinates via
+// getCrds() (mutable via setNodeCoord; NOTE formInertiaTerms uses getCrds()
+// always, so the mass is reference-configuration BY DESIGN in every
+// formulation including -geom finite -- see the note at formResidAndTangent-
+// Finite). A guard mismatch re-forms and re-fills. So invariance is CHECKED
+// per call (32 double compares, ~ns) rather than assumed (ADR-76 App. A.4);
+// the guard costs ~0.1% of what it saves (~1.5 us per formation).
+//
+// Scope, deliberately narrow: the residual (tangFlag==0) inertia pass is NOT
+// routed through this cache. Two reasons: (i) for massType==1 the residual is
+// consistent-mass-based while M is lumped, so "resid = M*a" would change the
+// answer; (ii) even for massType==0, computing M*a reorders the floating-point
+// accumulation vs the Gauss-loop and breaks bit-identity. That pass is instead
+// covered by the ADR-68 T7 skip where it is provably zero.
+//
+// The cached path also stops returning the CLASS-LEVEL `static Matrix mass`
+// (a shared-static hazard on ADR-75b 5.4's threading blocklist) -- each
+// instance returns its own Mi.
+// Cost: ~4.6 KB + 256 B per element. Escape: element ... -noMassCache.
 const Matrix &  LadrunoBrick::getMass(void)
 {
+  if (massCache && Mi != 0) {
+    bool clean = true;
+    for (int i = 0; i < 8 && clean; i++)
+      if (materialPointers[i]->getRho() != MiRho[i]) clean = false;
+    for (int i = 0; i < 8 && clean; i++) {
+      const Vector &crd = nodePointers[i]->getCrds();
+      if (crd(0) != MiCrd[3*i] || crd(1) != MiCrd[3*i+1] || crd(2) != MiCrd[3*i+2])
+        clean = false;
+    }
+    if (clean)
+      return *Mi;
+    delete Mi;          // guard tripped (rho or coords changed): re-form + re-fill
+    Mi = 0;
+  }
+
   formInertiaTerms(1);
+
+  if (massCache) {
+    Mi = new Matrix(mass);
+    for (int i = 0; i < 8; i++) {
+      MiRho[i] = materialPointers[i]->getRho();
+      const Vector &crd = nodePointers[i]->getCrds();
+      MiCrd[3*i] = crd(0); MiCrd[3*i+1] = crd(1); MiCrd[3*i+2] = crd(2);
+    }
+    return *Mi;
+  }
   return mass;
 }
 
@@ -664,7 +751,10 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
     if (materialPointers[i]->getRho() != 0.0) haveRho = 1;
   if (haveRho == 0) return 0;
 
-  formInertiaTerms(1);
+  // Ladruno (ADR-77 T2/G2): route through getMass() so the cached M is used.
+  // Safe: this function OVERWRITES resid immediately below, so losing
+  // formInertiaTerms(1)'s resid side-effect on a cache hit changes nothing.
+  const Matrix &M = this->getMass();
 
   int count = 0;
   for (int i = 0; i < numberNodes; i++) {
@@ -674,7 +764,7 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
   }
 
   if (load == 0) load = new Vector(numberNodes * ndf);
-  load->addMatrixVector(1.0, mass, resid, -1.0);
+  load->addMatrixVector(1.0, M, resid, -1.0);
   return 0;
 }
 
@@ -833,6 +923,9 @@ LadrunoBrick::update(void)
   if (this->isFinite())          // -geom finite (v3): F-driven, updated-Lagrangian
     return this->updateFinite();
 
+  if (this->isHypo())            // -geom hypo (v4, ADR 79): rate-form UL
+    return this->updateHypo();
+
   // eas (true Simo-Rifai): set the 8 material trial states here (the standard
   // update() contract). formEAStrue(0,...) solves the enhanced parameters alpha by
   // an inner Newton and strains each GP to B*u + M*alpha, so commitState captures
@@ -988,6 +1081,11 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
 {
   if (this->isFinite()) {        // -geom finite (v3): updated-Lagrangian assembly
     this->formResidAndTangentFinite(tang_flag);
+    return;
+  }
+
+  if (this->isHypo()) {          // -geom hypo (v4, ADR 79): rate-form UL assembly
+    this->formResidAndTangentHypo(tang_flag);
     return;
   }
 
@@ -1511,6 +1609,230 @@ LadrunoBrick::formResidAndTangentFinite(int tang_flag)
                   stiff(3 * a + i, 3 * bn + kk)
                     += Lfac[a][i] * (G0[kk][bn] - g[kk][bn]) * dv;
         }
+      }
+      gp++;
+    }
+}
+
+//======================================================================
+// -geom hypo (v4, ADR 79) — hypoelastic rate-form updated-Lagrangian.
+//
+// Large strain with an UNCHANGED small-strain material: per GP the
+// Hughes–Winget midpoint objective strain increment is de-rotated into the
+// FIXED unrotated (Green–Naghdi) material frame (LadrunoHypoKernel.h),
+// accumulated into hypoFeed, and fed via setTrialStrain — the material
+// perceives exactly the objective increment relative to its committed state,
+// and its whole tensorial internal state (backstress, surface centers) lives
+// in that fixed frame, never rotated. Assembly pushes the material stress and
+// 6×6 tangent forward with R = polar(F_trial) and integrates on the CURRENT
+// configuration:
+//     f = ∫ Bᵀσ dv ,   K = ∫ BᵀcB dv + ∫ GᵀΣG dv ,   dv = J dV
+// with the standard SYMMETRIC initial-stress term (K_geo)_{(a,i)(b,k)} =
+// δ_ik ∫ ∂Nₐ/∂x_j σ_jl ∂N_b/∂x_l dv. The rate-convection terms of the exact
+// Green–Naghdi consistent tangent are omitted (O(σ) vs O(C), unsymmetric) —
+// the corot v2.0 "residual exact, tangent dominant-term" policy; K stays
+// symmetric.
+//======================================================================
+bool
+LadrunoBrick::isHypo(void) const
+{
+  return theGeom != 0 &&
+         theGeom->getMethodID() == SolidTransformation::METHOD_HYPO;
+}
+
+// update — hypo: per GP compute the objective increment from the COMMITTED
+// (Node::getDisp) and TRIAL (Node::getTrialDisp) displacements, accumulate,
+// and drive the material. Every Newton iteration recomputes the trial feed
+// from the committed feed — no accumulation-within-iteration hazard.
+int
+LadrunoBrick::updateHypo(void)
+{
+  computeBasis();                          // xl = reference nodal coordinates
+
+  static double shpRef[4][8];              // [0..2]=∂Nₐ/∂X, [3]=Nₐ
+  static double dNdX[24], un[24], u1[24];
+  static Vector strain(6);
+  double detJ0;
+
+  for (int a = 0; a < 8; a++) {
+    const Vector &ud = nodePointers[a]->getDisp();       // committed
+    const Vector &ut = nodePointers[a]->getTrialDisp();  // trial
+    for (int i = 0; i < 3; i++) {
+      un[a*3 + i] = ud(i);
+      u1[a*3 + i] = ut(i);
+    }
+  }
+
+  int gp = 0;
+  for (int i = 0; i < 2; i++)
+    for (int j = 0; j < 2; j++)
+      for (int k = 0; k < 2; k++) {
+        double pt[3] = { sg[i], sg[j], sg[k] };
+        shp3d(pt, detJ0, shpRef, xl);
+        for (int a = 0; a < 8; a++)
+          for (int J = 0; J < 3; J++)
+            dNdX[a*3 + J] = shpRef[J][a];
+
+        double deps[6], R1[9], J1;
+        if (!ladruno_hypo::hypoIncrement(8, dNdX, un, u1, deps, R1, J1)) {
+          opserr << "LadrunoBrick::updateHypo - collapsed/inverted trial or "
+                    "midpoint configuration at GP " << gp << " (element "
+                 << this->getTag() << ", det <= 0)\n";
+          return -1;
+        }
+
+        for (int c = 0; c < 6; c++) {
+          hypoFeed[gp][c] = hypoFeedCommit[gp][c] + deps[c];
+          strain(c) = hypoFeed[gp][c];
+        }
+        if (materialPointers[gp]->setTrialStrain(strain) < 0) {
+          opserr << "LadrunoBrick::updateHypo - setTrialStrain failed at GP "
+                 << gp << " (element " << this->getTag() << ")\n";
+          return -1;
+        }
+        gp++;
+      }
+  return 0;
+}
+
+// formResidAndTangentHypo — current-configuration assembly with the
+// pushed-forward material response (see the block comment above).
+void
+LadrunoBrick::formResidAndTangentHypo(int tang_flag)
+{
+  static const int numberNodes = 8;
+
+  stiff.Zero();
+  resid.Zero();
+  computeBasis();                          // reference coordinates
+
+  static double shpRef[4][8];              // [0..2]=∂Nₐ/∂X, [3]=Nₐ
+  static double dNdX[24], u1[24];
+  static double g[3][8];                   // spatial gradients ∂Nₐ/∂x_j
+
+  for (int a = 0; a < 8; a++) {
+    const Vector &ut = nodePointers[a]->getTrialDisp();
+    for (int i = 0; i < 3; i++)
+      u1[a*3 + i] = ut(i);
+  }
+
+  int gp = 0;
+  for (int gi = 0; gi < 2; gi++)
+   for (int gj = 0; gj < 2; gj++)
+    for (int gk = 0; gk < 2; gk++) {
+      double pt[3] = { sg[gi], sg[gj], sg[gk] };
+      double detJ0;
+      shp3d(pt, detJ0, shpRef, xl);
+      for (int a = 0; a < 8; a++)
+        for (int J = 0; J < 3; J++)
+          dNdX[a*3 + J] = shpRef[J][a];
+
+      // trial deformation gradient, its rotation, and spatial gradients
+      double H1[9], F1[9], Fi[9], R1[9];
+      ladruno_hypo::dispGradient(8, dNdX, u1, H1);
+      for (int n = 0; n < 9; n++) F1[n] = H1[n];
+      F1[0] += 1.0; F1[4] += 1.0; F1[8] += 1.0;
+      double J = ladruno_hypo::inv3(F1, Fi);
+      if (J <= 0.0 || !ladruno_hypo::polar3(F1, R1)) {
+        opserr << "LadrunoBrick::formResidAndTangentHypo - non-positive det F "
+                  "at GP " << gp << " (element " << this->getTag() << ")\n";
+        return;
+      }
+      for (int a = 0; a < numberNodes; a++)
+        for (int j = 0; j < 3; j++) {
+          double s = 0.0;
+          for (int k = 0; k < 3; k++)
+            s += shpRef[k][a] * Fi[3*k + j];      // ∂Nₐ/∂x_j
+          g[j][a] = s;
+        }
+
+      double dv = J * detJ0;                       // current volume (wg = 1)
+
+      // push the material (unrotated-frame) Cauchy stress forward: σ = R σ_mat Rᵀ
+      const Vector &sMatV = materialPointers[gp]->getStress();
+      double sMat[6], sCur[6];
+      for (int c = 0; c < 6; c++) sMat[c] = sMatV(c);
+      ladruno_hypo::pushStress6(R1, sMat, sCur);
+      double sig[3][3];
+      sig[0][0]=sCur[0]; sig[1][1]=sCur[1]; sig[2][2]=sCur[2];
+      sig[0][1]=sig[1][0]=sCur[3];
+      sig[1][2]=sig[2][1]=sCur[4];
+      sig[2][0]=sig[0][2]=sCur[5];
+
+      // residual: f_{a,i} = ∫ σ_ij ∂Nₐ/∂x_j dv  (− body force). Body force is a
+      // dead load per REFERENCE volume (the finite-lane convention, consistent
+      // with the reference-config mass in formInertiaTerms).
+      for (int a = 0; a < numberNodes; a++)
+        for (int i = 0; i < 3; i++) {
+          double fi = 0.0;
+          for (int j = 0; j < 3; j++)
+            fi += sig[i][j] * g[j][a];
+          resid(3*a + i) += fi * dv;
+          if (applyLoad == 0)
+            resid(3*a + i) -= detJ0 * b[i] * shpRef[3][a];
+          else
+            resid(3*a + i) -= detJ0 * appliedB[i] * shpRef[3][a];
+        }
+
+      if (tang_flag == 1) {
+        // material part: push the 6×6 tangent forward (bond rotation, energy-
+        // consistent for the engineering-shear Voigt convention) and contract
+        // with the spatial B built from g.
+        const Matrix &Dm = materialPointers[gp]->getTangent();
+        double Dmat[36], Dcur[36];
+        for (int r = 0; r < 6; r++)
+          for (int c = 0; c < 6; c++)
+            Dmat[6*r + c] = Dm(r, c);
+        ladruno_hypo::pushTangent6(R1, Dmat, Dcur);
+
+        // K_mat via nodal 6×3 B-blocks: B_a rows {xx,yy,zz,xy,yz,zx} from g.
+        // (B(r,i) pattern of computeB, with spatial gradients.)
+        static double Ba[6][3], Bb[6][3], DB[6][3];
+        for (int a = 0; a < numberNodes; a++) {
+          for (int r = 0; r < 6; r++)
+            for (int c = 0; c < 3; c++) Ba[r][c] = 0.0;
+          Ba[0][0] = g[0][a]; Ba[1][1] = g[1][a]; Ba[2][2] = g[2][a];
+          Ba[3][0] = g[1][a]; Ba[3][1] = g[0][a];
+          Ba[4][1] = g[2][a]; Ba[4][2] = g[1][a];
+          Ba[5][0] = g[2][a]; Ba[5][2] = g[0][a];
+
+          for (int bn = 0; bn < numberNodes; bn++) {
+            for (int r = 0; r < 6; r++)
+              for (int c = 0; c < 3; c++) Bb[r][c] = 0.0;
+            Bb[0][0] = g[0][bn]; Bb[1][1] = g[1][bn]; Bb[2][2] = g[2][bn];
+            Bb[3][0] = g[1][bn]; Bb[3][1] = g[0][bn];
+            Bb[4][1] = g[2][bn]; Bb[4][2] = g[1][bn];
+            Bb[5][0] = g[2][bn]; Bb[5][2] = g[0][bn];
+
+            for (int r = 0; r < 6; r++)
+              for (int c = 0; c < 3; c++) {
+                double s = 0.0;
+                for (int q = 0; q < 6; q++)
+                  s += Dcur[6*r + q] * Bb[q][c];
+                DB[r][c] = s;
+              }
+            for (int i = 0; i < 3; i++)
+              for (int k = 0; k < 3; k++) {
+                double s = 0.0;
+                for (int r = 0; r < 6; r++)
+                  s += Ba[r][i] * DB[r][k];
+                stiff(3*a + i, 3*bn + k) += s * dv;
+              }
+          }
+        }
+
+        // geometric / initial-stress term: (K_geo)_{(a,i)(b,k)} =
+        //   δ_ik · ∂Nₐ/∂x_j σ_jl ∂N_b/∂x_l · dv   (symmetric).
+        for (int a = 0; a < numberNodes; a++)
+          for (int bn = 0; bn < numberNodes; bn++) {
+            double s = 0.0;
+            for (int j = 0; j < 3; j++)
+              for (int l = 0; l < 3; l++)
+                s += g[j][a] * sig[j][l] * g[l][bn];
+            s *= dv;
+            for (int i = 0; i < 3; i++)
+              stiff(3*a + i, 3*bn + i) += s;
+          }
       }
       gp++;
     }
@@ -2624,16 +2946,22 @@ LadrunoBrick::buildEAStrue(void)
            - J0(0,1) * (J0(1,0)*J0(2,2) - J0(1,2)*J0(2,0))
            + J0(0,2) * (J0(1,0)*J0(2,1) - J0(1,1)*J0(2,0));
 
-  // Scale-invariant degeneracy test: the dimensionless volume ratio
-  // |det J0| / (||col0|| ||col1|| ||col2||) is 1 for an orthogonal Jacobian and
-  // ->0 only as the three natural axes become coplanar/collinear (a genuinely
-  // flat/degenerate element), independent of element SIZE. An absolute threshold
-  // on |det J0| alone would false-positive a valid but small element (det scales
-  // as L^3), hard-failing e.g. a sub-mm brick in SI-metre coordinates.
+  // Scale-invariant degeneracy test — normalize by max-column CUBED, not the
+  // column product. |det| / (||c0|| ||c1|| ||c2||) detects only axis
+  // collinearity/coplanarity of DIRECTIONS and is BLIND to axis COLLAPSE: a
+  // brick squashed flat leaves one microscopic (fp-residue) column, det and
+  // the column product shrink TOGETHER, the old ratio stays ~1, and
+  // easJ0inv ~ 1/||c_min|| silently NaNs the enhanced Newton (2D twin found by
+  // the post-merge adversarial battery, 2026-07-20; analyze() returned 0 on
+  // NaN). |det| / max_i(||c_i||)^3 = (||c_min|| ||c_mid|| / ||c_max||^2) *
+  // |angle factor| catches collapse AND coplanarity, stays size-invariant, and
+  // passes healthy thin slabs (1e-8-thickness ratio -> 1e-8 >> 1e-10).  // Ladruno
   double col0 = sqrt(J0(0,0)*J0(0,0) + J0(1,0)*J0(1,0) + J0(2,0)*J0(2,0));
   double col1 = sqrt(J0(0,1)*J0(0,1) + J0(1,1)*J0(1,1) + J0(2,1)*J0(2,1));
   double col2 = sqrt(J0(0,2)*J0(0,2) + J0(1,2)*J0(1,2) + J0(2,2)*J0(2,2));
-  double scale = col0 * col1 * col2;
+  double cmax = (col0 > col1) ? col0 : col1;
+  if (col2 > cmax) cmax = col2;
+  double scale = cmax * cmax * cmax;
   easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
   if (easDegenerate) {
     opserr << "WARNING LadrunoBrick::buildEAStrue() - element " << this->getTag()
@@ -2704,6 +3032,13 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   // fixed 1e-10 is unreachable for steel-scale problems (spurious non-convergence).  // Ladruno
   static const double tolRel = 1.0e-8;
   static const double tolAbs = 1.0e-12;
+  // NOISE floor: residE is the near-cancelling sum of per-GP M^T sigma dV terms,
+  // so its entries carry roundoff proportional to the magnitude of those terms
+  // (rScale = sum of per-GP ||M^T sigma dV||). Below tolNoise*rScale the residual
+  // is fp noise, not signal -- without this the fixed tolAbs floor is unreachable
+  // for large-unit (SI steel/soil) models and every assembly re-entry spins the
+  // full maxIters on noise.  // Ladruno
+  static const double tolNoise = 1.0e-12;
 
   if (easJ0det == 0.0) buildEAStrue();       // safety (normally cached in setDomain)
 
@@ -2752,7 +3087,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   static Matrix B(6, 24), M(6, 9);
   static Matrix dd(6, 6), DB(6, 24), DM(6, 9);
   static Matrix Kaa(9, 9), Kda(24, 9), Kad(9, 24), KaaInvKad(9, 24);
-  static Vector residE(9), dalpha(9), strain(6), stress(6);
+  static Vector residE(9), dalpha(9), strain(6), stress(6), contrib(9);
   static double shp[4][8];
 
   // helper macro-ish: build the compatible 6x24 B at the current saved GP `g`
@@ -2794,9 +3129,11 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
   int count = 0;
   double r0 = -1.0;          // first-iteration ||residE|| (sets the relative scale)
+  double rPrev = -1.0;       // previous-iteration ||residE|| (stagnation detection)
   while (true) {
     residE.Zero();
     Kaa.Zero();
+    double rScale = 0.0;       // sum of per-GP ||M^T sigma dV|| (noise scale)
     for (int g = 0; g < 8; g++) {
       for (int p = 0; p < 4; p++) for (int q = 0; q < 8; q++) shp[p][q] = Shape[p][q][g];
       B.Zero();
@@ -2816,15 +3153,28 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       stress *= dvol[g];
       dd = materialPointers[g]->getTangent();
       dd *= dvol[g];
-      residE.addMatrixTransposeVector(1.0, M, stress, -1.0);   // residE += -(M^T sigma)
+      contrib.addMatrixTransposeVector(0.0, M, stress, 1.0);   // M^T sigma (this GP)
+      rScale += contrib.Norm();
+      residE.addVector(1.0, contrib, -1.0);                    // residE += -(M^T sigma)
       DM.addMatrixProduct(0.0, dd, M, 1.0);
       Kaa.addMatrixTransposeProduct(1.0, M, DM, 1.0);          // Kaa += M^T dd M
     }
     double r = residE.Norm();
     if (count == 0) r0 = r;                          // scale from the first residual
-    // converged (after >=1 update): relative to r0, with a tiny absolute floor for
-    // the alpha-already-satisfies (uniform-strain) case where r0 itself is ~0.
-    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+    // converged: relative to r0, with an absolute + scale-aware noise floor.
+    // Tested from count==0 on purpose: formEAStrue re-enters on EVERY assembly
+    // (update() and formResidAndTangent), so it routinely starts from an
+    // already-converged alpha where r0 is at the noise floor; forcing an update
+    // there solves a pure-roundoff RHS and can never satisfy a test with no
+    // reachable floor -- the maxIters warning then fires on every assembly of
+    // every element.
+    if (r <= tolRel * r0 + tolAbs + tolNoise * rScale)
+      break;
+    // stagnation: a step that fails to reduce ||r|| while no worse than entry means
+    // roundoff dominates -- accept best-available alpha silently (the same
+    // acceptance the maxIters path makes) instead of burning the remaining
+    // iterations on noise.
+    if (count >= 1 && r >= rPrev && r <= r0)
       break;
     if (count >= maxIters) {
       // Not propagated as a hard failure: r is typically already within noise
@@ -2846,6 +3196,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       break;
     }
     alpha += dalpha;
+    rPrev = r;
     count++;
   }
 
@@ -3000,6 +3351,21 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     }
   }
 
+  // Ladruno (ADR 79) — hypo: ship the committed accumulated feed strain as an
+  // EXTRA guarded Vector(48), gated on the geometry method id in idData(28)
+  // (the eas-alpha pattern — non-hypo streams stay byte-identical; eas+hypo
+  // cannot co-occur, parser-refused, so the guarded-send order is fixed).
+  if (this->isHypo()) {
+    static Vector hypoData(48);
+    for (int g = 0; g < 8; g++)
+      for (int c = 0; c < 6; c++)
+        hypoData(6*g + c) = hypoFeedCommit[g][c];
+    if (theChannel.sendVector(dataTag, commitTag, hypoData) < 0) {
+      opserr << "LadrunoBrick::sendSelf() - failed to send hypo feed strain\n";
+      return -1;
+    }
+  }
+
   for (int i = 0; i < 8; i++) {
     res += materialPointers[i]->sendSelf(commitTag, theChannel);
     if (res < 0) {
@@ -3092,6 +3458,21 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
     alpha = alphaCommit;
   }
 
+  // Ladruno (ADR 79) — hypo: receive the committed accumulated feed strain
+  // (sent right after the eas slot, before the materials — match that order).
+  // Gated on the geometry method id just decoded; trial = committed (no trial
+  // state survives a migration; the next update recomputes it).
+  if (geomID == SolidTransformation::METHOD_HYPO) {
+    static Vector hypoData(48);
+    if (theChannel.recvVector(dataTag, commitTag, hypoData) < 0) {
+      opserr << "LadrunoBrick::recvSelf() - failed to recv hypo feed strain\n";
+      return -1;
+    }
+    for (int g = 0; g < 8; g++)
+      for (int c = 0; c < 6; c++)
+        hypoFeed[g][c] = hypoFeedCommit[g][c] = hypoData(6*g + c);
+  }
+
   if (materialPointers[0] == 0) {
     for (int i = 0; i < 8; i++) {
       int matClassTag = idData(i);
@@ -3155,6 +3536,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
       }
     }
   }
+
+  // Ladruno (ADR-77 review wave): massType decoded above is guard-exempt
+  // (construction-fixed in normal flows), but a restore into a live element
+  // can flip it with rho and coords unchanged -- a clean-guard hit would then
+  // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
+  if (Mi != 0) { delete Mi; Mi = 0; }
 
   return res;
 }
@@ -3457,6 +3844,8 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
   Response *theResponse = 0;
   char outputData[32];
 
+  if (argc < 1) return 0;
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoBrick");
   output.attr("eleTag", this->getTag());
@@ -3465,7 +3854,7 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.attr(outputData, nodePointers[i - 1]->getTag());
   }
 
-  if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0) {
+  if (LadrunoResp::is(argv[0], "force")) {
     for (int i = 1; i <= 8; i++) {
       sprintf(outputData, "P1_%d", i); output.tag("ResponseType", outputData);
       sprintf(outputData, "P2_%d", i); output.tag("ResponseType", outputData);
@@ -3473,22 +3862,27 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 1, resid);
 
-  } else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stiff")) {
     // full 24x24 tangent — used by the FD-tangent verification (and handy generally).
     theResponse = new ElementResponse(this, 2, Matrix(24, 24));
 
-  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= 8) {
-      // single-point formulations: every GP query resolves to the live slot 0
-      int slot = this->isSinglePoint() ? 0 : pointNum - 1;
-      output.tag("GaussPoint");
-      output.attr("number", pointNum);
-      theResponse = materialPointers[slot]->setResponse(&argv[2], argc - 2, output);
-      output.endTag();
+  } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
+    theResponse = new ElementResponse(this, 10, Matrix(24, 24));
+
+  } else if (LadrunoResp::is(argv[0], "material")) {
+    if (argc > 1) {                        // guard before reading argv[1]
+      int pointNum = atoi(argv[1]);
+      if (pointNum > 0 && pointNum <= 8) {
+        // single-point formulations: every GP query resolves to the live slot 0
+        int slot = this->isSinglePoint() ? 0 : pointNum - 1;
+        output.tag("GaussPoint");
+        output.attr("number", pointNum);
+        theResponse = materialPointers[slot]->setResponse(&argv[2], argc - 2, output);
+        output.endTag();
+      }
     }
 
-  } else if (strcmp(argv[0], "stresses") == 0) {
+  } else if (LadrunoResp::is(argv[0], "stress")) {
     for (int i = 0; i < 8; i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -3506,7 +3900,7 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     }
     theResponse = new ElementResponse(this, 3, Vector(48));
 
-  } else if (strcmp(argv[0], "strains") == 0) {
+  } else if (LadrunoResp::is(argv[0], "strain")) {
     for (int i = 0; i < 8; i++) {
       output.tag("GaussPoint");
       output.attr("number", i + 1);
@@ -3556,24 +3950,25 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.endTag();
     theResponse = new ElementResponse(this, 7, Vector(6));
 
-  } else if (strcmp(argv[0], "hourglassEnergy") == 0 ||
-             strcmp(argv[0], "hgEnergy") == 0 ||
-             strcmp(argv[0], "hourglassWork") == 0 ||
-             strcmp(argv[0], "hourglassDissipation") == 0 ||
-             strcmp(argv[0], "hgDissipation") == 0) {
+  } else if (LadrunoResp::is(argv[0], "hourglassEnergy")) {
     // For uri 'stiffness'/ssp this is the STORED stabilization energy; for uri
     // 'viscous' it is the CUMULATIVE DISSIPATED energy (see hourglassEnergy()).
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));
 
-  } else if (strcmp(argv[0], "charLength") == 0 ||
-             strcmp(argv[0], "characteristicLength") == 0) {
+  } else if (LadrunoResp::is(argv[0], "charLength")) {
     // Ladruno — the element size handed to crack-band materials (= cbrt(V)).
     output.tag("ResponseType", "lch");
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
   output.endTag(); // ElementOutput
+
+  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
+  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
+  // this MUST come after endTag().
+  if (theResponse == 0)
+    return this->Element::setResponse(argv, argc, output);
   return theResponse;
 }
 
@@ -3641,9 +4036,11 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     static Vector lch(1);
     lch(0) = this->getCharacteristicLength();
     return eleInfo.setVector(lch);
-  }
 
-  return -1;
+  } else if (responseID == 10)
+    return eleInfo.setMatrix(this->getInitialStiff());
+
+  return this->Element::getResponse(responseID, eleInfo);
 }
 
 int

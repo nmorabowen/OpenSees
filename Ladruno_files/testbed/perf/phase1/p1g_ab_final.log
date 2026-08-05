@@ -1,0 +1,10 @@
+P1f addA A/B | threads=1 repeats=5 sizes=[15, 20] configs=['umfpack']
+  OLD=C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\ab\base
+  NEW=C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\dist\bin
+
+=== grid 15^3 (~11.5k DOF) ===
+  umfpack old   16.508s  new   15.813s  speedup 1.044x  ux BIT-IDENTICAL
+=== grid 20^3 (~26.5k DOF) ===
+  umfpack old   66.744s  new   64.736s  speedup 1.031x  ux BIT-IDENTICAL
+
+wrote C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\patricio-palacios-prs-17c1e2\Ladruno_files\testbed\perf\phase1\p1f_adda_ab_t1.json

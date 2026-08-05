@@ -63,6 +63,7 @@ void *OPS_LadrunoSolidShell()
 
   // tag + 8 node tags + matTag
   int idata[10];
+  bool massCacheOn = true;   // Ladruno (ADR-77 G2 ext): default on, guard-checked
   int num = 10;
   if (OPS_GetIntInput(&num, idata) < 0) {
     opserr << "WARNING: invalid integer data for LadrunoSolidShell\n";
@@ -132,6 +133,9 @@ void *OPS_LadrunoSolidShell()
     else if (strcmp(opt, "-lumped") == 0) {
       massType = 1;                 // row-sum == HRZ on the trilinear shape (ADR 66 G9)
     }
+    else if (strcmp(opt, "-noMassCache") == 0) {
+      massCacheOn = false;   // Ladruno (ADR-77 G2 ext): A/B escape
+    }
     else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING -geom needs a value for LadrunoSolidShell "
@@ -197,8 +201,10 @@ void *OPS_LadrunoSolidShell()
   }
   delete probe;
 
-  return new LadrunoSolidShell(idata[0],
+  LadrunoSolidShell *theEle = new LadrunoSolidShell(idata[0],
                                idata[1], idata[2], idata[3], idata[4],
                                idata[5], idata[6], idata[7], idata[8],
                                *mat, nz, quadz, formulation, massType);
+  theEle->setMassCache(massCacheOn);   // Ladruno (ADR-77 G2 ext): transient, unserialized
+  return theEle;
 }

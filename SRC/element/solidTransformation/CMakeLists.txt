@@ -13,11 +13,14 @@ target_sources(OPS_Element
     SolidTransformationLinear.cpp
     SolidTransformationFinite.cpp
     SolidTransformationCorot.cpp
+    SolidTransformationHypo.cpp
     PUBLIC
     SolidTransformation.h
     SolidTransformationLinear.h
     SolidTransformationFinite.h
     SolidTransformationCorot.h
+    SolidTransformationHypo.h
+    LadrunoHypoKernel.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})

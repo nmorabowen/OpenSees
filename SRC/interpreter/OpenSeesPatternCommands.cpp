@@ -80,6 +80,12 @@ void* OPS_TimeSeriesIntegrator();
 // so ops.pattern('H5DRM', ...) returned "unknown pattern type" (Tcl-only before).
 void* OPS_H5DRMLoadPattern();
 #endif
+// Ladruno (ADR-73): expose LadrunoPorousOverlay to openseespy. Same OPS_ factory
+// as the Tcl path (OPS_LadrunoPorousOverlay.cpp); here the interpreter has already
+// reset the arg cursor and OPS_GetString() below consumes the type token, so the
+// cursor sits on the tag when the factory runs (identical to the H5DRM wiring).
+// Always built (no _H5DRM-style guard) — the overlay is a core fork feature.
+void* OPS_LadrunoPorousOverlay();
 
 namespace {
     static LoadPattern* theActiveLoadPattern = 0;
@@ -128,6 +134,12 @@ int OPS_Pattern()
 
     }
 #endif
+    // Ladruno (ADR-73): persistent-fluid staggered u-p overlay pattern.
+    else if (strcmp(type, "LadrunoPorousOverlay") == 0) {
+	theActiveLoadPattern = (LoadPattern*)OPS_LadrunoPorousOverlay();
+	pattern = theActiveLoadPattern;
+
+    }
     else {
 	opserr<<"WARNING unknown pattern type"<<type<<"\n";
 	return -1;
@@ -1118,8 +1130,19 @@ int OPS_SP()
 	    isSpConst = true;
 	    
 	} else if (strcmp(type,"-subtractInit") == 0) {
-	  // allow user to ignore init disp values at the node
-	  retZeroInitValue = true;
+	  // Make the imposed value INCREMENTAL from the node's state when the
+	  // constraint entered the domain, so a staged analysis (gravity, then an
+	  // imposed displacement) does not yank the node back to zero.
+	  //
+	  // This was `retZeroInitValue = true`, which is already the initialiser at
+	  // :1123 - so the flag was a NO-OP and incremental SP was unreachable from
+	  // this interpreter (i.e. from openseespy), while BOTH Tcl parsers set it to
+	  // false correctly:
+	  //   SRC/modelbuilder/tcl/TclModelBuilder.cpp:3808-3810   (retZeroInitial)
+	  //   SRC/runtime/commands/modeling/constraint.cpp:392-394 (retZeroInit)
+	  // getInitialValue() returns 0 while this is true (SP_Constraint.cpp:316-328),
+	  // so the handler had nothing to subtract. Restores Python/Tcl parity.
+	  retZeroInitValue = false;
 
 	} else if(strcmp(type, "-pattern") == 0) {
 	    if (OPS_GetNumRemainingInputArgs() > 0) {
