@@ -203,25 +203,51 @@ Different change budgets by surface, all in service of long-term upstreamability
 additive hook that makes our feature work?" If a change belongs in our own code,
 put it there, not in the vanilla file.
 
-### 6a. Trailing-CR churn inflates the recorded footprint ~170x — measure with `--strip-trailing-cr`
+### 6a. `.gitattributes` marks ~5,300 files `-text`, so line-ending churn inflates the recorded footprint ~170x
 
-An editor that rewrites line endings turns a few-line registration hook into a
-whole-file rewrite in git's eyes, and the footprint audit above then reads a
-routine change as a core rewrite. Measured case: PR #700 records **10,543**
-changed lines across `SRC/interpreter/OpenSeesCommands.{cpp,h}`; the real change
-is **63 lines**. Both blobs are CRLF, so `grep -c $'\r$'` says nothing — the
-parent carried a trailing CR *before* the CRLF on every line and the commit
-normalized it.
+**Root cause, and it is not anybody's editor being wrong.** The root
+`.gitattributes` opens with `* text=auto !eol` and then spends **5,323 of its
+5,345 lines** listing individual files as `-text` — a CVS/SVN→git conversion
+artifact inherited from upstream. `-text` tells git to store bytes **verbatim**
+and normalize nothing, so those files have **no canonical line ending**: whatever
+the last committer's editor emitted is what git keeps. Any contributor whose
+editor disagrees rewrites the whole file, and the §6 footprint audit then reads a
+routine registration hook as a core rewrite.
+
+Measured case: PR #700 records **10,543** changed lines across
+`SRC/interpreter/OpenSeesCommands.{cpp,h}`; the real change is **63 lines**. The
+parent blob was ordinary CRLF (5,240 LF / 5,240 CR), the child is pure LF
+(5,303 LF / 0 CR) — a plain CRLF→LF flip, stored verbatim because `-text` was in
+force on both files.
 
 - **Detect:** `diff --strip-trailing-cr <(git show REV^:path) <(git show REV:path)`.
-  If that number is tiny and `git show --numstat` is huge, it is ending churn.
+  Tiny result + huge `git show --numstat` = ending churn. To see it directly,
+  `git cat-file blob $(git rev-parse REV:path) | tr -cd '\r' | wc -c` — and use
+  `git ls-files --eol` for the index-vs-worktree view across many files.
+  Beware `grep -c $'\r$'` inside nested command substitution: if the `$'...'`
+  quoting doesn't survive, the pattern degenerates and matches *every* line, which
+  reads exactly like "all lines are CRLF". If a CR count equals the total line
+  count on both sides of a comparison, suspect the measurement, not the file.
 - **Audit with it:** any footprint review, upstream-port sizing, or
   `LEDGER_vanilla_files` row for a big-numstat interpreter file must quote the
   strip-trailing-cr count, not the raw numstat, or the fork looks far more
   divergent from upstream than it is.
-- **Avoid causing it:** `.gitattributes` governs endings; if your editor
-  disagrees, fix the editor rather than committing the normalization mixed in
-  with a feature — it makes the feature's real diff unreviewable.
+- **Fixed for the registration surface (PR #706).** The eight files every fork
+  feature touches to register a class — `OpenSeesCommands.{cpp,h}`,
+  `{Python,Tcl}Wrapper.cpp`, `OpenSees{Element,Pattern}Commands.cpp`,
+  `tcl/commands.cpp`, `classTags.h` — now carry an explicit `text` override at the
+  END of `.gitattributes` (last matching line wins). All eight were already LF in
+  the blob, so it was a **zero-diff** change that simply makes it permanent.
+  Verified A/B: CRLF-ify a covered file and `git add` it → **empty** staged diff;
+  do the same to a still-`-text` file (`OpenSeesCommandsTcl.cpp`) → **188/188**
+  whole-file churn.
+- **Still exposed:** every other `-text` file. If you find yourself fighting
+  ending churn on one, add it to that block rather than re-normalizing by hand —
+  but check `git ls-files --eol` first: adding `text` to a file whose blob is
+  CRLF *does* produce a one-time whole-file diff, and for a vanilla file that
+  becomes permanent divergence from upstream. Zero-diff only holds for blobs that
+  are already `i/lf`. A repo-wide `git add --renormalize .` would rewrite ~447
+  blobs and is **not** a casual cleanup on a fork that tracks upstream.
 
 ## `gh pr merge --auto` on this repo merges IMMEDIATELY (auto-merge is disabled), and ledger-placeholder fills race the squash
 
