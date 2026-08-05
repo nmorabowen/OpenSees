@@ -3691,3 +3691,124 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   "did the wave reach the absorbing boundary" or "is the damage localized"
   check on a graded or adaptively refined mesh.
   *2026-07-30 (ADR-79 collapse study).*
+### `Vector::operator()` is UNCHECKED outside `_G3DEBUG` — a mis-sized `static Vector` in `getResponse` is a silent heap overrun, not a caught index error
+- **Bites:** any `getResponse` that fills a fixed-size scratch `Vector` in a
+  Gauss-point loop. Found in vanilla `TenNodeTetrahedron::getResponse`, where
+  `static Vector stresses(6)` — copy-pasted from `FourNodeTetrahedron`, which
+  has ONE Gauss point so 6 is right there — is written by BOTH the `stresses`
+  and `strains` branches looping over all `NumGaussPoints=4` points × 6
+  components = **24 doubles into a 6-double block**. 18 doubles / 144 bytes past
+  the end, on every recorder step. `Brick` gets it right (`stresses(48)` for
+  8 GP), so the pattern is fine — only the size was left behind when the loop
+  bound was edited.
+- **Why it is invisible:** `Vector::operator()` bounds-checks ONLY under
+  `_G3DEBUG` (`SRC/matrix/Vector.h`), which release builds do not define — the
+  checked accessor is `operator[]`, which nobody uses in element code. And the
+  buffer is `static`, so it is heap-allocated once on first call and the SAME
+  144 bytes past it are stomped forever after. The crash therefore surfaces at
+  whatever the allocator placed next — often a later `free`/alloc far from the
+  write — so the backtrace does not point at the element.
+- **Second-order damage even without a crash:** `Information::setVector` does
+  `*theVector = newVector`, and `Vector::operator=` REALLOCATES on size
+  mismatch. So the `ElementResponse`'s advertised `Vector(6*nGP)` gets silently
+  shrunk to the scratch size, while `ElementRecorder` already sized its columns
+  from the advertised size at setup (`ElementRecorder.cpp`) and then copies
+  `eleData.Size()` per element — the column layout desynchronises across
+  elements. Garbage output, no diagnostic.
+- **Measured A/B** (one tet10, uniform-strain patch, `eleResponse(ele,'stresses')`):
+  pre-fix build returns **6** values, post-fix returns **24** — so the cheap,
+  deterministic tell is a response list that is a WHOLE FRACTION of the
+  advertised length, one GP block instead of nGP. Both builds report
+  `σxx = 10000.0 = E·ε` exactly, i.e. the physics was never wrong — only the
+  buffer. Note the 1-element control did NOT crash: the overrun is real on
+  every call but whether it segfaults depends on what the allocator put after
+  the block, so a small repro proving "no crash" proves nothing. Trust the
+  length, not the absence of a crash.
+- **Rule:** size the scratch from the same expression `setResponse` advertises
+  (`6*NumGaussPoints`, never a literal), and treat any `static Vector`/`Matrix`
+  in a response path as a place to check the loop bound against the declared
+  size. When a new element is derived by copy-paste from one with a different
+  Gauss-point count, audit every fixed size in the file, not just the loops.
+  Cross-ref [[ladruno-adr79-geom-hypo]] (tet10 was the recorder in use).
+  *2026-08-04 (tet10 recorder segfault).*
+### A numpy ORACLE can silently lag a reviewed C++ fix — a red zone_a gate may indict the reference, not the shipped code
+- **Bites:** any subsystem gated by a hand-written numpy oracle that mirrors a
+  C++ kernel (`concrete3d_ref.py`↔`LadrunoConcrete3DKernel.h`, and the same
+  pattern in the J2/logstrain/up/hypo `*_reference.py` pairs). A fix applied to
+  the kernel during PR review does NOT propagate to the oracle, and nothing in
+  CI notices: the kernel-vs-oracle test compares them on a COMMITTED FIXTURE of
+  paths that may never exercise the diverging branch.
+- **The case:** `test_p2i_multiaxial_apportioning_gate` asserts
+  `I3_pure_compression_wt < 1e-9` (no spurious compression→tension damage) and
+  measured **0.997**. It looks like a formulation bug in the tensile damage
+  gate. It is not — the gate `sig_t_drive = E*et if max(w) > 1e-6*ft else 0`
+  is CORRECT and opens legitimately, because the effective stress handed to it
+  genuinely IS tensile: under uniaxial-STRAIN compression the hardening Newton
+  overshoots to `rho<0`, the apex branch teleports to the hydrostatic-TENSION
+  vertex, and a trial with max principal **−23.76** returns **[+2.94,+2.94,+2.94]**
+  with `conv=True`. `f==0` holds at the apex BY CONSTRUCTION, so the oracle's
+  `(converged or apex) and |f_indep|<tol` reports success for a sign-flipped,
+  inadmissible state. `kp` also jumps 0.034→0.182 in one step.
+- **The kernel was already right.** PR #249's adversarial review added to
+  `returnMapHardening` an admissibility test (`dlam>=0 && kp>=kp_n`), refusal to
+  report converged, and a fallback to the ELASTIC PREDICTOR so the caller cuts
+  the step — with the comment "this deliberately diverges from the numpy
+  oracle's (equally-arbitrary) apex teleport — the kernel is the safe reference
+  here." The oracle received only the HONEST-f-recompute half of that fix and
+  kept the literal pre-fix expression the C++ comment calls out as lying. So
+  **the shipped material never had the bug**; only the reference did.
+- **It shipped red and stayed red.** The gate produces the byte-identical
+  0.9971183764898133 at `c349e8763` (#336), the very commit that introduced it —
+  #336 landed AFTER #249, so the gate was authored against an oracle that
+  already lagged the kernel. It has never passed.
+- **Rule:** when a zone_a gate goes red on a subsystem that has BOTH a numpy
+  oracle and a C++ kernel, diff the two implementations of the disputed branch
+  BEFORE touching the assertion — the oracle is as likely to be stale as the
+  code. And when a PR-review fix lands in a kernel, port it to the oracle in the
+  SAME PR, because the fixture-based agreement test will not catch the drift.
+  Do not "fix" a gate by weakening its assertion until you have established
+  which side is wrong. Cross-ref [[ladruno-adr79-geom-hypo]].
+  *2026-08-04 (P2i apex-teleport hunt).*
+### quad8 mortar dual masses are NEGATIVE at corners (−A/12) by construction — sign-aware guards, do not "fix"
+- **Bites:** the serendipity quad8 corner shape functions integrate to **−A/12** over the facet (mids +A/3; the total is still A), so the ADR-62 P2.1 dual condensation `Aᵉ=diag(∫N)(Dᵉ)⁻¹` legitimately produces NEGATIVE diagonal dual masses at every quad8 corner node. The sign cancels exactly in `P = Mdual/Ddual` (partition of unity `P·1=1` holds algebraically), but any guard, recorder, or future reader that assumes `Ddual > 0` — the shipped `Ddual[I] <= 1e-300` "uncovered node" refusal did exactly this — false-refuses every valid quad8 tie. Same trap wherever a rowsum `∫N_I ≥ 0` assumption hides: the pre-ADR-78 coverage ratio (`cover/fullCov ≥ 1−1e-3` FLIPS for negative rowsums) and the `|gap|/cover` normalization.
+- **Rule:** for serendipity bases, node-wise rowsum measures are SIGNED; guards must be sign-free (areas, L1 integrals) or sign-aware (`|Ddual|`). ADR-78 D3 unified the mortar-tie guards on per-facet AREA coverage + per-facet `∫|g_N|/area`.
+- **Workaround/status:** ✅ shipped that way (ADR-78). *2026-08-04.*
+
+### tri6 SLAVE facets are structurally incompatible with the dual mortar — corner ∫N = 0, refused by name
+- **Bites:** on the reference triangle the tri6 CORNER shape functions integrate to exactly ZERO (the three midsides carry the whole area). The dual scaling divides by the per-facet corner rowsum ⇒ division by zero, and no tolerance rescues it — it is structural, not conditioning. The rowsum-based coverage machinery is equally meaningless there. quad8 corners (−A/12 ≠ 0) are fine.
+- **Rule:** `LadrunoTie -mortar` refuses `npsS == 6` in BOTH bases (ADR-78 D2, mirroring apeGmsh ADR 0086 v1); tri6 MASTER facets are fully supported. Remedy in the message: swap master/slave, or put quad8/hex20 faces on the slave side. Revisit only if a tet10-interface user materializes.
+- **Workaround/status:** ✅ named refusal shipped (ADR-78). *2026-08-04.*
+
+### ADR-78 unified the mortar-tie guards for ALL facet orders — linear decks with cancelling gap fields now refuse (by design)
+- **Bites:** the pre-ADR-78 conforming-gap guard tested the per-node SIGNED weighted gap `|Σ∫N_I g_N|/cover`, which a gap field that cancels inside a node's support could slip through (a warp/antisymmetric offset reading as "conforming"). The ADR-78 per-facet `∫|g_N|/area` L1 guard has no cancellation blind spot and — per the OQ-2 "unify" sign-off — applies to tri3/quad4 decks too. A linear deck that previously built its tie may now refuse with the conforming-gap message. The emitted P (weights) is byte-identical for linear inputs; only refusal behaviour changed.
+- **Rule:** if a formerly-working linear tie now refuses on the gap guard, the geometry genuinely is off the master surface somewhere — fix the interface or consciously relax `-tol`.
+- **Workaround/status:** ✅ intentional behaviour change, documented here + ADR-78 D3/BLOCKER-3; regression-tested (`test_refuse_accordion_gap_L1`). Two adversarial-gate amendments same day: (a) the threshold scale is `0.5·sqrt(areaFull)` — a bare `sqrt(A)` was 2× LOOSER than the shipped per-node tributary scale (review MINOR); (b) the per-facet area-coverage sum counts MULTIPLICITY, so a self-overlapping / doubly-listed MASTER surface could exactly mask an uncovered slave strip — now a named refusal (coincident master-master overlap, mean-gap-gated so curved masters stay legal; review MAJOR, `test_refuse_duplicate_master_facets`). A linear deck with duplicated master facets that previously "worked" now refuses. *2026-08-04.*
+
+### A non-homogeneous `sp` makes `enforceSPs` PRE-UPDATE the driven element layer, so the first constitutive evaluation of every increment is over-strained by L/h — harmless for an elastic law, ×28 iterations for a plastic one
+- **Bites:** a static push driven by a prescribed displacement on a face (`sp` in a `Plain` pattern + `Linear` series, `constraints Transformation`, `integrator LoadControl`) costs an order of magnitude more solver work **if the elements at that face carry a path-dependent material**. Measured on a 3D solid, small-strain `LadrunoJ2`, `H/E` = 1 %, all four runs pinned to `KrylovNewton`: driven-face elements **elastic** → 30 increments / 0 cutbacks / **149** Newton iterations; **plastic** → 324 / **52** / **4 255** (**×28.6**). Same converged answer to **0.00 %** (920.0 vs 920.1 kN at a stated internal rotation) — pure conditioning. Replace the prescribed displacement with a **traction** on the same face and the plastic material is FREE (30 / 0 / 145, ×0.95) — *even though the cover then grossly plastically hinges*, while the expensive displacement-driven run's covers **never yield at all** (max σ_vM 295 MPa vs `f_y` 379.5, 0.00 % plastic at every step). So "the BC singularity yields and wrecks the tangent" is **refuted**: a fully hinging cover converges in 4.6 iterations/increment, a non-yielding one takes 13.4 with 35 cutbacks.
+- **Why:** `LoadControl::newStep()` calls only `applyLoadDomain(λ)` (`SRC/analysis/integrator/LoadControl.cpp:130`) — **statics has no predictor**. That reaches `TransformationConstraintHandler::applyLoad()` → `enforceSPs()` (`SRC/analysis/handler/TransformationConstraintHandler.cpp:496-524`), which writes the full prescribed value into each constrained node (`TransformationDOF_Group.cpp:1071`, `setTrialDisp`) **and then calls `theEle->updateElement()` on every element touching a constrained node, at lines 518-521**. So the first constitutive evaluation happens *inside `newStep`*, with the driven face advanced by the whole increment and every interior node still at the last converged position: that layer sees **Δδ/h_element** instead of the physical **Δδ/L_model**. The return map yields it spuriously, its consistent tangent collapses toward `2G·H/(3G+H)` ≈ 1 % of elastic, the predictor built on it overshoots, the layer unloads elastically next iteration, and the active set oscillates. Trial states are recomputed from the committed state each iteration, so **nothing survives into committed state** — which is exactly why the answer is right and only the iteration count betrays it. The pre-update is not gratuitous: the `sp`'d DOF is genuinely eliminated (`setID(dof,-1)`, `TransformationDOF_Group.cpp:1034`; numberers assign equations only to `-2`) and `TransformationFE::getResidual` is only `Tᵗ·R` from element state (`TransformationFE.cpp:391-394`), so there is no column for a `K·Δu_prescribed` term — pre-updating is how the prescribed motion reaches the RHS at all.
+- **Diagnosis trap:** raising `sig0` out of reach "fixes" it in 2 iterations, which looks like it exonerates the constraint and indicts yielding. It does neither — the mechanism is *yielding caused by the constraint enforcement*, a conjunction, and that control removes only the yielding half. The discriminating test is the **traction** drive, which keeps the material able to yield and removes the constraint.
+- **Contrast worth knowing:** `DisplacementControl::newStep` already has the right ordering — `formTangent → solve → deltaU → incrDisp(deltaU) → applyLoadDomain(λ) → updateDomain()` (`SRC/analysis/integrator/DisplacementControl.cpp` ~35-98), i.e. the interior is advanced by a tangent-consistent predictor *before* the SPs are enforced. Abaqus avoids the whole thing with a default-ON 100 % extrapolation predictor; Kratos ships `use_old_stiffness_in_first_iteration` (assemble iteration 1 at the converged state, inject `b −= K·Δu_D`) and **enables it in its own J2 / plastic-damage / fatigue tests while disabling it for elastic ones**.
+- **Workaround/status (2026-08-04):** ⚠ **open — no code change.** Practical workaround: give the load-introduction volumes an **elastic** material (measured neutral to 0.00 % at equal internal rotation; it is what elastic load blocks / rigid platens achieve in commercial practice, though **no code's manual actually recommends it** — searched). Candidate fix is a static **predictor** (`LadrunoLoadControl -extrapolate`), NOT a new SP handler; do **not** "fix" it by adding `updateDomain()` to `LoadControl::newStep` (the driven layer is already updated, so that buys an extra full constitutive sweep per increment for zero behaviour change). Evidence, cross-code comparison and validation gates: [[80_sp_prescribed_displacement_findings]]. Related fork SP fix: the `sp -subtractInit` no-op row in [[LEDGER_vanilla_files]].
+
+### `AutoConstraintHandler::applyLoad()` omits the `updateElement()` loop that Transformation has — with a non-homogeneous `sp` that is a SILENT WRONG ANSWER, not an error
+- **Bites:** `constraints Auto` looks like a drop-in replacement for `Transformation`, and for homogeneous BCs it is. With a **non-homogeneous** `sp` (a prescribed, load-factor-scaled displacement) an increment can be committed with only the boundary layer moved and equilibrium never re-checked — no warning, no error, plausible-looking output.
+- **Why:** `AutoConstraintHandler::applyLoad()` (`SRC/analysis/handler/AutoConstraintHandler.cpp:573-584`) runs the two `enforceSPs` loops and **stops**, where `TransformationConstraintHandler::enforceSPs` follows them with `theEle->updateElement()` over every element touching a constrained node (`TransformationConstraintHandler.cpp:518-521`). Without that loop the first residual of the increment is formed from **stale** element state, so `dU ≈ 0` comes out of the first solve — and `CTestNormDispIncr` has **no minimum-iteration guard** (`SRC/convergenceTest/CTestNormDispIncr.cpp:160-175`: `if (norm <= tol) return currentIter;`, with only a `currentIter == 0` "start() never invoked" check), so it reports convergence at iteration 1. Neither `NewtonRaphson.cpp` nor `KrylovNewton.cpp` guards against it either.
+- **CONFIRMED and FIXED (ADR-80 gate G4, 2026-08-04).** No longer an inference. Measured A/B on the pre-fix binary, two equal trusses driven to δ=3.0 with the midpoint free: `Transformation` gives **u_mid = 1.5 in 2 iterations**, `Auto` gives **u_mid = 0.0 in 1 iteration** with `analyze()` returning **0**. Identical signature on two stacked `stdBrick`s. The **single Newton iteration is the diagnostic tell** — it means the first residual carried no information about the prescribed motion.
+- **The inference UNDERSTATED the blast radius: `EnergyIncr` is fooled too**, not just `CTestNormDispIncr`. Energy is `dU·R`, so anything built on `dU` collapses with it. Measured: `NormDispIncr` → 0.0 (wrong), `EnergyIncr` → 0.0 (wrong), `NormUnbalance` → 1.5 (right).
+- **Test-dependence IS the mechanism, and it is why this hid for so long.** `NormUnbalance` looks at the large *stale* residual, refuses to converge at iteration 1, and the very next `LoadControl::update` → `updateDomain()` silently repairs the state — so **the same deck is right or wrong purely by choice of convergence test.** If you are auditing an old `constraints Auto` result, the question to ask is not "did it converge" but "what did `test` say".
+- **Contrast — `Plain` is also wrong here but LOUD:** it prints `non-homogeneos constraint for node N homogeneous constraint assumed` and gives 0.0. That is documented by-design behaviour (Plain cannot do non-homogeneous SPs), not this bug. `Auto` was wrong and **silent** — that is the whole defect.
+- **Workaround/status:** ✅ **FIXED** — `theFEs` membership + the `updateElement()` loop in `applyLoad()`, mirroring the Transformation handler; see the `AutoConstraintHandler` row in [[LEDGER_vanilla_files]]. Gated by `tests/test_auto_handler_sp_update.py` (verified to FAIL on the pre-fix binary). Homogeneous-only (`fix`-only) models are numerically unaffected. Still do not reach for `constraints Auto` as a workaround for the `sp` × plasticity *conditioning* quirk above — that one is unrelated and remains open. See [[80_ladruno_sp_imposition_strengthening_adr]] S2 and [[80_sp_prescribed_displacement_findings]] §4 candidate B.
+
+### The 16 `*_cpp.py` kernel self-checks FAIL under plain `pytest` and PASS under `pytest -s` — it's stdout capture breaking `subprocess`, not a regression
+- **Bites:** a full Zone-A sweep reports `16 failed, 1742 passed`, and every failure is a C++ kernel self-check (`test_hypo_kernel_cpp`, `test_ladrunoJ2_*_cpp`, `test_logstrain*_cpp`, `test_ladrunoConcrete3D_material`, `test_ladrunoCMS_core_cpp`, `test_ladruno_up_kernel_cpp`, `test_ladrunoRCConcrete_{reg,tensstiff}_cpp`, …). It reads as if a source change just broke every material kernel at once. It did not.
+- **Why:** those tests shell out to `g++` via `subprocess.run(..., capture_output=True)`. Under pytest's default capture the parent's stdio handles are not real console handles, and Windows fails the spawn with **`OSError: [WinError 50] The request is not supported`** at `subprocess.py:1416` — *before* any C++ is compiled or any OpenSees code runs. `g++` itself is fine (`/c/msys64/mingw64/bin/g++`, MSYS2 rev8 15.2.0) and the same `subprocess.run` succeeds from a plain `python3.12 -c`.
+- **Tell:** the failure is an `OSError` at spawn time, never an assertion or a numeric mismatch. A real kernel regression fails on *values*.
+- **Workaround/status (2026-08-04):** run those tests with **`pytest -s`** (capture disabled) — `16 passed` on the identical binary that "failed" 16. So the honest Zone-A total is **1758 passed, 0 real failures**. Verify a suspected kernel regression with `-s` **before** believing it. Two further modules (`test_ladruno_overlay_{driver,physics}.py`) cannot even be *collected* here because `matplotlib` is absent — also unrelated; `--ignore` them or install matplotlib.
+
+### A cross-check patch built on RECTANGLES cannot detect a quadrature mismatch — patch-exactness and PoU are both quadrature-independent, so the rule hides until the facets stop being parallelograms
+- **Bites:** the ADR-78 → apeGmsh mortar contract (R3) told the porter to match the fork's 12-point degree-6 Dunavant rule "so the cross-check matches to 1e-12, not 1e-6", and R7 defined that cross-check on uniform grids over [0,1]². apeGmsh's port (ADR 0086 S1, PR #898) used a completely different rule — a Duffy-collapsed 5×5 tensor rule, 25 points — and **reproduced the fork's `P` to 5.0e-13 anyway**. R3 had no teeth: a porter could ignore it entirely and still pass R7.
+- **Why:** on an affine facet (rectangle, parallelogram, any triangle) the isoparametric pullback of the `N·φ` product is a POLYNOMIAL of degree ≤ 6, so *every* rule exact to degree 6 returns the same integral to round-off — measured 1.9e-15 fork-side, 4.5e-15 apeGmsh-side. Make the facet a non-parallelogram and the pullback goes RATIONAL: no finite rule is exact, and the same two rules diverge by ~1e-7 in `P` (fork: 1.4e-07 on a trapezoid, 3.5e-07 on a stronger skew; apeGmsh: 8.4e-08 / 5.9e-08). Four to five orders above the stated tolerance. The linear **patch test** cannot expose this either — it is exact under both rules on both patch types (`D` and `M` share Gauss points, so the error cancels in `P·1`); PoU likewise. The *only* signal is `P` itself, on a non-affine patch.
+- **Rule:** any two-implementation agreement protocol for an integral-mortar / segment-to-segment kernel MUST include at least one non-parallelogram facet, or it is silently only testing the algebra, not the quadrature. Sanity-check the reverse too: a rule of INSUFFICIENT degree *is* caught on affine facets (the degree-4 rule shifts `P_dual` by 4.7e-04 on the same patch), so an affine-only protocol distinguishes "wrong degree" but not "different adequate rule".
+- **Related:** the same protocol quoted its reference row to 9 decimals while asking for a 1e-12 row-by-row comparison (caps any row check at ~5e-10), and keyed that row to node INDICES that were described as row-major but are actually the mesh helper's `nid()` **creation** order. Publish cross-check references as a machine-readable file at round-trip float precision, keyed by COORDINATES, not indices — `kinematic_tie_validation/mortar_crosscheck_reference.json` now does.
+- **Workaround/status:** ✅ fixed — contract revision 2 adds R7 **case B** (the same 2×2 quad8 / 3×3 quad4 topology bilinearly mapped onto a trapezoid; mesh lines stay straight and midsides stay at midpoints, so R1/R2 are untouched) with published reference `P`, and the oracle gates it with **T12** (case B assembly + patch exactness) and **T13** (Dunavant-12 vs Duffy-5×5: agree ≤1e-12 affine, disagree ≥1e-9 non-affine). *2026-08-04.*

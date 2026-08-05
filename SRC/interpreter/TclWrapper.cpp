@@ -750,6 +750,15 @@ static int Tcl_ops_ladrunoArcLength(ClientData clientData, Tcl_Interp *interp, i
     return TCL_OK;
 }
 
+// Ladruno (ADR-80 S1): resize LadrunoLoadControl's step WITHOUT reconstructing it.
+static int Tcl_ops_ladrunoLoadControl(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_LadrunoLoadControlCmd() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
 // Ladruno: runtime query of the active LadrunoDynamicRelaxation (rung-5 settling).
 static int Tcl_ops_ladrunoDR(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
@@ -1994,6 +2003,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"getCTestNorms", &Tcl_ops_getCTestNorms);
     addCommand(interp,"getCTestIter", &Tcl_ops_getCTestIter);
     addCommand(interp,"ladrunoArcLength", &Tcl_ops_ladrunoArcLength);   // Ladruno: Layer-B
+    addCommand(interp,"ladrunoLoadControl", &Tcl_ops_ladrunoLoadControl);   // Ladruno (ADR-80 S1)
     addCommand(interp,"ladrunoDR", &Tcl_ops_ladrunoDR);   // Ladruno: rung-5 DR query
     addCommand(interp,"recorder", &Tcl_ops_recorder);
     addCommand(interp,"database", &Tcl_ops_database);

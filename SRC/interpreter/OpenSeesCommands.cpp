@@ -105,6 +105,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <Element.h>                  // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <ElementIter.h>             // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
+#include <LadrunoLoadControl.h>       // Ladruno (ADR-80 S1): -extrapolate predictor
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
@@ -1800,6 +1801,9 @@ int OPS_Integrator()
 
     } else if (strcmp(type,"LadrunoArcLength") == 0) {   // Ladruno
 	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
+    } else if (strcmp(type,"LadrunoLoadControl") == 0) {   // Ladruno (ADR-80 S1)
+	si = (StaticIntegrator*)OPS_LadrunoLoadControl();
 
     } else if (strcmp(type,"LadrunoIndirectControl") == 0) {   // Ladruno
 	si = (StaticIntegrator*)OPS_LadrunoIndirectControl();
@@ -3498,6 +3502,65 @@ int OPS_getCTestIter()
 
     opserr << "ERROR testIter - no convergence test!\n";
     return -1;
+}
+
+// Ladruno (ADR-80 S1): runtime control of the active LadrunoLoadControl.
+// WHY THIS EXISTS. `integrator LadrunoLoadControl ...` CONSTRUCTS A NEW OBJECT,
+// so a caller-driven adaptive ladder that re-issues it every step destroys the
+// predictor state and the predictor never fires -- measured, not theorised
+// (80c: frac=1 was byte-identical to frac=0 under that idiom). Resize the step
+// through this command instead and the object, and its prediction, survive:
+//   ok = analyze(1)
+//   while ok != 0:
+//       ladrunoLoadControl('setDeltaLambda', dl*0.5);  ok = analyze(1)
+// Subcommands: setDeltaLambda v | deltaLambda | extrapolate | armed
+// With no subcommand returns deltaLambda.
+int OPS_LadrunoLoadControlCmd()
+{
+    if (cmds == 0) return 0;
+    StaticIntegrator *si = cmds->getStaticIntegrator();
+    if (si == 0 || si->getClassTag() != INTEGRATOR_TAGS_LadrunoLoadControl) {
+        opserr << "WARNING ladrunoLoadControl - the active static integrator is not a LadrunoLoadControl (set `integrator LadrunoLoadControl ...` first)\n";
+        return -1;
+    }
+    LadrunoLoadControl *lc = (LadrunoLoadControl *)si;
+
+    double out;
+    int numData = 1;
+
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        out = lc->getDeltaLambda();
+        if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+        return 0;
+    }
+
+    const char *sub = OPS_GetString();
+
+    if (strcmp(sub, "setDeltaLambda") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING ladrunoLoadControl setDeltaLambda - needs a value\n";
+            return -1;
+        }
+        double v;
+        if (OPS_GetDoubleInput(&numData, &v) < 0) {
+            opserr << "WARNING ladrunoLoadControl setDeltaLambda - bad value\n";
+            return -1;
+        }
+        lc->setDeltaLambda(v);
+        out = lc->getDeltaLambda();
+        if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+        return 0;
+    }
+
+    if (strcmp(sub, "deltaLambda") == 0)      out = lc->getDeltaLambda();
+    else if (strcmp(sub, "extrapolate") == 0) out = lc->getExtrapolate();
+    else if (strcmp(sub, "armed") == 0)       out = lc->predictorArmed() ? 1.0 : 0.0;
+    else {
+        opserr << "WARNING ladrunoLoadControl - unknown subcommand (want setDeltaLambda|deltaLambda|extrapolate|armed)\n";
+        return -1;
+    }
+    if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;
+    return 0;
 }
 
 // Ladruno: runtime control of the active LadrunoArcLength static integrator
