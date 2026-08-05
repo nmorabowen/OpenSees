@@ -79,6 +79,11 @@ private:
     double auto_penalty_oom = 3.0;
     double user_penalty = 0.0;
     std::vector<TransformationDOF_Group*> theDOFs;
+    // Ladruno (ADR-80 S2): FE_Elements touching an SP-constrained node. applyLoad()
+    // must updateElement() these after enforceSPs, exactly as
+    // TransformationConstraintHandler::enforceSPs does, or the first residual of
+    // every step is stale. See LEDGER_quirks.md.
+    std::vector<FE_Element*> theFEs;
 };
 
 #endif
