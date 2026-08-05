@@ -484,7 +484,145 @@ precision at every step, and Pardiso ≡ UmfPack to 5.2e-13.
 
 ---
 
-## 9. References
+## 9. Numerical collapse load with the actual cone (2026-07-30)
+
+§8 ended by naming its own next step: *"This is a hypothesis — 50.4° was
+measured in simple shear while a bearing mechanism is nearer plane strain — and
+the rigorous check is a limit analysis with the actual cone."* That check has
+been run. Full write-up, CSVs, figure:
+`Ladruno_files/testbed/hypo_bearing/COLLAPSE.md`.
+
+**Answer: the anchoring error is real but is ≈ 2.4×, not 52×, and the
+over-strength is re-scaled rather than dissolved.**
+
+### The instrument
+
+PDMY cannot produce a collapse load — 20 nested surfaces approach the envelope
+asymptotically, which is why 11 h of pushing ended still hardening. So the
+material is replaced by an **elastic–perfectly-plastic `DruckerPrager` sharing
+the measured failure surface** (ρ = √2·α = 0.344531), on the same mesh, the
+same footing, the same surcharge and the same reaction correction; drained, so
+`LadrunoUP` gives way to a 3-DOF `LadrunoBrick` carrying γ' as a body force.
+A collapse load is a property of the failure surface and the flow rule, not of
+the hardening path to them, so the substitution is legitimate — and it is the
+only thing changed.
+
+The surrogate is verified rather than assumed: a strain-controlled plateau
+probe measures α = 0.24407 against the target 0.24362, and the +0.18 % is
+exactly the σ_y = 0.2 kPa apex offset (predicted +0.000444, measured 0.00044).
+Running `cone_probe.py`'s own stress-controlled probe on the surrogate returns
+−0.01 %, so **that instrument is unbiased** — the 1.5° gap between PDMY's
+measured txc-equivalent and its supplied φ = 33° is not a probe artifact.
+
+### Three things wrong with the Chen–Han route
+
+| basis | φ | N_q | N_γ | q_u (square) |
+|---|---|---|---|---|
+| nominal φ = 33° — what is quoted | 33.00 | 26.1 | 35.2 | **637.5** |
+| cone, txc equivalent | 31.51 | 21.9 | 28.1 | 518.3 |
+| cone, plane-strain equivalent (Chen–Han) | 53.72 | 673.1 | 1836.6 | **26 711** |
+| **cone, plane-strain THEN Davis ψ = 0** | **38.87** | **55.0** | **90.3** | **1525.0** |
+
+1. **The matching is unstable here.** tan φ = √(9α²/(1−12α²)) has a pole at
+   α = 1/√12 = 0.28868 — above which no plane-strain Mohr–Coulomb equivalent
+   exists — and the measured cone sits at **84.4 %** of it. A ±2 % move in α,
+   inside `cone_probe`'s own 3.9 % Lode spread, swings q_u from 17.3 to
+   43.8 MPa.
+2. **It assumes associated flow and this set is non-dilatant** (`dil1 = dil2 =
+   0`). Davis's ψ = 0 reduction (tan φ* = sin φ) takes 53.72° → 38.87° and N_q
+   from 673 to 55, a factor of **12.2** by itself.
+3. **Its coefficients are far outside their calibration range**, and the model
+   says so: the measured sensitivity of the collapse load to cohesion is
+   53.7 kPa per kPa of σ_y, where Vesić's `c·N_c·s_c` at 53.72° predicts 565 —
+   **11× too large**.
+
+### What was measured
+
+Square footing, actual cone, non-associated, `-formulation bbar`, on a domain
+large enough that the mechanism is demonstrably CONTAINED (14.5 B clearance,
+10 B depth; 0 of 672 elements in the outermost column at yield):
+**q = 1108 kPa at the s/B = 10 % ultimate criterion and 1152 kPa at
+s/B = 15 %**, plateauing at 0.7 % of its initial tangent. The 4.5 B campaign
+mesh gives 1140 / 1179 kPa, so the box is worth 2.3–2.8 %; σ_y → 0 costs a
+further 0.92 %. That is 0.73–0.76 of the Davis anchor and **1/23 of the
+Chen–Han prediction**.
+
+So the benchmark's PDMY backbone — 3384 kPa at s/B = 15 % — is **2.2× the
+correct anchor and 2.9× the measured collapse load of its own cone.**
+Re-anchoring removes a factor of 2.4 from the 5.31× §8 reported. It does not
+remove the anomaly; locking, large-strain embedment, boundary confinement and
+mesh coarseness still have to carry the remaining ~2.2×.
+
+### Validation, and two things it exposed
+
+The plane-strain Prandtl–Reissner problem (weightless soil, surcharge q₀) has
+`q_u = q₀·N_q` **exactly** — upper and lower bounds coincide. On a
+tensor-graded plane-strain strip mesh at a mild cone (φ_ps = 27.47°), the
+non-associated leg holds **139.2 kPa against the exact 138.9 (1.0020)** with
+dq/ds = 0, out to the full s/B = 0.25 target. The machinery is correct.
+
+- **Associated legs never plateau.** Every one of them, at every cone, hardens
+  without reaching a limit point — `nq20_assoc` walls out 10–12 % *above* its
+  own exact answer, and the associated SQUARE leg ends at s/B = 0.0139 still
+  at 66 % of its initial tangent with 64.6 % of the mesh yielded and the
+  plastic zone on both the sides and the base. Dilatancy at ψ = φ = 53.7° has
+  to displace the surrounding soil and a fixed box resists it. The flow-rule
+  bracket is therefore one-sided — but the non-associated rung is the one that
+  matches PDMY's `dil1 = dil2 = 0`, so it is the rung the verdict needs.
+- **A verification cone must be checked against its own initial state.** The
+  first attempt (φ_txc = 20° at PDMY's moduli) sits at **m = 0.950 of yield
+  under gravity alone**, because the elastic K₀ = ν/(1−ν) = 0.507 mobilises
+  19.1° against a 20° cone. That leg measured its initial condition and is
+  reported void; raising ν to 0.45 fixes it, legitimately, since a collapse
+  load does not depend on elastic constants. At the real cone m = 0.579.
+
+### Limits of this result
+
+- **No refined collapse load, and the way refinement fails is diagnostic.** The
+  non-associated series at the real cone terminates *earlier* at every
+  refinement, in BOTH load cases independently — weightless Prandtl at
+  s/B = 0.0124 / 0.0030 / 0.0014 with the termination tangent rising
+  26 → 35 → 63 % of initial, and full (γ' + q₀) at s/B = 0.0520 / 0.0198 /
+  0.0060 rising 19 → 26 → 69 %, at 4 / 8 / 16 elements across B. That
+  is not a sequence converging on a collapse load. The CONTROL does the
+  opposite — the mild cone runs to its full target and plateaus at 4, 8 AND 16
+  elements across B (1.0020 / 0.9517 / 0.9260 of the exact answer, successive
+  differences −5.0 % then −2.6 %, and mild post-peak softening on the finest
+  rung), i.e. a clean convergence sequence. Neither refinement nor the solver
+  is the problem. A perfectly plastic
+  **non-associated** frictional solid is past the Rudnicki–Rice localization
+  threshold (the critical hardening modulus for banding is positive under
+  non-associated flow), so the continuum problem has lost ellipticity, band
+  width is set by the element size, and refinement resolves ever-thinner bands
+  in a progressively worse-conditioned discrete problem. A mesh-converged
+  number at this cone needs regularization (viscoplastic, gradient, Cosserat)
+  or an explicit dynamic solve — not a finer mesh. The exact-oracle control
+  shows 4 elements across B suffices at φ_ps = 27.5°; nothing here shows it
+  suffices at 53.7°. This is the honest limit of the study.
+- **Not a sharp limit point.** dq/ds decays as a power law in settlement
+  (∝ s^−1.48, 41 432 → 302 kPa/m over s/B = 0.5 → 15 %), which is a punching
+  signature — now reproduced by a *perfectly plastic* material, which rules out
+  hardening as its cause.
+- **Locking cannot be measured at collapse**, and that inverts §8's
+  locking-leg item 3: on a perfectly plastic cone `std` is the formulation that
+  cannot be pushed at all (walls out at s/B = 0.0031 even with an algorithm
+  ladder), where on hardening PDMY it was `bbar` that cost reach. Over the
+  shared span std/bbar runs 1.063 → 1.150 across s = 1 → 6 mm, still growing.
+- **The boundary question is CLOSED.** On the campaign mesh the fully-mobilised
+  zone does reach the roller sides (20 of the 352 elements in the outermost
+  column; the base stays clear). The 14.5 B / 10 B control mesh
+  (`build_mesh_big.py`, 8064 hexes) runs the same leg to the full s/B = 0.15,
+  plateaus, and contains the mechanism completely — **0 of 672** in the outer
+  column, **0 of 576** in the base row. The campaign box is therefore worth
+  **2.3–2.8 %**, and the contained-domain value is the one quoted above.
+  (The runner's first verdict said "contained" on the campaign mesh too; that
+  test compared the centroid to 90 % of the domain extent, and on a graded mesh
+  the outermost hex is 3.1 m wide with its centroid at 8.45 m of 10. Now tested
+  by element-column membership.)
+
+---
+
+## 10. References
 
 - Hughes, T.J.R. & Winget, J. (1980), "Finite rotation effects in numerical
   integration of rate constitutive equations arising in large-deformation
@@ -500,3 +638,15 @@ precision at every step, and Pardiso ≡ UmfPack to 5.2e-13.
   linear-elastic inner law in the fork's adaptor.
 - ADR 09/10 (SolidTransformation seam, corot), ADR 78 (u–p corot, the
   incremental p-row findings that P2 inherits).
+- Chen, W.F. & Han, D.J. (1988), *Plasticity for Structural Engineers* — the
+  Drucker–Prager ↔ Mohr–Coulomb matching relations §9 uses and refutes.
+- Davis, E.H. (1968), "Theories of plasticity and the failure of soil masses",
+  in *Soil Mechanics: Selected Topics* — the non-associated reduction
+  tan φ* = cos ψ sin φ / (1 − sin φ sin ψ), which is what the §9 anchor uses.
+- Rudnicki, J.W. & Rice, J.R. (1975), "Conditions for the localization of
+  deformation in pressure-sensitive dilatant materials", JMPS 23 — why a
+  perfectly plastic NON-associated solid is already past the banding threshold,
+  which is the diagnosis §9 gives for the failed refinement series.
+- Prandtl (1920) / Reissner (1924) — the weightless surcharge-bearing problem
+  `q_u = q₀·N_q`, whose coincident upper and lower bounds make it the exact
+  oracle §9's validation leg is checked against.

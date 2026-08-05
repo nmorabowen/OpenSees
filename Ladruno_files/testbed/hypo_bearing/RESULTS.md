@@ -47,16 +47,25 @@ a pure oedometer.
 > has a fixed frictional envelope and therefore a BOUNDED collapse load, so a
 > plateau is expected and its absence needs explaining.
 >
-> The explanation is that the model was never near failing, and that the anchor
-> is wrong twice over. The failure surface is a **Drucker–Prager cone**
-> (measured: α constant to 3.9 % across the Lode extremes while the
-> Mohr–Coulomb angle swings 31.5° → 54°), calibrated in triaxial compression;
-> Vesić's `N_γ` is a Mohr–Coulomb formula, and the plane-strain equivalent of
-> the measured cone is 53.7°, giving **10.8 MPa against the 207 kPa anchor — a
-> factor of 52**. The benchmark's 3384 kPa is ~31 % of that. And the failure
-> MODE is punching, not the general shear `N_γ` describes: no heave, no element
-> within 5 % of its strength, plastic strain in a compacting bulb rather than a
-> band. Full analysis in TIMs vault note 17.
+> The explanation is that the anchor is wrong. The failure surface is a
+> **Drucker–Prager cone** (measured: α constant to 3.9 % across the Lode
+> extremes while the Mohr–Coulomb angle swings 31.5° → 54°), calibrated in
+> triaxial compression; Vesić's `N_γ` is a Mohr–Coulomb formula. And the
+> failure MODE is punching, not the general shear `N_γ` describes: no heave, no
+> element within 5 % of its strength, plastic strain in a compacting bulb
+> rather than a band.
+>
+> **Correction, 2026-07-30 — the size of the anchoring error was 52× and is
+> 2.4×; see `COLLAPSE.md`.** This section claimed the plane-strain equivalent
+> of the cone (53.7°) gives 10.8 MPa against the 207 kPa anchor, putting the
+> benchmark at ~31 % of its capacity. That matching assumes **associated flow**,
+> which this non-dilatant set (`dil1 = dil2 = 0`) violates. With Davis's ψ = 0
+> reduction the plane-strain equivalent is 38.87° and the square-footing anchor
+> is **1525 kPa**, and an elastic–perfectly-plastic surrogate on the same cone,
+> same mesh and same footing **measures 1140 kPa** at the s/B = 10 % criterion.
+> The benchmark's 3384 kPa is therefore **2.2× the correct anchor and ~3× the
+> measured collapse load** — the over-strength is re-scaled by 2.4×, not
+> dissolved. TIMs vault notes 16/17 predate this correction.
 
 ![backbones](bearing_backbone.png)
 
