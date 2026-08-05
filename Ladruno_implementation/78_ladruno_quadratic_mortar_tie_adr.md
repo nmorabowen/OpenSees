@@ -1,8 +1,9 @@
 # LadrunoTie quadratic mortar — quad8/tri6 (serendipity) facets for the integral-mortar mesh-tie
 
 > ADR-78. Status: **IMPLEMENTED + ADVERSARIALLY GATED (2026-08-04) — Q0–Q3
-> shipped same day; Q4 (apeGmsh cross-check) gated on apeGmsh ADR 0086 S1
-> merging.** Oracle `proto_p2_2_quad8_mortar.py` 31/31; FE
+> shipped same day; Q4 (apeGmsh cross-check) CLOSED 2026-08-04, apeGmsh PR #898,
+> case-A agreement 5.0e-13 — see Q4 for the contract revision it forced.**
+> Oracle `proto_p2_2_quad8_mortar.py` 38/38; FE
 > `tests/test_ladrunoTie_mortar_quad8.py` 13/13; all shipped tie suites (40) +
 > contact suites (91) green unchanged. Gate: 2 independent refute-oriented
 > reviews + 2 killed mutations; 3 MAJORs found and fixed (master self-overlap
@@ -254,11 +255,22 @@ now refuse).
   hex20-block-on-hex8-block linear patch with `-mortar -dual` (exact, ν = 0 K
   check); tri6-slave named refusal; collocation-quad8 named refusal; curved-quad8
   named refusal; the shipped linear suite green unchanged (BLOCKER-3).
-* **Q4 — the cross-check (gated on apeGmsh).** Once apeGmsh's
-  `_kernel/resolvers/_mortar.py` (ADR 0086 S1) merges: run both kernels on the
-  **same** quad8-on-quad4 patch coordinates and compare P row-by-row to ≤1e-12.
-  Record the numbers in both repos (this oracle here, the S1 unit tests there).
-  Until that merge, Q4 is a named TODO in the oracle, not a silent gap.
+* **Q4 — the cross-check. CLOSED 2026-08-04** (apeGmsh ADR 0086 S1 merged, PR
+  #898). Both kernels ran the same quad8-on-quad4 patch: `‖P_dual‖_F` agrees to
+  |diff| = **5.0e-13** and the reference corner row to every quoted digit
+  (row sum 1.000000000000). Recorded in both repos — the oracle's Q4 block +
+  `kinematic_tie_validation/mortar_crosscheck_reference.json` here,
+  `test_q4_crosscheck_matches_fork_oracle` there. The contract
+  ([[78_apegmsh_mortar_crosscheck_requirements]]) went to **revision 2** on the
+  strength of apeGmsh's report, which found four defects in it. The load-bearing
+  one: **apeGmsh passed while using a different quadrature rule** (Duffy 5×5, not
+  the R3 Dunavant-12), because the Q4 patch is affine and any two degree-6-exact
+  rules agree there to ~1e-15 — R3 was unenforceable by its own cross-check. Q4
+  is therefore now a **two-case** protocol: case A (the affine patch above) plus
+  case B, the same topology bilinearly mapped onto a trapezoid, where the
+  pullback goes rational and the two rules part at ~1e-7. Oracle gates T12
+  (case B) and T13 (the discrimination measurement); case B's reference `P` is
+  published and awaits a second implementation. See [[LEDGER_quirks]].
 
 ## Adversarial gate — RUN (2026-08-04), findings fixed
 
