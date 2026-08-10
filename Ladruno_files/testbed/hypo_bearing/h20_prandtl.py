@@ -64,7 +64,7 @@ sees the exact 1-D state sigma_zz = -q0, sigma_xx = sigma_yy = -K0 q0.  Check
 that tests the distribution.
 
 Run:  py -3.12 h20_prandtl.py [leg ...] [--h0 H] [--form uri|std] [--budget N]
-      legs: patch | nonassoc | assoc      (default: patch nonassoc)
+      legs: patch | modes | nonassoc | assoc   (default: patch modes nonassoc)
 """
 import argparse
 import csv
@@ -459,6 +459,53 @@ def leg_patch(nodes, cells, sets, w, form):
     return dict(leg="patch", ngp=ngp, worst=worst)
 
 
+# --- control 4: the spurious-mode census on THIS mesh -----------------------
+def leg_modes(nodes, cells, sets, w, form):
+    """Count the zero-energy modes of the ASSEMBLED, RESTRAINED elastic
+    stiffness of this exact mesh.
+
+    Why this is not optional here.  H20 at 2x2x2 carries 6 spurious modes per
+    element and ships with NO hourglass control by design (ADR 72 §3.2; Abaqus
+    applies none to C3D20R).  The contract is that they are non-communicable in
+    a solid assembly -- and the usage guidance that comes with it says `uri` is
+    for meshes AT LEAST TWO ELEMENTS THICK, while this plane-strain strip is
+    ONE element thick in y.  So the leg sits exactly on the documented caveat,
+    and the honest move is to measure the rank rather than argue about it.  If
+    the restrained stiffness has any zero eigenvalue beyond round-off, the
+    `uri` collapse load is a mechanism, not a measurement."""
+    build_model(nodes, cells, sets, w, form, assoc=False, elastic=True)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormUnbalance", 1.0e-8, 1, 0)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 0.0)
+    ops.analysis("Static")
+    ops.analyze(1)
+    a = np.asarray(ops.printA("-ret"), dtype=float)
+    n = int(round(math.sqrt(a.size)))
+    assert n * n == a.size, a.size
+    K = a.reshape(n, n)
+    K = 0.5 * (K + K.T)
+    ev = np.linalg.eigvalsh(K)
+    tr = float(np.trace(K)) / n                    # mean diagonal = the scale
+    rel = ev / tr
+    nzero = int((rel < 1e-10).sum())
+    log(f"    [control 4] spurious-mode census ({form}): {n} free DOF, "
+        f"smallest 5 eigenvalues / (tr K / n) = "
+        f"{', '.join(f'{v:.3e}' for v in rel[:5])}")
+    log(f"    [control 4] zero-energy modes (rel < 1e-10): {nzero}  ->  "
+        + ("PASS -- the assembly has full rank, so the reduced rule's 6 "
+           "per-element modes do NOT communicate through this "
+           "single-element-thick strip"
+           if nzero == 0 else
+           "*** FAIL: the mesh carries a mechanism; any collapse load "
+           "measured on it is void ***"))
+    if nzero:
+        raise SystemExit("spurious mechanism present")
+    return dict(leg="modes", form=form, ndof=n, lam_min=float(rel[0]))
+
+
 # --- the ladder -------------------------------------------------------------
 def attempts(tol):
     """A perfectly plastic collapse is where Newton is worst: the tangent goes
@@ -622,7 +669,7 @@ def leg_push(nodes, cells, sets, w, form, assoc, tag, budget, sfrac, tmax, h0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("legs", nargs="*", default=["patch", "nonassoc"])
+    ap.add_argument("legs", nargs="*", default=["patch", "modes", "nonassoc"])
     ap.add_argument("--h0", type=float, default=0.5)
     ap.add_argument("--order", type=int, default=2, choices=[1, 2],
                     help="1 = LadrunoBrick (H8) control, 2 = LadrunoBrick20")
@@ -659,6 +706,8 @@ def main():
     for leg in args.legs:
         if leg == "patch":
             leg_patch(nodes, cells, sets, w, args.form)
+        elif leg == "modes":
+            leg_modes(nodes, cells, sets, w, args.form)
         elif leg in ("nonassoc", "assoc"):
             tag = (f"h{cells.shape[1]}_{leg}_{args.form}_"
                    f"h{str(args.h0).replace('0.', '')}" + args.suffix)
