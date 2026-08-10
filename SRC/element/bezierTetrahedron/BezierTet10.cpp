@@ -785,9 +785,11 @@ void BezierTet10::formCore(int tangFlag, Vector &fInt, Matrix *K)
         double B[NSTRESS][NELD];
         double factor = formBAtGauss(gp, dN_avg, B);
         // Abandon the pass (return), not skip-GP (continue): a partially-
-        // assembled fInt/K is never correct, and for a straight-sided tet
-        // detJ is constant so one bad GP means the element is degenerate
-        // everywhere. Unreachable-by-construction in the normal Newton flow —
+        // assembled fInt/K is never correct. For a straight-sided tet detJ
+        // is constant so one bad GP means the element is degenerate
+        // everywhere; a curved tet CAN degenerate at a single GP, and
+        // abandoning remains the fail-visible choice there too.
+        // Unreachable-by-construction in the normal Newton flow —
         // update() screens the same condition first and returns -1 (step-cut)
         // before any assembly — but fail safe if an accessor is ever called
         // on a degenerate trial state (mirrors formResidAndTangentFinite).

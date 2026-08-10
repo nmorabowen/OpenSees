@@ -413,8 +413,17 @@ SolidTransformationCorot::globalizeStiff(const Matrix &kCore,
       }
   }
 
-  // (3) symmetrise — now a rounding-level no-op (material R k_d Rᵀ and the
-  //     G1+G1ᵀ geometric part are both symmetric by construction).
+  // (3) symmetrise — NOT a no-op in general (PR #709 falsified the old
+  //     premise here): the core k_d is the full BᵀDB, which is UNSYMMETRIC
+  //     for non-associated plasticity (DruckerPrager rho_bar != rho,
+  //     ManzariDafalias), so this averaging discards the skew part of
+  //     R k_d Rᵀ. Kept as a deliberate modified-Newton POLICY for the corot
+  //     path: its tangent already omits the deferred polar-Hessian terms
+  //     (what the FD-tangent gate tolerates), the residual is exact via
+  //     globalizeForce, and only the G1+G1ᵀ geometric part is symmetric by
+  //     construction. Consequence: -geom corot + non-associated yield
+  //     converges linearly, not quadratically. If that path ever stalls,
+  //     drop this averaging and re-validate the corot batteries.  // Ladruno
   for (int i = 0; i < ndof; i++)
     for (int j = i+1; j < ndof; j++) {
       double avg = 0.5 * (K(i, j) + K(j, i));
