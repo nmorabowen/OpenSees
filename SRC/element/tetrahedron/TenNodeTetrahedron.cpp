@@ -46,6 +46,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
+#include <LadrunoResponseTokens.h>   // Ladruno: canonical recorder-token aliases
 #include <map>
 
 void* OPS_TenNodeTetrahedron()
@@ -1790,7 +1791,11 @@ TenNodeTetrahedron::setResponse(const char **argv, int argc, OPS_Stream &output)
 
 
     }
-    else if (strcmp(argv[0], "stresses") == 0)
+    // Ladruno: accept the canonical spelling too — bare strcmp took only the
+    // plural, so `-E stress` silently recorded nothing on this element while it
+    // worked on its neighbours. LadrunoResp::is() matches both spellings and does
+    // NOT change what is emitted (same responseID, same labels, same width).
+    else if (LadrunoResp::is(argv[0], "stress"))
     {
         for (int i = 0; i < 4; i++)
         {
@@ -1813,7 +1818,7 @@ TenNodeTetrahedron::setResponse(const char **argv, int argc, OPS_Stream &output)
         theResponse =  new ElementResponse(this, 3, Vector(6*4));
 
     }
-    else if (strcmp(argv[0], "strains") == 0)
+    else if (LadrunoResp::is(argv[0], "strain"))   // Ladruno: singular alias, see above
     {
         for (int i = 0; i < 4; i++)
         {

@@ -1588,6 +1588,20 @@ int LadrunoRecorder::initElementSources()
 	for (size_t cnt_request = 0; cnt_request < m_data->elemental_results_requests.size(); ++cnt_request) {
 		const std::vector<std::string>& request = m_data->elemental_results_requests[cnt_request];
 
+		// Ladruno (silent-drop diagnostics): the printable form of the -E request,
+		// i.e. the dot-joined token list exactly as the user typed it. Used only by
+		// the warnings below.
+		std::string request_str;
+		for (size_t i = 0; i < request.size(); ++i) {
+			if (i > 0) request_str += ".";
+			request_str += request[i];
+		}
+		// Number of elements, anywhere in the domain, that answered this request.
+		// Zero => the request produced no bucket at all (see the warning after the
+		// class loop). Only counts elements whose response AND descriptor stream
+		// were both accepted, which is exactly the bucket-fill condition.
+		size_t num_request_answers = 0;
+
 		std::vector<std::string> request_mod;
 		bool do_all_materials = false;
 		bool do_all_sections = false;
@@ -1639,6 +1653,13 @@ int LadrunoRecorder::initElementSources()
 			me::ElementWithSameClassTagCollection& elem_by_tag = it1->second;
 			me::OutputWithSameClassTagCollection& eo_by_tag = recorder.response_map[it1->first];
 
+			// Ladruno (silent-drop diagnostics): aggregate, per element class, how
+			// many elements refused this request. NEVER report per element — a
+			// domain-wide unknown token would otherwise emit one line per element.
+			size_t num_class_elements = 0;
+			size_t num_class_no_response = 0;     // setResponse returned null
+			size_t num_class_stream_error = 0;    // response built, descriptor stream rejected it
+
 			bool standard_section_keyword_modified = false;
 			if (do_all_sections && ladrunons::utils::shell::isShellElementTag(it1->first)) {
 				argv[0] = aux_section_keyword_for_shells.c_str();
@@ -1657,6 +1678,7 @@ int LadrunoRecorder::initElementSources()
 					for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it4 = elem_by_custom_rule.items.begin();
 						it4 != elem_by_custom_rule.items.end(); ++it4) {
 						Element* elem = *it4;
+						++num_class_elements;   // Ladruno: silent-drop diagnostics
 						me::OutputDescriptor eo_descriptor;
 						Response* eo_response = 0;
 						me::OutputDescriptorStream eo_stream(&eo_descriptor);
@@ -1800,9 +1822,19 @@ int LadrunoRecorder::initElementSources()
 							}
 							eo_by_header.items.push_back(me::OutputResponse(elem, eo_response));
 							m_data->elemental_responses.push_back(eo_response);
+							++num_request_answers;   // Ladruno: silent-drop diagnostics
 						}
 						else if (eo_response) {
 							delete eo_response;  // Ladruno: composite built but descriptor stream errored (e.g. GENERIC) -> owned by nobody
+							++num_class_stream_error;   // Ladruno: silent-drop diagnostics
+						}
+						else {
+							// Ladruno (silent-drop diagnostics): setResponse returned null —
+							// this element does not know the token, or does not support it in
+							// this configuration. Upstream this fell through in silence and
+							// the element simply never appeared in the file. Only COUNT here;
+							// the aggregated message is emitted once per element class below.
+							++num_class_no_response;
 						}
 					}
 				}
@@ -1811,6 +1843,30 @@ int LadrunoRecorder::initElementSources()
 				argv[0] = aux_section_keyword_standard.c_str();
 				standard_section_keyword_modified = false;
 			}
+
+			// Ladruno (silent-drop diagnostics): ONE line per (request, element
+			// class) when this class dropped any element. Deliberately NOT a token
+			// vocabulary check — the element response token space is per-element and
+			// open-ended, so "did anyone answer" is the only sound signal.
+			size_t num_class_dropped = num_class_no_response + num_class_stream_error;
+			if (num_class_dropped > 0) {
+				opserr << "LadrunoRecorder warning: -E " << request_str.c_str()
+				       << " : " << (int)num_class_dropped << " of " << (int)num_class_elements
+				       << " " << elem_by_tag.class_name.c_str()
+				       << " element(s) returned no response (unknown or unsupported token";
+				if (num_class_stream_error > 0)
+					opserr << "; " << (int)num_class_stream_error
+					       << " of them built a response the output descriptor rejected";
+				opserr << "); nothing will be recorded for them\n";
+			}
+		}
+
+		// Ladruno (silent-drop diagnostics): a request nobody answered produces no
+		// HDF5 group at all — upstream that was completely silent, so a typo in -E
+		// looked exactly like a working recorder with an empty result.
+		if (num_request_answers == 0) {
+			opserr << "LadrunoRecorder warning: -E " << request_str.c_str()
+			       << " matched no element in the model; nothing will be recorded for it\n";
 		}
 		delete[] argv;
 	}
