@@ -261,12 +261,17 @@ if (-not $NoExe) {
         $exePath = Join-Path $out "install.exe"
         if (Test-Path $exePath) { Remove-Item $exePath }
         Write-Host "Compiling install.ps1 -> install.exe via PS2EXE ..." -NoNewline
-        # PE/.NET version must fit major.minor.build.revision (each <= 65535).
-        # Map a YYYYMMDD date string into "1.0.YYYY.MMDD"; otherwise use as-is.
-        if ($Version -match '^\d{8}$') {
-            $assemblyVersion = "1.0.$($Version.Substring(0,4)).$($Version.Substring(4,4))"
+        # PE/.NET version must fit major.minor.build.revision (each <= 65535),
+        # digits only — a tagged version like "20260810_tims" is NOT valid and
+        # makes Invoke-PS2EXE throw. Map the LEADING YYYYMMDD (tagged or not)
+        # into "1.0.YYYY.MMDD"; anything else falls back to 1.0.0.0 so the
+        # assembly version is always well-formed. The full tagged string still
+        # lands in the title/description/product metadata below.
+        if ($Version -match '^(\d{8})') {
+            $d = $Matches[1]
+            $assemblyVersion = "1.0.$($d.Substring(0,4)).$($d.Substring(4,4))"
         } else {
-            $assemblyVersion = $Version
+            $assemblyVersion = "1.0.0.0"
         }
         Invoke-PS2EXE `
             -inputFile    $installerPath `
