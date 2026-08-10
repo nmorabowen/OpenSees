@@ -495,6 +495,12 @@ static int Tcl_ops_LadrunoEndAugment(ClientData clientData, Tcl_Interp *interp, 
     return TCL_OK;
 }
 
+static int Tcl_ops_LadrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno build-stamp query
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoBuild() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
 static int Tcl_ops_eigen(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -1970,6 +1976,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"ladrunoMortarTieResidual", &Tcl_ops_LadrunoMortarTieResidual);  // Ladruno ADR-41 C4
     addCommand(interp,"ladrunoBeginAugment", &Tcl_ops_LadrunoBeginAugment);            // Ladruno ADR-41 D1
     addCommand(interp,"ladrunoEndAugment", &Tcl_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1
+    addCommand(interp,"ladrunoBuild", &Tcl_ops_LadrunoBuild);                          // Ladruno build-stamp query
     addCommand(interp,"ladrunoContactForce", &Tcl_ops_LadrunoContactForce);  // Ladruno ADR-39 B3
     addCommand(interp,"eigen", &Tcl_ops_eigen);
     addCommand(interp,"nDMaterial", &Tcl_ops_nDMaterial);

@@ -287,6 +287,7 @@ int OPS_LadrunoMortarTieResidual();    // Ladruno: ADR-41 C4 query (max ‖r̄�
 int OPS_LadrunoContactForce();         // Ladruno: ADR-39 B3 query (NTS nodal contact force)
 int OPS_LadrunoBeginAugment();         // Ladruno: ADR-41 D1 (open held-load augmentation sweep)
 int OPS_LadrunoEndAugment();           // Ladruno: ADR-41 D1 (close held-load augmentation sweep)
+int OPS_LadrunoBuild();                // Ladruno: build-stamp query (git hash the binary was compiled from)
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();
