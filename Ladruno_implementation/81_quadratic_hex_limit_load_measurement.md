@@ -153,7 +153,8 @@ leg terminated on the **step floor**, none on the subdivision budget — the
 | `h20_nonassoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | **0.7715** | NO | 11.6 | 0.0112 | 49 | 260 | 266 |
 | `h20_nonassoc_uri_h5` | H20 | `uri` | 1.5 | 4 | **0.6894** | NO | 10.4 | 0.0103 | 67 | 399 | 994 |
 | `h20_nonassoc_std_h1.0` | H20 | `std` | 0.44 | 2 | **0.5894** | NO | 27.2 | 0.0045 | 47 | 252 | 310 |
-| `h20_assoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | 1.1414 (assoc control) | (see below) | 0.04 | 0.0203 | 0 | 1020 | 1084 |
+| `..._uri_h1.0_strong` | H20 | `uri` | 1.5 | 2 | 0.7902 (100× rung, §4.2) | NO | 11.2 | 0.0120 | 46 | 305 | 1014 |
+| `h20_assoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | 1.1414 (assoc control) | (see §4.5) | 0.04 | 0.0203 | 0 | 1020 | 1084 |
 
 Wall times are on a **contended box** (three other agents were running); treat
 them as an order of magnitude, not a benchmark.
@@ -182,10 +183,15 @@ that margin "Newton cannot get there" and "there is nothing there to get to"
 look identical, so a fourth rung at **100× tolerance** was added (`--strong`)
 and the leg re-run.
 
-It bought **0.7715 → 0.7846, i.e. +1.7 %**, and it did so by putting **129 of
-271 steps** on relaxed tolerances. Half the curve leaning on a 100× relaxation
-moves the answer by under two percent. The wall is a property of the
-discretization; a better solver does not walk through it.
+It bought **0.7715 → 0.7902, i.e. +2.4 %**, ended at s/B = 0.0120 (against
+0.0112) still hardening at 11.2 % of its initial tangent, and again died on the
+step floor with 46 of 800 subdivisions. It paid for those 2.4 % with **95 of
+305 steps taken on the 100× rung** — nearly a third of the curve at a
+tolerance a hundred times looser than the one the headline legs were held to.
+
+A third of the curve on a 100× relaxation moves the answer by under three
+percent and still does not produce a plateau. **The wall is a property of the
+discretization; a better solver does not walk through it.**
 
 ### 4.3 What the volumetric treatment is worth, by order
 
@@ -265,7 +271,7 @@ the entire ceiling inside pure Lagrange elements, with no Bézier anywhere.
 hardening at 10 % of its initial tangent has not shown you where it would have
 stopped. What is established is (i) that the wall is reproducible to three
 digits across a 10× change in step size, (ii) that it is not the subdivision
-budget, and (iii) that a 100×-relaxed solver moves it by 1.7 %. What is *not*
+budget, and (iii) that a 100×-relaxed solver moves it by 2.4 %. What is *not*
 established is that 0.77 is the quadratic hex's asymptote. If a regularized
 formulation walked an H20 to 1.0 on this problem, verdict (b) would weaken and
 (a) would come back into play.
