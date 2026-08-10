@@ -680,10 +680,13 @@ setPrecision(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 int 
 logFile(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
-int 
+int
 version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
-int 
+int
+ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
+
+int
 getPID(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int 
@@ -1495,8 +1498,10 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
     Tcl_CreateCommand(interp, "systemSize", &systemSize, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
-    Tcl_CreateCommand(interp, "version", &version, 
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
+    Tcl_CreateCommand(interp, "version", &version,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "ladrunoBuild", &ladrunoBuild,   // Ladruno build-stamp query
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
@@ -11271,6 +11276,25 @@ version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
 
   sprintf(buffer, "%s", OPS_VERSION);
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+
+  return TCL_OK;
+}
+
+// Ladruno: build-stamp query — the git commit hash this binary was compiled from
+// (CMake stamps `git log -1 --format=%H` into the OPENSEES_VERSION define, the same
+// constant the banner prints). Machine-readable provenance: works with the banner
+// suppressed and is plain ASCII.
+int
+ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  char buffer[64];
+
+#ifdef OPENSEES_VERSION
+  snprintf(buffer, sizeof(buffer), "%s", OPENSEES_VERSION);
+#else
+  snprintf(buffer, sizeof(buffer), "unknown");
+#endif
   Tcl_SetResult(interp, buffer, TCL_VOLATILE);
 
   return TCL_OK;

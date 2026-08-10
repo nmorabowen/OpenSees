@@ -1131,6 +1131,24 @@ int OPS_LadrunoEndAugment()
     return 0;
 }
 
+// ladrunoBuild -> the git commit hash this binary was compiled from (CMake stamps
+// `git log -1 --format=%H` into the OPENSEES_VERSION define — the same constant the
+// splash banner prints). Machine-readable engine provenance: queryable in-process,
+// independent of LADRUNO_OPENSEES_QUIET, plain ASCII. No args.
+int OPS_LadrunoBuild()   // Ladruno
+{
+#ifdef OPENSEES_VERSION
+    const char *build = OPENSEES_VERSION;
+#else
+    const char *build = "unknown";
+#endif
+    if (OPS_SetString(build) < 0) {
+        opserr << "WARNING ladrunoBuild: failed to set build string\n";
+        return -1;
+    }
+    return 0;
+}
+
 
 int OPS_nodeCrd()
 {
