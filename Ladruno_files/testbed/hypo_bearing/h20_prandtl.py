@@ -516,14 +516,29 @@ def leg_modes(nodes, cells, sets, w, form):
 
 
 # --- the ladder -------------------------------------------------------------
-def attempts(tol):
+def attempts(tol, strong=False):
     """A perfectly plastic collapse is where Newton is worst: the tangent goes
     singular in the mechanism mode exactly when the answer arrives.  Each
     increment gets this ladder before the step is shrunk, and any step that
-    needed the relaxed tolerance is flagged in the CSV."""
-    return [("KrylovNewton", tol, 25, 0),
-            ("NewtonLineSearch", tol, 40, 0),
-            ("KrylovNewton", 10.0 * tol, 60, 1)]
+    needed a relaxed tolerance is flagged in the CSV with WHICH one.
+
+    The first three rungs are the reference driver's, unchanged.  `strong`
+    appends a fourth at 100x, and exists to answer one question: when an H20
+    leg walls, is it the SOLVER or the DISCRETIZATION?  The measured wall
+    stagnates at a residual of 0.045 kN on a 300 kN problem -- 1.5e-4 relative,
+    and only 1.5x above the 10x rung -- which is close enough that "Newton
+    cannot get there" and "there is nothing there to get to" look alike.  A
+    leg that walks through on the 100x rung was solver-limited; one that stops
+    in the same place at the same q was not.  Steps taken on it are flagged
+    `relaxed = 2`, so the fraction of the curve that leaned on it is on the
+    record and the headline can be quoted with and without them."""
+    lad = [("KrylovNewton", tol, 25, 0),
+           ("NewtonLineSearch", tol, 40, 0),
+           ("KrylovNewton", 10.0 * tol, 60, 1)]
+    if strong:
+        lad += [("NewtonLineSearch", 10.0 * tol, 80, 1),
+                ("KrylovNewton", 100.0 * tol, 100, 2)]
+    return lad
 
 
 def set_attempt(a):
@@ -532,7 +547,8 @@ def set_attempt(a):
     ops.algorithm(algo)
 
 
-def leg_push(nodes, cells, sets, w, form, assoc, tag, budget, sfrac, tmax, h0):
+def leg_push(nodes, cells, sets, w, form, assoc, tag, budget, sfrac, tmax, h0,
+             strong=False):
     alpha = alpha_from_phi_txc(PHI_TXC)
     mc = mc_from_cone(alpha)
     nq = n_q(mc["ps"])
@@ -557,7 +573,8 @@ def leg_push(nodes, cells, sets, w, form, assoc, tag, budget, sfrac, tmax, h0):
     if m0 >= 0.8:
         raise SystemExit("initial state too close to yield; raise nu")
     log(f"    subdivision budget = {budget}, ds base/min/max = "
-        f"{DS_BASE * 1e3}/{DS_MIN * 1e3}/{DS_MAX * 1e3} mm, s/B target = {sfrac}")
+        f"{DS_BASE * 1e3}/{DS_MIN * 1e3}/{DS_MAX * 1e3} mm, s/B target = {sfrac}, "
+        f"ladder = {'STRONG (4th rung at 100x tol)' if strong else 'reference (3 rungs)'}")
 
     build_model(nodes, cells, sets, w, form, assoc)
     tol = 1.0e-5 * max(Q0 * float(w.sum()), 1.0)
@@ -590,7 +607,7 @@ def leg_push(nodes, cells, sets, w, form, assoc, tag, budget, sfrac, tmax, h0):
     wr.writerow(["s_m", "s_over_B", "R_kN", "q_kPa", "ds_mm", "relaxed", "wall_s"])
     rows, ds, good, nfail, nrelax, nsub = [], DS_BASE, 0, 0, 0, 0
     verdict, t0 = "reached the target", time.time()
-    lad = attempts(tol)
+    lad = attempts(tol, strong)
     while True:
         s_now = uz0 - ops.getTime()
         if s_now >= smax - 1e-12:
@@ -689,6 +706,9 @@ def main():
     ap.add_argument("--budget", type=int, default=40)
     ap.add_argument("--tmax", type=float, default=1.0e9)
     ap.add_argument("--suffix", default="")
+    ap.add_argument("--strong", action="store_true",
+                    help="append the 100x-tolerance 4th ladder rung "
+                         "(solver-vs-discretization probe; flags relaxed=2)")
     ap.add_argument("--ds", type=float, nargs=3, default=None,
                     metavar=("BASE", "MIN", "MAX"),
                     help="override the order's step ladder, in metres")
@@ -729,7 +749,7 @@ def main():
                    f"h{str(args.h0).replace('0.', '')}" + args.suffix)
             out.append(leg_push(nodes, cells, sets, w, args.form,
                                 leg == "assoc", tag, args.budget, args.sfrac,
-                                args.tmax, args.h0))
+                                args.tmax, args.h0, args.strong))
         else:
             raise SystemExit(f"unknown leg {leg!r}")
 
