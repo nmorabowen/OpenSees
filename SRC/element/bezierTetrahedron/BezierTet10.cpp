@@ -451,25 +451,33 @@ const Matrix &BezierTet10::getInitialStiff()
     for (int gp = 0; gp < NGAUSS; gp++) {
         double B[NSTRESS][NELD];
         double factor = formBAtGauss(gp, dN_avg, B);
+        // Abandon (return), not skip-GP: a partial K is never correct, and a
+        // degenerate reference geometry is permanent — return the abandoned
+        // K_return WITHOUT caching it as Ki (mirrors the formCore guard).
         if (factor < 0.0) {
             opserr << "BezierTet10::getInitialStiff - degenerate Jacobian at GP "
                    << gp << " (element " << this->getTag() << ")\n";
-            continue;
+            return K_return;
         }
 
+        // Full BᵀD₀B — getInitialTangent() may be unsymmetric for the same
+        // materials whose getTangent() is (see formCore); no mirror shortcut.
         const Matrix &D = theMaterial[gp]->getInitialTangent();
-
-        for (int I = 0; I < NELD; I++) {
-            for (int Jc = I; Jc < NELD; Jc++) {
+        double DB[NSTRESS][NELD];
+        for (int k = 0; k < NSTRESS; k++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
+                double sum = 0.0;
+                for (int l = 0; l < NSTRESS; l++)
+                    sum += D(k, l) * B[l][Jc];
+                DB[k][Jc] = sum;
+            }
+        for (int I = 0; I < NELD; I++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
                 double sum = 0.0;
                 for (int k = 0; k < NSTRESS; k++)
-                    for (int l = 0; l < NSTRESS; l++)
-                        sum += B[k][I] * D(k, l) * B[l][Jc];
+                    sum += B[k][I] * DB[k][Jc];
                 K_return(I, Jc) += factor * sum;
-                if (I != Jc)
-                    K_return(Jc, I) += factor * sum;
             }
-        }
     }
 
     // seam 3 (reference config): pin the geometry frame to R = I by refreshing
@@ -776,10 +784,17 @@ void BezierTet10::formCore(int tangFlag, Vector &fInt, Matrix *K)
     for (int gp = 0; gp < NGAUSS; gp++) {
         double B[NSTRESS][NELD];
         double factor = formBAtGauss(gp, dN_avg, B);
+        // Abandon the pass (return), not skip-GP (continue): a partially-
+        // assembled fInt/K is never correct, and for a straight-sided tet
+        // detJ is constant so one bad GP means the element is degenerate
+        // everywhere. Unreachable-by-construction in the normal Newton flow —
+        // update() screens the same condition first and returns -1 (step-cut)
+        // before any assembly — but fail safe if an accessor is ever called
+        // on a degenerate trial state (mirrors formResidAndTangentFinite).
         if (factor < 0.0) {
             opserr << "BezierTet10::formCore - degenerate Jacobian at GP " << gp
                    << " (element " << this->getTag() << ")\n";
-            continue;
+            return;
         }
 
         const Vector &sigma = theMaterial[gp]->getStress();
@@ -791,18 +806,29 @@ void BezierTet10::formCore(int tangFlag, Vector &fInt, Matrix *K)
         }
 
         if (tangFlag && K != 0) {
+            // D is GENERALLY UNSYMMETRIC (non-associated flow: DruckerPrager
+            // with rho_bar != rho, ManzariDafalias always), so the full BᵀDB
+            // must be assembled — an upper-triangle-and-mirror shortcut writes
+            // the Bᵀ(I)DB(J) contraction into K(J,I), whose true value is the
+            // Dᵀ contraction, silently corrupting the tangent the moment any
+            // GP yields (TIMs report item 1). Cache DB once per GP; this is
+            // no more work than the old triangular double contraction.
             const Matrix &D = theMaterial[gp]->getTangent();
-            for (int I = 0; I < NELD; I++) {
-                for (int Jc = I; Jc < NELD; Jc++) {   // symmetric
+            double DB[NSTRESS][NELD];
+            for (int k = 0; k < NSTRESS; k++)
+                for (int Jc = 0; Jc < NELD; Jc++) {
+                    double sum = 0.0;
+                    for (int l = 0; l < NSTRESS; l++)
+                        sum += D(k, l) * B[l][Jc];
+                    DB[k][Jc] = sum;
+                }
+            for (int I = 0; I < NELD; I++)
+                for (int Jc = 0; Jc < NELD; Jc++) {
                     double sum = 0.0;
                     for (int k = 0; k < NSTRESS; k++)
-                        for (int l = 0; l < NSTRESS; l++)
-                            sum += B[k][I] * D(k, l) * B[l][Jc];
+                        sum += B[k][I] * DB[k][Jc];
                     (*K)(I, Jc) += factor * sum;
-                    if (I != Jc)
-                        (*K)(Jc, I) += factor * sum;
                 }
-            }
         }
     }
 }
