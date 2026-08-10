@@ -93,8 +93,6 @@ if _BUILT:
         os.add_dll_directory(_DIST)
     except (FileNotFoundError, OSError):
         pass
-    for _m in ("opensees", "openseespy", "openseespy.opensees"):
-        sys.modules.pop(_m, None)
     if _DIST not in sys.path:
         sys.path.insert(0, _DIST)
 
@@ -114,10 +112,8 @@ if _HAVE_PYTEST and _BUILT and not _HAVE_H5PY:
     pytest.skip(f"h5py unavailable after site re-add: {_H5_ERR}", allow_module_level=True)
 
 if _BUILT:
-    import opensees as ops  # noqa: E402
-    assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
-        f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST})"
-    )
+    from _engine import bind_worktree_engine  # noqa: E402
+    ops = bind_worktree_engine(_DIST)
 
 if _HAVE_PYTEST:
     pytestmark = [pytest.mark.zone_b, pytest.mark.t1]

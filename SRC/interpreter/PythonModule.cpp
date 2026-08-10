@@ -486,9 +486,14 @@ PyMethodDef *getmethodsFunc() {
 }
 
 void cleanupFunc() {
-    module->getCmds().wipe();
+    // Ladruno: null-safe + idempotent. Py_AtExit may invoke this after a
+    // prior invocation already freed `module` (see LEDGER_quirks.md,
+    // "re-import ... crashes Python AT SHUTDOWN"); the old code deref'd the
+    // dangling pointer before its own null check.
     if (module != 0) {
+        module->getCmds().wipe();
         delete module;
+        module = 0;
     }
 }
 
@@ -669,7 +674,15 @@ initopensees(void)
 
     sserr.setError(st->error);
 
-    Py_AtExit(cleanupFunc);
+    // Ladruno: m_size > 0 makes CPython RE-RUN this init when the module is
+    // re-imported after a sys.modules.pop of the same DLL; an unconditional
+    // Py_AtExit here then registers cleanupFunc twice and the second call at
+    // Py_FinalizeEx wipes a dangling PythonModule* (0xC0000005/0xC0000409).
+    static bool cleanupRegistered = false;
+    if (!cleanupRegistered) {
+        Py_AtExit(cleanupFunc);
+        cleanupRegistered = true;
+    }
 
 #if PY_MAJOR_VERSION >= 3
     return pymodule;

@@ -83,20 +83,8 @@ if not os.path.isfile(os.path.join(_DIST, "opensees.pyd")):
     print(f"SKIP: {_msg}")
     raise SystemExit(0)
 
-os.environ["PATH"] = _DIST + os.pathsep + os.environ.get("PATH", "")
-try:
-    os.add_dll_directory(_DIST)
-except (FileNotFoundError, OSError):
-    pass
-if _DIST not in sys.path:
-    sys.path.insert(0, _DIST)
-for _m in ("opensees", "openseespy", "openseespy.opensees"):
-    sys.modules.pop(_m, None)
-import opensees as ops  # noqa: E402
-
-assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
-    f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST})"
-)
+from _engine import bind_worktree_engine  # noqa: E402
+ops = bind_worktree_engine(_DIST)
 
 # pytest support (optional; the primary runner is `python -S <file>`)
 try:
