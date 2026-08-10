@@ -115,7 +115,16 @@ XLIM, ZBOT = 30.0, -20.0  # 14.5 B of clearance, 10 B of depth -- dp_strip.py's
 R_GRADE = 1.35
 
 # --- ADR 63 D16: the three adaptive-stepping guards -------------------------
-DS_BASE, DS_MIN, DS_MAX = 2.0e-4, 2.0e-6, 1.0e-3
+# Two step ladders, because the reference campaign measured that ONE does not
+# serve both orders.  `dp_strip.py`'s 2e-4/2e-6/1e-3 was tuned on 336 LINEAR
+# hexes; the quadratic reference driver records that it "diverges at step zero
+# on this quadratic mesh -- measured: 2e-5 converges cleanly at 0.19 s/step
+# where 5e-5 already fails", and runs 2e-5/2e-7/2e-4 instead.  So the linear
+# leg gets the linear ladder and the quadratic legs get the quadratic one, and
+# neither element is judged on the other's step size.
+DS_LADDER = {1: (2.0e-4, 2.0e-6, 1.0e-3),      # dp_strip.py (H8)
+             2: (2.0e-5, 2.0e-7, 2.0e-4)}      # r3_prandtl_tet10.py (quadratic)
+DS_BASE, DS_MIN, DS_MAX = DS_LADDER[1]
 GROW_AFTER = 6            # recovery latch: clean steps before the step grows
 STALL_WINDOW = 150        # steps
 STALL_ADVANCE = 1.0e-4    # fraction of smax that must be covered in that window
@@ -680,10 +689,17 @@ def main():
     ap.add_argument("--budget", type=int, default=40)
     ap.add_argument("--tmax", type=float, default=1.0e9)
     ap.add_argument("--suffix", default="")
+    ap.add_argument("--ds", type=float, nargs=3, default=None,
+                    metavar=("BASE", "MIN", "MAX"),
+                    help="override the order's step ladder, in metres")
     args = ap.parse_args()
     if args.order == 2 and args.form == "bbar":
         raise SystemExit("LadrunoBrick20 has no B-bar; use uri (the C3D20R "
                          "analog) or std")
+
+    global DS_BASE, DS_MIN, DS_MAX
+    DS_BASE, DS_MIN, DS_MAX = (tuple(args.ds) if args.ds
+                               else DS_LADDER[args.order])
 
     # --- control 0: provenance ---------------------------------------------
     try:
