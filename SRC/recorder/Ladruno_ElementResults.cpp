@@ -44,6 +44,7 @@ namespace ladruno {
 		detail::element::OutputResponseCollection& bucket)
 		: m_header(header)
 		, m_bucket(bucket)
+		, m_size_warned(false)   // Ladruno: one-shot latch for the size-mismatch diagnostic
 	{
 		// Row identity = the element tag of each response in the bucket (matches
 		// the frozen recordResultsOnElements ID dataset order).
@@ -96,7 +97,21 @@ namespace ladruno {
 			current_response.response->getResponse();
 			const Vector& current_data = current_response.response->getInformation().getData();
 			if (current_data.Size() != num_columns) {
-				opserr << "LadrunoRecorder Error: invalid response data size\n";
+				// Ladruno: latched + actionable. The mismatch is a property of the
+				// (element, bucket) pairing, so it recurs on every element on every
+				// step; unlatched this printed the same anonymous line forever and
+				// buried every other message. The zero-fill recovery below is kept —
+				// the row stays the declared width so the dataset never desyncs.
+				if (!m_size_warned) {
+					m_size_warned = true;
+					opserr << "LadrunoRecorder warning: element "
+					       << current_response.element->getTag()
+					       << " in bucket " << m_bucket.dir_name.c_str()
+					       << " returned " << current_data.Size()
+					       << " values but the bucket declares " << num_columns
+					       << " columns; that row is zero-filled"
+					          " (further size mismatches in this bucket are not reported)\n";
+				}
 				continue;
 			}
 			size_t offset = i * (size_t)num_columns;
