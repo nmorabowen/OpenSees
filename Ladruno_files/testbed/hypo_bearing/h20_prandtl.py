@@ -29,6 +29,24 @@ serendipity hex -- QUADRATIC and a HEX and Lagrange -- on the identical problem.
     quadratic hex reaches ~1.0     ->  the ceiling is (a) SIMPLEX GEOMETRY
     quadratic hex tops out too     ->  the ceiling is (b) QUADRATIC ORDER
 
+RESULT, AND A CORRECTION TO THE DECISION RULE ABOVE (note 81 §0, §4.1).  The
+quadratic hex tops out — 0.5894 (std) / 0.7715 (uri, 2 el/B) / 0.6894 (uri,
+4 el/B) — while the linear hex plateaus at 0.9977 and reaches its target.  But
+NONE of the quadratic legs plateaued: every one ended on the adaptive
+controller's STEP FLOOR with the curve still rising at 10-27 % of its initial
+tangent, so none of those numbers is a ceiling.  TIMs then showed a sibling leg
+moving +17 % in capacity and +59 % in reach under a change to ONE solver
+integer (subdivision budget 24 -> 48) with the discretization held fixed.  So
+read the numbers as "the Newton path was lost here", not as element capacities,
+and DO NOT quote a leg as a capacity unless it reached its target with a flat
+tangent.  Every capacity claim wants TWO controller allowances reported.
+The constraint-ratio (r) explanation that the 2x2 design was built around is
+REJECTED — note 81 §5.3 has a measured counter-example at r ~ 4.4.
+
+INTERNAL / HOLD: the TIMs figures quoted in this docstring are the campaign's,
+cited with credit, and are under the same hold as the unfiled UW report — do
+not carry them into anything public or upstream-facing.
+
 NOTE ON THE VOLUMETRIC TREATMENT.  LadrunoBrick20 has no B-bar option, and it
 does not need one: its two formulations are `std` (full 27-pt Gauss) and `uri`
 (uniform reduced 2x2x2), and H20 + 2x2x2 IS the classical near-incompressible
@@ -523,15 +541,23 @@ def attempts(tol, strong=False):
     needed a relaxed tolerance is flagged in the CSV with WHICH one.
 
     The first three rungs are the reference driver's, unchanged.  `strong`
-    appends a fourth at 100x, and exists to answer one question: when an H20
-    leg walls, is it the SOLVER or the DISCRETIZATION?  The measured wall
-    stagnates at a residual of 0.045 kN on a 300 kN problem -- 1.5e-4 relative,
-    and only 1.5x above the 10x rung -- which is close enough that "Newton
-    cannot get there" and "there is nothing there to get to" look alike.  A
-    leg that walks through on the 100x rung was solver-limited; one that stops
-    in the same place at the same q was not.  Steps taken on it are flagged
-    `relaxed = 2`, so the fraction of the curve that leaned on it is on the
-    record and the headline can be quoted with and without them."""
+    appends a fourth at 100x.  The measured wall stagnates at a residual of
+    0.045 kN on a 300 kN problem -- 1.5e-4 relative, and only 1.5x above the
+    10x rung -- which is close enough that "Newton cannot get there" and "there
+    is nothing there to get to" look alike.  Steps taken on the extra rung are
+    flagged `relaxed = 2`, so the fraction of the curve that leaned on it is on
+    the record and the headline can be quoted with and without them.
+
+    WHAT THIS RUNG DOES AND DOES NOT SETTLE (corrected, note 81 §4.3).  It was
+    introduced to decide SOLVER vs DISCRETIZATION, and it does not: a relaxed
+    TOLERANCE is not a stronger path algorithm, it is the same algorithm
+    allowed to accept worse answers.  Measured, it bought +2.4 % and no
+    plateau -- the same direction and order of magnitude as the TIMs
+    subdivision-budget sweep, i.e. one more knob that nudges the wall.  The
+    honest reading is that a leg ending here lost the Newton path, full stop.
+    A real solver-vs-kinematics discriminator needs arc-length (a path method
+    that does not need the tangent to stay invertible) plus the mobilisation
+    field at termination -- note 81 §5.5."""
     lad = [("KrylovNewton", tol, 25, 0),
            ("NewtonLineSearch", tol, 40, 0),
            ("KrylovNewton", 10.0 * tol, 60, 1)]
