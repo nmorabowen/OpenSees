@@ -17,10 +17,11 @@ engaged so the tangent actually changes between iterations).
   test_profiler_brackets_present      the phase-split profiler brackets report
   test_bad_options_degrade_not_null   parse failure degrades, never ProfileSPD
 
-NOT covered here (documented gap, not an oversight): the addA asymmetry
-detector needs a genuinely unsymmetric element tangent inside the first three
-assemblies (contact / non-associated flow / LadrunoUP) — a heavier model than
-a CI gate should carry; it stays exercised by the perf decks.
+NOT covered here: the addA half-storage asymmetry detector. It needs a genuinely
+unsymmetric element tangent (contact / non-associated flow / LadrunoUP), which
+this associative-J2 cantilever never produces. It now has its own gate —
+tests/test_pardiso_asym_rearm.py, a non-associated DruckerPrager cube — added
+with the guard's periodic re-arm (TIMs item 2).
 
 Tolerances are chosen to hold at ANY MKL thread count: threaded PARDISO is not
 byte-reproducible run-to-run (P1f, ~1 ULP), so nothing here asserts bitwise
