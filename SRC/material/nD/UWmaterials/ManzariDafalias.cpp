@@ -173,19 +173,43 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mTolR                  = TolR;
     mJacoType              = JacoType;
     mScheme                = integrationScheme;
+
+    // Ladruno: schemes 3 (RungeKutta4) and 5 (ForwardEuler) take one
+    // uncorrected substep with no error estimate and no yield-drift
+    // correction (scheme 3's adaptive branch is dead code, its
+    // Stress_Correction calls are commented out) -- warn once per process.
+    // TIMs report item 3/4.
+    if (mScheme == 3 || mScheme == 5) {
+        static bool warnedIntSchemeNoErrorControl = false;
+        if (!warnedIntSchemeNoErrorControl) {
+            opserr << "WARNING ManzariDafalias IntScheme 3 (RungeKutta4) / 5 (ForwardEuler): "
+                   << "no error estimate, no yield-drift correction -- not a converged integrator; "
+                   << "results can drift far above the true strength. Use 1 (ModifiedEuler, "
+                   << "error-controlled) or 45 (RK45 Sloan).\n";
+            warnedIntSchemeNoErrorControl = true;
+        }
+    }
     mTangType              = tangentType;
     mIter                  = 0;
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
-    
+
+    // Ladruno: default to the elastic stage, matching the parallel/classTag
+    // constructor below (mElastFlag=0). The staged-gravity idiom
+    // (elastic gravity, then updateMaterialStage ... 1) assumes the material
+    // starts elastic; without this, "elastic" gravity runs the full plastic
+    // model from zero stress (singular regime) and stalls Newton silently.
+    // TIMs report item 7.
+    mElastFlag = 0;
+
     initialize();
 }
 
 // full constructor
-ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu, 
+ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     double e_init, double Mc, double c, double lambda_c, double e0, double ksi,
     double P_atm, double m, double h0, double ch, double nb, double A0, double nd,
-    double z_max, double cz, double mDen, int integrationScheme, int tangentType, 
+    double z_max, double cz, double mDen, int integrationScheme, int tangentType,
     int JacoType, double TolF, double TolR): NDMaterial(tag, classTag),
     mEpsilon(6), 
     mEpsilon_n(6),
@@ -226,11 +250,32 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mTolR                  = TolR;
     mJacoType              = JacoType;
     mScheme                = integrationScheme;
+
+    // Ladruno: schemes 3 (RungeKutta4) and 5 (ForwardEuler) take one
+    // uncorrected substep with no error estimate and no yield-drift
+    // correction (scheme 3's adaptive branch is dead code, its
+    // Stress_Correction calls are commented out) -- warn once per process.
+    // TIMs report item 3/4.
+    if (mScheme == 3 || mScheme == 5) {
+        static bool warnedIntSchemeNoErrorControl = false;
+        if (!warnedIntSchemeNoErrorControl) {
+            opserr << "WARNING ManzariDafalias IntScheme 3 (RungeKutta4) / 5 (ForwardEuler): "
+                   << "no error estimate, no yield-drift correction -- not a converged integrator; "
+                   << "results can drift far above the true strength. Use 1 (ModifiedEuler, "
+                   << "error-controlled) or 45 (RK45 Sloan).\n";
+            warnedIntSchemeNoErrorControl = true;
+        }
+    }
     mTangType              = tangentType;
     mIter                  = 0;
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
-    
+
+    // Ladruno: default to the elastic stage, matching the parallel/classTag
+    // constructor below (mElastFlag=0). See the other full constructor above
+    // for the staged-gravity rationale. TIMs report item 7.
+    mElastFlag = 0;
+
     initialize();
 }
 
@@ -4760,8 +4805,17 @@ ManzariDafalias::Elastic2Plastic()
     double p = one3 * GetTrace(mSigma) + m_Presidual;
     curM = curM / p;
     if (curM > m_Mc)
-    {  
+    {
+         // Ladruno: restore the diagnostic (upstream commented it out below,
+         // leaving this stage-switch silently raise the friction angle 10%
+         // with no trace). Numerics unchanged -- upstream UW behavior kept.
+         // TIMs report item 8.
+         double m_Mc_old = m_Mc;
          m_Mc = 1.1 * curM;
+         opserr << "WARNING ManzariDafalias tag " << this->getTag()
+                << ": stage-switch stress ratio (" << curM
+                << ") exceeded the bounding surface M_c (" << m_Mc_old
+                << "); raising M_c to " << m_Mc << " (Outside Bounding!)" << endln;
     //     opserr << "Outside Bounding!" << endln;
     //     opserr << "Before = " << mSigma;
     //     mAlpha = mAlpha_n = (m_Mc - m_m) / curM * GetDevPart(mSigma) / p;
