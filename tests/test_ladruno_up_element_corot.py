@@ -65,9 +65,19 @@ except (FileNotFoundError, OSError):
     pass
 if _DIST not in sys.path:
     sys.path.insert(0, _DIST)
-for _m in ("opensees", "openseespy", "openseespy.opensees"):
-    sys.modules.pop(_m, None)
-import opensees as ops  # noqa: E402
+_cached = sys.modules.get("opensees")
+if _cached is not None and os.path.normcase(
+        os.path.dirname(getattr(_cached, "__file__", "") or "")) == os.path.normcase(_DIST):
+    # Already this worktree's pyd (imported by another collected test file or
+    # the boot .pth). NEVER pop-and-reimport the SAME extension DLL: moduledef
+    # has m_size > 0, so CPython re-runs PyInit_opensees, which re-registers
+    # Py_AtExit(cleanupFunc); the doubled cleanup then wipes a dangling
+    # PythonModule* at interpreter shutdown (0xC0000005/0xC0000409).
+    ops = _cached
+else:
+    for _m in ("opensees", "openseespy", "openseespy.opensees"):
+        sys.modules.pop(_m, None)
+    import opensees as ops  # noqa: E402
 
 assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
     f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST})"
