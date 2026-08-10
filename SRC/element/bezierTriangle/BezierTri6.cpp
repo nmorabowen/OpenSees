@@ -513,21 +513,25 @@ const Matrix &BezierTri6::getTangentStiff()
         // Factor: w × |J| × thickness
         double factor = w * detJ * thickness;
 
-        // K += factor × Bᵀ D B
-        // Using explicit loops for clarity and to avoid temporary allocation
-        for (int I = 0; I < NELD; I++) {
-            for (int J = I; J < NELD; J++) {  // Exploit symmetry
+        // K += factor × Bᵀ D B — FULL product, no upper-triangle mirror.
+        // D is generally unsymmetric for non-associated plasticity, and the
+        // mirror writes the wrong contraction into K(J,I) the moment any GP
+        // yields (TIMs report item 1; same defect as BezierTet10::formCore).
+        double DB[NSTRESS][NELD];
+        for (int k = 0; k < NSTRESS; k++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
                 double sum = 0.0;
-                for (int k = 0; k < NSTRESS; k++) {
-                    for (int l = 0; l < NSTRESS; l++) {
-                        sum += B[k][I] * D(k, l) * B[l][J];
-                    }
-                }
-                K_return(I, J) += factor * sum;
-                if (I != J)
-                    K_return(J, I) += factor * sum;  // Symmetric
+                for (int l = 0; l < NSTRESS; l++)
+                    sum += D(k, l) * B[l][Jc];
+                DB[k][Jc] = sum;
             }
-        }
+        for (int I = 0; I < NELD; I++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
+                double sum = 0.0;
+                for (int k = 0; k < NSTRESS; k++)
+                    sum += B[k][I] * DB[k][Jc];
+                K_return(I, Jc) += factor * sum;
+            }
     }
 
     return K_return;
@@ -569,17 +573,22 @@ const Matrix &BezierTri6::getInitialStiff()
         const Matrix &D = theMaterial[gp]->getInitialTangent();
         double factor = w * detJ * thickness;
 
-        for (int I = 0; I < NELD; I++) {
-            for (int J = I; J < NELD; J++) {
+        // Full BᵀD₀B, no mirror — see getTangentStiff.
+        double DB[NSTRESS][NELD];
+        for (int k = 0; k < NSTRESS; k++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
+                double sum = 0.0;
+                for (int l = 0; l < NSTRESS; l++)
+                    sum += D(k, l) * B[l][Jc];
+                DB[k][Jc] = sum;
+            }
+        for (int I = 0; I < NELD; I++)
+            for (int Jc = 0; Jc < NELD; Jc++) {
                 double sum = 0.0;
                 for (int k = 0; k < NSTRESS; k++)
-                    for (int l = 0; l < NSTRESS; l++)
-                        sum += B[k][I] * D(k, l) * B[l][J];
-                K_return(I, J) += factor * sum;
-                if (I != J)
-                    K_return(J, I) += factor * sum;
+                    sum += B[k][I] * DB[k][Jc];
+                K_return(I, Jc) += factor * sum;
             }
-        }
     }
 
     // Cache the initial stiffness
