@@ -39,12 +39,20 @@
 #include <FEM_ObjectBroker.h>
 #include <profiler/ProfilerMacros.h>  // Ladruno ADR-75: CSR-build + scatter brackets
 
+// Ladruno ADR-75 P1d / TIMs item 2: the addA half-storage symmetry guard samples
+// in BURSTS rather than continuously. ASYM_CHECK_BUDGET tangent assemblies are
+// checked, then the guard sleeps until the next multiple of ASYM_RESAMPLE_PERIOD
+// assemblies. Duty cycle = BUDGET/PERIOD (see zeroA and addA).
+static const int ASYM_CHECK_BUDGET    = 3;
+static const int ASYM_RESAMPLE_PERIOD = 64;
+
 PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	:LinearSOE(the_Solver, LinSOE_TAGS_PARDISOGenLinSOE),
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(0), asymWarned(0), asymBudget(0), missWarned(0)
+	factored(false), matType(0), asymWarned(0), asymBudget(0), asymPass(0),
+	missWarned(0)
 {
 	the_Solver.setLinearSOE(*this);
 }
@@ -59,7 +67,8 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver, int _matType
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(_matType), asymWarned(0), asymBudget(0), missWarned(0)
+	factored(false), matType(_matType), asymWarned(0), asymBudget(0), asymPass(0),
+	missWarned(0)
 {
 	if (matType < 0 || matType > 2) {
 		opserr << "WARNING PARDISOGenLinSOE - unknown matrixType (" << matType
@@ -129,8 +138,11 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 	// formTangent). Budgeting in passes rather than in addA calls is what makes
 	// the cost independent of model size and of how many Newton iterations the
 	// run takes — 3 assemblies, not 3 assemblies' worth of a 45-assembly run.
+	// The pass counter is re-anchored here too: it counts assemblies of THIS
+	// pattern, and zeroA re-arms the budget every ASYM_RESAMPLE_PERIOD of them.
+	asymPass = 0;
 	if (matType != 0 && asymWarned == 0)
-		asymBudget = 3;
+		asymBudget = ASYM_CHECK_BUDGET;
 
 	// Ladruno ADR-75 P1d (adversarial review): this OOM path was DEAD CODE.
 	// Plain `new` THROWS; it never returns 0, so `if (A == 0 ...)` could not
@@ -450,12 +462,29 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 	// would tax the assembly loop of a PERFORMANCE feature for the entire
 	// analysis.
 	//
-	// LIMITATION, stated rather than papered over: it samples the first few
-	// tangent assemblies. An element whose tangent only turns unsymmetric LATER
-	// — contact closing at step 50, a non-associated flow rule after first
-	// yield — will NOT be caught. It is a first-pass misconfiguration detector,
-	// not a guarantee, and `-matrixType 2` still requires the author to know
-	// their tangent is symmetric.
+	// SAMPLING (Ladruno TIMs item 2 — this used to be a flat LIMITATION): the
+	// guard originally sampled ONLY the first few tangent assemblies, so a
+	// tangent that turns unsymmetric LATER — contact closing at step 50, a
+	// non-associated flow rule after first yield (ManzariDafalias measures 4-6%
+	// asymmetry once it yields) — sailed straight past it. The budget now
+	// RE-ARMS every ASYM_RESAMPLE_PERIOD assemblies (zeroA), so the guard
+	// samples startup AND periodically: late-onset asymmetry is caught within at
+	// most ASYM_RESAMPLE_PERIOD tangent assemblies of appearing.
+	//
+	// The ADR-75 performance contract still holds — the check must never tax a
+	// symmetric model's whole run. Steady-state duty cycle is
+	// ASYM_CHECK_BUDGET/ASYM_RESAMPLE_PERIOD = 3/64 ≈ 4.7% of the mirror-compare
+	// cost, and that compare is itself the cheap part of addA (idSize^2/2
+	// in-cache subtractions against an idSize^2 binary-searched scatter, no
+	// allocation, no extra traversal). ~5% of an already-negligible check is
+	// noise, and 96.9% of assemblies pay literally nothing (one modulo in
+	// zeroA, once per assembly, not per element).
+	//
+	// Still not a proof: it is a sampler, so an asymmetry that appears and
+	// vanishes entirely inside one sleep window is missable, and `-matrixType 2`
+	// still requires the author to know their tangent is symmetric. `asymWarned`
+	// remains a once-per-SOE latch — after the first report the guard stops
+	// re-arming for good.
 	if (halfStore && asymWarned == 0 && asymBudget > 0 &&
 	    idSize == m.noRows() && idSize == m.noCols()) {
 		double worstDev = 0.0, scale = 0.0;
@@ -474,8 +503,13 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 			asymWarned = 1;
 			opserr << "WARNING PARDISOGenLinSOE: an assembled element matrix is "
 			          "UNSYMMETRIC (max deviation " << worstDev << " vs scale "
-			       << scale << ") but `system Pardiso -matrixType " << matType
-			       << "` stores only the upper triangle.\n"
+			       << scale << ") at TANGENT ASSEMBLY " << asymPass
+			       << " of this pattern, but `system Pardiso -matrixType "
+			       << matType << "` stores only the upper triangle.\n"
+			          "     Assembly " << asymPass << " is where to look: if it is "
+			          "not the first few, the tangent turned unsymmetric DURING the "
+			          "run (yield, contact closing) — correlate it with your load "
+			          "step.\n"
 			          "     The lower half is being DISCARDED, so this run solves "
 			          "the REFLECTED system and may converge to a WRONG answer.\n"
 			          "     Use the default `system Pardiso` (-matrixType 0) for "
@@ -641,7 +675,19 @@ PARDISOGenLinSOE::zeroA(void)
 	// the only place this SOE can see a pass boundary. Spend one unit of the
 	// addA symmetry-check budget here so the check costs a FIXED number of
 	// assemblies regardless of model size or Newton-iteration count.
-	if (asymBudget > 0)
+	//
+	// Ladruno TIMs item 2: and RE-ARM that budget every ASYM_RESAMPLE_PERIOD
+	// passes, so the guard keeps sampling instead of dying elastic. Without this
+	// a non-associated flow rule or a contact pair that first bites at step 50
+	// was never checked at all — the budget was long spent. Re-arming stops for
+	// good once `asymWarned` latches (reported once per SOE, unchanged), and the
+	// duty cycle is ASYM_CHECK_BUDGET/ASYM_RESAMPLE_PERIOD — see addA.
+	asymPass++;
+
+	if (matType != 0 && asymWarned == 0 &&
+	    (asymPass % ASYM_RESAMPLE_PERIOD) == 0)
+		asymBudget = ASYM_CHECK_BUDGET;
+	else if (asymBudget > 0)
 		asymBudget--;
 }
 
