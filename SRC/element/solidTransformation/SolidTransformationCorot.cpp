@@ -413,23 +413,19 @@ SolidTransformationCorot::globalizeStiff(const Matrix &kCore,
       }
   }
 
-  // (3) symmetrise — NOT a no-op in general (PR #709 falsified the old
-  //     premise here): the core k_d is the full BᵀDB, which is UNSYMMETRIC
-  //     for non-associated plasticity (DruckerPrager rho_bar != rho,
-  //     ManzariDafalias), so this averaging discards the skew part of
-  //     R k_d Rᵀ. Kept as a deliberate modified-Newton POLICY for the corot
-  //     path: its tangent already omits the deferred polar-Hessian terms
-  //     (what the FD-tangent gate tolerates), the residual is exact via
-  //     globalizeForce, and only the G1+G1ᵀ geometric part is symmetric by
-  //     construction. Consequence: -geom corot + non-associated yield
-  //     converges linearly, not quadratically. If that path ever stalls,
-  //     drop this averaging and re-validate the corot batteries.  // Ladruno
-  for (int i = 0; i < ndof; i++)
-    for (int j = i+1; j < ndof; j++) {
-      double avg = 0.5 * (K(i, j) + K(j, i));
-      K(i, j) = K(j, i) = avg;
-    }
-
+  // (3) NO symmetrisation. The core k_d is the full BᵀDB, which is
+  //     UNSYMMETRIC for non-associated plasticity (DruckerPrager
+  //     rho_bar != rho, ManzariDafalias) — averaging K with Kᵀ here (as
+  //     this step did before PR #709's follow-up) discarded the skew part
+  //     of R k_d Rᵀ and re-introduced exactly the symmetrized-tangent
+  //     defect the elements were cured of: measured on the mixed-yield
+  //     non-associated cube, the averaged tangent cost 2-8x the Newton
+  //     iterations in the plastic regime (up to 47/step) and drove
+  //     corot+bbar into element inversion; without it the fixed elements'
+  //     convergence carries over. For a symmetric (elastic/associated)
+  //     core, R k_d Rᵀ is symmetric to rounding anyway, and the G1+G1ᵀ
+  //     geometric term is symmetric by construction — nothing to clean.
+  //     Callers must NOT assume a symmetric corot tangent.  // Ladruno
   kGlobal = K;
   return 0;
 }
