@@ -147,14 +147,25 @@ All legs: non-associated (ρ̄ = 0), the gate flow rule, unless marked. Every H2
 leg terminated on the **step floor**, none on the subdivision budget — the
 `subdiv` column is against a budget of 800.
 
-| leg | element | rule | r | el/B | q_max/q_exact | plateau | tail % | s_end/B | subdiv | steps | wall s |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `h8_nonassoc_bbar_h5` | H8 | B-bar | 3.0 | 4 | **0.9977** | **yes** | 0.00 | 0.138+ | 12 | 1009+ | 1570+ |
-| `h20_nonassoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | **0.7715** | NO | 11.6 | 0.0112 | 49 | 260 | 266 |
-| `h20_nonassoc_uri_h5` | H20 | `uri` | 1.5 | 4 | **0.6894** | NO | 10.4 | 0.0103 | 67 | 399 | 994 |
-| `h20_nonassoc_std_h1.0` | H20 | `std` | 0.44 | 2 | **0.5894** | NO | 27.2 | 0.0045 | 47 | 252 | 310 |
-| `..._uri_h1.0_strong` | H20 | `uri` | 1.5 | 2 | 0.7902 (100× rung, §4.2) | NO | 11.2 | 0.0120 | 46 | 305 | 1014 |
-| `h20_assoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | 1.1414 (assoc control) | (see §4.5) | 0.04 | 0.0203 | 0 | 1020 | 1084 |
+| leg | element | rule | r | el/B | q_max/q_exact | plateau | tail % | s_end/B | ended by | subdiv | steps | wall s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `h8_nonassoc_bbar_h5` | H8 | B-bar | 3.0 | 4 | **0.9977** | **yes** | −0.00 | **0.2500** | reached the target | 315/500 | 1909 | 2740 |
+| `h20_nonassoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | **0.7715** | NO | 11.6 | 0.0112 | step floor | 49/800 | 260 | 266 |
+| `h20_nonassoc_uri_h5` | H20 | `uri` | 1.5 | 4 | **0.6894** | NO | 10.4 | 0.0103 | step floor | 67/800 | 399 | 994 |
+| `h20_nonassoc_std_h1.0` | H20 | `std` | 0.44 | 2 | **0.5894** | NO | 27.2 | 0.0045 | step floor | 47/800 | 252 | 310 |
+| `..._uri_h1.0_strong` | H20 | `uri` | 1.5 | 2 | 0.7902 (100× rung, §4.2) | NO | 11.2 | 0.0120 | step floor | 46/800 | 305 | 1014 |
+| `h20_assoc_uri_h1.0` | H20 | `uri` | 1.5 | 2 | 1.1422 (assoc control) | see §4.5 | 0.02 | 0.0359 | stopped by hand | 0/800 | 2265 | 2265 |
+
+**The baseline ran the full push.** `h8_nonassoc_bbar_h5` reached the s/B = 0.25
+target — not a wall, not a cap — with q_max = 138.59 kPa against the exact
+138.91, a tail slope of −0.00 kPa/m, and its peak already reached at
+s/B = 0.144. That is what a collapse load looks like on this problem, and it
+reproduces the campaign's own 1.0020 / ≈0.99 inside this harness. No H20 leg
+looks like it.
+
+The associated control was stopped by hand once it had made its point
+(§4.5); its row is scored from its CSV by `h20_summary.py`, which applies the
+identical truncation and plateau rules.
 
 Wall times are on a **contended box** (three other agents were running); treat
 them as an order of magnitude, not a benchmark.
@@ -214,7 +225,7 @@ before this measurement was taken.
 | element | 2 el/B | 4 el/B | 8 el/B | 16 el/B |
 |---|---|---|---|---|
 | H20 `uri` (here) | 0.7715, wall at s/B = 0.0112 | 0.6894, wall at s/B = 0.0103 | — | — |
-| H8 B-bar (here / COLLAPSE.md) | — | 0.9977 / 1.0020 | 0.9517 | 0.9260 |
+| H8 B-bar (here / COLLAPSE.md) | — | **0.9977** / 1.0020 | 0.9517 | 0.9260 |
 
 Both families approach from **above** and fall with refinement, so neither
 number is a converged limit load and the H20 values are not conservative in the
@@ -227,11 +238,11 @@ Rudnicki–Rice localization under non-associated perfect plasticity.
 
 ### 4.5 The falsification control behaves as the campaign said it would
 
-The associated leg runs *past* the exact answer — 1.1414 — which is the
+The associated leg runs *past* the exact answer — 1.1422 — which is the
 documented behaviour (dilating at ψ = φ must push the surrounding soil aside; a
 bounded mesh resists, and the leg hardens through its own oracle). Its
 `plateau = yes` flag should **not** be read as a collapse load: the test looks
-at the last 10 % of a curve that only reached s/B = 0.020, and the value it
+at the last 10 % of a curve that only reached s/B = 0.036, and the value it
 flattens at is 14 % *above* a bound that is exact from both sides. It is
 reported here as what it is — a control that fired, confirming the
 non-associated leg is the one carrying the measurement.
@@ -246,7 +257,8 @@ Three strands, in order of how much weight they carry.
 
 1. **The qualitative split is on ORDER, not on geometry.** The linear hex
    plateaus — cleanly, at every resolution, on the same problem, the same mesh,
-   the same script, 0.9977 of an exact answer. *Every* quadratic leg fails to:
+   the same script, 0.9977 of an exact answer, running the full s/B = 0.25
+   push to completion. *Every* quadratic leg fails to:
    hex and tet, Lagrange and Bernstein, relieved and locked, all of them wall
    while still hardening at 10–27 % of their initial tangent. The plateau, not
    the number, is the robust observable here, and it partitions the elements by
