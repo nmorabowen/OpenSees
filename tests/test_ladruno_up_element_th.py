@@ -100,20 +100,8 @@ if not (os.path.isfile(os.path.join(_DIST, "opensees.pyd"))
         or os.path.isfile(os.path.join(_DIST, "opensees.so"))):
     pytest.skip(f"worktree engine not built: {_DIST}", allow_module_level=True)
 
-os.environ["PATH"] = _DIST + os.pathsep + os.environ.get("PATH", "")
-try:
-    os.add_dll_directory(_DIST)
-except (FileNotFoundError, OSError, AttributeError):
-    pass
-if _DIST not in sys.path:
-    sys.path.insert(0, _DIST)
-for _m in ("opensees", "openseespy", "openseespy.opensees"):
-    sys.modules.pop(_m, None)
-import opensees as ops  # noqa: E402
-
-assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
-    f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST}); run with "
-    "py -3.12 so the boot .pth cannot preload another build")
+from _engine import bind_worktree_engine  # noqa: E402
+ops = bind_worktree_engine(_DIST)
 
 pytestmark = [pytest.mark.zone_b]
 

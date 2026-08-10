@@ -98,19 +98,14 @@ if _BUILT:
         os.add_dll_directory(_DIST)
     except (FileNotFoundError, OSError):
         pass
-    for _m in ("opensees", "openseespy", "openseespy.opensees"):
-        sys.modules.pop(_m, None)
     if _DIST not in sys.path:
         sys.path.insert(0, _DIST)
 
 if _HAVE_PYTEST and not _BUILT:
     pytest.skip(f"worktree engine not built: {_DIST}", allow_module_level=True)
 
-import opensees as ops  # noqa: E402
-
-assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
-    f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST})"
-)
+from _engine import bind_worktree_engine  # noqa: E402
+ops = bind_worktree_engine(_DIST)
 
 # (d) the frozen toy (ADR-71 spike, extended by ADR-73 P0) as a library.
 _TOYDIR = str(_ROOT / "Ladruno_implementation" / "adr71_meshless_p_spike")

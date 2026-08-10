@@ -98,22 +98,8 @@ _DIST = str(Path(__file__).resolve().parents[1] / "dist" / "bin")
 if not os.path.isfile(os.path.join(_DIST, "opensees.pyd")):
     pytest.skip(f"worktree engine not built: {_DIST}", allow_module_level=True)
 
-os.environ["PATH"] = _DIST + os.pathsep + os.environ.get("PATH", "")
-try:
-    os.add_dll_directory(_DIST)
-except (FileNotFoundError, OSError):
-    pass
-if _DIST not in sys.path:
-    sys.path.insert(0, _DIST)
-# the installer's ladruno_opensees.pth boot module PRELOADS another build's
-# opensees.pyd at interpreter start — evict it so THIS worktree's pyd wins.
-for _m in ("opensees", "openseespy", "openseespy.opensees"):
-    sys.modules.pop(_m, None)
-import opensees as ops  # noqa: E402
-
-assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST), (
-    f"wrong opensees.pyd imported: {ops.__file__} (want {_DIST})"
-)
+from _engine import bind_worktree_engine  # noqa: E402
+ops = bind_worktree_engine(_DIST)
 
 pytestmark = [pytest.mark.zone_b]
 
