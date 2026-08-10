@@ -66,6 +66,23 @@
 // Example (Python):
 //   ops.nDMaterial('ElasticIsotropic', 1, 1000.0, 0.3)
 //   ops.element('BezierTet10', 1, 1,2,3,4,5,6,7,8,9,10, 1, '-bbar')
+//
+// LOADS AND BCs — CONTROL-VALUE SEMANTICS (read before porting a tet10 deck):
+//   Element DOFs are Bernstein CONTROL values. At the four VERTICES the
+//   quadratic Bernstein basis is interpolatory, so vertex DOFs, vertex point
+//   loads and vertex BCs mean exactly what they mean on TenNodeTetrahedron.
+//   At the six MID-EDGE nodes they do NOT: a nodal force there is conjugate to
+//   the (non-interpolatory) mid-edge Bernstein function, and a nonzero sp() is
+//   a control value, not the displacement at that point (homogeneous fixes are
+//   equivalent — zero control values = zero field).
+//   Consequence for surface tractions: LAGRANGE-consistent nodal forces (the
+//   tet10 rule — vertices ~0, midsides ~q·A/3) applied to this element
+//   represent an OSCILLATORY traction, exact in resultant but locally spiking;
+//   elastically benign, it can silently drive surface Gauss points into
+//   yield/apex regimes the intended traction never reaches (TIMs T2, 2026-08).
+//   The BERNSTEIN-consistent rule is simpler: every quadratic Bernstein face
+//   function integrates to A/6, so a uniform traction q on a face is q·A/6 on
+//   EACH of its six nodes (general t: f_a = ∫ t·B_a dΓ, Bernstein B_a).
 
 #include "BezierTet10.h"
 
