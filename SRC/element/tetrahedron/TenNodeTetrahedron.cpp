@@ -1022,7 +1022,8 @@ TenNodeTetrahedron::update(void)
     static const int nShape = 4 ;
 
     int i, j, k, p, q ;
-    int success ;
+    int success = 0 ;  // Ladruno: accumulate constitutive failures across the
+                        // Gauss loop instead of discarding them (see below).
 
     static double volume ;
 
@@ -1172,14 +1173,17 @@ TenNodeTetrahedron::update(void)
         // opserr << "TenNodeTetrahedron::update -- 4.3 i = " << i << endln;
 
         //send the strain to the material
-        success = materialPointers[i]->setTrialStrain( strain ) ;
+        // Ladruno: accumulate (not overwrite) so a constitutive failure at
+        // any Gauss point is actually reported -- the fork sibling
+        // BezierTet10 already propagates the sum this way. TIMs report item 8.
+        success += materialPointers[i]->setTrialStrain( strain ) ;
 
         // opserr << "TenNodeTetrahedron::update -- 4.4 i = " << i << "strain = " << strain << endln;
 
     } //end for i gauss loop
     // opserr << "TenNodeTetrahedron::update -- 5" << endln;
     // opserr << "TenNodeTetrahedron::update -- END" << endln;
-    return 0;
+    return success;
 }
 
 
