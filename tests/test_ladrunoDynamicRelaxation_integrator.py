@@ -176,6 +176,8 @@ def test_dr8_massless_relaxes_via_gershgorin():
     (DR, "-damping", "viscous"),
     (DR, "-damping", "viscous", 0.7),
     (DR, "-noAutoRefresh"),
+    (DR, "-massSafety", 0.25),
+    (DR, "-massSafety", 0.5, "-damping", "viscous"),
 ])
 def test_drs_parser_smoke(args):
     _build_geom()

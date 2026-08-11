@@ -52,6 +52,15 @@
 // overridden formTangent(), so theSOE->solve() degenerates to a M*^{-1} apply and
 // K is NEVER assembled/factorized in the stepping loop.
 //
+// STABILITY MARGIN (-massSafety f, note 83 §3). The raw Gershgorin mass
+// m_i = (dt²/4)Σ_j|K_ij| bounds ω_max·dt ≤ 2 with EQUALITY, i.e. it marches
+// exactly ON the central-difference stability boundary, where the amplification
+// matrix is defective and round-off is amplified instead of damped — measured, a
+// zero-push hold on an EXACT equilibrium walked to an 87 kN residual on a 300 kN
+// problem with no error reported. `-massSafety f` divides the prefactor by f²
+// (m_i = (dt²/(4f²))Σ_j|K_ij|) so ω_max·dt ≤ 2f, at the cost of f² relaxation per
+// step. Default 0.5 (see the .cpp for the measured justification).
+//
 // Termination is script-owned (the stock transient driver has no convergence
 // early-exit): a Ladruno_scripts relax loop runs analyze(chunk,dt) and watches
 // the velocity/displacement decay (Ladruno_scripts/relax_to_static.py).
@@ -69,6 +78,11 @@ class FE_Element;
 class DOF_Group;
 class Vector;
 
+// Gershgorin-mass safety factor f: omega_max*dt <= 2f. The DEFAULT is deliberately
+// below 1 — f = 1 is the bare stability boundary and is a measured silent-wrong-
+// answer generator (note 83 §3). Named so the tests and the ledger quote ONE number.
+#define LADRUNO_DR_DEFAULT_MASS_SAFETY 0.5
+
 class LadrunoDynamicRelaxation : public TransientIntegrator
 {
   public:
@@ -81,7 +95,8 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
                              bool interp = false, double divergenceFactor = 0.0,
                              bool verbose = false,
                              int dampMode = 0, double zetaTarget = 1.0,
-                             bool autoRefresh = true);
+                             bool autoRefresh = true,
+                             double massSafety = LADRUNO_DR_DEFAULT_MASS_SAFETY);
     ~LadrunoDynamicRelaxation();
 
     // TransientIntegrator contract
@@ -108,6 +123,14 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     double getResidualNorm(void) const;     // ||f_ext - f_int|| (settling gate)
     double getKineticEnergy(void) const;    // 1/2 v^T M* v (micro-burst signal)
 
+    // Gershgorin stability margin of the mass we are MARCHING with, measured
+    // against the CURRENT tangent: max_i (dt^2/4)*sum_j|K_ij| / M*_i, which is
+    // (omega_max*dt/2)^2. <= 1 is stable; it equals massSafety^2 whenever the
+    // tangent has not changed since M* was built, and exceeds 1 once the model
+    // has stiffened past the mass — the silent-divergence detector. -1 = not
+    // available (no gershgorin mass, or only one build so far).
+    double getStabilityMargin(void) const;
+
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
     void Print(OPS_Stream &s, int flag = 0);
@@ -128,6 +151,7 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
 
     // --- fictitious mass + leap-frog state (CDL skeleton) ---
     Vector *Mstar;                   // integrator-owned diagonal fictitious mass
+    Vector *MstarPrev;               // M* we were marching with (margin detector)
     Vector *Ut, *Vhalf, *Aprev, *Vfull, *Azero;
     bool   firstStep;
     int    updateCount;              // one solve/step guard
@@ -145,6 +169,11 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     double zetaTarget;               // viscous damping ratio (default 1.0 = critical)
     double cVisc;                    // realized mass-proportional coeff (C* = cVisc*M*)
     bool   autoRefresh;              // rebuild M* at KE peaks (gershgorin) — knob-free snap-through
+
+    // --- v3: explicit stability margin (note 83 §3) ---
+    double massSafety;               // f in omega_max*dt <= 2f (gershgorin only)
+    double stabMargin;               // last measured (omega_max*dt/2)^2; -1 = n/a
+    bool   marginWarned;             // one-time boundary-crossing diagnostic
 };
 
 #endif

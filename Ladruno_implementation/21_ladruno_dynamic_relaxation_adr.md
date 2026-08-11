@@ -300,6 +300,20 @@ The integrator exposes both via `getResponse('residualNorm')` /
   gershgorin` the user sets `dt=1` and stability is guaranteed by construction
   (`ω·Δt ≈ 2`). With `-mass unity` the real `dt_cr` matters again → keep CDL's
   `dt_cr` advisory + `-cflAbort` available.
+  > **CORRECTED 2026-08-11 (#728, note 83 §3).** "Guaranteed by construction" was
+  > **wrong**, and the `≈` in `ω·Δt ≈ 2` was doing load-bearing work it could not
+  > carry: the Gershgorin bound is attained with **equality**, so v1 marched
+  > exactly ON the central-difference limit — the one point where the amplification
+  > matrix is defective and round-off is amplified rather than damped. It is not a
+  > guarantee, it is the boundary. Because DR runs orders of magnitude more steps
+  > than a physical explicit analysis, it sat there long enough for the growth to
+  > BECOME the answer: a zero-push hold on an exact equilibrium walked to an **87 kN
+  > residual on a 300 kN problem** with no error reported. v3 adds **`-massSafety f`**
+  > (default **0.5**, was effectively 1), which divides the prefactor by `f²` so
+  > `ω_max·Δt ≤ 2f` with real margin, at `f²` relaxation per step. The safe `f` is
+  > element- and state-dependent (H8 bbar holds 0.75; H20 uri holds 0.50 elastic and
+  > needs 0.25 deeply plastic), so `ladrunoDR stabilityMargin` reports `(ω_max·Δt/2)²`
+  > against the live tangent and the integrator warns once when it crosses 1.
 - **Gershgorin on softening/indefinite `K`:** take `|K_ij|` (absolute) so row sums
   stay positive, and **floor** `m_i`; optionally `-recompute` to track softening.
 - **Global KE zeroing can be over-aggressive** on heterogeneous models (one region
@@ -433,9 +447,16 @@ integrator LadrunoDynamicRelaxation
 # full surface (all optional):
 integrator LadrunoDynamicRelaxation \
     -mass     gershgorin|lumped $scale|unity \
+    -massSafety 0.5 \
     -tolR     1e-5  -tolKE 1e-4 \
     -maxPeaks $N    -recompute $N \
     -dt       1.0   -interp  -cflAbort  -verbose
+
+# -massSafety f (v3, #728): omega_max*dt <= 2f on the gershgorin mass. DEFAULT 0.5.
+# f = 1 is the bare stability boundary (the v1 behaviour) and is a measured
+# silent-wrong-answer generator; f = 0.25 for deeply plastic solids. Relaxation per
+# step scales as f^2, so 0.5 costs ~4x the steps v1 did. Read `ladrunoDR
+# stabilityMargin` -- > 1 means the mass has stopped bounding the step.
 
 # required driver recipe (mirrors CDL):
 system Diagonal ; numberer Plain ; constraints Transformation
