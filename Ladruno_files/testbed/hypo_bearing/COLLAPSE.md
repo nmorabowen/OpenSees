@@ -157,6 +157,53 @@ Two things that check is worth keeping:
   a collapse load does not depend on elastic constants. At the real cone
   m = 0.579 at PDMY's own ν, which is safe.
 
+### This check is now a standing gate — `tests/test_r3_prandtl_collapse_gate.py`
+
+The TIMs / APE campaign (ADR 63 R3, vault note 71) re-ran this exact leg on its
+own driver and turned the single 1.0020 point into a **refinement sequence**:
+`LadrunoBrick -formulation bbar` reads **1.0842 / 0.9938 / 0.9513** of the exact
+138.91 kPa at h₀ = 1.0 / 0.5 / 0.25 (200 / 390 / 782 hexes), every one a genuine
+plateau — textbook convergence *from above*. Two calibration findings came with
+it, and both are encoded in the gate:
+
+- **A flat accuracy tolerance is the wrong gate.** The coarse mesh is 8.4 %
+  above exact and is *correct* there; a 5 % band would fail it for being right.
+  The gate therefore carries a band **per resolution** and asserts the shape of
+  the sequence — monotone decrease under refinement, plateau at every rung.
+- **The subdivision budget was masking the answer.** At D16's default of 24 the
+  h₀ = 0.25 leg read **0.8988 still hardening** (tail 5.75 % of initial), which
+  reads as a sequence turning over — i.e. exactly the "loss of reach" this
+  document diagnoses below for the *real* cone. Raising the budget to 80 and
+  changing nothing else, the same mesh plateaus at **0.9513** (tail 0.02 %). The
+  0.899 was the stepping controller, not the mesh. The gate pins the budget as a
+  named constant: *a convergence study whose termination criterion binds before
+  the mechanics do measures the criterion.*
+
+A third finding was folded in when the gate was built, and it sharpens the
+plateau test this document relies on throughout. **A curve can flatten because a
+mechanism formed, or because the run seized** — a step floor reached just as the
+curve rolls over presents as a flat tail too. So the gate classifies each leg on
+three clauses and calls it a *capacity* only if all three hold: plateau, an
+admissible termination mode (reached the target, or spent the pinned budget as a
+**named** allowance — a step floor, a wall-clock stop or a truncated curve are
+seizure), and **free advance** (the step over the final tenth stayed ≥ 100× the
+floor). The clauses separate by three orders of magnitude here: the gate legs end
+at tail 0.001–0.017 % with 800–2500× step headroom, the associated control at
+tail 38.9 % with **1.6×** — it seizes rather than plateaus.
+
+The **associated** leg is run as the falsification control (it must NOT be a
+capacity, per the bullet above), and `ops.ladrunoBuild()` is stamped into the
+output so a number can be re-attributed to an engine build. The surcharge step is
+checked twice: this document's `Σ R_z = q₀·ΣA_trib` identity is kept, but it is
+**structurally blind to load-distribution error**, so it is paired with the exact
+1-D elastic stress patch (σ_zz = −q₀, σ_xx = σ_yy = −K₀q₀ at every Gauss point);
+measured 2.7e-15 and 1.0e-14 respectively.
+
+Measured on build `1db3394b8`: **1.0849 / 0.9977 / 0.9514** — +0.06 / +0.39 /
++0.01 % from the campaign's numbers — control 1.1139, not a capacity. 11 tests,
+**61.1 min**. Zone A but slow-tier (opt-in):
+`pytest --runslow -m slow tests/test_r3_prandtl_collapse_gate.py`.
+
 ## Results — square footing, the campaign mesh
 
 ![collapse](dp_collapse.png)
