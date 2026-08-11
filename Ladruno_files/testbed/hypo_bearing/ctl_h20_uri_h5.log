@@ -1,0 +1,9 @@
+﻿[17:00:18] [control 0] engine C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-a15dc30314b84b17c\dist\bin\opensees.pyd
+[17:00:18] [control 0] ladrunoBuild() = 1db3394b8c4d4c23e12f2629d5e7ef92a106acfa
+[17:00:18]     [control 2] consistent Q8 serendipity surcharge over 26 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 54 nodes carry a NEGATIVE weight; per-face weights match the analytic (-A/12, +A/3) to 1.2e-16 of A
+[17:00:18] [mesh] 2938 nodes / 8814 DOF, 390 20-node hexes (26 x 1 x 15), footing set 23 nodes
+[17:00:47]     [control 4] spurious-mode census (uri): 5460 free DOF, smallest 5 eigenvalues / (tr K / n) = 1.061e-04, 1.537e-04, 3.118e-04, 5.560e-04, 5.759e-04
+[17:00:47]     [control 4] zero-energy modes (rel < 1e-10): 0  ->  PASS -- the assembly has full rank, so the reduced rule's 6 per-element modes do NOT communicate through this single-element-thick strip
+[17:00:47]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.3s]
+[17:00:47]     [control 1] 1-D elastic patch test on 390 20-node elements x 8 GP (uri): max |sigma_zz/-q0 - 1| = 2.48e-13, max |sigma_xx/-K0 q0 - 1| = 3.11e-13, max |tau|/q0 = 1.53e-13
+[17:00:47]     [control 1] PASS -- the surcharge is consistent with the H20 basis
