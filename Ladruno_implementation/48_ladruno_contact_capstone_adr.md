@@ -31,6 +31,11 @@ document is authoritative; the per-track ADRs hold the detailed design and the p
 - **ADR-47** — the **deferral ledger** (dual/biorthogonal mortar, true-LM saddle-point, self-contact,
   full slide-line smoothing, anisotropic friction, …). *To be created;* this capstone fences its
   scope.
+- **ADR-78** — the **parallel (MPI) lane** ([[78_ladruno_parallel_contact_adr]], proposed
+  2026-08-11): one owner rank per contact interaction, the whole interface ghosted via the
+  replicated-boundary-node mechanism partitioned decks already use. Lifts the `[SERIAL-ONLY]`
+  ceiling on every component in the table below. Cross-library — its emit half is apeGmsh
+  ADR 0092.
 
 **Committed end-state (dual-lane, decided 2026-06-22):** one `LadrunoContactDomain` engine → broad
 phase → **shared header-only kernels** (projection, friction, normal law) → **two formulations**

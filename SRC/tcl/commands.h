@@ -150,6 +150,41 @@ steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 int
 randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+// Ladruno (ADR-78 P0.5): contact-family classic-Tcl handlers (bridges to the
+// OPS_Ladruno* entry points, which are already linked into every target via
+// OpenSeesLIB but were registered only in TclWrapper/PythonWrapper). Declared
+// here for the same reason as the ADR-44 block above: the Tcl_CreateCommand
+// registrations sit ~5600 lines before the definitions in commands.cpp.
+int
+ladrunoContactSurface(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoContact(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoContactPlane(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoContactInfo(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoContactForce(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoMortarPenetration(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoMortarTieResidual(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoEdgePenetration(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoBeginAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoEndAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
