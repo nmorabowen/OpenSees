@@ -98,7 +98,8 @@ ContactMaterial3D::ContactMaterial3D (int tag, double mu, double Gmod, double c,
    G(2,2),
    strain_vec(4),
    stress_vec(4),
-   tangent_matrix(4,4)
+   tangent_matrix(4,4),
+   initialTangent(4,4)
 {
 #ifdef DEBUG
   opserr << "ContactMaterial3D::ContactMaterial3D(...)" << endln;
@@ -125,7 +126,8 @@ ContactMaterial3D::ContactMaterial3D (const ContactMaterial3D &other)
     G(2,2),
     strain_vec(4),
     stress_vec(4),
-    tangent_matrix(4,4)
+    tangent_matrix(4,4),
+    initialTangent(4,4)
 {
 #ifdef DEBUG
   opserr << "ContactMaterial3D::ContactMaterial3D(...)" << endln;
@@ -152,7 +154,8 @@ ContactMaterial3D::ContactMaterial3D ()
     G(2,2),
     strain_vec(4),
     stress_vec(4),
-    tangent_matrix(4,4)
+    tangent_matrix(4,4),
+    initialTangent(4,4)
 {
 #ifdef DEBUG
   opserr << "ContactMaterial3D::ContactMaterial3D()" << endln;
@@ -374,7 +377,27 @@ const Matrix & ContactMaterial3D::getInitialTangent ()
 #ifdef DEBUG
   opserr << "ContactMaterial3D::getInitialTangent ()" << endln;
 #endif
-  return tangent_matrix;          //tangent is empty matrix
+
+  // Ladruno: this used to return tangent_matrix -- the SAME buffer that
+  // getTangent() overwrites in place -- so the "initial" tangent depended
+  // on call order (whatever sliding/sticking state the last getTangent()
+  // call happened to leave behind), and on a freshly constructed material
+  // it was the zero matrix, i.e. a singular initial stiffness. Populate a
+  // dedicated buffer with the elastic (sticking) tangent instead, matching
+  // the "sticking coefficients" branch of getTangent(): C_ss = stiffness*g,
+  // C_sl = 0. This is call-order independent once the element has supplied
+  // the surface metric tensor via setMetricTensor(); before that call g is
+  // still zero, which correctly reflects "not yet geometrically configured"
+  // rather than the previous call-order bug.
+  initialTangent.Zero();
+  initialTangent(0,3) = 1;
+  initialTangent(1,1) = stiffness * g(0,0);
+  initialTangent(1,2) = stiffness * g(0,1);
+  initialTangent(2,1) = stiffness * g(1,0);
+  initialTangent(2,2) = stiffness * g(1,1);
+  initialTangent(3,0) = 1;
+
+  return initialTangent;
 }
 
 

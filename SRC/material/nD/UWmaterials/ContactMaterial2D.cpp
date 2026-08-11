@@ -93,7 +93,8 @@ ContactMaterial2D::ContactMaterial2D (int tag, double mu, double G, double c, do
  : NDMaterial(tag,ND_TAG_ContactMaterial2D),
    strain_vec(3),
    stress_vec(3),
-   tangent_matrix(3,3)
+   tangent_matrix(3,3),
+   initialTangent(3,3)
 {
 #ifdef DEBUG
         opserr << "ContactMaterial2D::ContactMaterial2D" << endln;
@@ -110,11 +111,12 @@ ContactMaterial2D::ContactMaterial2D (int tag, double mu, double G, double c, do
 }
    
 //null constructor
-ContactMaterial2D::ContactMaterial2D () 
+ContactMaterial2D::ContactMaterial2D ()
  : NDMaterial(0, ND_TAG_ContactMaterial2D),
    strain_vec(3),
    stress_vec(3),
-   tangent_matrix(3,3)
+   tangent_matrix(3,3),
+   initialTangent(3,3)
 {
         frictionCoeff = 0.0;
         stiffness = 1.0;
@@ -301,7 +303,20 @@ const Matrix & ContactMaterial2D::getInitialTangent ()
         opserr << "ContactMaterial2D::getInitialTangent()" << endln;
 #endif
 
-    return tangent_matrix;      //tangent is empty matrix
+    // Ladruno: this used to return tangent_matrix -- the SAME buffer that
+    // getTangent() overwrites in place -- so the "initial" tangent depended
+    // on call order, and on a freshly constructed material (before any
+    // getTangent() call) it was the zero matrix, i.e. a singular initial
+    // stiffness. Populate a dedicated buffer with the elastic (sticking,
+    // within the tensile-strength bound) tangent instead, matching the
+    // "sticking coefficients" branch of getTangent().
+    initialTangent.Zero();
+    initialTangent(0,2) = 1.0;
+    initialTangent(1,1) = stiffness;
+    initialTangent(1,2) = 0.0;
+    initialTangent(2,0) = 1.0;
+
+    return initialTangent;
 }
 
 

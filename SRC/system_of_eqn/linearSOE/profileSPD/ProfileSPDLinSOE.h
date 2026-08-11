@@ -80,7 +80,7 @@ class ProfileSPDLinSOE : public LinearSOE
     friend class ProfileSPDLinSubstrThreadSolver;
     
   protected:
-    int size, profileSize;    
+    int size, profileSize;
     double *A, *B, *X;
     Vector *vectX;
     Vector *vectB;
@@ -88,8 +88,19 @@ class ProfileSPDLinSOE : public LinearSOE
     int Asize, Bsize;
     bool isAfactored, isAcondensed;
     int numInt;
-    
+
   private:
+    // Ladruno: budgeted, once-per-SOE unsymmetric-tangent detector, modelled
+    // on PARDISOGenLinSOE's asymWarned/asymBudget/asymPass (ADR-75 P1d + the
+    // TIMs-item-2 re-arm). ProfileSPD is the DEFAULT solver in both
+    // interpreters and addA() below unconditionally keeps only row <= col
+    // ("we only add upper and inside profile"), silently discarding the
+    // lower triangle -- so a non-associated-plasticity tangent gets
+    // symmetrized with no diagnostic at all. See ProfileSPDLinSOE.cpp::addA.
+    int asymWarned;      // half-store asymmetry reported once for this SOE
+    int asymBudget;      // ...and how many more element matrices to check
+    int asymPass;        // ...and how many tangent assemblies this pattern
+                         // (since the last setSize()) has seen
 };
 
 

@@ -393,12 +393,16 @@ ZeroLengthND::getTangentStiff(void)
 
 	double E;
 
+	// Ladruno: kb = theNDMaterial->getTangent() is not guaranteed symmetric
+	// (e.g. non-associated plasticity). Assemble the FULL i,j range here
+	// instead of only the lower triangle + mirror below, which silently
+	// symmetrized an unsymmetric material tangent. See PR #709/audit.
 	// Compute element stiffness ... K = A^*kb*A
 	for (int k = 0; k < order; k++) {
 		for (int l = 0; l < order; l++) {
 			E = kb(k,l);
 			for (int i = 0; i < numDOF; i++)
-				for (int j = 0; j < i+1; j++)
+				for (int j = 0; j < numDOF; j++)
 					stiff(i,j) +=  tran(k,i) * E * tran(l,j);
 		}
 	}
@@ -413,14 +417,9 @@ ZeroLengthND::getTangentStiff(void)
 
 		// Compute element stiffness ... K = A^*kb*A
 		for (int i = 0; i < numDOF; i++)
-			for (int j = 0; j < i+1; j++)
+			for (int j = 0; j < numDOF; j++)
 				stiff(i,j) +=  tran(2,i) * E * tran(2,j);
 	}
-
-    // Complete symmetric stiffness matrix
-    for (int i = 0; i < numDOF; i++)
-		for(int j = 0; j < i; j++)
-		    stiff(j,i) = stiff(i,j);
 
 	return stiff;
 }
@@ -436,35 +435,33 @@ ZeroLengthND::getInitialStiff(void)
   const Matrix &tran = *A;
   
   stiff.Zero();
-  
+
   double E;
-  
+
+  // Ladruno: same fix as getTangentStiff() above -- getInitialTangent() on
+  // an NDMaterial with non-associated flow need not be symmetric either,
+  // so assemble the full i,j range instead of mirroring the lower triangle.
   // Compute element stiffness ... K = A^*kb*A
   for (int k = 0; k < order; k++) {
     for (int l = 0; l < order; l++) {
       E = kb(k,l);
       for (int i = 0; i < numDOF; i++)
-	for (int j = 0; j < i+1; j++)
+	for (int j = 0; j < numDOF; j++)
 	  stiff(i,j) +=  tran(k,i) * E * tran(l,j);
     }
   }
-  
+
   if (the1DMaterial != 0) {
-    
+
     // Get UniaxialMaterial tangent, the element basic stiffness
     E = the1DMaterial->getInitialTangent();
-    
+
     // Compute element stiffness ... K = A^*kb*A
     for (int i = 0; i < numDOF; i++)
-      for (int j = 0; j < i+1; j++)
+      for (int j = 0; j < numDOF; j++)
 	stiff(i,j) +=  tran(2,i) * E * tran(2,j);
   }
 
-  // Complete symmetric stiffness matrix
-  for (int i = 0; i < numDOF; i++)
-    for(int j = 0; j < i; j++)
-      stiff(j,i) = stiff(i,j);
-  
   return stiff;
 }
 
