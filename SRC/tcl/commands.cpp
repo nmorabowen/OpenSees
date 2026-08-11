@@ -311,6 +311,31 @@ extern int OPS_LadrunoEdgePenetration(void);        // ADR-57 E6
 extern int OPS_LadrunoBeginAugment(void);           // ADR-41 D1
 extern int OPS_LadrunoEndAugment(void);             // ADR-41 D1
 
+// Ladruno (#729): the two SOLVER-STATE query commands had the same registration
+// gap — `ladrunoArcLength` (ADR-20 Layer-B / ADR-31 rung-4) and `ladrunoDR`
+// (ADR-31 rung-5) answered only under TclWrapper/PythonWrapper, so classic .tcl,
+// and OpenSeesMP which drives parallelism through THIS file, got "invalid command
+// name ladrunoDR" even though `integrator LadrunoDynamicRelaxation` itself parsed
+// fine. Measured 2026-08-11 on OpenSees.exe.
+//
+// TWO traps here, both measured the hard way; see LadrunoSolverQuery.h.
+//
+// 1. The dispatch could NOT be externed out of OpenSeesCommands.cpp the way the
+//    contact family externs OpenSeesOutputCommands.cpp. `OPS_InterpPyCmds` is on
+//    this exe's link line, but nothing here referenced a symbol in that TU, so the
+//    linker never pulled the object. Externing one function pulls the WHOLE file
+//    and it collides: ~40 LNK2005 against elementAPI_TCL.cpp (both define the
+//    elementAPI ops_get*_/ops_set*_ backend) plus unresolved OPS_SparsePython*.
+//    So the shared dispatch is header-only inline — no object, no link surface,
+//    and each engine binds elementAPI to its own backend.
+// 2. It takes the integrator as an ARGUMENT. The no-arg OPS_Ladruno*Cmd() forms
+//    read the `cmds` singleton, which only the DL engine constructs; calling those
+//    from here would compile, link and be silently useless — `cmds == 0` returns 0
+//    (SUCCESS) writing no output, i.e. a command that exists and answers nothing,
+//    which is worse than the missing-command error it replaced. Classic Tcl owns
+//    its integrators in theStaticIntegrator / theTransientIntegrator below.
+#include <LadrunoSolverQuery.h>
+
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
 #include <Newmark.h>
@@ -1356,6 +1381,13 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "ladrunoBeginAugment", &ladrunoBeginAugment,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "ladrunoEndAugment", &ladrunoEndAugment,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    // Ladruno (#729): solver-state queries into classic-Tcl dispatch. Without
+    // these, a .tcl deck can SET `integrator LadrunoDynamicRelaxation` but cannot
+    // read the settling gate that says when the relaxation is done.
+    Tcl_CreateCommand(interp, "ladrunoArcLength", &ladrunoArcLength,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoDR", &ladrunoDR,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -7107,6 +7139,37 @@ ladrunoEndAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char*
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoEndAugment() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno (#729): classic-Tcl bridges for the two solver-state query commands.
+// Same OPS_ResetInputNoBuilder shape as the contact family above — so the
+// subcommand string and any value argument come off the elementAPI cursor, and
+// OPS_SetDoubleOutput publishes through elementAPI_TCL.cpp into the interpreter
+// result exactly as under the Python/DL engine.
+//
+// The ONE difference is deliberate and load-bearing: these pass THIS engine's
+// integrator globals into the shared dispatch. The no-arg OPS_Ladruno*Cmd() forms
+// read the `cmds` singleton, which classic Tcl never constructs, so they would
+// return 0 (success) having written nothing — a command that exists and silently
+// answers nothing. A swapped-in no-arg call compiles and links, so this cannot be
+// left to the compiler; it is covered by tests/tcl/ladruno_solver_queries.tcl,
+// which fails on an EMPTY result and not merely on a Tcl error.
+int
+ladrunoArcLength(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (Ladruno::arcLengthCommand(theStaticIntegrator) < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (Ladruno::drCommand(theTransientIntegrator) < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }
