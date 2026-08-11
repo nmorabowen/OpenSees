@@ -740,6 +740,31 @@ set(OPS_INTERP_TCL_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/element/UWelements/Tcl_generateInterfacePoints.cpp
 )
 
+# ---------------------------------------------------------------------------
+# Ladruno ADR-78 P1: per-define contact abort
+#
+# Same shape as Patch 8 above, and the same reason. LadrunoContactHandler.cpp
+# lives in the OPS_Analysis OBJECT library -- compiled ONCE with no parallel
+# define and folded into every target -- so an `#ifdef _PARALLEL_*` block
+# written there compiles to nothing in EVERY build, OpenSeesMP included.
+# Measured, not assumed: a guarded MPI_Abort placed in the handler vanished
+# silently and the mutation deck hung exactly as it had before the change.
+#
+# So the one parallel-sensitive function -- the fatal exit, which must
+# MPI_Abort rather than let a failing rank strand its peers in the next
+# collective -- is isolated in its own TU and compiled per-target with that
+# target's defines. Deliberately kept to a single function: this list is
+# duplicated into every binary, so it should stay trivial.
+#
+# NB AutoConstraintHandler.cpp has the SAME latent problem -- it is in
+# OPS_Analysis and is not listed here, so its MPI_Allreduce is compiled out of
+# every target and `constraints Auto` sizes its penalty from rank-local
+# stiffness under MPI. Pre-existing and unrelated to contact; flagged rather
+# than fixed here so it gets its own change.
+set(OPS_CONTACT_PER_TARGET_SOURCES
+    ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
+)
+
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
 if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
   target_include_directories(OPS_InterpTcl PUBLIC ${TCL_INCLUDE_PATH})
@@ -921,6 +946,7 @@ add_executable(OpenSees EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/tcl/commands.cpp
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
   ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
+  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
 )
 
 if(TARGET TCL::TCL)
@@ -1023,6 +1049,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
       ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
+  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
     )
 
 
@@ -1093,6 +1120,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
       ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
+  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
     )
 
     if(DEFINED MUMPS_INCLUDE_DIR)
@@ -1152,6 +1180,7 @@ endif()
 add_library(OpenSeesPy SHARED EXCLUDE_FROM_ALL
     ${OPS_SRC_DIR}/interpreter/PythonModule.cpp
     ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
 )
 
 set_target_properties(OpenSeesPy PROPERTIES PREFIX "")
@@ -1186,6 +1215,7 @@ target_link_libraries(OpenSeesPy
 if(MPI_FOUND)
 
 add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
+  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
   ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomain.cpp
   ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomainEleIter.cpp
