@@ -29,6 +29,15 @@ AppVersion={#LadrunoVersion}
 AppPublisher=Ladruno
 AppPublisherURL=https://github.com/nmorabowen
 DefaultDirName={autopf}\Ladruno\OpenSees
+; Inno defaults UsePreviousAppDir to yes: it pre-fills (and can silently skip
+; showing, when combined with /DIR=) the destination page from whatever path
+; a PRIOR run with this same AppId used, read from the uninstall registry key
+; -- including a one-off /DIR= test/scratch run. Since every Ladruno OpenSees
+; build shares one fixed AppId, that makes the destination "sticky" across
+; unrelated builds/machines: a throwaway test install can silently redirect
+; every subsequent real install until something else overwrites the registry
+; value. Pin it off so DefaultDirName above is authoritative every time.
+UsePreviousAppDir=no
 DefaultGroupName=Ladruno OpenSees
 DisableProgramGroupPage=yes
 OutputDir={#LadrunoOut}
