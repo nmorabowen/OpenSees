@@ -519,35 +519,48 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 cd->getMortarContact(c).edgeSoftScale > 0.0) anySoft = true;
         if (anySoft) {
             ladrunoBuildNodalMass(theDomain, cd);
-            // ADR-78 P1: a SOFT contact sizes k_soft = SOFSCL*4*m_eff/dt² from the
-            // ASSEMBLED nodal mass built above. A node carrying neither `mass` nor any
-            // element leaves a cache entry of exactly 0 -- and m_eff = 1/(invM_s + ...)
-            // then collapses to 0, so k_soft is 0 and the contact SILENTLY does nothing.
-            // That is precisely a ghosted interface node on a partitioned deck (it has
-            // no element on the owner rank), which is why apeGmsh ADR 0092 INV-3 refuses
-            // `soft=` under partitioning; this is the engine-side backstop for a
-            // hand-written deck. A zero-mass node in an explicit contact is degenerate
-            // regardless -- the integrator would divide by it.
+            // ADR-78 P1, NARROWED after adversarial review. A SOFT contact sizes
+            // k_soft = SOFSCL*4*m_eff/dt² from the ASSEMBLED nodal mass built above,
+            // and m_eff = 1/(invMproj_slave + Σ Nᵢ²·invMproj_segᵢ).
+            //
+            // The first version of this guard scanned BOTH surfaces and justified
+            // itself with "k_soft collapses to 0 and the contact silently does
+            // nothing". BOTH halves of that were wrong, and the adapter says so:
+            //
+            //  * A massless MASTER is legitimate and supported. gapModeInvMass()
+            //    (LadrunoContactFE.cpp:448) treats a DOF with m ≤ 0 as INFINITE mass
+            //    -- "the correct gap-mode treatment of a FIXED master node ... a
+            //    fixed/rigid master contributes 0, leaving m_eff = m_slave". A rigid
+            //    indenter or drum meshed as fixed, element-free master nodes is a
+            //    standard pattern; aborting on it rejected a correct model.
+            //  * The failure was never silent. softKn() (LadrunoContactFE.cpp:516)
+            //    already warns once per (contact, topic) and falls back to the
+            //    configured kn, which the kn > 0 guard below guarantees is positive.
+            //
+            // Only a massless SLAVE is degenerate -- gapModeInvMass returns 0 and the
+            // adapter cannot soft-size at all. That is also the partitioned case ADR
+            // 0092 INV-3 refuses `soft=` for: a ghosted slave node has no element on
+            // the owner rank. So: slave surface only, and the message no longer
+            // claims the alternative is silence.
             for (int c = 0; c < cd->getNumContacts(); c++) {
                 const LadrunoContactDomain::Contact &ct = cd->getContact(c);
                 if (ct.softScale <= 0.0) continue;
-                const LadrunoContactSurface *sfc[2] = { cd->getSurface(ct.masterSurfTag),
-                                                        cd->getSurface(ct.slaveSurfTag) };
-                for (int k = 0; k < 2; k++) {
-                    if (sfc[k] == 0) continue;
-                    const ID &tg = sfc[k]->getNodeTags();
-                    for (int i = 0; i < tg.Size(); i++) {
-                        double m[3];
-                        bool have = cd->getNodalMass(tg(i), m);
-                        if (!have || (m[0] <= 0.0 && m[1] <= 0.0 && m[2] <= 0.0)) {
-                            opserr << "FATAL LadrunoContactHandler::handle() - contact "
-                                   << ct.tag << ": -soft needs an assembled mass at node "
-                                   << tg(i) << ", which carries none (no nodal `mass`, no "
-                                      "element on this process). k_soft would collapse to 0 "
-                                      "and the contact would do NOTHING; ABORTING (ADR-78 "
-                                      "P1). Under partitioning `-soft` is not supported.\n";
-                            return ladrunoContactFatal();
-                        }
+                const LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
+                if (ss == 0) continue;   // surface-undefined is caught, fatally, below
+                const ID &tg = ss->getNodeTags();
+                for (int i = 0; i < tg.Size(); i++) {
+                    double m[3];
+                    bool have = cd->getNodalMass(tg(i), m);
+                    if (!have || (m[0] <= 0.0 && m[1] <= 0.0 && m[2] <= 0.0)) {
+                        opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                               << ct.tag << ": -soft needs an assembled mass at SLAVE node "
+                               << tg(i) << ", which carries none (no nodal `mass`, no "
+                                  "element on this process). m_eff collapses, so the "
+                                  "contact silently falls back to the configured kn and "
+                                  "loses its Courant-stable penalty; ABORTING (ADR-78 P1). "
+                                  "Under partitioning `-soft` is not supported. A massless "
+                                  "MASTER is fine -- it is treated as a fixed/rigid one.\n";
+                        return ladrunoContactFatal();
                     }
                 }
             }
@@ -888,13 +901,30 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 int nCand = grid.candidates(slavePt, cand.data());
                 for (int ci = 0; ci < nCand; ci++) {
                     int seg = cand[ci];
-                    Node *segNodes[4]; bool ok = true;
+                    Node *segNodes[4]; int badTag = 0, badNdf = 0;
                     for (int k = 0; k < nps; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * nps + k));
-                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        if (mn == 0 || mn->getNumberDOF() != 3) {
+                            badTag = mTags(seg * nps + k);
+                            badNdf = (mn != 0) ? mn->getNumberDOF() : -1;
+                            break;
+                        }
                         segNodes[k] = mn;
                     }
-                    if (!ok) continue;   // missing/incompatible master node -> skip pair
+                    if (badTag != 0) {
+                        // ADR-78 P1 (added on review): this was `if (!ok) continue;` with NO
+                        // message at all -- the last fully SILENT drop in the handler, and on
+                        // the master side, which ladrunoSurfaceNodesOk cannot catch because it
+                        // checks existence and 3-D coords but NOT ndf. A master node shared
+                        // with a beam/shell (pile cap, slab-on-soil) passes pre-flight and then
+                        // every pair touching its segments vanished without a word: exactly the
+                        // silently-partial interface P1 exists to remove.
+                        opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                               << " master segment " << seg << " node " << badTag << ": ndf="
+                               << badNdf << " != 3 (or node absent); ABORTING (P2b master "
+                                  "segments are 3D translational -- ADR-78 P1)\n";
+                        return ladrunoContactFatal();
+                    }
                     // ADR-60 P1 (BLOCKER-SELF-CONTACT): finite-sliding re-emit can pair a slave with a
                     // segment that CONTAINS it (a folded declared surface). Skip a candidate whose node
                     // set includes the slave node — a self-penetration guard. Re-emit-only ⇒ identical.
@@ -1040,11 +1070,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 for (int k = 0; k < npsS; k++) {
                     Node *sn = theDomain->getNode(sTags(sf * npsS + k));
                     if (sn == 0 || sn->getNumberDOF() != 3) {
-                        if (sn != 0)
-                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
-                                   << mc.tag << " slave node " << sTags(sf * npsS + k) << " ndf="
-                                   << sn->getNumberDOF() << " != 3; facet skipped (mortar is 3D)\n";
-                        ok = false; break;
+                        // ADR-78 P1 (added on review): was warn-and-skip-the-facet, which is
+                        // the mortar twin of the NTS slave-ndf abort. Leaving the two lanes
+                        // inconsistent meant a mortar interface could still lose facets while
+                        // the NTS one refused to.
+                        opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                               << mc.tag << " slave node " << sTags(sf * npsS + k) << " ndf="
+                               << (sn != 0 ? sn->getNumberDOF() : -1)
+                               << " != 3; ABORTING (mortar is 3D translational -- ADR-78 P1)\n";
+                        return ladrunoContactFatal();
                     }
                     sNodes[k] = sn;
                     const Vector &Xk = sn->getCrds();
@@ -1122,10 +1156,20 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     if (epsAuto) {
                         epsUse = ladrunoResolveAutoKn(theDomain, mNodes, npsM, orientDir);
                         if (epsUse <= 0.0) {
-                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                            // ADR-78 P1 (added on review): the SAME resolver and the SAME
+                            // failure as the NTS `-kn auto` abort, converted there and left
+                            // skipping here. D5.2 named this path fatal, and apeGmsh ADR 0092
+                            // INV-1 leans on it: the node-majority owner proxy is only safe
+                            // because a mis-pick makes auto-sizing fail LOUDLY. Without this,
+                            // that backstop did not exist for mortar mesh-ties -- which is
+                            // exactly what ADR-78 P4 plans to run partitioned.
+                            opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
                                    << mc.tag << " slave facet " << sf << " master facet " << seg
-                                   << ": auto penalty could not be sized; pair skipped\n";
-                            continue;
+                                   << ": auto penalty could not be sized (no owning solid "
+                                      "element / non-3-DOF element / ambiguous normal); "
+                                      "ABORTING (ADR-78 P1). Give an explicit -epsN, or ensure "
+                                      "the master facet's solid element is on this rank.\n";
+                            return ladrunoContactFatal();
                         }
                     }
                     // C3.1 friction: epsT auto ⇒ size from the normal penalty (epsUse); else the
@@ -1261,10 +1305,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             edgeKnUse = epsFixed;
                     }
                     if (edgeKnUse <= 0.0) {
-                        opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                        // ADR-78 P1 (added on review): third lane of the same auto-penalty
+                        // failure. Converting NTS and mortar but not edge-edge would leave
+                        // the fallback lane -- the one that catches what the face clip
+                        // degenerates on -- quietly dropping pairs.
+                        opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
                                << " slave facet " << sf << " master facet " << seg
-                               << ": -edgeedge penalty could not be sized; pair skipped\n";
-                        continue;
+                               << ": -edgeedge penalty could not be sized; ABORTING (ADR-78 P1). "
+                                  "Give an explicit -edgeKn.\n";
+                        return ladrunoContactFatal();
                     }
                     // E3 friction: edgeKt (tangential penalty). Friction requested but no -edgeKt ⇒
                     // the return map would stick at ZERO force (silently inert); default it to the

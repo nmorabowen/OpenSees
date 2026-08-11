@@ -491,3 +491,46 @@ is *not* listed per-target, so its `MPI_Allreduce` — the one computing the glo
 `constraints Auto` — is compiled out of every target. Under MPI each rank would size its
 penalty from rank-local stiffness. Verified from its `DEFINES` line; pre-existing and unrelated
 to contact, so it deserves its own change rather than riding along here.
+
+### P1 amendments — adversarial review, same day. Two of P1's own claims were wrong.
+
+**A1 — the SOFT guard rejected correct models, on a false premise.** It scanned *both* surfaces
+and justified itself with "k_soft collapses to 0 and the contact silently does nothing". Both
+halves are refuted by the adapter it claims to protect:
+
+* `gapModeInvMass` (`LadrunoContactFE.cpp:448`) treats a DOF with `m ≤ 0` as **infinite** mass —
+  *"the correct gap-mode treatment of a FIXED master node … a fixed/rigid master contributes 0,
+  leaving m_eff = m_slave"*. A rigid indenter or drum meshed as fixed, element-free master nodes
+  is a standard pattern, and P1 aborted on it.
+* `softKn` (`LadrunoContactFE.cpp:516`) already warns once and **falls back to the configured
+  kn**. The pre-P1 behaviour was loud-warn-plus-safe-fallback, never silence.
+
+Narrowed to **slave-surface nodes only** (a massless slave really does defeat soft-sizing, and
+is the ghosted-node case ADR 0092 INV-3 refuses), and the message corrected.
+
+**A2 — the conversion was incomplete, and P1's own verification hid it.** P1 reported
+`grep "; skipped"` returning zero. Literally true, substantively misleading: the pattern matched
+what had been *changed* rather than what was *claimed*. Four paths survived —
+`"; facet skipped"` (mortar slave ndf), `"; pair skipped"` (mortar auto-penalty, edge-edge
+auto-penalty), and one with **no message at all** (`if (!ok) continue;` on a master segment node
+with `ndf != 3`, which `ladrunoSurfaceNodesOk` cannot catch because it checks existence and 3-D
+coordinates but not ndf). All four now abort. The mortar auto-penalty one mattered most: it is
+the same resolver and same failure as the NTS `-kn auto` abort that D5.2 named fatal, and
+apeGmsh ADR 0092 INV-1 leans on it — the node-majority owner proxy is only safe because a
+mis-pick fails loudly. That backstop did not exist for mortar mesh-ties, which P4 plans to run
+partitioned.
+
+### P1 KNOWN LIMITATION — incompatible with runtime element removal
+
+`handle()` re-runs on **every** `domainChanged()`, not once, and `LadrunoContactDomain` has **no
+API to retire a contact or prune a surface**. `RemoveRecorder` (the Elwood / Talaat-Mosalam
+collapse lane) removes elements *and dangling nodes* at runtime. So a collapse run with a
+declared contact, where a removed node belonged to a contact surface, now **aborts mid-run**
+where it previously limped on with a warning — and under MPI the teardown skips `H5Fclose`, so
+earlier stages' MPCO output can be lost.
+
+The handler cannot presently distinguish "your deck has a typo" from "the analysis legitimately
+removed this node", and the abort is right for the first and wrong for the second. Closing this
+needs surface-membership pruning on `removeNode`/`removeElement`, or an explicit
+contact-removal command. **Until then, do not combine `recorder Collapse` with a declared
+contact.** Recorded here rather than fixed because it is a design gap, not a defect in P1.
