@@ -1,5 +1,6 @@
 # Note 83 — The tangent-free path probe: does a quadratic element finish the Prandtl collapse when no tangent is formed?
 
+**PR:** [#727](https://github.com/nmorabowen/OpenSees/pull/727)
 **Kind:** MEASUREMENT. Ships no feature, changes no element, changes no
 integrator.
 **Predecessors:** [[81_quadratic_hex_limit_load_measurement]] and
