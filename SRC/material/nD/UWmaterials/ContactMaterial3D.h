@@ -166,7 +166,12 @@ class ContactMaterial3D : public NDMaterial
   // stress_vec(3) -> gap     ... current gap
   
   Matrix tangent_matrix;  // material tangent
-  
+
+  // Ladruno: dedicated buffer for getInitialTangent() so it no longer
+  // aliases tangent_matrix (which getTangent() overwrites in place --
+  // see ContactMaterial3D.cpp).
+  Matrix initialTangent;
+
 };
 
 #endif

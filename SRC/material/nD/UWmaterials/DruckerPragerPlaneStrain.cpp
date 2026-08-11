@@ -141,19 +141,26 @@ DruckerPragerPlaneStrain::getTangent()
     return tangent;
 } 
 
-//send back the tangent 
-const Matrix& DruckerPragerPlaneStrain::getInitialTangent() 
+//send back the tangent
+// Ladruno: this was a verbatim copy of getTangent() above and returned the
+// condensed elastoplastic mCep (current, possibly unsymmetric under
+// non-associated flow) instead of the elastic mCe -- so getInitialTangent()
+// drifted with plastic loading and was call-order dependent. Condense mCe
+// the same way getTangent() condenses mCep, matching
+// DruckerPrager3D::getInitialTangent() which returns mCe. See audit
+// following PR #709.
+const Matrix& DruckerPragerPlaneStrain::getInitialTangent()
 {
-    tangent(0,0) = mCep(0,0);
-	tangent(0,1) = mCep(0,1);
-	tangent(0,2) = mCep(0,3);
-	tangent(1,0) = mCep(1,0);
-	tangent(1,1) = mCep(1,1);
-	tangent(1,2) = mCep(1,3);
-	tangent(2,0) = mCep(3,0);
-	tangent(2,1) = mCep(3,1);
-	tangent(2,2) = mCep(3,3);
-	
+    tangent(0,0) = mCe(0,0);
+	tangent(0,1) = mCe(0,1);
+	tangent(0,2) = mCe(0,3);
+	tangent(1,0) = mCe(1,0);
+	tangent(1,1) = mCe(1,1);
+	tangent(1,2) = mCe(1,3);
+	tangent(2,0) = mCe(3,0);
+	tangent(2,1) = mCe(3,1);
+	tangent(2,2) = mCe(3,3);
+
     return tangent;
-} 
+}
 

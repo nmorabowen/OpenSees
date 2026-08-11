@@ -43,12 +43,24 @@
 #include <iostream>
 using std::nothrow;
 
+// Ladruno: same structure/constants as PARDISOGenLinSOE's asymmetry guard
+// (ADR-75 P1d + TIMs item 2). BURSTED sampling: ASYM_CHECK_BUDGET tangent
+// assemblies are checked, then the guard sleeps until the next multiple of
+// ASYM_RESAMPLE_PERIOD assemblies (see setSize/zeroA/addA). ProfileSPD is
+// the DEFAULT solver in both interpreters, so this cost must be negligible
+// in steady state: duty cycle is ASYM_CHECK_BUDGET/ASYM_RESAMPLE_PERIOD =
+// 3/64 ~= 4.7%, and the check itself is O(idSize^2/2) in-cache compares
+// against an assembly loop that is already O(idSize^2) -- noise on top of
+// noise for a symmetric model, and `asymWarned` latches for good the first
+// time it fires so a confirmed-unsymmetric model pays it exactly once.
+static const int ASYM_CHECK_BUDGET    = 3;
+static const int ASYM_RESAMPLE_PERIOD = 64;
 
 ProfileSPDLinSOE::ProfileSPDLinSOE(ProfileSPDLinSolver &the_Solver)
 :LinearSOE(the_Solver, LinSOE_TAGS_ProfileSPDLinSOE),
  size(0), profileSize(0), A(0), B(0), X(0), vectX(0), vectB(0),
  iDiagLoc(0), Asize(0), Bsize(0), isAfactored(false), isAcondensed(false),
- numInt(0) 
+ numInt(0), asymWarned(0), asymBudget(0), asymPass(0)
 {
     the_Solver.setLinearSOE(*this);
 }
@@ -58,7 +70,7 @@ ProfileSPDLinSOE::ProfileSPDLinSOE(int classTag)
 :LinearSOE(classTag),
  size(0), profileSize(0), A(0), B(0), X(0), vectX(0), vectB(0),
  iDiagLoc(0), Asize(0), Bsize(0), isAfactored(false), isAcondensed(false),
- numInt(0) 
+ numInt(0), asymWarned(0), asymBudget(0), asymPass(0)
 {
 
 }
@@ -68,7 +80,7 @@ ProfileSPDLinSOE::ProfileSPDLinSOE(ProfileSPDLinSolver &the_Solver, int classTag
 :LinearSOE(the_Solver, classTag),
  size(0), profileSize(0), A(0), B(0), X(0), vectX(0), vectB(0),
  iDiagLoc(0), Asize(0), Bsize(0), isAfactored(false), isAcondensed(false),
- numInt(0) 
+ numInt(0), asymWarned(0), asymBudget(0), asymPass(0)
 {
     the_Solver.setLinearSOE(*this);
 }
@@ -79,7 +91,7 @@ ProfileSPDLinSOE::ProfileSPDLinSOE(int N, int *iLoc,
 :LinearSOE(the_Solver, LinSOE_TAGS_ProfileSPDLinSOE),
  size(0), profileSize(0), A(0), B(0), X(0), vectX(0), vectB(0),
  iDiagLoc(0), Asize(0), Bsize(0), isAfactored(false), isAcondensed(false),
- numInt(0)
+ numInt(0), asymWarned(0), asymBudget(0), asymPass(0)
 {
     size = N;
     profileSize = iLoc[N-1];
@@ -291,7 +303,15 @@ ProfileSPDLinSOE::setSize(Graph &theGraph)
 	opserr << "WARNING ProfileSPDLinSOE::setSize :";
 	opserr << " solver failed setSize()\n";
 	return solverOK;
-    }    
+    }
+
+    // Ladruno: arm the addA symmetry check for the first few TANGENT
+    // ASSEMBLIES of this (possibly new) sparsity pattern -- see the class
+    // comment on asymWarned/asymBudget/asymPass and PARDISOGenLinSOE's
+    // identical setSize/zeroA/addA arrangement.
+    asymPass = 0;
+    if (asymWarned == 0)
+	asymBudget = ASYM_CHECK_BUDGET;
 
     return result;
 }
@@ -303,13 +323,59 @@ ProfileSPDLinSOE::addA(const Matrix &m, const ID &id, double fact)
     if (fact == 0.0)  return 0;
     
     // check that m and id are of similar size
-    int idSize = id.Size();    
+    int idSize = id.Size();
     if (idSize != m.noRows() && idSize != m.noCols()) {
 	opserr << "ProfileSPDLinSOE::addA()	- Matrix and ID not of similar sizes\n";
 	return -1;
     }
 
-    if (fact == 1.0) { // do not need to multiply 
+    // Ladruno: DETECT the asymmetry the "we only add upper and inside
+    // profile" loops below are about to discard. ProfileSPD is the DEFAULT
+    // system in both interpreters, and non-associated plasticity, contact,
+    // or a follower-load tangent can be genuinely unsymmetric -- silently
+    // keeping only row <= col reflects it into a converged, plausible,
+    // WRONG answer with no diagnostic. Reported ONCE per SOE, BUDGETED (see
+    // setSize/zeroA), so it never taxes a symmetric model's steady state:
+    // the compare below is idSize^2/2 in-cache subtractions against an
+    // addA scatter that is already O(idSize^2), done for only
+    // ASYM_CHECK_BUDGET assemblies out of every ASYM_RESAMPLE_PERIOD.
+    if (asymWarned == 0 && asymBudget > 0 &&
+        idSize == m.noRows() && idSize == m.noCols()) {
+	double worstDev = 0.0, scale = 0.0;
+	for (int ii = 0; ii < idSize; ii++)
+	    for (int jj = 0; jj < ii; jj++) {
+		double u = m(ii, jj), v = m(jj, ii);
+		double au = u < 0.0 ? -u : u;
+		double av = v < 0.0 ? -v : v;
+		if (au > scale) scale = au;
+		if (av > scale) scale = av;
+		double d = u - v;
+		if (d < 0.0) d = -d;
+		if (d > worstDev) worstDev = d;
+	    }
+	if (scale > 0.0 && worstDev > 1.0e-8 * scale) {
+	    asymWarned = 1;
+	    opserr << "WARNING ProfileSPDLinSOE: an assembled element matrix is "
+	              "UNSYMMETRIC (max deviation " << worstDev << " vs scale "
+	           << scale << ") at TANGENT ASSEMBLY " << asymPass
+	           << " of this pattern, but `system ProfileSPD` (the DEFAULT "
+	              "solver) stores only the upper triangle within the "
+	              "profile.\n"
+	              "     Assembly " << asymPass << " is where to look: if it "
+	              "is not the first few, the tangent turned unsymmetric "
+	              "DURING the run (yield, contact closing) -- correlate it "
+	              "with your load step.\n"
+	              "     The lower half is being DISCARDED, so this run "
+	              "solves the REFLECTED system and may converge to a WRONG "
+	              "answer.\n"
+	              "     Use `system FullGeneral`, `UmfPack`, `SparseGEN`, or "
+	              "`system Pardiso` (default, unsymmetric CSR) for contact, "
+	              "non-associated flow, follower loads, corotational "
+	              "transforms, or LadrunoUP. Reported once.\n";
+	}
+    }
+
+    if (fact == 1.0) { // do not need to multiply
 	for (int i=0; i<idSize; i++) {
 	    int col = id(i);
 	    if (col < size && col >= 0) {
@@ -489,14 +555,28 @@ ProfileSPDLinSOE::setB(const Vector &v, double fact)
     return 0;
 }
 
-void 
+void
 ProfileSPDLinSOE::zeroA(void)
 {
     double *Aptr = A;
     for (int i=0; i<Asize; i++)
 	*Aptr++ = 0;
-    
+
     isAfactored = false;
+
+    // Ladruno: zeroA runs once per tangent assembly, so it is the only place
+    // this SOE can see a pass boundary. Spend one unit of the addA
+    // symmetry-check budget here (fixed cost per assembly, independent of
+    // model size or Newton-iteration count), and RE-ARM it every
+    // ASYM_RESAMPLE_PERIOD passes so late-onset asymmetry (a non-associated
+    // flow rule that only yields at step 50, contact closing) is still
+    // caught. Re-arming stops for good once asymWarned latches.
+    asymPass++;
+
+    if (asymWarned == 0 && (asymPass % ASYM_RESAMPLE_PERIOD) == 0)
+	asymBudget = ASYM_CHECK_BUDGET;
+    else if (asymBudget > 0)
+	asymBudget--;
 }
 	
 void 
