@@ -2234,7 +2234,10 @@ from worktree A (check `opensees.__file__` FIRST when a freshly-built symbol is 
 MPI guard skips the eager import + aliasing) and `sys.path.insert(0, <your dist\bin>)` +
 `os.add_dll_directory` + PATH-prepend in a small driver BEFORE importing pytest
 (the P5.1 `run_gates.py` pattern). Re-running `wire_venv_pth.py` re-pins instead, but stomps the
-sibling session.
+sibling session. **2026-08-10: superseded for the common case** — `set LADRUNO_OPENSEES_BIN=<your
+dist\bin>` before importing wins WITHOUT stomping the sibling session or needing the PMI_RANK trick
+(the boot module itself now checks the env var first); see the "An INSTALLED Ladruno hijacks" entry
+below for the fix detail.
 
 ## Solid-shell patch tests on a 1-element-thick mesh: the interior-node patch MUST use a traction-consistent field (ADR-66 P5.1)
 
@@ -3528,15 +3531,34 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   (ADR 71 §2.4)` on a worktree whose own `dist/bin` build accepts it fine. The
   banner is the giveaway — it prints the *installed* build's commit, not the
   worktree's.
-- **Workaround:** run campaign/testbed scripts with an interpreter that has no
-  Ladruno `.pth` (the base `C:\Users\<u>\AppData\Local\Programs\Python\Python312\
-  python.exe`), and **assert which engine loaded** — compare
-  `os.path.dirname(opensees.__file__)` against the intended `dist/bin` and
-  `raise SystemExit` on mismatch. `Ladruno_files/testbed/hypo_bearing/
-  bearing_backbone.py` carries that guard as the reference pattern. Note the
-  venvs that DO have the `.pth` (e.g. `opensees_env`) are still the right ones
-  for apeGmsh mesh work — just not for running a worktree build.
-  *2026-07-28 (ADR-79 bearing campaign).*
+- **Workaround (still applies for a venv you cannot touch):** run campaign/
+  testbed scripts with an interpreter that has no Ladruno `.pth` (the base
+  `C:\Users\<u>\AppData\Local\Programs\Python\Python312\python.exe`), and
+  **assert which engine loaded** — compare `os.path.dirname(opensees.__file__)`
+  against the intended `dist/bin` and `raise SystemExit` on mismatch.
+  `Ladruno_files/testbed/hypo_bearing/bearing_backbone.py` carries that guard
+  as the reference pattern. Note the venvs that DO have the `.pth` (e.g.
+  `opensees_env`) are still the right ones for apeGmsh mesh work — just not
+  for running a worktree build. *2026-07-28 (ADR-79 bearing campaign).*
+- **Fix (2026-08-10):** `wire_venv_pth.py`'s generated boot module now checks
+  `LADRUNO_OPENSEES_BIN` / `LADRUNO_OPENSEESMP_BIN` FIRST, before its baked-in
+  install dirs — a runtime escape hatch that needs no re-run of the wirer and
+  does not disturb any OTHER session sharing the venv:
+  `set LADRUNO_OPENSEES_BIN=<worktree>\dist\bin` before `import opensees` (or
+  `import openseespy.opensees`, since that alias chains through the same
+  eager import) binds the worktree build instead of the install. Verified
+  end-to-end in `opensees_env`: without the override, `ladrunoBuild()` reads
+  the installed hash; with it set, the SAME process reads the worktree's.
+  Regenerate an already-wired venv's boot script with the fixed
+  `wire_venv_pth.py <bin-dir> [<mp-dir>]` to pick up the fix without a full
+  installer re-run. Gate: `tests/test_wire_venv_pth_override.py` (no built
+  engine needed — renders `BOOT_TEMPLATE` and asserts which dir wins).
+  apeGmsh's live-backend resolver (`opensees/emitter/live.py`) was
+  independently hardened the same day: it no longer trusts a pre-bound
+  `opensees` module just because it is *some* fork build (`criticalTimeStep`
+  present) — it now also checks the module's `__file__` directory matches
+  `APEGMSH_OPENSEES_BIN` before reusing it, closing the gap for code paths
+  that reach `sys.modules['opensees']` before apeGmsh's own resolver runs.
 
 ### A converged push increment is a property of the MESH, not of the problem — recalibrate it after any refinement
 - **Bites:** reusing a step size proven on one discretization. ADR-79 P3 proved
