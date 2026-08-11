@@ -190,6 +190,9 @@ path. We do not claim SOE bypass.
    zero-density research models — the exact ADR-20 §2.5 BLOCKER, FC4/F4 confirmed
    the `getMass` hooks cannot carry an artificial mass). Modes:
    `-mass {gershgorin|lumped|unity}`, default `gershgorin`.
+   > **The "automatic stability" clause above is CORRECTED — see §3.4.** `ω·Δt ≈ 2`
+   > is the central-difference limit itself, not a margin below it; v3 (#728) adds
+   > `-massSafety f` (default **0.5**) to buy one.
 
 3. **Damping = kinetic (Cundall), the v1 default and only v1 mode. NO viscous
    constant.** This is the whole point of the stance: nothing to mistune,
