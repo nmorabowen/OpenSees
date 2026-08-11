@@ -109,7 +109,7 @@ def robust_drive(ops, done, *,
                  min_scale=1.0 / 1024,
                  grow=2.0,
                  peak_cutbacks=3,
-                 max_substeps=20000,
+                 max_substeps=50000,
                  stabilize=False,
                  stab_f=1.0e-3,
                  stab_tol=1.0e-8,
@@ -120,8 +120,9 @@ def robust_drive(ops, done, *,
                  verify_tol=0.02,
                  dynamics=False,
                  dr_settle_tol=1.0e-4,
-                 dr_max_steps=4000,
+                 dr_max_steps=16000,
                  dr_pref=None,
+                 dr_mass_safety=None,
                  dr_setup=None,
                  log_path=None,
                  verbose=False):
@@ -156,6 +157,23 @@ def robust_drive(ops, done, *,
                      KE is ~0 on DR's pseudo-mass models, so the gate is force-based).
     dr_pref        : reference load norm ||P|| for the settle gate. None -> proxy
                      max(1, |lambda|) (exact when the reference-load norm is ~1).
+    dr_mass_safety : DR Gershgorin stability margin f (omega_max*dt <= 2f). None ->
+                     the integrator's own safe default (0.5). Rung 5 relaxes a REAL
+                     model to a rest state it then reports as `regularized`, so it
+                     must NOT run at the bare stability boundary f = 1, where DR
+                     amplifies round-off and can settle to a silently wrong state
+                     (note 83 sec 3 / LEDGER_quirks). Pass a smaller f (0.25) for
+                     deeply plastic models; `ladrunoDR stabilityMargin` > 1 at any
+                     point says the mass has stopped bounding the step.
+                     NOTE the cost: relaxation per step scales as f^2, so the f = 0.5
+                     default needs ~4x the steps the pre-#728 f = 1 did -- which is
+                     why `dr_max_steps` is 16000 and not 4000, and why `max_substeps`
+                     went 20000 -> 50000 with it. Raising only the rung-5 budget
+                     would have left the GLOBAL budget binding instead, silently
+                     converting settled rung-5 runs into `incomplete` ones; the two
+                     numbers have to move together or the recalibration is a no-op.
+                     DR substeps are matrix-free and by far the cheapest the driver
+                     spends, so the widened runaway guard costs little.
     dr_setup       : optional callable(ops) that configures the transient analysis
                      for the DR phase (constraints/numberer/system). If None, the
                      driver uses Plain/RCM/BandGen defaults (fine for simple models).
@@ -318,7 +336,13 @@ def robust_drive(ops, done, *,
             ops.system("BandGen")
         ops.test("NormUnbalance", 1.0e-3, 25, 0)     # DR's own gate is force-based
         ops.algorithm("Newton")
-        ops.integrator("LadrunoDynamicRelaxation")   # gershgorin M*, pseudo dt=1
+        # gershgorin M*, pseudo dt=1. The mass carries the stability margin: the raw
+        # row-sum sits EXACTLY on the explicit boundary, so leave -massSafety at the
+        # integrator default (0.5) unless the caller has measured its model.
+        dr_args = ["LadrunoDynamicRelaxation"]
+        if dr_mass_safety is not None:
+            dr_args += ["-massSafety", float(dr_mass_safety)]
+        ops.integrator(*dr_args)
         ops.analysis("Transient")
         # mass-free settling threshold: residualNorm < dr_settle_tol * ||P||
         pref = dr_pref if dr_pref is not None else max(1.0, abs(lam))
@@ -335,7 +359,13 @@ def robust_drive(ops, done, *,
             rn = ops.ladrunoDR("residualNorm")
             if rn < settle_abs:                      # mass-free quasi-static gate
                 res.dr_settled = True
-                log("dr_settled", residualNorm=rn, pref=pref, steps=res.substeps)
+                # margin = (omega_max*dt/2)^2 of the mass actually marched, against
+                # the tangent at the last M* rebuild. > 1 means the relaxation ran
+                # over the explicit boundary and the "settled" state is not
+                # trustworthy -- log it so a rung-5 verdict is auditable after the
+                # fact, since the integrator only warns once.
+                log("dr_settled", residualNorm=rn, pref=pref, steps=res.substeps,
+                    stabilityMargin=ops.ladrunoDR("stabilityMargin"))
                 break
             if done():
                 break

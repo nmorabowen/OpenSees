@@ -3663,8 +3663,15 @@ int OPS_LadrunoArcLengthCmd()
 
 // ladrunoDR <sub> -- runtime query of the active LadrunoDynamicRelaxation (33005);
 // the rung-5 settling / micro-burst signals (ADR-31 R-DR-ENERGY). Read-only.
-//   ladrunoDR residualNorm   -> ||f_ext - f_int||_inf  (mass-free settling gate)
-//   ladrunoDR kineticEnergy  -> 1/2 v^T M* v           (micro-burst signal)
+//   ladrunoDR residualNorm    -> ||f_ext - f_int||_inf  (mass-free settling gate)
+//   ladrunoDR kineticEnergy   -> 1/2 v^T M* v           (micro-burst signal)
+//   ladrunoDR stabilityMargin -> (omega_max*dt/2)^2 of the mass in use, measured
+//        against the CURRENT tangent by an independent probe on its own step
+//        cadence (note 83 §3). <= 1 stable; == massSafety^2 on an unchanged
+//        tangent; > 1 = marching at/over the explicit boundary, where DR amplifies
+//        round-off and can relax to a silently WRONG state. NEGATIVE = NOT
+//        MEASURED, and must never be read as "safe": -1 = no gershgorin mass
+//        (lumped/unity have no such bound), -2 = probe disabled (-marginEvery 0).
 // The robust-solve driver reads residualNorm/residualNorm0 each DR step to decide
 // when the dynamics excursion has relaxed to a quasi-static rest state -- the
 // physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
@@ -3683,16 +3690,18 @@ int OPS_LadrunoDRCmd()
 
     if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING ladrunoDR - expects a subcommand "
-                  "(residualNorm|kineticEnergy)\n";
+                  "(residualNorm|kineticEnergy|stabilityMargin)\n";
         return -1;
     }
     const char *sub = OPS_GetString();
     double out = 0.0;
     if      (strcmp(sub, "residualNorm") == 0)  out = dr->getResidualNorm();
     else if (strcmp(sub, "kineticEnergy") == 0) out = dr->getKineticEnergy();
+    // Ladruno (#728): the -massSafety silent-divergence detector
+    else if (strcmp(sub, "stabilityMargin") == 0) out = dr->getStabilityMargin();
     else {
         opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
-               << "' (use residualNorm|kineticEnergy)\n";
+               << "' (use residualNorm|kineticEnergy|stabilityMargin)\n";
         return -1;
     }
     int n = 1;

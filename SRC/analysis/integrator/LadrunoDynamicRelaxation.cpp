@@ -62,7 +62,8 @@
 void *OPS_LadrunoDynamicRelaxation(void)
 {
     // Usage: integrator LadrunoDynamicRelaxation
-    //          <-mass gershgorin|lumped $scale|unity> <-dt $dt>
+    //          <-mass gershgorin|lumped $scale|unity> <-massSafety $f>
+    //          <-marginEvery $N> <-dt $dt>
     //          <-recompute $N> <-interp> <-divergence $f> <-verbose>
     int    massMode = 0;            // gershgorin
     double dtPseudo = 1.0, massScale = 1.0, divergenceFactor = 0.0;
@@ -71,6 +72,9 @@ void *OPS_LadrunoDynamicRelaxation(void)
     int    dampMode = 0;            // 0 kinetic (default) | 1 viscous-critical
     double zetaTarget = 1.0;        // viscous damping ratio (1 = critical)
     bool   autoRefresh = true;      // rebuild M* at KE peaks (gershgorin)
+    double massSafety = LADRUNO_DR_DEFAULT_MASS_SAFETY;   // omega_max*dt <= 2f
+    bool   massSafetySet = false;   // explicit -massSafety (for the mode warning)
+    int    marginEvery = LADRUNO_DR_DEFAULT_MARGIN_EVERY;  // margin-probe cadence
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -90,6 +94,20 @@ void *OPS_LadrunoDynamicRelaxation(void)
             } else if (strcmp(m, "unity") == 0)    massMode = 2;
             else opserr << "WARNING LadrunoDynamicRelaxation - unknown -mass " << m
                         << " (keeping gershgorin)\n";
+        } else if (strcmp(opt, "-massSafety") == 0) {
+            int nd = 1;
+            if (OPS_GetDoubleInput(&nd, &massSafety) < 0) {
+                opserr << "WARNING LadrunoDynamicRelaxation -massSafety failed to read f\n";
+                return 0;
+            }
+            massSafetySet = true;
+        } else if (strcmp(opt, "-marginEvery") == 0) {
+            int nd = 1;
+            if (OPS_GetIntInput(&nd, &marginEvery) < 0) {
+                opserr << "WARNING LadrunoDynamicRelaxation -marginEvery failed to read N\n";
+                return 0;
+            }
+            if (marginEvery < 0) marginEvery = 0;
         } else if (strcmp(opt, "-dt") == 0) {
             int nd = 1;
             if (OPS_GetDoubleInput(&nd, &dtPseudo) < 0) {
@@ -132,31 +150,70 @@ void *OPS_LadrunoDynamicRelaxation(void)
         }
     }
 
+    // -massSafety validation. f is a SAFETY factor: (0,1]. f = 1 restores the
+    // pre-#728 behaviour, which is the bare central-difference stability boundary
+    // and a measured silent-wrong-answer generator (note 83 §3) — so say so, once,
+    // loudly, rather than silently honouring it.
+    if (!(massSafety > 0.0)) {
+        opserr << "WARNING LadrunoDynamicRelaxation -massSafety " << massSafety
+               << " is not positive; using the default "
+               << LADRUNO_DR_DEFAULT_MASS_SAFETY << "\n";
+        massSafety = LADRUNO_DR_DEFAULT_MASS_SAFETY;
+    } else if (massSafety > 1.0) {
+        opserr << "WARNING LadrunoDynamicRelaxation -massSafety " << massSafety
+               << " > 1 is ABOVE the central-difference stability limit "
+                  "(omega*dt > 2); clamping to 1\n";
+        massSafety = 1.0;
+    }
+    // ...but only where it MEANS anything: massSafety scales the gershgorin mass and
+    // nothing else, so shouting about the stability boundary on a `-mass unity` run
+    // (immediately before saying the option is ignored) is a contradiction that
+    // teaches users to skim the warning that matters.
+    if (massSafety >= 1.0 && massMode == 0)
+        opserr << "WARNING LadrunoDynamicRelaxation -massSafety 1 marches EXACTLY "
+                  "ON the explicit stability boundary (omega_max*dt = 2), where the "
+                  "march amplifies round-off instead of damping it. A long relaxation "
+                  "can walk away from an exact equilibrium and report NO error "
+                  "(measured: 87 kN residual on a 300 kN problem). Prefer the default "
+                  "-massSafety " << LADRUNO_DR_DEFAULT_MASS_SAFETY << ".\n";
+    if (massSafetySet && massMode != 0)
+        opserr << "WARNING LadrunoDynamicRelaxation -massSafety only scales the "
+                  "gershgorin mass; with -mass lumped/unity it is IGNORED (use the "
+                  "-mass lumped $scale factor instead)\n";
+
     return new LadrunoDynamicRelaxation(massMode, dtPseudo, massScale,
                                         recomputeEvery, interp, divergenceFactor,
-                                        verbose, dampMode, zetaTarget, autoRefresh);
+                                        verbose, dampMode, zetaTarget, autoRefresh,
+                                        massSafety, marginEvery);
 }
 
 LadrunoDynamicRelaxation::LadrunoDynamicRelaxation(int massMode_, double dtPseudo_,
                                                    double massScale_, int recomputeEvery_,
                                                    bool interp_, double divergenceFactor_,
                                                    bool verbose_, int dampMode_,
-                                                   double zetaTarget_, bool autoRefresh_)
+                                                   double zetaTarget_, bool autoRefresh_,
+                                                   double massSafety_, int marginEvery_)
  :TransientIntegrator(INTEGRATOR_TAGS_LadrunoDynamicRelaxation),
   massMode(massMode_), dtPseudo(dtPseudo_), massScale(massScale_),
   recomputeEvery(recomputeEvery_), interp(interp_),
   divergenceFactor(divergenceFactor_), verbose(verbose_),
-  Mstar(0), Ut(0), Vhalf(0), Aprev(0), Vfull(0), Azero(0),
+  Mstar(0), Mprobe(0), Ut(0), Vhalf(0), Aprev(0), Vfull(0), Azero(0),
   firstStep(true), updateCount(0), size(0), stepCount(0),
   prevKE(0.0), kineticEnergy(0.0), residualNorm(0.0), deltaT(0.0),
-  dampMode(dampMode_), zetaTarget(zetaTarget_), cVisc(0.0), autoRefresh(autoRefresh_)
+  dampMode(dampMode_), zetaTarget(zetaTarget_), cVisc(0.0), autoRefresh(autoRefresh_),
+  massSafety(massSafety_), stabMargin(-1.0), marginWarned(false),
+  marginEvery(marginEvery_ < 0 ? 0 : marginEvery_), marginCount(0),
+  haveBuiltOnce(false)
 {
-
+    // guard the direct-construction path too (the parser validates separately)
+    if (!(massSafety > 0.0) || massSafety > 1.0)
+        massSafety = LADRUNO_DR_DEFAULT_MASS_SAFETY;
 }
 
 LadrunoDynamicRelaxation::~LadrunoDynamicRelaxation()
 {
     if (Mstar != 0) delete Mstar;
+    if (Mprobe != 0) delete Mprobe;
     if (Ut    != 0) delete Ut;
     if (Vhalf != 0) delete Vhalf;
     if (Aprev != 0) delete Aprev;
@@ -194,22 +251,36 @@ int LadrunoDynamicRelaxation::formNodTangent(DOF_Group *theDof)
 }
 
 // ---- build the fictitious lumped diagonal M* (ADR decision 2 / §4.2) --------
-// gershgorin: m_i = (dt^2/4) * sum_j |K_ij|  (scale-free, omega*dt ~ 2 by
+// gershgorin: m_i = (dt^2/(4 f^2)) * sum_j |K_ij|  (scale-free; omega*dt <= 2f by
 //             construction) — a ONE-TIME element-stiffness probe, SOE-free.
 // lumped:     row-sum of the real element mass, * massScale (needs nonzero mass).
 // unity:      m_i = 1.
+//
+// The f^2 in the denominator is the -massSafety margin (note 83 §3). WITHOUT it
+// (f = 1) the Gershgorin bound is attained with EQUALITY: omega_max*dt = 2 is the
+// central-difference limit itself, where the amplification matrix has a defective
+// double root at -1 and round-off grows instead of decaying. A quasi-static DR run
+// takes orders of magnitude more steps than a physical explicit run, so it sits on
+// that boundary long enough for the growth to become the answer.
 int
 LadrunoDynamicRelaxation::buildFictitiousMass(void)
 {
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0 || Mstar == 0) return -1;
 
-    // gershgorin prefactor (mode 0): f = dt^2/4, scale-free so omega*dt ~ 2 by
-    // construction. Viscous: grow M* so the DAMPED step stays stable. Critical
-    // viscous damping shrinks the explicit safe step by (sqrt(1+z^2)-z); grow M*
-    // by its inverse-square so omega*dt stays <= 2. (Passed as dt2Quarter; the
-    // shared builder applies it. lumped/unity ignore it.)
-    double f = 0.25 * dtPseudo * dtPseudo;
+    // stash the mass we have been marching with so the rebuild below can be read as
+    // a free margin sample (see after the build).
+    bool hadPrevMass = (massMode == 0 && haveBuiltOnce && Mprobe != 0
+                        && Mprobe->Size() == size);
+    if (hadPrevMass) *Mprobe = *Mstar;
+
+    // gershgorin prefactor (mode 0): f = dt^2/(4*massSafety^2), scale-free so
+    // omega*dt <= 2*massSafety by construction. Viscous: grow M* further so the
+    // DAMPED step stays stable. Critical viscous damping shrinks the explicit safe
+    // step by (sqrt(1+z^2)-z); grow M* by its inverse-square so omega*dt stays in
+    // bounds. (Passed as dt2Quarter; the shared builder applies it. lumped/unity
+    // ignore it — and so, therefore, does massSafety.)
+    double f = 0.25 * dtPseudo * dtPseudo / (massSafety * massSafety);
     if (dampMode == 1) {
         double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
         if (s > 0.0) f /= (s * s);
@@ -219,16 +290,117 @@ LadrunoDynamicRelaxation::buildFictitiousMass(void)
         return -1;
 
     // viscous-critical coefficient C* = cVisc*M*. The M* rescale above grew M* by
-    // 1/s^2 (s = sqrt(1+z^2)-z), so the RESCALED omega1*dt ~ 2s (not 2). Critical
-    // damping for that omega is cVisc = 2*zeta*omega1 = 4*zeta*s/dtPseudo. Using the
-    // unrescaled 2/dt here overshoots (dt*cVisc = 4 > 2 => explicit-damping blowup);
-    // the s factor keeps dt*cVisc = 4*zeta*s < 2 (=1.66 at zeta=1). gershgorin is the
-    // recommended pairing (closed-form omega); unity/lumped is approximate.
+    // 1/(s^2 massSafety^2) (s = sqrt(1+z^2)-z), so the RESCALED omega1*dt ~ 2*s*fSafe
+    // (not 2). Critical damping for that omega is cVisc = 2*zeta*omega1 =
+    // 4*zeta*s*fSafe/dtPseudo. Using the unrescaled 2/dt here overshoots
+    // (dt*cVisc = 4 > 2 => explicit-damping blowup); the s (and now massSafety) factor
+    // keeps dt*cVisc = 4*zeta*s*fSafe < 2 (= 0.83 at zeta = 1, fSafe = 0.5).
+    // gershgorin is the recommended pairing (closed-form omega); unity/lumped is
+    // approximate — and there massSafety does NOT scale M*, so it must not scale
+    // cVisc either.
     if (dampMode == 1) {
         double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
-        cVisc = 4.0 * zetaTarget * s / dtPseudo;
+        double fSafe = (massMode == 0) ? massSafety : 1.0;
+        cVisc = 4.0 * zetaTarget * s * fSafe / dtPseudo;
     }
 
+    // FREE margin sample: the row-sums just computed describe the live tangent, and
+    // (when this is a refresh rather than the first build) *Mprobe still holds the
+    // mass we were marching with until a moment ago. Comparing them costs one pass
+    // over a vector and samples exactly when the model is changing fastest -- at a
+    // KE peak under auto-refresh -- which the fixed-cadence probe is too coarse to
+    // catch. The cadence probe is the guaranteed FLOOR, not the whole detector.
+    if (massMode == 0 && haveBuiltOnce && hadPrevMass)
+        this->applyMargin(*Mstar, *Mprobe);
+
+    haveBuiltOnce = true;
+    marginCount = 0;
+    if (massMode == 0) {
+        if (stabMargin < 0.0) stabMargin = massSafety * massSafety;
+    } else {
+        stabMargin = -1.0;    // lumped/unity carry no Gershgorin bound to measure
+    }
+
+    return 0;
+}
+
+// Compare the mass implied by the LIVE tangent against the mass actually being
+// MARCHED, and record/announce the result. margin_i = live_i * f^2 / march_i (see
+// measureStabilityMargin for the derivation); both vectors must already carry the
+// same prefactor, so the ratio is a pure tangent ratio scaled by f^2.
+void
+LadrunoDynamicRelaxation::applyMargin(const Vector &live, const Vector &march)
+{
+    double mmax = 0.0;
+    for (int i = 0; i < size; i++)
+        if (live(i) > mmax) mmax = live(i);
+    // ignore DOFs sitting on the builder's mmax*1e-8 zero-floor: they carry no
+    // stiffness, so they cannot be the unstable mode, but their floored value moves
+    // between samples and would forge a ratio.
+    double cut = mmax * 1.0e-6;
+    double worst = 0.0;
+    for (int i = 0; i < size; i++) {
+        double m = march(i);
+        if (!(m > 0.0) || !(live(i) > cut)) continue;
+        double r = live(i) * massSafety * massSafety / m;
+        if (r > worst) worst = r;
+    }
+    if (!(worst > 0.0)) return;
+
+    // WORST since the last domainChanged, not the latest. A rebuild makes the
+    // instantaneous margin massSafety^2 again by construction, so a "latest" reading
+    // would let the very refresh that papers over the excursion also erase the
+    // evidence of it -- and this value is what robust_drive logs to audit a whole
+    // rung-5 relaxation after the fact.
+    if (worst > stabMargin) stabMargin = worst;
+
+    if (worst > 1.0 + 1.0e-6 && !marginWarned) {
+        marginWarned = true;
+        opserr << "WARNING LadrunoDynamicRelaxation - the fictitious mass NO LONGER "
+                  "BOUNDS the explicit step: the current tangent gives a Gershgorin "
+                  "stability margin of " << worst << " (> 1 means omega*dt > 2). "
+                  "The march is amplifying round-off, not damping it, and DR reports "
+                  "no error when it does -- the relaxed state can be silently wrong "
+                  "(note 83 sec 3). Lower -massSafety (currently " << massSafety
+               << ", try " << 0.5 * massSafety << ") and/or refresh M* more often "
+                  "(-recompute N / drop -noAutoRefresh). Printed once per integrator.\n";
+    }
+}
+
+// ---- stability-margin probe (note 83 §3) -----------------------------------
+// The failure mode this guards is SILENT: nothing errors, every step "succeeds",
+// and on a path-dependent material the damage is permanent. The exact statement of
+// danger is that the mass no longer bounds the CURRENT tangent, so measure exactly
+// that. Row-sums of the live K go into Mprobe with the SAME prefactor M* was built
+// with, so with m_probe = (dt^2/(4 f^2)) * s_now,
+//   margin_i = s_now_i * dt^2 / (4 * M*_i) = m_probe_i * f^2 / M*_i
+// (the viscous 1/s^2 cancels against the correspondingly relaxed limit), i.e.
+// margin == (omega_max*dt / 2)^2 for the mass actually in use. Exactly massSafety^2
+// while the tangent is unchanged; past 1 once the model has stiffened past M*.
+//
+// This deliberately does NOT touch M*. An earlier version folded the measurement
+// into buildFictitiousMass() and so only ever ran when the mass was REBUILT, which
+// made the diagnostic a hostage of the refresh policy: with `-noAutoRefresh` and no
+// `-recompute` it never ran at all, and `stabilityMargin` reported a stale, falsely
+// reassuring massSafety^2 for the whole run. Measured on one diverging H20 case:
+// 1.07006 with auto-refresh on (warns) vs a flat 1.00000 with it off (silent).
+// Measuring and refreshing are different jobs; the probe owns its own cadence.
+int
+LadrunoDynamicRelaxation::measureStabilityMargin(void)
+{
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0 || Mstar == 0 || Mprobe == 0 || massMode != 0 || !haveBuiltOnce)
+        return -1;
+
+    double f = 0.25 * dtPseudo * dtPseudo / (massSafety * massSafety);
+    if (dampMode == 1) {
+        double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
+        if (s > 0.0) f /= (s * s);
+    }
+    if (Ladruno::buildGershgorinDiagonal(theModel, *Mprobe, 0, massScale, f) < 0)
+        return -1;
+
+    this->applyMargin(*Mprobe /*live tangent*/, *Mstar /*mass being marched*/);
     return 0;
 }
 
@@ -256,14 +428,16 @@ LadrunoDynamicRelaxation::domainChanged(void)
         if (Vfull != 0) delete Vfull;
         if (Azero != 0) delete Azero;
         if (Mstar != 0) delete Mstar;
+        if (Mprobe != 0) delete Mprobe;
         Ut    = new Vector(size);
         Vhalf = new Vector(size);
         Aprev = new Vector(size);
         Vfull = new Vector(size);
         Azero = new Vector(size);
         Mstar = new Vector(size);
+        Mprobe = new Vector(size);
         if (Ut == 0 || Vhalf == 0 || Aprev == 0 || Vfull == 0 || Azero == 0 ||
-            Mstar == 0 || Mstar->Size() != size) {
+            Mstar == 0 || Mprobe == 0 || Mstar->Size() != size) {
             opserr << "LadrunoDynamicRelaxation::domainChanged - out of memory\n";
             return -1;
         }
@@ -288,6 +462,11 @@ LadrunoDynamicRelaxation::domainChanged(void)
     firstStep = true;
     stepCount = 0;
     prevKE = 0.0;
+    // a domain change can renumber the equations, so nothing measured against the
+    // old numbering is comparable: restart the baseline instead of forging a ratio.
+    stabMargin = -1.0;
+    haveBuiltOnce = false;
+    marginCount = 0;
 
     // build the fictitious mass (SOE-free element probe)
     if (this->buildFictitiousMass() < 0) {
@@ -299,7 +478,9 @@ LadrunoDynamicRelaxation::domainChanged(void)
         for (int i = 1; i < size; i++) { if ((*Mstar)(i) < mn) mn = (*Mstar)(i);
                                          if ((*Mstar)(i) > mx) mx = (*Mstar)(i); }
         opserr << "LadrunoDynamicRelaxation: fictitious M* (mode " << massMode
-               << ") range [" << mn << ", " << mx << "], dt = " << dtPseudo << endln;
+               << ") range [" << mn << ", " << mx << "], dt = " << dtPseudo
+               << ", massSafety = " << massSafety << " (omega*dt <= "
+               << 2.0 * massSafety << ")" << endln;
     }
     return 0;
 }
@@ -320,6 +501,18 @@ LadrunoDynamicRelaxation::newStep(double _deltaT)
 
     AnalysisModel *theModel = this->getAnalysisModel();
     LinearSOE *theLinSOE = this->getLinearSOE();
+
+    // Stability-margin probe on its OWN cadence — deliberately before the refresh
+    // block, and independent of it. Whatever the refresh policy, this measures the
+    // mass we are ACTUALLY marching with against the tangent that is live now; a
+    // diagnostic that only ran at a rebuild was blind exactly where drift is most
+    // likely (`-noAutoRefresh`, no `-recompute`).
+    if (marginEvery > 0 && massMode == 0 && haveBuiltOnce && !firstStep) {
+        if (++marginCount >= marginEvery) {
+            marginCount = 0;
+            this->measureStabilityMargin();
+        }
+    }
 
     // -recompute N: refresh M* from the (softened) tangent and re-zero velocities
     // so the refresh injects no energy (ADR R6 / test DR-10).
@@ -485,10 +678,22 @@ double LadrunoDynamicRelaxation::getKineticEnergy(void) const
     return kineticEnergy;
 }
 
+// (omega_max*dt/2)^2 for the mass actually in use, measured against the tangent at
+// the last M* rebuild: <= 1 stable, == massSafety^2 on an unchanged tangent, > 1 =
+// marching at/over the explicit boundary. -1 when there is no gershgorin bound.
+double LadrunoDynamicRelaxation::getStabilityMargin(void) const
+{
+    // -2 = the probe is OFF, so no measurement exists. Reporting the by-construction
+    // massSafety^2 here would hand back a reassuring number nobody measured, which
+    // is the exact failure shape this whole option exists to remove.
+    if (massMode == 0 && marginEvery <= 0) return -2.0;
+    return stabMargin;
+}
+
 int
 LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
 {
-    Vector data(10);
+    Vector data(12);
     data(0) = (double)massMode;
     data(1) = dtPseudo;
     data(2) = massScale;
@@ -499,6 +704,8 @@ LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
     data(7) = (double)dampMode;
     data(8) = zetaTarget;
     data(9) = autoRefresh ? 1.0 : 0.0;
+    data(10) = massSafety;
+    data(11) = (double)marginEvery;
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoDynamicRelaxation::sendSelf() - failed to send\n";
         return -1;
@@ -509,7 +716,7 @@ LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
 int
 LadrunoDynamicRelaxation::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-    Vector data(10);
+    Vector data(12);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoDynamicRelaxation::recvSelf() - failed to receive\n";
         return -1;
@@ -524,6 +731,25 @@ LadrunoDynamicRelaxation::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBrok
     dampMode        = (int)data(7);
     zetaTarget      = data(8);
     autoRefresh     = data(9) != 0.0;
+    massSafety      = data(10);
+    marginEvery     = (int)data(11);
+    if (marginEvery < 0) marginEvery = 0;
+    // Do NOT substitute the default in silence. Within one build the sender's value
+    // is always in range, so a bad one means the two ends disagree about the wire
+    // format -- and a rank quietly marching at a different margin from the master is
+    // precisely the class of silent divergence this option was added to end.
+    if (!(massSafety > 0.0) || massSafety > 1.0) {
+        opserr << "WARNING LadrunoDynamicRelaxation::recvSelf() - received massSafety "
+               << massSafety << " outside (0,1]; falling back to "
+               << LADRUNO_DR_DEFAULT_MASS_SAFETY << ". This rank will NOT march with "
+                  "the same fictitious mass as the sender -- suspect a mixed-build "
+                  "actor pair (the wire format is 12 doubles as of #728).\n";
+        massSafety = LADRUNO_DR_DEFAULT_MASS_SAFETY;
+    }
+    stabMargin      = -1.0;      // per-process; rebuilt on this actor's first build
+    marginWarned    = false;
+    marginCount     = 0;
+    haveBuiltOnce   = false;
     return 0;
 }
 
@@ -534,6 +760,9 @@ LadrunoDynamicRelaxation::Print(OPS_Stream &s, int flag)
     s << "\t mass mode: " << (massMode == 0 ? "gershgorin" : massMode == 1 ? "lumped" : "unity")
       << "  dt: " << dtPseudo << "  recompute: " << recomputeEvery
       << "  autoRefresh: " << (autoRefresh ? "on" : "off") << endln;
+    s << "\t massSafety: " << massSafety << " (omega*dt <= " << 2.0 * massSafety
+      << ")  stability margin: " << this->getStabilityMargin()
+      << "  probe every: " << marginEvery << " steps" << endln;
     s << "\t damping: " << (dampMode == 0 ? "kinetic" : "viscous")
       << "  zeta: " << zetaTarget << "  cVisc: " << cVisc << endln;
     s << "\t last RES: " << residualNorm << "  KE: " << kineticEnergy << endln;

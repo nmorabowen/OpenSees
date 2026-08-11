@@ -13,6 +13,19 @@ dynamics to a quasi-static REST state (gated on the mass-free force residual
 factor exactly on return. A DR rest state is `regularized` -- a relaxed rest, not
 a traced equilibrium branch -- so it is NEVER reported truthy.
 
+-massSafety AUDIT (#728). This fixture deliberately takes the integrator's DEFAULT
+Gershgorin safety factor rather than pinning one, and the default is what is under
+test here: the pre-#728 behaviour was f = 1, the bare central-difference stability
+boundary, where a long relaxation amplifies round-off and can settle to a silently
+wrong state (note 83 sec 3). Two reasons the default suffices for THIS fixture and
+no explicit factor is passed: (1) the excursion is short -- measured 250 substeps
+against the 3000-step `dr_max_steps` budget and 8000-step `max_substeps` budget, a
+12x headroom, so the 4x more steps the f = 0.5 default costs are absorbed without
+touching the budgets; (2) the model is a single softening Concrete02 truss, so the
+worst case the note calls out (a deeply plastic solid needing f = 0.25) cannot
+arise. A caller with a real model should read `ladrunoDR stabilityMargin` -- > 1
+means the mass stopped bounding the step -- or pass `dr_mass_safety`.
+
 Run standalone:
     python Ladruno_scripts/robust_solve_tests/torture_dynamics.py
 """
