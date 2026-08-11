@@ -206,6 +206,17 @@ FREE_ADVANCE_FLOOR_FACTOR = 100.0
 # on a tensor grid, where the tributary lumping IS the consistent load vector
 # for a rectangular bilinear face; 1e-6 is a distribution-error detector with
 # six decades of headroom, not a fitted tolerance.
+#
+# TO A FUTURE MAINTAINER SEEING THIS GATE RED: do NOT relax this number.
+# The measured value is a PREDICTION MET, not a threshold passed -- on this
+# grid the correct answer is exact by construction, so the observed 1e-14
+# has no physical slack above it to spend.  There is no tolerance to tune in
+# either direction: a load-distribution error does not drift this value, it
+# moves it by orders of magnitude (measured O(1) relative -- 190 % into
+# sigma_zz here, 343 % on the reporters' quadratic-tet mesh -- while the
+# resultant identity stayed at 1e-15 in BOTH failing cases, because a
+# resultant is conserved under ANY redistribution).  A red patch check means
+# the load vector is wrong for the element's basis; fix the loads.
 PATCH_RTOL = 1.0e-6
 
 # Termination modes.  The first two can be a capacity; the rest are SEIZURE.
