@@ -107,6 +107,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
 #include <LadrunoLoadControl.h>       // Ladruno (ADR-80 S1): -extrapolate predictor
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
+#include <LadrunoSolverQuery.h>       // Ladruno (#729): shared ladrunoArcLength/ladrunoDR dispatch
 #include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
@@ -3563,151 +3564,24 @@ int OPS_LadrunoLoadControlCmd()
     return 0;
 }
 
-// Ladruno: runtime control of the active LadrunoArcLength static integrator
-// (Layer-B cut-and-retry, ADR-20 §4.3). Exposes the scalar radius mutators and
-// read-only state to a script so a failed step can be re-attempted without
-// reconstructing the integrator:
-//   ok = analyze(1)
-//   while ok != 0:
-//       ladrunoArcLength('reduceStep', 0.5);  ok = analyze(1)
-// Subcommands (value-taking): reduceStep f | increaseStep f | setArcLength v
-// Subcommands (query, return a scalar): arcLength | deltaLambdaStep |
-//   currentLambda | sign | deltaUstepNorm. With no subcommand returns arcLength.
+// Ladruno: the two solver-state runtime commands. The SUBCOMMAND DISPATCH now
+// lives in SRC/analysis/integrator/LadrunoSolverQuery.h so the classic Tcl engine
+// (SRC/tcl/commands.cpp) can share it verbatim -- see #729 and that header's note
+// for why it had to be header-only and why the integrator is a parameter. What is
+// left here is only this engine's half: hand the core the integrator held by the
+// `cmds` singleton, which is state ONLY the DL engine has.
 int OPS_LadrunoArcLengthCmd()
 {
     if (cmds == 0) return 0;
-    StaticIntegrator *si = cmds->getStaticIntegrator();
-    if (si == 0 || si->getClassTag() != INTEGRATOR_TAGS_LadrunoArcLength) {
-        opserr << "WARNING ladrunoArcLength - the active static integrator is not "
-                  "a LadrunoArcLength (set `integrator LadrunoArcLength ...` first)\n";
-        return -1;
-    }
-    LadrunoArcLength *la = (LadrunoArcLength *)si;
-
-    // no subcommand => return the current arc length
-    if (OPS_GetNumRemainingInputArgs() < 1) {
-        double al = la->getArcLength();
-        int nd = 1;
-        OPS_SetDoubleOutput(&nd, &al, true);
-        return 0;
-    }
-
-    const char *sub = OPS_GetString();
-
-    // value-taking mutators
-    if (strcmp(sub, "reduceStep") == 0 || strcmp(sub, "increaseStep") == 0 ||
-        strcmp(sub, "setArcLength") == 0) {
-        if (OPS_GetNumRemainingInputArgs() < 1) {
-            opserr << "WARNING ladrunoArcLength " << sub << " - expects one value\n";
-            return -1;
-        }
-        int nd = 1;
-        double v = 0.0;
-        if (OPS_GetDoubleInput(&nd, &v) < 0) {
-            opserr << "WARNING ladrunoArcLength " << sub << " - failed to read value\n";
-            return -1;
-        }
-        int res = 0;
-        if (strcmp(sub, "reduceStep") == 0)        res = la->reduceStep(v);
-        else if (strcmp(sub, "increaseStep") == 0) res = la->increaseStep(v);
-        else                                       res = la->setArcLength(v);
-        if (res < 0) return -1;
-        double al = la->getArcLength();            // echo the resulting radius
-        int n = 1;
-        OPS_SetDoubleOutput(&n, &al, true);
-        return 0;
-    }
-
-    // value-taking actuator (ADR-31 R-RAMPDOWN): scale the viscous coefficient;
-    // echoes the resulting dissipation ratio so the driver sees the effect.
-    if (strcmp(sub, "scaleCVisc") == 0) {
-        if (OPS_GetNumRemainingInputArgs() < 1) {
-            opserr << "WARNING ladrunoArcLength scaleCVisc - expects one value\n";
-            return -1;
-        }
-        int nd = 1;
-        double v = 0.0;
-        if (OPS_GetDoubleInput(&nd, &v) < 0) {
-            opserr << "WARNING ladrunoArcLength scaleCVisc - failed to read value\n";
-            return -1;
-        }
-        if (la->scaleCVisc(v) < 0) return -1;
-        double r = la->getStabilizationDissipationRatio();
-        int n = 1;
-        OPS_SetDoubleOutput(&n, &r, true);
-        return 0;
-    }
-
-    // read-only queries
-    double out = 0.0;
-    if      (strcmp(sub, "arcLength") == 0)        out = la->getArcLength();
-    else if (strcmp(sub, "deltaLambdaStep") == 0)  out = la->getDeltaLambdaStep();
-    else if (strcmp(sub, "currentLambda") == 0)    out = la->getCurrentLambda();
-    else if (strcmp(sub, "sign") == 0)             out = (double)la->getSignLastDeltaLambdaStep();
-    else if (strcmp(sub, "deltaUstepNorm") == 0)   out = la->getDeltaUstepNorm();
-    // ADR-31 Layer-1.5 stabilization-energy gate
-    else if (strcmp(sub, "dissipationRatio") == 0) out = la->getStabilizationDissipationRatio();
-    else if (strcmp(sub, "dissipatedEnergy") == 0) out = la->getStabilizationDissipatedEnergy();
-    else if (strcmp(sub, "referenceEnergy") == 0)  out = la->getReferenceStrainEnergy();
-    else {
-        opserr << "WARNING ladrunoArcLength - unknown subcommand '" << sub
-               << "' (use reduceStep|increaseStep|setArcLength|scaleCVisc|arcLength|"
-                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm|"
-                  "dissipationRatio|dissipatedEnergy|referenceEnergy)\n";
-        return -1;
-    }
-    int n = 1;
-    OPS_SetDoubleOutput(&n, &out, true);
-    return 0;
+    return Ladruno::arcLengthCommand(cmds->getStaticIntegrator());
 }
 
-// ladrunoDR <sub> -- runtime query of the active LadrunoDynamicRelaxation (33005);
-// the rung-5 settling / micro-burst signals (ADR-31 R-DR-ENERGY). Read-only.
-//   ladrunoDR residualNorm    -> ||f_ext - f_int||_inf  (mass-free settling gate)
-//   ladrunoDR kineticEnergy   -> 1/2 v^T M* v           (micro-burst signal)
-//   ladrunoDR stabilityMargin -> (omega_max*dt/2)^2 of the mass in use, measured
-//        against the CURRENT tangent by an independent probe on its own step
-//        cadence (note 83 §3). <= 1 stable; == massSafety^2 on an unchanged
-//        tangent; > 1 = marching at/over the explicit boundary, where DR amplifies
-//        round-off and can relax to a silently WRONG state. NEGATIVE = NOT
-//        MEASURED, and must never be read as "safe": -1 = no gershgorin mass
-//        (lumped/unity have no such bound), -2 = probe disabled (-marginEvery 0).
-// The robust-solve driver reads residualNorm/residualNorm0 each DR step to decide
-// when the dynamics excursion has relaxed to a quasi-static rest state -- the
-// physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
-// MUST be this force residual, not a KE ratio.
 int OPS_LadrunoDRCmd()
 {
     if (cmds == 0) return 0;
-    TransientIntegrator *ti = cmds->getTransientIntegrator();
-    if (ti == 0 || ti->getClassTag() != INTEGRATOR_TAGS_LadrunoDynamicRelaxation) {
-        opserr << "WARNING ladrunoDR - the active transient integrator is not a "
-                  "LadrunoDynamicRelaxation (set `integrator LadrunoDynamicRelaxation "
-                  "...` first)\n";
-        return -1;
-    }
-    LadrunoDynamicRelaxation *dr = (LadrunoDynamicRelaxation *)ti;
-
-    if (OPS_GetNumRemainingInputArgs() < 1) {
-        opserr << "WARNING ladrunoDR - expects a subcommand "
-                  "(residualNorm|kineticEnergy|stabilityMargin)\n";
-        return -1;
-    }
-    const char *sub = OPS_GetString();
-    double out = 0.0;
-    if      (strcmp(sub, "residualNorm") == 0)  out = dr->getResidualNorm();
-    else if (strcmp(sub, "kineticEnergy") == 0) out = dr->getKineticEnergy();
-    // Ladruno (#728): the -massSafety silent-divergence detector
-    else if (strcmp(sub, "stabilityMargin") == 0) out = dr->getStabilityMargin();
-    else {
-        opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
-               << "' (use residualNorm|kineticEnergy|stabilityMargin)\n";
-        return -1;
-    }
-    int n = 1;
-    OPS_SetDoubleOutput(&n, &out, true);
-    return 0;
+    return Ladruno::drCommand(cmds->getTransientIntegrator());
 }
+
 
 int OPS_Database()
 {

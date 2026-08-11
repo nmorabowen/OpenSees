@@ -185,6 +185,15 @@ ladrunoBeginAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 int
 ladrunoEndAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+// Ladruno (#729): solver-state query handlers (ADR-20 Layer-B / ADR-31 rungs 4-5).
+// Declared here for the same reason as the block above — the Tcl_CreateCommand
+// registrations sit ~5700 lines before the definitions in commands.cpp.
+int
+ladrunoArcLength(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
