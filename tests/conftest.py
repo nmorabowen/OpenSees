@@ -6,6 +6,21 @@ Enforces the two-zone contract WITHOUT breaking upstream's unmarked tests:
     with APEGMSH_SKIP_VIEWER=1 so a headless box never tries to open a viewer,
   * unmarked tests (the existing upstream ones) are left alone.
 
+SLOW TIER (`@pytest.mark.slow`).  Orthogonal to the zones: a case may be
+`zone_a` (dep-free, upstreamable) and still cost minutes because the PHYSICS is
+expensive — a collapse load pushed to a plateau, a convergence sequence over
+three meshes.  Such cases must not be paid for on every push, but must also not
+be exiled to zone_b, which would make them invisible to a box that simply lacks
+gmsh.  So `slow` is opt-in and auto-skipped by default:
+
+    pytest tests/                       # slow cases skipped
+    pytest --runslow tests/             # slow cases run
+    LADRUNO_RUN_SLOW=1 pytest tests/    # same, for CI/env-driven runners
+    pytest --runslow -m slow tests/     # only the slow tier
+
+A `slow` case MUST state its measured wall time in its module docstring and in
+its ledger row — a runtime nobody has measured is a runtime nobody budgeted.
+
 See Ladruno_implementation/testbed/00_canonical_testbed.md.
 """
 import os
@@ -14,12 +29,27 @@ import importlib.util
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--runslow", action="store_true", default=False,
+        help="run @pytest.mark.slow cases (minutes-scale physics; see the "
+             "conftest docstring). LADRUNO_RUN_SLOW=1 does the same.",
+    )
+
+
 def _has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
 def pytest_collection_modifyitems(config, items):
+    run_slow = config.getoption("--runslow") or os.environ.get("LADRUNO_RUN_SLOW")
+    skip_slow = pytest.mark.skip(
+        reason="slow tier — opt in with --runslow or LADRUNO_RUN_SLOW=1"
+    )
     for item in items:
+        if not run_slow and item.get_closest_marker("slow"):
+            item.add_marker(skip_slow)
+            continue
         zones = {m.name for m in item.iter_markers()} & {"zone_a", "zone_b"}
         if zones == {"zone_a", "zone_b"}:
             item.add_marker(

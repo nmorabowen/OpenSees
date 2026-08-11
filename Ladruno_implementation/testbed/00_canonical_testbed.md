@@ -36,6 +36,70 @@ PR and run on the maintainer's CI with **zero extra setup**.
 **Rule:** the upstream PR carries only Zone A. Anything needing a mesher, a
 commercial code, or a GPU stays in Zone B and is excluded from the PR diff.
 
+### 1b. The slow tier (`@pytest.mark.slow`) — orthogonal to the zones
+
+Some Zone-A cases are dep-free and upstreamable but cost **minutes** because the
+*physics* is expensive: a collapse load pushed to a plateau, a convergence
+sequence over three meshes. Exiling them to Zone B would be wrong — they need no
+mesher — but paying for them on every push is also wrong. So they carry a third,
+orthogonal marker and are **opt-in**:
+
+```bash
+pytest tests/                    # slow cases skipped (the default)
+pytest --runslow tests/          # slow cases run
+LADRUNO_RUN_SLOW=1 pytest tests/ # same, for env-driven runners
+pytest --runslow -m slow tests/  # only the slow tier
+```
+
+Contract for a `slow` case:
+
+- it MUST state its **measured wall time** in the module docstring *and* in its
+  ledger row — a runtime nobody has measured is a runtime nobody budgeted;
+- it MUST carry a hard stop (wall-clock budget) so it cannot hang a battery, and
+  a leg that ends on that stop is reported **inadmissible**, never as a result;
+- any adaptive controller it drives must have its budgets **pinned as named
+  constants with their calibration history**, never inherited from a default —
+  a study whose termination criterion binds before the mechanics do measures the
+  criterion. (Live example: `tests/test_r3_prandtl_collapse_gate.py`'s
+  `SUBDIV_BUDGET`.)
+
+### 1c. Capacity vs controller allowance (any gate that reports a limit load)
+
+> A leg is a **capacity** only if it reached the target with a flat tangent.
+> Otherwise it is a **controller allowance**, and the allowance must be named.
+
+And the companion clause, because the flat-tangent test has its own blind spot —
+a curve can flatten because a mechanism formed, *or because the run seized*
+(a step floor reached just as the curve rolls over, a stall detector firing on
+numerical seizure, both present as a flat tail):
+
+> A flat tangent is a capacity only if the leg was still **advancing freely**
+> when it flattened.
+
+So a gate reporting a limit load asserts **three** clauses, not one:
+
+1. **plateau** — tail `dq/ds` below the threshold;
+2. **termination mode** — reached the target, or spent a *pinned* budget;
+   a step floor, a wall-clock stop or a truncated curve are **seizure** modes
+   and are never a capacity, whatever the tail tangent says;
+3. **free advance** — the step size over the final stretch stayed well above the
+   floor, and the subdivision budget was not silently doing the work.
+
+Record the **terminal step size, the subdivisions used against the pinned
+budget, and the termination reason** in the failure message. A gate that fails
+with only a number reproduces the exact confusion this rule prevents: a reader
+cannot tell *"the element got worse"* from *"the controller ran out of room"*.
+
+### 1d. Never validate a load with a resultant identity alone
+
+A `sum(R) == applied total` check is **structurally blind to load-distribution
+error**. Measured: a tributary-lumped surcharge reproduced its applied total in
+base reactions to **+0.0000000 %** while carrying **190 %** error in `sigma_zz`
+(independently reproduced at 343 % on a different mesh). Keep the identity — it
+is a cheap catch for sign/convention errors — but pair it with a **field** check
+whose closed form is known (a 1-D elastic stress patch, a constant-stress patch).
+The two discriminate totally: measured `7.75e-14` against `O(1)`.
+
 ---
 
 ## 2. Three axes → tiers
