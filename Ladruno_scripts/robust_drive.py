@@ -109,7 +109,7 @@ def robust_drive(ops, done, *,
                  min_scale=1.0 / 1024,
                  grow=2.0,
                  peak_cutbacks=3,
-                 max_substeps=20000,
+                 max_substeps=50000,
                  stabilize=False,
                  stab_f=1.0e-3,
                  stab_tol=1.0e-8,
@@ -167,9 +167,13 @@ def robust_drive(ops, done, *,
                      point says the mass has stopped bounding the step.
                      NOTE the cost: relaxation per step scales as f^2, so the f = 0.5
                      default needs ~4x the steps the pre-#728 f = 1 did -- which is
-                     why `dr_max_steps` is 16000 and not 4000. If your caller pins
-                     `max_substeps` low, that global budget (not dr_max_steps) is now
-                     the binding constraint on a rung-5 excursion.
+                     why `dr_max_steps` is 16000 and not 4000, and why `max_substeps`
+                     went 20000 -> 50000 with it. Raising only the rung-5 budget
+                     would have left the GLOBAL budget binding instead, silently
+                     converting settled rung-5 runs into `incomplete` ones; the two
+                     numbers have to move together or the recalibration is a no-op.
+                     DR substeps are matrix-free and by far the cheapest the driver
+                     spends, so the widened runaway guard costs little.
     dr_setup       : optional callable(ops) that configures the transient analysis
                      for the DR phase (constraints/numberer/system). If None, the
                      driver uses Plain/RCM/BandGen defaults (fine for simple models).

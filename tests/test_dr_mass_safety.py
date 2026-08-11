@@ -21,6 +21,18 @@ residual growth is manufactured by the integrator.
         MS-1 could pass for any reason at all (e.g. if DR never moved anything).
   MS-3  `ladrunoDR stabilityMargin` reads (ω_max·dt/2)² = f² on an unchanged tangent.
   MS-4  parser: forms, clamping, and the ignored-mode warning path.
+  MS-5  the detector DETECTS — stiffen the model by a known factor r mid-march and
+        the margin must read exactly f²·r, crossing 1 when r > 1/f². Run with the
+        M*-refresh policy both ON and OFF, because an earlier version measured only
+        at a rebuild and so was blind under `-noAutoRefresh`.
+  MS-6  with the probe off, the query reports "not measured" (−2) rather than a
+        reassuring number nobody took.
+
+MS-5 is the test that licenses the 0.5 default. The choice of 0.5 over 0.25 rests
+on the argument that the remaining deep-plastic risk is DETECTED rather than
+prevented, and MS-1/2/3 only ever exercise a stationary tangent, where there is no
+drift to detect. Note what MS-5 measures at r = 4: exactly 1.0 — `f = 0.5` buys
+precisely 4× tangent headroom, which is the quantitative content of the default.
 
 See Ladruno_implementation/83_dynamic_relaxation_quadratic_probe.md §3 and the
 LEDGER_quirks row it ships.
@@ -198,10 +210,23 @@ def test_ms1_zero_push_hold_stays_put(kind, plastic):
     assert abs(c["R1"] - c["R0"]) < 1e-9 * scale, (
         f"{kind} reaction drifted {c['R0']:.8e} -> {c['R1']:.8e} during a hold"
     )
-    # ...and the margin the integrator reports must be the safe one it promised.
-    assert c["margin"] == pytest.approx(_DEFAULT_SAFETY ** 2, rel=1e-6), (
-        f"default stability margin {c['margin']} != {_DEFAULT_SAFETY}^2"
+    # ...and the margin must confirm the run stayed inside the bound. NOT `== f^2`:
+    # that only holds where the tangent never moves. On the PLASTIC holds it reads
+    # ~0.31 (measured), because the mass is built from the yielded tangent at the end
+    # of the push and Gauss points revert to the stiffer elastic branch the moment
+    # the hold begins — a real 1.24x tangent jump, and a reminder that a share of the
+    # 4x headroom f = 0.5 buys is already spent before the hold starts.
+    assert c["margin"] <= 1.0, (
+        f"{kind} marched OVER the stability bound during a hold (margin "
+        f"{c['margin']}) even though residual and state held"
     )
+    assert c["margin"] >= _DEFAULT_SAFETY ** 2 - 1e-9, (
+        f"{kind} margin {c['margin']} is below f^2 — impossible by construction"
+    )
+    if not plastic:
+        assert c["margin"] == pytest.approx(_DEFAULT_SAFETY ** 2, rel=1e-6), (
+            f"elastic tangent cannot drift, so margin {c['margin']} must be f^2"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -257,6 +282,9 @@ def test_ms3_margin_equals_safety_squared(f):
     ((DR, "-massSafety", -1.0), _DEFAULT_SAFETY ** 2),
     ((DR, "-mass", "gershgorin", "-massSafety", 0.5), 0.25),
     ((DR, "-massSafety", 0.5, "-damping", "viscous"), 0.25),
+    ((DR, "-marginEvery", 100), _DEFAULT_SAFETY ** 2),
+    ((DR, "-marginEvery", 0), -2.0),                     # off => not measured
+    ((DR, "-marginEvery", -5), -2.0),                    # negative clamps to off
 ])
 def test_ms4_parser(args, expect):
     tops, _ = _build("H8", False)
@@ -272,6 +300,102 @@ def test_ms4_parser(args, expect):
     ops.analysis("Transient")
     assert ops.analyze(20, 1.0) == 0, f"first steps failed for {args}"
     assert ops.ladrunoDR("stabilityMargin") == pytest.approx(expect, rel=1e-9)
+
+
+# --------------------------------------------------------------------------
+# MS-5 : the detector actually DETECTS — a known stiffness change must move the
+#        margin by exactly that factor, with the refresh policy ON *and* OFF
+# --------------------------------------------------------------------------
+def _stiffen_and_read(factor, extra_args, steps=2000, chunk=50):
+    """Relax a truss, multiply E by `factor` mid-march, return the margin.
+
+    A `parameter`/`updateParameter` change of E is the cleanest drift there is: it
+    scales every row-sum by exactly `factor` and nothing else, with no domain
+    change, so the expected margin is f²·factor to the last digit. Real drift
+    (plastic softening then elastic unloading) is the same mechanism with an
+    unknown factor — untestable as an equality, which is why it is not the vehicle.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1000.0)
+    ops.element("truss", 1, 1, 2, 1.0, 1)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormUnbalance", 1e30, 1, 0)
+    ops.algorithm("Linear")
+    ops.integrator(DR, "-marginEvery", 50, *extra_args)
+    ops.analysis("Transient")
+
+    ops.analyze(50, 1.0)
+    before = ops.ladrunoDR("stabilityMargin")
+    ops.parameter(1, "element", 1, "E")
+    ops.updateParameter(1, 1000.0 * factor)
+    done = 0
+    while done < steps:
+        if ops.analyze(chunk, 1.0) != 0:
+            break            # a violent stiffening aborts loudly; that is fine
+        done += chunk
+    return before, ops.ladrunoDR("stabilityMargin")
+
+
+# r <= 4 stays inside the margin f=0.5 buys; r > 4 must cross 1.
+@pytest.mark.parametrize("factor", [1.5, 2.0, 4.0, 6.0, 8.0])
+@pytest.mark.parametrize("refresh", ["auto", "noAutoRefresh"],
+                         ids=["autoRefresh", "noAutoRefresh"])
+def test_ms5_margin_tracks_a_known_stiffness_change(factor, refresh):
+    extra = [] if refresh == "auto" else ["-noAutoRefresh"]
+    before, after = _stiffen_and_read(factor, extra)
+
+    assert before == pytest.approx(_DEFAULT_SAFETY ** 2, rel=1e-9), (
+        f"pre-drift margin {before} != f^2"
+    )
+    # the whole claim, as an equality: the margin IS the tangent ratio times f^2
+    assert after == pytest.approx(_DEFAULT_SAFETY ** 2 * factor, rel=1e-6), (
+        f"margin {after} != f^2*r = {_DEFAULT_SAFETY ** 2 * factor} after a "
+        f"{factor}x stiffening ({refresh})"
+    )
+    # ...and it crosses 1 exactly where the theory says: r > 1/f^2 = 4
+    crossed = after > 1.0 + 1e-6
+    assert crossed == (factor > 1.0 / _DEFAULT_SAFETY ** 2), (
+        f"margin {after} at r={factor}: crossing 1 disagrees with 1/f^2 = "
+        f"{1.0 / _DEFAULT_SAFETY ** 2}"
+    )
+
+
+def test_ms5b_detection_does_not_depend_on_the_refresh_policy():
+    """Regression guard for a fixed blind spot.
+
+    The first version of this detector measured only when M* was REBUILT, so with
+    `-noAutoRefresh` and no `-recompute` it never ran, and `stabilityMargin`
+    reported a stale, falsely reassuring f² for the whole run — measured 1.07 with
+    auto-refresh on vs a flat 1.00 with it off, on the same diverging model. The
+    two policies must now agree to the last digit.
+    """
+    _, with_refresh = _stiffen_and_read(6.0, [])
+    _, without = _stiffen_and_read(6.0, ["-noAutoRefresh"])
+    assert with_refresh == pytest.approx(without, rel=1e-12), (
+        f"margin depends on the refresh policy: {with_refresh} vs {without}"
+    )
+    assert without > 1.0, "the -noAutoRefresh run did not detect a 6x stiffening"
+
+
+# --------------------------------------------------------------------------
+# MS-6 : probe off => "not measured", NOT a reassuring number
+# --------------------------------------------------------------------------
+def test_ms6_probe_off_reports_not_measured():
+    _, after = _stiffen_and_read(6.0, ["-marginEvery", 0])
+    assert after == -2.0, (
+        f"with -marginEvery 0 the query returned {after}; it must report -2 "
+        "(not measured) and never a plausible f^2 nobody measured"
+    )
 
 
 def test_ms4b_massSafety_ignored_for_non_gershgorin_mass():

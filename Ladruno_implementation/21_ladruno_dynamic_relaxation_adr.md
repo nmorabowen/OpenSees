@@ -450,7 +450,7 @@ integrator LadrunoDynamicRelaxation
 # full surface (all optional):
 integrator LadrunoDynamicRelaxation \
     -mass     gershgorin|lumped $scale|unity \
-    -massSafety 0.5 \
+    -massSafety 0.5   -marginEvery 500 \
     -tolR     1e-5  -tolKE 1e-4 \
     -maxPeaks $N    -recompute $N \
     -dt       1.0   -interp  -cflAbort  -verbose
@@ -459,7 +459,11 @@ integrator LadrunoDynamicRelaxation \
 # f = 1 is the bare stability boundary (the v1 behaviour) and is a measured
 # silent-wrong-answer generator; f = 0.25 for deeply plastic solids. Relaxation per
 # step scales as f^2, so 0.5 costs ~4x the steps v1 did. Read `ladrunoDR
-# stabilityMargin` -- > 1 means the mass has stopped bounding the step.
+# stabilityMargin` -- > 1 means the mass has stopped bounding the step, and a
+# NEGATIVE reading means nobody measured (-1 no gershgorin mass, -2 probe off),
+# never "safe". `-marginEvery N` is that probe's step cadence (0 = off); it runs
+# INDEPENDENTLY of the M*-refresh policy, because a diagnostic that only fired at
+# a rebuild was blind under -noAutoRefresh.
 
 # required driver recipe (mirrors CDL):
 system Diagonal ; numberer Plain ; constraints Transformation

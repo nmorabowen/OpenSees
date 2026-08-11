@@ -3666,10 +3666,12 @@ int OPS_LadrunoArcLengthCmd()
 //   ladrunoDR residualNorm    -> ||f_ext - f_int||_inf  (mass-free settling gate)
 //   ladrunoDR kineticEnergy   -> 1/2 v^T M* v           (micro-burst signal)
 //   ladrunoDR stabilityMargin -> (omega_max*dt/2)^2 of the mass in use, measured
-//        against the CURRENT tangent (note 83 §3). <= 1 stable; == massSafety^2 on
-//        an unchanged tangent; > 1 = marching at/over the explicit boundary, where
-//        DR amplifies round-off and can relax to a silently WRONG state. -1 = n/a
-//        (no gershgorin mass).
+//        against the CURRENT tangent by an independent probe on its own step
+//        cadence (note 83 §3). <= 1 stable; == massSafety^2 on an unchanged
+//        tangent; > 1 = marching at/over the explicit boundary, where DR amplifies
+//        round-off and can relax to a silently WRONG state. NEGATIVE = NOT
+//        MEASURED, and must never be read as "safe": -1 = no gershgorin mass
+//        (lumped/unity have no such bound), -2 = probe disabled (-marginEvery 0).
 // The robust-solve driver reads residualNorm/residualNorm0 each DR step to decide
 // when the dynamics excursion has relaxed to a quasi-static rest state -- the
 // physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
