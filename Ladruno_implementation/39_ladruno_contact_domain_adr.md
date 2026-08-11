@@ -464,7 +464,9 @@ is unambiguous).
 - **CFL:** `k_n` sets explicit `dt_cr`; self-report via `getExplicitCriticalTimeStep()`
   (#190) so `ops.criticalTimeStep` honours it.
 - **Parallel (MPI):** OUT of v1 — refuse partition-crossing pairs with a named
-  error (mirrors ADR-30's partition-crossing refusal).
+  error (mirrors ADR-30's partition-crossing refusal). **Picked up 2026-08-11 by
+  [[78_ladruno_parallel_contact_adr]]** — owner-rank interactions on
+  replicated-boundary-node decks; the blanket refusal narrows to a locality contract.
 - **Backwards compatibility:** null `LadrunoContactDomain*` ⇒ byte-identical to
   stock; opt-in via the `contact*` commands + `constraints LadrunoContact`.
 - **Vanilla footprint:** ~5–7 files / ~8–11 methods (Domain, Node, AnalysisModel,

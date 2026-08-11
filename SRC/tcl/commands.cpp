@@ -290,6 +290,27 @@ extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
 extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
 extern int OPS_LadrunoRandomResponse(void);         // P3:  randomResponse
 
+// Ladruno (ADR-78 P0.5): the contact verbs had the SAME gap, with a sharper
+// consequence. They are implemented once in OpenSeesOutputCommands.cpp and are
+// already LINKED into every target (that TU lives in the OPS_INTERPRETER object
+// lib, folded into OpenSeesLIB) — but they were registered only in
+// TclWrapper.cpp / PythonWrapper.cpp. So classic .tcl users, and in particular
+// OpenSeesMP (which drives parallelism through THIS file, never the Python
+// command engine), got "invalid command name contactSurface". Measured
+// 2026-08-11 on OpenSees.exe, OpenSeesMP.exe and the installed 4a6aeec5 build;
+// it is why apeGmsh's per-rank Tcl decks could not carry contact at all.
+// Registration only — no parser is duplicated here.
+extern int OPS_LadrunoContactSurface(void);         // ADR-39:     contactSurface
+extern int OPS_LadrunoContact(void);                // ADR-39:     contact
+extern int OPS_LadrunoContactPlane(void);           // ADR-39 P2a: contactPlane
+extern int OPS_LadrunoContactInfo(void);            // ADR-39:     ladrunoContactInfo
+extern int OPS_LadrunoContactForce(void);           // ADR-39 B3:  ladrunoContactForce
+extern int OPS_LadrunoMortarPenetration(void);      // ADR-41 C2.2
+extern int OPS_LadrunoMortarTieResidual(void);      // ADR-41 C4
+extern int OPS_LadrunoEdgePenetration(void);        // ADR-57 E6
+extern int OPS_LadrunoBeginAugment(void);           // ADR-41 D1
+extern int OPS_LadrunoEndAugment(void);             // ADR-41 D1
+
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
 #include <Newmark.h>
@@ -1312,6 +1333,29 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "randomResponse", &randomResponse,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    // Ladruno (ADR-78 P0.5): contact family into classic-Tcl dispatch. Without
+    // these, OpenSeesMP — which drives parallelism through this file — cannot
+    // see `contactSurface` at all, so no partitioned contact deck can run.
+    Tcl_CreateCommand(interp, "contactSurface", &ladrunoContactSurface,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "contact", &ladrunoContact,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "contactPlane", &ladrunoContactPlane,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoContactInfo", &ladrunoContactInfo,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoContactForce", &ladrunoContactForce,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoMortarPenetration", &ladrunoMortarPenetration,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoMortarTieResidual", &ladrunoMortarTieResidual,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoEdgePenetration", &ladrunoEdgePenetration,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoBeginAugment", &ladrunoBeginAugment,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "ladrunoEndAugment", &ladrunoEndAugment,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -6960,6 +7004,109 @@ randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoRandomResponse() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno (ADR-78 P0.5): classic-Tcl bridges for the contact family. Each is the
+// same two-line shape as responseSpectrumAnalysis / the ADR-44 modal bridges
+// above — OPS_ResetInputNoBuilder plumbs argv into the elementAPI arg cursor
+// (skipping argv[0], the command name) and pins the static theDomain/theInterp,
+// then the shared OPS_* entry point parses and acts. The query commands publish
+// through OPS_SetIntOutput / OPS_SetDoubleOutput, whose classic-Tcl backend
+// (elementAPI_TCL.cpp) appends to the interpreter result, so their return values
+// reach .tcl exactly as they do under the Python/DL engine.
+//
+// Registering the whole family, not just the three definition verbs: the ALM
+// workflow (`ladrunoBeginAugment` / `ladrunoMortarPenetration` /
+// `ladrunoEndAugment`) is how a mortar contact is actually driven, so a deck
+// that could DEFINE a contact but not augment it would be a trap.
+int
+ladrunoContactSurface(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContactSurface() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoContact(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContact() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoContactPlane(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContactPlane() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoContactInfo(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContactInfo() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoContactForce(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContactForce() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoMortarPenetration(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoMortarPenetration() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoMortarTieResidual(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoMortarTieResidual() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoEdgePenetration(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoEdgePenetration() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoBeginAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoBeginAugment() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoEndAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoEndAugment() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }
