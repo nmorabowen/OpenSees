@@ -161,6 +161,19 @@ set uy [nodeDisp 2 2]
 check_numeric "DR.residualNorm.relaxed" $r1
 check_numeric "DR.kineticEnergy"        $ke
 
+# stabilityMargin arrived in #728 while this branch was extracting the dispatch
+# into a shared header; the two conflicted on exactly that line, and a merge that
+# took the extraction wholesale would have dropped the subcommand while still
+# compiling. Assert it from the engine that would never have noticed.
+set sm [ladrunoDR stabilityMargin]
+check_numeric "DR.stabilityMargin" $sm
+# NOT == 0.25: the material is elastic but the element is corotTruss, so the
+# GEOMETRIC tangent stiffens as the arch deflects and the margin genuinely drifts
+# (measured 0.2648, a 5.9% stiffening). What must hold is that it never dropped
+# below the by-construction floor and never left the bound.
+check "DR.stabilityMargin.inBounds" {$sm >= 0.25 - 1.0e-9 && $sm <= 1.0} \
+    "margin $sm outside the range 0.25 (massSafety squared) to 1.0"
+
 # physics, not just plumbing. The query has to be reading the LIVE integrator, so
 # the value must move with the model and land where the other engine lands.
 check "DR.residual.started.loaded" {$r0 > 1.0} \

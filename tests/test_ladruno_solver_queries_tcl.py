@@ -62,7 +62,7 @@ def test_classic_tcl_answers_the_solver_queries():
     # line 1 also produces no FAIL lines, so absence of failure is not evidence.
     assert "SELF-TEST:" in out, f"deck did not reach its verdict:\n{out}"
     n_pass = out.count("PASS ")
-    assert n_pass >= 20, f"only {n_pass} checks ran; expected the full deck:\n{out}"
+    assert n_pass >= 22, f"only {n_pass} checks ran; expected the full deck:\n{out}"
 
     assert "invalid command name" not in out, (
         "a command is still unregistered in the classic Tcl engine:\n" + out
