@@ -261,7 +261,8 @@ Non-associated (ρ̄ = 0) throughout. Classification is the merged R3 gate's.
 | `h8bbar_h5` | 0.50 | 2592 | **0.9977** | 0.004 | **BUDGET** | 5.0e-01 | 125 | 81/80 | 6.64 | yes | yes | **YES** | 1246 |
 | `h8bbar_h5_at0103` | 0.50 | 2592 | 0.7698 | 11.858 | TARGET | 6.0e-01 | 250 | 4/80 | 6.64 | NO | yes | NO | 92 |
 | `h20uri_h5` | 0.50 | 8814 | 0.6846 | 10.654 | **FLOOR** | 3.1e-04 | **1.6** | 72/200 | 6.64 | NO | NO | NO | 1234 |
-| `h20uri_h5_loose` | 0.50 | 8814 | 0.7306 | 10.346 | **FLOOR** | 5.0e-03 | 78 | 118/800 | **13.29** | NO | NO | NO | 2652 |
+| `h20uri_h5_loose` (run A) | 0.50 | 8814 | 0.7306 | 10.346 | **FLOOR** | 5.0e-03 | 78 | 118/800 | **13.29** | NO | NO | NO | 2652 |
+| `h20uri_h5_loosefloor` (run B, **same config as A**) | 0.50 | 8814 | 0.6951 | 11.771 | **FLOOR** | 1.3e-03 | 20 | 90/800 | **13.29** | NO | NO | NO | 1731 |
 | `h20std_h5` | 0.50 | 8814 | 0.4587 | 31.305 | **FLOOR** | 2.5e-03 | 12.5 | 65/200 | 6.64 | NO | NO | NO | 1056 |
 | `h8bbar_h1.0_at0112` | 1.00 | 1386 | 0.8845 | 10.632 | TARGET | 1.0e+00 | 500 | 0/80 | 6.64 | NO | yes | NO | 23 |
 | `h8bbar_h1.0_traj` | 1.00 | 1386 | **1.0849** | 0.002 | **BUDGET** | 1.0e+00 | 250 | 81/80 | 6.64 | yes | yes | **YES** | 845 |
@@ -273,7 +274,9 @@ Non-associated (ρ̄ = 0) throughout. Classification is the merged R3 gate's.
 stopped early; their `TARGET` is a truncation, not a capacity, and the table says so.
 
 **Only the two LINEAR full legs are capacities.** Every quadratic leg terminates
-`FLOOR` — seizure — and none may be quoted as an element ceiling.
+`FLOOR` — seizure — and none may be quoted as an element ceiling. **Runs A and B
+of `h20uri_h5_loose*` are the SAME configuration and differ by 5.1 %** — see
+§7.1.1 before reading any quadratic figure to more than one digit.
 
 **This independently reproduces note 81 and the merged gate**, on a different
 build and through a different driver:
@@ -422,18 +425,67 @@ ladder and settlement target. **Only the controller's allowance differs.**
 | mode | FLOOR | FLOOR |
 | M | 0.781 | 0.801 |
 
-**+6.7 % capacity, +19.4 % reach, for a 100× lower step floor and nothing else.**
-This reproduces the TIMs subdivision-budget result (+17 % / +59 %) inside the
-fork's own harness, on a quadratic **hex**, with the allowance varied along the
-axis §4 shows note 81's own control failed to vary.
+That single pair reads **+6.7 % capacity, +19.4 % reach** for a 100× lower step
+floor and nothing else — the TIMs subdivision-budget result (+17 % / +59 %)
+reproduced inside the fork's harness on a quadratic **hex**, with the allowance
+varied along the axis §4 shows note 81's own control failed to vary.
 
-> **No quadratic figure on this problem is a ceiling.** 0.5894, 0.6846, 0.7713
-> and 0.7306 are all points at which a controller ran out of room.
+### 7.1.1 …but a REPEAT of the loose leg does not reproduce it, and that changes the claim
 
-Two honest qualifications. The wall **recedes but does not disappear**: 100×
-more room bought 19 % more reach and the leg still ended on `FLOOR`, still
-hardening at 10.3 %, still not a plateau. And the tail barely moved — so this is
-not a sequence visibly converging to anything, and it must not be extrapolated.
+The loose-floor leg was run a **second time, identical in every argument**
+(`--elem h20uri --h0 0.5 --budget 800 --floor 2e-9 --sfrac 0.15`). It did not
+reproduce the first:
+
+| H20 `uri`, h0 = 0.5 | reference allowance | loose, run A | loose, run B |
+|---|---|---|---|
+| halvings / budget | 6.64 / 200 | 13.29 / 800 | 13.29 / 800 |
+| q/q_exact | 0.6846 | **0.7306** | **0.6951** |
+| reach s/B | 0.01009 | **0.01205** | **0.01051** |
+| tail % of initial | 10.65 | 10.35 | 11.77 | 
+| M | 0.781 | 0.801 | 0.802 |
+| mode | FLOOR | FLOOR | FLOOR |
+
+**Two bit-identical configurations differ by 5.1 % in capacity and 14.7 % in
+reach.** The mechanism is not mysterious and the merged gate already names it in
+its own band justification: a threaded PARDISO factorisation is not
+FP-deterministic, and **an adaptive controller amplifies that without limit —
+one step converging differently re-sequences every step after it**. A leg that
+ends by *seizing* is far more exposed to this than one that ends on a plateau,
+because its endpoint is precisely a convergence failure.
+
+**What survives, and what does not.**
+
+- **Does not survive:** the magnitude. "+6.7 % capacity, +19.4 % reach" is one
+  draw from a distribution whose spread is of the same order as the effect. The
+  allowance effect measured against the two loose runs is **+1.5 % to +6.7 %**
+  (mean +4.1 %) in capacity and **+4.2 % to +19.4 %** in reach. With n = 1 at
+  the reference allowance and n = 2 at the loose one, **this design does not
+  resolve the size of the allowance effect** and no single number from it should
+  be quoted.
+- **Survives, and is strengthened:** the direction is consistent — **both** loose
+  runs went further and higher than the reference run (2/2). And the headline
+  conclusion is now over-determined, because it no longer even needs the
+  allowance experiment:
+
+> **No quadratic figure on this problem is a ceiling — and none of them is
+> stable to three digits.** If two runs of the *same* configuration on the *same
+> binary* differ by 5 % in capacity and 15 % in reach, then quoting 0.6846,
+> 0.6951, 0.7306, 0.7713 or 0.5894 as an element property is indefensible
+> regardless of what the allowance does.
+
+That also re-frames note 81 §4.2's surviving ladder pair ("0.7706 vs 0.7715,
+agreement to 0.1 %"): at h0 = 1.0 that was either a fortunate draw or a genuinely
+more stable leg, but it was *never* evidence about the element, and §4 already
+showed the two ladders had identical allowances anyway.
+
+**A third qualification that does survive both runs.** The wall **recedes but
+does not disappear**: every loose leg still ended on `FLOOR`, still hardening at
+10–12 %, still with no plateau. Nothing here is a sequence converging to
+anything, and it must not be extrapolated.
+
+**What would settle the magnitude:** 4–6 repeats at each of 3 floors, reported
+as distributions rather than points. That is ~10 leg-hours and is the honest
+price of a number here; note 82 does not pay it and therefore does not quote one.
 
 ### 7.2 A different algorithm set does NOT move the wall
 
@@ -537,10 +589,20 @@ caution would have.
    the fork already owns `LadrunoFictitiousMass` and `LadrunoDynamicRelaxation`
    (ADR 21). Untried, and the most valuable remaining experiment: it would
    determine whether a quadratic element can complete this collapse *at all*.
-4. **Where the recession in §7.1 ends.** One allowance pair gives a direction,
-   not a limit. Three or four floors would show whether reach is converging or
-   growing like `log(1/floor)`. This note refuses to extrapolate from two points.
-5. **Resolution of the localisation metrics.** At h0 = 1.0 the core holds 18
+4. **The SIZE of the allowance effect, and where the recession ends.** §7.1.1
+   measured a 5.1 % capacity / 14.7 % reach spread between two **identical**
+   runs, which is the same order as the effect being measured. Direction is
+   established (2/2); magnitude is not. **Test:** 4–6 repeats at each of 3
+   floors, reported as distributions. ~10 leg-hours, and it is the honest price
+   of a number here.
+5. **How far the run-to-run scatter of §7.1.1 extends.** It was measured on one
+   configuration. Whether *plateaued* legs (the linear ones, which are the fork's
+   gate) carry the same exposure is untested here — the merged gate's ±3 % bands
+   assume they carry less, which is plausible (a plateau is not a convergence
+   failure) but is now an assumption with a measured counter-example nearby.
+   **Test:** repeat the R3 gate's h0 = 0.5 leg 5× and report the spread. Cheap,
+   and it directly protects a standing CI gate.
+6. **Resolution of the localisation metrics.** At h0 = 1.0 the core holds 18
    elements and at h0 = 0.5 it holds 96; neither can resolve a 1–3-element slip
    band even if one existed. The "no slip surface anywhere" finding is therefore
    a statement about *these meshes*, not about the elements.
@@ -557,8 +619,9 @@ Against that, the three measured facts:
 
 - the mechanism forms in the quadratic element at the same rate as in the linear
   one (§6.1);
-- the wall moves **+6.7 % / +19.4 %** on a pure controller parameter and **not
-  at all** on a different algorithm (§7.1, §7.2);
+- the wall moves on a pure controller parameter (direction consistent, magnitude
+  unresolved — §7.1.1) and **not at all** on a different algorithm (§7.2), and
+  it is not even reproducible to 5 % between identical runs;
 - the operator is well conditioned until an abrupt, unidentified numerical event
   (§7.3).
 

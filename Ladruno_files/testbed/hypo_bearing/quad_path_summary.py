@@ -199,12 +199,41 @@ def main():
                   f"-> q/q_ex {r['ratio']:.4f}, reach s/B {r['s_end_over_B']:.5f}, "
                   f"tail {r['tail_pct']:.2f} %, mode {r['mode']}, "
                   f"M {r['M']:+.3f}")
-        a, z = v[0], v[-1]
-        print(f"     DELTA: capacity {100 * (z['ratio'] / a['ratio'] - 1):+.1f} %, "
-              f"reach {100 * (z['s_end_over_B'] / a['s_end_over_B'] - 1):+.1f} %, "
-              f"tail {a['tail_pct']:.2f} -> {z['tail_pct']:.2f} %")
+        # Group by ALLOWANCE, so repeats of one setting are visible as repeats.
+        # A single leg per setting measures the DRAW, not the effect: two
+        # bit-identical runs of the loose setting here differ by 5.1 % in
+        # capacity and 14.7 % in reach (threaded PARDISO is not FP-deterministic
+        # and the adaptive controller amplifies that without bound).  So the
+        # delta is printed as a RANGE against the reference, never as one number.
+        by_a = {}
+        for r in v:
+            by_a.setdefault((r["halvings"], r["budget"]), []).append(r)
+        lo_key = min(by_a)
+        ref = by_a[lo_key]
+        for k2 in sorted(by_a):
+            g = by_a[k2]
+            tag = f"  ({len(g)} REPEATS of one setting)" if len(g) > 1 else ""
+            print(f"     -> {k2[0]:.2f} halvings, budget {k2[1]}: "
+                  f"q/q_ex {'/'.join('%.4f' % r['ratio'] for r in g)}, "
+                  f"reach {'/'.join('%.5f' % r['s_end_over_B'] for r in g)}"
+                  f"{tag}")
+            if len(g) > 1:
+                sr = max(r["ratio"] for r in g) / min(r["ratio"] for r in g) - 1
+                ss = (max(r["s_end_over_B"] for r in g)
+                      / min(r["s_end_over_B"] for r in g) - 1)
+                print(f"        RUN-TO-RUN SPREAD at a FIXED setting: "
+                      f"capacity {100 * sr:.1f} %, reach {100 * ss:.1f} % "
+                      f"<- any effect smaller than this is NOT resolved")
+            if k2 != lo_key:
+                d = [100 * (r["ratio"] / max(q["ratio"] for q in ref) - 1)
+                     for r in g]
+                dr = [100 * (r["s_end_over_B"]
+                             / max(q["s_end_over_B"] for q in ref) - 1) for r in g]
+                print(f"        vs the reference allowance: capacity "
+                      f"{min(d):+.1f} to {max(d):+.1f} %, reach "
+                      f"{min(dr):+.1f} to {max(dr):+.1f} %")
     if not any_pair:
-        print("  (none yet — an allowance pair needs two legs differing only in "
+        print("  (none yet - an allowance pair needs two legs differing only in "
               "floor/budget)")
 
 
