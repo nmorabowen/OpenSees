@@ -29,6 +29,21 @@ The legacy `openseespy` / `openseespy.opensees` alias -> our sequential
 sequential runtime inside an `mpiexec ... import openseesmp` rank would
 load two OpenSees runtimes into one process. Intel MPI / Hydra set
 PMI_RANK / PMI_SIZE per rank, which we detect.
+
+The eager `import opensees` at interpreter startup pins `sys.modules`
+before any user code runs, so a worktree build's own
+`sys.path.insert(0, dist/bin)` bootstrap is a no-op in a venv this script
+has wired (LEDGER_quirks: "An INSTALLED Ladruno hijacks `import opensees`
+in every venv it has wired"). Only the installer (installer.iss) bakes in
+the Program-Files install dirs this way; `wire_pyenv.ps1`'s own dev venvs
+already point straight at a worktree's dist\\bin and never hit this. The
+generated boot module therefore checks `LADRUNO_OPENSEES_BIN` /
+`LADRUNO_OPENSEESMP_BIN` FIRST and prefers those over the baked-in dirs
+when set -- a runtime escape hatch for an installer-wired venv (e.g.
+`opensees_env`) that needs no re-run of this script:
+
+    set LADRUNO_OPENSEES_BIN=<worktree>\\dist\\bin
+    python -c "import opensees; print(opensees.ladrunoBuild())"
 """
 import sys
 import sysconfig
@@ -39,9 +54,14 @@ BOOT_TEMPLATE = '''\
 # Makes BOTH `import opensees` and `import openseesmp` work from this venv.
 import os, sys
 
+# LADRUNO_OPENSEES_BIN / LADRUNO_OPENSEESMP_BIN override the baked-in install
+# dirs when set -- an escape hatch so a worktree build can win in a venv this
+# script wired to an installed Ladruno, without re-running the wirer (which
+# would re-pin the .pth for every OTHER session using this venv). See the
+# LEDGER_quirks "An INSTALLED Ladruno hijacks `import opensees`" entry.
 _dirs = [
-    {bin_repr},   # opensees.pyd  (+ bundled MKL)
-    {mp_repr},    # openseesmp.pyd (+ Intel MPI + MKL); "" if not installed
+    os.environ.get("LADRUNO_OPENSEES_BIN") or {bin_repr},     # opensees.pyd  (+ bundled MKL)
+    os.environ.get("LADRUNO_OPENSEESMP_BIN") or {mp_repr},    # openseesmp.pyd (+ Intel MPI + MKL); "" if not installed
 ]
 
 # Keep the add_dll_directory handles alive for the whole process: if the
