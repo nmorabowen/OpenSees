@@ -60,6 +60,14 @@
 #include <vector>
 #include <cmath>
 
+// ADR-78 P1 — the fatal exit lives in LadrunoContactAbort.cpp, NOT here. This TU
+// is compiled into the OPS_Analysis OBJECT library, which is built once with no
+// parallel define and folded into every target, so an `#ifdef _PARALLEL_*` block
+// written HERE compiles to nothing everywhere -- including OpenSeesMP. That was
+// measured: a guarded MPI_Abort placed in this file vanished silently and the
+// mutation deck hung exactly as it had before. See LadrunoContactAbort.h.
+#include "LadrunoContactAbort.h"
+
 // ----------------------------------------------------------------------------
 // contact-review P3: pre-flight a contact's surfaces — every referenced node must
 // exist and carry 3D coordinates. Previously a typo'd node tag was skipped in
@@ -67,6 +75,14 @@
 // (`-ndm 2 -ndf 3` frame) passed the ndf==3 guards while getCrds()(2) read out of
 // bounds (unchecked in release ⇒ nondeterministic garbage geometry). Refuse the
 // WHOLE contact loudly instead of silently processing a partial surface.
+//
+// ADR-78 P1 (2026-08-11): the refusal is now an ABORT, not a skip. Warning-and-
+// continuing means a declared contact quietly does not happen, and the resulting
+// run looks entirely plausible — the P0 mutation battery produced exactly that:
+// a model that converged, balanced its reactions, and was wrong by a factor of
+// two. Under MPI it is worse still, because a warning on rank 7 of 240 scrolls
+// past unread. Callers turn a false return into `return -1` from handle(), which
+// StaticAnalysis/DirectIntegrationAnalysis::domainChanged() report as a failure.
 // ----------------------------------------------------------------------------
 static bool
 ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s)
@@ -75,16 +91,17 @@ ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s)
     for (int i = 0; i < tags.Size(); i++) {
         Node *n = dom->getNode(tags(i));
         if (n == 0) {
-            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ctag
+            opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
                    << ": node " << tags(i) << " of contactSurface " << s->getTag()
-                   << " does not exist; contact SKIPPED\n";
+                   << " does not exist; ABORTING (a declared contact is never "
+                      "silently dropped -- ADR-78 P1)\n";
             return false;
         }
         if (n->getCrds().Size() < 3) {
-            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ctag
+            opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
                    << ": node " << tags(i) << " of contactSurface " << s->getTag()
                    << " has " << n->getCrds().Size() << "D coordinates (contact needs "
-                      "-ndm 3); contact SKIPPED\n";
+                      "-ndm 3); ABORTING (ADR-78 P1)\n";
             return false;
         }
     }
@@ -500,8 +517,41 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         for (int c = 0; c < cd->getNumMortarContacts() && !anySoft; c++)
             if (cd->getMortarContact(c).softScale > 0.0 ||
                 cd->getMortarContact(c).edgeSoftScale > 0.0) anySoft = true;
-        if (anySoft)
+        if (anySoft) {
             ladrunoBuildNodalMass(theDomain, cd);
+            // ADR-78 P1: a SOFT contact sizes k_soft = SOFSCL*4*m_eff/dt² from the
+            // ASSEMBLED nodal mass built above. A node carrying neither `mass` nor any
+            // element leaves a cache entry of exactly 0 -- and m_eff = 1/(invM_s + ...)
+            // then collapses to 0, so k_soft is 0 and the contact SILENTLY does nothing.
+            // That is precisely a ghosted interface node on a partitioned deck (it has
+            // no element on the owner rank), which is why apeGmsh ADR 0092 INV-3 refuses
+            // `soft=` under partitioning; this is the engine-side backstop for a
+            // hand-written deck. A zero-mass node in an explicit contact is degenerate
+            // regardless -- the integrator would divide by it.
+            for (int c = 0; c < cd->getNumContacts(); c++) {
+                const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+                if (ct.softScale <= 0.0) continue;
+                const LadrunoContactSurface *sfc[2] = { cd->getSurface(ct.masterSurfTag),
+                                                        cd->getSurface(ct.slaveSurfTag) };
+                for (int k = 0; k < 2; k++) {
+                    if (sfc[k] == 0) continue;
+                    const ID &tg = sfc[k]->getNodeTags();
+                    for (int i = 0; i < tg.Size(); i++) {
+                        double m[3];
+                        bool have = cd->getNodalMass(tg(i), m);
+                        if (!have || (m[0] <= 0.0 && m[1] <= 0.0 && m[2] <= 0.0)) {
+                            opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                                   << ct.tag << ": -soft needs an assembled mass at node "
+                                   << tg(i) << ", which carries none (no nodal `mass`, no "
+                                      "element on this process). k_soft would collapse to 0 "
+                                      "and the contact would do NOTHING; ABORTING (ADR-78 "
+                                      "P1). Under partitioning `-soft` is not supported.\n";
+                            return ladrunoContactFatal();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // P2b: faceted node-to-segment penalty contact. For each contact definition
@@ -545,34 +595,38 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             LadrunoContactSurface *ms = cd->getSurface(ct.masterSurfTag);
             LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
             if (ms == 0 || ss == 0) {
-                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                       << ": master/slave surface not defined; skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": master/slave surface not defined; ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
                 ss->getKind() != LadrunoContactSurface::SLAVE_NODES) {
-                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                       << ": need a MASTER_SEGMENTS master + SLAVE_NODES slave; skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": need a MASTER_SEGMENTS master + SLAVE_NODES slave; "
+                          "ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             int nps = ms->getNodesPerSeg();
             if (nps < 3 || nps > 4) {
-                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                       << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); "
+                          "ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             if (!ladrunoSurfaceNodesOk(theDomain, ct.tag, ms) ||
                 !ladrunoSurfaceNodesOk(theDomain, ct.tag, ss))
-                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
+                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
             if (!ct.knAuto && ct.kn <= 0.0) {
                 // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
-                // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert;
-                // warn rather than silently build dead adapters. (Gate PARSE-2/H1.)
+                // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert —
+                // it would build dead adapters, i.e. a declared contact that transmits
+                // nothing, which ADR-78 P1 makes fatal rather than a warning.
                 // `-kn auto` (P2b-2b) carries a 0 placeholder and is resolved per pair
                 // below, so it bypasses this guard.
-                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                       << ": segment contact needs kn > 0 (got " << ct.kn << "); skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": segment contact needs kn > 0 (got " << ct.kn << "); "
+                          "ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
@@ -806,11 +860,16 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
                 if (sn == 0 || sn->getNumberDOF() != 3) {
-                    if (sn != 0)
-                        opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                               << " slave node " << sTags(si) << " ndf=" << sn->getNumberDOF()
-                               << " != 3; skipped (P2b is 3D translational)\n";
-                    continue;
+                    // ADR-78 P1: dropping a slave node here leaves a hole in an
+                    // otherwise-live interface -- the same silently-partial contact
+                    // the surface pre-flight exists to prevent, one level down.
+                    // (sn == 0 is already impossible past ladrunoSurfaceNodesOk; the
+                    // ndf mismatch is the live case.)
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << " slave node " << sTags(si) << " ndf="
+                           << (sn != 0 ? sn->getNumberDOF() : 0)
+                           << " != 3; ABORTING (P2b is 3D translational -- ADR-78 P1)\n";
+                    return ladrunoContactFatal();
                 }
                 const Vector &Xs0 = sn->getCrds();
                 double slavePt[3] = { Xs0(0), Xs0(1), Xs0(2) };
@@ -874,12 +933,20 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     if (ct.knAuto) {
                         knUse = ladrunoResolveAutoKn(theDomain, segNodes, nps, orientDir);
                         if (knUse <= 0.0) {
-                            opserr << "WARNING LadrunoContactHandler::handle() - contact "
+                            // ADR-78 P1: was a per-pair skip with a warning, which is the
+                            // subtlest of the silent degradations -- the contact still
+                            // exists, just with a hole in it, so nothing downstream looks
+                            // wrong. It is also the exact failure a partitioned run hits
+                            // when the owner rank holds the master NODES but not the
+                            // backing solid ELEMENT (apeGmsh ADR 0092 INV-1/INV-4): the
+                            // abort is what makes that mis-pick loud instead of silent.
+                            opserr << "FATAL LadrunoContactHandler::handle() - contact "
                                    << ct.tag << " slave node " << sTags(si) << " segment "
                                    << seg << ": -kn auto could not size a penalty (no owning "
                                       "solid element / non-3-DOF element / ambiguous normal); "
-                                      "pair skipped\n";
-                            continue;
+                                      "ABORTING (ADR-78 P1). Give an explicit -kn, or ensure "
+                                      "the master segment's solid element is on this rank.\n";
+                            return ladrunoContactFatal();
                         }
                     }
                     // P3: thread kt/mu + the engine ptr + the friction-state key
@@ -924,34 +991,36 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
             LadrunoContactSurface *ss = cd->getSurface(mc.slaveSurfTag);
             if (ms == 0 || ss == 0) {
-                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
-                       << ": master/slave surface not defined; skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": master/slave surface not defined; ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
                 ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) {
-                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
-                       << ": need a MASTER_SEGMENTS master + SLAVE_SEGMENTS slave; skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": need a MASTER_SEGMENTS master + SLAVE_SEGMENTS slave; "
+                          "ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) {
-                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
                        << ": nodesPerSeg must be 3 or 4 (slave " << npsS << ", master " << npsM
-                       << "); skipped\n";
-                continue;
+                       << "); ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             // penalty: epsN if given, else the kn slot; auto-size per pair if requested.
             bool epsAuto = mc.epsNAuto || mc.knAuto;
             double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
             if (!epsAuto && epsFixed <= 0.0) {
-                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
-                       << ": needs a penalty (-epsN val|auto or kn > 0); skipped\n";
-                continue;
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": needs a penalty (-epsN val|auto or kn > 0); "
+                          "ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
             }
             if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
                 !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
-                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
+                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;
@@ -1130,7 +1199,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
             if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
                 !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
-                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
+                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;
@@ -1253,14 +1322,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         for (int p = 0; p < cd->getNumRigidPlanes(); p++) {
             const LadrunoContactDomain::RigidPlane &rp = cd->getRigidPlane(p);
             LadrunoContactSurface *surf = cd->getSurface(rp.slaveSurfTag);
-            if (surf == 0) continue;
+            if (surf == 0) {
+                opserr << "FATAL LadrunoContactHandler::handle() - contactPlane " << rp.tag
+                       << ": slave surface " << rp.slaveSurfTag
+                       << " not defined; ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
+            }
             const ID &nodeTags = surf->getNodeTags();
             for (int k = 0; k < nodeTags.Size(); k++) {
                 Node *sn = theDomain->getNode(nodeTags(k));
                 if (sn == 0) {
-                    opserr << "WARNING LadrunoContactHandler::handle() - rigid-plane slave node "
-                           << nodeTags(k) << " not in domain; skipped\n";
-                    continue;
+                    opserr << "FATAL LadrunoContactHandler::handle() - rigid-plane slave node "
+                           << nodeTags(k) << " not in domain; ABORTING (ADR-78 P1)\n";
+                    return ladrunoContactFatal();
                 }
                 int nd = sn->getCrds().Size();
                 if (sn->getNumberDOF() < nd) {
@@ -1268,11 +1342,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // a node with fewer DOFs than coordinates (ndf < ndm) would let
                     // base setID() leave trailing myID slots at 0 (contact assembled
                     // onto equation 0) and rigidPlaneGap() read past getTrialDisp().
-                    // Skip with a warning rather than silently corrupt the system.
-                    opserr << "WARNING LadrunoContactHandler::handle() - rigid-plane slave node "
+                    // ADR-78 P1: abort rather than drop the node -- skipping left a
+                    // rigid plane that silently held back only some of its slaves.
+                    opserr << "FATAL LadrunoContactHandler::handle() - rigid-plane slave node "
                            << nodeTags(k) << " has ndf=" << sn->getNumberDOF()
-                           << " < ndm=" << nd << "; skipped\n";
-                    continue;
+                           << " < ndm=" << nd << "; ABORTING (ADR-78 P1)\n";
+                    return ladrunoContactFatal();
                 }
                 LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn,
                                                             rp.muc,         // D2 viscous (0 ⇒ off)

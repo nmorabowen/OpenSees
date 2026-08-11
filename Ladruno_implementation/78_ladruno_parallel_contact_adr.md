@@ -448,3 +448,46 @@ path. None answered `invalid command name`.
    numbers to every digit. Two interpreters, two builds, one answer. That retires the open
    worry about whether the rebuilt engine was configured equivalently (lp64 / sequential /
    static MKL, MUMPS from `mumps-install`).
+
+### P1 — DONE 2026-08-11. Every silent degradation aborts, and it tears the job down.
+
+**Fifteen paths converted** from warn-and-continue to abort: the three
+`ladrunoSurfaceNodesOk` call sites (NTS / mortar / edge-edge), `-kn auto` failing to size a
+penalty, SOFT with no assembled mass at an interface node (D4), and eleven configuration
+skips (surface undefined, wrong surface kinds, unsupported `nodesPerSeg`, `kn <= 0`, slave
+`ndf != 3`, and the `contactPlane` equivalents). `grep "; skipped"` in the handler now returns
+**zero**. Two were worse than the rest: `contactPlane` with an undefined slave surface was a
+bare `continue` with *no message at all*, and the rigid-plane `ndf < ndm` path dropped
+individual slaves, leaving a plane that restrained only some of them.
+
+**The abort had to leave the handler's translation unit.** `LadrunoContactHandler.cpp` is
+compiled into the `OPS_Analysis` **OBJECT library** — built once, no parallel define, folded
+into every target — so the first version of this fix, an `#ifdef _PARALLEL_*` block written
+inside the handler, **compiled to nothing in every build, OpenSeesMP included**. It compiled
+clean and left both happy paths bit-identical; only the mutation deck caught it, by hanging
+exactly as it had before. Same trap ADR-02 calls "the core blocker" for `OpenSeesCommands.cpp`.
+
+Fixed the way Patch 8 / Patch 9 fixed theirs: the one parallel-sensitive function lives in
+`SRC/analysis/handler/LadrunoContactAbort.cpp`, listed in `OPS_CONTACT_PER_TARGET_SOURCES` and
+compiled **per target** with that target's defines. Verified in the generated `build.ninja` —
+`-D_PARALLEL_INTERPRETERS` present on `OpenSeesMP`'s copy, absent on the serial one. Isolating
+one function rather than moving the 1400-line handler keeps the duplicated compilation
+trivial; the CMake edit surface is identical either way.
+
+**Why teardown and not just `return -1`:** measured twice. A failing rank returns from
+`handle()` while its peers walk into the numberer's gather and block on a rank that never
+arrives. The job hung until an external timeout, twice leaving orphaned `OpenSeesMP.exe`
+processes alive for hours — which on the second occasion held the binary open and failed the
+next link. On a 240-rank run that burns the allocation and buries the FATAL line in one log.
+
+| | before P1 | after P1 |
+|---|---|---|
+| serial happy path | reference values | **unchanged** |
+| 2-rank happy path | reference values | **unchanged** |
+| `noghost` mutation | warned, limped to `analyze=-3`, **hung 7 min**, orphans left | FATAL + teardown, **terminated in 1.1 s**, zero orphans |
+
+**Found in passing, not fixed:** `AutoConstraintHandler.cpp` is in the same object library and
+is *not* listed per-target, so its `MPI_Allreduce` — the one computing the global penalty for
+`constraints Auto` — is compiled out of every target. Under MPI each rank would size its
+penalty from rank-local stiffness. Verified from its `DEFINES` line; pre-existing and unrelated
+to contact, so it deserves its own change rather than riding along here.
