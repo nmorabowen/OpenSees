@@ -3517,7 +3517,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Tell:** a monotone Path-driven quantity that grows correctly for N−1 steps and collapses at step N (the ADR-79 P2 undrained gate saw p: 6.16e5 → 5.2e4 at the final step, top displacement 0.0975 → 0.0000). Invisible when the final state happens to satisfy the assertion anyway — the ADR-78 corot gate-3 test asserts p ≈ 0 under rigid rotation, so its final-step snap-back to u = 0 ALSO read p ≈ 0 and passed.
 - **Workaround/status:** ✅ FIXED (ADR-79 P2 PR) — the parsed `useLast` is forwarded to the `PathTimeSeries` ctor (`// Ladruno` mark; [[LEDGER_vanilla_files]] row). Belt-and-braces for test authors: give the Path an extra terminal point beyond the last analysis time so no route depends on the beyond-the-end branch. *2026-07-28 (ADR-79 P2).*
 
-### An INSTALLED Ladruno hijacks `import opensees` in every venv it has wired — `sys.path.insert` cannot win
+### An INSTALLED Ladruno hijacks `import opensees` in every venv it has wired — `sys.path.insert` cannot win  *(ROOT-CAUSED and FIXED 2026-08-11, #735 — see the last bullet; the workarounds below are kept because they still apply to any venv wired by an older installer)*
 - **Bites:** any script that bootstraps a *worktree* build with the standard
   `sys.path.insert(0, "<worktree>/dist/bin"); import opensees`. The Ladruno
   installer writes `ladruno_opensees.pth` into the venv's `site-packages`,
@@ -3559,6 +3559,29 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   present) — it now also checks the module's `__file__` directory matches
   `APEGMSH_OPENSEES_BIN` before reusing it, closing the gap for code paths
   that reach `sys.modules['opensees']` before apeGmsh's own resolver runs.
+
+- **ROOT-CAUSE FIX (2026-08-11, #735): the boot module no longer imports anything at startup.** The
+  2026-08-10 entry above treats `LADRUNO_OPENSEES_BIN` as *the* escape hatch, which conceded the premise
+  — that `import opensees` must happen at interpreter startup. It did not. The eager import existed only
+  to alias `openseespy`/`openseespy.opensees` onto the sequential build; that alias is now resolved by a
+  lazy `sys.meta_path` finder which imports the engine on the FIRST request for the name and not before.
+  The rest of the boot module (`sys.path`, `add_dll_directory`, process-local `PATH`) only REGISTERS
+  search locations — it loads nothing — so the module is now passive in the sense BUILD_GOTCHAS §5 asks
+  for. **Both symptoms go at once:** `sys.path.insert(0, <worktree>/dist/bin)` wins again unaided
+  (verified: the same venv that used to force the install now resolves to the worktree), and a bare venv
+  interpreter stops pinning the install's DLLs, which is what made installer UPGRADES fail with
+  `DeleteFile failed; code 5`. `LADRUNO_OPENSEES_BIN` survives as a deliberate override, demoted from
+  crutch. **Re-run `wire_venv_pth.py <bin-dir> [<mp-dir>]` once per venv** — an already-wired venv keeps
+  the old eager boot script until you do. Gated by `tests/test_wire_venv_pth_override.py` (5 tests): the
+  two override tests above, plus an AST check that no `import opensees` sits outside a function
+  (verified non-vacuous against three regression shapes — module-level, inside an `if`, and `from`-import),
+  a behavioural check that nothing is aliased at exec but both names resolve afterwards, and one that the
+  alias is skipped under `PMI_RANK`. **Measuring this needs care: two obvious probes lie.**
+  `Get-Process($pid).Modules` reported 7 modules and 0 held for a Python whose own stdout proved it had
+  imported the installed `.pyd`; and `tasklist /m X /fi "PID eq N"` misses because the venv launcher
+  re-spawns under a different PID than `Start-Process` returns. Use unfiltered `tasklist /m opensees.pyd`
+  as a set difference against a live baseline, and always run the eager-import CONTROL — a probe that
+  reports "no holders" for both cases is measuring nothing.
 
 ### A single scratch/test run of the Inno installer poisons the destination folder for every FUTURE run, on any machine sharing the registry
 - **Bites:** anyone testing `Ladruno_OpenSees_*_setup.exe` against a throwaway directory (`/DIR=<scratch>`), then later running the SAME or a NEWER installer normally. Inno Setup's `UsePreviousAppDir` defaults to `yes`: the "Select Destination Location" page pre-fills — and with a command-line `/DIR=` present, SKIPS SHOWING ENTIRELY — from whatever path the last COMPLETED run with the same `AppId` used, read back from the Windows uninstall registry key. `installer.iss`'s `AppId` is one fixed GUID shared by every Ladruno OpenSees build ever compiled, so a single scratch install (even an automated one meant only to verify a fix) silently becomes the default destination for every subsequent install — including a colleague's, or a future session's, with no on-screen indication that anything unusual happened (the page can look pre-filled with a plausible-looking path and the user just clicks through).

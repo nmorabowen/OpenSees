@@ -7,6 +7,24 @@
 ;   & 'C:\Program Files (x86)\Inno Setup 6\iscc.exe' installer.iss
 ;
 ; The build_inno_installer.ps1 driver does this for you.
+;
+; Install-time switches (Inno's own, plus two of ours):
+;   /DIR="C:\path"          install location
+;   /TASKS=addtopath        append {app}\bin to the user PATH
+;   /SILENT | /VERYSILENT   no wizard          /LOG="file"   setup log
+;   /VENV=skip              wire no venv  -- the DEFAULT for a silent install
+;   /VENV=new               create {app}\opensees_venv and wire it
+;   /VENV="C:\path\to\venv" wire an EXISTING venv (the ROOT folder, the one
+;                           holding Scripts\ and Lib\ -- NOT python.exe)
+;   /BASEPYTHON="C:\...\python.exe"   interpreter to bootstrap /VENV=new (3.12)
+;
+; The venv switches exist because Inno never shows custom wizard pages under
+; /SILENT, so a scripted install used to be stuck with the page defaults
+; ("create a venv from the literal string python.exe") -- which fails on any
+; machine without such a python on the elevated PATH, and then blocked on a
+; modal error box that no one was there to dismiss.
+;
+;   setup.exe /VERYSILENT /VENV="C:\Users\me\venv\opensees_env"
 
 #define LadrunoVersion GetEnv("LADRUNO_VERSION")
 #define LadrunoDist    GetEnv("LADRUNO_DIST")
@@ -226,6 +244,82 @@ begin
   end;
 end;
 
+// ---- /VENV= and /BASEPYTHON= : venv control for SCRIPTED installs -------
+// Inno never shows custom wizard pages under /SILENT|/VERYSILENT, so without
+// these a scripted install could only ever take the page DEFAULTS -- which
+// meant "create a new venv, bootstrapped from the literal string python.exe".
+// In an elevated installer there is usually no such python on PATH, so every
+// silent install did the same thing: `python.exe -m venv exited 1`, then a
+// MODAL ERROR BOX that blocks forever because nobody is there to click it.
+// Measured 2026-08-11: a /VERYSILENT run sat on that box for ~3 minutes.
+//
+//   /VENV=skip              do not wire anything (the silent DEFAULT)
+//   /VENV=new               create <install-dir>\opensees_venv
+//   /VENV=<path-to-venv>    wire an EXISTING venv (dir containing Scripts\)
+//   /BASEPYTHON=<py.exe>    interpreter used to bootstrap /VENV=new
+//
+// e.g.  setup.exe /VERYSILENT /VENV="C:\Users\me\venv\opensees_env"
+function ParamOrEmpty(const Name: String): String;
+begin
+  Result := Trim(ExpandConstant('{param:' + Name + '|}'));
+end;
+
+// Resolve what to actually do, from (in order) the command line, silent-mode
+// policy, then the wizard pages. Returns 0 = skip, 1 = create, 2 = existing.
+function ResolveVenvChoice(var VenvDir: String; var BasePython: String): Integer;
+var
+  P: String;
+begin
+  VenvDir    := '';
+  BasePython := ParamOrEmpty('basepython');
+  P          := ParamOrEmpty('venv');
+
+  if P <> '' then
+  begin
+    if CompareText(P, 'skip') = 0 then
+    begin
+      Result := 0;
+      Exit;
+    end;
+    if CompareText(P, 'new') = 0 then
+    begin
+      Result  := 1;
+      VenvDir := ExpandConstant('{app}\opensees_venv');
+      Exit;
+    end;
+    Result  := 2;                       // anything else is a venv path
+    VenvDir := RemoveBackslash(P);
+    Exit;
+  end;
+
+  // No /VENV= given. A silent install must NOT guess: creating a venv from a
+  // python that probably is not there is how the failure above happened, and a
+  // half-done install that logs a warning nobody reads is worse than one that
+  // plainly did nothing. Interactive runs still get the wizard's choice.
+  if WizardSilent then
+  begin
+    Result := 0;
+    Exit;
+  end;
+
+  Result := VenvOptionPage.SelectedValueIndex;
+  if Result = 1 then
+  begin
+    VenvDir := ExpandConstant('{app}\opensees_venv');
+    if BasePython = '' then BasePython := Trim(PythonPathPage.Values[0]);
+  end;
+  if Result = 2 then
+    VenvDir := RemoveBackslash(Trim(VenvDirPage.Values[0]));
+end;
+
+// Never block a scripted install on a modal box; the log is the channel there.
+procedure Complain(const Msg: String);
+begin
+  LogToFile('  ' + Msg);
+  if not WizardSilent then
+    MsgBox(Msg, mbError, MB_OK);
+end;
+
 procedure WirePth(const VenvPython, BinDir, MpDir: String);
 var
   HelperPy: String;
@@ -256,18 +350,16 @@ begin
   LogToFile('Creating venv at ' + VenvDir + ' (base: ' + BasePython + ') ...');
   if not Exec(BasePython, '-m venv ' + AddQuotes(VenvDir), '', SW_HIDE, ewWaitUntilTerminated, Code) then
   begin
-    LogToFile('  ERROR: failed to launch ' + BasePython);
-    MsgBox('Failed to launch ' + BasePython + '.' + #13#10 +
-           'Skipping venv wiring; you can run Ladruno_scripts\wire_pyenv.ps1 later.',
-           mbError, MB_OK);
+    Complain('ERROR: failed to launch ' + BasePython + '. Skipping venv wiring; ' +
+             'run Ladruno_scripts\wire_venv_pth.py later, or re-run with ' +
+             '/BASEPYTHON=<path to a 3.12 python.exe>.');
     Exit;
   end;
   if Code <> 0 then
   begin
-    LogToFile('  ERROR: ' + BasePython + ' -m venv exited ' + IntToStr(Code));
-    MsgBox(BasePython + ' -m venv exited ' + IntToStr(Code) + '.' + #13#10 +
-           'Skipping venv wiring.',
-           mbError, MB_OK);
+    Complain('ERROR: ' + BasePython + ' -m venv exited ' + IntToStr(Code) +
+             '. Skipping venv wiring; pass /BASEPYTHON=<path to a 3.12 ' +
+             'python.exe>, or /VENV=<existing venv> to wire one you already have.');
     Exit;
   end;
   VenvPython := AddBackslash(VenvDir) + 'Scripts\python.exe';
@@ -294,13 +386,17 @@ begin
     LogToFile('  bin dir    : ' + BinDir);
     LogToFile('  openseesmp : ' + MpDir);
 
-    case VenvOptionPage.SelectedValueIndex of
+    // /VENV= and /BASEPYTHON= win over the wizard; a silent run with neither
+    // resolves to SKIP rather than guessing. See ResolveVenvChoice.
+    case ResolveVenvChoice(VenvDir, BasePython) of
       0:
-        LogToFile('  venv option: skip');
+        if WizardSilent and (ParamOrEmpty('venv') = '') then
+          LogToFile('  venv option: skip (silent install, no /VENV= given -- ' +
+                    'pass /VENV=<path>, /VENV=new or /VENV=skip to be explicit)')
+        else
+          LogToFile('  venv option: skip');
       1:
         begin
-          VenvDir    := ExpandConstant('{app}\opensees_venv');
-          BasePython := Trim(PythonPathPage.Values[0]);
           if BasePython = '' then BasePython := 'python';
           LogToFile('  venv option: create at ' + VenvDir);
           LogToFile('  base python: ' + BasePython);
@@ -308,13 +404,14 @@ begin
         end;
       2:
         begin
-          VenvDir    := VenvDirPage.Values[0];
           VenvPython := AddBackslash(VenvDir) + 'Scripts\python.exe';
           LogToFile('  venv option: existing at ' + VenvDir);
           if FileExists(VenvPython) then
             WirePth(VenvPython, BinDir, MpDir)
           else
-            LogToFile('  ERROR: ' + VenvPython + ' missing');
+            Complain('ERROR: ' + VenvPython + ' missing -- /VENV= wants the venv ' +
+                     'ROOT (the folder containing Scripts\ and Lib\), not python.exe. ' +
+                     'Nothing was wired.');
         end;
     end;
 

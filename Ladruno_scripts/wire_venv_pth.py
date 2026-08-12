@@ -30,20 +30,34 @@ sequential runtime inside an `mpiexec ... import openseesmp` rank would
 load two OpenSees runtimes into one process. Intel MPI / Hydra set
 PMI_RANK / PMI_SIZE per rank, which we detect.
 
-The eager `import opensees` at interpreter startup pins `sys.modules`
-before any user code runs, so a worktree build's own
-`sys.path.insert(0, dist/bin)` bootstrap is a no-op in a venv this script
-has wired (LEDGER_quirks: "An INSTALLED Ladruno hijacks `import opensees`
-in every venv it has wired"). Only the installer (installer.iss) bakes in
-the Program-Files install dirs this way; `wire_pyenv.ps1`'s own dev venvs
-already point straight at a worktree's dist\\bin and never hit this. The
-generated boot module therefore checks `LADRUNO_OPENSEES_BIN` /
-`LADRUNO_OPENSEESMP_BIN` FIRST and prefers those over the baked-in dirs
-when set -- a runtime escape hatch for an installer-wired venv (e.g.
-`opensees_env`) that needs no re-run of this script:
+The generated wiring is PASSIVE: it registers search locations at startup
+(sys.path, add_dll_directory, process-local PATH) and imports NOTHING. The
+`openseespy` alias is resolved lazily by a meta_path finder, so the first
+thing that actually loads `opensees.pyd` is the user's own import.
+
+It did not used to be. An eager `import opensees` at interpreter startup
+cost us twice over, and both bills are documented:
+
+  * DLL LOCK -- every Python in the venv (VS Code's Black/isort/pylint
+    lsp_server, Jupyter kernels) loaded the .pyd and pinned the install's
+    MKL DLLs, so the next installer upgrade failed with "DeleteFile
+    failed; code 5" (BUILD_GOTCHAS sec 5, whose "permanent fix" is exactly
+    this change).
+  * sys.modules HIJACK -- `opensees` was pinned before any user code ran,
+    so a worktree build's own `sys.path.insert(0, dist/bin)` bootstrap was
+    a no-op in any venv this script had wired (LEDGER_quirks: "An INSTALLED
+    Ladruno hijacks `import opensees` in every venv it has wired").
+
+Deferring the import fixes both, and the `sys.path.insert` bootstrap works
+on its own again. `LADRUNO_OPENSEES_BIN` / `LADRUNO_OPENSEESMP_BIN` remain
+as a deliberate override of the baked-in dirs -- now a convenience rather
+than the only escape hatch:
 
     set LADRUNO_OPENSEES_BIN=<worktree>\\dist\\bin
     python -c "import opensees; print(opensees.ladrunoBuild())"
+
+Only the installer (installer.iss) bakes in the Program-Files install dirs;
+`wire_pyenv.ps1`'s own dev venvs point straight at a worktree's dist\\bin.
 """
 import sys
 import sysconfig
@@ -93,14 +107,58 @@ for _d in _dirs:
 # openseespy-flavored examples) get THIS build (MPCO/HDF5) rather than a
 # vanilla pip openseespy. Skipped under MPI (PMI_RANK/PMI_SIZE set by
 # Intel MPI/Hydra) so `import openseesmp` ranks stay a single runtime.
+#
+# PASSIVE (this is the point of the file): the alias is resolved by a meta_path
+# finder that does nothing until something actually asks for `openseespy`. The
+# previous version did `import opensees` RIGHT HERE, at interpreter startup, and
+# that one line caused both of the problems this wiring is notorious for:
+#
+#   1. DLL LOCK. Every Python in the venv -- VS Code's Black/isort/pylint
+#      lsp_server, linters, Jupyter kernels -- loaded opensees.pyd and pinned the
+#      install's MKL DLLs, so the next installer UPGRADE died with
+#      "DeleteFile failed; code 5" (BUILD_GOTCHAS sec 5). Nothing here loads a
+#      DLL any more: sys.path / add_dll_directory / PATH only REGISTER search
+#      locations, they do not load anything.
+#   2. sys.modules HIJACK. The eager import pinned `opensees` before any user
+#      code ran, so a worktree's own `sys.path.insert(0, dist/bin)` bootstrap was
+#      a no-op and you needed LADRUNO_OPENSEES_BIN to escape it (LEDGER_quirks
+#      "An INSTALLED Ladruno hijacks `import opensees`"). Deferred, the insert
+#      wins again on its own -- the env var stays as an override, not a crutch.
 if not (os.environ.get("PMI_RANK") or os.environ.get("PMI_SIZE")):
-    try:
-        import opensees as _ops
-        sys.modules["openseespy"] = _ops
-        sys.modules["openseespy.opensees"] = _ops
-        _ops.opensees = _ops
-    except Exception:
-        pass
+
+    class _LadrunoOpenSeesPyAlias:
+        """Resolve `openseespy[.opensees]` to this build's `opensees`, on demand.
+
+        Registered ahead of the stock finders so it still beats a pip-installed
+        openseespy, exactly as the eager version did.
+        """
+
+        _NAMES = ("openseespy", "openseespy.opensees")
+
+        @classmethod
+        def find_spec(cls, name, path=None, target=None):
+            if name not in cls._NAMES:
+                return None
+            import importlib.util
+            return importlib.util.spec_from_loader(name, cls)
+
+        @staticmethod
+        def create_module(spec):
+            # First touch of the name: NOW pay for the real import.
+            import opensees as _ops
+            _ops.opensees = _ops
+            # Pre-seed the submodule so `import openseespy.opensees` resolves
+            # without needing openseespy to be a package -- CPython's
+            # _find_and_load_unlocked re-checks sys.modules after importing the
+            # parent (the branch its source comments "Crazy side-effects!").
+            sys.modules.setdefault("openseespy.opensees", _ops)
+            return _ops
+
+        @staticmethod
+        def exec_module(module):
+            pass          # `opensees` already executed itself; aliasing only
+
+    sys.meta_path.insert(0, _LadrunoOpenSeesPyAlias)
 '''
 
 

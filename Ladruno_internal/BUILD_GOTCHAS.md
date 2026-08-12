@@ -196,11 +196,78 @@ Python extension respawns its formatter server within ~1s if killed — whack-a-
    ipykernel/Jupyter kernels, which hold user state), and click Retry in the window.
 3. Windows restart (heavier).
 
-**Permanent fix (do once):** convert the `opensees_venv` wiring from the boot
-`.pth` (active `import`) to a *passive* `.pth` (adds the dist path to `sys.path`
-but does NOT import on startup). Then VS Code's Python tools no longer auto-load
-the install DLLs and upgrades stop getting locked. See `wire_venv_pth.py` /
-`wire_pyenv.ps1` in `Ladruno_scripts`.
+**Permanent fix — DONE in the tool (#735), no longer a manual step.**
+`wire_venv_pth.py` now generates a *passive* boot module. It still registers
+search locations at startup (`sys.path`, `add_dll_directory`, process-local
+`PATH`) — none of which LOAD anything — but the `openseespy` alias that used to
+do an eager `import opensees` right there is now resolved lazily by a
+`sys.meta_path` finder. The first thing to load `opensees.pyd` is the user's own
+import, so VS Code's Python tools no longer pin the install DLLs.
+**Re-run the wirer once per venv to pick it up:**
+
+```
+<venv>\Scripts\python.exe Ladruno_scripts\wire_venv_pth.py "C:\Program Files\Ladruno\OpenSees\bin" "C:\Program Files\Ladruno\OpenSees\openseesmp"
+```
+
+**Measure it with `tasklist /m opensees.pyd`, as a set difference against a live
+baseline** — a bare venv Python must add NO new holder, while one whose script
+imports opensees adds some (that contrast is the only thing that proves the probe
+works at all). Two probes that LOOK right and silently lie:
+
+* `Get-Process($pid).Modules` — enumerated **7** modules for a Python that had
+  demonstrably imported the .pyd (its own stdout printed the Program-Files path),
+  and reports a clean `0` held whether or not the file is pinned. It will tell you
+  the lock is gone when it is not.
+* `tasklist /m X /fi "PID eq N"` — misses, because the venv launcher re-spawns the
+  real interpreter under a **different PID** than `Start-Process` hands back. Run
+  it unfiltered and diff the PID set.
+
+The same change retires the companion `LEDGER_quirks` entry ("An INSTALLED
+Ladruno hijacks `import opensees`"): with nothing imported at startup, a
+worktree's own `sys.path.insert(0, dist/bin)` wins again, and
+`LADRUNO_OPENSEES_BIN` is demoted from crutch to override.
+
+**It does NOT save you from a process that legitimately imported the engine** —
+an analysis run, a pytest session, its `multiprocessing` workers. The passive
+`.pth` stops *bare* interpreters from holding the DLLs; a real user of OpenSees
+still holds them, correctly.
+
+### 5b. `/SUPPRESSMSGBOXES` turns "could not close applications" into a SILENT abort
+
+A scripted upgrade (`setup.exe /VERYSILENT /SUPPRESSMSGBOXES`) returned **exit 5**
+and changed nothing, twice, while `install.log` showed only the PREVIOUS run's
+lines — easy to misread as "the installer is broken". It was not. Inno's
+RestartManager found six Python processes using files it was about to replace,
+failed to shut them down, and `/SUPPRESSMSGBOXES` answered the resulting
+Abort/Retry/Ignore box with its default, **Abort**:
+
+```
+RestartManager found an application using one of our files: Python   (x6)
+Shutting down applications using our files.
+Some applications could not be shut down.
+Defaulting to Abort for suppressed message box (Abort/Retry/Ignore)
+User canceled the installation process.
+```
+
+**Read `/LOG=<file>`, not `install.log`,** to see this: `install.log` is written by
+our own `[Code]` at `ssPostInstall`, so an install that aborts BEFORE that never
+writes a line, and its stale contents describe an earlier run. Exit 5 = user
+cancelled during install; with `/SUPPRESSMSGBOXES` that "user" is the default
+button.
+
+Nothing is damaged when this happens — the abort is before any file is replaced,
+and the existing install keeps working (verify with `ladrunoBuild`). Options: wait
+for the runs to finish; `/NOCLOSEAPPLICATIONS` (then locked files fail
+individually instead); or install elsewhere with `/DIR=`.
+
+**If you do test-install to a scratch `/DIR=`, repair the uninstall key
+afterwards.** `AppId` is FIXED in `installer.iss`, so every install — scratch ones
+included — overwrites the machine's single Add/Remove Programs entry under
+`HKLM\...\Uninstall\{8C8E2E87-...}_is1`. Test-installing to a temp folder silently
+repoints `InstallLocation` / `UninstallString` / `QuietUninstallString` /
+`Inno Setup: App Path` at that folder, and deleting it then leaves a dangling
+entry and a real install with no entry at all. Same key also makes the wizard's
+default destination "sticky", so the next interactive run offers the temp path.
 
 ---
 
