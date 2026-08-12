@@ -227,6 +227,48 @@ Ladruno hijacks `import opensees`"): with nothing imported at startup, a
 worktree's own `sys.path.insert(0, dist/bin)` wins again, and
 `LADRUNO_OPENSEES_BIN` is demoted from crutch to override.
 
+**It does NOT save you from a process that legitimately imported the engine** —
+an analysis run, a pytest session, its `multiprocessing` workers. The passive
+`.pth` stops *bare* interpreters from holding the DLLs; a real user of OpenSees
+still holds them, correctly.
+
+### 5b. `/SUPPRESSMSGBOXES` turns "could not close applications" into a SILENT abort
+
+A scripted upgrade (`setup.exe /VERYSILENT /SUPPRESSMSGBOXES`) returned **exit 5**
+and changed nothing, twice, while `install.log` showed only the PREVIOUS run's
+lines — easy to misread as "the installer is broken". It was not. Inno's
+RestartManager found six Python processes using files it was about to replace,
+failed to shut them down, and `/SUPPRESSMSGBOXES` answered the resulting
+Abort/Retry/Ignore box with its default, **Abort**:
+
+```
+RestartManager found an application using one of our files: Python   (x6)
+Shutting down applications using our files.
+Some applications could not be shut down.
+Defaulting to Abort for suppressed message box (Abort/Retry/Ignore)
+User canceled the installation process.
+```
+
+**Read `/LOG=<file>`, not `install.log`,** to see this: `install.log` is written by
+our own `[Code]` at `ssPostInstall`, so an install that aborts BEFORE that never
+writes a line, and its stale contents describe an earlier run. Exit 5 = user
+cancelled during install; with `/SUPPRESSMSGBOXES` that "user" is the default
+button.
+
+Nothing is damaged when this happens — the abort is before any file is replaced,
+and the existing install keeps working (verify with `ladrunoBuild`). Options: wait
+for the runs to finish; `/NOCLOSEAPPLICATIONS` (then locked files fail
+individually instead); or install elsewhere with `/DIR=`.
+
+**If you do test-install to a scratch `/DIR=`, repair the uninstall key
+afterwards.** `AppId` is FIXED in `installer.iss`, so every install — scratch ones
+included — overwrites the machine's single Add/Remove Programs entry under
+`HKLM\...\Uninstall\{8C8E2E87-...}_is1`. Test-installing to a temp folder silently
+repoints `InstallLocation` / `UninstallString` / `QuietUninstallString` /
+`Inno Setup: App Path` at that folder, and deleting it then leaves a dangling
+entry and a real install with no entry at all. Same key also makes the wizard's
+default destination "sticky", so the next interactive run offers the temp path.
+
 ---
 
 ## 6. Building the all-features installer
