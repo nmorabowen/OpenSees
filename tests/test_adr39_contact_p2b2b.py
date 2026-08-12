@@ -116,10 +116,23 @@ def test_autokn_matches_oracle_formula():
     assert rel < 0.02, f"kn_auto={kn_auto:.4f} vs oracle={kn_oracle:.4f} (rel {rel:.3e})"
 
 
-def test_autokn_no_owning_solid_skips():
-    """A master face whose nodes belong to NO 3-DOF/node solid → auto cannot size the
-    penalty → the pair is skipped (warn) and contact is inert. The slave then settles
-    on its own spring alone (disp = -P/k_spring), proving the contact contributed nothing."""
+def test_autokn_no_owning_solid_aborts():
+    """A master face whose nodes belong to NO 3-DOF/node solid → `-kn auto` cannot
+    size the penalty → ADR-78 P1 ABORTS. It used to skip the pair with a warning and
+    leave the contact inert, which is what this test asserted (hence the old name).
+
+    Inverted, not repaired, and this one is load-bearing beyond its own file.
+    ADR-78's apeGmsh side (ADR 0092 INV-1) picks the owner rank by master-node
+    majority, which is a PROXY for "the rank holding the master surface's backing
+    solid elements". That proxy is safe ONLY because a mis-pick now fails loudly:
+    the ADR says in as many words that if these aborts are ever softened back to
+    skips, the emit side silently regresses. A test still asserting the skip is a
+    standing invitation to do exactly that.
+
+    The escape hatch the abort's own message advertises -- "give an explicit -kn"
+    -- is covered by test_explicit_kn_on_solidless_master_runs below, so the
+    inversion costs no coverage of the legitimate rigid-master model.
+    """
     L, P, KSPRING = 1.0, 1.0e2, 1.0e3
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
@@ -150,8 +163,51 @@ def test_autokn_no_owning_solid_skips():
     ops.test("NormDispIncr", 1e-10, 50, 0)
     ops.algorithm("Newton")
     ops.analysis("Static")
-    assert ops.analyze(1) == 0, "spring-only model did not converge"
+    # handle() FATALs -> domainChanged() fails -> analyze() reports -1. Asserting the
+    # exact code rather than != 0: the pre-P1 failure mode was a CONVERGED run with a
+    # silently inert contact, so "it failed somehow" is too weak a discriminator.
+    assert ops.analyze(1) == -1, \
+        "-kn auto with no owning solid must ABORT (ADR-78 P1), not skip"
+
+
+def test_explicit_kn_on_solidless_master_runs():
+    """The escape hatch test_autokn_no_owning_solid_aborts points at: the same
+    solid-less master face is a perfectly legitimate model (a fixed/rigid master),
+    it just cannot have its penalty DERIVED. Give an explicit -kn and it runs.
+
+    This is the coverage that would otherwise have been lost by inverting that test,
+    and it is what keeps P1's abort a demand for information rather than a refusal
+    of the model: the slave now feels the contact (it penetrates far less than the
+    unresisted -P/k_spring), proving the explicit penalty is genuinely active."""
+    L, P, KSPRING, KN = 1.0, 1.0e2, 1.0e3, 1.0e6
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    top = [1, 2, 3, 4]
+    pts = [(0, 0, L), (L, 0, L), (L, L, L), (0, L, L)]
+    for t, (x, y, z) in zip(top, pts):
+        ops.node(t, float(x), float(y), float(z))
+        ops.fix(t, 1, 1, 1)
+    ops.node(99, L / 2, L / 2, L - 1.0e-8)
+    ops.fix(99, 1, 1, 0)
+    ops.node(98, L / 2, L / 2, L - 1.0e-8)
+    ops.fix(98, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, KSPRING)
+    ops.element("zeroLength", 1, 98, 99, "-mat", 1, "-dir", 3)
+    ops.contactSurface(10, "-master", 4, *top)
+    ops.contactSurface(20, "-slave", 99)
+    ops.contact(1, 10, 20, KN, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0)   # explicit kn
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(99, 0.0, 0.0, -P)
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.integrator("LoadControl", 1.0)
+    ops.test("NormDispIncr", 1e-10, 50, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "explicit -kn on a solid-less master must RUN"
     dz = ops.nodeDisp(99, 3)
-    # contact inert (skipped) ⇒ pure spring response, no contact resistance
-    assert abs(dz - (-P / KSPRING)) / (P / KSPRING) < 1e-6, \
-        f"slave dz={dz} != -P/k={-P/KSPRING} (contact did NOT skip?)"
+    free = -P / KSPRING                       # what an inert contact would give
+    assert abs(dz) < 0.5 * abs(free), \
+        f"slave dz={dz} ~ unresisted {free} -- the explicit kn did not engage"

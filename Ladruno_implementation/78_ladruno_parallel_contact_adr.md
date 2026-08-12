@@ -591,3 +591,54 @@ No contact regression from the CMake rename: `mp_noghost.tcl` still aborts and t
 down in **1.9 s**, and `mp.tcl` reproduces the harness reference values to every digit
 (`w15 = −5.624999999999919e−3`, `w11 = −5.124999999999914e−3`, `w5 = −5.000000000000034e−4`,
 `ΣR = 1.0000000000e+4`). `tests/test_auto_handler_sp_update.py` 15/15.
+### P1 FALLOUT — the four tests P1 left asserting the old contract
+
+P1 replaced fifteen silent degradations with aborts and **touched no test file**
+(`git show --stat` on `150b5a5f5` / `daf1b1ba7`: `CMakeLists.txt`,
+`LadrunoContactAbort.{cpp,h}`, `LadrunoContactHandler.cpp`, nothing else). Four tests still
+encoded the pre-P1 contract and had been red on `ladruno` ever since, found by an unrelated
+regression sweep. Their names were the only surviving record of what P1 replaced —
+`_skips`, `_skipped_loudly`, `_inert_`.
+
+The repair is **not** uniform, and the choice matters. The test is:
+
+> **was the broken precondition the SUBJECT of the test, or incidental to it?**
+
+If it was the subject, repairing the deck deletes the gate — invert the assertion. If it was
+incidental, inverting turns a physics test into a duplicate refusal test — repair the deck.
+
+| test | verdict | why |
+|---|---|---|
+| `test_missing_node_contact_skipped_loudly` → `_aborts` | **inverted** | The subject is "a typo'd node tag is never quietly tolerated". That has ratcheted twice — silent pair-drop → loud skip → abort — and the test should track the ratchet, not pin one rung. Fixing the typo would leave nothing to catch. |
+| `test_autokn_no_owning_solid_skips` → `_aborts` | **inverted** | The subject is what happens when `-kn auto` cannot size. Load-bearing beyond its own file: ADR 0092 INV-1 picks the owner rank by a master-node-majority PROXY, and §"Where the two ADRs interlock" states the proxy is safe *only* because this failure is now fatal. A test asserting the skip is a standing invitation to regress the emit side. |
+| `test_soft_kt_implicit_byte_identical` | **repaired** | The subject is that `-soft` cannot perturb an implicit solve. The slave being massless was incidental — harmless only while the degradation it triggered was silent. Mass is inert under `LoadControl` and both compared runs get the same value, so the bit-identity is untouched. |
+| `test_c2_0_mortar_contact_is_inert_byte_identical` → `_mortar_out_of_contact_` | **repaired** | See below — this one was green *for the wrong reason*. |
+
+Inverting `test_autokn_no_owning_solid_skips` would have lost real coverage: a solid-less
+(fixed/rigid) master IS a legitimate model, it simply cannot have its penalty *derived*. Added
+`test_explicit_kn_on_solidless_master_runs`, which gates the escape hatch the abort message
+itself advertises, so P1's abort stays a demand for information rather than a refusal of the
+model.
+
+**The finding worth keeping.** `test_c2_0_mortar_contact_is_inert_byte_identical` was not
+merely stale — it was **passing because of the bug it should have caught**. It built its facets
+on five collinear truss nodes with `-epsN auto`; the degenerate geometry made auto-sizing fail,
+the contact was silently dropped, and the model was therefore identical to no-contact. It had
+been gating "a mortar contact that silently failed to exist perturbs nothing" — the exact
+degradation P1 abolished. Rebuilt on real, separated, explicitly-penalised facets so the
+inertness rests on a positive gap.
+
+**And the first repair reproduced the same defect.** Putting the facets on fully-fixed nodes
+while comparing only the truss made the assertion unfalsifiable — no mortar behaviour could
+move the compared quantity. Caught by mutation, not by review. The facet nodes now carry free
+z DOFs and mass and their displacements join the compared tuple.
+
+Every repaired test was then **mutation-verified**: remove its subject and it must fail.
+Measured — missing-node abort (make the tag valid), auto-kn abort (give an explicit `kn`),
+explicit-kn engagement (make the penalty floppy), mortar neutrality (close the gap to
+interpenetration): all four flip to failing. See `LEDGER_quirks` for the two mutation-hygiene
+traps this cost (a non-unique anchor mutating an unrelated test, and `git checkout --` in a
+harness destroying uncommitted work).
+
+Suite after: the four files go 22 passed / 4 failed → **27 passed**; the wider
+contact/constraint/handler/tie sweep is **214 passed, 0 failed**.

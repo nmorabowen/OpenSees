@@ -122,9 +122,27 @@ def test_partial_segment_connectivity_refused():
         ops.contactSurface(1, "-master", 4, 1, 2, 3, 4, 5, 6, 7)
 
 
-def test_missing_node_contact_skipped_loudly():
-    """A typo'd node tag no longer silently drops pairs: the whole contact is skipped
-    with a warning, and the analysis still runs (no crash, no partial surface)."""
+def test_missing_node_contact_aborts():
+    """A typo'd node tag is FATAL -- the analysis refuses to run.
+
+    This test has always gated one thing: a bad node tag must never be quietly
+    tolerated. What "not tolerated" means has been ratcheted twice, and the test
+    tracks the ratchet rather than pinning one rung of it:
+
+        drop the affected pairs, silently   (pre contact-review P3)
+      -> skip the whole contact, warn       (contact-review P3 -- what this used
+                                             to assert, hence the old name)
+      -> abort                              (ADR-78 P1 -- asserted here)
+
+    P1's rule is that a DECLARED contact never silently fails to happen, and a
+    skipped-but-warned contact is precisely that failure under MPI, where the
+    warning is one line in one rank's log among many.
+
+    Inverted rather than repaired: fixing the typo would have deleted the gate
+    outright, since the missing node IS the subject. Contrast
+    test_c2_0_mortar_out_of_contact_byte_identical in the ADR-41 battery, whose
+    subject was byte-identity and whose broken precondition was incidental.
+    """
     _fresh()
     ops.node(1, -1.0, -1.0, 0.0); ops.fix(1, 1, 1, 1)
     ops.node(2,  1.0, -1.0, 0.0); ops.fix(2, 1, 1, 1)
@@ -137,7 +155,10 @@ def test_missing_node_contact_skipped_loudly():
     ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("Diagonal")
     ops.integrator("CentralDifferenceLadruno"); ops.algorithm("Linear")
     ops.analysis("Transient")
-    assert ops.analyze(1, 1e-4) == 0        # skipped contact, healthy analysis
+    # handle() FATALs -> domainChanged() fails -> analyze() reports -1. Asserting
+    # the exact code, not merely != 0: a bare "it failed" would also pass if the
+    # deck stopped converging for an unrelated reason.
+    assert ops.analyze(1, 1e-4) == -1
 
 
 # ------------------------------------------------- 3. mortar large-facet (isomap) gate

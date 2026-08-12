@@ -362,6 +362,15 @@ def _friction_stick_static(kt, soft):
         ops.fix(t, 1, 1, 1)
     ops.node(5, 0.0, 0.0, -1.0e-4)                       # start slightly penetrated ⇒ contact active iter 1
     ops.fix(5, 0, 1, 0)
+    # ADR-78 P1 fallout: `-soft` now REFUSES a slave node with no assembled mass,
+    # because m_eff collapses and the Courant-stable penalty silently degrades to the
+    # configured kn. This deck left node 5 massless, which was harmless only for as
+    # long as that degradation was silent. Mass is inert in a LoadControl static solve
+    # and both compared runs get the identical value, so the bit-identity this test
+    # gates is untouched -- the masslessness was incidental to the subject, never part
+    # of it. (Contrast the ADR-39 P2b-2b auto-kn test, where the broken precondition
+    # WAS the subject and the assertion had to be inverted instead.)
+    ops.mass(5, M, M, M)
     ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
     ops.contactSurface(2, "-slave", 5)
     extra = ("-outward", 0.0, 0.0, 1.0) + (("-soft", soft) if soft > 0.0 else ())

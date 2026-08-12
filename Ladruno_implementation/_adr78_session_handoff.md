@@ -70,30 +70,13 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
    progressive-collapse roadmap (ADR-51/54) and should probably outrank P2.
 3. **P2** — `-soft` refusal under partitioning, `LadrunoContactDomain::sendSelf`
    / `recvSelf`.
-4. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
+4. ~~**P1 left four tests red on `ladruno`.**~~ **DONE** — re-greened per test by
+   asking whether the broken precondition was the SUBJECT (invert) or incidental
+   (repair the deck); one of them turned out to be passing *because of* the bug
+   it should have caught. All four mutation-verified. See ADR-78 §P1 FALLOUT.
+5. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
    supply **element→rank ownership**, which is what makes ADR 0092 INV-1 exact
    instead of a proxy that refuses on an undecidable tie (see below).
-5. **NEW — P1 left four tests red on `ladruno`.** Found 2026-08-11 while
-   regression-checking the follow-up fix. P1 turned fifteen silent degradations
-   into aborts but touched **no test file** (`git show --stat` on `150b5a5f5` /
-   `daf1b1ba7`: only `CMakeLists.txt`, `LadrunoContactAbort.{cpp,h}`,
-   `LadrunoContactHandler.cpp`). Four tests still assert the pre-P1
-   "skip loudly and keep going" contract and now fail on the abort:
-
-   | test | the abort it now hits |
-   |---|---|
-   | `test_contact_review_p3_validation.py::test_missing_node_contact_skipped_loudly` | missing surface node |
-   | `test_adr39_contact_p2b2b.py::test_autokn_no_owning_solid_skips` | `-kn auto` cannot size |
-   | `test_adr41_mortar_c2_0.py::test_c2_0_mortar_contact_is_inert_byte_identical` | mortar auto penalty cannot size |
-   | `test_adr39_contact_p4_soft.py::test_soft_kt_implicit_byte_identical` | `-soft` massless slave |
-
-   Each name states the old contract (`_skips`, `_skipped_loudly`, `_inert_`),
-   so these are not incidental casualties — they are the suite's record of the
-   behaviour P1 deliberately replaced, and deciding what each should assert now
-   is P1's call, not a mechanical re-green. Two plausible readings per test
-   (invert to expect the abort, or give the deck an explicit `-kn`/`-epsN`/mass
-   so it stays a physics test), and they are not interchangeable.
-
 ## Where the two ADRs interlock
 
 ADR 0092 INV-1 picks the owner rank by master-node majority. That is a *proxy*
