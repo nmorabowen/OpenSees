@@ -18,9 +18,26 @@ from _testbed import ops
 pytestmark = [pytest.mark.zone_a]
 
 
+MASTER_FACET = ((101, 0.0, 0.0, 10.0), (102, 1.0, 0.0, 10.0), (103, 0.0, 1.0, 10.0))
+# 10 length units above the master: a real positive gap. Drop this to 9.5 and the
+# facets interpenetrate, the penalty engages, and the byte-identity below breaks --
+# that is the mutation which proves this test can fail.
+SLAVE_FACET = ((201, 0.0, 0.0, 20.0), (202, 1.0, 0.0, 20.0), (203, 0.0, 1.0, 20.0))
+
+
 def _chain(handler, define_mortar=False, nsteps=40):
-    """A small 3D truss chain (SP constraints only), optionally with an inert mortar
-    contact defined on top — used to prove the mortar definition is graph-neutral."""
+    """A small 3D truss chain (SP constraints only) plus a free-floating pair of
+    facets, optionally with a mortar contact DECLARED on those facets — used to prove
+    the declaration is graph-neutral.
+
+    The facets are built in BOTH runs and only the contactSurface/contact declarations
+    are conditional, so the comparison isolates the declaration itself rather than the
+    presence of six extra nodes. Their z DOFs are FREE and carry mass, and their
+    displacements are part of the compared tuple: that is what gives the test teeth. An
+    earlier repair pinned these nodes fully fixed and compared only the truss, which
+    made the assertion unfalsifiable — no mortar behaviour, correct or broken, could
+    have moved the compared quantity. Caught by mutation, not by review.
+    """
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     n = 5
@@ -35,29 +52,31 @@ def _chain(handler, define_mortar=False, nsteps=40):
         ops.element("Truss", i, i, i + 1, 1.0, 1)
     ops.setNodeVel(n, 1, 0.5, "-commit")
 
+    # the facet nodes: x/y held, z free + massive (so the transient tangent
+    # M/(beta dt^2) is nonsingular without needing springs), slave drifting gently
+    # downward so the compared z displacements are non-trivial and demonstrably live.
+    for t, x, y, z in MASTER_FACET + SLAVE_FACET:
+        ops.node(t, x, y, z)
+        ops.fix(t, 1, 1, 0)
+        ops.mass(t, 1.0, 1.0, 1.0)
+    for t, _x, _y, _z in SLAVE_FACET:
+        ops.setNodeVel(t, 3, -0.25, "-commit")
+
     ops.constraints(handler)
     if define_mortar:
-        # Real, non-degenerate, SEPARATED facets on their own fully-fixed nodes: a
-        # legitimate mortar contact that contributes nothing because the two surfaces
-        # are 10 length units apart. Fully-fixed nodes carry no equations, so they
-        # cannot perturb the truss chain's numbering.
+        # A legitimate, fully-specified mortar contact that contributes nothing because
+        # the two surfaces are 10 length units apart.
         #
         # This deck used to put the facets on the truss nodes 1..5 with `-epsN auto`,
         # and was green for the WRONG REASON: collinear nodes give degenerate facets,
         # auto-sizing failed, and the contact was inert because it had been silently
-        # dropped -- the exact degradation ADR-78 P1 abolished. The test was measuring
-        # the bug that made it pass. Two things changed: the penalty is explicit (there
-        # is nothing left to fail to size), and the inertness now rests on a durable
-        # physical reason (a positive gap) instead of on degenerate geometry that a
-        # future zero-area guard would rightly reject.
-        for t, (x, y, z) in zip((101, 102, 103),
-                                [(0.0, 0.0, 10.0), (1.0, 0.0, 10.0), (0.0, 1.0, 10.0)]):
-            ops.node(t, x, y, z); ops.fix(t, 1, 1, 1)
-        for t, (x, y, z) in zip((201, 202, 203),
-                                [(0.0, 0.0, 20.0), (1.0, 0.0, 20.0), (0.0, 1.0, 20.0)]):
-            ops.node(t, x, y, z); ops.fix(t, 1, 1, 1)
-        ops.contactSurface(1, "-master", 3, 101, 102, 103)
-        ops.contactSurface(2, "-slave-segments", 3, 201, 202, 203)
+        # DROPPED -- the exact degradation ADR-78 P1 abolished. The test was measuring
+        # the bug that made it pass. Two things changed: the penalty is explicit, so
+        # there is nothing left to fail to size; and the inertness now rests on a
+        # durable physical reason (a positive gap) instead of on degenerate geometry
+        # that a future zero-area guard would rightly reject.
+        ops.contactSurface(1, "-master", 3, *[t for t, *_ in MASTER_FACET])
+        ops.contactSurface(2, "-slave-segments", 3, *[t for t, *_ in SLAVE_FACET])
         ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-outward", 0.0, 0.0, 1.0,
                     "-augTol", 1e-8, "-maxAug", 20, "-ngp", 2)
 
@@ -69,9 +88,15 @@ def _chain(handler, define_mortar=False, nsteps=40):
     ops.analysis("Transient")
 
     out = []
+    facets = [t for t, *_ in MASTER_FACET + SLAVE_FACET]
     for _ in range(nsteps):
         assert ops.analyze(1, 1.0e-3) == 0
-        out.append(tuple(ops.nodeDisp(i + 1, 1) for i in range(n)))
+        # BOTH the truss x-displacements and the facet z-displacements. The facet
+        # terms are what make this falsifiable: an engaged mortar contact moves those
+        # nodes and nothing else, so omitting them leaves an assertion that no mortar
+        # behaviour could ever break.
+        out.append(tuple(ops.nodeDisp(i + 1, 1) for i in range(n))
+                   + tuple(ops.nodeDisp(t, 3) for t in facets))
     return out
 
 
