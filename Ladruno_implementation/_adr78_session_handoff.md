@@ -51,13 +51,15 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
 
 ## Open items, in the order I would take them
 
-1. **`AutoConstraintHandler`'s dead `MPI_Allreduce`.** Confirmed twice from the
-   generated `build.ninja` `DEFINES`: the file is in the `OPS_Analysis` object
-   library, is not listed per-target, so its `#ifdef _PARALLEL_*` block compiles
-   out of **every** target. Under MPI `constraints Auto` sizes each rank's
-   penalty from rank-local stiffness. Pre-existing, unrelated to contact, and now
-   a one-line fix via the `OPS_CONTACT_PER_TARGET_SOURCES` pattern P1
-   established. This is a live correctness bug in shipped code.
+1. ~~**`AutoConstraintHandler`'s dead `MPI_Allreduce`.**~~ **DONE 2026-08-11.**
+   Fixed via the per-target-TU pattern: the reduction now lives in
+   `LadrunoAutoPenaltyReduce.cpp`, listed in `OPS_MPI_PER_TARGET_SOURCES` (the
+   P1 list, renamed since it now holds two unrelated files).
+   `AutoConstraintHandler.cpp` is left with **no `#ifdef _PARALLEL_*` at all** —
+   that, not the guard's contents, is what stops the trap reopening. Gated by
+   `Ladruno_files/testbed/auto_penalty_mpi/`, whose pre-fix signature was
+   **measured by mutation** ( `[1e9, 1e5]` instead of `1e7` twice ), not
+   predicted. See ADR-78 §FOLLOW-UP.
 2. **P1 known limitation — runtime element removal.** `handle()` re-runs on every
    `domainChanged()`, and `LadrunoContactDomain` has no API to retire a contact
    or prune a surface, while `RemoveRecorder` removes nodes at runtime. A
@@ -75,7 +77,6 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
 5. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
    supply **element→rank ownership**, which is what makes ADR 0092 INV-1 exact
    instead of a proxy that refuses on an undecidable tie (see below).
-
 ## Where the two ADRs interlock
 
 ADR 0092 INV-1 picks the owner rank by master-node majority. That is a *proxy*

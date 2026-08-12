@@ -65,14 +65,11 @@
 #include <iomanip>
 #include <iostream>
 
-// for parallel
-#ifdef _PARALLEL_PROCESSING
-extern bool OPS_PARTITIONED;
-#include <mpi.h>
-#endif // _PARALLEL_PROCESSING
-#ifdef _PARALLEL_INTERPRETERS
-#include <mpi.h>
-#endif // _PARALLEL_INTERPRETERS
+// Ladruno ADR-78 follow-up: for parallel. The `#ifdef _PARALLEL_*` guards that
+// used to be here were inert -- see the note at the call site below. This file
+// is in the OPS_Analysis OBJECT library, so it must NOT reference mpi.h or
+// OPS_PARTITIONED at all; the reduction lives in its own per-target TU.
+#include "LadrunoAutoPenaltyReduce.h"
 
 void* OPS_AutoConstraintHandler()
 {
@@ -219,36 +216,17 @@ namespace {
 				item.second = std::pow(10.0, koom + penalty_oom);
 			}
 			// finalize the global stiffness info for global penalty
-#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
-			int pid = 0;
-			int np = 1;
-			MPI_Comm_rank(MPI_COMM_WORLD, &pid);
-			MPI_Comm_size(MPI_COMM_WORLD, &np);
-			// quick return for 1 process or for non-partitioned cases (should not happen)
-			bool do_allreduce = true;
-			if (np == 1) do_allreduce = false;
-#if defined(_PARALLEL_PROCESSING)
-			if (pid == 0 && !OPS_PARTITIONED) do_allreduce = false;
-#endif // defined(_PARALLEL_PROCESSING)
-			if (do_allreduce) {
-				double local_min = m_gp_min;
-				double local_max = m_gp_max;
-				double local_avg = m_gp_avg;
-				double local_cnt = m_gp_cnt;
-				if (MPI_Allreduce(&local_min, &m_gp_min, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD) != MPI_SUCCESS) {
-					opserr << "AutoConstraintHandler Warning: MPI_Allreduce failed to get MIN\n";
-				}
-				if (MPI_Allreduce(&local_max, &m_gp_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD) != MPI_SUCCESS) {
-					opserr << "AutoConstraintHandler Warning: MPI_Allreduce failed to get MAX\n";
-				}
-				if (MPI_Allreduce(&local_avg, &m_gp_avg, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD) != MPI_SUCCESS) {
-					opserr << "AutoConstraintHandler Warning: MPI_Allreduce failed to get SUM\n";
-				}
-				if (MPI_Allreduce(&local_cnt, &m_gp_cnt, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD) != MPI_SUCCESS) {
-					opserr << "AutoConstraintHandler Warning: MPI_Allreduce failed to get CNT\n";
-				}
-			}
-#endif // defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
+			// Ladruno ADR-78 follow-up: this reduction used to live here, inside an
+			// `#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)`
+			// block -- and this file compiles into the OPS_Analysis OBJECT library,
+			// which is built ONCE with no parallel define, so the block was dead in
+			// every binary including OpenSeesMP. Each rank therefore averaged only
+			// its own elements and got its own m_global_penalty, which is the value
+			// used for exactly the interface constraints that straddle a partition.
+			// Moved to LadrunoAutoPenaltyReduce.cpp, which IS compiled per target.
+			// The call is unconditional on purpose: leaving no `#ifdef _PARALLEL_*`
+			// in this TU is what keeps the trap from silently reopening.
+			ladrunoAutoPenaltyReduce(m_gp_min, m_gp_max, m_gp_avg, m_gp_cnt);
 			// finalize the average
 			if (m_gp_cnt > 0.0) m_gp_avg /= m_gp_cnt;
 			// compute the global penalty as function of the average
