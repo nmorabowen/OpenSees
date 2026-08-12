@@ -642,3 +642,50 @@ harness destroying uncommitted work).
 
 Suite after: the four files go 22 passed / 4 failed → **27 passed**; the wider
 contact/constraint/handler/tie sweep is **214 passed, 0 failed**.
+
+### REMOVAL LANE — `recorder Collapse` + contact is legal again
+
+Closes the P1 KNOWN LIMITATION above, which the handoff ranked as outranking P2 because it
+blocked the fork's own progressive-collapse roadmap (ADR-51/54).
+
+**The knot.** `handle()` re-runs on every `domainChanged()`, and P1 made a missing surface
+node FATAL. A collapse analysis removes nodes at runtime, so a declared contact + a removed
+surface node aborted mid-run. But P1 was *right* for its own case — a typo'd tag must never
+be silently dropped. The two cases were genuinely indistinguishable, because **both first
+surfaced inside `handle()`**: `LadrunoContactSurface` never saw the `Domain`, and
+`addSurface()` did no existence check.
+
+**The decision: split them by WHEN the node went missing.**
+
+| when the tag is absent | what it means | what happens |
+|---|---|---|
+| at `contactSurface` declaration | a deck typo | **refused**, at the deck line, naming the tag |
+| present then, absent at `handle()` | the analysis removed it | **pruned**, run continues, named notice |
+
+Declaration-time validation is what makes the runtime path sound: once a tag is known to have
+existed at setup, later absence *can only* be a removal. So P1's abort is preserved exactly
+where it was right and dropped exactly where it was wrong — this is not a softening of the
+fail-loud rule, it is the rule finally applied to the correct discriminator.
+
+**Retirement, not silent inertness.** If pruning empties a surface, the interaction has no
+body left to act on. It is **retired with a named notice and the run continues** — the
+physically correct answer, and not silent. That the notice is loud is the whole point: P1's
+thesis is that a declared contact never *silently* fails to happen, not that it can never
+stop existing.
+
+**What is deliberately untouched.** The `-kn auto`, `-soft`, and `kn <= 0` aborts. §Where the
+two ADRs interlock records that apeGmsh ADR 0092 INV-1's master-node-majority owner proxy is
+safe *only* because `-kn auto` failure is fatal; softening it would silently regress the emit
+side. `tests/test_contact_runtime_removal.py::test_kn_auto_failure_is_still_fatal` is a guard
+on that guard, so a future removal-lane change cannot erode it by accident.
+
+**Facets are pruned whole.** A faceted surface loses the entire segment if any corner is gone.
+The handler derives `nSeg = size/nps`, so dropping single corners would leave a short tail and
+silently mis-stride every later segment — the same class of defect the `addSurface()`
+whole-number-of-segments guard already exists to prevent.
+
+**Where:** `LadrunoContactSurface::pruneMissingNodes()` (whole-stride), 
+`LadrunoContactDomain::pruneRemovedNodes()` (sweep + retire, `retired` flag on all three
+interaction structs), called at the top of `LadrunoContactHandler::handle()`; declaration-time
+validation in `OPS_LadrunoContactSurface()` — the single parser for both engines, since P0.5
+registered the Tcl verbs against it rather than duplicating a parser.

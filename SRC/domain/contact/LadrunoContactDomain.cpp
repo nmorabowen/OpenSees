@@ -958,3 +958,79 @@ LadrunoContactDomain::revertToStart(void)
     // produce the identical value, so keeping it is both cheaper and byte-equivalent).
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// ADR-78 removal lane — see LadrunoContactDomain.h for why this is not a
+// regression of P1's fail-loud rule.
+// ---------------------------------------------------------------------------
+int
+LadrunoContactDomain::pruneRemovedNodes(Domain *dom)
+{
+    if (dom == 0)
+        return 0;
+
+    // 1. drop nodes the analysis removed, keeping facets whole
+    for (size_t i = 0; i < theSurfaces.size(); i++) {
+        LadrunoContactSurface *s = theSurfaces[i];
+        if (s == 0)
+            continue;
+        int before = s->getNodeTags().Size();
+        int dropped = s->pruneMissingNodes(dom);
+        if (dropped > 0) {
+            opserr << "LadrunoContactDomain: contactSurface " << s->getTag()
+                   << " lost " << dropped << " of " << before
+                   << " node entries removed by the analysis (ADR-78 removal lane); "
+                   << s->getNodeTags().Size() << " remain\n";
+        }
+    }
+
+    // 2. retire any interaction left without a usable surface
+    int retiredNow = 0;
+    // one lambda-free helper inlined three times: the three lanes store their
+    // surface tags in differently-named fields, so a loop would need a variant.
+    for (size_t i = 0; i < theContacts.size(); i++) {
+        Contact &c = theContacts[i];
+        if (c.retired)
+            continue;
+        LadrunoContactSurface *ms = getSurface(c.masterSurfTag);
+        LadrunoContactSurface *ss = getSurface(c.slaveSurfTag);
+        if (ms == 0 || ss == 0 ||
+            ms->getNodeTags().Size() == 0 || ss->getNodeTags().Size() == 0) {
+            c.retired = true;
+            retiredNow++;
+            opserr << "LadrunoContactDomain: RETIRING contact " << c.tag
+                   << " -- the analysis removed every node of its master or slave "
+                      "surface, so the interaction no longer has a body to act on "
+                      "(ADR-78 removal lane). The run continues WITHOUT it.\n";
+        }
+    }
+    for (size_t i = 0; i < theMortarContacts.size(); i++) {
+        MortarContact &m = theMortarContacts[i];
+        if (m.retired)
+            continue;
+        LadrunoContactSurface *ms = getSurface(m.masterSurfTag);
+        LadrunoContactSurface *ss = getSurface(m.slaveSurfTag);
+        if (ms == 0 || ss == 0 ||
+            ms->getNodeTags().Size() == 0 || ss->getNodeTags().Size() == 0) {
+            m.retired = true;
+            retiredNow++;
+            opserr << "LadrunoContactDomain: RETIRING mortar contact " << m.tag
+                   << " -- the analysis removed every node of its master or slave "
+                      "surface (ADR-78 removal lane). The run continues WITHOUT it.\n";
+        }
+    }
+    for (size_t i = 0; i < theRigidPlanes.size(); i++) {
+        RigidPlane &r = theRigidPlanes[i];
+        if (r.retired)
+            continue;
+        LadrunoContactSurface *ss = getSurface(r.slaveSurfTag);
+        if (ss == 0 || ss->getNodeTags().Size() == 0) {
+            r.retired = true;
+            retiredNow++;
+            opserr << "LadrunoContactDomain: RETIRING contactPlane " << r.tag
+                   << " -- the analysis removed every node of its slave surface "
+                      "(ADR-78 removal lane). The run continues WITHOUT it.\n";
+        }
+    }
+    return retiredNow;
+}

@@ -369,6 +369,39 @@ int OPS_LadrunoContactSurface()
         }
         nodeTags(i) = v;
     }
+    // ADR-78 removal lane — every node must EXIST NOW.
+    //
+    // This is the load-bearing half of making `recorder Collapse` + contact legal.
+    // Before it, a node tag that was never defined and a node the analysis removed
+    // mid-run were indistinguishable: both first surfaced inside handle(), which is
+    // why ADR-78 P1 had to abort on either. Rejecting a non-existent tag HERE means
+    // absence later can only be a runtime removal, which handle() may then prune and
+    // continue through.
+    //
+    // It is also strictly better on its own terms: a typo now fails at the deck line
+    // that contains it, naming the tag, instead of surfacing much later as a fatal in
+    // the middle of an analysis.
+    //
+    // Lives in the parser, not in LadrunoContactDomain::addSurface() where the other
+    // choke-point guards are, for one reason: addSurface() has no Domain handle. This
+    // function is the single parser for BOTH engines -- ADR-78 P0.5 registered the Tcl
+    // verbs against it rather than duplicating a parser -- so one check still covers
+    // Python and Tcl.
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) {
+        opserr << "WARNING contactSurface - no Domain\n";
+        return -1;
+    }
+    for (int i = 0; i < nodeTags.Size(); i++) {
+        if (theDomain->getNode(nodeTags(i)) == 0) {
+            opserr << "WARNING contactSurface " << tag << " - node " << nodeTags(i)
+                   << " does not exist. Define every node BEFORE the surface: contact "
+                      "cannot tell a typo from a node the analysis removed later, so the "
+                      "tags are pinned at declaration (ADR-78 removal lane).\n";
+            return -1;
+        }
+    }
+
     LadrunoContactDomain *cd = OPS_getOrCreateContactDomain();
     if (cd == 0) return -1;
     LadrunoContactSurface *s = new LadrunoContactSurface(tag, kind, nodeTags, nodesPerSeg);

@@ -122,26 +122,28 @@ def test_partial_segment_connectivity_refused():
         ops.contactSurface(1, "-master", 4, 1, 2, 3, 4, 5, 6, 7)
 
 
-def test_missing_node_contact_aborts():
-    """A typo'd node tag is FATAL -- the analysis refuses to run.
+def test_missing_node_refused_at_declaration():
+    """A typo'd node tag is refused by `contactSurface` itself.
 
     This test has always gated one thing: a bad node tag must never be quietly
-    tolerated. What "not tolerated" means has been ratcheted twice, and the test
-    tracks the ratchet rather than pinning one rung of it:
+    tolerated. What "not tolerated" means has now ratcheted three times, and the
+    test tracks the ratchet rather than pinning one rung of it:
 
         drop the affected pairs, silently   (pre contact-review P3)
-      -> skip the whole contact, warn       (contact-review P3 -- what this used
-                                             to assert, hence the old name)
-      -> abort                              (ADR-78 P1 -- asserted here)
+      -> skip the whole contact, warn       (contact-review P3)
+      -> abort at analyze                   (ADR-78 P1)
+      -> refuse at DECLARATION              (ADR-78 removal lane -- asserted here)
 
-    P1's rule is that a DECLARED contact never silently fails to happen, and a
-    skipped-but-warned contact is precisely that failure under MPI, where the
-    warning is one line in one rank's log among many.
+    The last rung is not just stricter, it is better placed. P1 could only catch
+    the typo inside handle(), because a missing node was indistinguishable from a
+    node the ANALYSIS had removed -- which is what made `recorder Collapse` +
+    contact abort mid-run. Pinning the tags at declaration separates the two: a
+    typo now fails at the deck line that contains it, naming the tag, and absence
+    later can only mean a runtime removal, which the removal lane prunes.
 
-    Inverted rather than repaired: fixing the typo would have deleted the gate
-    outright, since the missing node IS the subject. Contrast
-    test_c2_0_mortar_out_of_contact_byte_identical in the ADR-41 battery, whose
-    subject was byte-identity and whose broken precondition was incidental.
+    So the gate moved earlier and got more precise, and it bought the collapse
+    lane in the process. See tests/test_contact_runtime_removal.py for the other
+    half.
     """
     _fresh()
     ops.node(1, -1.0, -1.0, 0.0); ops.fix(1, 1, 1, 1)
@@ -149,16 +151,11 @@ def test_missing_node_contact_aborts():
     ops.node(3,  1.0,  1.0, 0.0); ops.fix(3, 1, 1, 1)
     ops.node(4, -1.0,  1.0, 0.0); ops.fix(4, 1, 1, 1)
     ops.node(5, 0.0, 0.0, 1e-4); ops.mass(5, 1.0, 1.0, 1.0)
-    ops.contactSurface(1, "-master", 4, 1, 2, 3, 999)   # 999 does not exist
-    ops.contactSurface(2, "-slave", 5)
-    ops.contact(7, 1, 2, 1e6, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0)
-    ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("Diagonal")
-    ops.integrator("CentralDifferenceLadruno"); ops.algorithm("Linear")
-    ops.analysis("Transient")
-    # handle() FATALs -> domainChanged() fails -> analyze() reports -1. Asserting
-    # the exact code, not merely != 0: a bare "it failed" would also pass if the
-    # deck stopped converging for an unrelated reason.
-    assert ops.analyze(1, 1e-4) == -1
+    with pytest.raises(Exception):
+        ops.contactSurface(1, "-master", 4, 1, 2, 3, 999)   # 999 does not exist
+    # and the same surface with only real tags is accepted, so the guard is not
+    # simply rejecting everything
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
 
 
 # ------------------------------------------------- 3. mortar large-facet (isomap) gate
