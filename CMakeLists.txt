@@ -741,28 +741,32 @@ set(OPS_INTERP_TCL_PER_TARGET_SOURCES
 )
 
 # ---------------------------------------------------------------------------
-# Ladruno ADR-78 P1: per-define contact abort
+# Ladruno ADR-78: MPI-sensitive sources that must be compiled PER TARGET
 #
-# Same shape as Patch 8 above, and the same reason. LadrunoContactHandler.cpp
-# lives in the OPS_Analysis OBJECT library -- compiled ONCE with no parallel
-# define and folded into every target -- so an `#ifdef _PARALLEL_*` block
-# written there compiles to nothing in EVERY build, OpenSeesMP included.
-# Measured, not assumed: a guarded MPI_Abort placed in the handler vanished
+# Same shape as Patch 8 above, and the same reason. Anything in the
+# OPS_Analysis OBJECT library is compiled ONCE with no parallel define and
+# folded into every target -- so an `#ifdef _PARALLEL_*` block written there
+# compiles to nothing in EVERY build, OpenSeesMP included. Measured, not
+# assumed: a guarded MPI_Abort placed in LadrunoContactHandler.cpp vanished
 # silently and the mutation deck hung exactly as it had before the change.
 #
-# So the one parallel-sensitive function -- the fatal exit, which must
-# MPI_Abort rather than let a failing rank strand its peers in the next
-# collective -- is isolated in its own TU and compiled per-target with that
-# target's defines. Deliberately kept to a single function: this list is
-# duplicated into every binary, so it should stay trivial.
+# So each parallel-sensitive function is isolated in its own TU and compiled
+# per-target with that target's defines. Keep this list trivial -- it is
+# duplicated into every binary -- and keep the OPS_Analysis-side file free of
+# `#ifdef _PARALLEL_*` entirely, so the trap cannot silently reopen.
 #
-# NB AutoConstraintHandler.cpp has the SAME latent problem -- it is in
-# OPS_Analysis and is not listed here, so its MPI_Allreduce is compiled out of
-# every target and `constraints Auto` sizes its penalty from rank-local
-# stiffness under MPI. Pre-existing and unrelated to contact; flagged rather
-# than fixed here so it gets its own change.
-set(OPS_CONTACT_PER_TARGET_SOURCES
+#   LadrunoContactAbort.cpp     ADR-78 P1 -- the contact fatal exit, which must
+#                               MPI_Abort rather than let a failing rank strand
+#                               its peers in the next collective.
+#   LadrunoAutoPenaltyReduce.cpp  ADR-78 follow-up -- the `constraints Auto`
+#                               global-stiffness allreduce. It had sat dead in
+#                               AutoConstraintHandler.cpp since that handler was
+#                               contributed, so under MPI every rank sized its
+#                               penalty from rank-local stiffness and the ranks
+#                               sharing an interface constraint disagreed on it.
+set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
+    ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
@@ -946,7 +950,7 @@ add_executable(OpenSees EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/tcl/commands.cpp
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
   ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
-  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
+  ${OPS_MPI_PER_TARGET_SOURCES}   # Ladruno ADR-78 (contact abort + auto-penalty allreduce)
 )
 
 if(TARGET TCL::TCL)
@@ -1049,7 +1053,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
       ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
-  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
+  ${OPS_MPI_PER_TARGET_SOURCES}   # Ladruno ADR-78 (contact abort + auto-penalty allreduce)
     )
 
 
@@ -1120,7 +1124,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
       ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
-  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
+  ${OPS_MPI_PER_TARGET_SOURCES}   # Ladruno ADR-78 (contact abort + auto-penalty allreduce)
     )
 
     if(DEFINED MUMPS_INCLUDE_DIR)
@@ -1180,7 +1184,7 @@ endif()
 add_library(OpenSeesPy SHARED EXCLUDE_FROM_ALL
     ${OPS_SRC_DIR}/interpreter/PythonModule.cpp
     ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
-    ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
+    ${OPS_MPI_PER_TARGET_SOURCES}   # Ladruno ADR-78 (contact abort + auto-penalty allreduce)
 )
 
 set_target_properties(OpenSeesPy PROPERTIES PREFIX "")
@@ -1215,7 +1219,7 @@ target_link_libraries(OpenSeesPy
 if(MPI_FOUND)
 
 add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
-  ${OPS_CONTACT_PER_TARGET_SOURCES}   # Ladruno ADR-78 P1
+  ${OPS_MPI_PER_TARGET_SOURCES}   # Ladruno ADR-78 (contact abort + auto-penalty allreduce)
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
   ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomain.cpp
   ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomainEleIter.cpp

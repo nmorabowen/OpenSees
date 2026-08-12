@@ -468,7 +468,7 @@ clean and left both happy paths bit-identical; only the mutation deck caught it,
 exactly as it had before. Same trap ADR-02 calls "the core blocker" for `OpenSeesCommands.cpp`.
 
 Fixed the way Patch 8 / Patch 9 fixed theirs: the one parallel-sensitive function lives in
-`SRC/analysis/handler/LadrunoContactAbort.cpp`, listed in `OPS_CONTACT_PER_TARGET_SOURCES` and
+`SRC/analysis/handler/LadrunoContactAbort.cpp`, listed in `OPS_MPI_PER_TARGET_SOURCES` and
 compiled **per target** with that target's defines. Verified in the generated `build.ninja` —
 `-D_PARALLEL_INTERPRETERS` present on `OpenSeesMP`'s copy, absent on the serial one. Isolating
 one function rather than moving the 1400-line handler keeps the duplicated compilation
@@ -534,3 +534,47 @@ removed this node", and the abort is right for the first and wrong for the secon
 needs surface-membership pruning on `removeNode`/`removeElement`, or an explicit
 contact-removal command. **Until then, do not combine `recorder Collapse` with a declared
 contact.** Recorded here rather than fixed because it is a design gap, not a defect in P1.
+
+### FOLLOW-UP — `AutoConstraintHandler`'s allreduce had never been compiled
+
+Open item 1 from the P1 handoff, and the third instance of the same trap in this ADR.
+
+`AutoConstraintHandler.cpp` sizes the `constraints Auto` penalty from the order of magnitude of
+the **mean element-diagonal stiffness**, `PVAL = 10^(round(log10(KAVG)) + oom)`. Upstream wrote
+four `MPI_Allreduce` calls to make `KAVG` a *global* quantity. That file compiles into the
+`OPS_Analysis` OBJECT library — built **once, with no parallel define**, and folded into every
+target — so its `#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)` block
+compiled to nothing in **every** binary, `OpenSeesMP` included. It has been dead since the
+handler was contributed.
+
+Under MPI each rank therefore averaged only its **own** elements. `PVAL` is the value
+`getPenaltyValue()` falls back to for any constrained node with no locally attached elements —
+which is precisely a partition-straddling interface node — so the ranks sharing a constraint
+size it from disjoint stiffness samples, with nothing printed.
+
+Fixed the way P1 fixed its `MPI_Abort`: the reduction moved to
+`SRC/analysis/handler/LadrunoAutoPenaltyReduce.cpp`, listed in `OPS_MPI_PER_TARGET_SOURCES`
+(the P1 list, renamed from `OPS_CONTACT_PER_TARGET_SOURCES` now that it holds two unrelated
+files) and compiled per target with that target's defines. The behaviour is a verbatim move —
+same four collectives in the same order, same `OPS_PARTITIONED` quick-return, same warning
+strings; only the compilation unit changed, which was the entire bug.
+
+`AutoConstraintHandler.cpp` is deliberately left with **no `#ifdef _PARALLEL_*` at all** and an
+unconditional call. That is the part that matters going forward: the trap is not that someone
+wrote the wrong guard, it is that a correct-looking guard in an OPS_Analysis TU is invisible.
+Removing the guard entirely is what stops it reopening silently.
+
+**Scope, stated honestly.** This restores the *global* statistic (`KMIN`/`KMAX`/`KAVG` and the
+`m_global_penalty` derived from it). It does **not** make the *per-node* penalties global —
+those accumulate from elements attached to the node on that rank, so a replicated interface node
+still gets a partial sum on each rank. That is inherent to an element-loop accumulation and would
+need element ghosting rather than a reduction; it is also far less severe, since both ranks'
+contributions are summed by the distributed SOE into a single, merely larger, effective penalty.
+The fallback path fixed here is the one that can be orders of magnitude wrong.
+
+**Gate:** `Ladruno_files/testbed/auto_penalty_mpi/`. The element populations are chosen so the
+three possible answers are four orders of magnitude apart — 100 trusses at `k=1e2` give
+`PVAL=1e5`, one truss at `k=1e6` gives `1e9`, and together they give exactly `1e7`. A 2-rank run
+must print `1e7` on **both** ranks; the pre-fix signature is `1e5` on one and `1e9` on the other.
+The two serial single-partition runs are what make that a fix rather than a coincidence: they
+establish that `1e5` and `1e9` are what the two partitions produce alone.

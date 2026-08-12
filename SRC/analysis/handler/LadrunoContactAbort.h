@@ -17,7 +17,7 @@
 // guarded MPI_Abort silently vanished and the mutation deck hung exactly as it
 // had before the "fix".
 //
-// This file is therefore listed in OPS_CONTACT_PER_TARGET_SOURCES and added to
+// This file is therefore listed in OPS_MPI_PER_TARGET_SOURCES and added to
 // each executable/module directly, mirroring Patch 8
 // (OPS_INTERP_TCL_PER_TARGET_SOURCES) and Patch 9 (OPS_InterpPyCmds*). Keeping
 // it to ~one function keeps the duplicated compilation trivial.

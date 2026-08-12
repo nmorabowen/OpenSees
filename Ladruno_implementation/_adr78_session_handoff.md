@@ -56,7 +56,7 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
    library, is not listed per-target, so its `#ifdef _PARALLEL_*` block compiles
    out of **every** target. Under MPI `constraints Auto` sizes each rank's
    penalty from rank-local stiffness. Pre-existing, unrelated to contact, and now
-   a one-line fix via the `OPS_CONTACT_PER_TARGET_SOURCES` pattern P1
+   a one-line fix via the `OPS_MPI_PER_TARGET_SOURCES` pattern P1
    established. This is a live correctness bug in shipped code.
 2. **P1 known limitation — runtime element removal.** `handle()` re-runs on every
    `domainChanged()`, and `LadrunoContactDomain` has no API to retire a contact
