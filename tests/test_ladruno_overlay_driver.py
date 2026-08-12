@@ -145,9 +145,23 @@ except Exception:  # pragma: no cover
     _HAVE_PYTEST = False
 
 # (d) the frozen toy (ADR-71 spike, extended by ADR-73 P0) as a library.
+#
+# The toy imports matplotlib AT MODULE SCOPE, which made a plotting library a hard
+# dependency of merely COLLECTING this file. A collection error is not contained --
+# pytest aborts the WHOLE run -- so on a machine without matplotlib this took down
+# all ~2000 tests in the suite, not just this module, and `pytest tests/` could not
+# be run at all. Skip cleanly instead, the same way the build gate above does.
+#
+# Not fixed at the source: the toy is ADR-cited and marked "DO NOT MODIFY". Install
+# matplotlib to actually run these tests.
 _TOYDIR = str(_ROOT / "Ladruno_implementation" / "adr71_meshless_p_spike")
 if _TOYDIR not in sys.path:
     sys.path.insert(0, _TOYDIR)
+if _HAVE_PYTEST:
+    pytest.importorskip(
+        "matplotlib",
+        reason="the ADR-71 frozen toy imports matplotlib at module scope",
+    )
 import staggered_pins_e7 as e7  # noqa: E402
 
 if _HAVE_PYTEST:

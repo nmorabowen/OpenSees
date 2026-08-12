@@ -68,7 +68,11 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
    progressive-collapse roadmap (ADR-51/54) and should probably outrank P2.
 3. **P2** — `-soft` refusal under partitioning, `LadrunoContactDomain::sendSelf`
    / `recvSelf`.
-4. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
+4. ~~**P1 left four tests red on `ladruno`.**~~ **DONE** — re-greened per test by
+   asking whether the broken precondition was the SUBJECT (invert) or incidental
+   (repair the deck); one of them turned out to be passing *because of* the bug
+   it should have caught. All four mutation-verified. See ADR-78 §P1 FALLOUT.
+5. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
    supply **element→rank ownership**, which is what makes ADR 0092 INV-1 exact
    instead of a proxy that refuses on an undecidable tie (see below).
 
