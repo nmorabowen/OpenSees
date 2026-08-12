@@ -354,6 +354,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         return -1;
     }
 
+    // ADR-78 removal lane. handle() re-runs on EVERY domainChanged(), and a
+    // collapse analysis (`recorder Collapse` / `remove node`) shrinks the domain
+    // underneath a contact declared once at setup. Reconcile before anything
+    // reads a surface: prune the removed nodes, retire any interaction left with
+    // nothing to act on, both reported by name.
+    //
+    // This is what makes `recorder Collapse` + contact legal again. P1 had to
+    // abort here because a missing node was indistinguishable from a deck typo;
+    // it no longer is -- OPS_LadrunoContactSurface() rejects a non-existent tag
+    // at DECLARATION time -- so absence now means the analysis removed it, and
+    // the ladrunoSurfaceNodesOk() aborts below become genuinely unreachable for
+    // that cause while staying as a backstop.
+    if (LadrunoContactDomain *cdPrune = theDomain->getLadrunoContactDomain())
+        cdPrune->pruneRemovedNodes(theDomain);
+
     // P1a: MP constraints (equalDOF / rigidLink / rigidDiaphragm) are NOT enforced
     // by the contact handler yet (Plain-style numbering). Warn rather than silently
     // ignore. Delegation to a base handler lands in P1b.
@@ -544,6 +559,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // claims the alternative is silence.
             for (int c = 0; c < cd->getNumContacts(); c++) {
                 const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+                if (ct.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
                 if (ct.softScale <= 0.0) continue;
                 const LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
                 if (ss == 0) continue;   // surface-undefined is caught, fatally, below
@@ -588,6 +604,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             std::multimap<int, int> slaveSeen;   // slaveNodeTag -> contactTag
             for (int c = 0; c < cd->getNumContacts(); c++) {
                 const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+                if (ct.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
                 LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
                 if (ss == 0 || ss->getKind() != LadrunoContactSurface::SLAVE_NODES)
                     continue;
@@ -605,6 +622,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
 
         for (int c = 0; c < cd->getNumContacts(); c++) {
             const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+            if (ct.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
             LadrunoContactSurface *ms = cd->getSurface(ct.masterSurfTag);
             LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
             if (ms == 0 || ss == 0) {
@@ -1018,6 +1036,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         cd->mortarNormalGCBegin();   // C2.2: rebuild the live λ_N node-set this handle()
         for (int c = 0; c < cd->getNumMortarContacts(); c++) {
             const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
+            if (mc.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
             LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
             LadrunoContactSurface *ss = cd->getSurface(mc.slaveSurfTag);
             if (ms == 0 || ss == 0) {
@@ -1231,6 +1250,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         cd->edgeGCBegin();
         for (int c = 0; c < cd->getNumMortarContacts(); c++) {
             const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
+            if (mc.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
             if (!mc.edgeEdge) continue;                 // opt-in off ⇒ skip (byte-identical)
             LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
             LadrunoContactSurface *ss = cd->getSurface(mc.slaveSurfTag);
@@ -1370,6 +1390,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     if (cd != 0) {
         for (int p = 0; p < cd->getNumRigidPlanes(); p++) {
             const LadrunoContactDomain::RigidPlane &rp = cd->getRigidPlane(p);
+            if (rp.retired) continue;   // ADR-78 removal lane: retired by pruneRemovedNodes()
             LadrunoContactSurface *surf = cd->getSurface(rp.slaveSurfTag);
             if (surf == 0) {
                 opserr << "FATAL LadrunoContactHandler::handle() - contactPlane " << rp.tag

@@ -31,6 +31,8 @@
 
 #include <ID.h>
 
+class Domain;
+
 class LadrunoContactSurface
 {
   public:
@@ -51,6 +53,21 @@ class LadrunoContactSurface
     const ID &getNodeTags(void) const { return theNodeTags; }
     int getNumSegments(void) const;       // MASTER: count; SLAVE: numNodes
     int getNodesPerSeg(void) const { return nodesPerSeg; }
+
+    // ADR-78 removal lane — drop nodes the ANALYSIS removed at runtime
+    // (`recorder Collapse` / `remove node`), returning the number of node-tag
+    // entries dropped. Nothing else in the engine may shrink a surface.
+    //
+    // This is only sound because a missing node can no longer mean a deck typo:
+    // OPS_LadrunoContactSurface() now rejects a tag that does not exist at
+    // DECLARATION time, so absence later can only be a runtime removal. Before
+    // that check existed the two cases were indistinguishable at handle() time,
+    // which is why ADR-78 P1 had to abort on both.
+    //
+    // Faceted kinds lose the WHOLE segment if any of its nodes is gone -- a
+    // partial facet is not a facet, and the handler derives nSeg = size/nps, so
+    // leaving a short tail would silently mis-stride every later segment.
+    int pruneMissingNodes(Domain *dom);
 
   private:
     int myTag;

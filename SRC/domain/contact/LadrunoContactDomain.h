@@ -61,6 +61,24 @@ class LadrunoContactDomain
     // --- model definition (from the contactSurface / contact commands) ---
     int addSurface(LadrunoContactSurface *surf);          // takes ownership
     LadrunoContactSurface *getSurface(int tag) const;
+
+    // ADR-78 removal lane — reconcile the declared contact with a domain the
+    // ANALYSIS has been shrinking underneath it (`recorder Collapse` /
+    // `remove node`). Called at the top of every handle().
+    //
+    // Prunes removed nodes from every surface, then RETIRES any interaction
+    // whose master or slave surface no longer has anything left, reporting both
+    // by name on opserr. Returns the number of interactions retired by this call.
+    //
+    // Why this is not a regression of ADR-78 P1's fail-loud rule: P1 aborts
+    // because a missing node used to be indistinguishable from a deck typo. It
+    // no longer is -- OPS_LadrunoContactSurface() rejects a non-existent tag at
+    // DECLARATION time -- so absence at handle() time can only mean the analysis
+    // removed it, and continuing without a body that no longer exists is the
+    // physically correct answer rather than a silent degradation. The `-kn auto`
+    // / `-soft` / kn<=0 aborts are untouched; apeGmsh ADR 0092 INV-1 leans on
+    // those, not on this path.
+    int pruneRemovedNodes(Domain *dom);
     // a contact interaction between a master and a slave surface (+ P2 params).
     // outward (optional, null = auto): a direction toward the slave's allowed
     // half-space, used to orient the derived segment normal (design-gate BLOCKER-1);
@@ -82,6 +100,12 @@ class LadrunoContactDomain
     //     LadrunoContactFE per (slave node, master segment) pair. Exposed so the
     //     handler (OPS_Analysis) can read the definition. ---
     struct Contact {
+        // ADR-78 removal lane: set when the ANALYSIS removed every node of one of
+        // this interaction's surfaces at runtime (`recorder Collapse` / `remove
+        // node`). A retired interaction is skipped by handle() with a NAMED
+        // notice -- never silently. It cannot mask a deck typo, because a tag
+        // that does not exist is now rejected at declaration time.
+        bool retired = false;
         int tag, masterSurfTag, slaveSurfTag;
         double kn, kt, mu;
         bool knAuto;            // true => kn auto-sized from the master element (P2b-2b)
@@ -126,6 +150,12 @@ class LadrunoContactDomain
     //     definition (a separate vector the NTS handler loop does not read), so the
     //     command surface exists and is byte-identical/inert until C2.1 consumes it. ---
     struct MortarContact {
+        // ADR-78 removal lane: set when the ANALYSIS removed every node of one of
+        // this interaction's surfaces at runtime (`recorder Collapse` / `remove
+        // node`). A retired interaction is skipped by handle() with a NAMED
+        // notice -- never silently. It cannot mask a deck typo, because a tag
+        // that does not exist is now rejected at declaration time.
+        bool retired = false;
         int tag, masterSurfTag, slaveSurfTag;
         double kn;              // penalty / epsN seed; knAuto => sized from the solid (C2.1)
         bool   knAuto;
@@ -211,6 +241,12 @@ class LadrunoContactDomain
     // --- P2a: rigid analytical plane (point p0 + outward unit normal n) vs a
     //     slave node-set; one adapter per slave node, connectivity = {slave}. ---
     struct RigidPlane {
+        // ADR-78 removal lane: set when the ANALYSIS removed every node of one of
+        // this interaction's surfaces at runtime (`recorder Collapse` / `remove
+        // node`). A retired interaction is skipped by handle() with a NAMED
+        // notice -- never silently. It cannot mask a deck typo, because a tag
+        // that does not exist is now rejected at declaration time.
+        bool retired = false;
         int tag, slaveSurfTag;
         double p0[3], n[3];     // n stored normalized at add time
         double kn;
