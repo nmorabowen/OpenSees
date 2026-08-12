@@ -134,6 +134,68 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           python ci/check_tcl_results.py
 
+  # ---- Full suite in ONE process: cross-tier state leaks ----------------
+  # The gap this closes, measured 2026-08-12:
+  #
+  #   PR CI    (ubuntu)      pytest -m "zone_a"
+  #   nightly  (self-hosted) pytest -m "zone_b"
+  #
+  # The two tiers NEVER share a process, so a test in one tier that poisons a
+  # process-global cannot be caught by either job. That is not hypothetical --
+  # it is exactly how the ASDConcrete3D tag-keyed hardening-law cache defect
+  # survived: a zone_a test registers material tag 1, and a zone_b test then
+  # silently inherits its backbone. Measured both ways on the same build:
+  # zone_b alone is 144 passed; zone_a-then-zone_b is 1 failed.
+  #
+  # So this job runs the WHOLE suite, unfiltered, in a single interpreter. It is
+  # the only job that can see ordering and global-state effects at all.
+  #
+  # Separate job rather than a step of zone-b-nightly on purpose: a failure here
+  # means "something leaks across tests", which is a different diagnosis from
+  # "Zone-B is broken", and conflating them makes the check ambiguous.
+  cross-tier-nightly:
+    name: Full suite, one process (cross-tier leaks)
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      # ~50 min. The ONE deselect is the known, deliberately-unfixed
+      # ASDConcrete3D defect (ADR-11 §KNOWN DEFECT, LEDGER_quirks,
+      # Ladruno_files/testbed/asdconcrete_tag_cache/). Deselecting it here does
+      # NOT hide it: the test still fails locally in a full run, which is the
+      # documented expectation, and the sentinel step below fails this job the
+      # moment the defect stops reproducing. Without the deselect this job would
+      # be red every single night, which trains people to ignore it -- and a
+      # permanently-red gate catches nothing.
+      - name: Full suite, unfiltered, single process
+        shell: pwsh
+        run: |
+          $env:APEGMSH_SKIP_VIEWER = "1"
+          cd tests
+          pytest -v --deselect test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
+      # Sentinel for the allowance above. Runs the minimal poisoning PAIR (~75 s)
+      # and requires it to FAIL. If someone fixes the material, this goes green,
+      # the step goes red, and whoever fixed it is told to delete the deselect
+      # rather than leaving a stale exemption behind forever.
+      # NB the pair is required: the bend test PASSES on its own (order-dependent),
+      # so asserting on it alone would be meaningless.
+      - name: Sentinel — the known ASDConcrete3D defect still reproduces
+        shell: pwsh
+        run: |
+          cd tests
+          pytest -q test_ladrunoBrick_asdconcrete.py::test_lch_handshake_mesh_objectivity test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
+          $rc = $LASTEXITCODE
+          if ($rc -eq 0) {
+            Write-Host "::error::The ASDConcrete3D tag-cache defect no longer reproduces."
+            Write-Host "::error::If it was fixed: delete the --deselect in the step above, drop this"
+            Write-Host "::error::sentinel, and update ADR-11 + LEDGER_quirks + the testbed README."
+            exit 1
+          }
+          Write-Host "Sentinel OK - the known defect still reproduces (pytest exit $rc), so the deselect above is still earned."
+          exit 0
+
   # ---- Zone-B + perf: nightly, self-hosted oneAPI box -------------------
   # Also runs on manual workflow_dispatch so the self-hosted tier (Zone-B
   # cross-checks, perf, and the ADR-1000 CMS LADRUNO_CMS=ON build+checks) can be
