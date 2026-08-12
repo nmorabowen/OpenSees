@@ -226,3 +226,51 @@ Listed here only as an index; the entries carry the detail and the measurements.
 * Removing a node that still carries a `NodalLoad` ACCESS-VIOLATES on the next
   `analyze` — measured with `constraints Plain` and no contact, so it is a stock
   lifecycle hazard, not a contact one. Collapse decks must drop the load first.
+
+---
+
+# Session 3 — 2026-08-12
+
+One PR: **P2**, the roadmap item both previous handoffs pointed at. Both halves
+shipped and gated by `Ladruno_files/testbed/contact_p2/run.py` (7 cases; the
+pre-P2 installed build fails exactly the 3 instruments it should — the best
+negative control this lane has had, and free).
+
+## What landed
+
+* **`-soft` refused under partitioning, ALL four lanes** (NTS / rigid plane /
+  mortar SOFT=2 / `-edgeSoft`), one named FATAL at the `anySoft` choke point.
+  np detection lives in `LadrunoContactAbort.cpp` (`ladrunoContactNumRanks()`),
+  NOT the handler — the P1 inert-`#ifdef` trap again, respected this time from
+  the start. np=1 (serial and `mpiexec -n 1`) unaffected, mutation-verified.
+* **`LadrunoContactDomain::sendSelf`/`recvSelf`** — definitions-only, through
+  `Domain::sendSelf/recvSelf` (`domainData` 17→19). `database File`
+  save→wipe→restore now carries contact exactly; pre-P2 it restored a
+  contact-free model SILENTLY (measured: top block floating, rt=0.0).
+* Partitioned `-kn auto` re-measured vs its serial twin on the P2 build:
+  1.6e−14 (the P0 number). Serial contact battery 147/147.
+
+## Findings worth knowing cold
+
+1. **P1's mass guard was ONLY ever protecting the fully-ghosted NTS case.**
+   Ghost ⇒ zero rank-local mass ⇒ P1 fires. A partition-boundary node has
+   PARTIAL mass (nonzero — locally undetectable), and the mortar/edge/plane
+   soft lanes were never scanned at all: the pre-P2 build runs a 2-rank mortar
+   `-soft` deck to completion, silently. That mortar deck is the honest
+   mutation for the refusal; the NTS deck alone can pass via the WRONG abort,
+   which is why both decks carry `rho > 0`.
+2. **The refusal over-refuses, disclosed:** an MP parametric sweep where every
+   rank holds the full model would size SOFT correctly and is refused anyway —
+   indistinguishable from manual DD from inside `handle()`. The error message
+   says so and names the workaround (explicit `-kn` / serial / a future
+   deck-supplied `m_eff`).
+3. **The DB stream is now build-lineage-scoped** (17→19): a pre-P2 database
+   cannot be restored by a P2+ build and the error names nothing useful. In
+   [[LEDGER_quirks]].
+
+## Open items now
+
+**S3/S4 (apeGmsh side) are next**, then **P4** (the validation battery — note
+its `-soft` case is now moot-by-refusal on partitioned decks; pounding on 2
+ranks should run `-kn auto`/explicit kn). The ASDConcrete3D sentinel and
+`cross-tier-nightly` notes from Session 2 stand unchanged.

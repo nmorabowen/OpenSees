@@ -51,6 +51,8 @@
 class LadrunoContactSurface;
 class ID;
 class Domain;   // ADR-60: needsResort(Domain*) looks up committed slave coords by tag
+class Vector;   // ADR-78 P2: the flat definitions pack
+class Channel;  // ADR-78 P2: sendSelf/recvSelf ride Domain::sendSelf's channel
 
 class LadrunoContactDomain
 {
@@ -552,6 +554,29 @@ class LadrunoContactDomain
         WARN_EDGE_SIGN_DEFER        // edge-edge sign capture deferred (orientDir ⟂ n)
     };
     bool warnOnce(int contactTag, int topic);
+
+    // --- ADR-78 P2 (D3): DEFINITIONS-ONLY serialization over a Channel. The engine's
+    //     surfaces + Contact/MortarContact/RigidPlane definitions are packed into ONE
+    //     flat Vector (ints/bools as exact small doubles) and ride Domain::sendSelf /
+    //     recvSelf -- the packed size travels in Domain's domainData ID so the receiver
+    //     can size the recv. Path state (friction slips, ALM multipliers, edge signs,
+    //     re-emit anchors) is deliberately NOT shipped: it is rank-local by INV-3, and a
+    //     shipped analysis re-engages fresh. No MPI here (INV-4) -- Channel is the same
+    //     transport abstraction every DomainComponent serializes through.
+    //
+    //     unpackDefinitions REFUSES a non-empty engine (definitions are declared once;
+    //     merging streams would alias tags) and rebuilds through the public add* choke
+    //     points so the command-path validation runs on the received data too; the
+    //     `retired` flags (a runtime datum the add* surface has no parameter for) are
+    //     patched after each add. recvSelf on an ALREADY-populated engine (a datastore
+    //     restore onto a live model) consumes the stream to stay in sync and VERIFIES it
+    //     matches the live definitions, warning loudly on any mismatch (the P1 rule:
+    //     never silently divergent). ---
+    int defsPackedSize(void) const;             // slots packDefinitions will fill (0 = nothing to ship)
+    int packDefinitions(Vector &v) const;       // v must be sized defsPackedSize(); <0 on size mismatch
+    int unpackDefinitions(const Vector &v);     // into an EMPTY engine only; <0 on refusal/bad stream
+    int sendSelf(int commitTag, Channel &theChannel, int dbTag);
+    int recvSelf(int commitTag, Channel &theChannel, int dbTag, int packedSize);
 
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
     int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)

@@ -29,6 +29,7 @@
 #include <Domain.h>        // ADR-60: needsResort() looks up committed slave coords by tag
 #include <Node.h>          // ADR-60
 #include <Vector.h>        // ADR-60
+#include <Channel.h>       // ADR-78 P2: definitions serialization (sendSelf/recvSelf)
 #include <Subdomain.h>     // ADR-60 R6: serial-only refusal — detect a worker Subdomain host
 #include "LadrunoContactProjection.h"   // ADR-63 auto-sign: voteSignRobust (per-slave majority vote)
 
@@ -510,6 +511,293 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     rp.softScale = (softScale > 0.0) ? softScale : 0.0; // B1 SOFT=1 scale (≤0 ⇒ off, byte-identical)
     for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
     theRigidPlanes.push_back(rp);
+    return 0;
+}
+
+// ===================================================== ADR-78 P2: definitions serialization
+// The engine's DEFINITIONS (surfaces + the three interaction lanes) as one flat Vector of
+// doubles. Ints and bools ride as exact small doubles (tags < 2^31 << 2^53). Path state is
+// deliberately absent (D3/INV-3: rank-local, re-engages fresh). Fixed per-lane slot counts;
+// bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
+
+namespace {
+    const int LCD_FMT_VERSION  = 1;
+    const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
+    const int LCD_NTS_SLOTS    = 21;
+    const int LCD_MORTAR_SLOTS = 37;
+    const int LCD_PLANE_SLOTS  = 12;
+}
+
+int
+LadrunoContactDomain::defsPackedSize(void) const
+{
+    if (theSurfaces.empty() && theContacts.empty() &&
+        theMortarContacts.empty() && theRigidPlanes.empty())
+        return 0;   // nothing to ship -- Domain::sendSelf sends size 0 and no Vector
+    int n = LCD_HDR_SLOTS;
+    for (size_t i = 0; i < theSurfaces.size(); i++)
+        n += 4 + theSurfaces[i]->getNodeTags().Size();   // tag, kind, nps, nTags, tags...
+    n += (int)theContacts.size()       * LCD_NTS_SLOTS;
+    n += (int)theMortarContacts.size() * LCD_MORTAR_SLOTS;
+    n += (int)theRigidPlanes.size()    * LCD_PLANE_SLOTS;
+    return n;
+}
+
+int
+LadrunoContactDomain::packDefinitions(Vector &v) const
+{
+    int need = this->defsPackedSize();
+    if (v.Size() != need) {
+        opserr << "WARNING LadrunoContactDomain::packDefinitions() - vector sized "
+               << v.Size() << ", need " << need << "\n";
+        return -1;
+    }
+    int p = 0;
+    v(p++) = (double)LCD_FMT_VERSION;
+    v(p++) = (double)theSurfaces.size();
+    v(p++) = (double)theContacts.size();
+    v(p++) = (double)theMortarContacts.size();
+    v(p++) = (double)theRigidPlanes.size();
+
+    for (size_t i = 0; i < theSurfaces.size(); i++) {
+        const LadrunoContactSurface *s = theSurfaces[i];
+        const ID &tg = s->getNodeTags();
+        v(p++) = (double)s->getTag();
+        v(p++) = (double)s->getKind();
+        v(p++) = (double)s->getNodesPerSeg();
+        v(p++) = (double)tg.Size();
+        for (int k = 0; k < tg.Size(); k++) v(p++) = (double)tg(k);
+    }
+    for (size_t i = 0; i < theContacts.size(); i++) {
+        const Contact &c = theContacts[i];
+        v(p++) = (double)c.tag;
+        v(p++) = (double)c.masterSurfTag;
+        v(p++) = (double)c.slaveSurfTag;
+        v(p++) = c.retired ? 1.0 : 0.0;
+        v(p++) = c.kn;  v(p++) = c.kt;  v(p++) = c.mu;
+        v(p++) = c.knAuto ? 1.0 : 0.0;
+        v(p++) = c.hasOutward ? 1.0 : 0.0;
+        for (int d = 0; d < 3; d++) v(p++) = c.outward[d];
+        v(p++) = c.cellFrac;
+        v(p++) = c.consistentTan ? 1.0 : 0.0;
+        v(p++) = c.muc;
+        v(p++) = c.consistentNormal ? 1.0 : 0.0;
+        v(p++) = c.softScale;
+        v(p++) = c.enableReemit ? 1.0 : 0.0;
+        v(p++) = c.resortFrac;
+        v(p++) = (double)c.resortEvery;
+        v(p++) = c.smoothNormal ? 1.0 : 0.0;
+    }
+    for (size_t i = 0; i < theMortarContacts.size(); i++) {
+        const MortarContact &m = theMortarContacts[i];
+        v(p++) = (double)m.tag;
+        v(p++) = (double)m.masterSurfTag;
+        v(p++) = (double)m.slaveSurfTag;
+        v(p++) = m.retired ? 1.0 : 0.0;
+        v(p++) = m.kn;   v(p++) = m.knAuto ? 1.0 : 0.0;
+        v(p++) = m.epsN; v(p++) = m.epsNAuto ? 1.0 : 0.0;
+        v(p++) = m.augTol; v(p++) = (double)m.maxAug; v(p++) = (double)m.ngp;
+        v(p++) = m.hasOutward ? 1.0 : 0.0;
+        for (int d = 0; d < 3; d++) v(p++) = m.outward[d];
+        v(p++) = m.cellFrac;
+        v(p++) = m.mu; v(p++) = m.epsT; v(p++) = m.epsTAuto ? 1.0 : 0.0;
+        v(p++) = m.cohesion; v(p++) = m.tauMax;
+        v(p++) = m.consistentTan ? 1.0 : 0.0;
+        v(p++) = m.isTie ? 1.0 : 0.0;
+        v(p++) = m.muc;
+        v(p++) = m.softScale;
+        v(p++) = m.edgeEdge ? 1.0 : 0.0;
+        v(p++) = m.edgeKn; v(p++) = m.edgeKnAuto ? 1.0 : 0.0;
+        v(p++) = m.edgeBand;
+        v(p++) = m.edgeMu; v(p++) = m.edgeKt;
+        v(p++) = m.edgeCohesion; v(p++) = m.edgeTauMax;
+        v(p++) = m.edgeConsistentTan ? 1.0 : 0.0;
+        v(p++) = m.edgeSoftScale;
+        v(p++) = m.edgeAlm ? 1.0 : 0.0;
+        v(p++) = m.edgeAugTol;
+    }
+    for (size_t i = 0; i < theRigidPlanes.size(); i++) {
+        const RigidPlane &r = theRigidPlanes[i];
+        v(p++) = (double)r.tag;
+        v(p++) = (double)r.slaveSurfTag;
+        v(p++) = r.retired ? 1.0 : 0.0;
+        for (int d = 0; d < 3; d++) v(p++) = r.p0[d];
+        for (int d = 0; d < 3; d++) v(p++) = r.n[d];
+        v(p++) = r.kn; v(p++) = r.muc; v(p++) = r.softScale;
+    }
+    return (p == need) ? 0 : -1;   // p != need would be a slot-count bug above
+}
+
+int
+LadrunoContactDomain::unpackDefinitions(const Vector &v)
+{
+    if (!theSurfaces.empty() || !theContacts.empty() ||
+        !theMortarContacts.empty() || !theRigidPlanes.empty()) {
+        // Definitions are declared once; merging a second stream would alias tags
+        // (the tag keys EVERY path-state store). recvSelf routes a live engine to
+        // the verify path instead -- reaching here non-empty is a caller bug.
+        opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - engine not "
+                  "empty; refusing to merge a definitions stream\n";
+        return -1;
+    }
+    int p = 0, sz = v.Size();
+    if (sz < LCD_HDR_SLOTS || (int)v(0) != LCD_FMT_VERSION) {
+        opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - bad stream "
+                  "(size " << sz << ", version " << (sz > 0 ? (int)v(0) : -1)
+               << ", expected version " << LCD_FMT_VERSION << ")\n";
+        return -1;
+    }
+    p = 1;
+    int nSurf = (int)v(p++), nNts = (int)v(p++), nMor = (int)v(p++), nPl = (int)v(p++);
+
+    for (int i = 0; i < nSurf; i++) {
+        if (p + 4 > sz) goto short_stream;
+        int tag  = (int)v(p++);
+        int kind = (int)v(p++);
+        int nps  = (int)v(p++);
+        int nTag = (int)v(p++);
+        if (kind < 0 || kind > 2 || nTag < 0 || p + nTag > sz) goto short_stream;
+        ID tags(nTag);
+        for (int k = 0; k < nTag; k++) tags(k) = (int)v(p++);
+        LadrunoContactSurface *s = new LadrunoContactSurface(
+            tag, (LadrunoContactSurface::Kind)kind, tags, nps);
+        if (this->addSurface(s) < 0) { delete s; return -1; }
+    }
+    for (int i = 0; i < nNts; i++) {
+        if (p + LCD_NTS_SLOTS > sz) goto short_stream;
+        int tag = (int)v(p++), ms = (int)v(p++), ss = (int)v(p++);
+        bool retired = (v(p++) != 0.0);
+        double kn = v(p++), kt = v(p++), mu = v(p++);
+        bool knAuto = (v(p++) != 0.0), hasOut = (v(p++) != 0.0);
+        double out[3]; for (int d = 0; d < 3; d++) out[d] = v(p++);
+        double cellFrac = v(p++);
+        bool cTan = (v(p++) != 0.0);
+        double muc = v(p++);
+        bool cNorm = (v(p++) != 0.0);
+        double soft = v(p++);
+        bool reemit = (v(p++) != 0.0);
+        double rFrac = v(p++);
+        int rEvery = (int)v(p++);
+        bool smooth = (v(p++) != 0.0);
+        if (this->addContact(tag, ms, ss, kn, kt, mu, hasOut ? out : 0, knAuto,
+                             cellFrac, cTan, muc, cNorm, soft,
+                             reemit, rFrac, rEvery, smooth) < 0)
+            return -1;
+        theContacts.back().retired = retired;   // runtime datum; no add* parameter
+    }
+    for (int i = 0; i < nMor; i++) {
+        if (p + LCD_MORTAR_SLOTS > sz) goto short_stream;
+        int tag = (int)v(p++), ms = (int)v(p++), ss = (int)v(p++);
+        bool retired = (v(p++) != 0.0);
+        double kn = v(p++);       bool knAuto = (v(p++) != 0.0);
+        double epsN = v(p++);     bool epsNAuto = (v(p++) != 0.0);
+        double augTol = v(p++);
+        int maxAug = (int)v(p++), ngp = (int)v(p++);
+        bool hasOut = (v(p++) != 0.0);
+        double out[3]; for (int d = 0; d < 3; d++) out[d] = v(p++);
+        double cellFrac = v(p++);
+        double mu = v(p++), epsT = v(p++);
+        bool epsTAuto = (v(p++) != 0.0);
+        double cohesion = v(p++), tauMax = v(p++);
+        bool cTan = (v(p++) != 0.0), isTie = (v(p++) != 0.0);
+        double muc = v(p++), soft = v(p++);
+        bool eEdge = (v(p++) != 0.0);
+        double eKn = v(p++);      bool eKnAuto = (v(p++) != 0.0);
+        double eBand = v(p++);
+        double eMu = v(p++), eKt = v(p++), eCoh = v(p++), eTau = v(p++);
+        bool eCTan = (v(p++) != 0.0);
+        double eSoft = v(p++);
+        bool eAlm = (v(p++) != 0.0);
+        double eAugTol = v(p++);
+        if (this->addMortarContact(tag, ms, ss, kn, knAuto, epsN, epsNAuto,
+                                   augTol, maxAug, ngp, hasOut ? out : 0, cellFrac,
+                                   mu, epsT, epsTAuto, cohesion, tauMax, cTan,
+                                   isTie, muc, soft,
+                                   eEdge, eKn, eKnAuto, eBand, eMu, eKt, eCoh, eTau,
+                                   eCTan, eSoft, eAlm, eAugTol) < 0)
+            return -1;
+        theMortarContacts.back().retired = retired;
+    }
+    for (int i = 0; i < nPl; i++) {
+        if (p + LCD_PLANE_SLOTS > sz) goto short_stream;
+        int tag = (int)v(p++), ss = (int)v(p++);
+        bool retired = (v(p++) != 0.0);
+        double p0[3], nn[3];
+        for (int d = 0; d < 3; d++) p0[d] = v(p++);
+        for (int d = 0; d < 3; d++) nn[d] = v(p++);
+        double kn = v(p++), muc = v(p++), soft = v(p++);
+        if (this->addRigidPlane(tag, ss, p0, nn, kn, muc, soft) < 0)
+            return -1;
+        theRigidPlanes.back().retired = retired;
+    }
+    if (p != sz) {
+        opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - " << (sz - p)
+               << " trailing slots unread (stream/format mismatch)\n";
+        return -1;
+    }
+    return 0;
+
+short_stream:
+    opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - stream ends "
+              "mid-record (read " << p << " of " << sz << " slots)\n";
+    return -1;
+}
+
+int
+LadrunoContactDomain::sendSelf(int commitTag, Channel &theChannel, int dbTag)
+{
+    int n = this->defsPackedSize();
+    if (n == 0)
+        return 0;   // Domain::sendSelf advertises size 0 and sends nothing
+    Vector v(n);
+    if (this->packDefinitions(v) < 0)
+        return -1;
+    if (theChannel.sendVector(dbTag, commitTag, v) < 0) {
+        opserr << "WARNING LadrunoContactDomain::sendSelf() - channel failed to send "
+                  "the definitions Vector (" << n << " slots)\n";
+        return -1;
+    }
+    return 0;
+}
+
+int
+LadrunoContactDomain::recvSelf(int commitTag, Channel &theChannel, int dbTag, int packedSize)
+{
+    if (packedSize <= 0)
+        return 0;
+    Vector v(packedSize);
+    if (theChannel.recvVector(dbTag, commitTag, v) < 0) {
+        opserr << "WARNING LadrunoContactDomain::recvSelf() - channel failed to recv "
+                  "the definitions Vector (" << packedSize << " slots)\n";
+        return -1;
+    }
+    if (theSurfaces.empty() && theContacts.empty() &&
+        theMortarContacts.empty() && theRigidPlanes.empty())
+        return this->unpackDefinitions(v);
+
+    // Already populated (a datastore restore onto a live model, the vanilla
+    // recv-again branch). Definitions are static declarations -- keep the live
+    // ones, but VERIFY the stream matches instead of silently trusting it
+    // (retired flags may legitimately differ: a restore rewinds to a commit
+    // taken before a runtime removal, so compare everything BUT them by
+    // re-packing the live engine, which carries the CURRENT retired flags,
+    // and masking the retired slots on both sides is more code than value --
+    // a retired-only mismatch is still worth the warning).
+    int n = this->defsPackedSize();
+    bool match = (n == packedSize);
+    if (match) {
+        Vector cur(n);
+        if (this->packDefinitions(cur) < 0)
+            return -1;
+        for (int i = 0; i < n && match; i++)
+            if (cur(i) != v(i)) match = false;
+    }
+    if (!match)
+        opserr << "WARNING LadrunoContactDomain::recvSelf() - the restored contact "
+                  "definitions differ from the live ones (" << packedSize << " vs "
+               << n << " slots); KEEPING the live definitions -- a restore does not "
+                  "redefine contact (ADR-78 P2). If the model changed since the "
+                  "save, rebuild it before restoring.\n";
     return 0;
 }
 

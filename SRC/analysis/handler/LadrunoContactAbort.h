@@ -39,4 +39,12 @@
 // job is torn down instead.
 int ladrunoContactFatal();
 
+// ADR-78 P2 -- the MPI world size, for the D4 `-soft`-under-partitioning
+// refusal. Serial builds (and MPI builds outside mpiexec) return 1. Lives in
+// this per-target TU for the same reason as ladrunoContactFatal(): an
+// `#ifdef _PARALLEL_*` probe written in LadrunoContactHandler.cpp would
+// compile to `return 1` in EVERY build, including OpenSeesMP, and the refusal
+// would never fire (the P1 inert-MPI_Abort trap).
+int ladrunoContactNumRanks();
+
 #endif

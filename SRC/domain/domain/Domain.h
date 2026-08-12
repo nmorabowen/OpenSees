@@ -294,6 +294,7 @@ class Domain
     int    theDbTag;                   // the Domains unique database tag == 0
     int    lastGeoSendTag;            // the value of currentGeoTag when sendSelf was last invoked
     int dbEle, dbNod, dbSPs, dbPCs, dbMPs, dbEQs, dbLPs, dbParam; // database tags for storing info
+    int dbContact;  // Ladruno (ADR-78 P2): dbTag for the contact-engine definitions Vector
 
     bool eleGraphBuiltFlag;
     bool nodeGraphBuiltFlag;
