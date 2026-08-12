@@ -37,11 +37,28 @@ def _chain(handler, define_mortar=False, nsteps=40):
 
     ops.constraints(handler)
     if define_mortar:
-        # faceted surfaces over existing nodes (geometry irrelevant — C2.0 never reads it);
-        # the mortar contact lands in theMortarContacts, which the handler does not iterate.
-        ops.contactSurface(1, "-master", 3, 1, 2, 3)
-        ops.contactSurface(2, "-slave-segments", 3, 3, 4, 5)
-        ops.contact(1, 1, 2, "-mortar", "-epsN", "auto",
+        # Real, non-degenerate, SEPARATED facets on their own fully-fixed nodes: a
+        # legitimate mortar contact that contributes nothing because the two surfaces
+        # are 10 length units apart. Fully-fixed nodes carry no equations, so they
+        # cannot perturb the truss chain's numbering.
+        #
+        # This deck used to put the facets on the truss nodes 1..5 with `-epsN auto`,
+        # and was green for the WRONG REASON: collinear nodes give degenerate facets,
+        # auto-sizing failed, and the contact was inert because it had been silently
+        # dropped -- the exact degradation ADR-78 P1 abolished. The test was measuring
+        # the bug that made it pass. Two things changed: the penalty is explicit (there
+        # is nothing left to fail to size), and the inertness now rests on a durable
+        # physical reason (a positive gap) instead of on degenerate geometry that a
+        # future zero-area guard would rightly reject.
+        for t, (x, y, z) in zip((101, 102, 103),
+                                [(0.0, 0.0, 10.0), (1.0, 0.0, 10.0), (0.0, 1.0, 10.0)]):
+            ops.node(t, x, y, z); ops.fix(t, 1, 1, 1)
+        for t, (x, y, z) in zip((201, 202, 203),
+                                [(0.0, 0.0, 20.0), (1.0, 0.0, 20.0), (0.0, 1.0, 20.0)]):
+            ops.node(t, x, y, z); ops.fix(t, 1, 1, 1)
+        ops.contactSurface(1, "-master", 3, 101, 102, 103)
+        ops.contactSurface(2, "-slave-segments", 3, 201, 202, 203)
+        ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-outward", 0.0, 0.0, 1.0,
                     "-augTol", 1e-8, "-maxAug", 20, "-ngp", 2)
 
     ops.numberer("Plain")
@@ -76,9 +93,18 @@ def test_c2_0_mortar_definition_round_trips():
     assert ops.ladrunoContactInfo() == [0, 0, 0, 0], "engine leaked across wipe"
 
 
-def test_c2_0_mortar_contact_is_inert_byte_identical():
-    """A model with a mortar contact DEFINED is BITWISE identical to no-contact — the
-    definition adds no DOF-graph edges (the handler never reads theMortarContacts in C2.0)."""
+def test_c2_0_mortar_out_of_contact_byte_identical():
+    """A model with an OUT-OF-CONTACT mortar contact defined is BITWISE identical to
+    no-contact: declaring surfaces and a mortar pair adds no DOF-graph edges and
+    perturbs no result.
+
+    Renamed from `..._mortar_contact_is_inert_byte_identical`. That name dates from
+    C2.0, when the mortar lane was inert PLUMBING by construction; the lane has been
+    live since C2.1 (ADR-41), so "is inert" no longer describes anything true about
+    the code -- only about this particular deck, whose surfaces do not touch. The
+    graph-neutrality property the test actually gates survives the change intact.
+    See _chain() for why the old fixture was green for the wrong reason.
+    """
     ref = _chain("Plain", define_mortar=False)
     mor = _chain("LadrunoContact", define_mortar=True)
     assert mor == ref
