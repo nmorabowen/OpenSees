@@ -196,11 +196,36 @@ Python extension respawns its formatter server within ~1s if killed — whack-a-
    ipykernel/Jupyter kernels, which hold user state), and click Retry in the window.
 3. Windows restart (heavier).
 
-**Permanent fix (do once):** convert the `opensees_venv` wiring from the boot
-`.pth` (active `import`) to a *passive* `.pth` (adds the dist path to `sys.path`
-but does NOT import on startup). Then VS Code's Python tools no longer auto-load
-the install DLLs and upgrades stop getting locked. See `wire_venv_pth.py` /
-`wire_pyenv.ps1` in `Ladruno_scripts`.
+**Permanent fix — DONE in the tool (#730), no longer a manual step.**
+`wire_venv_pth.py` now generates a *passive* boot module. It still registers
+search locations at startup (`sys.path`, `add_dll_directory`, process-local
+`PATH`) — none of which LOAD anything — but the `openseespy` alias that used to
+do an eager `import opensees` right there is now resolved lazily by a
+`sys.meta_path` finder. The first thing to load `opensees.pyd` is the user's own
+import, so VS Code's Python tools no longer pin the install DLLs.
+**Re-run the wirer once per venv to pick it up:**
+
+```
+<venv>\Scripts\python.exe Ladruno_scripts\wire_venv_pth.py "C:\Program Files\Ladruno\OpenSees\bin" "C:\Program Files\Ladruno\OpenSees\openseesmp"
+```
+
+**Measure it with `tasklist /m opensees.pyd`, as a set difference against a live
+baseline** — a bare venv Python must add NO new holder, while one whose script
+imports opensees adds some (that contrast is the only thing that proves the probe
+works at all). Two probes that LOOK right and silently lie:
+
+* `Get-Process($pid).Modules` — enumerated **7** modules for a Python that had
+  demonstrably imported the .pyd (its own stdout printed the Program-Files path),
+  and reports a clean `0` held whether or not the file is pinned. It will tell you
+  the lock is gone when it is not.
+* `tasklist /m X /fi "PID eq N"` — misses, because the venv launcher re-spawns the
+  real interpreter under a **different PID** than `Start-Process` hands back. Run
+  it unfiltered and diff the PID set.
+
+The same change retires the companion `LEDGER_quirks` entry ("An INSTALLED
+Ladruno hijacks `import opensees`"): with nothing imported at startup, a
+worktree's own `sys.path.insert(0, dist/bin)` wins again, and
+`LADRUNO_OPENSEES_BIN` is demoted from crutch to override.
 
 ---
 
