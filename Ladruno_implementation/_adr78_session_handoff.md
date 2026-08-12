@@ -60,14 +60,16 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
    `Ladruno_files/testbed/auto_penalty_mpi/`, whose pre-fix signature was
    **measured by mutation** ( `[1e9, 1e5]` instead of `1e7` twice ), not
    predicted. See ADR-78 §FOLLOW-UP.
-2. **P1 known limitation — runtime element removal.** `handle()` re-runs on every
-   `domainChanged()`, and `LadrunoContactDomain` has no API to retire a contact
-   or prune a surface, while `RemoveRecorder` removes nodes at runtime. A
-   collapse run whose removed node belonged to a contact surface now aborts
-   mid-run, and the MPI teardown skips `H5Fclose`. **Do not combine
-   `recorder Collapse` with a declared contact** until surface pruning or a
-   contact-removal command exists. Recorded in ADR-78; this blocks the fork's own
-   progressive-collapse roadmap (ADR-51/54) and should probably outrank P2.
+2. ~~**P1 known limitation — runtime element removal.**~~ **DONE 2026-08-12
+   (#737).** `recorder Collapse` + a declared contact is legal again. The knot was
+   that a deck typo and a node the ANALYSIS removed were indistinguishable — both
+   first surfaced inside `handle()`, because `LadrunoContactSurface` never saw the
+   `Domain` and `addSurface()` did no existence check. Split them by WHEN the tag
+   went missing: absent at declaration ⇒ typo ⇒ refused at the deck line; present
+   then absent at `handle()` ⇒ removal ⇒ pruned, run continues. An emptied surface
+   RETIRES its interaction with a named notice. The `-kn auto` / `-soft` /
+   `kn <= 0` aborts are untouched and now have a guard-on-the-guard test, because
+   ADR 0092 INV-1 leans on those. See ADR-78 §REMOVAL LANE.
 3. **P2** — `-soft` refusal under partitioning, `LadrunoContactDomain::sendSelf`
    / `recvSelf`.
 4. ~~**P1 left four tests red on `ladruno`.**~~ **DONE** — re-greened per test by
@@ -122,3 +124,105 @@ decks are the reason this ADR's numbers can be trusted; keep running them.
 * Python side: pin `LADRUNO_OPENSEES_BIN` / `LADRUNO_OPENSEESMP_BIN` and assert
   `mod.__file__`. A bare `import opensees` resolved to another session's
   scratchpad build.
+
+---
+
+# Session 2 — 2026-08-12
+
+Continued from the 2026-08-11 session above. Four PRs, all merged to `ladruno`
+(tip `900501d71`). Three of the four were **not** on the original roadmap: they
+were found by measuring, and each one explains why the next was findable.
+
+## What landed
+
+| PR | what |
+|---|---|
+| **#733** | `constraints Auto` was sizing its MPI penalty from ONE rank's elements — open item 1 |
+| **#734** | The four tests P1 orphaned + the collection abort that made the suite unrunnable + the ASDConcrete3D defect report |
+| **#736** | `cross-tier-nightly` — the whole suite in ONE process, so cross-test state leaks are catchable at all |
+| **#737** | The removal lane — open item 2, which the previous handoff ranked above P2 |
+
+## The chain, because the order is the point
+
+1. **#733** fixed a dead `MPI_Allreduce` in `AutoConstraintHandler`. Same
+   OPS_Analysis object-library trap P1 hit; found by taking the previous
+   handoff's open item 1 literally.
+2. Regression-checking #733 turned up **four tests red on `ladruno`** — P1 had
+   changed a contract and touched no test file. Fixing them (#734) meant deciding
+   per test whether the broken precondition WAS the subject (invert) or
+   incidental (repair the deck).
+3. One of those four turned out to be **passing because of the bug it should
+   have caught**, and then **my first repair of it was unfalsifiable**. Both
+   caught by mutation, neither by review.
+4. Trying to run the full suite to check for more revealed it **could not run at
+   all** — a missing matplotlib aborted collection, taking ~2000 tests with it.
+   That is why the four orphans had gone unnoticed.
+5. With the suite finally running end to end: exactly **one** failure, and it was
+   ORDER-DEPENDENT. Bisected in six steps to a tag-keyed process-global cache in
+   upstream `ASDConcrete3D`. Reported, deliberately not fixed.
+6. That defect was invisible to CI **by construction** (`-m zone_a` on PRs,
+   `-m zone_b` nightly, never the same process) — hence **#736**.
+7. **#737** then took the roadmap's own next item.
+
+## Open items now
+
+**P2 is next**, then S3/S4, then P4 — the list above is current. Plus:
+
+* **ASDConcrete3D tag cache — parked, reported, sentinel armed.** `ladruno`
+  carries ONE known-failing test on purpose:
+  `test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity`,
+  which fails in a full-suite run and passes alone. Do NOT repair, retag, or
+  xfail it — it is the only thing detecting a live silent-wrong-answer. Evidence,
+  reproducer, the two candidate fixes and the gate they must satisfy:
+  `Ladruno_files/testbed/asdconcrete_tag_cache/`. Also ADR-11 §KNOWN DEFECT and
+  [[LEDGER_quirks]].
+* **`cross-tier-nightly` fires for the first time tonight (06:00 UTC).** Two
+  things to know cold: it takes ~50 min, and its **sentinel step REQUIRES the
+  ASDConcrete3D defect to still reproduce**. If someone fixes that material the
+  sentinel goes green and the job goes RED on purpose, telling you to delete the
+  now-unearned `--deselect`. Also: it needs the self-hosted runner online — when
+  the runner is offline the job queues and cancels, which is SILENT, so confirm
+  the first run actually executed rather than assuming green.
+
+## Traps this session paid for — all recorded in [[LEDGER_quirks]]
+
+Listed here only as an index; the entries carry the detail and the measurements.
+
+* A test can be GREEN because of the very bug it should catch — and the fix for
+  it can be unfalsifiable in a new way. Mutate every "X changes nothing"
+  assertion.
+* Mutation hygiene: anchor on a UNIQUE string (a duplicated anchor edited an
+  unrelated test and reported the target as vacuous); restore by writing back the
+  bytes you read, NEVER `git checkout -- <path>` (it restores from the INDEX and
+  destroyed a finished rewrite after a `git stash pop` de-staged it).
+* A behaviour-changing PR that touches no test file leaves the suite asserting
+  the old contract, and the failures read as generic breakage.
+* A missing OPTIONAL dependency does not skip two tests — it aborts the ENTIRE
+  suite at collection.
+* Marker-filtered CI tiers can never catch a cross-test state leak.
+* `--deselect` with an unmatched path is SILENTLY ignored — verify by collection
+  count, with a bogus path as the control.
+* `pytest -k` applies to EVERY argument, so it deselects the target you are
+  measuring and reports a clean 0.08 s pass.
+* Peak load cannot discriminate two softening backbones (`FT*area` either way) —
+  integrate dissipated work.
+* **Two PRs can merge CLEANLY into a contradictory document.** #733 and #734 both
+  edited this file's open-items list; git conflicted on the ADR (both appended a
+  section — resolution keeps BOTH) but auto-merged the handoff into two item-5s,
+  one of which described work the same file recorded as DONE. Read the merged
+  result; a clean merge is not a correct merge.
+
+## Environment notes
+
+* **Run the suite with `opensees_env`**, not base `python3.12`. It has gmsh 4.15,
+  matplotlib, h5py, scipy, apeGmsh. Base 3.12 lacks gmsh, so `conftest.py` skips
+  the **entire 129-test `zone_b` tier** by design and the run looks green while a
+  whole tier never executed. That tier is where the material defect was hiding.
+* **`LADRUNO_OPENSEES_BIN` wants the DIRECTORY**, not the `.pyd` path — pointing
+  it at the file makes `import opensees` fail with `ModuleNotFoundError`, which
+  reads as a broken build. And unpinned in `opensees_env`, `import opensees`
+  still resolves to `C:\Program Files\Ladruno\...`, so always assert
+  `opensees.__file__`.
+* Removing a node that still carries a `NodalLoad` ACCESS-VIOLATES on the next
+  `analyze` — measured with `constraints Plain` and no contact, so it is a stock
+  lifecycle hazard, not a contact one. Collapse decks must drop the load first.
