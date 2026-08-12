@@ -498,3 +498,34 @@ independent damage points, no hourglass at all) is still the most robust choice;
 reach for the single-point forms when their ~8× material-eval saving matters
 (explicit dynamics, or very large ASDConcrete3D+IMPLEX models) and **monitor
 `hourglassEnergy`**.
+
+## KNOWN DEFECT (upstream, reported 2026-08-12, NOT fixed) — the tag-keyed hardening-law cache
+
+`ASDConcrete3D` silently reuses the **first** hardening law ever registered under a
+material tag. `HardeningLawStorage` (`ASDConcrete3DMaterial.cpp:1263`) is a
+process-global singleton keyed only by tag whose `store()` writes into an empty slot
+only; it is a function-local `static`, so **`ops.wipe()` cannot clear it**.
+`HardeningLaw::regularize()` calls `deRegularize()` (`:957`), which recovers that
+cached law and overwrites the instance's own. So the first material defined with tag
+*N* owns that tag's backbones for the life of the process.
+
+Preconditions, all three required: `-autoRegularization` on, `lch != lch_ref` (the
+`lch_scale == 1.0` guard returns before `deRegularize()`), and an earlier same-tag
+material with a different backbone.
+
+**This directly affects the §5 validation cases in this ADR.**
+`tests/test_ladrunoBrick_asdconcrete.py` registers tag 1 with a brittle backbone and
+runs first; `tests/test_ladrunoBrick_asdconcrete_bend.py` then asks for tag 1 with the
+deliberately ductile one it needs for displacement control to traverse the crack, and
+silently gets the brittle curve. Result:
+`test_notched_bend_mesh_objectivity` **passes in isolation and fails in a full-suite
+run**, on the reachability precondition (`coarse: only reached d=0.034`) rather than on
+either mesh-objectivity assertion.
+
+That failure is **expected and correct** until the material is fixed. Do not repair,
+retag, or xfail the bend test to make the suite green — it is the only thing currently
+detecting this. Reported rather than fixed by deliberate decision (upstream file).
+
+Evidence, standalone reproducer, the two candidate fixes, and the instrument traps
+found while measuring it: `Ladruno_files/testbed/asdconcrete_tag_cache/`. See also
+[[LEDGER_quirks]].
