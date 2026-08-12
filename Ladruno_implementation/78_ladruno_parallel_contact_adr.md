@@ -578,3 +578,16 @@ three possible answers are four orders of magnitude apart — 100 trusses at `k=
 must print `1e7` on **both** ranks; the pre-fix signature is `1e5` on one and `1e9` on the other.
 The two serial single-partition runs are what make that a fix rather than a coincidence: they
 establish that `1e5` and `1e9` are what the two partitions produce alone.
+
+**Measured 2026-08-11.** Fixed build: `1e5` / `1e9` / `1e7` serial, `1e7` twice on 2 ranks —
+ALL PASS. Per-target `DEFINES` re-checked in the generated `build.ninja` (the P1 lesson):
+`_PARALLEL_INTERPRETERS` on `OpenSeesMP` and `OpenSeesPyMP`, `_PARALLEL_PROCESSING` on
+`OpenSeesSP`, absent on `OpenSees` and `OpenSeesPy`. Then the mutation, because a green harness
+proves nothing until the broken one fails: `ladrunoAutoPenaltyReduce()` stubbed to `return 1`
+(what the dead `#ifdef` amounted to), `OpenSeesMP` rebuilt alone — the three serial rows stayed
+green and the 2-rank row flipped to exactly `[1e9, 1e5]`. Restored and re-verified.
+
+No contact regression from the CMake rename: `mp_noghost.tcl` still aborts and tears the job
+down in **1.9 s**, and `mp.tcl` reproduces the harness reference values to every digit
+(`w15 = −5.624999999999919e−3`, `w11 = −5.124999999999914e−3`, `w5 = −5.000000000000034e−4`,
+`ΣR = 1.0000000000e+4`). `tests/test_auto_handler_sp_update.py` 15/15.

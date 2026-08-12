@@ -51,13 +51,15 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
 
 ## Open items, in the order I would take them
 
-1. **`AutoConstraintHandler`'s dead `MPI_Allreduce`.** Confirmed twice from the
-   generated `build.ninja` `DEFINES`: the file is in the `OPS_Analysis` object
-   library, is not listed per-target, so its `#ifdef _PARALLEL_*` block compiles
-   out of **every** target. Under MPI `constraints Auto` sizes each rank's
-   penalty from rank-local stiffness. Pre-existing, unrelated to contact, and now
-   a one-line fix via the `OPS_MPI_PER_TARGET_SOURCES` pattern P1
-   established. This is a live correctness bug in shipped code.
+1. ~~**`AutoConstraintHandler`'s dead `MPI_Allreduce`.**~~ **DONE 2026-08-11.**
+   Fixed via the per-target-TU pattern: the reduction now lives in
+   `LadrunoAutoPenaltyReduce.cpp`, listed in `OPS_MPI_PER_TARGET_SOURCES` (the
+   P1 list, renamed since it now holds two unrelated files).
+   `AutoConstraintHandler.cpp` is left with **no `#ifdef _PARALLEL_*` at all** —
+   that, not the guard's contents, is what stops the trap reopening. Gated by
+   `Ladruno_files/testbed/auto_penalty_mpi/`, whose pre-fix signature was
+   **measured by mutation** ( `[1e9, 1e5]` instead of `1e7` twice ), not
+   predicted. See ADR-78 §FOLLOW-UP.
 2. **P1 known limitation — runtime element removal.** `handle()` re-runs on every
    `domainChanged()`, and `LadrunoContactDomain` has no API to retire a contact
    or prune a surface, while `RemoveRecorder` removes nodes at runtime. A
@@ -71,6 +73,26 @@ explicit. Harness preserved at `Ladruno_files/testbed/contact_parallel/`.
 4. **S3 / S4** on the apeGmsh side. S4 matters most: it is the layer that can
    supply **element→rank ownership**, which is what makes ADR 0092 INV-1 exact
    instead of a proxy that refuses on an undecidable tie (see below).
+5. **NEW — P1 left four tests red on `ladruno`.** Found 2026-08-11 while
+   regression-checking the follow-up fix. P1 turned fifteen silent degradations
+   into aborts but touched **no test file** (`git show --stat` on `150b5a5f5` /
+   `daf1b1ba7`: only `CMakeLists.txt`, `LadrunoContactAbort.{cpp,h}`,
+   `LadrunoContactHandler.cpp`). Four tests still assert the pre-P1
+   "skip loudly and keep going" contract and now fail on the abort:
+
+   | test | the abort it now hits |
+   |---|---|
+   | `test_contact_review_p3_validation.py::test_missing_node_contact_skipped_loudly` | missing surface node |
+   | `test_adr39_contact_p2b2b.py::test_autokn_no_owning_solid_skips` | `-kn auto` cannot size |
+   | `test_adr41_mortar_c2_0.py::test_c2_0_mortar_contact_is_inert_byte_identical` | mortar auto penalty cannot size |
+   | `test_adr39_contact_p4_soft.py::test_soft_kt_implicit_byte_identical` | `-soft` massless slave |
+
+   Each name states the old contract (`_skips`, `_skipped_loudly`, `_inert_`),
+   so these are not incidental casualties — they are the suite's record of the
+   behaviour P1 deliberately replaced, and deciding what each should assert now
+   is P1's call, not a mechanical re-green. Two plausible readings per test
+   (invert to expect the abort, or give the deck an explicit `-kn`/`-epsN`/mass
+   so it stays a physics test), and they are not interchangeable.
 
 ## Where the two ADRs interlock
 

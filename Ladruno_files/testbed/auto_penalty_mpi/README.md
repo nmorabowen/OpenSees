@@ -62,10 +62,17 @@ like. So `PVAL` is not merely printed here, it is the value actually used.
 | `serial.tcl whole` | one `PVAL = 1.000000e+07` |
 | `mp.tcl` on 2 ranks | **two** `PVAL = 1.000000e+07` |
 
-**Pre-fix signature:** the 2-rank run prints `1.000000e+05` and `1.000000e+09`
-— one per rank, each sized from its own elements. `run.py` names that case
-explicitly when it sees it, so a regression reads as itself rather than as a
-generic number mismatch.
+**Pre-fix signature — measured, not predicted:** the 2-rank run prints
+`1.000000e+09` and `1.000000e+05`, one per rank, each sized from its own
+elements. Obtained by mutating `ladrunoAutoPenaltyReduce()` to `return 1`
+immediately (which is exactly what the dead `#ifdef` amounted to), rebuilding
+`OpenSeesMP` alone, and re-running: the three serial rows stayed green and only
+the 2-rank row flipped. `run.py` names that case explicitly when it sees it, so
+a regression reads as itself rather than as a generic number mismatch.
+
+Re-run that mutation if you touch this path. A green harness proves nothing
+until the broken version fails — the same lesson ADR-78 P1 learned when its
+first `MPI_Abort` compiled clean and did nothing.
 
 The checker asserts that **both** `PVAL` lines equal the whole-model value
 rather than attributing a line to a rank: the two ranks' verbose reports
