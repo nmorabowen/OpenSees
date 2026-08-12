@@ -39,3 +39,15 @@ ladrunoContactFatal()
 #endif
     return -1;
 }
+
+int
+ladrunoContactNumRanks()
+{
+#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
+    int np = 1;
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
+    return np;
+#else
+    return 1;
+#endif
+}

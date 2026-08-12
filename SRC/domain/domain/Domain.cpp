@@ -102,6 +102,7 @@ Domain::Domain()
  currentTime(0.0), committedTime(0.0), dT(0.0), currentGeoTag(0),
  hasDomainChangedFlag(false), theDbTag(0), lastGeoSendTag(-1),
  dbEle(0), dbNod(0), dbSPs(0), dbPCs(0), dbMPs(0), dbEQs(0), dbLPs(0), dbParam(0),
+ dbContact(0),   // Ladruno: ADR-78 P2
  eleGraphBuiltFlag(false),  nodeGraphBuiltFlag(false), theNodeGraph(0), 
  theElementGraph(0), 
  theRegions(0), numRegions(0), commitTag(0), initBounds(true), resetBounds(false),
@@ -161,6 +162,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  currentTime(0.0), committedTime(0.0), dT(0.0), currentGeoTag(0),
  hasDomainChangedFlag(false), theDbTag(0), lastGeoSendTag(-1),
  dbEle(0), dbNod(0), dbSPs(0), dbPCs(0), dbMPs(0), dbEQs(0), dbLPs(0), dbParam(0),
+ dbContact(0),   // Ladruno: ADR-78 P2
  eleGraphBuiltFlag(false), nodeGraphBuiltFlag(false), theNodeGraph(0), 
  theElementGraph(0),
  theRegions(0), numRegions(0), commitTag(0), initBounds(true), resetBounds(false),
@@ -221,6 +223,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  currentTime(0.0), committedTime(0.0), dT(0.0), currentGeoTag(0),
  hasDomainChangedFlag(false), theDbTag(0), lastGeoSendTag(-1),
  dbEle(0), dbNod(0), dbSPs(0), dbPCs(0), dbMPs(0), dbEQs(0), dbLPs(0), dbParam(0),
+ dbContact(0),   // Ladruno: ADR-78 P2
  eleGraphBuiltFlag(false), nodeGraphBuiltFlag(false), theNodeGraph(0), 
  theElementGraph(0), 
  theElements(&theElementsStorage),
@@ -289,6 +292,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  currentTime(0.0), committedTime(0.0), dT(0.0), currentGeoTag(0),
  hasDomainChangedFlag(false), theDbTag(0), lastGeoSendTag(-1),
  dbEle(0), dbNod(0), dbSPs(0), dbPCs(0), dbMPs(0), dbEQs(0), dbLPs(0), dbParam(0),
+ dbContact(0),   // Ladruno: ADR-78 P2
  eleGraphBuiltFlag(false), nodeGraphBuiltFlag(false), theNodeGraph(0), 
  theElementGraph(0), 
  theRegions(0), numRegions(0), commitTag(0),initBounds(true), resetBounds(false),
@@ -339,6 +343,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
     theBounds(5) = 0;            
 
     dbEle =0; dbNod =0; dbSPs =0; dbPCs = 0; dbMPs =0; dbEQs = 0; dbLPs = 0; dbParam = 0;
+    dbContact = 0;   // Ladruno: ADR-78 P2
 }
 
 
@@ -1149,6 +1154,7 @@ Domain::clearAll(void) {
   eleGraphBuiltFlag = false;
   
   dbEle =0; dbNod =0; dbSPs =0; dbPCs = 0; dbMPs = 0; dbEQs = 0; dbLPs = 0; dbParam = 0;
+  dbContact = 0;   // Ladruno: ADR-78 P2
 
   currentGeoTag = 0;
   lastGeoSendTag = -1;
@@ -1168,6 +1174,7 @@ Domain::clearAll(void) {
   theElementGraph = 0;
   
   dbEle =0; dbNod =0; dbSPs =0; dbPCs = 0; dbMPs = 0; dbEQs = 0; dbLPs = 0; dbParam = 0;
+  dbContact = 0;   // Ladruno: ADR-78 P2
 }
 
 
@@ -3117,7 +3124,18 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   numLPs = theLoadPatterns->getNumComponents();
   numParam = theParameters->getNumComponents();
 
-  ID domainData(17);
+  // Ladruno (ADR-78 P2): 17 -> 19. Slot 17 carries the packed size of the contact
+  // engine's DEFINITIONS Vector (0 = no engine / nothing declared), slot 18 its
+  // dbTag, so the receiver can size + locate the recv. The Vector itself goes out
+  // at the very end of this method (after the Parameters), UNguarded by the geoTag
+  // block -- symmetric with recvSelf, which reads the size from THIS commit's
+  // domainData every time. Fork<->fork streams only; a contact-free model ships 4
+  // extra bytes of ID and nothing else.
+  int contactSize = (theContactDomain != 0) ? theContactDomain->defsPackedSize() : 0;
+  if (contactSize > 0 && dbContact == 0)
+    dbContact = theChannel.getDbTag();
+
+  ID domainData(19);
   domainData(0) = currentGeoTag;
   domainData(1) = numNod;
   domainData(2) = numEle;
@@ -3127,6 +3145,8 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(15) = numEQs;
   domainData(5) = numLPs;
   domainData(11) = numParam;
+  domainData(17) = contactSize;   // Ladruno: ADR-78 P2
+  domainData(18) = dbContact;     // Ladruno: ADR-78 P2
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -3514,7 +3534,16 @@ Domain::sendSelf(int cTag, Channel &theChannel)
       opserr << "Domain::send - Parameter with tag " << theParam->getTag() << " failed in sendSelf\n";
       return -12;
     }
-  }  
+  }
+
+  // Ladruno (ADR-78 P2): ship the contact engine's definitions (size advertised in
+  // domainData(17) above; 0 = nothing sent, byte-identical stream shape otherwise).
+  if (contactSize > 0) {
+    if (theContactDomain->sendSelf(commitTag, theChannel, dbContact) < 0) {
+      opserr << "Domain::send - the contact engine failed in sendSelf\n";
+      return -13;
+    }
+  }
 
   // if get here we were successful
   return commitTag;
@@ -3529,7 +3558,10 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   this->hasDomainChanged();
 
   // first we get the data about the state of the domain for this commitTag
-  ID domainData(17);
+  // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
+  // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
+  // Vector itself is consumed at the very end of this method.
+  ID domainData(19);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
     return -1;
@@ -3993,11 +4025,30 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 	opserr << "Domain::recv - Parameter with tag" << theParam->getTag() << " failed in recvSelf";
 	return -12;
       }
-    }  
-  } 
+    }
+  }
+
+  // Ladruno (ADR-78 P2): consume the contact engine's definitions Vector, if the
+  // sender shipped one (size in domainData(17), dbTag in domainData(18)). Two cases,
+  // both handled inside LadrunoContactDomain::recvSelf: an EMPTY engine (a restore
+  // after clearAll, or a shipped Subdomain) rebuilds the definitions through the
+  // add* choke points; a POPULATED one (the recv-again branch above) keeps its live
+  // definitions and only VERIFIES the stream matches, warning loudly on divergence.
+  {
+    int contactSize = domainData(17);
+    if (contactSize > 0) {
+      dbContact = domainData(18);
+      if (theContactDomain == 0)
+        this->setLadrunoContactDomain(new LadrunoContactDomain());
+      if (theContactDomain->recvSelf(commitTag, theChannel, dbContact, contactSize) < 0) {
+        opserr << "Domain::recv - the contact engine failed in recvSelf\n";
+        return -13;
+      }
+    }
+  }
 
   // now set the domains lastGeoSendTag and currentDomainChangedFlag
-  lastGeoSendTag = currentGeoTag;  
+  lastGeoSendTag = currentGeoTag;
 
   // if get here we were successful
   return 0;

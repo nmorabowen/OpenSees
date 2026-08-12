@@ -231,7 +231,7 @@ across ranks all declare no MP constraints.
 | **P0** ✅ | **No SRC change.** 2-rank deck: contact wholly on the master-owning rank, slave interface ghosted, under `system Mumps` (implicit) and `MPIDiagonal` (explicit), vs the identical serial model. | **PASSED 2026-08-11** — implicit within 1.6e−14, explicit bit-identical, 3 mutations each fail as designed. `-kn auto` resolves natively on the master-owning rank, confirming D1. See §Implementation log. |
 | **P0.5** ✅ | Register the contact family in `SRC/tcl/commands.cpp` (+ declarations in `commands.h`) so the classic engine — and therefore `OpenSeesMP` — can see it. Registration only; no parser duplicated. | **DONE 2026-08-11.** A 2-rank contact deck **in Tcl** matches its serial twin (1.4e−14) and both match the Python-lane reference to every digit. See §Implementation log P0.5. |
 | **P1** | D5 fail-loud (missing node → named error) + a `contact`-verb-on-wrong-rank abort. | Serial battery byte-identical; a deliberately incomplete interface aborts instead of running. |
-| **P2** | D4 as corrected: `-soft` refused under partitioning with a named error (`-kn auto` needs no change). `LadrunoContactDomain::sendSelf`/`recvSelf`. | The refusal fires; a partitioned `-kn auto` run resolves the **same** penalty as its serial twin. |
+| **P2** ✅ | D4 as corrected: `-soft` refused under partitioning with a named error (`-kn auto` needs no change). `LadrunoContactDomain::sendSelf`/`recvSelf`. | **DONE 2026-08-12.** The refusal fires on 2 ranks in BOTH the NTS and mortar lanes and stays quiet at np=1 (serial AND `mpiexec -n 1`); the partitioned `-kn auto` run matches its serial twin to 1.6e−14 (the same P0 number, re-measured on the P2 build); definitions round-trip `database File` save → wipe → restore exactly, and the pre-P2 build FAILS both instruments as designed (mortar deck runs silently, restore drops contact). See §P2 log. |
 | **P3** | apeGmsh ADR 0092: partition-graph weighting, owner selection, ghost + SP replay, `BridgeError` relaxed to a locality check. | A `g.constraints.contact` model emits a runnable 2-rank deck; partition-straddling cases still refuse with the *specific* reason. |
 | **P4** | Validation battery: 2-body pounding on 2 ranks (explicit, NTS + `-soft` if P2 shipped it), mortar mesh-tie across ranks (implicit + ALM), 4-rank strong-scaling sanity. | Each matches its serial reference; contact energy balance closes. |
 | **P5** | *Deferred sketch only.* Slave-node-partitioned contact + facet ghosting for load balance — requires the in-Newton allreduce for `ḡ_I` that D1 exists to avoid. | — |
@@ -689,3 +689,68 @@ whole-number-of-segments guard already exists to prevent.
 interaction structs), called at the top of `LadrunoContactHandler::handle()`; declaration-time
 validation in `OPS_LadrunoContactSurface()` — the single parser for both engines, since P0.5
 registered the Tcl verbs against it rather than duplicating a parser.
+
+### §P2 LOG — SOFT partition refusal + definitions serialization (2026-08-12)
+
+Two halves, gated by `Ladruno_files/testbed/contact_p2/run.py` (7 cases, all PASS on the P2
+build; the pre-P2 installed build fails exactly the instruments it should — see below).
+
+**Half 1 — `-soft` refused under partitioning (D4 as corrected).** One choke point, at the
+top of the existing `anySoft` scan in `handle()` (`LadrunoContactHandler.cpp`), covering ALL
+four soft lanes in one refusal: NTS `-soft`, rigid-plane `-soft`, mortar `-soft` (SOFT=2),
+and `-edgeSoft`. Condition: `hostPartitioned || ladrunoContactNumRanks() > 1`, where
+`ladrunoContactNumRanks()` lives in `LadrunoContactAbort.cpp` — the per-target MPI TU —
+because an `#ifdef _PARALLEL_*` probe written in the handler itself would compile to
+`return 1` in every build including `OpenSeesMP` (the P1 inert-`MPI_Abort` trap, §FOLLOW-UP).
+The error names every offending interaction and lane, states the mechanism (k_soft =
+SOFSCL·4·m_eff/dt² needs BOTH surfaces' ASSEMBLED mass; a rank-local cache makes a ghosted or
+partition-boundary node's m_eff silently too small), and exits via `ladrunoContactFatal()`.
+
+Two findings worth more than the code:
+
+1. **P1 already caught the fully-ghosted NTS case — by accident of completeness, and only
+   there.** The pre-P2 build aborts the 2-rank NTS `-soft` deck via P1's zero-slave-mass
+   guard (a ghost has NO rank-local element ⇒ zero mass ⇒ P1 fires). What P1 can never see:
+   a partition-BOUNDARY node (elements on both ranks ⇒ PARTIAL mass, nonzero) and the
+   mortar/edge/plane lanes, which P1's guard — an NTS-`getNumContacts()` loop — never scans.
+   Measured: the pre-P2 build runs the 2-rank MORTAR `-soft` deck **to completion, silently**
+   (`mp2-soft-mortar` prints its tail line pre-P2, is refused post-P2). That mortar deck is
+   the honest mutation for this refusal; the NTS deck alone could "pass" via the WRONG abort,
+   which is why both decks carry `rho > 0` — with mass, the P2 refusal is the only abort
+   available on the new build.
+2. **Disclosed over-refusal (recorded in the message itself):** an MP parametric sweep where
+   EVERY rank holds the full model has a complete mass cache and would size SOFT correctly,
+   but that is indistinguishable from manual DD from inside `handle()`. Such decks must use
+   an explicit `-kn`/`-kn auto` or run serial until a deck-supplied `m_eff` route exists.
+
+Controls: `serial-soft` (np=1 serial) and `mp1-soft` (`mpiexec -n 1 OpenSeesMP`) both RUN —
+the refusal is np-keyed, not build-keyed.
+
+**Half 2 — `LadrunoContactDomain::sendSelf`/`recvSelf` (D3's serialization clause).**
+DEFINITIONS-ONLY: surfaces + the three interaction lanes packed into ONE flat Vector
+(`defsPackedSize`/`packDefinitions`/`unpackDefinitions`, format-versioned, fixed per-lane
+slot counts — NTS 21, mortar 37, plane 12). Path state is deliberately absent (INV-3:
+rank-local, re-engages fresh); no MPI anywhere in the engine (INV-4 — `Channel` is the same
+transport every DomainComponent rides). The freight is wired through `Domain::sendSelf` /
+`recvSelf`: `domainData` grew 17 → 19 (slot 17 = packed size, 0 when no engine; slot 18 = the
+Vector's dbTag), the Vector goes out after the Parameters, and the receive path handles both
+branches — an EMPTY engine (restore-after-wipe, shipped Subdomain) rebuilds through the
+public `add*` choke points so command-path validation runs on received data too; a POPULATED
+one (the recv-again branch) keeps its live definitions and VERIFIES the stream matches,
+warning loudly on divergence. `unpackDefinitions` refuses a non-empty engine (tags key every
+path-state store; merging streams would alias them). The handler's `sendSelf`/`recvSelf`
+stay deliberately empty — the handler is stateless and its remote twin rebuilds everything
+from the received Domain.
+
+Measured (`db-roundtrip`): with contact, `database File` save → wipe → restore reproduces
+the reference response EXACTLY (w15 to the last digit) where the pre-P2 build restores a
+contact-free model (top block floating, the silent drop this closes); the live-model restore
+takes the verify path silently; and the vanilla (contact-free) round-trip is unchanged in
+behaviour. **Compatibility note:** the 17→19 stream change means a database written by a
+pre-P2 fork build (or upstream) cannot be restored by a P2+ build — recorded in
+[[LEDGER_quirks]].
+
+**Gate half 2 of the P2 row** — partitioned `-kn auto` vs serial twin: max relative delta
+1.625e−14 across w5/w11/w15/R on the preserved P0 decks, re-measured on this build (`mp-auto`).
+Serial byte-identity: the full serial contact battery (30 files, 147 tests) green against the
+P2 `opensees.pyd`.

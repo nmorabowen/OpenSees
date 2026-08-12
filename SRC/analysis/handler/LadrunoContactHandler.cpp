@@ -532,6 +532,50 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         for (int c = 0; c < cd->getNumMortarContacts() && !anySoft; c++)
             if (cd->getMortarContact(c).softScale > 0.0 ||
                 cd->getMortarContact(c).edgeSoftScale > 0.0) anySoft = true;
+        // ADR-78 P2 (D4): SOFT is REFUSED under partitioning, every lane. k_soft =
+        // SOFSCL*4*m_eff/dt^2 reads the ASSEMBLED nodal mass, and this rank's cache
+        // holds only ITS elements' mass: a ghosted surface contributes zero, and a
+        // partition-BOUNDARY node contributes a PARTIAL mass -- nonzero, so the P1
+        // zero-mass guard below cannot see it -- making m_eff too small and the
+        // contact silently too soft (the D4 failure class, undetectable locally).
+        // np > 1 comes from the per-target MPI TU (LadrunoContactAbort.cpp); an
+        // #ifdef probe HERE would be dead code in every build, OpenSeesMP included
+        // (the P1 inert-MPI_Abort trap -- see the note at the top of this file).
+        //
+        // Disclosed over-refusal: an MP parametric sweep whose EVERY rank holds the
+        // full model has a complete mass cache and would size SOFT correctly, but
+        // that is indistinguishable from manual domain decomposition from inside
+        // handle() -- so it refuses too. Named in the message.
+        if (anySoft && (hostPartitioned || ladrunoContactNumRanks() > 1)) {
+            for (int c = 0; c < cd->getNumContacts(); c++)
+                if (!cd->getContact(c).retired && cd->getContact(c).softScale > 0.0)
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                           << cd->getContact(c).tag << ": -soft";
+            for (int p = 0; p < cd->getNumRigidPlanes(); p++)
+                if (!cd->getRigidPlane(p).retired && cd->getRigidPlane(p).softScale > 0.0)
+                    opserr << "FATAL LadrunoContactHandler::handle() - contactPlane "
+                           << cd->getRigidPlane(p).tag << ": -soft";
+            for (int c = 0; c < cd->getNumMortarContacts(); c++) {
+                const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
+                if (mc.retired) continue;
+                if (mc.softScale > 0.0)
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                           << mc.tag << ": -soft";
+                if (mc.edgeSoftScale > 0.0)
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                           << mc.tag << ": -edgeSoft";
+            }
+            opserr << " is not supported under a partitioned host (np > 1 or "
+                      "Subdomain): k_soft = SOFSCL*4*m_eff/dt^2 needs BOTH surfaces' "
+                      "ASSEMBLED mass, and this process's cache holds only its own "
+                      "elements' share -- a ghosted or partition-boundary node makes "
+                      "m_eff silently too small (ADR-78 P2/D4). Use an explicit -kn "
+                      "(or -kn auto) instead, or run the SOFT model serial. NOTE: "
+                      "this refusal also fires when every rank holds the FULL model "
+                      "(an MP parametric sweep) -- completeness of the mass cache is "
+                      "not verifiable from one rank; ABORTING (ADR-78 P2)\n";
+            return ladrunoContactFatal();
+        }
         if (anySoft) {
             ladrunoBuildNodalMass(theDomain, cd);
             // ADR-78 P1, NARROWED after adversarial review. A SOFT contact sizes
@@ -1450,8 +1494,12 @@ LadrunoContactHandler::clearAll(void)
 int
 LadrunoContactHandler::sendSelf(int, Channel &)
 {
-    // P1a single-process stub (no state to serialize); parallel/database in a
-    // later phase rides LadrunoContactDomain::sendSelf, not the handler.
+    // Deliberately empty, and staying that way (ADR-78 P2). The handler is
+    // STATELESS -- every definition lives on the Domain's contact engine, and
+    // that freight now rides Domain::sendSelf -> LadrunoContactDomain::sendSelf
+    // (shipped in P2), the same channel stream that carries nodes/elements. A
+    // handler shipped through the DDM analysis aggregate therefore has nothing
+    // to add: its remote twin rebuilds everything from the received Domain.
     return 0;
 }
 
