@@ -3517,7 +3517,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Tell:** a monotone Path-driven quantity that grows correctly for N−1 steps and collapses at step N (the ADR-79 P2 undrained gate saw p: 6.16e5 → 5.2e4 at the final step, top displacement 0.0975 → 0.0000). Invisible when the final state happens to satisfy the assertion anyway — the ADR-78 corot gate-3 test asserts p ≈ 0 under rigid rotation, so its final-step snap-back to u = 0 ALSO read p ≈ 0 and passed.
 - **Workaround/status:** ✅ FIXED (ADR-79 P2 PR) — the parsed `useLast` is forwarded to the `PathTimeSeries` ctor (`// Ladruno` mark; [[LEDGER_vanilla_files]] row). Belt-and-braces for test authors: give the Path an extra terminal point beyond the last analysis time so no route depends on the beyond-the-end branch. *2026-07-28 (ADR-79 P2).*
 
-### An INSTALLED Ladruno hijacks `import opensees` in every venv it has wired — `sys.path.insert` cannot win  *(ROOT-CAUSED and FIXED 2026-08-11, #730 — see the last bullet; the workarounds below are kept because they still apply to any venv wired by an older installer)*
+### An INSTALLED Ladruno hijacks `import opensees` in every venv it has wired — `sys.path.insert` cannot win  *(ROOT-CAUSED and FIXED 2026-08-11, #735 — see the last bullet; the workarounds below are kept because they still apply to any venv wired by an older installer)*
 - **Bites:** any script that bootstraps a *worktree* build with the standard
   `sys.path.insert(0, "<worktree>/dist/bin"); import opensees`. The Ladruno
   installer writes `ladruno_opensees.pth` into the venv's `site-packages`,
@@ -3560,7 +3560,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   `APEGMSH_OPENSEES_BIN` before reusing it, closing the gap for code paths
   that reach `sys.modules['opensees']` before apeGmsh's own resolver runs.
 
-- **ROOT-CAUSE FIX (2026-08-11, #730): the boot module no longer imports anything at startup.** The
+- **ROOT-CAUSE FIX (2026-08-11, #735): the boot module no longer imports anything at startup.** The
   2026-08-10 entry above treats `LADRUNO_OPENSEES_BIN` as *the* escape hatch, which conceded the premise
   — that `import opensees` must happen at interpreter startup. It did not. The eager import existed only
   to alias `openseespy`/`openseespy.opensees` onto the sequential build; that alias is now resolved by a

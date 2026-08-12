@@ -196,7 +196,7 @@ Python extension respawns its formatter server within ~1s if killed — whack-a-
    ipykernel/Jupyter kernels, which hold user state), and click Retry in the window.
 3. Windows restart (heavier).
 
-**Permanent fix — DONE in the tool (#730), no longer a manual step.**
+**Permanent fix — DONE in the tool (#735), no longer a manual step.**
 `wire_venv_pth.py` now generates a *passive* boot module. It still registers
 search locations at startup (`sys.path`, `add_dll_directory`, process-local
 `PATH`) — none of which LOAD anything — but the `openseespy` alias that used to

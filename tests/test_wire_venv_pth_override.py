@@ -121,7 +121,7 @@ def test_no_override_falls_back_to_baked_in_install_dir(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# PASSIVE wiring (#730) — the generated boot module must not load the engine at
+# PASSIVE wiring (#735) — the generated boot module must not load the engine at
 # interpreter startup. One module-level `import opensees` cost us twice:
 #   * it pinned the install's MKL DLLs in every venv interpreter (VS Code's
 #     linters, Jupyter), so the next installer upgrade died with
