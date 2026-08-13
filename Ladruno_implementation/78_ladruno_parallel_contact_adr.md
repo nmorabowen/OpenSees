@@ -233,7 +233,7 @@ across ranks all declare no MP constraints.
 | **P1** | D5 fail-loud (missing node → named error) + a `contact`-verb-on-wrong-rank abort. | Serial battery byte-identical; a deliberately incomplete interface aborts instead of running. |
 | **P2** ✅ | D4 as corrected: `-soft` refused under partitioning with a named error (`-kn auto` needs no change). `LadrunoContactDomain::sendSelf`/`recvSelf`. | **DONE 2026-08-12.** The refusal fires on 2 ranks in BOTH the NTS and mortar lanes and stays quiet at np=1 (serial AND `mpiexec -n 1`); the partitioned `-kn auto` run matches its serial twin to 1.6e−14 (the same P0 number, re-measured on the P2 build); definitions round-trip `database File` save → wipe → restore exactly, and the pre-P2 build FAILS both instruments as designed (mortar deck runs silently, restore drops contact). See §P2 log. |
 | **P3** | apeGmsh ADR 0092: partition-graph weighting, owner selection, ghost + SP replay, `BridgeError` relaxed to a locality check. | A `g.constraints.contact` model emits a runnable 2-rank deck; partition-straddling cases still refuse with the *specific* reason. |
-| **P4** | Validation battery: 2-body pounding on 2 ranks (explicit, NTS + `-soft` if P2 shipped it), mortar mesh-tie across ranks (implicit + ALM), 4-rank strong-scaling sanity. | Each matches its serial reference; contact energy balance closes. |
+| **P4** ✅ | Validation battery: 2-body pounding on 2 ranks (explicit, NTS + `-soft` if P2 shipped it), mortar mesh-tie across ranks (implicit + ALM), 4-rank strong-scaling sanity. | **DONE 2026-08-12.** 12 verdicts, ALL PASS (`Ladruno_files/testbed/contact_p4/`): explicit pounding **bit-identical** to serial at np=2 AND np=4 (both bodies cut); energy closure 0.002% of E_peak with serial-vs-Σranks channel parity 6e−16; mortar tie + fixed-count ALM residual ~1e−19, np2 vs serial 6.5e−16; np=1/2/4 = 9.1/4.9/3.2 s. `-soft` case is moot-by-refusal (P2) and the refusal is re-pinned on the pounding deck. **One open defect found:** #737 regressed P1's MPI teardown for a missing ghost — see §P4 log finding 1. |
 | **P5** | *Deferred sketch only.* Slave-node-partitioned contact + facet ghosting for load balance — requires the in-Newton allreduce for `ḡ_I` that D1 exists to avoid. | — |
 
 ## Risks / open questions — **all five settled 2026-08-11, see §Adversarial review log**
@@ -754,3 +754,97 @@ pre-P2 fork build (or upstream) cannot be restored by a P2+ build — recorded i
 1.625e−14 across w5/w11/w15/R on the preserved P0 decks, re-measured on this build (`mp-auto`).
 Serial byte-identity: the full serial contact battery (30 files, 147 tests) green against the
 P2 `opensees.pyd`.
+
+### §P4 LOG — validation battery (2026-08-12)
+
+Battery at `Ladruno_files/testbed/contact_p4/` (`python run.py <build-dir>`; decks
+`pound.tcl` + `tie.tcl`, one deck per physics, partitioning selected by `[getNP]`).
+12 verdicts, **ALL PASS** against a fresh build of `cebec3f9f` (tip incl. #739);
+splash hash checked against the worktree HEAD before any measurement.
+
+**Pounding model** (the new transient case P0 never had): two 1x1xNB `stdBrick`
+columns stacked with a 5e-3 gap, bottom body fixed at the base (master face on top),
+top body under a constant downward load — it falls, impacts, bounces, separates,
+repeatedly (3 full impact/separation cycles in 3000 x 2e-5 s). NTS `-kn auto`,
+`CentralDifferenceLadruno` + `MPIDiagonal` + `ParallelPlain`, nodal mass. Deck shape =
+the P0 manual-DD pattern; at np=4 **both bodies are cut across ranks** (regular
+replicated-boundary DD and a contact interface in the same model — first time
+measured together; cut-level nodal mass is declared by ONE rank only, the same
+sum-of-A mechanism as INV-6).
+
+| case | gate | measured |
+|---|---|---|
+| pound-np2 | disp+vel histories at 3 sampled nodes, 17-digit records, vs serial | **0.000e+00 — bit-identical**, every step |
+| pound-np2 | peak impact force (sum of base reactions) | 2.996725e+04 both, identical |
+| pound-np2 | ghost slave copy vs native, every step | 0.000e+00 |
+| pound-np4 | histories vs serial (both bodies cut) | **0.000e+00 — bit-identical** |
+| energy-serial | closure at contact-OPEN samples | 4.61e-3 abs = **0.002% of E_peak** = 305.9 |
+| energy-np2/np4 | sum-over-ranks channels vs serial | **5.6e-16 / 6.0e-16** of E_peak |
+| tie-serial | tie residual after 15 fixed ALM augments; tip vs analytic | res = 3.6e-19; u15 = 2.0000000000e-3 (= 2P/E exactly to 10 digits) |
+| tie-np2 | residual; u5/u9/u15 vs serial; ghost vs native | res = 2.2e-19; max rel delta = **6.5e-16**; ghost-native = 0 |
+| scale-np124 | NB=8, 40000 steps: parity + coarse wall time | delta vs np1 = 0.000e+00; **np1 9.1 s / np2 4.9 s / np4 3.2 s** (desktop, startup-inclusive — a sanity check, NOT a scaling study) |
+| ctl-soft | P2 refusal on the partitioned pounding deck | named refusal, tail suppressed |
+| ctl-noghost | ghost declarations stripped -> loud, never silent | declaration-time refusal names the node; **job teardown MISSING — finding 1** |
+| ctl-ghostmass | INV-6 mutation (mass on ghosts) -> instrument must catch | runs silently to completion, moves t1 by **91%** -> the serial-comparison instrument flags it |
+
+**Explicit transient is bit-identical, not ~1e-12.** P0 measured the explicit lane
+bit-identical on a statics-shaped single engagement; P4 extends that to a genuinely
+transient run with repeated impact, separation and re-impact, at np=2 and np=4:
+every recorded digit of every step matches. The mechanism is the P0 one —
+`DistributedDiagonalSolver` sums A and B exactly once per shared DOF, and with the
+interface whole on one rank there is no order-dependent reduction anywhere. (The
+implicit tie lane shows the expected solver-order noise instead: 6.5e-16, Mumps vs
+UmfPack.)
+
+**Energy: the in-contact RES excursion is physical, and the gate must sit on
+separated samples.** Contact forces are assembled at the SOE by the handler's FEs —
+the EnergyBalance element/node sweep never sees them — so while the penalty spring
+is loaded its stored energy appears as an RES excursion (measured up to 200.7 of
+E_peak 305.9 at max penetration) and is returned on separation. Closure is therefore
+gated where the contact is OPEN (gap > 0, computed from the recorded histories):
+0.002% of E_peak, identical serial and partitioned. Per-rank EnergyBalance files sum
+to the serial channels at machine precision because trapezoidal integration is
+linear in the element/node partition — nothing is double-counted precisely because
+ghosts and replicated cut-level nodes carry no mass (INV-6 doing energy duty).
+
+**ALM across ranks: the augment loop must be fixed-count.** `analyze` is collective
+(Mumps), but `ladrunoMortarTieResidual` is rank-local (0 on the non-owner). A
+residual-keyed `break` would exit the loop on rank 1 immediately and deadlock rank 0
+in the next solve. The deck runs a FIXED number of held-load augmentations on every
+rank and applies the residual gate after the sweep, on the owner. Anyone porting
+`analyze_augmented`'s while-loop shape to a partitioned deck hits this.
+
+**Findings:**
+
+1. **OPEN DEFECT — #737 regressed P1's MPI teardown for the missing-ghost case.**
+   The removal lane moved missing-node detection from `handle()` (where P1's
+   `ladrunoContactFatal` tore the job down in 1.1 s) to `contactSurface`
+   declaration time — where the refusal is a rank-local parser error (`return -1`,
+   no MPI awareness). The refusing rank aborts its script; the OTHER rank walks
+   into the numberer/SOE collective and blocks. Measured on the **preserved P0
+   mutation gate** `contact_parallel/mp_noghost.tcl`, which P1 measured at "FATAL +
+   teardown, 1.1 s, zero orphans": on this build it prints the named refusal on
+   rank 0 and then **hangs** (>30 s manual, 45 s under the driver; once hydra's
+   auto-cleanup reaped it after 17 s with rc -1 — nondeterministic). The refusal
+   itself is correct and loud — what is missing is the teardown: the declaration
+   refusal should route through the per-target abort TU
+   (`ladrunoContactNumRanks()`/`ladrunoContactFatal()` in `LadrunoContactAbort.cpp`,
+   built for exactly this) when np > 1. Not fixed here (P4 is a measurement lane);
+   the battery's `ctl-noghost` documents the gap in its verdict line and reaps the
+   job with a process-tree kill.
+2. **Harness trap (cost ~15 min, in [[LEDGER_quirks]]):** when MPI ranks outlive
+   `mpiexec` (finding 1's hang, teardown races), they inherit the driver's stdout
+   pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, *even after
+   its own `TimeoutExpired` killed mpiexec* (Python re-enters `communicate()` on
+   the still-open pipes). The battery driver redirects to files and kills the whole
+   tree (`taskkill /F /T`) on timeout.
+3. **Recorder text output defaults to `-precision 6`,** which quantizes any
+   cross-run parity gate at ~3e-7 of peak (measured: the energy parity read
+   3.3e-7 until the decks passed `-precision 17`, then 5.6e-16). Under MPI the
+   file handler also appends `.part-<rank>` to every filename.
+
+**What P5 (deferred) should know:** Q-P0GATHER is not measurable at desktop scale —
+the np-scaling rows show healthy speedup (2.8x at np4) with the gather in the loop,
+but the model is far too small to expose an O(numShared)-through-rank-0 cost. A
+cluster-scale pounding run with a large interface is the honest measurement, and it
+belongs to the same campaign that would justify P5 itself.
