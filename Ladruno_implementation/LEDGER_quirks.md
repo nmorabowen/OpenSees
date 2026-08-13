@@ -4041,6 +4041,21 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Bites:** `Domain::sendSelf/recvSelf` grew the leading `domainData` ID from 17 to 19 slots (slot 17 = the contact-engine definitions Vector's packed size, slot 18 = its dbTag) so `database File` save/restore carries contact definitions. `FileDatastore` keys its record files BY OBJECT SIZE (`.IDs.17` vs `.IDs.19`), so a P2+ build restoring a pre-P2 database (or an upstream one) looks for a 19-slot record that does not exist and fails with the generic `Domain::recv - channel failed to recv the initial ID` — nothing says "format changed".
 - **Why it evades the usual guards:** both builds are green on their own round-trips; only the CROSS-build restore breaks, and saved databases usually outlive the build that wrote them by exactly long enough to forget this.
 - **Rule:** a saved OpenSees database is build-lineage-scoped. Re-save after upgrading across P2 (#this PR); do not archive `database File` outputs as long-term state.
+
+### `system("FullGeneral")` hard-crashes the whole process on a model with zero free equations
+- **Bites:** any model where every DOF ends up fixed or sp-prescribed — e.g. a fully strain-driven single-brick material-point driver under `constraints("Transformation")`, the standard ASDPlasticMaterial3D unit-test rig — dies the instant `system("FullGeneral")` is selected. It is material-independent: `ElasticIsotropic`, plain `MohrCoulomb_YF`, and the new `MohrCoulombTensionCutoff_YF` all die identically at analysis step 1. There is no Python traceback, `faulthandler` prints nothing, and the process exits 255/-1 — it looks exactly like a fresh material bug in whatever is under test, and cost about an hour of bisection before the culprit turned out to be the solver, not the material. `UmfPack` returns `rc=0` on the byte-identical model.
+- **Why:** the `FullGeneral` SOE/solver path does not guard `N==0` free equations; a fully-prescribed system legitimately has none.
+- **Workaround/status (2026-08-12, found during PR #741 / ADR-84 P0 verification):** use `UmfPack` (or another solver with an N=0 guard) for fully-prescribed material-point drivers. Root fix (a `FullGenLinSOE` N=0 guard) is filed as its own task, not part of this PR — pre-existing core defect, out of scope for the MCTC feature.
+
+### Eigen members "initialized" with `*= 0` keep NaN heap garbage (`NaN*0 == NaN`)
+- **Bites:** `ASDPlasticMaterial3D`'s constructor zeroed its Trial/Commit stress/strain Eigen members with `*= 0` rather than `setZero()`. Freshly allocated heap storage is uninitialized, and `*= 0` is a no-op on NaN/Inf bit patterns (`NaN*0 == NaN`) — it only "zeroes" values that already happen to be finite. A fresh OS process gets zero-filled pages, so a standalone probe run in its own interpreter always passed; pytest's long-lived, churned heap recycles dirty blocks, so roughly 40% of full-suite runs picked up NaN in the shear slots of `CommitStress` at construction. Every yf comparison against NaN silently evaluates false — plain MC trips its Newton NaN guard and the analysis fails loudly, but the MCTC escalation chain (ADR-84) would instead classify the NaN-poisoned trial as TC-dominant, land on the apex, and return a CLEAN-LOOKING `T_eff·δ` on what should have been an ordinary compression path — exactly the garbage-into-plausible failure mode this feature exists to prevent.
+- **Why:** `*=` on Eigen types is elementwise multiply-in-place; it is not a substitute for `setZero()`/`Zero()` when the storage's initial content is unknown.
+- **Workaround/status (2026-08-12, PR #741):** fixed by switching the constructor to `setZero()` — benefits every ASDP material, not just MCTC. Before trusting any other constructor in the tree, grep it for the same `*= 0` idiom; the bug pattern is generic to Eigen-backed members and not specific to this class.
+
+### ASDPlasticMaterial3D test paths must be tuned against PLASTIC response, not elastic estimates
+- **Bites:** a lateral-strain drive sized off the ELASTIC trial stiffness (targeting "+1.2e-3 strain reaches +1.15e3 kPa" against a tension cutoff) never actually reaches the cutoff once plastic relaxation kicks in — the measured final state was `s2=s3=-213.6 kPa`, still sitting on the MC ridge, nowhere near the target the elastic estimate promised. An assertion of non-vacuity (e.g. "the cutoff activates somewhere on this path") built on that estimate silently tests nothing.
+- **Why:** ASDPlasticMaterial3D's Backward_Euler return map relaxes the stress well below the elastic-predictor trajectory once yielding starts; extrapolating a target strain/stress from `E`/`nu` alone ignores that relaxation entirely.
+- **Workaround/status (2026-08-12, PR #741):** sweep the drive numerically (print the actual committed stress path at a few candidate strain magnitudes) and pin the test's non-vacuity assertions to the MEASURED plastic response, not an elastic back-of-envelope number.
 - **Layering note recorded with it:** P1's zero-slave-mass abort catches the FULLY-ghosted NTS `-soft` case by accident of completeness (ghost ⇒ no rank-local element ⇒ zero mass). It can never catch a partition-BOUNDARY node (partial mass, nonzero) and never scans the mortar/edge/plane soft lanes at all — the pre-P2 build ran a 2-rank mortar `-soft` deck to completion silently. The P2 refusal (`ladrunoContactNumRanks() > 1 || hostPartitioned` at the `anySoft` choke point) is the actual guard; when writing a mutation deck for a NEW guard, give the model mass so an OLD guard cannot fire first and let the test pass via the wrong abort.
 
 ### A model with ZERO free equations kills the whole PROCESS under the dense SOEs — exit 255, no traceback, faulthandler silent, and it reads like a bug in your test file
@@ -4050,3 +4065,158 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   (2) The two ProfileSPD variants additionally do `profileSize = iDiagLoc[size-1]` guarded only on `iDiagLoc != 0` — resizing an existing SOE *down* to zero equations reads `iDiagLoc[-1]` (UB) and leaves `profileSize` stale.
 - **How to recognize it fast:** whole-process death with **no** Python-level diagnostic during `analyze()`, on a model you can convince yourself has no free DOFs, that goes away when you switch to `system UmfPack` (or free one DOF). The `exit(-1)`-in-a-getter pattern is used in several OpenSees classes, so "silent process death, solver-dependent" is worth a `grep -rn "FATAL.*exit(-1)"` before bisecting the deck.
 - **Workaround/status (2026-08-12):** FIXED — all six dense SOEs now also create the wrappers when they are still null (`size != oldSize || vectX == 0`), and the ProfileSPD pair guards `size > 0` before indexing `iDiagLoc`. A zero-equation solve is trivially successful and now returns rc=0 with the `sp` values enforced, matching `UmfPack`. Regression gate: `tests/test_soe_zero_free_equations.py` (zone_a) — six systems x two scenarios (fresh zero equations; 3 -> 0 shrink) plus `Diagonal` on the fresh half, each in a **subprocess**, because a regression kills the interpreter and would otherwise take the whole pytest run down instead of failing one case. 6 of the 13 fail pre-fix, all of them *fresh*: only the FIRST `setSize` can see null wrappers, so **a 3 -> 0 shrink never reproduced the crash** (`size != oldSize` is true, the block runs, the wrappers are rebuilt at zero length) — the shrink half guards the `iDiagLoc[-1]` UB only. See [[LEDGER_vanilla_files]] rows for the six SOE files.
+## A rank-local Tcl deck ERROR under OpenSeesMP HANGS the whole job — a parser refusal is not a teardown, and #737 silently converted a measured 1.1 s FATAL into exactly this hang (ADR-78 P4) — FIXED
+
+- **Bites:** any check that refuses a deck line on ONE rank of a partitioned run
+  (measured instance: `contactSurface` declaration-time missing-node validation,
+  added by the ADR-78 removal lane #737). The refusing rank prints the named
+  error and aborts its script; every other rank marches into the next collective
+  (numberer gather, SOE solve) and blocks. The job then either hangs
+  indefinitely or is reaped by hydra's `--auto-cleanup` at a NONDETERMINISTIC
+  delay (measured on the same deck: hung >30 s and 45 s in two runs, exited
+  rc −1 after 17 s in a third). The preserved P0 mutation gate
+  `Ladruno_files/testbed/contact_parallel/mp_noghost.tcl` — which P1 measured at
+  "FATAL + teardown, 1.1 s, zero orphans" — hung on every build from #737 until
+  the fix below. Re-confirmed by mutation afterwards: revert the wrapper to a
+  bare `return res`, rebuild `OpenSeesMP` alone, and the deck goes straight back
+  to 45.16 s tree-killed with two orphaned `OpenSeesMP.exe` processes.
+- **Why:** P1's abort lived in `handle()` and routed through
+  `ladrunoContactFatal()` (the per-target MPI TU, `MPI_Abort` teardown). #737
+  moved the missing-node check to the `contactSurface` PARSER
+  (`OpenSeesOutputCommands.cpp`, `return -1`) — correct in serial, better even,
+  but the parser has no MPI awareness, so under MPI the loudness survived and
+  the teardown did not.
+- **Status: FIXED (2026-08-12, ADR-78 §P4 finding 1).** The three contact
+  DECLARATION verbs (`contactSurface` / `contact` / `contactPlane`) are now
+  two-line wrappers over their unchanged bodies, routing any `<0` result through
+  `ladrunoContactFatal()` (`LadrunoContactAbort.cpp` — the per-target MPI TU).
+  `mp_noghost.tcl` tears the job down again with zero orphans; the P4 battery's
+  `ctl-noghost` case now REQUIRES the fast exit (a driver tree-kill is a FAILURE
+  verdict, not an expectation), so the gate is a standing guard rather than a
+  note. Serial and `mpiexec -n 1` unchanged — `ladrunoContactFatal()` returns −1
+  untouched at np ≤ 1.
+- **The shape of the fix is the durable part.** Wrapping the RESULT, not each of
+  the ~75 individual `return -1` sites, means (a) the refusals that propagate out
+  of `addSurface`/`addContact`/`addRigidPlane` (unknown surface tag, duplicate
+  tag — the same partition-dependent class) are covered for free, and (b) a check
+  added later inherits the teardown instead of silently reopening the defect,
+  which is exactly how it opened. **General rule for ALL future fail-loud work:
+  under MPI, "refuse at the deck line" is only half a contract — the other half
+  is tearing the job down. Put the teardown at the verb boundary, not at the
+  check.** Note the query verbs are deliberately NOT wrapped: their −1 is
+  legitimately rank-local (`ladrunoMortarTieResidual` is 0 on the non-owner by
+  design), so aborting on one would break the ALM tie lane.
+- **Driving partitioned decks regardless:** redirect output to FILES and
+  `taskkill /F /T` the mpiexec tree on timeout (see the next entry for why pipes
+  make a wedged job worse). That harness discipline is what let this defect be
+  measured at all, and it stays right for any deck that can wedge.
+
+## MPI ranks that outlive mpiexec inherit the driver's stdout pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, even after its own TimeoutExpired already killed mpiexec (ADR-78 P4)
+
+- **Bites:** a Python harness launching `mpiexec` with `capture_output=True` and
+  a `timeout=`. If the job wedges (previous entry) the timeout fires, Python
+  kills mpiexec — and then blocks anyway: `subprocess.run`'s TimeoutExpired
+  path re-enters `communicate()` to drain the pipes, and the ORPHANED ranks
+  (children of `hydra_pmi_proxy`, not of mpiexec on Windows Intel MPI... they
+  survive the parent kill) still hold inherited write handles, so EOF never
+  comes. The driver looks hung with no traceback; the stdout buffer (all your
+  PASS/FAIL verdicts) is invisible until the process dies. Cost this session:
+  ~15 min of forensics on a battery that had actually finished 9 of its 12
+  cases.
+- **Why:** Windows pipe handles are inherited by the whole process tree;
+  `Popen.kill()` kills only the direct child. CPython's `run()` deliberately
+  waits for pipe EOF after the kill so it can attach output to the exception.
+- **Workaround/status (2026-08-12):** in MPI harnesses never capture through
+  pipes — redirect stdout/stderr to a FILE, `Popen.wait(timeout=...)`, and on
+  timeout kill the whole tree: `taskkill /F /T /PID <mpiexec-pid>` (hydra and
+  the ranks are in its Job tree even when mpiexec's own kill misses them). The
+  ADR-78 P4 driver (`Ladruno_files/testbed/contact_p4/run.py`, `Runner.run`) is
+  the reference implementation. Related-but-different from the Git-Bash
+  `kill -0` lie in [[ladruno-long-run-agent-traps]].
+
+## Recorder text files default to `-precision 6` — any cross-run parity gate tighter than ~1e-6 relative is gated on QUANTIZATION, not physics (and under MPI filenames grow a `.part-<rank>` suffix)
+
+- **Bites:** comparing recorder output between two runs that should agree to
+  machine precision (serial vs partitioned twins, A/B refactors). At the
+  default 6 significant digits two BIT-IDENTICAL runs compare equal — but so
+  does a run that diverged below ~1e-6 relative, so the gate silently proves
+  nothing; and a SUM of per-rank files (energy channels) picks up the rounding
+  of each addend (measured: serial-vs-Σranks energy parity read 3.3e-7 of
+  E_peak from quantization alone; with `-precision 17` the same comparison
+  reads 5.6e-16). Separately, under MPI every `-file foo.txt` becomes
+  `foo.part-<rank>.txt` (DataFileStream per-process suffix), so a driver
+  globbing exact names finds nothing.
+- **Why:** `DataFileStream` default precision is 6; the `.part-N` suffix is how
+  per-process streams avoid clobbering each other.
+- **Workaround/status (2026-08-12, ADR-78 P4):** pass `-precision 17` on every
+  recorder feeding a parity gate (`Node` and `EnergyBalance` both accept it);
+  glob `name*.txt` in drivers. P0/P2 never hit this because they compared
+  interpreter-printed `format %.15e` values, not recorder files.
+
+### Renormalizing an already-unit vector is NOT bitwise-idempotent — serialization round trips through a validating constructor drift by 1 ulp (ADR 78 P2 review F2)
+- **Bites:** any unpack/restore path that rebuilds state through the same validating entry point that normalized it originally. `sqrt(n·n)` of a stored unit normal is 1±1ulp for generic directions (measured: re-dividing changed bits on 3368 of 10000 random unit vectors), so `save → restore → re-verify` reported "definitions differ" on a model nobody touched — the verify instrument poisoned by its own rebuild path.
+- **Why it evades the usual guards:** axis-aligned test vectors ((0,0,1) etc.) have EXACT norms, so every convenient test normal passes bit-exact; only a tilted normal exposes it. And behavioral gates can't see 1 ulp — only a bit-compare can.
+- **Rule:** make normalization idempotent at the choke point (`|nrm−1| < 1e-12 ⇒ passthrough`), and gate serialization with (a) a tilted/irrational-normed vector in the test model and (b) a restore→re-save BYTE compare of the packed payload, not just response parity.
+### ASDPlasticMaterial3D's `Backward_Euler` ACCEPTS a non-converged return map — silently committing f > 0 as success (FIXED opt-in, ADR-84 P2a)
+
+- **Bites:** every ASDP material on the default `Backward_Euler` integrator
+  (VonMises, DruckerPrager, MohrCoulomb, the new MohrCoulombTensionCutoff, ...).
+  The scalar-Newton consistency loop is written
+  `for (int iter = 0; iter < max_iter; ++iter) { ... if (|Phi| < tol_yf) break; ... }`
+  and **falls out of `max_iter` with no convergence check at all**, dropping
+  straight through to `ComputeTangentStiffness(); return 0;`. A stalled or
+  slowly-converging Gauss point therefore reports SUCCESS to the element, the
+  element reports success to the algorithm, and the global Newton converges on
+  a residual assembled from an inadmissible stress. Nothing anywhere in the
+  output says a return map failed — `n_max_iterations` is not a budget, it is a
+  silent truncation. This is the persistence mechanism behind the Cerro Lindo
+  ADR-0005 M3 finding: 20 Gauss points sitting measurably OUTSIDE the yield
+  surface (`f/(2c·cosφ) = +0.0299`) in a model whose every analysis step
+  "converged".
+- **Why:** convergence is signalled only by `break`, and C++ gives you no way to
+  distinguish "broke out early" from "ran out of iterations" without a flag —
+  so an author who forgets the flag gets the accepting behaviour by DEFAULT.
+  The neighbouring paths are not written this way: `Modified_Euler_Error_Control`
+  has an explicit `if (niter > max_iterations) { ...; return -1; }` and
+  `Backward_Euler_LineSearch` tracks a `newton_ok` flag and returns -1 once
+  substepping is exhausted. Only the plain BE — the DEFAULT integrator — accepts.
+- **Workaround/status (2026-08-13, ADR-84 P2a, PR):** fixed **opt-in** via a new
+  integration option `strict_convergence` (int, default 0; parsed in the
+  `Begin_Integration_Options` block of `OPS_AllASDPlasticMaterial3Ds.cpp`, stored
+  in the per-tag static map `INT_OPT_strict_convergence`). With
+  `strict_convergence 1`, loop exhaustion with `|Phi| >= tol_yf` prints an
+  `opserr` line naming the material tag, the final `|Phi|` and the tolerance,
+  and returns -1 so the element reports the failure upward and the algorithm can
+  cut back. Default 0 is byte-identical to upstream — deliberately, because
+  turning it on changes convergence behaviour for every existing ASDP user.
+  **If you are chasing "f > 0 at committed states" in an ASDP model, set
+  `strict_convergence 1` before you suspect anything else**; a clean run under
+  the flag rules this defect out in one shot.
+
+### The same `Backward_Euler` calls a step "elastic" whenever f merely DECREASED — perpetuating an existing violation (FIXED opt-in, ADR-84 P2a)
+
+- **Bites:** the elastic early-exit reads
+  `if ((yf_val_start <= 0 && yf_val_end <= 0) || (yf_val_start - yf_val_end > tol_yf)) { Stiffness = Eelastic; return 0; }`.
+  The second disjunct accepts the step as elastic on the sole grounds that `f`
+  **went down by more than tol** — with no requirement that the end state be
+  admissible. From an admissible commit (`f_start <= 0`) it cannot manufacture a
+  violation, so it is invisible in any clean-history test; but from an
+  already-inadmissible commit — exactly what the exhaustion-accept above
+  produces — it will happily carry `f_end > 0` forward step after step as long
+  as the value keeps shrinking, never engaging the plastic corrector that would
+  actually pull the point back onto the surface. The two defects compound: one
+  creates the inadmissible state, the other protects it from correction.
+- **Why:** the disjunct exists for elastic UNLOADING from a plastic state, where
+  `f_start ≈ 0` and `f_end < 0` — a legitimate case that the first disjunct's
+  `yf_val_start <= 0.0` misses on the boundary. But "f decreased" is a much
+  weaker test than "the end state is admissible", and the weaker test is what
+  got written.
+- **Workaround/status (2026-08-13, ADR-84 P2a, PR):** under the same
+  `strict_convergence 1` flag the second disjunct additionally requires
+  `yf_val_end <= tol_yf`; when it does not hold the step falls through to the
+  plastic corrector instead of being accepted. The unloading case is untouched
+  (`f_end < 0` satisfies the added condition trivially). Default 0 keeps the
+  upstream disjunct exactly as written. Note the ordering: the MCTC
+  `special_return` hook (ADR-84 P0) sits BELOW this exit, so a step wrongly
+  classified as elastic here never reaches the hook — fixing the classification
+  is what lets the hook see the states it was built for.

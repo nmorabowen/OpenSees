@@ -20,6 +20,7 @@ session's build on this machine more than once.
 | mp2-soft | `mp_soft.tcl`, np2 | named FATAL refusal; tail line never prints |
 | mp2-soft-mortar | `mp_soft_mortar.tcl`, np2 | same refusal in the lane P1 never guarded (pre-P2 this RUNS silently — the honest mutation) |
 | db-roundtrip | `db_roundtrip.py` | contact defs survive save→wipe→restore exactly; live-restore verify path silent; vanilla model round-trips too |
+| db-all-lanes | `db_roundtrip_all_lanes.py` | the review follow-up: ALL FOUR definition lanes (NTS+friction/geomtan, mortar tie, rigid plane+visc, mortar friction+edge-edge block) round-trip exactly in one model; the packed Vector is byte-deterministic; six per-field mutations (kt, mu, edgeKn, epsTie, plane kn, plane normal) each provably change the packed bytes; the live-restore verify instrument stays silent on a match and warns on a mutated definition set |
 
 Negative control: run the same driver against a pre-P2 build
 (`C:\Program Files\Ladruno\OpenSees\bin` at the time of writing) —

@@ -497,6 +497,16 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
         opserr << "WARNING LadrunoContactDomain::addRigidPlane() - zero normal\n";
         return -1;
     }
+    // ADR-78 P2 review F2: normalization must be IDEMPOTENT. Dividing an
+    // already-unit vector by its recomputed norm (1 +/- 1 ulp) changes bits on
+    // ~1/3 of generic unit normals, so unpackDefinitions -> addRigidPlane made
+    // the plane lane the one lane that did NOT round-trip bit-exactly -- and a
+    // later verify-path restore then warned "definitions differ" on a model
+    // nobody changed. A normal already unit to 1e-12 passes through untouched
+    // (exact for the serialization path, which only ever re-adds stored unit
+    // normals; a user-declared unit normal was exact before and stays exact).
+    if (fabs(nrm - 1.0) < 1e-12)
+        nrm = 1.0;
     if (kn <= 0.0) {
         // kn < 0 would make contact attractive with a negative-definite tangent
         // (unstable); kn == 0 is silently inert. Reject both at this choke point
@@ -661,7 +671,7 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         for (int k = 0; k < nTag; k++) tags(k) = (int)v(p++);
         LadrunoContactSurface *s = new LadrunoContactSurface(
             tag, (LadrunoContactSurface::Kind)kind, tags, nps);
-        if (this->addSurface(s) < 0) { delete s; return -1; }
+        if (this->addSurface(s) < 0) { delete s; goto unpack_fail; }
     }
     for (int i = 0; i < nNts; i++) {
         if (p + LCD_NTS_SLOTS > sz) goto short_stream;
@@ -682,7 +692,7 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         if (this->addContact(tag, ms, ss, kn, kt, mu, hasOut ? out : 0, knAuto,
                              cellFrac, cTan, muc, cNorm, soft,
                              reemit, rFrac, rEvery, smooth) < 0)
-            return -1;
+            goto unpack_fail;
         theContacts.back().retired = retired;   // runtime datum; no add* parameter
     }
     for (int i = 0; i < nMor; i++) {
@@ -715,7 +725,7 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
                                    isTie, muc, soft,
                                    eEdge, eKn, eKnAuto, eBand, eMu, eKt, eCoh, eTau,
                                    eCTan, eSoft, eAlm, eAugTol) < 0)
-            return -1;
+            goto unpack_fail;
         theMortarContacts.back().retired = retired;
     }
     for (int i = 0; i < nPl; i++) {
@@ -727,19 +737,34 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         for (int d = 0; d < 3; d++) nn[d] = v(p++);
         double kn = v(p++), muc = v(p++), soft = v(p++);
         if (this->addRigidPlane(tag, ss, p0, nn, kn, muc, soft) < 0)
-            return -1;
+            goto unpack_fail;
         theRigidPlanes.back().retired = retired;
     }
     if (p != sz) {
         opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - " << (sz - p)
                << " trailing slots unread (stream/format mismatch)\n";
-        return -1;
+        goto unpack_fail;
     }
     return 0;
 
 short_stream:
     opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - stream ends "
               "mid-record (read " << p << " of " << sz << " slots)\n";
+    // fall through to unpack_fail
+
+unpack_fail:
+    // ADR-78 P2 review F3: NO partial state may survive a failed unpack. The
+    // engine was empty on entry (enforced above); leaving the successfully-
+    // added prefix in place made a RETRY route to the verify path, which only
+    // WARNS -- laundering a corrupt restore into "succeeded with a truncated
+    // definition set" that a later handle() would happily analyze. Roll back
+    // to empty so every retry re-enters the loud path.
+    for (size_t i = 0; i < theSurfaces.size(); i++)
+        delete theSurfaces[i];
+    theSurfaces.clear();
+    theContacts.clear();
+    theMortarContacts.clear();
+    theRigidPlanes.clear();
     return -1;
 }
 

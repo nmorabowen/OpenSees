@@ -37,6 +37,18 @@
 // external timeout kills it, stranding orphaned processes. On a 240-rank run
 // that burns the whole allocation and buries the FATAL line in one log. So the
 // job is torn down instead.
+//
+// ADR-78 P4 finding 1 -- the SECOND caller. The removal lane (#737) moved
+// missing-node detection out of handle() and into the `contactSurface` parser,
+// which is better in serial (the typo fails at the deck line that contains it)
+// but is a plain `return -1` with no MPI awareness: the refusing rank aborts
+// its script and every peer blocks in the next collective, exactly the hang
+// this function exists to prevent. Measured: the P0 mutation deck
+// (contact_parallel/mp_noghost.tcl) went from a 1.1 s teardown to a >30 s hang.
+// The three declaration verbs (contactSurface / contact / contactPlane) now
+// funnel every refusal through here, so "refuse at the deck line" carries its
+// other half -- tearing the job down -- and a check added later cannot reopen
+// the gap by forgetting to.
 int ladrunoContactFatal();
 
 // ADR-78 P2 -- the MPI world size, for the D4 `-soft`-under-partitioning

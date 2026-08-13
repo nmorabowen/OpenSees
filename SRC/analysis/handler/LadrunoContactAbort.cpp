@@ -31,9 +31,12 @@ ladrunoContactFatal()
     if (np > 1) {
         // np == 1 falls through to the plain return: no peers to strand, and it
         // keeps single-rank MP runs debuggable.
-        opserr << "LadrunoContactHandler: tearing down all " << np << " MPI ranks -- a "
+        // Deliberately not named after the handler: P4 gave this the second caller
+        // (the contactSurface/contact/contactPlane declaration verbs), and a
+        // "LadrunoContactHandler:" prefix on a parser refusal misdirects the reader.
+        opserr << "Ladruno contact: tearing down all " << np << " MPI ranks -- a "
                   "contact failure on one rank leaves every peer blocked in the next "
-                  "collective, so returning alone would HANG the job (ADR-78 P1).\n";
+                  "collective, so returning alone would HANG the job (ADR-78 P1/P4).\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 #endif
