@@ -27,9 +27,9 @@ def test_reg_gpp_gate():
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "rc_reg.exe")
         cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, _GATE, "-o", exe],
-                            capture_output=True, text=True)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed to compile the regularization gate:\n{cc.stderr}"
-        rr = subprocess.run([exe], capture_output=True, text=True)
+        rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     assert rr.returncode == 0, f"g++ regularization gate FAILED:\n{rr.stdout}\n{rr.stderr}"
     assert "GPP REG GATE: PASS" in rr.stdout, rr.stdout
     assert "no-op: max|delta|=0.00e+00" in rr.stdout, rr.stdout      # lch==lch_ref is a no-op

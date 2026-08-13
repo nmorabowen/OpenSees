@@ -48,12 +48,12 @@ def test_cpp_ladruno_up_kernel_selfcheck():
         # static data members; c++11/14 compiles but fails to link.
         cc = subprocess.run(
             [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_UP, src, "-o", exe],
-            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
         )
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
         # Pass the cases-file path explicitly; the harness self-tests unconditionally
         # and additionally validates the cases file when it exists.
-        rr = subprocess.run([exe, _CASES], capture_output=True, text=True)
+        rr = subprocess.run([exe, _CASES], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert rr.returncode == 0, f"kernel check failed:\n{rr.stdout}\n{rr.stderr}"
         assert "RESULT: PASS" in rr.stdout, rr.stdout
         m = re.search(r"\[cases\] parsed (\d+) case", rr.stdout)
