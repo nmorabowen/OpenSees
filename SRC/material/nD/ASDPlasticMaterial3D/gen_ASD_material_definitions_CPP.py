@@ -146,6 +146,25 @@ STIFFSOIL_MODELS = [
 
 
 # ============================================================================
+# COMBINED (multi-surface composite) MODEL DEFINITIONS -- Ladruno (ADR-84 P0)
+# ============================================================================
+
+# Explicit registrations only: composite YFs must NOT enter the standard
+# cross-product (a composite YF paired with a foreign PF -- e.g. dilatant MC
+# flow on the tension cap -- is mechanically wrong, and every extra pairing
+# grows the already-huge OPS_AllASDPlasticMaterial3Ds.cpp TU).
+# YF and PF share the same IV type, so reuse stiffsoil_template.
+COMBINED_MODELS = [
+    {
+        "EL": "LinearIsotropic3D_EL",
+        "YF": "MohrCoulombTensionCutoff_YF",
+        "PF": "MohrCoulombTensionCutoff_PF",
+        "IV": "BackStress<NullHardeningTensorFunction>",
+    },
+]
+
+
+# ============================================================================
 # Generate output file
 # ============================================================================
 with open("ASD_material_definitions.cpp", "w") as fid:
@@ -174,6 +193,16 @@ with open("ASD_material_definitions.cpp", "w") as fid:
     fid.write("// =========================================\n")
     
     for model in STIFFSOIL_MODELS:
+        fid.write(stiffsoil_template.format(**model))
+
+    # -------------------------------------------------------------------------
+    # Combined (composite-surface) models -- Ladruno (ADR-84 P0)
+    # -------------------------------------------------------------------------
+    fid.write("\n// =========================================\n")
+    fid.write("// Combined (composite-surface) Models -- Ladruno (ADR-84 P0)\n")
+    fid.write("// =========================================\n")
+
+    for model in COMBINED_MODELS:
         fid.write(stiffsoil_template.format(**model))
 
 print("Generated ASD_material_definitions.cpp")

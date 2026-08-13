@@ -122,12 +122,16 @@ public:
     {
 
 
-        TrialStress *= 0;
-        CommitStress *= 0;
-        TrialStrain *= 0;
-        CommitStrain *= 0;
-        TrialPlastic_Strain *= 0;
-        CommitPlastic_Strain *= 0;
+        // Ladruno (ADR-84 P0): these members are uninitialized Eigen storage,
+        // and "*= 0" does NOT clear heap garbage that decodes as NaN/Inf
+        // (NaN*0 == NaN). On a churned heap the shear slots kept NaN and every
+        // yf comparison silently went false. setZero() is unconditional.
+        TrialStress.setZero();
+        CommitStress.setZero();
+        TrialStrain.setZero();
+        CommitStrain.setZero();
+        TrialPlastic_Strain.setZero();
+        CommitPlastic_Strain.setZero();
 
         first_step = true;
         stress_set_externally = false;
@@ -2138,6 +2142,29 @@ private:
                 // Stiffness = Eelastic;
                 // // ComputeTangentStiffness(); // (optional if it knows how to handle apex)
                 // return 0;
+            }
+        }
+
+        // Ladruno (ADR-84 P0): predictor-classified exact special-region return
+        // (tension-cutoff face/edge, MC∩TC corner, apex cone) for yield functions
+        // that opt in via yf_has_special_return. The YF validates every candidate
+        // against its own yield values before accepting, so no f > 0 state can be
+        // committed through this path. For every existing YF the trait is false
+        // and this block compiles away -- behavior is bit-identical.
+        if constexpr (yf_has_special_return<YieldFunctionType>::value)
+        {
+            VoigtVector sigma_sr, dep_sr;
+            VoigtMatrix stiff_sr;
+            if (yf.special_return(TrialStress, Eelastic, tol_yf,
+                                  iv_storage, parameters_storage,
+                                  sigma_sr, dep_sr, stiff_sr))
+            {
+                TrialStress          = sigma_sr;
+                TrialPlastic_Strain += dep_sr;
+                Stiffness            = stiff_sr;
+                // Internal variables: the opted-in YFs are perfectly plastic
+                // (Null hardening), so no IV update is required here.
+                return 0;
             }
         }
 

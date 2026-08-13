@@ -38,6 +38,13 @@
 template <typename T>
 struct yf_has_apex : std::false_type {};
 
+// Ladruno (ADR-84 P0): opt-in trait for YFs that implement their own exact
+// return for stress states where the generic scalar-Newton return map is
+// invalid (multi-surface corners, cutoff planes, apex cones). A YF that
+// specializes this to true_type must define the SPECIAL_RETURN member below.
+template <typename T>
+struct yf_has_special_return : std::false_type {};
+
 
 
 // Helper template to check if a class has a parameters_t type alias
@@ -80,6 +87,24 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
 #define APEX_STRESS template <typename IVStorageType, typename ParameterStorageType> \
     const VoigtVector& apex_stress(const IVStorageType& internal_variables_storage, \
                         const ParameterStorageType& parameters_storage) const
+
+// Ladruno (ADR-84 P0): signature for the opt-in special return (see
+// yf_has_special_return above). Called by the constitutive integrator after
+// the elastic check and before the scalar-Newton plastic correction, with the
+// trial (elastic-predictor) stress and the state-frozen elastic tangent.
+// Returns false to fall through to the generic return map, or true after
+// writing the returned stress, the plastic-strain increment, and the tangent
+// to use. The argument names match the other macros so GET_PARAMETER_VALUE /
+// YF(...) work inside the body.
+#define SPECIAL_RETURN template <typename IVStorageType, typename ParameterStorageType> \
+    bool special_return(const VoigtVector& sigma_trial, \
+        const VoigtMatrix& Eelastic, \
+        const double tol_yf, \
+        const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        VoigtVector& sigma_return, \
+        VoigtVector& plastic_strain_incr, \
+        VoigtMatrix& stiffness_return) const
 
 #define GET_INTERNAL_VARIABLE_HARDENING(type) \
     internal_variables_storage.template get<type> ().hardening_function(depsilon, m, sigma, parameters_storage)

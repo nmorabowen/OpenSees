@@ -458,3 +458,17 @@ createASDPlasticMaterial3D<
             CapPressureLinear
             >
         > (instance_tag, yf_type, pf_type, el_type, iv_type, instance_pointers, available_models);
+
+// =========================================
+// Combined (composite-surface) Models -- Ladruno (ADR-84 P0)
+// =========================================
+
+createASDPlasticMaterial3D<
+        LinearIsotropic3D_EL, 
+        MohrCoulombTensionCutoff_YF<
+            BackStress<NullHardeningTensorFunction>
+            >, 
+        MohrCoulombTensionCutoff_PF<
+            BackStress<NullHardeningTensorFunction>
+            >
+        > (instance_tag, yf_type, pf_type, el_type, iv_type, instance_pointers, available_models);
