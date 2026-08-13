@@ -1289,7 +1289,7 @@ public:
         TrialStress = stress;
     }
 
-    bool set_constitutive_integration_method(int method, int tangent, double f_absolute_tol, double stress_absolute_tol, int n_max_iterations, int return_to_yield_surface, int rk45_niter_max, double rk45_dT_min)
+    bool set_constitutive_integration_method(int method, int tangent, double f_absolute_tol, double stress_absolute_tol, int n_max_iterations, int return_to_yield_surface, int rk45_niter_max, double rk45_dT_min, int strict_convergence = 0) // Ladruno (ADR-84 P2a): opt-in strict_convergence flag, default 0 preserves upstream behavior
     {
         if ( method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Not_Set
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler
@@ -1312,6 +1312,7 @@ public:
             INT_OPT_return_to_yield_surface[ASDP_TAG] = return_to_yield_surface ;
             DBL_OPT_RK45_dT_min[ASDP_TAG] = rk45_dT_min ;
             INT_OPT_RK45_niter_max[ASDP_TAG] = rk45_niter_max ;
+            INT_OPT_strict_convergence[ASDP_TAG] = strict_convergence ; // Ladruno (ADR-84 P2a)
 
             GLOBAL_INT_max_iter[ASDP_TAG] = 0;
             GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
@@ -1325,6 +1326,7 @@ public:
             cout << "   return_to_yield_surface = " << return_to_yield_surface << endl;
             cout << "   rk45_niter_max = " << rk45_niter_max << endl;
             cout << "   rk45_dT_min = " << rk45_dT_min << endl;
+            cout << "   strict_convergence = " << strict_convergence << endl; // Ladruno (ADR-84 P2a)
 
             return true;
         }
@@ -2067,8 +2069,20 @@ private:
         const double yf_val_end   = yf(TrialStress,  iv_storage, parameters_storage);
         // cout << "----->  yf_val_end = " << yf_val_end << " tol_yf = " << tol_yf <<  endl;
 
+        // Ladruno (ADR-84 P2a): strict_convergence gate on the f-decreasing early-exit.
+        // Upstream, the second disjunct accepts a step as "elastic" whenever f merely
+        // DECREASED by more than tol_yf, even if the end state is still outside the
+        // surface (yf_val_end > 0) -- from an inadmissible committed state this
+        // perpetuates the violation instead of correcting it. With strict_convergence
+        // the exit additionally requires yf_val_end <= tol_yf (elastic unloading from
+        // a plastic state has yf_end < 0, so it still exits here). Flag off: identical
+        // to upstream.
+        const bool be_strict = INT_OPT_strict_convergence[ASDP_TAG] != 0; // Ladruno (ADR-84 P2a)
+
         // purely elastic or moving deeper inside the surface
-        if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0) || (yf_val_start - yf_val_end > tol_yf) ) {
+        if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0)
+                || ( (yf_val_start - yf_val_end > tol_yf)
+                     && (!be_strict || yf_val_end <= tol_yf) ) ) { // Ladruno (ADR-84 P2a)
             // cout << "BE - ELASTIC!" << endl << endl;
             Stiffness = Eelastic;
             return 0;
@@ -2172,6 +2186,7 @@ private:
 
         double dLambda = 0.0;
 
+        bool be_converged = false; // Ladruno (ADR-84 P2a): only read when strict_convergence is on
 
         // cout << "BE - Plastic! Begin iterations----------" << endl << endl;
 
@@ -2196,6 +2211,7 @@ private:
                 // cout << "  =>  n = " << n.transpose() << endl;
                 // cout << "  =>  m = " << m.transpose() << endl;
                 // cout << "  =>  H = " << H << endl;
+                be_converged = true; // Ladruno (ADR-84 P2a)
                 break; // converged
             }
 
@@ -2257,6 +2273,26 @@ private:
         }
         // cout << "BE - END iterations----------" << endl << endl;
 
+        // Ladruno (ADR-84 P2a): strict_convergence gate on the exhaustion-accept.
+        // Upstream, falling out of the loop after max_iter iterations falls through
+        // to ComputeTangentStiffness()/return 0, silently committing a non-converged
+        // state with f > tol_yf as success. With strict_convergence, exhaustion with
+        // |Phi| >= tol_yf fails loud so the element reports the failure upward.
+        // (The last Newton update may have converged without being checked -- the
+        // check runs at the top of the next iteration -- so re-evaluate yf here.)
+        if (be_strict && !be_converged)
+        {
+            const double Phi_final = std::abs(yf(TrialStress, iv_storage, parameters_storage));
+            if (Phi_final >= tol_yf)
+            {
+                opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                       << ") - scalar Newton exhausted " << max_iter
+                       << " iterations without converging: |Phi| = " << Phi_final
+                       << " >= tol_yf = " << tol_yf
+                       << " -- rejecting step (strict_convergence)" << endln;
+                return -1;
+            }
+        }
 
         ComputeTangentStiffness();
 
@@ -4012,6 +4048,7 @@ protected:
     static std::map<int, int> INT_OPT_return_to_yield_surface;
     static std::map<int, double> DBL_OPT_RK45_dT_min;
     static std::map<int, int> INT_OPT_RK45_niter_max;
+    static std::map<int, int> INT_OPT_strict_convergence; // Ladruno (ADR-84 P2a): 1 = fail loud on BE non-convergence instead of silently accepting
 
     static std::map<int, int> GLOBAL_INT_max_iter; 
     static std::map<int, double> GLOBAL_DBL_max_error; 
@@ -4044,6 +4081,8 @@ template < class E, class Y, class P, int tag>
 std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::DBL_OPT_RK45_dT_min;
 template < class E, class Y, class P, int tag>
 std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::INT_OPT_RK45_niter_max;
+template < class E, class Y, class P, int tag>
+std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::INT_OPT_strict_convergence; // Ladruno (ADR-84 P2a)
 
 template < class E, class Y, class P, int tag>
 std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::GLOBAL_DBL_max_error;
