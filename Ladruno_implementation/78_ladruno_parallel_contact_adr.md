@@ -233,7 +233,7 @@ across ranks all declare no MP constraints.
 | **P1** | D5 fail-loud (missing node → named error) + a `contact`-verb-on-wrong-rank abort. | Serial battery byte-identical; a deliberately incomplete interface aborts instead of running. |
 | **P2** ✅ | D4 as corrected: `-soft` refused under partitioning with a named error (`-kn auto` needs no change). `LadrunoContactDomain::sendSelf`/`recvSelf`. | **DONE 2026-08-12.** The refusal fires on 2 ranks in BOTH the NTS and mortar lanes and stays quiet at np=1 (serial AND `mpiexec -n 1`); the partitioned `-kn auto` run matches its serial twin to 1.6e−14 (the same P0 number, re-measured on the P2 build); definitions round-trip `database File` save → wipe → restore exactly, and the pre-P2 build FAILS both instruments as designed (mortar deck runs silently, restore drops contact). See §P2 log. |
 | **P3** | apeGmsh ADR 0092: partition-graph weighting, owner selection, ghost + SP replay, `BridgeError` relaxed to a locality check. | A `g.constraints.contact` model emits a runnable 2-rank deck; partition-straddling cases still refuse with the *specific* reason. |
-| **P4** ✅ | Validation battery: 2-body pounding on 2 ranks (explicit, NTS + `-soft` if P2 shipped it), mortar mesh-tie across ranks (implicit + ALM), 4-rank strong-scaling sanity. | **DONE 2026-08-12.** 12 verdicts, ALL PASS (`Ladruno_files/testbed/contact_p4/`): explicit pounding **bit-identical** to serial at np=2 AND np=4 (both bodies cut); energy closure 0.002% of E_peak with serial-vs-Σranks channel parity 6e−16; mortar tie + fixed-count ALM residual ~1e−19, np2 vs serial 6.5e−16; np=1/2/4 = 9.1/4.9/3.2 s. `-soft` case is moot-by-refusal (P2) and the refusal is re-pinned on the pounding deck. **One open defect found:** #737 regressed P1's MPI teardown for a missing ghost — see §P4 log finding 1. |
+| **P4** ✅ | Validation battery: 2-body pounding on 2 ranks (explicit, NTS + `-soft` if P2 shipped it), mortar mesh-tie across ranks (implicit + ALM), 4-rank strong-scaling sanity. | **DONE 2026-08-12.** 12 verdicts, ALL PASS (`Ladruno_files/testbed/contact_p4/`): explicit pounding **bit-identical** to serial at np=2 AND np=4 (both bodies cut); energy closure 0.002% of E_peak with serial-vs-Σranks channel parity 6e−16; mortar tie + fixed-count ALM residual ~1e−19, np2 vs serial 6.5e−16; np=1/2/4 = 9.1/4.9/3.2 s. `-soft` case is moot-by-refusal (P2) and the refusal is re-pinned on the pounding deck. **The one open defect found — #737 having regressed P1's MPI teardown for a missing ghost — is now FIXED and the battery's `ctl-noghost` upgraded from a documented gap to a standing guard;** see §P4 log finding 1. |
 | **P5** | *Deferred sketch only.* Slave-node-partitioned contact + facet ghosting for load balance — requires the in-Newton allreduce for `ḡ_I` that D1 exists to avoid. | — |
 
 ## Risks / open questions — **all five settled 2026-08-11, see §Adversarial review log**
@@ -784,7 +784,7 @@ sum-of-A mechanism as INV-6).
 | tie-np2 | residual; u5/u9/u15 vs serial; ghost vs native | res = 2.2e-19; max rel delta = **6.5e-16**; ghost-native = 0 |
 | scale-np124 | NB=8, 40000 steps: parity + coarse wall time | delta vs np1 = 0.000e+00; **np1 9.1 s / np2 4.9 s / np4 3.2 s** (desktop, startup-inclusive — a sanity check, NOT a scaling study) |
 | ctl-soft | P2 refusal on the partitioned pounding deck | named refusal, tail suppressed |
-| ctl-noghost | ghost declarations stripped -> loud, never silent | declaration-time refusal names the node; **job teardown MISSING — finding 1** |
+| ctl-noghost | ghost declarations stripped -> loud, never silent, AND the job ends itself | declaration-time refusal names the node; **job exited rc=1 in 0.1 s** (was: teardown MISSING — finding 1, now fixed) |
 | ctl-ghostmass | INV-6 mutation (mass on ghosts) -> instrument must catch | runs silently to completion, moves t1 by **91%** -> the serial-comparison instrument flags it |
 
 **Explicit transient is bit-identical, not ~1e-12.** P0 measured the explicit lane
@@ -816,7 +816,8 @@ rank and applies the residual gate after the sweep, on the owner. Anyone porting
 
 **Findings:**
 
-1. **OPEN DEFECT — #737 regressed P1's MPI teardown for the missing-ghost case.**
+1. **#737 regressed P1's MPI teardown for the missing-ghost case — FOUND HERE, FIXED
+   IN THE FOLLOW-UP PR (see §P4 FIX below).**
    The removal lane moved missing-node detection from `handle()` (where P1's
    `ladrunoContactFatal` tore the job down in 1.1 s) to `contactSurface`
    declaration time — where the refusal is a rank-local parser error (`return -1`,
@@ -829,9 +830,8 @@ rank and applies the residual gate after the sweep, on the owner. Anyone porting
    itself is correct and loud — what is missing is the teardown: the declaration
    refusal should route through the per-target abort TU
    (`ladrunoContactNumRanks()`/`ladrunoContactFatal()` in `LadrunoContactAbort.cpp`,
-   built for exactly this) when np > 1. Not fixed here (P4 is a measurement lane);
-   the battery's `ctl-noghost` documents the gap in its verdict line and reaps the
-   job with a process-tree kill.
+   built for exactly this) when np > 1. Not fixed in the battery PR itself (P4 is a
+   measurement lane); fixed in the immediate follow-up — §P4 FIX.
 2. **Harness trap (cost ~15 min, in [[LEDGER_quirks]]):** when MPI ranks outlive
    `mpiexec` (finding 1's hang, teardown races), they inherit the driver's stdout
    pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, *even after
@@ -848,3 +848,64 @@ the np-scaling rows show healthy speedup (2.8x at np4) with the gather in the lo
 but the model is far too small to expose an O(numShared)-through-rank-0 cost. A
 cluster-scale pounding run with a large interface is the honest measurement, and it
 belongs to the same campaign that would justify P5 itself.
+
+### §P4 FIX — the declaration refusal now tears the job down (finding 1 closed)
+
+The refusal #737 added is right and stays: a `contactSurface` node tag that does not
+exist is rejected at the deck line that contains it, naming the tag. What was missing
+is the other half of the contract under MPI — **ending the job.** A parser `return -1`
+aborts one rank's script and leaves every peer blocked in the next collective.
+
+**Shape of the fix.** The three DECLARATION verbs — `contactSurface`, `contact`,
+`contactPlane` — each become a two-line wrapper over its unchanged body (now a
+`static ladrunoContact*Impl()`), routing a negative result through
+`ladrunoContactFatal()`:
+
+```cpp
+int OPS_LadrunoContactSurface()
+{
+    const int res = ladrunoContactSurfaceImpl();
+    return (res < 0) ? ladrunoContactFatal() : res;
+}
+```
+
+Wrapping the **result** rather than each refusal site is the load-bearing choice, for
+two reasons that a per-site edit would have missed:
+
+* the bodies hold ~75 `return -1`s, but the refusals that matter most are not literals
+  at all — they **propagate out of** `addSurface`/`addContact`/`addMortarContact`/
+  `addRigidPlane` (unknown surface tag, duplicate tag), which is the same
+  partition-dependent class as the missing node;
+* a check added later inherits the teardown instead of silently reopening this defect
+  — which is exactly how it opened. #737 was a good change that lost a property nobody
+  had written down as belonging to the verb rather than to the check.
+
+The QUERY verbs are deliberately **not** wrapped. Their −1 is legitimately rank-local:
+`ladrunoMortarTieResidual` returns 0 on the non-owner by design, and the fixed-count
+ALM sweep above depends on that.
+
+`ladrunoContactFatal()`'s message dropped its `LadrunoContactHandler:` prefix (it now
+reads `Ladruno contact:`) — with a second caller, naming the handler on a parser
+refusal misdirects the reader.
+
+**Measured (2026-08-12, build `a62af3ca1` + this change).**
+
+| gate | measured |
+|---|---|
+| `contact_parallel/mp_noghost.tcl`, np2 | named refusal **and** teardown line, `rc=1`, **0.18–0.20 s**, **zero orphans** (P1: 1.1 s; post-#737: 45 s hang) |
+| same deck, `mpiexec -n 1` | refusal printed, **no** teardown, `rc=0`, 0.11 s — the single-rank MP run stays debuggable (INV-5) |
+| `contact_parallel/mp.tcl`, np2 (no mutation) | every reference digit reproduced: `w15 = −5.624999999999919e−3`, `w11 = −5.124999999999914e−3`, `w5 = −5.000000000000034e−4`, `ΣR = 1.0000000000e+4` |
+| P4 battery, all 12 verdicts | **ALL PASS**; `ctl-noghost` now reads `job exited rc=1 (0.1s)` |
+| serial contact battery (contact + mortar + edge-edge + reemit + smoothNormal + tie) | **255 passed, 0 failed** |
+
+**Mutation-verified, because a green gate proves nothing until the broken build fails
+it.** The wrapper was reverted to a bare `return res` (exactly the pre-fix rank-local
+refusal) and `OpenSeesMP` rebuilt **alone**: `mp_noghost.tcl` went straight back to the
+defect — **45.16 s, tree-killed (`rc = −9`), two orphaned `OpenSeesMP.exe` processes
+left behind.** Restored and re-measured at 0.18 s with zero orphans.
+
+**The battery case was upgraded from documentation to a guard.** `ctl-noghost` in
+`contact_p4/run.py` previously accepted the timeout-and-tree-kill path as EXPECTED and
+merely printed the gap. It now requires all three of: the named refusal, no results,
+and `rc != −9` within a 20 s wall bound — so a future regression of the teardown fails
+the battery instead of being narrated by it.

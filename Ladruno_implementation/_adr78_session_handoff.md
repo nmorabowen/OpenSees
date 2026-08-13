@@ -311,7 +311,8 @@ against the worktree HEAD via the splash before any measurement). Battery at
 
 ## The finding that outranks the numbers
 
-**#737 regressed P1's MPI teardown for the missing-ghost case — OPEN DEFECT.**
+**#737 regressed P1's MPI teardown for the missing-ghost case — FOUND BY P4, FIXED IN
+THE FOLLOW-UP PR (ADR §P4 FIX).**
 The removal lane moved missing-node detection from `handle()` (P1's
 `ladrunoContactFatal`, measured 1.1 s teardown) to `contactSurface` declaration
 time, where the refusal is a rank-local parser `return -1` with no MPI
@@ -319,10 +320,15 @@ awareness. The refusing rank aborts its script; the other rank blocks in the
 next collective. The preserved P0 gate `contact_parallel/mp_noghost.tcl` now
 HANGS on every build since #737 (measured: >30 s, 45 s, and one 17 s
 hydra-auto-cleanup reap — nondeterministic). Refusal text is still loud and
-named; only the teardown is missing. Fix shape: route the declaration refusal
-through `ladrunoContactNumRanks()`/`ladrunoContactFatal()` when np > 1 — the
-per-target TU exists for exactly this. Recorded in ADR §P4 finding 1 +
-[[LEDGER_quirks]]; NOT fixed in the P4 PR (measurement lane, no SRC changes).
+named; only the teardown is missing. **Fixed** by making the three declaration
+verbs (`contactSurface`/`contact`/`contactPlane`) thin wrappers that route any
+`<0` result through `ladrunoContactFatal()` — the per-target TU existed for
+exactly this. Wrapping the RESULT, not the ~75 individual refusal sites, also
+covers the refusals that propagate out of `addSurface`/`addContact`/
+`addRigidPlane` and stops a later check reopening the gap. Re-measured: 0.18 s
+teardown, zero orphans; mutation (`return res`) reproduces the 45 s tree-killed
+hang with two orphans. Recorded in ADR §P4 finding 1 + §P4 FIX +
+[[LEDGER_quirks]]; NOT fixed in the P4 PR itself (measurement lane).
 
 ## Traps paid for (details in [[LEDGER_quirks]])
 
@@ -340,9 +346,9 @@ per-target TU exists for exactly this. Recorded in ADR §P4 finding 1 +
 
 ## Open items now
 
-1. **The #737 teardown gap** (above) — small SRC fix + re-green
-   `mp_noghost.tcl` + a P4 `ctl-noghost` gate flip (its verdict line documents
-   the expected post-fix behaviour).
+1. ~~**The #737 teardown gap**~~ — DONE (above): SRC fix, `mp_noghost.tcl`
+   re-greened at 0.18 s, and the P4 `ctl-noghost` verdict flipped from
+   documenting the gap to requiring the fast exit.
 2. **apeGmsh S6** (its ADR 0092) if still open, then the ADR-78 table is done
    through P4; **P5 stays deferred** and now has a written measurement
    precondition (cluster-scale interface, §P4 last paragraph).

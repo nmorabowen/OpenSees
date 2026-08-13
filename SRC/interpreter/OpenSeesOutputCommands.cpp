@@ -304,6 +304,35 @@ int OPS_LadrunoProjectionTieForce()
 // ---------------------------------------------------------------------------
 #include <LadrunoContactDomain.h>
 #include <LadrunoContactSurface.h>
+#include <LadrunoContactAbort.h>   // ADR-78 P4 finding 1: refusal => MPI teardown
+
+// ---------------------------------------------------------------------------
+// Ladruno (ADR-78 P4, finding 1) — a declaration refusal is only HALF a contract
+// under MPI.
+//
+// The three declaration verbs below (contactSurface / contact / contactPlane)
+// are parsed per rank. In a manual-DD deck their call sites sit inside a rank
+// guard (`if {$pid == 0} { ... }`), and even in a full-model MP sweep a refusal
+// driven by what THIS partition holds is rank-local by construction. So a
+// refusal here — a typo'd node tag, a bad option, an unknown surface tag
+// propagated out of LadrunoContactDomain::addContact() — can fire on ONE rank,
+// which then aborts its script while every peer walks into the next collective
+// (the numberer gather, the SOE solve) and blocks on a rank that will never
+// arrive. The job hangs until something external reaps it. Measured on
+// contact_parallel/mp_noghost.tcl after #737 moved the missing-node check here:
+// >30 s and 45 s hangs, once a
+// nondeterministic 17 s hydra auto-cleanup, against P1's 1.1 s clean teardown.
+//
+// Each verb is therefore a thin wrapper over its (unchanged) body, routing a
+// negative result through ladrunoContactFatal() — the per-target MPI TU, which
+// MPI_Aborts when np > 1 and returns -1 untouched otherwise. Serial is
+// byte-identical (INV-5), and so is `mpiexec -n 1`.
+//
+// The wrapper, rather than a call at each refusal site, is the point: the bodies
+// hold ~75 `return -1`s and the add*() calls refuse further down in the engine.
+// Funnelling the RESULT means a check added later inherits the teardown instead
+// of silently reopening this defect — which is exactly how it opened.
+// ---------------------------------------------------------------------------
 
 // lazily get/create the contact engine on the active Domain
 static LadrunoContactDomain *OPS_getOrCreateContactDomain()
@@ -319,7 +348,7 @@ static LadrunoContactDomain *OPS_getOrCreateContactDomain()
 }
 
 // contactSurface tag (-slave | -master nodesPerSeg | -slave-segments nodesPerSeg) nodeTag...
-int OPS_LadrunoContactSurface()
+static int ladrunoContactSurfaceImpl()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
         opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg | "
@@ -409,8 +438,14 @@ int OPS_LadrunoContactSurface()
     return 0;
 }
 
+int OPS_LadrunoContactSurface()
+{
+    const int res = ladrunoContactSurfaceImpl();
+    return (res < 0) ? ladrunoContactFatal() : res;
+}
+
 // contact tag masterSurfTag slaveSurfTag <kn kt mu> <-outward ox oy oz>
-int OPS_LadrunoContact()
+static int ladrunoContactImpl()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
         opserr << "WARNING want - contact tag masterSurfTag slaveSurfTag <kn kt mu> <-outward ox oy oz>\n";
@@ -964,8 +999,14 @@ int OPS_LadrunoContact()
                           smoothNormal);
 }
 
+int OPS_LadrunoContact()
+{
+    const int res = ladrunoContactImpl();
+    return (res < 0) ? ladrunoContactFatal() : res;
+}
+
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c> <-soft SOFSCL>  (P2a rigid plane)
-int OPS_LadrunoContactPlane()
+static int ladrunoContactPlaneImpl()
 {
     if (OPS_GetNumRemainingInputArgs() < 9) {
         opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn "
@@ -1033,6 +1074,12 @@ int OPS_LadrunoContactPlane()
         return -1;
     }
     return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc, softScale);
+}
+
+int OPS_LadrunoContactPlane()
+{
+    const int res = ladrunoContactPlaneImpl();
+    return (res < 0) ? ladrunoContactFatal() : res;
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts, numMortarContacts]
