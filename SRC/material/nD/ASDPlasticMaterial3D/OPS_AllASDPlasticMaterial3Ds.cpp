@@ -74,6 +74,7 @@ void print_usage(void)
        "    stress_absolute_tol (double value)\\ \n"
        "    n_max_iterations (int value)\\ \n"
        "    return_to_yield_surface (0 or 1)\\ \n"
+       "    strict_convergence (0 or 1, default 0) : 1 = Backward_Euler fails loud on non-convergence\\ \n" // Ladruno (ADR-84 P2a)
        "    method (string) : Forward_Euler | Runge_Kutta_45_Error_Control\\ \n"
        "    tangent (string) : Elastic | Numerical_Algorithmic_FirstOrder | Numerical_Algorithmic_SecondOrder\\ \n"
        "End_Integration_Options \\ \n"
@@ -294,6 +295,7 @@ void populate_ASDPlasticMaterial3D(T* instance)
     double stress_absolute_tol = 1e-6; 
     int n_max_iterations = 100;
     int return_to_yield_surface = 1;
+    int strict_convergence = 0; // Ladruno (ADR-84 P2a): opt-in fail-loud on Backward_Euler non-convergence
     double rk45_dT_min = 1e-2;
     int rk45_niter_max = 110;
 
@@ -381,6 +383,11 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     OPS_GetInt(&get_one_value, &n_max_iterations);
                     cout << "   Setting n_max_iterations = " << n_max_iterations << endl;
                 }
+                if (std::strcmp(param_name, "strict_convergence") == 0) // Ladruno (ADR-84 P2a)
+                {
+                    OPS_GetInt(&get_one_value, &strict_convergence);
+                    cout << "   Setting strict_convergence = " << strict_convergence << endl;
+                }
                 if (std::strcmp(param_name, "rk45_dT_min") == 0)
                 {
                     OPS_GetDouble(&get_one_value, &rk45_dT_min);
@@ -462,7 +469,7 @@ void populate_ASDPlasticMaterial3D(T* instance)
         }
     }
 
-    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min);
+    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence); // Ladruno (ADR-84 P2a)
 }
 
 
