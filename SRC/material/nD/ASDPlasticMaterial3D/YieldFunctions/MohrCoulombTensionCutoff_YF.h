@@ -34,7 +34,16 @@
 // candidate validated against both yield values -- it is never handed to the
 // generic scalar-Newton return map, whose exhaustion-accept path is what let
 // f > 0 states through for plain Mohr-Coulomb near the apex.
-// See Ladruno_implementation/84_ladruno_mc_tension_cutoff_adr.md.
+//
+// Ladruno (ADR-84 P3): the hook returns the RAW active-set (Koiter) consistent
+// tangent. It used to secant-blend (E+D)/2 in here, which (a) silently
+// overrode the material's configured `tangent_type` and (b) at the MC-cutoff
+// corner fabricated ~2e6 kPa of stiffness in the direction whose true tangent
+// is ~0, giving an 87%-wrong tangent -- measured as the cause of the Cerro
+// Lindo M5 confined-shear Newton stall. Blending is now the integrator's
+// decision, so `tangent_type Secant` (the default) is unchanged and
+// `tangent_type Continuum` finally does what it says.
+// See Ladruno_implementation/84_ladruno_mc_tension_cutoff_adr.md §9.
 
 #ifndef MohrCoulombTensionCutoff_YF_H
 #define MohrCoulombTensionCutoff_YF_H
@@ -278,6 +287,10 @@ public:
     {
         using namespace std;
 
+        // Every rung below is a closed-form return except the terminal Stage-4
+        // vertex projection, which downgrades this to SR_QUALITY_FALLBACK.
+        return_quality = SR_QUALITY_EXACT;
+
         const double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
         const double c   = GET_PARAMETER_VALUE(MC_c);
         const double psi = GET_PARAMETER_VALUE(MC_psi)*M_PI/180;
@@ -384,7 +397,8 @@ public:
                     VoigtVector m3 = direction_voigt(V.col(2));
                     sigma_return        = sigma_cand;
                     plastic_strain_incr = dl_face * m3;
-                    stiffness_return    = secant_blend(Eelastic, rank1_tangent(Eelastic, m3, m3));
+                    stiffness_return    = rank1_tangent(Eelastic, m3, m3);
+                    return_quality      = SR_QUALITY_EXACT;
                     return true;
                 }
                 face_needs_corner = true; // MC also active at the face candidate
@@ -409,7 +423,8 @@ public:
                     VoigtVector m2 = direction_voigt(V.col(1));
                     sigma_return        = sigma_cand;
                     plastic_strain_incr = la * m3 + lb * m2;
-                    stiffness_return    = secant_blend(Eelastic, rank2_tangent(Eelastic, m3, m2, m3, m2));
+                    stiffness_return    = rank2_tangent(Eelastic, m3, m2, m3, m2);
+                    return_quality      = SR_QUALITY_EXACT;
                     return true;
                 }
                 // Edge candidate violates MC: fall through to the corner.
@@ -467,7 +482,12 @@ public:
         // ---- Stage 4: apex of the composite surface (always feasible:
         //      f_TC(T_eff*I) <= 0 by clamp, f_MC(T_eff*I) <= 0 since T_eff <= p_apex).
         //      Reached only by TC-dominant trials none of whose exact returns
-        //      validated: conservative, logged.
+        //      validated. This is the ONE inexact rung: from a confined trial it
+        //      replaces the whole deviatoric state with T_eff*I -- a large,
+        //      unphysical stress drop that reads downstream as a modelling
+        //      problem. Flagged so the integrator can refuse it loudly under
+        //      strict_convergence instead of committing it silently.
+        return_quality = SR_QUALITY_FALLBACK;
         return apex_projection(T_eff, sigma_trial, Eelastic,
                                sigma_return, plastic_strain_incr, stiffness_return);
     }
@@ -518,17 +538,6 @@ private:
     static double nEm_dot(const VoigtVector& n, const VoigtVector& Em)
     {
         return n.dot(Em);
-    }
-
-    // The framework's default tangent contract is Secant = (elastic +
-    // continuum)/2, chosen upstream so rank-deficient plastic tangents never
-    // reach the global solver raw. The hook honors the same contract: a raw
-    // Koiter tangent (rank-1..3 deficient) assembled from several Gauss
-    // points at once makes the global K near-singular and Newton limit-cycles
-    // (measured on the uniaxial-compression leg).
-    static VoigtMatrix secant_blend(const VoigtMatrix& E, const VoigtMatrix& D)
-    {
-        return VoigtMatrix((E + D) / 2.0);
     }
 
     // Consistent tangent for a single plane surface with frozen direction:
@@ -622,8 +631,7 @@ private:
             {
                 Eigen::Matrix<double, 6, 3> EM;
                 EM.col(0) = Em1; EM.col(1) = Em2; EM.col(2) = Em3;
-                stiffness_return = secant_blend(Eelastic,
-                    VoigtMatrix(Eelastic - EM * A.inverse() * EM.transpose()));
+                stiffness_return = VoigtMatrix(Eelastic - EM * A.inverse() * EM.transpose());
             }
         }
 
@@ -729,7 +737,7 @@ private:
 
         sigma_return        = sigma_k;
         plastic_strain_incr = l_mc * m_mc + l_tc * m_tc;
-        stiffness_return    = secant_blend(Eelastic, rank2_tangent(Eelastic, n_mc, n_tc, m_mc, m_tc));
+        stiffness_return    = rank2_tangent(Eelastic, n_mc, n_tc, m_mc, m_tc);
         return CornerResult::ACCEPTED;
     }
 
@@ -842,8 +850,7 @@ private:
                 EM.col(0) = Em1; EM.col(1) = Em2; EM.col(2) = Em3;
                 Eigen::Matrix<double, 6, 3> EN;
                 EN.col(0) = En1; EN.col(1) = En2; EN.col(2) = En3;
-                stiffness_return = secant_blend(Eelastic,
-                    VoigtMatrix(Eelastic - EM * A.inverse() * EN.transpose()));
+                stiffness_return = VoigtMatrix(Eelastic - EM * A.inverse() * EN.transpose());
             }
         }
 
@@ -909,7 +916,7 @@ private:
 
         sigma_return        = sigma_k;
         plastic_strain_incr = l_mc * m_mc;
-        stiffness_return    = secant_blend(Eelastic, rank1_tangent(Eelastic, n_mc, m_mc));
+        stiffness_return    = rank1_tangent(Eelastic, n_mc, m_mc);
         return true;
     }
 

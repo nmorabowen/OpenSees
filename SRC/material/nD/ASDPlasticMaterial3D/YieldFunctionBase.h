@@ -96,6 +96,19 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
 // writing the returned stress, the plastic-strain increment, and the tangent
 // to use. The argument names match the other macros so GET_PARAMETER_VALUE /
 // YF(...) work inside the body.
+// Ladruno (ADR-84 P3): `stiffness_return` is the RAW active-set (Koiter)
+// consistent tangent -- the YF does NOT apply a tangent-operator policy. The
+// integrator applies the material's configured `tangent_type` to it, exactly as
+// it does on the generic path. (P0 secant-blended inside the YF, which silently
+// overrode `tangent_type` and fabricated stiffness in the degenerate corner
+// direction -- see the ADR's §9 measurement.)
+// `return_quality` reports how the state was resolved: SR_QUALITY_EXACT for a
+// closed-form face/edge/corner/apex-cone return, SR_QUALITY_FALLBACK for the
+// conservative terminal vertex projection (a large, unphysical stress drop that
+// the caller may refuse under strict_convergence).
+#define SR_QUALITY_EXACT    1
+#define SR_QUALITY_FALLBACK 2
+
 #define SPECIAL_RETURN template <typename IVStorageType, typename ParameterStorageType> \
     bool special_return(const VoigtVector& sigma_trial, \
         const VoigtMatrix& Eelastic, \
@@ -104,7 +117,8 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
         const ParameterStorageType& parameters_storage, \
         VoigtVector& sigma_return, \
         VoigtVector& plastic_strain_incr, \
-        VoigtMatrix& stiffness_return) const
+        VoigtMatrix& stiffness_return, \
+        int& return_quality) const
 
 #define GET_INTERNAL_VARIABLE_HARDENING(type) \
     internal_variables_storage.template get<type> ().hardening_function(depsilon, m, sigma, parameters_storage)
