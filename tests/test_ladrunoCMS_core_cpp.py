@@ -40,7 +40,7 @@ def test_ladruno_cms_pure_cpp_core():
                 "-o",
                 executable,
             ],
-            capture_output=True,
+            stdin=subprocess.DEVNULL, capture_output=True,
             text=True,
             check=False,
         )
@@ -48,7 +48,7 @@ def test_ladruno_cms_pure_cpp_core():
             "C++ compilation failed:\n" + compile_result.stderr
         )
         run_result = subprocess.run(
-            [executable], capture_output=True, text=True, check=False
+            [executable], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False
         )
         assert run_result.returncode == 0, (
             "C++ core checks failed:\n"

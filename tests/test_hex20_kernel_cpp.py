@@ -36,9 +36,9 @@ def _run_cpp():
         cc = subprocess.run([gpp, "-O2", "-std=c++17",
                              "-I", _SRC_BRICK, "-I", _SRC_INTEG,
                              "-DLADRUNO_MASSLUMPING_STANDALONE",
-                             src, "-o", exe], capture_output=True, text=True)
+                             src, "-o", exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
-        rr = subprocess.run([exe], capture_output=True, text=True)
+        rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert rr.returncode == 0, f"run failed:\n{rr.stderr}"
     return _parse(rr.stdout)
 

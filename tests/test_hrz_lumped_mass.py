@@ -172,10 +172,10 @@ def test_hrz_standalone_kernel(tmp_path):
     exe = str(tmp_path / ("hrz_standalone_ci" + (".exe" if os.name == "nt" else "")))
     comp = subprocess.run(
         [gpp, "-std=c++14", "-I", inc, "-DLADRUNO_MASSLUMPING_STANDALONE", src, "-o", exe],
-        capture_output=True, text=True, env=os.environ.copy(),
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, env=os.environ.copy(),
     )
     assert comp.returncode == 0, "standalone compile failed:\n" + comp.stderr
-    run = subprocess.run([exe], capture_output=True, text=True, env=os.environ.copy())
+    run = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True, env=os.environ.copy())
     assert run.returncode == 0, (
         "standalone HRZ self-test failed (returncode %s):\n%s\n%s"
         % (hex(run.returncode & 0xFFFFFFFF), run.stdout, run.stderr))
