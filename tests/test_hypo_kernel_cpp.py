@@ -49,10 +49,10 @@ def test_cpp_hypo_kernel_selfcheck():
         cc = subprocess.run(
             [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_GEOM,
              src, "-o", exe],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
-        rr = subprocess.run([exe, _CASES], capture_output=True, text=True,
+        rr = subprocess.run([exe, _CASES], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                             encoding="utf-8", errors="replace")
         assert rr.returncode == 0, f"kernel check failed:\n{rr.stdout}\n{rr.stderr}"
         assert "RESULT: PASS" in rr.stdout, rr.stdout

@@ -77,9 +77,9 @@ def _run_cpp():
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "lj2k.exe")
         cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, src, "-o", exe],
-                            capture_output=True, text=True)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
-        rr = subprocess.run([exe], capture_output=True, text=True)
+        rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert rr.returncode == 0, f"run failed:\n{rr.stderr}"
     # parse into {scenario: {step: {"STRESS":[...], "STATE":[...], "DTAN":[...]}}}
     out, cur = {}, None

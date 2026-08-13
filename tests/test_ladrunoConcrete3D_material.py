@@ -468,7 +468,7 @@ def test_cpp_kernel_matches_oracle_dump(tmp_path):
     #    PR #249 review). The g++ check then runs against this SAME-PLATFORM dump.
     fixture = os.path.join(tmp_path, "fixture.txt")
     subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py"), fixture],
-                   check=True, cwd=TESTBED, env=os.environ.copy())
+                   stdin=subprocess.DEVNULL, check=True, cwd=TESTBED, env=os.environ.copy())
     # 2) THE REAL GATE: compile the self-check (header-only kernel; -I repo root for SRC/) and run it
     #    against the SAME-PLATFORM fresh dump (C++ and oracle compiled/run on one platform => the
     #    precision floors hold exactly).
@@ -480,8 +480,8 @@ def test_cpp_kernel_matches_oracle_dump(tmp_path):
     exe = os.path.join(tmp_path, "c3dchk.exe")
     src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
     subprocess.run([gpp, "-std=c++17", "-O2", "-I", REPO, src, "-o", exe],
-                   check=True, cwd=REPO, env=os.environ.copy())
-    out = subprocess.run([exe, fixture], cwd=REPO, capture_output=True, text=True,
+                   stdin=subprocess.DEVNULL, check=True, cwd=REPO, env=os.environ.copy())
+    out = subprocess.run([exe, fixture], stdin=subprocess.DEVNULL, cwd=REPO, capture_output=True, text=True,
                          env=os.environ.copy())
     assert out.returncode == 0, f"g++ kernel check failed:\n{out.stdout}\n{out.stderr}"
     assert "KERNEL CHECK: ALL PASS" in out.stdout

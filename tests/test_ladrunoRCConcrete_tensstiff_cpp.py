@@ -29,9 +29,9 @@ def test_tensstiff_gpp_gate():
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "rc_ts.exe")
         cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, _GATE, "-o", exe],
-                            capture_output=True, text=True)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed to compile the kernel gate:\n{cc.stderr}"
-        rr = subprocess.run([exe], capture_output=True, text=True)
+        rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     # the gate self-asserts: it returns non-zero on any floor/tangent mismatch.
     assert rr.returncode == 0, f"g++ tension-stiffening gate FAILED:\n{rr.stdout}\n{rr.stderr}"
     out = rr.stdout
