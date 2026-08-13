@@ -181,6 +181,32 @@ def main():
                                                    r["w15_nocontact"]))
                 + ((" FAILED: " + ", ".join(bad)) if bad else ""))
 
+    # --- P2b review follow-up: ALL-LANES round trip + field sensitivity ---
+    rc, out = run([sys.executable, "db_roundtrip_all_lanes.py", bd], env)
+    m = re.search(r"^P2DBALL (\{.*\})", out, re.M)
+    if not m:
+        verdict("db-all-lanes", False, out[-400:])
+    else:
+        r = json.loads(m.group(1))
+        mark = out.find("P2DBALL-MARK pre-mutation-restore-done")
+        warn = out.find("differ from the live ones")
+        checks = [
+            ("analyses converged", r["ref_ok"] == 0 and r["rt_ok"] == 0),
+            ("all four lanes exact", r["tips_ref"] == r["tips_rt"]),
+            ("lanes distinct + tie in tension",
+             r["tips_ref"]["B"] > 0 > r["tips_ref"]["A"]
+             and len(set(r["tips_ref"].values())) == 4),
+            ("verify silent until mutated, then warns",
+             mark != -1 and warn > mark),
+            ("pack deterministic", r["determinism_same"]),
+            ("every probed field packed", all(r["sensitivity"].values())),
+        ]
+        bad = [n for n, okc in checks if not okc]
+        verdict("db-all-lanes", not bad,
+                ("tips=" + ",".join("%s=%.6e" % kv
+                                    for kv in sorted(r["tips_ref"].items())))
+                + ((" FAILED: " + ", ".join(bad)) if bad else ""))
+
     print()
     if failures:
         print("FAILED: " + ", ".join(failures))
