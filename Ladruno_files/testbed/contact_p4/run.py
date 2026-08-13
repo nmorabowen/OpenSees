@@ -22,9 +22,9 @@ Cases (decks in this dir; outputs land in ./_out, wiped per run):
                                                   table (DESKTOP SANITY, not a study)
   ctl-soft         pound.tcl + P4_SOFT, np2       P2 refusal must fire (named FATAL)
   ctl-noghost      pound.tcl + P4_NOGHOST, np2    declaration-time refusal must fire
-                                                  (named, loud; the job is then reaped
-                                                  by the driver tree-kill -- the missing
-                                                  MPI teardown is a recorded open defect)
+                                                  (named, loud) AND tear the MPI job
+                                                  down on its own -- a tree-kill by this
+                                                  driver is now a FAILURE
   ctl-ghostmass    pound.tcl + P4_GHOSTMASS, np2  INV-6 mutation: runs, but the
                                                   serial-comparison instrument must
                                                   FLAG it (silent-wrong-answer check)
@@ -363,22 +363,31 @@ def main():
 
     # (b) fail-loud: ghost declarations stripped. Post-#737 (removal lane) the
     #     missing nodes are refused AT DECLARATION with a named error -- loud,
-    #     never a silent pass. MEASURED GAP (open defect, ADR-78 §P4): that
-    #     refusal is rank-local (parser error, no MPI teardown), so the OTHER
-    #     rank blocks in its next collective and the job must be reaped by the
-    #     driver's tree-kill -- P1's 1.1 s FATAL teardown regressed when #737
-    #     moved the check out of handle(). Gate = named refusal + no results;
-    #     the timeout+kill path is EXPECTED until the teardown gap is closed.
+    #     never a silent pass. The P4 battery ORIGINALLY found that refusal to be
+    #     rank-local (a parser `return -1`, no MPI teardown): the other rank
+    #     blocked in its next collective and the job had to be reaped by this
+    #     driver's tree-kill, regressing P1's 1.1 s FATAL teardown. Fixed by
+    #     routing the declaration verbs through ladrunoContactFatal(), so the
+    #     gate now requires all three: named refusal, no results, AND the job
+    #     ending itself. rc == -9 (tree-killed) is a FAILURE, not an expectation
+    #     -- that is what makes this case a standing guard on the teardown.
+    #     WALL_MAX is generous against P1's measured 1.1 s: it must separate a
+    #     teardown from a hang, not time the teardown.
+    WALL_MAX = 20.0
     rc, o, wall = R.run("pound.tcl", n=2, extra_env={"P4_TAG": "nogh", "P4_NOGHOST": "1"},
                         timeout=45)
     named = "does not exist" in o
     tail = re.search(r"P4POUND nogh .* analyze=", o) is not None
-    verdict("ctl-noghost", named and not tail,
-            "declaration refusal%s, tail %s, %s (%.0fs)"
+    torn_down = rc != -9 and wall < WALL_MAX
+    verdict("ctl-noghost", named and not tail and torn_down,
+            "declaration refusal%s, tail %s, %s (%.1fs)"
             % ("" if named else " MISSING",
                "suppressed" if not tail else "PRINTED",
-               "job hung -> tree-killed (KNOWN teardown gap)" if rc == -9
-               else "job exited rc=%d" % rc, wall))
+               "job HUNG -> tree-killed (TEARDOWN REGRESSED)" if rc == -9
+               else ("job exited rc=%d" % rc if wall < WALL_MAX
+                     else "job exited rc=%d but took >%.0fs (teardown too slow)"
+                          % (rc, WALL_MAX)),
+               wall))
 
     # (c) INV-6 mutation: mass on ghosts runs to completion (silently wrong);
     #     the serial-comparison instrument itself must FLAG the divergence.

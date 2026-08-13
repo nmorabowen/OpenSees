@@ -4043,7 +4043,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Rule:** a saved OpenSees database is build-lineage-scoped. Re-save after upgrading across P2 (#this PR); do not archive `database File` outputs as long-term state.
 - **Layering note recorded with it:** P1's zero-slave-mass abort catches the FULLY-ghosted NTS `-soft` case by accident of completeness (ghost ⇒ no rank-local element ⇒ zero mass). It can never catch a partition-BOUNDARY node (partial mass, nonzero) and never scans the mortar/edge/plane soft lanes at all — the pre-P2 build ran a 2-rank mortar `-soft` deck to completion silently. The P2 refusal (`ladrunoContactNumRanks() > 1 || hostPartitioned` at the `anySoft` choke point) is the actual guard; when writing a mutation deck for a NEW guard, give the model mass so an OLD guard cannot fire first and let the test pass via the wrong abort.
 
-## A rank-local Tcl deck ERROR under OpenSeesMP HANGS the whole job — a parser refusal is not a teardown, and #737 silently converted a measured 1.1 s FATAL into exactly this hang (ADR-78 P4)
+## A rank-local Tcl deck ERROR under OpenSeesMP HANGS the whole job — a parser refusal is not a teardown, and #737 silently converted a measured 1.1 s FATAL into exactly this hang (ADR-78 P4) — FIXED
 
 - **Bites:** any check that refuses a deck line on ONE rank of a partitioned run
   (measured instance: `contactSurface` declaration-time missing-node validation,
@@ -4054,21 +4054,40 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   delay (measured on the same deck: hung >30 s and 45 s in two runs, exited
   rc −1 after 17 s in a third). The preserved P0 mutation gate
   `Ladruno_files/testbed/contact_parallel/mp_noghost.tcl` — which P1 measured at
-  "FATAL + teardown, 1.1 s, zero orphans" — now hangs on every build since #737.
+  "FATAL + teardown, 1.1 s, zero orphans" — hung on every build from #737 until
+  the fix below. Re-confirmed by mutation afterwards: revert the wrapper to a
+  bare `return res`, rebuild `OpenSeesMP` alone, and the deck goes straight back
+  to 45.16 s tree-killed with two orphaned `OpenSeesMP.exe` processes.
 - **Why:** P1's abort lived in `handle()` and routed through
   `ladrunoContactFatal()` (the per-target MPI TU, `MPI_Abort` teardown). #737
   moved the missing-node check to the `contactSurface` PARSER
   (`OpenSeesOutputCommands.cpp`, `return -1`) — correct in serial, better even,
   but the parser has no MPI awareness, so under MPI the loudness survived and
   the teardown did not.
-- **Workaround/status (2026-08-12, ADR-78 §P4 finding 1 — OPEN DEFECT):** drive
-  partitioned decks from a harness that redirects output to FILES and
-  `taskkill /F /T`s the mpiexec tree on timeout (see the next entry for why
-  pipes make it worse). The fix belongs in the refusal path: route
-  declaration-time refusals through `ladrunoContactNumRanks()` /
-  `ladrunoContactFatal()` (`LadrunoContactAbort.cpp`) when np > 1. General rule
-  for ALL future fail-loud work: under MPI, "refuse at the deck line" is only
-  half a contract — the other half is tearing the job down.
+- **Status: FIXED (2026-08-12, ADR-78 §P4 finding 1).** The three contact
+  DECLARATION verbs (`contactSurface` / `contact` / `contactPlane`) are now
+  two-line wrappers over their unchanged bodies, routing any `<0` result through
+  `ladrunoContactFatal()` (`LadrunoContactAbort.cpp` — the per-target MPI TU).
+  `mp_noghost.tcl` tears the job down again with zero orphans; the P4 battery's
+  `ctl-noghost` case now REQUIRES the fast exit (a driver tree-kill is a FAILURE
+  verdict, not an expectation), so the gate is a standing guard rather than a
+  note. Serial and `mpiexec -n 1` unchanged — `ladrunoContactFatal()` returns −1
+  untouched at np ≤ 1.
+- **The shape of the fix is the durable part.** Wrapping the RESULT, not each of
+  the ~75 individual `return -1` sites, means (a) the refusals that propagate out
+  of `addSurface`/`addContact`/`addRigidPlane` (unknown surface tag, duplicate
+  tag — the same partition-dependent class) are covered for free, and (b) a check
+  added later inherits the teardown instead of silently reopening the defect,
+  which is exactly how it opened. **General rule for ALL future fail-loud work:
+  under MPI, "refuse at the deck line" is only half a contract — the other half
+  is tearing the job down. Put the teardown at the verb boundary, not at the
+  check.** Note the query verbs are deliberately NOT wrapped: their −1 is
+  legitimately rank-local (`ladrunoMortarTieResidual` is 0 on the non-owner by
+  design), so aborting on one would break the ALM tie lane.
+- **Driving partitioned decks regardless:** redirect output to FILES and
+  `taskkill /F /T` the mpiexec tree on timeout (see the next entry for why pipes
+  make a wedged job worse). That harness discipline is what let this defect be
+  measured at all, and it stays right for any deck that can wedge.
 
 ## MPI ranks that outlive mpiexec inherit the driver's stdout pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, even after its own TimeoutExpired already killed mpiexec (ADR-78 P4)
 

@@ -159,3 +159,10 @@ build_p1b*.log
 # ADR-79 bearing testbed: .ladruno recorder output is tens of MB of HDF5 and is
 # a DERIVED artifact — viewer_run.py + bearing_mesh.npz reproduce it exactly.
 Ladruno_files/testbed/hypo_bearing/*.ladruno
+
+# Parallel-contact testbed run output: run.py wipes and regenerates ./_out on
+# every invocation (recorder histories, per-rank energy channels, deck logs).
+# Derived, and noisy enough to bury a real diff — 90 files per battery run.
+Ladruno_files/testbed/contact_p4/_out/
+Ladruno_files/testbed/contact_p2/_out/
+Ladruno_files/testbed/contact_parallel/_out/
