@@ -4042,3 +4042,72 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Why it evades the usual guards:** both builds are green on their own round-trips; only the CROSS-build restore breaks, and saved databases usually outlive the build that wrote them by exactly long enough to forget this.
 - **Rule:** a saved OpenSees database is build-lineage-scoped. Re-save after upgrading across P2 (#this PR); do not archive `database File` outputs as long-term state.
 - **Layering note recorded with it:** P1's zero-slave-mass abort catches the FULLY-ghosted NTS `-soft` case by accident of completeness (ghost ⇒ no rank-local element ⇒ zero mass). It can never catch a partition-BOUNDARY node (partial mass, nonzero) and never scans the mortar/edge/plane soft lanes at all — the pre-P2 build ran a 2-rank mortar `-soft` deck to completion silently. The P2 refusal (`ladrunoContactNumRanks() > 1 || hostPartitioned` at the `anySoft` choke point) is the actual guard; when writing a mutation deck for a NEW guard, give the model mass so an OLD guard cannot fire first and let the test pass via the wrong abort.
+
+## A rank-local Tcl deck ERROR under OpenSeesMP HANGS the whole job — a parser refusal is not a teardown, and #737 silently converted a measured 1.1 s FATAL into exactly this hang (ADR-78 P4)
+
+- **Bites:** any check that refuses a deck line on ONE rank of a partitioned run
+  (measured instance: `contactSurface` declaration-time missing-node validation,
+  added by the ADR-78 removal lane #737). The refusing rank prints the named
+  error and aborts its script; every other rank marches into the next collective
+  (numberer gather, SOE solve) and blocks. The job then either hangs
+  indefinitely or is reaped by hydra's `--auto-cleanup` at a NONDETERMINISTIC
+  delay (measured on the same deck: hung >30 s and 45 s in two runs, exited
+  rc −1 after 17 s in a third). The preserved P0 mutation gate
+  `Ladruno_files/testbed/contact_parallel/mp_noghost.tcl` — which P1 measured at
+  "FATAL + teardown, 1.1 s, zero orphans" — now hangs on every build since #737.
+- **Why:** P1's abort lived in `handle()` and routed through
+  `ladrunoContactFatal()` (the per-target MPI TU, `MPI_Abort` teardown). #737
+  moved the missing-node check to the `contactSurface` PARSER
+  (`OpenSeesOutputCommands.cpp`, `return -1`) — correct in serial, better even,
+  but the parser has no MPI awareness, so under MPI the loudness survived and
+  the teardown did not.
+- **Workaround/status (2026-08-12, ADR-78 §P4 finding 1 — OPEN DEFECT):** drive
+  partitioned decks from a harness that redirects output to FILES and
+  `taskkill /F /T`s the mpiexec tree on timeout (see the next entry for why
+  pipes make it worse). The fix belongs in the refusal path: route
+  declaration-time refusals through `ladrunoContactNumRanks()` /
+  `ladrunoContactFatal()` (`LadrunoContactAbort.cpp`) when np > 1. General rule
+  for ALL future fail-loud work: under MPI, "refuse at the deck line" is only
+  half a contract — the other half is tearing the job down.
+
+## MPI ranks that outlive mpiexec inherit the driver's stdout pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, even after its own TimeoutExpired already killed mpiexec (ADR-78 P4)
+
+- **Bites:** a Python harness launching `mpiexec` with `capture_output=True` and
+  a `timeout=`. If the job wedges (previous entry) the timeout fires, Python
+  kills mpiexec — and then blocks anyway: `subprocess.run`'s TimeoutExpired
+  path re-enters `communicate()` to drain the pipes, and the ORPHANED ranks
+  (children of `hydra_pmi_proxy`, not of mpiexec on Windows Intel MPI... they
+  survive the parent kill) still hold inherited write handles, so EOF never
+  comes. The driver looks hung with no traceback; the stdout buffer (all your
+  PASS/FAIL verdicts) is invisible until the process dies. Cost this session:
+  ~15 min of forensics on a battery that had actually finished 9 of its 12
+  cases.
+- **Why:** Windows pipe handles are inherited by the whole process tree;
+  `Popen.kill()` kills only the direct child. CPython's `run()` deliberately
+  waits for pipe EOF after the kill so it can attach output to the exception.
+- **Workaround/status (2026-08-12):** in MPI harnesses never capture through
+  pipes — redirect stdout/stderr to a FILE, `Popen.wait(timeout=...)`, and on
+  timeout kill the whole tree: `taskkill /F /T /PID <mpiexec-pid>` (hydra and
+  the ranks are in its Job tree even when mpiexec's own kill misses them). The
+  ADR-78 P4 driver (`Ladruno_files/testbed/contact_p4/run.py`, `Runner.run`) is
+  the reference implementation. Related-but-different from the Git-Bash
+  `kill -0` lie in [[ladruno-long-run-agent-traps]].
+
+## Recorder text files default to `-precision 6` — any cross-run parity gate tighter than ~1e-6 relative is gated on QUANTIZATION, not physics (and under MPI filenames grow a `.part-<rank>` suffix)
+
+- **Bites:** comparing recorder output between two runs that should agree to
+  machine precision (serial vs partitioned twins, A/B refactors). At the
+  default 6 significant digits two BIT-IDENTICAL runs compare equal — but so
+  does a run that diverged below ~1e-6 relative, so the gate silently proves
+  nothing; and a SUM of per-rank files (energy channels) picks up the rounding
+  of each addend (measured: serial-vs-Σranks energy parity read 3.3e-7 of
+  E_peak from quantization alone; with `-precision 17` the same comparison
+  reads 5.6e-16). Separately, under MPI every `-file foo.txt` becomes
+  `foo.part-<rank>.txt` (DataFileStream per-process suffix), so a driver
+  globbing exact names finds nothing.
+- **Why:** `DataFileStream` default precision is 6; the `.part-N` suffix is how
+  per-process streams avoid clobbering each other.
+- **Workaround/status (2026-08-12, ADR-78 P4):** pass `-precision 17` on every
+  recorder feeding a parity gate (`Node` and `EnergyBalance` both accept it);
+  glob `name*.txt` in drivers. P0/P2 never hit this because they compared
+  interpreter-printed `format %.15e` values, not recorder files.

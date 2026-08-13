@@ -274,3 +274,76 @@ negative control this lane has had, and free).
 its `-soft` case is now moot-by-refusal on partitioned decks; pounding on 2
 ranks should run `-kn auto`/explicit kn). The ASDConcrete3D sentinel and
 `cross-tier-nightly` notes from Session 2 stand unchanged.
+
+---
+
+# Session 4 — 2026-08-12 (P4 validation battery)
+
+One PR: **P4**, the fork-side validation battery — the last committed fork phase
+of this ADR. All 12 verdicts PASS against a fresh `cebec3f9f` build (hash checked
+against the worktree HEAD via the splash before any measurement). Battery at
+`Ladruno_files/testbed/contact_p4/` (`python run.py <build-dir>`).
+
+## What landed (measured, headline numbers)
+
+* **Explicit 2-body pounding (NTS `-kn auto`) is BIT-IDENTICAL to serial at
+  np=2 AND np=4** — full disp/vel histories at 17 recorded digits, 3000 steps,
+  3 impact/separation cycles, ghost == native every step, identical peak base
+  reaction. The np=4 deck cuts BOTH bodies across ranks (regular DD boundary +
+  contact interface in one model — first time measured together).
+* **Contact energy balance closes:** 0.002% of E_peak at contact-open samples
+  (serial AND partitioned), per-rank EnergyBalance channels sum to serial at
+  5.6e-16 / 6.0e-16 of E_peak. The in-contact RES excursion (up to 66% of
+  E_peak) is the penalty-spring storage — contact assembles at the SOE, which
+  the recorder sweep never sees — so the closure gate must sit on separated
+  samples. Physical, not an error; returned on separation.
+* **Mortar mesh-tie across ranks (implicit Mumps + held-load ALM):** tie
+  residual 2.2e-19 (np2) / 3.6e-19 (serial) after 15 fixed augmentations; np2
+  vs serial 6.5e-16; tip == analytic 2P/E to 10 digits; loaded in TENSION so a
+  silently-missing tie cannot pass.
+* **np=1/2/4 sanity (NB=8, 40k steps):** 9.1 / 4.9 / 3.2 s, answers
+  bit-identical across np. Desktop, startup-inclusive — a sanity check, NOT a
+  scaling study (Q-P0GATHER is unmeasurable at this size; it belongs to the
+  cluster campaign that would justify P5).
+* **Controls:** P2 soft-refusal re-pinned on the pounding deck; INV-6
+  ghost-mass mutation runs silently and moves the answer 91% — the battery's
+  own serial-comparison instrument catches it.
+
+## The finding that outranks the numbers
+
+**#737 regressed P1's MPI teardown for the missing-ghost case — OPEN DEFECT.**
+The removal lane moved missing-node detection from `handle()` (P1's
+`ladrunoContactFatal`, measured 1.1 s teardown) to `contactSurface` declaration
+time, where the refusal is a rank-local parser `return -1` with no MPI
+awareness. The refusing rank aborts its script; the other rank blocks in the
+next collective. The preserved P0 gate `contact_parallel/mp_noghost.tcl` now
+HANGS on every build since #737 (measured: >30 s, 45 s, and one 17 s
+hydra-auto-cleanup reap — nondeterministic). Refusal text is still loud and
+named; only the teardown is missing. Fix shape: route the declaration refusal
+through `ladrunoContactNumRanks()`/`ladrunoContactFatal()` when np > 1 — the
+per-target TU exists for exactly this. Recorded in ADR §P4 finding 1 +
+[[LEDGER_quirks]]; NOT fixed in the P4 PR (measurement lane, no SRC changes).
+
+## Traps paid for (details in [[LEDGER_quirks]])
+
+* Orphaned MPI ranks inherit the harness's stdout pipe:
+  `subprocess.run(capture_output=True)` blocks forever even AFTER its own
+  TimeoutExpired killed mpiexec. File-redirect + `taskkill /F /T` is the only
+  robust shape; `run.py`'s `Runner.run` is the reference.
+* Recorder files default to `-precision 6`: a serial-vs-parallel parity gate
+  reads ~3e-7 from quantization alone and proves nothing tighter. `-precision
+  17` on every recorder feeding a gate; under MPI filenames grow `.part-<rank>`.
+* ALM across ranks: the held-load augment loop must be FIXED-COUNT on every
+  rank (`analyze` is collective, the residual query is rank-local) — a
+  residual-keyed break deadlocks. `analyze_augmented`'s while-loop shape does
+  not port to partitioned decks as-is.
+
+## Open items now
+
+1. **The #737 teardown gap** (above) — small SRC fix + re-green
+   `mp_noghost.tcl` + a P4 `ctl-noghost` gate flip (its verdict line documents
+   the expected post-fix behaviour).
+2. **apeGmsh S6** (its ADR 0092) if still open, then the ADR-78 table is done
+   through P4; **P5 stays deferred** and now has a written measurement
+   precondition (cluster-scale interface, §P4 last paragraph).
+3. Unchanged from Session 2: ASDConcrete3D sentinel, `cross-tier-nightly`.
