@@ -212,8 +212,12 @@ SProfileSPDLinSOE::setSize(Graph &theGraph)
     for (int j=1; j<size; j++)
 	iDiagLoc[j] = iDiagLoc[j] + 1 + iDiagLoc[j-1];
 
-    if (iDiagLoc != 0)       
+    // Ladruno: size > 0 guard -- resizing down to a zero-free-equation model
+    // with a stale iDiagLoc read iDiagLoc[-1] here.
+    if (iDiagLoc != 0 && size > 0)
     	profileSize = iDiagLoc[size-1];
+    else
+	profileSize = 0;
 
     // check if we need more space to hold A
     // if so then go get it
@@ -275,16 +279,19 @@ SProfileSPDLinSOE::setSize(Graph &theGraph)
 	doubleX[l] = 0;
     }
     
-    if (size != oldSize) {
-	
+    // Ladruno: also create when still null -- a zero-free-equation model has
+    // size == oldSize == 0 and getB()/getX() would exit(-1) on the null
+    // wrappers (whole-process death). See FullGenLinSOE.cpp for the analysis.
+    if (size != oldSize || vectX == 0) {
+
 	if (vectX != 0)
 	    delete vectX;
 	if (vectB != 0)
 	    delete vectB;
-	
+
 	vectX = new Vector(doubleX,size);
 	vectB = new Vector(doubleB,size);
-	
+
 	if (size > Bsize)
 	  Bsize = size;
     }

@@ -218,7 +218,10 @@ BandGenLinSOE::setSize(Graph &theGraph)
     }
 
     // get new Vector objects if size has changes
-    if (oldSize != size) {
+    // Ladruno: also create when still null -- a zero-free-equation model has
+    // size == oldSize == 0 and getB()/getX() would exit(-1) on the null
+    // wrappers (whole-process death). See FullGenLinSOE.cpp for the analysis.
+    if (oldSize != size || vectX == 0) {
 	if (vectX != 0) 
 	    delete vectX;
 

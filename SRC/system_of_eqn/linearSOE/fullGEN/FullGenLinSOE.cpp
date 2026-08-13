@@ -187,7 +187,13 @@ FullGenLinSOE::setSize(Graph &theGraph)
     }
 
     // create new Vectors
-    if (size != oldSize) {
+    // Ladruno: also create when the wrappers are still null. A model whose
+    // every DOF is fixed or sp-constrained numbers ZERO equations, so
+    // size == oldSize == 0 here and the original condition left vectX/vectB/
+    // matA null from the default constructor -- the first getB()/getX() then
+    // hit the FATAL exit(-1) path and killed the whole process (silent under
+    // the Python module's stream redirection; looked like a native crash).
+    if (size != oldSize || vectX == 0) {
 	if (vectX != 0)
 	    delete vectX;
 

@@ -218,14 +218,17 @@ BandSPDLinSOE::setSize(Graph &theGraph)
 	X[j] = 0;
     }
 
-    if (size != oldSize) {
+    // Ladruno: also create when still null -- a zero-free-equation model has
+    // size == oldSize == 0 and getB()/getX() would exit(-1) on the null
+    // wrappers (whole-process death). See FullGenLinSOE.cpp for the analysis.
+    if (size != oldSize || vectX == 0) {
 
 	if (vectX != 0)
 	    delete vectX;
 	if (vectB != 0)
 	    delete vectB;
 
-	vectX = new Vector(X,size);	
+	vectX = new Vector(X,size);
 	vectB = new Vector(B,size);
 
 	if (size > Bsize)

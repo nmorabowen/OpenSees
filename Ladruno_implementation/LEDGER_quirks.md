@@ -904,6 +904,10 @@ broadcast path is not runtime-testable in this build.
   by `tests/test_spring_damping_claims.py`. Learned 2026-06-02.
 
 ### Prescribing ALL of a node's DOFs via `sp` with the Transformation handler ⇒ 0 free equations ⇒ process terminates
+- **FIXED 2026-08-13** -- see the `FullGenLinSOE::getX - vectX == 0` entry below for the
+  root cause (six SOEs, null size-0 `Vector` wrappers) and the fix. This entry is kept
+  because its *symptom* description (pytest aborting with no summary, looking like a
+  hang) is the one you are most likely to search for.
 - **Bites:** a static test that imposes both DOFs of the only free node via `ops.sp`
   (with the other node fully `fix`ed) leaves the system with **zero unknowns**.
   Under `constraints('Transformation')` the solve does not return an error code —
@@ -2734,7 +2738,32 @@ is immune (uses eigenvalues only, never Φ).
   where every DOF is fixed or sp-prescribed leaves size-0 vectors that the SOE treats
   as an allocation failure, and OpenSees's error path is `exit`, not a recoverable
   analysis error.
-- **Fix:** for fully-prescribed rigs use `constraints("Penalty", 1e15, 1e15)` — the
+- **Workaround/status (2026-08-13): FIXED — the workarounds below are no longer
+  required.** Root cause was never the solvers (every LAPACK solver already had its
+  `if (n == 0) return 0;` quick return) but `setSize(Graph&)` in **six** SOEs:
+  `FullGenLinSOE`, `BandGenLinSOE`, `BandSPDLinSOE`, `ProfileSPDLinSOE`,
+  `SProfileSPDLinSOE` build their `vectX`/`vectB` (FullGen also `matA`) wrappers only
+  under `if (size != oldSize)`, and `DiagonalSOE` excludes `size == 0` from that block
+  *explicitly*. With zero equations `size == oldSize == 0`, so the wrappers keep the
+  null value the default constructor gave them and the first `getX()`/`getB()` takes
+  the `FATAL ... exit(-1)` branch. `exit(-1)` is a clean process exit, **not** a signal
+  -- hence no traceback and nothing from `faulthandler` -- and the FATAL text goes to
+  `opserr`, which the Python module redirects, so nothing prints at all. Fixed with six
+  one-line `|| vectX == 0` guards, plus a `size > 0` guard on the two ProfileSPD
+  variants' `profileSize = iDiagLoc[size-1]` (which read `iDiagLoc[-1]` when an existing
+  SOE was resized *down* to zero). Provably inert for any model with free equations: the
+  new branch needs `vectX == 0 && size == oldSize`, reachable only at the first
+  `setSize` with `size == 0`. A zero-equation solve is trivially successful and now
+  returns rc=0 with the `sp` values enforced, matching `UmfPack` (which always worked).
+  Gate: `tests/test_soe_zero_free_equations.py` (zone_a, subprocess-isolated; 6 of its
+  13 cases fail pre-fix). See the six `SRC/system_of_eqn/linearSOE/**` rows in
+  [[LEDGER_vanilla_files]].
+- **NOTE -- this quirk was rediscovered THREE times before anyone fixed it** (2026-06-03
+  PR #155 while building LadrunoRCConcrete; 2026-07-07 PR #525 building
+  `tests/test_planestrain_sigma_zz.py`; 2026-08-12 on an `sp`-driven MC/MCTC brick
+  probe), each time landing a *workaround* in a different section of this file. If you
+  find yourself writing a fourth, fix the code instead.
+- **Superseded workaround** (kept for context): for fully-prescribed rigs use `constraints("Penalty", 1e15, 1e15)` -- the
   prescribed DOFs then STAY in the system (size > 0) and the penalty violation at
   1e15 vs typical stiffness is ~1e-10 relative, invisible to material-response
   checks. Alternatively leave at least one genuinely free DOF in the model.
@@ -4057,94 +4086,6 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Why:** ASDPlasticMaterial3D's Backward_Euler return map relaxes the stress well below the elastic-predictor trajectory once yielding starts; extrapolating a target strain/stress from `E`/`nu` alone ignores that relaxation entirely.
 - **Workaround/status (2026-08-12, PR #741):** sweep the drive numerically (print the actual committed stress path at a few candidate strain magnitudes) and pin the test's non-vacuity assertions to the MEASURED plastic response, not an elastic back-of-envelope number.
 - **Layering note recorded with it:** P1's zero-slave-mass abort catches the FULLY-ghosted NTS `-soft` case by accident of completeness (ghost ⇒ no rank-local element ⇒ zero mass). It can never catch a partition-BOUNDARY node (partial mass, nonzero) and never scans the mortar/edge/plane soft lanes at all — the pre-P2 build ran a 2-rank mortar `-soft` deck to completion silently. The P2 refusal (`ladrunoContactNumRanks() > 1 || hostPartitioned` at the `anySoft` choke point) is the actual guard; when writing a mutation deck for a NEW guard, give the model mass so an OLD guard cannot fire first and let the test pass via the wrong abort.
-
-## A rank-local Tcl deck ERROR under OpenSeesMP HANGS the whole job — a parser refusal is not a teardown, and #737 silently converted a measured 1.1 s FATAL into exactly this hang (ADR-78 P4) — FIXED
-
-- **Bites:** any check that refuses a deck line on ONE rank of a partitioned run
-  (measured instance: `contactSurface` declaration-time missing-node validation,
-  added by the ADR-78 removal lane #737). The refusing rank prints the named
-  error and aborts its script; every other rank marches into the next collective
-  (numberer gather, SOE solve) and blocks. The job then either hangs
-  indefinitely or is reaped by hydra's `--auto-cleanup` at a NONDETERMINISTIC
-  delay (measured on the same deck: hung >30 s and 45 s in two runs, exited
-  rc −1 after 17 s in a third). The preserved P0 mutation gate
-  `Ladruno_files/testbed/contact_parallel/mp_noghost.tcl` — which P1 measured at
-  "FATAL + teardown, 1.1 s, zero orphans" — hung on every build from #737 until
-  the fix below. Re-confirmed by mutation afterwards: revert the wrapper to a
-  bare `return res`, rebuild `OpenSeesMP` alone, and the deck goes straight back
-  to 45.16 s tree-killed with two orphaned `OpenSeesMP.exe` processes.
-- **Why:** P1's abort lived in `handle()` and routed through
-  `ladrunoContactFatal()` (the per-target MPI TU, `MPI_Abort` teardown). #737
-  moved the missing-node check to the `contactSurface` PARSER
-  (`OpenSeesOutputCommands.cpp`, `return -1`) — correct in serial, better even,
-  but the parser has no MPI awareness, so under MPI the loudness survived and
-  the teardown did not.
-- **Status: FIXED (2026-08-12, ADR-78 §P4 finding 1).** The three contact
-  DECLARATION verbs (`contactSurface` / `contact` / `contactPlane`) are now
-  two-line wrappers over their unchanged bodies, routing any `<0` result through
-  `ladrunoContactFatal()` (`LadrunoContactAbort.cpp` — the per-target MPI TU).
-  `mp_noghost.tcl` tears the job down again with zero orphans; the P4 battery's
-  `ctl-noghost` case now REQUIRES the fast exit (a driver tree-kill is a FAILURE
-  verdict, not an expectation), so the gate is a standing guard rather than a
-  note. Serial and `mpiexec -n 1` unchanged — `ladrunoContactFatal()` returns −1
-  untouched at np ≤ 1.
-- **The shape of the fix is the durable part.** Wrapping the RESULT, not each of
-  the ~75 individual `return -1` sites, means (a) the refusals that propagate out
-  of `addSurface`/`addContact`/`addRigidPlane` (unknown surface tag, duplicate
-  tag — the same partition-dependent class) are covered for free, and (b) a check
-  added later inherits the teardown instead of silently reopening the defect,
-  which is exactly how it opened. **General rule for ALL future fail-loud work:
-  under MPI, "refuse at the deck line" is only half a contract — the other half
-  is tearing the job down. Put the teardown at the verb boundary, not at the
-  check.** Note the query verbs are deliberately NOT wrapped: their −1 is
-  legitimately rank-local (`ladrunoMortarTieResidual` is 0 on the non-owner by
-  design), so aborting on one would break the ALM tie lane.
-- **Driving partitioned decks regardless:** redirect output to FILES and
-  `taskkill /F /T` the mpiexec tree on timeout (see the next entry for why pipes
-  make a wedged job worse). That harness discipline is what let this defect be
-  measured at all, and it stays right for any deck that can wedge.
-
-## MPI ranks that outlive mpiexec inherit the driver's stdout pipe — `subprocess.run(capture_output=True)` then blocks FOREVER, even after its own TimeoutExpired already killed mpiexec (ADR-78 P4)
-
-- **Bites:** a Python harness launching `mpiexec` with `capture_output=True` and
-  a `timeout=`. If the job wedges (previous entry) the timeout fires, Python
-  kills mpiexec — and then blocks anyway: `subprocess.run`'s TimeoutExpired
-  path re-enters `communicate()` to drain the pipes, and the ORPHANED ranks
-  (children of `hydra_pmi_proxy`, not of mpiexec on Windows Intel MPI... they
-  survive the parent kill) still hold inherited write handles, so EOF never
-  comes. The driver looks hung with no traceback; the stdout buffer (all your
-  PASS/FAIL verdicts) is invisible until the process dies. Cost this session:
-  ~15 min of forensics on a battery that had actually finished 9 of its 12
-  cases.
-- **Why:** Windows pipe handles are inherited by the whole process tree;
-  `Popen.kill()` kills only the direct child. CPython's `run()` deliberately
-  waits for pipe EOF after the kill so it can attach output to the exception.
-- **Workaround/status (2026-08-12):** in MPI harnesses never capture through
-  pipes — redirect stdout/stderr to a FILE, `Popen.wait(timeout=...)`, and on
-  timeout kill the whole tree: `taskkill /F /T /PID <mpiexec-pid>` (hydra and
-  the ranks are in its Job tree even when mpiexec's own kill misses them). The
-  ADR-78 P4 driver (`Ladruno_files/testbed/contact_p4/run.py`, `Runner.run`) is
-  the reference implementation. Related-but-different from the Git-Bash
-  `kill -0` lie in [[ladruno-long-run-agent-traps]].
-
-## Recorder text files default to `-precision 6` — any cross-run parity gate tighter than ~1e-6 relative is gated on QUANTIZATION, not physics (and under MPI filenames grow a `.part-<rank>` suffix)
-
-- **Bites:** comparing recorder output between two runs that should agree to
-  machine precision (serial vs partitioned twins, A/B refactors). At the
-  default 6 significant digits two BIT-IDENTICAL runs compare equal — but so
-  does a run that diverged below ~1e-6 relative, so the gate silently proves
-  nothing; and a SUM of per-rank files (energy channels) picks up the rounding
-  of each addend (measured: serial-vs-Σranks energy parity read 3.3e-7 of
-  E_peak from quantization alone; with `-precision 17` the same comparison
-  reads 5.6e-16). Separately, under MPI every `-file foo.txt` becomes
-  `foo.part-<rank>.txt` (DataFileStream per-process suffix), so a driver
-  globbing exact names finds nothing.
-- **Why:** `DataFileStream` default precision is 6; the `.part-N` suffix is how
-  per-process streams avoid clobbering each other.
-- **Workaround/status (2026-08-12, ADR-78 P4):** pass `-precision 17` on every
-  recorder feeding a parity gate (`Node` and `EnergyBalance` both accept it);
-  glob `name*.txt` in drivers. P0/P2 never hit this because they compared
-  interpreter-printed `format %.15e` values, not recorder files.
 
 ### Renormalizing an already-unit vector is NOT bitwise-idempotent — serialization round trips through a validating constructor drift by 1 ulp (ADR 78 P2 review F2)
 - **Bites:** any unpack/restore path that rebuilds state through the same validating entry point that normalized it originally. `sqrt(n·n)` of a stored unit normal is 1±1ulp for generic directions (measured: re-dividing changed bits on 3368 of 10000 random unit vectors), so `save → restore → re-verify` reported "definitions differ" on a model nobody touched — the verify instrument poisoned by its own rebuild path.
