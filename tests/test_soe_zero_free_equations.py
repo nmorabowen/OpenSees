@@ -90,10 +90,16 @@ import json, os, sys
 _D = %(ENGINE_DIR)r
 if os.path.isdir(_D):
     os.environ["PATH"] = _D + os.pathsep + os.environ.get("PATH", "")
-    try:
-        os.add_dll_directory(_D)
-    except (OSError, FileNotFoundError):
-        pass
+    # add_dll_directory is WINDOWS-ONLY. Probe it with getattr rather than
+    # calling it inside try/except OSError: the absence is an AttributeError,
+    # which that clause does not catch, so on Linux CI the child died before
+    # importing anything and all 13 cases reported "the crash is back".
+    _add = getattr(os, "add_dll_directory", None)
+    if _add is not None:
+        try:
+            _add(_D)
+        except OSError:
+            pass
     sys.path.insert(0, _D)
 
 try:
