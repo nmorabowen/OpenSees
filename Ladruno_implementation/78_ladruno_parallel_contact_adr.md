@@ -755,6 +755,47 @@ pre-P2 fork build (or upstream) cannot be restored by a P2+ build — recorded i
 Serial byte-identity: the full serial contact battery (30 files, 147 tests) green against the
 P2 `opensees.pyd`.
 
+### §P2 ADVERSARIAL REVIEW (2026-08-13) — four confirmed findings, all fixed same-day
+
+An independent refute-oriented review of #739 (post-P4). The format walk found **no slot
+misalignment in any lane**, the unpack re-validation is idempotent, the Domain 17→19 wiring is
+symmetric on every branch pair, and `dbContact`'s 7 init sites are complete. Four real defects
+survived the original gates, all now fixed + instrumented in the same PR as this entry:
+
+1. **F1 (MEDIUM) — the `anySoft` scan was retired-blind.** The refusal condition read
+   `softScale > 0` without checking `.retired`, while the offender-naming loops below DID skip
+   retired — so a partitioned job whose only soft interaction had been retired by the removal
+   lane was `MPI_Abort`-ed behind a **subject-less** FATAL tail, over an interaction the
+   removal lane's own contract calls inert. Fixed: retired-skips in all three detection loops
+   (which also stops a pointless mass-cache pass). Gated: `mp_soft_retired.tcl` — sacrificial
+   `-soft` pair removed pre-analyze on np2 now RETIRES (named) and the live `-kn auto` pair
+   matches serial; belt-and-braces, any abort fails the case (the P1 massless guard would
+   abort it too if retirement broke).
+2. **F2 (MEDIUM-LOW) — the plane lane did not round-trip bit-exactly.** `addRigidPlane`
+   re-normalized the already-unit stored normal on unpack; dividing by a recomputed norm of
+   1±1ulp flips bits on ~⅓ of generic unit normals (measured 3368/10000), so a
+   restore-then-restore fired a spurious "definitions differ — rebuild the model" warning on
+   an unchanged model. Invisible to axis-aligned test normals (`sqrt(1)` is exact) — which is
+   exactly why the first gate missed it. Fixed: normalization is now idempotent
+   (`|nrm−1| < 1e-12 ⇒ passthrough`). Gated: the all-lanes round trip now uses a TILTED normal
+   and adds a restore→re-save **byte-compare** of the packed payload.
+3. **F3 (MEDIUM-LOW) — no rollback on a failed unpack.** A corrupt/short stream left the
+   successfully-added prefix in the engine; the retry then routed to the verify path, which
+   only WARNS — laundering the failure into "restored, with a truncated definition set".
+   Fixed: every post-mutation failure path rolls the engine back to empty, so a retry
+   re-enters the loud path.
+4. **F4 (LOW) — multi-offender refusal output was a run-on line.** Each offender is now its
+   own newline-terminated `FATAL` line and the mechanism tail is self-contained.
+
+Also recorded, accepted as-is: a commit saved **before** any contact was declared restores
+onto a contact-carrying session with no verify and no warning (`domainData(17)=0` skips the
+block) — consistent with "restore never redefines contact", but the warned-vs-silent asymmetry
+depends on whether the save predates the first declaration (review F6). And the review's F5 —
+"only the NTS lane was runtime-gated" — is what `db_roundtrip_all_lanes.py` closes: all four
+lanes round-trip exactly in one model, the packed payload is byte-deterministic, and six
+single-field mutations (kt, mortar mu, edgeKn, epsTie, plane kn, plane normal) each provably
+change the packed bytes.
+
 ### §P4 LOG — validation battery (2026-08-12)
 
 Battery at `Ladruno_files/testbed/contact_p4/` (`python run.py <build-dir>`; decks
