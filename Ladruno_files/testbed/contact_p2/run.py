@@ -181,6 +181,16 @@ def main():
                                                    r["w15_nocontact"]))
                 + ((" FAILED: " + ", ".join(bad)) if bad else ""))
 
+    # --- review F1: a RETIRED soft interaction must not trip the refusal ---
+    rc, out = run([mpiexec, "-n", "2", opsmp, "mp_soft_retired.tcl"], env)
+    m1 = re.search(r"P2RETIRED pid=1 analyze=(-?\d+) w15=(\S+)", out)
+    ok = (m1 is not None and int(m1.group(1)) == 0
+          and "RETIRING contact 5" in out
+          and "not supported under a partitioned host" not in out
+          and ref and abs(float(m1.group(2)) - ref["w15"]) < 1e-12 * abs(ref["w15"]))
+    verdict("mp2-soft-retired", ok,
+            "retired notice + live pair matches serial" if ok else out[-400:])
+
     # --- P2b review follow-up: ALL-LANES round trip + field sensitivity ---
     rc, out = run([sys.executable, "db_roundtrip_all_lanes.py", bd], env)
     m = re.search(r"^P2DBALL (\{.*\})", out, re.M)
@@ -199,8 +209,24 @@ def main():
             ("verify silent until mutated, then warns",
              mark != -1 and warn > mark),
             ("pack deterministic", r["determinism_same"]),
+            ("restore->resave BIT-exact (F2)", r["resave_bitexact"]),
             ("every probed field packed", all(r["sensitivity"].values())),
         ]
+        # F3 rollback: BOTH corrupt restores fail loudly; the retry must NOT
+        # be laundered into the verify path. Stream-agnostic counts (stdout
+        # and stderr concatenate, so positional marker logic would misread):
+        # "KEEPING the live definitions" appears EXACTLY once in the whole
+        # run -- step 3's intended size-mismatch warning -- and never a
+        # second time for the corrupt retry; "stream ends mid-record" fires
+        # once per corrupt attempt; both attempts raised in Python.
+        # (the corrupted count makes the unpack re-read real defs as surface
+        # records and die on a duplicate tag -- the loud path either way; the
+        # invariant is BOTH attempts fail identically loud, never the verify
+        # warning on the retry)
+        checks.append(("corrupt stream: both restores loud (F3)",
+                       r.get("corrupt_restores_raised") == 2
+                       and out.count("the contact engine failed in recvSelf") >= 2
+                       and out.count("KEEPING the live definitions") == 1))
         bad = [n for n, okc in checks if not okc]
         verdict("db-all-lanes", not bad,
                 ("tips=" + ",".join("%s=%.6e" % kv

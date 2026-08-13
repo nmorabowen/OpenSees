@@ -521,17 +521,27 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     // read to size k_soft = SOFSCL·4·m_eff/dt². Only when soft is in play ⇒ no cost (and byte-
     // identical) otherwise. Mortar SOFT is out of scope (refused at the command surface).
     if (cd != 0) {
+        // ADR-78 P2 review F1: skip RETIRED interactions here too. This flag
+        // feeds BOTH the mass-cache build below and the partitioning refusal --
+        // a retired soft interaction is inert by the removal lane's own
+        // contract ("the run continues WITHOUT it"), so it must neither
+        // trigger the cache pass nor MPI_Abort a partitioned job in which no
+        // LIVE soft contact exists (pre-fix that abort printed a FATAL with
+        // no subject, because the message loops below correctly skip retired).
         bool anySoft = false;
         for (int c = 0; c < cd->getNumContacts() && !anySoft; c++)
-            if (cd->getContact(c).softScale > 0.0) anySoft = true;
+            if (!cd->getContact(c).retired &&
+                cd->getContact(c).softScale > 0.0) anySoft = true;
         for (int p = 0; p < cd->getNumRigidPlanes() && !anySoft; p++)
-            if (cd->getRigidPlane(p).softScale > 0.0) anySoft = true;
+            if (!cd->getRigidPlane(p).retired &&
+                cd->getRigidPlane(p).softScale > 0.0) anySoft = true;
         // B2 (P5): a SOFT=2 mortar contact also needs the assembled nodal-mass cache (the segment-
         // based m_eff). The cache is over ALL nodes (one element pass), shared with the NTS SOFT=1 lane.
         // ADR-57 E5: a -edgeSoft edge-edge contact needs the SAME cache (the edge gap-mode m_eff).
         for (int c = 0; c < cd->getNumMortarContacts() && !anySoft; c++)
-            if (cd->getMortarContact(c).softScale > 0.0 ||
-                cd->getMortarContact(c).edgeSoftScale > 0.0) anySoft = true;
+            if (!cd->getMortarContact(c).retired &&
+                (cd->getMortarContact(c).softScale > 0.0 ||
+                 cd->getMortarContact(c).edgeSoftScale > 0.0)) anySoft = true;
         // ADR-78 P2 (D4): SOFT is REFUSED under partitioning, every lane. k_soft =
         // SOFSCL*4*m_eff/dt^2 reads the ASSEMBLED nodal mass, and this rank's cache
         // holds only ITS elements' mass: a ghosted surface contributes zero, and a
@@ -547,25 +557,29 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         // that is indistinguishable from manual domain decomposition from inside
         // handle() -- so it refuses too. Named in the message.
         if (anySoft && (hostPartitioned || ladrunoContactNumRanks() > 1)) {
+            // Review F4: each offender is its own newline-terminated line (a
+            // multi-offender abort used to concatenate the fragments into one
+            // run-on string -- the sole diagnostic a torn-down job leaves).
             for (int c = 0; c < cd->getNumContacts(); c++)
                 if (!cd->getContact(c).retired && cd->getContact(c).softScale > 0.0)
                     opserr << "FATAL LadrunoContactHandler::handle() - contact "
-                           << cd->getContact(c).tag << ": -soft";
+                           << cd->getContact(c).tag << ": -soft refused under partitioning\n";
             for (int p = 0; p < cd->getNumRigidPlanes(); p++)
                 if (!cd->getRigidPlane(p).retired && cd->getRigidPlane(p).softScale > 0.0)
                     opserr << "FATAL LadrunoContactHandler::handle() - contactPlane "
-                           << cd->getRigidPlane(p).tag << ": -soft";
+                           << cd->getRigidPlane(p).tag << ": -soft refused under partitioning\n";
             for (int c = 0; c < cd->getNumMortarContacts(); c++) {
                 const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
                 if (mc.retired) continue;
                 if (mc.softScale > 0.0)
                     opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
-                           << mc.tag << ": -soft";
+                           << mc.tag << ": -soft refused under partitioning\n";
                 if (mc.edgeSoftScale > 0.0)
                     opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
-                           << mc.tag << ": -edgeSoft";
+                           << mc.tag << ": -edgeSoft refused under partitioning\n";
             }
-            opserr << " is not supported under a partitioned host (np > 1 or "
+            opserr << "FATAL LadrunoContactHandler::handle() - SOFT "
+                      "is not supported under a partitioned host (np > 1 or "
                       "Subdomain): k_soft = SOFSCL*4*m_eff/dt^2 needs BOTH surfaces' "
                       "ASSEMBLED mass, and this process's cache holds only its own "
                       "elements' share -- a ghosted or partition-boundary node makes "

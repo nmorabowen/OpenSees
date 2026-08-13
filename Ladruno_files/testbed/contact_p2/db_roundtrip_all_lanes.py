@@ -89,6 +89,10 @@ def build(ops, variant=None):
                 "-outward", 0.0, 0.0, 1.0)
 
     # --- pair C (off 200): single brick on a rigid plane, -visc packed ---
+    # The declared normal is deliberately TILTED (norm sqrt(1+49) -- nowhere
+    # near a power of two), so the stored unit normal has bits that the F2
+    # renormalize-on-unpack defect would flip. An axis-aligned (0,0,1) normal
+    # is exact under sqrt/divide and can never see F2 (why v1 missed it).
     hi = {211: (0, 0, GAP), 212: (1, 0, GAP), 213: (1, 1, GAP),
           214: (0, 1, GAP), 215: (0, 0, 1 + GAP), 216: (1, 0, 1 + GAP),
           217: (1, 1, 1 + GAP), 218: (0, 1, 1 + GAP)}
@@ -99,7 +103,7 @@ def build(ops, variant=None):
         ops.fix(n, 1, 1, 0)
     ops.contactSurface(5, "-slave", 211, 212, 213, 214)
     ops.contactPlane(3, 5,
-                     v.get("planeNx", 0.0), 0.0, v.get("planeNz", 1.0),
+                     v.get("planeNx", 1.0), 0.0, v.get("planeNz", 7.0),
                      2 * PAIR_DX, 0.0, 0.0,
                      v.get("planeKn", 2.0e7), "-visc", 5.0)
 
@@ -208,6 +212,16 @@ def main():
     ops.wipe()
     ops.database("File", os.path.join(rt_dir, "db"))
     ops.restore(1)
+    # 2b. BIT-EXACT round trip (review F2): re-save the just-restored engine
+    #     and byte-compare the packed payload against the original save. The
+    #     tilted plane normal makes this probe live -- pre-fix the unpack
+    #     renormalized the already-unit normal (1 +/- 1 ulp) and this compare
+    #     failed on the plane slots.
+    rs_dir = os.path.join(root, "resave"); os.makedirs(rs_dir)
+    ops.database("File", os.path.join(rs_dir, "db"))
+    ops.save(1)
+    out["resave_bitexact"] = (defs_bytes(rs_dir) == defs_bytes(rt_dir))
+    ops.database("File", os.path.join(rt_dir, "db"))
     out["rt_ok"] = analyse(ops)
     out["tips_rt"] = tips(ops)
 
@@ -244,6 +258,33 @@ def main():
         save_to(ops, vd, variant)
         sens[name] = (defs_bytes(vd) != base)
     out["sensitivity"] = sens
+
+    # 5. F3 rollback probe: corrupt the stream's nSurf count (slot 1) so the
+    #    unpack dies mid-record, then restore TWICE. Both attempts must fail
+    #    LOUDLY. Pre-fix, the first failure left the added prefix in the
+    #    engine, so the retry routed to the verify path and "succeeded" with
+    #    a warning -- laundering a corrupt restore into a truncated model.
+    import struct
+    cr_dir = os.path.join(root, "corrupt"); os.makedirs(cr_dir)
+    save_to(ops, cr_dir)
+    f = glob.glob(os.path.join(cr_dir, "*.VECs.*"))
+    f = [x for x in f if int(x.split(".")[-2]) > 50][0]
+    with open(f, "r+b") as fh:
+        raw = fh.read()
+        size = int(f.split(".")[-2])
+        hdr = len(raw) - size * 8
+        fh.seek(hdr + 8)                       # slot 1 = nSurf
+        fh.write(struct.pack("<d", 9999.0))
+    ops.wipe()
+    ops.database("File", os.path.join(cr_dir, "db"))
+    print("P2DBALL-MARK corrupt-restores-begin")
+    n_raised = 0
+    for _ in range(2):                         # both attempts must fail LOUDLY
+        try:
+            ops.restore(1)
+        except Exception:
+            n_raised += 1                      # the loud path raises here
+    out["corrupt_restores_raised"] = n_raised
 
     ops.wipe()
     print("P2DBALL " + json.dumps(out))
