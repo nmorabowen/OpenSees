@@ -19,7 +19,7 @@ SYMPTOM THAT MADE THIS EXPENSIVE TO BISECT: `exit(-1)` == whole-process death
 with exit code 255 (Windows) and NO Python traceback; the FATAL message goes to
 opserr, which the Python module redirects, so nothing prints. faulthandler is
 silent because it is a clean exit(), not a signal. It looks exactly like a bug
-in the test file. See LEDGER_quirks.md ("zero-free-equation models").
+in the test file. See LEDGER_quirks.md ("A fully-prescribed model (zero free DOFs) ... `FullGenLinSOE::getX - vectX == 0`").
 
 Each system therefore runs in a SUBPROCESS here: on a regression the child dies
 with a nonzero exit code and the parent reports it as an ordinary test failure
