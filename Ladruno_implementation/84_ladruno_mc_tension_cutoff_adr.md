@@ -2,12 +2,12 @@
 title: "ADR 84 — Mohr-Coulomb with tension cutoff for ASDPlasticMaterial3D"
 project: Ladruno
 type: ADR
-status: P0 shipped
+status: P0 shipped; P2(a) shipped
 priority: high
 owner: nmora
 related: ["Cerro Lindo ADR-0005", "[[LEDGER_implementations]]", "[[LEDGER_vanilla_files]]", "[[Ladruno_materials_guide]]"]
 tags: [adr, material, plasticity, geomaterial, asdplastic]
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
 # ADR 84 — MohrCoulombTensionCutoff for ASDPlasticMaterial3D
@@ -43,9 +43,10 @@ integrator mechanism that returns robustly at the cutoff face/edge/corner/apex.
 - A second latent defect: the elastic early-exit fires whenever f merely
   *decreased* by more than `tol_yf` across the step. From admissible committed
   states it cannot accept f > 0, but from an already-inadmissible commit it can
-  perpetuate one. Both upstream defects affect **all** ASDP materials and are
-  **deferred** (quirks-ledger entries; opt-in fix + measurement is P2 — changing
-  them alters behavior for VonMises/DP users).
+  perpetuate one. Both upstream defects affect **all** ASDP materials and were
+  **deferred out of P0** (changing them alters behavior for VonMises/DP users).
+  **Both are now fixed opt-in under `strict_convergence` — see §6c (P2(a),
+  shipped 2026-08-13)** and the two matching `LEDGER_quirks.md` entries.
 
 ## 3. Decision: composite YF + opt-in `special_return` hook, exact principal-space returns
 
@@ -222,11 +223,13 @@ consumer's M3 re-run: zero f > 0 states, bounded EDZ σ₁, λ ≤ 0.9 unchanged
 - **P1 (measured):** wire the same hook into `Backward_Euler_LineSearch`
   identically if model-scale Newton statistics warrant; extend tangent-FD
   coverage to special-region states.
-- **P2 (deferred):** (a) upstream BE exhaustion-accept + f-decreasing elastic
-  exit — opt-in fix + measurement, affects all ASDP materials; (b) FE/ME/RK
-  support via the same hook (their drift correction exists); (c) standalone
-  TensionCutoff_YF (needs a real TC_PF + apex handlers); (d) apex fix for plain
-  MohrCoulomb_YF; (e) required-parameter assertion.
+- **P2(a) — SHIPPED (this PR).** Upstream BE exhaustion-accept + f-decreasing
+  elastic exit, fixed **opt-in** behind a new `strict_convergence` integration
+  option (int, default 0). See §6c for the outcome.
+- **P2 (still deferred):** (b) FE/ME/RK support via the same hook (their drift
+  correction exists); (c) standalone TensionCutoff_YF (needs a real TC_PF +
+  apex handlers); (d) apex fix for plain MohrCoulomb_YF; (e) required-parameter
+  assertion.
 
 ## 6b. Two defects found during P0 verification (both fixed/filed)
 
@@ -248,6 +251,62 @@ consumer's M3 re-run: zero f > 0 states, bounded EDZ σ₁, λ ≤ 0.9 unchanged
    ElasticIsotropic, plain MC, MCTC), `UmfPack` returns rc=0 on the identical
    model. Pre-existing core defect, out of scope here: filed as its own task +
    quirks entry; the Zone-A driver uses UmfPack.
+
+## 6c. P2(a) outcome — `strict_convergence` (shipped 2026-08-13)
+
+Both §2 defects are fixed behind one opt-in integration option,
+`strict_convergence` (int, default 0, parsed in `Begin_Integration_Options`,
+stored per material tag in `INT_OPT_strict_convergence`). With it ON, (a) the
+scalar-Newton loop tracks a `be_converged` flag and, on exhaustion with
+`|Phi| >= tol_yf`, prints an `opserr` line (tag, final `|Phi|`, tol) and returns
+-1 instead of falling through to `ComputeTangentStiffness(); return 0;`; and (b)
+the elastic early-exit's f-decreasing disjunct additionally requires
+`yf_val_end <= tol_yf`, so an inadmissible commit is corrected by the plastic
+corrector rather than carried forward (elastic unloading, `f_end < 0`, still
+exits). Default 0 is byte-identical to upstream, deliberately: turning it on
+changes convergence behaviour for every existing VonMises/DP/MC deck. The P0
+`special_return` hook sits upstream of the Newton loop and is unaffected in
+both modes. **Measured:** the whole shipped ASDP battery
+(`test_asdplastic_mctc.py` + `test_asdplastic_response_tags.py`) passes
+unchanged with the flag off (3x, for the churned-heap NaN trap) **and** passes
+unchanged with `strict_convergence 1` force-injected into all 19 of its
+ASDPlasticMaterial3D definitions — zero behaviour differences on healthy paths.
+New Zone-A battery `tests/test_adr84_p2a_strict_convergence.py` (6 cases).
+
+Three findings came out of the measurement, all pinned by that battery:
+
+1. **The apex path is not the reproducer.** Plain `MohrCoulomb_YF` pulled 1.5x
+   past its hydrostatic apex — the obvious candidate, and the ADR's own
+   documentation run — converges cleanly on this build: 30/30 steps, worst
+   committed `f_MC = 2.8e-14`, flag-on bit-identical. What reproduces the
+   exhaustion-accept deterministically is starving `n_max_iterations` on a
+   plainly plastic leg, which is the defect stated precisely rather than a
+   contrivance. Measured at `n_max_iterations 2`: flag off completes 20/20 steps
+   *all reporting success* with **all 20 committed states inadmissible** and
+   worst `f_MC = 77.6 kPa` against a 2.8e-1 tolerance (276x); flag on refuses at
+   step 1 and commits nothing.
+2. **`stdBrick` swallows the refusal — a THIRD silent accept, in a vanilla
+   element.** `Brick::update()` writes `success = ...->setTrialStrain(strain);`
+   then unconditionally `return 0;` — assigned, never read. So the material
+   refuses, prints, returns -1, and the analysis still reports success.
+   `TenNodeTetrahedron` accumulates and returns the sum (already fixed in the
+   fork — TIMs report item 8), so the contract tests use the tet host. NOT fixed
+   here on purpose: `return success` is an unconditional behaviour change for
+   every stdBrick + every material, exactly the blast radius the opt-in flag
+   exists to avoid. Filed as its own follow-up; pinned by
+   `test_stdbrick_swallows_the_refusal` so fixing it surfaces as a loud,
+   informative failure.
+3. **Strict mode gates every global-Newton TRIAL, not only the commit — so it
+   needs a stress-scaled `f_absolute_tol`.** A step's first global iterate can be
+   far from the solution and the local return map on that large trial increment
+   may legitimately exhaust. Measured on the tet rig (max |sigma| ~ 2.8e5 kPa,
+   `n_max_iterations 100`): at `f_absolute_tol` 1e-6 (the default), 1e-4 and
+   1e-2 strict mode refuses step 1 of a run that is healthy flag-off; at 1e-1 —
+   a ~3.6e-7 *relative* demand — flag-on is bit-identical to flag-off. **Operating
+   guidance of record: scale `f_absolute_tol` to your model's stress magnitude
+   before turning `strict_convergence` on.** The absolute-tolerance design is
+   upstream's and is left as-is here; making the yield tolerance relative is a
+   separate decision with its own blast radius.
 
 ## 7. Risks
 

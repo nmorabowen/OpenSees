@@ -4150,3 +4150,66 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Bites:** any unpack/restore path that rebuilds state through the same validating entry point that normalized it originally. `sqrt(n·n)` of a stored unit normal is 1±1ulp for generic directions (measured: re-dividing changed bits on 3368 of 10000 random unit vectors), so `save → restore → re-verify` reported "definitions differ" on a model nobody touched — the verify instrument poisoned by its own rebuild path.
 - **Why it evades the usual guards:** axis-aligned test vectors ((0,0,1) etc.) have EXACT norms, so every convenient test normal passes bit-exact; only a tilted normal exposes it. And behavioral gates can't see 1 ulp — only a bit-compare can.
 - **Rule:** make normalization idempotent at the choke point (`|nrm−1| < 1e-12 ⇒ passthrough`), and gate serialization with (a) a tilted/irrational-normed vector in the test model and (b) a restore→re-save BYTE compare of the packed payload, not just response parity.
+### ASDPlasticMaterial3D's `Backward_Euler` ACCEPTS a non-converged return map — silently committing f > 0 as success (FIXED opt-in, ADR-84 P2a)
+
+- **Bites:** every ASDP material on the default `Backward_Euler` integrator
+  (VonMises, DruckerPrager, MohrCoulomb, the new MohrCoulombTensionCutoff, ...).
+  The scalar-Newton consistency loop is written
+  `for (int iter = 0; iter < max_iter; ++iter) { ... if (|Phi| < tol_yf) break; ... }`
+  and **falls out of `max_iter` with no convergence check at all**, dropping
+  straight through to `ComputeTangentStiffness(); return 0;`. A stalled or
+  slowly-converging Gauss point therefore reports SUCCESS to the element, the
+  element reports success to the algorithm, and the global Newton converges on
+  a residual assembled from an inadmissible stress. Nothing anywhere in the
+  output says a return map failed — `n_max_iterations` is not a budget, it is a
+  silent truncation. This is the persistence mechanism behind the Cerro Lindo
+  ADR-0005 M3 finding: 20 Gauss points sitting measurably OUTSIDE the yield
+  surface (`f/(2c·cosφ) = +0.0299`) in a model whose every analysis step
+  "converged".
+- **Why:** convergence is signalled only by `break`, and C++ gives you no way to
+  distinguish "broke out early" from "ran out of iterations" without a flag —
+  so an author who forgets the flag gets the accepting behaviour by DEFAULT.
+  The neighbouring paths are not written this way: `Modified_Euler_Error_Control`
+  has an explicit `if (niter > max_iterations) { ...; return -1; }` and
+  `Backward_Euler_LineSearch` tracks a `newton_ok` flag and returns -1 once
+  substepping is exhausted. Only the plain BE — the DEFAULT integrator — accepts.
+- **Workaround/status (2026-08-13, ADR-84 P2a, PR):** fixed **opt-in** via a new
+  integration option `strict_convergence` (int, default 0; parsed in the
+  `Begin_Integration_Options` block of `OPS_AllASDPlasticMaterial3Ds.cpp`, stored
+  in the per-tag static map `INT_OPT_strict_convergence`). With
+  `strict_convergence 1`, loop exhaustion with `|Phi| >= tol_yf` prints an
+  `opserr` line naming the material tag, the final `|Phi|` and the tolerance,
+  and returns -1 so the element reports the failure upward and the algorithm can
+  cut back. Default 0 is byte-identical to upstream — deliberately, because
+  turning it on changes convergence behaviour for every existing ASDP user.
+  **If you are chasing "f > 0 at committed states" in an ASDP model, set
+  `strict_convergence 1` before you suspect anything else**; a clean run under
+  the flag rules this defect out in one shot.
+
+### The same `Backward_Euler` calls a step "elastic" whenever f merely DECREASED — perpetuating an existing violation (FIXED opt-in, ADR-84 P2a)
+
+- **Bites:** the elastic early-exit reads
+  `if ((yf_val_start <= 0 && yf_val_end <= 0) || (yf_val_start - yf_val_end > tol_yf)) { Stiffness = Eelastic; return 0; }`.
+  The second disjunct accepts the step as elastic on the sole grounds that `f`
+  **went down by more than tol** — with no requirement that the end state be
+  admissible. From an admissible commit (`f_start <= 0`) it cannot manufacture a
+  violation, so it is invisible in any clean-history test; but from an
+  already-inadmissible commit — exactly what the exhaustion-accept above
+  produces — it will happily carry `f_end > 0` forward step after step as long
+  as the value keeps shrinking, never engaging the plastic corrector that would
+  actually pull the point back onto the surface. The two defects compound: one
+  creates the inadmissible state, the other protects it from correction.
+- **Why:** the disjunct exists for elastic UNLOADING from a plastic state, where
+  `f_start ≈ 0` and `f_end < 0` — a legitimate case that the first disjunct's
+  `yf_val_start <= 0.0` misses on the boundary. But "f decreased" is a much
+  weaker test than "the end state is admissible", and the weaker test is what
+  got written.
+- **Workaround/status (2026-08-13, ADR-84 P2a, PR):** under the same
+  `strict_convergence 1` flag the second disjunct additionally requires
+  `yf_val_end <= tol_yf`; when it does not hold the step falls through to the
+  plastic corrector instead of being accepted. The unloading case is untouched
+  (`f_end < 0` satisfies the added condition trivially). Default 0 keeps the
+  upstream disjunct exactly as written. Note the ordering: the MCTC
+  `special_return` hook (ADR-84 P0) sits BELOW this exit, so a step wrongly
+  classified as elastic here never reaches the hook — fixing the classification
+  is what lets the hook see the states it was built for.
