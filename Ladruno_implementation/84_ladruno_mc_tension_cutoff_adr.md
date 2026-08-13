@@ -2,7 +2,7 @@
 title: "ADR 84 — Mohr-Coulomb with tension cutoff for ASDPlasticMaterial3D"
 project: Ladruno
 type: ADR
-status: P0 shipped; P2(a) shipped
+status: P0 shipped; P2(a) shipped; P3 shipped (tangent-operator policy)
 priority: high
 owner: nmora
 related: ["Cerro Lindo ADR-0005", "[[LEDGER_implementations]]", "[[LEDGER_vanilla_files]]", "[[Ladruno_materials_guide]]"]
@@ -125,10 +125,15 @@ small conservative stress drop (logged, first 5 events), never an accepted f > 0
 state. **Structurally, zero inadmissible commits through this path.**
 
 **Tangents:** all hook tangents are Koiter-consistent for their active set
-(rank-1 face, rank-2 edge/corner, rank-3 compound/vertex) and then
-**Secant-blended** `(E + D)/2`, honoring the framework's default tangent
-contract — raw rank-deficient tangents assembled from several Gauss points at
-once make the global stiffness near-singular.
+(rank-1 face, rank-2 edge/corner, rank-3 compound/vertex).
+
+> [!warning] P0 then **Secant-blended them inside the YF**, `(E + D)/2`, on the
+> reasoning that raw rank-deficient tangents make the global stiffness
+> near-singular. That was wrong in a way that shipped: it also **silently
+> overrode the material's configured `tangent_type`** on every hook-resolved
+> Gauss point, and at the corner it fabricated stiffness in the direction whose
+> true tangent is ~0. It is the measured cause of the Cerro Lindo M5 stall.
+> **P3 moves the policy to the integrator — see §9.**
 
 ### Cutoff above the apex (`T ≥ c·cotφ`)
 
@@ -217,6 +222,11 @@ tangent contract; updateParameter c/φ/T ramps; no-op cutoff (T > c·cotφ); and
 every test — the M3 acceptance in miniature. Model-scale sign-off remains the
 consumer's M3 re-run: zero f > 0 states, bounded EDZ σ₁, λ ≤ 0.9 unchanged.
 
+Zone-A `tests/test_adr84_p3_confined_corner.py` (5 cases) adds the state the P0
+battery never visited — **confined, non-associated MC shear on the cutoff face
+and the MC∩TC corner at 4.86 MPa** — on a driver with **free DOFs**, without
+which the material tangent is unobservable. See §9.
+
 ## 6. Phasing
 
 - **P0 (this PR):** everything above under Backward_Euler.
@@ -226,10 +236,18 @@ consumer's M3 re-run: zero f > 0 states, bounded EDZ σ₁, λ ≤ 0.9 unchanged
 - **P2(a) — SHIPPED (this PR).** Upstream BE exhaustion-accept + f-decreasing
   elastic exit, fixed **opt-in** behind a new `strict_convergence` integration
   option (int, default 0). See §6c for the outcome.
+- **P3 — SHIPPED (this PR).** Tangent-operator policy moved out of the YF into
+  the integrator + `return_quality` / strict-mode refusal of the terminal vertex
+  projection + the confined-corner Zone-A battery. Root-causes and closes the
+  Cerro Lindo M5 stall. See §9.
 - **P2 (still deferred):** (b) FE/ME/RK support via the same hook (their drift
   correction exists); (c) standalone TensionCutoff_YF (needs a real TC_PF +
   apex handlers); (d) apex fix for plain MohrCoulomb_YF; (e) required-parameter
   assertion.
+- **P4 (new, demand-driven):** `Numerical_Algorithmic_*` differentiate
+  `compute_local_stress()`, a simplified map that never calls `special_return`
+  (nor the real `Backward_Euler`), so those operators are inconsistent with the
+  actual response for **every** ASDP material. Framework-wide; out of P3's scope.
 
 ## 6b. Two defects found during P0 verification (both fixed/filed)
 
@@ -336,6 +354,123 @@ Three findings came out of the measurement, all pinned by that battery:
 - Upstream campaign: candidate package alongside 1.5 (Hoek-Brown/StiffSoil) —
   the composite YF/PF are clean additive headers on the stock ASDP framework;
   the hook block is the only integrator edit and is `if constexpr`-gated.
+
+## 9. P3 — the confined-shear stall (Cerro Lindo M5), root cause and fix
+
+**Report (13 Aug 2026).** The M3/M4 model (2-D plane strain, `LadrunoLST`/
+`LadrunoQuad`, host rock c = 1014 kPa / φ = 45.95° / ψ = 11.49°, EDZ c = 100 /
+φ = 20° / ψ = 5°, in-situ σ₀ = 6160 kPa) runs to λ = 1 with plain MC. With the
+composite substituted and nothing else changed it stalls in **stage S1 — pure
+continuum** — at λ ≈ 0.45-0.50: 3 819 PARDISO pivot-perturbation warnings, and
+Newton sitting at a ~9e-5 m displacement increment against a ~500 kN residual.
+Three settings, all stall: shipped defaults (λ = 0.500); `strict_convergence` +
+`f_absolute_tol` 1e-1 + 200 iterations (λ = 0.450); `tangent_type = Continuum`
+(λ = 0.475). Their reading: the corner between the shear surface and the cutoff
+is active, and the consistent tangent there is near-singular.
+
+**The reading was right about the region and wrong about the mechanism, and the
+"all three settings behave the same" clue was the actual tell.**
+
+### 9.1 What was measured
+
+A numpy replica of the shipped algorithm (`special_return` chain + the scalar
+Newton, transcribed from the merged C++) was used to reach the states a global
+Newton actually presents, then compared against numerical differentiation of
+the material's own return map.
+
+1. **Corner chatter is NOT the mechanism.** Over a 45×45×3 sweep of trial states
+   at 1-6 MPa confinement, the scalar Newton failed to converge on 17 trials —
+   **all with zero branch flips** (every iterate on the MC branch). The
+   `f_TC ≥ f_MC` branch switch does not oscillate; the escalation chain's
+   once-only classification holds.
+2. **The corner is a rigid attractor.** Reached from an isotropic in-situ state,
+   the return pins the stress at `(-4862.24, -4289.39, +24.70)` **to the last
+   digit for a 20× range of strain increment**. The true algorithmic tangent
+   there has `min|eig| = 9.4e-4`, `cond = 6.8e9`.
+3. **The shipped tangent fabricates stiffness in exactly that direction.**
+
+   | operator | ‖D‖ | rel. err vs truth | cond | min\|eig\| |
+   |---|---|---|---|---|
+   | numerical (truth) | 5.73e6 | — | 6.8e9 | **9.4e-4** |
+   | raw Koiter rank-2 | 6.08e6 | **0.121** | 9.0e14 | 5.8e-9 |
+   | **secant blend (P0, shipped)** | 8.14e6 | **0.868** | 3.2 | **2.0e6** |
+   | elastic | 1.20e7 | 1.724 | 5.0 | 2.0e6 |
+
+   The blend is 87% wrong and, worse, **well-conditioned where the truth is
+   rank-deficient**. Plain MC on the same path hands out `cond ~1e16` and
+   converges. A global Newton told "push here and stress rises by 2e6·Δε",
+   whose stress then does not move at all, produces precisely the reported
+   signature: a vanishing increment against a residual that never falls.
+4. **`tangent_type` was inert.** `special_return` wrote `stiffness_return`
+   already blended and the integrator assigned `Stiffness = stiff_sr`
+   unconditionally, so **every hook-resolved Gauss point got the blend no matter
+   what the deck asked for**. That is why the consumer's three settings all
+   behaved alike — the knob they reached for could not reach the Gauss points
+   that needed it.
+5. **Not corner-specific.** The Rankine FACE rung is blended too; on the P3
+   regression path the face steps carry the same penalty. The M5 model has far
+   more face points than corner points, which fits a stall in *pure continuum*
+   at λ ≈ 0.45 rather than at a small corner cluster.
+
+### 9.2 Fix
+
+The YF no longer applies a tangent policy — `stiffness_return` is the **raw
+active-set (Koiter) tangent** — and `Backward_Euler` applies the material's
+configured operator to it, exactly as the generic path does:
+`Elastic → E`; `Continuum`/`Algorithmic` → raw; `Secant` (default) → `(E+D)/2`.
+`Numerical_Algorithmic_*` deliberately fall back to the raw active-set tangent:
+they differentiate `compute_local_stress()`, a simplified map that never calls
+this hook, so they would be strictly worse here (a pre-existing framework
+inconsistency, not addressed here).
+
+**Default is `Secant`, so this is byte-identical unless the deck asks
+otherwise.** The whole shipped ADR-84 battery passes unchanged (20/20).
+
+`special_return` also gained an out-param `return_quality`
+(`SR_QUALITY_EXACT` / `SR_QUALITY_FALLBACK`). The terminal Stage-4 vertex
+projection — the one inexact rung, which replaces a confined deviatoric state
+with `T_eff·δ` — now reports `FALLBACK`, and under `strict_convergence` the
+integrator **refuses the step loudly** instead of committing it silently. That
+is the M5 report's request #3.
+
+### 9.3 Measured effect (`tests/test_adr84_p3_confined_corner.py`)
+
+Confined driver, host-rock parameters, corner at **4.86 MPa confinement**
+(`s1 = -4862.2`, `s2 = 0`, `s3 = T = 24.7`) — inside the σ₃ ≈ 1-6 MPa band the
+report asked for; 45/45 steps with the cutoff active, 15 on the corner:
+
+| `tangent_type` | total Newton iterations | per working step |
+|---|---|---|
+| Elastic | 294 | 9 |
+| **Secant (default)** | 232 | 7 |
+| **Continuum** | **76** | **2** |
+
+**3.5× fewer iterations** on the 31 working steps (62 vs 218).
+
+### 9.4 Operating guidance for the consumer
+
+Set **`tangent_type Continuum`** on the MCTC materials. Before P3 that setting
+was inert on the hook-resolved Gauss points; it is now the raw active-set
+tangent, which is the correct Newton operator on the cutoff face and at the
+corner. Keep `strict_convergence` on with a stress-scaled `f_absolute_tol` (§6c
+finding 3) so a vertex-fallback or a non-converged return map refuses loudly
+rather than committing a quietly wrong state.
+
+### 9.5 Why P0 could ship this
+
+Two gaps in the P0 battery, both closed by the P3 module:
+
+- it exercised the composite in **uniaxial tension** only — never confined,
+  non-associated MC shear at the corner;
+- its material-point driver **prescribes every DOF**, so there are zero free
+  equations, the global Newton never solves anything, and the tangent the
+  material hands the assembler is *unobservable*. `test_tangent_fd` checks the
+  tangent by finite differences of the material response, which the blend
+  passes — it is a self-consistent operator, just not the right one.
+
+The P3 driver leaves the z-faces free precisely so the tangent shows up in
+`testIter()`. **Any future tangent work on this material must use a driver with
+free DOFs.**
 
 ## See also
 

@@ -2169,15 +2169,63 @@ private:
         {
             VoigtVector sigma_sr, dep_sr;
             VoigtMatrix stiff_sr;
+            int sr_quality = SR_QUALITY_EXACT;
             if (yf.special_return(TrialStress, Eelastic, tol_yf,
                                   iv_storage, parameters_storage,
-                                  sigma_sr, dep_sr, stiff_sr))
+                                  sigma_sr, dep_sr, stiff_sr, sr_quality))
             {
+                // Ladruno (ADR-84 P3): a conservative terminal vertex projection
+                // replaces a confined deviatoric state with a hydrostatic one.
+                // It keeps the "no f > 0 commit" guarantee, but it is NOT the
+                // right answer, and committing it silently is what makes a
+                // material failure read downstream as a modelling problem.
+                // Under strict_convergence, refuse loudly instead.
+                if (sr_quality == SR_QUALITY_FALLBACK && be_strict)
+                {
+                    opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                           << ") - special_return could not land this trial on any exact "
+                           << "cutoff feature (face/edge/corner/compound); the only "
+                           << "remaining candidate is the conservative vertex projection, "
+                           << "which would discard the deviatoric state"
+                           << " -- rejecting step (strict_convergence)" << endln;
+                    return -1;
+                }
+
                 TrialStress          = sigma_sr;
                 TrialPlastic_Strain += dep_sr;
-                Stiffness            = stiff_sr;
                 // Internal variables: the opted-in YFs are perfectly plastic
                 // (Null hardening), so no IV update is required here.
+
+                // Ladruno (ADR-84 P3): stiff_sr is the RAW active-set (Koiter)
+                // tangent. Apply the SAME tangent-operator policy the generic
+                // path applies, instead of the hardcoded secant blend P0 used --
+                // that blend ignored `tangent_type` and, at the MC-cutoff corner,
+                // reported ~2e6 kPa of stiffness where the true tangent is ~0
+                // (87% error), stalling the global Newton. Default is Secant, so
+                // this is byte-identical unless the user asks for another type.
+                using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
+                switch (INT_OPT_tangent_operator_type[ASDP_TAG])
+                {
+                case TOT::Elastic:
+                    Stiffness = Eelastic;
+                    break;
+                case TOT::Continuum:
+                case TOT::Algorithmic:
+                    Stiffness = stiff_sr;
+                    break;
+                // Numerical_Algorithmic_* differentiate compute_local_stress(),
+                // a simplified map that does NOT call this hook -- it would be
+                // strictly worse here than the exact active-set tangent, so the
+                // numerical types intentionally fall back to it.
+                case TOT::Numerical_Algorithmic_FirstOrder:
+                case TOT::Numerical_Algorithmic_SecondOrder:
+                    Stiffness = stiff_sr;
+                    break;
+                case TOT::Secant:
+                default:
+                    Stiffness = VoigtMatrix((stiff_sr + Eelastic) / 2.0);
+                    break;
+                }
                 return 0;
             }
         }
