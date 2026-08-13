@@ -137,7 +137,13 @@ DiagonalSOE::setSize(Graph &theGraph)
     }
   }
 
-  if (size != oldSize && size != 0) {
+  // Ladruno: the `size != 0` exclusion left vectX/vectB/matA null on a model
+  // with ZERO free equations (every DOF fixed or sp-constrained), and the
+  // first getX()/getB()/getA() then hit the FATAL exit(-1) path -- whole
+  // process death, no traceback. A zero-length Vector/Matrix over the (null)
+  // data pointer is well-formed: nothing indexes it. Same fix as the other
+  // dense SOEs; see FullGenLinSOE.cpp for the analysis.
+  if (size != oldSize || vectX == 0) {
     if (vectX != 0) delete vectX; vectX = 0;
     if (vectB != 0) delete vectB; vectB = 0;
     if (matA  != 0) delete matA;  matA = 0;
