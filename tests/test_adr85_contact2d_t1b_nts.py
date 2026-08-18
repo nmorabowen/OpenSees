@@ -20,7 +20,15 @@ COVERAGE MAP -> ADR-85 G-T1b
             test_2d_orientation_vote_resolves     (the vote's POSITIVE control)
             test_2d_outward_two_components        (the 2-component parse + flip)
     regression (T1b must not WIDEN T0's guards)
-            test_2d_ndf3_still_refused, test_2d_mortar_still_refused
+            test_2d_ndf3_still_refused
+            test_2d_mortar_live_from_t1b_side (ADR-85 T3 update: this row
+                used to assert the mortar lane STAYS refused after T1b's NTS
+                wiring; T3 makes 2D mortar live, so the row is repurposed --
+                its actual intent (T1b's own additions must not corrupt the
+                mortar lane, whichever state that lane is in) is preserved by
+                now asserting the mortar deck runs AND transmits force, the
+                same live-lane discipline test_pair_2d_now_live established
+                for NTS)
 
     G-T1b(a) (3D battery N-unchanged + contact_dump bit-identical), (c) (the
     slice twin) and (d) (plane stress) are NOT here: (a) is the whole shipped
@@ -93,7 +101,7 @@ import numpy as np
 import pytest
 
 from _testbed import ops
-from test_adr85_contact2d_t0_refusals import ENGINE_DIR, _assert_refused
+from test_adr85_contact2d_t0_refusals import ENGINE_DIR, _assert_refused, _run_child
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -978,13 +986,55 @@ def test_2d_ndf3_still_refused():
     _assert_refused("ndf3_frame_node_on_nts")
 
 
-def test_2d_mortar_still_refused():
-    """A well-formed all-2D MORTAR pair is STILL refused by name, pointing at T3.
+def test_2d_mortar_live_from_t1b_side():
+    """ADR-85 T3 UPDATE (repurposed, not retired -- see the coverage map above).
 
-    The NTS and mortar lanes share the handler, the surfaces, the orientation
-    machinery and (after T1b) the 2D branch of nearly everything except the
-    interval integrator.  That is precisely why this row is re-asserted from the
-    T1b side: opening NTS must not let a `-mortar` declaration fall through the
-    same widened gate and reach a lane whose 2D integrator does not exist yet.
+    Originally: a well-formed all-2D MORTAR pair is STILL refused after T1b,
+    because the NTS and mortar lanes share the handler, the surfaces, the
+    orientation machinery and (after T1b) the 2D branch of nearly everything
+    except the interval integrator -- so opening NTS must not let a `-mortar`
+    declaration fall through the same widened gate and reach a lane whose 2D
+    integrator does not exist yet.
+
+    T3 BUILDS that integrator, so "still refused" is no longer the contract --
+    but the ORIGINAL INTENT (T1b's NTS-lane additions must not corrupt the
+    mortar lane, in whatever state it is in) survives the swap unchanged: this
+    now asserts, from the T1b side, that the shared machinery T1b touched
+    (the handler, the surfaces, the orientation vote) leaves the mortar lane
+    genuinely LIVE and force-transmitting, on the exact `mortar_2d_now_live`
+    deck test_adr85_contact2d_t0_refusals.py::test_mortar_2d_now_live gates --
+    re-run here, from the other lane's file, so the two cannot silently drift
+    apart the way a re-implemented copy of the deck could.
     """
-    _assert_refused("mortar_2d_not_yet_supported")
+    proc = _run_child("mortar_2d_now_live")
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    assert proc.returncode == 0, (
+        "a well-formed all-2D mortar pair must be ACCEPTED after T1b's NTS "
+        f"wiring landed (exit {proc.returncode}).\n{out}"
+    )
+    assert "MORTAR2D_LIVE" in out, f"the child did not finish both legs.\n{out}"
+
+    u1c = _grab(out, "MORTAR2D_LIVE", "u1c")
+    u2c = _grab(out, "MORTAR2D_LIVE", "u2c")
+    u1f = _grab(out, "MORTAR2D_LIVE", "u1f")
+    u2f = _grab(out, "MORTAR2D_LIVE", "u2f")
+
+    KN_, KS_, P_, SEED_ = 1.0e6, 1.0e3, 1.0e3, 1.0e-8
+    # GATE RERUN (test-side): a 2-node MATCHED mortar facet's effective
+    # PER-NODE penalty stiffness is epsN/2, not epsN -- see
+    # test_adr85_contact2d_t0_refusals.py::test_mortar_2d_now_live's own
+    # note (probed directly, exact 0.0 relative match at k_eff=epsN/2).
+    k_eff = KN_ / 2.0
+    u_f_ref = -(P_ / 2.0) / KS_
+    u_c_ref = (k_eff * SEED_ - P_ / 2.0) / (k_eff + KS_)
+    for name, uf in (("u1f", u1f), ("u2f", u2f)):
+        assert abs(uf - u_f_ref) / abs(u_f_ref) < 1.0e-9, (
+            f"the contact-free control ({name}) is not the pure spring after "
+            f"T1b's NTS wiring landed: {uf!r} vs {u_f_ref!r}.\n{out}")
+    for name, uc in (("u1c", u1c), ("u2c", u2c)):
+        assert abs(uc - u_c_ref) / abs(u_c_ref) < 1.0e-8, (
+            f"2D mortar pair equilibrium ({name}) {uc!r} != closed form "
+            f"{u_c_ref!r} after T1b's NTS wiring landed.\n{out}")
+        assert abs(uc) < 1.0e-2 * abs(u_f_ref), (
+            f"the mortar pair transmitted (almost) nothing ({name}) -- T1b's "
+            f"shared machinery may have silently disabled the mortar lane.\n{out}")

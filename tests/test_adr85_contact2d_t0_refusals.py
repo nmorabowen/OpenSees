@@ -14,23 +14,32 @@ WHAT THIS FILE IS
     everything 2D.
 
 ROW COUNT (keep this in sync with the REFUSALS dict below)
-    SIX refusal rows + TWO acceptance rows = eight tests.
+    FIVE refusal rows + FOUR acceptance rows = nine tests.
 
-    The matrix shrank by one at T1b.  T0 shipped a SEVENTH refusal row,
-    `pair_2d_not_yet_supported`: a well-formed all-2D NTS pair had to be refused
-    by name pointing at T1b, because T0-C opened the DECLARATION path while the
-    FE SEGMENT 2D construction path did not exist yet.  T1b built that path, so
-    the row inverted: the same deck is now the `pair_2d_now_live` ACCEPTANCE row
-    (`test_pair_2d_now_live`), which asserts the pair does not merely run but
-    TRANSMITS FORCE -- because "assembles and transmits nothing" is precisely
-    the ADR-78 P0 failure the retired refusal existed to foreclose, and retiring
-    a refusal without replacing its guarantee would have re-opened it.
+    The matrix shrank by one at T1b and again at T3.  T0 shipped a SEVENTH
+    refusal row, `pair_2d_not_yet_supported`: a well-formed all-2D NTS pair had
+    to be refused by name pointing at T1b, because T0-C opened the DECLARATION
+    path while the FE SEGMENT 2D construction path did not exist yet.  T1b
+    built that path, so the row inverted: the same deck is now the
+    `pair_2d_now_live` ACCEPTANCE row (`test_pair_2d_now_live`), which asserts
+    the pair does not merely run but TRANSMITS FORCE -- because "assembles and
+    transmits nothing" is precisely the ADR-78 P0 failure the retired refusal
+    existed to foreclose, and retiring a refusal without replacing its
+    guarantee would have re-opened it.
 
-    The mortar row (`mortar_2d_not_yet_supported`, -> T3) is UNTOUCHED and stays
-    a refusal; the T1b battery re-asserts it, and the ndf equality row, from the
-    other side (tests/test_adr85_contact2d_t1b_nts.py::
-    test_2d_mortar_still_refused / ::test_2d_ndf3_still_refused) so that opening
-    the NTS lane cannot silently widen either guard.
+    T3 does the SAME swap to the mortar row.  `mortar_2d_not_yet_supported`
+    stayed a refusal through T1b and T2 (the ndf equality row, from the other
+    side, is tests/test_adr85_contact2d_t1b_nts.py::test_2d_ndf3_still_refused)
+    because the 2D interval integrator did not exist until T3.  T3 builds it,
+    so the row inverts into `mortar_2d_now_live` (`test_mortar_2d_now_live`),
+    on the SAME `pair_2d_now_live` precedent: the deck must not merely run, it
+    must TRANSMIT FORCE.  T3 also ADDS `tie_2d_now_live` (`test_tie_2d_now_live`)
+    -- there was never a `-tie` refusal row to invert (no test in this file
+    ever declared `-tie`), so this is a fresh acceptance case rather than an
+    inversion, following the SAME transmits-not-merely-runs discipline.  The
+    corresponding T1b-side re-assertion, test_adr85_contact2d_t1b_nts.py::
+    test_2d_mortar_still_refused, is repurposed alongside this swap (see that
+    file for its own T3 update).
 
 WHY A CHILD PROCESS
     Contact refusals are not ordinary Python exceptions.  Every declaration verb
@@ -133,8 +142,11 @@ REFUSALS = {
     # rather than a refusal, so the ADR-78 P0 guarantee the refusal carried --
     # a 2D pair never assembles and transmits nothing -- survives the swap.)
 
-    # -mortar is UNCHANGED by T1b: the 2D interval integrator lands in T3.
-    "mortar_2d_not_yet_supported": ("ADR-85", "T3"),
+    # (RETIRED AT T3 -- see the ROW COUNT note in the module docstring.  The
+    # well-formed ALL-2D MORTAR pair that used to be refused here with a named
+    # "not yet supported ... T3" now RUNS: its successor is the
+    # `mortar_2d_now_live` ACCEPTANCE case below, on the SAME
+    # transmits-force-not-merely-runs precedent as `pair_2d_now_live`.)
 
     # A 3D master facet paired with an all-2D -slave NODE SET.  The slave set is
     # arity-free (no nodesPerSeg), so no nps==2 gate can see it -- only a
@@ -346,21 +358,115 @@ elif CASE == "pair_2d_now_live":
     print("PAIR2D_LIVE uc=" + repr(u_c) + " uf=" + repr(u_f) + " fc=" + repr(f_c))
     sys.exit(0)
 
-elif CASE == "mortar_2d_not_yet_supported":
-    # Same, for the mortar lane: the 2D interval integrator lands in T3.
-    ops.model("basic", "-ndm", 2, "-ndf", 2)
-    m = _line_master_2d()
-    ops.node(1, -0.5, -1.0e-4)
-    ops.node(2, 0.5, -1.0e-4)
-    ops.fix(1, 1, 0)
-    ops.fix(2, 1, 0)
-    ops.contactSurface(10, "-master", 2, *m)
-    ops.contactSurface(20, "-slave-segments", 2, 1, 2)
-    ops.contact(1, 10, 20, "-mortar", "-epsN", EPSN)
-    _pattern()
-    ops.load(1, 0.0, -1.0)
-    ops.load(2, 0.0, -1.0)
-    rc = _static_1_step()
+elif CASE == "mortar_2d_now_live":
+    # ADR-85 T3: the successor to the retired `mortar_2d_not_yet_supported`
+    # row, on the EXACT `pair_2d_now_live` precedent (same file, above): a
+    # matched 2-node mortar facet (full overlap over the master's own span,
+    # the ADR-41 c2_1 "matched" idiom) in PARALLEL with a soft y-spring at
+    # EACH slave node.  "It ran" is not the assertion -- a mortar pair that
+    # assembles and transmits nothing converges and balances its reactions
+    # just as convincingly as a live one, so both legs (contact+spring vs
+    # spring-only) are solved and contrasted, exactly as the NTS row does.
+    P, KS = 1.0e3, 1.0e3
+
+    def _leg(with_contact):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        m = _line_master_2d()
+        ops.node(1, -0.5, -1.0e-8)
+        ops.node(2, 0.5, -1.0e-8)
+        ops.fix(1, 1, 0)                    # x fixed, y free (gate rerun: a
+        ops.fix(2, 1, 0)                    # missing fix left x singular)
+        ops.node(3, -0.5, -1.0e-8)          # spring ground, coincident with 1
+        ops.node(4, 0.5, -1.0e-8)           # spring ground, coincident with 2
+        ops.fix(3, 1, 1)
+        ops.fix(4, 1, 1)
+        ops.uniaxialMaterial("Elastic", 1, KS)
+        ops.element("zeroLength", 1, 3, 1, "-mat", 1, "-dir", 2)
+        ops.element("zeroLength", 2, 4, 2, "-mat", 1, "-dir", 2)
+        if with_contact:
+            ops.contactSurface(10, "-master", 2, *m)
+            ops.contactSurface(20, "-slave-segments", 2, 1, 2)
+            ops.contact(1, 10, 20, "-mortar", "-epsN", EPSN, "-outward", 0.0, 1.0)
+        _pattern()
+        ops.load(1, 0.0, -P / 2.0)
+        ops.load(2, 0.0, -P / 2.0)
+        code = _static_1_step()
+        if code != 0:
+            return code, 0.0, 0.0
+        return 0, ops.nodeDisp(1, 2), ops.nodeDisp(2, 2)
+
+    rc_c, u1_c, u2_c = _leg(True)
+    rc_f, u1_f, u2_f = _leg(False)
+    if rc_c != 0 or rc_f != 0:
+        print("MORTAR2D_ANALYZE_FAILED rc_contact=" + str(rc_c) + " rc_free=" + str(rc_f))
+        sys.exit(5)
+    print("MORTAR2D_LIVE u1c=" + repr(u1_c) + " u2c=" + repr(u2_c)
+          + " u1f=" + repr(u1_f) + " u2f=" + repr(u2_f))
+    sys.exit(0)
+
+elif CASE == "tie_2d_now_live":
+    # ADR-85 T3: there was NEVER a `-tie` refusal row here (no test in this
+    # file ever declared it) -- a FRESH acceptance case, not an inversion,
+    # following the same transmits-not-merely-runs discipline.
+    #
+    # DEFECT 2 (gate rerun finding): non-homogeneous `ops.sp` is NOT enforced
+    # under `constraints("LadrunoContact")` -- the engine warns and silently
+    # leaves the DOF free.  Redesigned to the EXACT `pair_2d_now_live` /
+    # `mortar_2d_now_live` contrast instead of an sp-driven target: master
+    # FIXED (never moves, u_master == 0 identically -- the tie couples
+    # RELATIVE DISPLACEMENT, so a fixed master IS a legitimate zero-target),
+    # slave free with a parallel soft spring, a tangential LOAD applied to
+    # the slave.  With the tie declared (epsTie >> the spring), the tie PINS
+    # the slave near the fixed master's zero displacement regardless of the
+    # load; without it, the spring alone carries the load and the slave moves
+    # by orders of magnitude more.
+    Q, KS = 1.0e3, 1.0e3
+
+    def _leg(with_tie):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(101, -0.5, 0.0)
+        ops.node(102, 0.5, 0.0)
+        ops.fix(101, 1, 1)
+        ops.fix(102, 1, 1)
+        ops.node(1, -0.5, 0.0)
+        ops.node(2, 0.5, 0.0)
+        ops.fix(1, 0, 1)                    # x free (driven), y fixed (gate
+        ops.fix(2, 0, 1)                    # rerun: a missing fix left y
+                                            # singular without the tie -- the
+                                            # tie itself DOES cover y once
+                                            # declared, epsTie*B~^T B~ (x) I,
+                                            # which is exactly why rc_tie==0
+                                            # but rc_free==-3 before this fix)
+        ops.node(3, -0.5, 0.0)
+        ops.node(4, 0.5, 0.0)
+        ops.fix(3, 1, 1)
+        ops.fix(4, 1, 1)
+        ops.uniaxialMaterial("Elastic", 1, KS)
+        ops.element("zeroLength", 1, 3, 1, "-mat", 1, "-dir", 1)
+        ops.element("zeroLength", 2, 4, 2, "-mat", 1, "-dir", 1)
+        if with_tie:
+            ops.contactSurface(10, "-master", 2, 101, 102)
+            ops.contactSurface(20, "-slave-segments", 2, 1, 2)
+            ops.contact(1, 10, 20, "-mortar", "-tie", "-epsTie", 1.0e6,
+                        "-outward", 0.0, 1.0)
+        _pattern()
+        ops.load(1, Q / 2.0, 0.0)
+        ops.load(2, Q / 2.0, 0.0)
+        code = _static_1_step()
+        if code != 0:
+            return code, 0.0, 0.0
+        return 0, ops.nodeDisp(1, 1), ops.nodeDisp(2, 1)
+
+    rc_t, u1_t, u2_t = _leg(True)
+    rc_f, u1_f, u2_f = _leg(False)
+    if rc_t != 0 or rc_f != 0:
+        print("TIE2D_ANALYZE_FAILED rc_tie=" + str(rc_t) + " rc_free=" + str(rc_f))
+        sys.exit(5)
+    print("TIE2D_LIVE u1t=" + repr(u1_t) + " u2t=" + repr(u2_t)
+          + " u1f=" + repr(u1_f) + " u2f=" + repr(u2_f))
+    sys.exit(0)
 
 elif CASE == "cross_dim_pair":
     # 3D master facet (internally consistent) + all-2D slave node set
@@ -573,13 +679,102 @@ def test_pair_2d_now_live():
         f"ladrunoContactForce {f_c!r} != kn*penetration {f_c_ref!r}.\n{out}")
 
 
-def test_refuse_mortar_2d_not_yet_supported():
-    """A valid all-2D mortar pair -> refused by name, pointing at T3.
+def test_mortar_2d_now_live():
+    """A valid all-2D mortar pair -> ACCEPTED, and it transmits force.
 
-    EXPECTED TO FAIL until ADR-85 T0-C.  Same argument as the NTS row; the 2D
-    interval-overlap integrator lands in T3.
+    THE SUCCESSOR TO A RETIRED REFUSAL (ADR-85 T3), on the EXACT
+    `pair_2d_now_live` precedent.  Until T3 this row was
+    `test_refuse_mortar_2d_not_yet_supported`: T0-C refused a well-formed 2D
+    mortar declaration by name pointing at T3, because the 2D interval
+    integrator did not exist.  T3 builds it, and the guarantee the refusal
+    carried has to survive the inversion the same way it did for the NTS row:
+    a 2D mortar pair that converges, balances its reactions and transmits NO
+    force is indistinguishable from a green run unless something measures it.
+    This does, via the same contact-vs-spring-only two-leg contrast
+    `pair_2d_now_live` uses (see the CASE comment for the deck), applied to
+    BOTH slave nodes of the matched facet.
     """
-    _assert_refused("mortar_2d_not_yet_supported")
+    proc = _run_child("mortar_2d_now_live")
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    assert proc.returncode == 0, (
+        "a well-formed all-2D mortar pair must now be ACCEPTED and run "
+        f"(exit {proc.returncode}).\n{out}"
+    )
+    assert "MORTAR2D_LIVE" in out, f"the child did not finish both legs.\n{out}"
+
+    u1c = _grab(out, "MORTAR2D_LIVE", "u1c")
+    u2c = _grab(out, "MORTAR2D_LIVE", "u2c")
+    u1f = _grab(out, "MORTAR2D_LIVE", "u1f")
+    u2f = _grab(out, "MORTAR2D_LIVE", "u2f")
+
+    KN_, KS_, P_, SEED_ = 1.0e6, 1.0e3, 1.0e3, 1.0e-8
+    # GATE RERUN (test-side): a 2-node MATCHED mortar facet's effective
+    # PER-NODE penalty stiffness is epsN/2, not epsN -- confirmed by direct
+    # probe against the live engine (a 2-pt-Gauss-integrated unit-length
+    # facet splitting its penalty evenly across the two nodes it spans, the
+    # standard FE lumping for a linear segment). An earlier draft assumed
+    # k_eff=epsN (the NTS/pointwise convention) and the equilibrium check
+    # below missed by ~2x. With k_eff=epsN/2 the match against the measured
+    # value is EXACT (0.0 relative error, probed directly).
+    k_eff = KN_ / 2.0
+    u_f_ref = -(P_ / 2.0) / KS_
+    u_c_ref = (k_eff * SEED_ - P_ / 2.0) / (k_eff + KS_)
+
+    for name, uf in (("u1f", u1f), ("u2f", u2f)):
+        assert abs(uf - u_f_ref) / abs(u_f_ref) < 1.0e-9, (
+            f"the contact-free control ({name}) is not the pure spring: "
+            f"{uf!r} vs {u_f_ref!r}.\n{out}")
+    for name, uc in (("u1c", u1c), ("u2c", u2c)):
+        assert abs(uc - u_c_ref) / abs(u_c_ref) < 1.0e-8, (
+            f"2D mortar pair equilibrium ({name}) {uc!r} != closed form "
+            f"{u_c_ref!r}: the pair assembled but does not carry epsN.\n{out}")
+        assert abs(uc) < 1.0e-2 * abs(u_f_ref), (
+            f"the mortar pair transmitted (almost) nothing ({name}): "
+            f"|u|={abs(uc):.6e} vs free {abs(u_f_ref):.6e} -- the ADR-78 P0 "
+            f"silent-drop signature.\n{out}")
+
+
+def test_tie_2d_now_live():
+    """A valid all-2D `-tie` pair -> ACCEPTED, and it transmits force.
+
+    A FRESH acceptance row, not an inversion (ADR-85 T3): no test in this file
+    ever declared `-tie`, so there is no refusal to retire.  Redesigned after
+    the gate rerun (DEFECT 2: non-homogeneous `sp` is not enforced under
+    `constraints("LadrunoContact")`) onto the EXACT `pair_2d_now_live` /
+    `mortar_2d_now_live` contrast: master FIXED (u_master == 0 identically --
+    a legitimate zero target, since the tie couples RELATIVE displacement),
+    slave free with a parallel soft spring, driven by a tangential load.  A
+    genuinely-live tie PINS the slave near zero despite the load (epsTie
+    dominates the parallel spring by 3 orders); the tie-absent leg has only
+    the spring, and must move by ORDERS OF MAGNITUDE more -- the same
+    transmits-force contrast the NTS/mortar acceptance rows use, applied to
+    the tie lane.
+    """
+    proc = _run_child("tie_2d_now_live")
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    assert proc.returncode == 0, (
+        f"a well-formed all-2D -tie pair must be ACCEPTED and run "
+        f"(exit {proc.returncode}).\n{out}"
+    )
+    assert "TIE2D_LIVE" in out, f"the child did not finish both legs.\n{out}"
+
+    u1t = _grab(out, "TIE2D_LIVE", "u1t")
+    u2t = _grab(out, "TIE2D_LIVE", "u2t")
+    u1f = _grab(out, "TIE2D_LIVE", "u1f")
+    u2f = _grab(out, "TIE2D_LIVE", "u2f")
+
+    Q_, KS_ = 1.0e3, 1.0e3
+    u_f_ref = (Q_ / 2.0) / KS_        # the tie-absent control: spring alone
+    for name, uf in (("u1f", u1f), ("u2f", u2f)):
+        assert abs(uf - u_f_ref) / u_f_ref < 1.0e-9, (
+            f"the tie-absent control ({name}) is not the pure spring: "
+            f"{uf!r} vs {u_f_ref!r}.\n{out}")
+    for name, ut in (("u1t", u1t), ("u2t", u2t)):
+        assert abs(ut) < 1.0e-2 * u_f_ref, (
+            f"the tied slave DOF ({name}) moved almost as much as the "
+            f"tie-absent control ({ut!r} vs {u_f_ref!r}) -- the tie assembled "
+            f"but does not transfer the motion (the ADR-78 P0 silent-drop "
+            f"signature).\n{out}")
 
 
 def test_refuse_cross_dim_pair():

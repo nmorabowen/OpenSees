@@ -454,6 +454,199 @@ inline void bOperatorVertex2D(const double n[2], double B[4])
     B[2] = -n[0];   B[3] = -n[1];
 }
 
+// =============================================================================
+// ADR-85 T3 -- 2D MORTAR: the slave-trace interval integrator (segment-to-segment
+// mortar for 2 two-node segments). Header-only, pure append below the T1a/T1b
+// NTS geometry above (byte-stable): NO edit above this marker.
+//
+// Mirrors LadrunoMortarKernel.h's PairResult/integratePair discipline (ADR-41 C1)
+// collapsed from the 3D clip -> sub-triangle Gauss to the 1D interval clip -> 2-pt
+// Gauss the ADR-85 SS How/3 kinematics prescribe: project the slave ENDPOINTS onto
+// the master's affine parametrization, clip [xiM(s0),xiM(s1)] against [0,1], and
+// integrate on the SLAVE-TRACE measure dGamma_s = (L_m/|t_s.t_m|)*dxi_m -- the 2D
+// analogue of the shipped 3D kernel's A_phys = A_aux/cos_t (LadrunoMortarKernel.h:460).
+// Oracle: Ladruno_implementation/contact_prototypes/proto_t3_mortar2d.py (70/70 PASS);
+// this function is a line-for-line C++ transcription of integrate_pair_2d() there --
+// same operation order (no reassociated dot products), same refusal ordering, same
+// thresholds -- so it is testable bit-for-bit against the numpy oracle.
+// =============================================================================
+
+// A2 (proto_t3_mortar2d.py) -- status stays the {0,-1} pair binding decision 2b.1
+// mandates (0 accumulated, -1 refused/skip; NO -2 tier -- straight 2-node segments
+// cannot be "invalid geometry" the way quadratic facets can), but PairResult2D ALSO
+// carries a `refusal` CLASSIFICATION and the `cos_t` the ALIGN test already computed
+// -- set BEFORE returning on every path that reaches it -- so the HANDLER can route
+// WARN_2D_PERP_NO_NTS / the NTS-ownership stand-down (ADR-85 How/3, decision 2b.4)
+// WITHOUT re-deriving cos_t from the coordinates (the fork's staleness trap, applied
+// to the exact quantity the gate turns on).
+enum Mort2DStatus { MORT2D_OK = 0, MORT2D_SKIP = -1 };
+enum Mort2DRefusal {
+    MORT2D_REF_NONE  = 0,
+    MORT2D_REF_EMPTY = 1,   // clipped overlap b-a <= tauOv*min(Ls,Lm)/Lm (sliver / disjoint)
+    MORT2D_REF_DEGEN = 2,   // zero-length slave OR master segment (tauSeg*Lref gauge, the
+                            // SAME relative gauge projectSegment2D uses)
+    MORT2D_REF_ALIGN = 3    // |t_hat_s . t_hat_m| < tauAlign -- near-perpendicular pair;
+                            // the slave-trace Jacobian 1/|cos| is ill-conditioned there
+};
+
+// TOLERANCE SEMANTICS (both RELATIVE gauges -- never a bare absolute; ADR-85 T3 design
+// note SS3, measured not guessed):
+//   MORT2D_TAU_OV_DEFAULT    -- the parametric-overlap SLIVER guard, RELATIVE to
+//       min(Ls,Lm)/Lm: that ratio IS the largest parametric overlap a pair can attain
+//       (a fully-contained slave gives Ls*|cos|/Lm, a fully-covered master gives 1), so
+//       it is the exact 2D analogue of the shipped 3D kernel's A_min sliver normalizer
+//       (LadrunoMortarKernel.h:444). Default 1e-9: the far-field TRANSLATION-noise floor
+//       measured at |x|~5e4 is ~9e-12 (oracle CHECK 1.7), so 1e-9 buys ~100x headroom.
+//   MORT2D_TAU_ALIGN_DEFAULT -- the alignment floor on |t_hat_s.t_hat_m|; caps the
+//       slave-trace Jacobian 1/|cos| at 1e6, far past any well-posed pair.
+// ORDERING IS A HARD, GATED REQUIREMENT (oracle CHECK 1.6, proto_t3_mortar2d.py A3):
+// MORT2D_TAU_OV_DEFAULT MUST stay far BELOW MORT2D_TAU_ALIGN_DEFAULT. For a fully
+// CONTAINED slave the clipped overlap is exactly b-a = Ls*|cos|/Lm against the sliver
+// threshold tauOv*Ls/Lm, so the sliver guard bites EXACTLY when |cos| < tauOv. If the
+// ordering were reversed (tauOv >= tauAlign), the EMPTY sliver guard would silently
+// swallow a legitimate, strongly-tilted FULL overlap as "no contribution" before the
+// ALIGN classification could route it to WARN_2D_PERP_NO_NTS / the NTS-ownership
+// stand-down -- a silent hole in exactly the case the routing protocol exists to catch.
+// mortarSegmentPair2D therefore tests ALIGN strictly before EMPTY; do not reorder.
+static const double MORT2D_TAU_OV_DEFAULT    = 1e-9;
+static const double MORT2D_TAU_ALIGN_DEFAULT = 1e-6;
+
+// The 2D mortar pair result: 2 slave nodes x 2 master nodes (straight 2-node segments
+// only -- there is no serendipity/quadratic 2D facet). Mirrors
+// LadrunoMortarKernel::PairResult's field list (status/ngp/area~len/gapL1/D/M/g) plus
+// the A2 refusal+cos_t fields the 2D routing protocol needs.
+struct PairResult2D {
+    int    status;    // MORT2D_OK (0, accumulated) or MORT2D_SKIP (-1, refused/skip)
+    int    refusal;   // Mort2DRefusal; MORT2D_REF_NONE unless status == MORT2D_SKIP
+    double cos_t;      // t_hat_s . t_hat_m -- set as soon as computed (before the ALIGN
+                       // test), so it is valid on ALIGN and on a later EMPTY refusal;
+                       // stays 0.0 on a DEGEN refusal (never reached -> never computed)
+    int    ngp;        // Gauss points integrated this pair (0 or 2; 0 <=> no contribution)
+    double len;        // INT dGamma_s over the clipped overlap (the slave-trace measure)
+    double gapL1;       // INT |gN| dGamma_s -- the sign-free gap guard (mirrors
+                        // LadrunoMortarKernel::PairResult::gapL1)
+    double D[2][2];    // slave-slave mortar D_ij = INT N_i^s N_j^s dGamma_s
+    double M[2][2];    // slave-master mortar M_ik = INT N_i^s N_k^m dGamma_s
+    double g[2];       // weighted gap g~_i = INT N_i^s gN dGamma_s -- gN computed INSIDE
+                       // the integral (mirrors LadrunoMortarKernel.h:484, the ADR-41 D1
+                       // flat-facet fix: factoring gN out of the integral is wrong
+                       // whenever the gap is not uniform along the overlap, which a
+                       // tilted/rotated pair always is)
+};
+
+// Integrate ONE slave/master 2-node segment pair on the slave-trace measure (ADR-85
+// SS How/3). Xs/Xm = [[x,y],[x,y]] segment endpoints (CURRENT config -- caller's
+// choice of reference vs trial); sigma = +-1 the committed interface orientation vote
+// (How/2, a caller INPUT here, never re-derived); Lref = the surface's min INITIAL
+// segment length (the SAME relative-gauge caller contract projectSegment2D/
+// vertexWedge2D use, computed once per contact at handle()). Zeroes `out` on entry (a
+// refused evaluation never leaks stale geometry -- the projectSegment2D precedent).
+//
+// tauOv/tauAlign/tauSeg default to the oracle-validated constants above; a caller
+// passing non-default values is responsible for preserving the tauOv << tauAlign
+// ordering (see the block comment above).
+//
+// Refusal order (never reorder -- see the ordering note above): DEGEN (either segment
+// too short) -> ALIGN (near-perpendicular) -> EMPTY (sliver/disjoint clip) -> OK.
+inline int mortarSegmentPair2D(const double Xs[2][2], const double Xm[2][2],
+                               double sigma, double Lref, PairResult2D &out,
+                               double tauOv    = MORT2D_TAU_OV_DEFAULT,
+                               double tauAlign = MORT2D_TAU_ALIGN_DEFAULT,
+                               double tauSeg   = TAU_SEG_DEFAULT)
+{
+    out.status = MORT2D_SKIP; out.refusal = MORT2D_REF_EMPTY; out.cos_t = 0.0;
+    out.ngp = 0; out.len = 0.0; out.gapL1 = 0.0;
+    for (int i = 0; i < 2; i++) {
+        out.g[i] = 0.0;
+        for (int j = 0; j < 2; j++) { out.D[i][j] = 0.0; out.M[i][j] = 0.0; }
+    }
+
+    const double ts[2] = { Xs[1][0] - Xs[0][0], Xs[1][1] - Xs[0][1] };
+    const double tm[2] = { Xm[1][0] - Xm[0][0], Xm[1][1] - Xm[0][1] };
+    const double Ls = norm2(ts), Lm = norm2(tm);
+
+    // Lref is a CALLER CONTRACT, exactly as in projectSegment2D: a missing/garbage
+    // Lref would silently disable the zero-length guard, so it is a refusal, not a
+    // fallback. !(x>0) also traps NaN.
+    if (!(Lref > 0.0))               { out.refusal = MORT2D_REF_DEGEN; return out.status; }
+    if (Ls <= tauSeg * Lref || Lm <= tauSeg * Lref) {
+        out.refusal = MORT2D_REF_DEGEN; return out.status;
+    }
+
+    // alignment: cos(theta) between the UNIT tangents. 1/|cos| is the load-bearing
+    // slave-trace Jacobian factor below. Set cos_t as soon as it is known (A2).
+    const double tsHat[2] = { ts[0] / Ls, ts[1] / Ls };
+    const double tmHat[2] = { tm[0] / Lm, tm[1] / Lm };
+    const double cosT = dot2(tsHat, tmHat);
+    out.cos_t = cosT;
+    if (std::fabs(cosT) < tauAlign) {           // near-perpendicular: ill-posed measure
+        out.refusal = MORT2D_REF_ALIGN;
+        return out.status;
+    }
+
+    // closed-form projection of the slave ENDPOINTS onto the master parametrization.
+    const double Lm2 = dot2(tm, tm);
+    const double d0[2] = { Xs[0][0] - Xm[0][0], Xs[0][1] - Xm[0][1] };
+    const double d1[2] = { Xs[1][0] - Xm[0][0], Xs[1][1] - Xm[0][1] };
+    const double al0 = dot2(d0, tm) / Lm2;
+    const double al1 = dot2(d1, tm) / Lm2;
+    const double lo = (al0 < al1) ? al0 : al1;
+    const double hi = (al0 < al1) ? al1 : al0;
+    const double a  = (lo > 0.0) ? lo : 0.0;
+    const double b  = (hi < 1.0) ? hi : 1.0;
+
+    // sliver guard -- RELATIVE to min(Ls,Lm)/Lm (see the tolerance-semantics block
+    // above); tested AFTER alignment, never before (the tauOv << tauAlign ordering).
+    const double thr = tauOv * ((Ls < Lm) ? Ls : Lm) / Lm;
+    if (b - a <= thr) {
+        out.refusal = MORT2D_REF_EMPTY;
+        return out.status;
+    }
+
+    const double nx = -sigma * tm[1] / Lm;      // n = sigma*perp(t_m)/L_m (How/1 convention)
+    const double ny =  sigma * tm[0] / Lm;
+
+    const double J = Lm / std::fabs(cosT);      // dGamma_s = (L_m/|t_s.t_m|) dxi_m
+    const double dal = al1 - al0;                // nonzero: |cosT| >= tauAlign > 0 (see
+                                                 // the design note: dal == Ls*cosT/Lm)
+
+    // 2-POINT GAUSS, HARDCODED -- exact for these degree<=2 integrands (oracle CHECK 2,
+    // proto_t3_mortar2d.py; a 1-pt rule is measurably wrong there). No order argument:
+    // the ADR-85 T3 binding decision (2b.7 / How/3) fixes 2-pt for the 2D mortar lane.
+    static const double GP2_U0 = 0.21132486540518711775;  // 0.5 - 1/(2*sqrt(3))
+    static const double GP2_U1 = 0.78867513459481288225;  // 0.5 + 1/(2*sqrt(3))
+    static const double GP2_W  = 0.5;
+    const double u[2] = { GP2_U0, GP2_U1 };
+    const double span = b - a;
+
+    for (int gp = 0; gp < 2; gp++) {
+        const double xim = a + span * u[gp];
+        const double wgt = GP2_W * span;
+        const double xis = (xim - al0) / dal;
+        const double Ns[2] = { 1.0 - xis, xis };
+        const double Nm[2] = { 1.0 - xim, xim };
+        const double xsx = Xs[0][0] + xis * ts[0];
+        const double xsy = Xs[0][1] + xis * ts[1];
+        const double xmx = Xm[0][0] + xim * tm[0];
+        const double xmy = Xm[0][1] + xim * tm[1];
+        // gN computed INSIDE the loop, from the SAME xis/xim the shape functions use --
+        // one consistent contact point (mirrors LadrunoMortarKernel.h:484).
+        const double gN = (xsx - xmx) * nx + (xsy - xmy) * ny;
+        const double wJ = wgt * J;
+        out.len   += wJ;
+        out.gapL1 += wJ * std::fabs(gN);
+        for (int i = 0; i < 2; i++) {
+            out.g[i] += wJ * Ns[i] * gN;
+            for (int j = 0; j < 2; j++) out.D[i][j] += wJ * Ns[i] * Ns[j];
+            for (int k = 0; k < 2; k++) out.M[i][k] += wJ * Ns[i] * Nm[k];
+        }
+        out.ngp++;
+    }
+    out.status = MORT2D_OK;
+    out.refusal = MORT2D_REF_NONE;
+    return out.status;
+}
+
 } // namespace LadrunoContact2DKernel
 
 #endif

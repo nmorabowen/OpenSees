@@ -226,8 +226,11 @@ own headline applications). §How/1 designs the vertex policy; G-T1a gates it.
     (`A_poly < 1e-12·A_min`, `:444`).
   - `LadrunoContactFE.cpp` SEGMENT/MORTAR — stateless-adapter assembly, softKn /
     gapModeInvMass (size-guarded for 2-DOF nodes), viscousActive, warn-latch.
-  - ADR-57 E7's **ordered ownership protocol** (NTS ≻ edge ≻ mortar stand-down,
-    handler `:1179-1184`) — the routing precedent §How/3 adapts.
+  - ADR-57 E7's **ordered ownership protocol** (NTS ≻ edge ≻ mortar stand-down;
+    T3 cite correction: the machinery is `ladrunoEdgeEdgeOwns`, handler
+    `:555-577`, with the `continue` stand-down in the mortar loop — the old
+    `:1179-1184` cite now points at the T1b vote magnitude gate) — the routing
+    precedent §How/3 adapts.
 - **Build:** no new CMake target, no external dep.
 
 ## How — governing kinematics and decisions
@@ -421,7 +424,9 @@ it" assumed a fallback that does not exist).** In the shipped engine `-mortar`
 and NTS are separate declared lanes; a mortar `status = −1` is silently
 skipped. 3D closed its equivalent hole (ADR-57 E7) with an ordered ownership
 protocol — NTS ≻ edge-edge ≻ face-mortar with stand-down
-(`LadrunoContactHandler.cpp:1179-1184`). The 2D lane **adopts that protocol
+(`ladrunoEdgeEdgeOwns`, `LadrunoContactHandler.cpp:555-577`, + the mortar-loop
+`continue` stand-down — T3 cite correction; the old `:1179-1184` range now
+holds the T1b vote magnitude gate). The 2D lane **adopts that protocol
 minus the edge tier**: NTS ≻ mortar with stand-down (no double-count when both
 are declared on the same surfaces), and an alignment-refused (near-
 perpendicular) mortar pair is covered iff an NTS contact is declared on the
@@ -814,7 +819,8 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
 
 - **T0 shipped** (PR #749, 2026-08-18): declarations + guards + rigid-plane
   acceptance + `contact_dump.py`. Gates: dump bit-identical pre/post (twice),
-  battery 121/121, T0 suite 13/13 (8-row refusal matrix + control + 5
+  battery 121/121 (a stale-glob figure — the pinned-glob count was already
+  142; see the T2 correction below), T0 suite 13/13 (8-row refusal matrix + control + 5
   rigid-plane tests). 8-angle review: 10 findings — 7 fixed in-PR, 1
   disclosed over-refusal, 2 deferred to T1b by name. Review also caught (and
   the test matrix now locks) the cross-surface dimension hole in the first
@@ -898,5 +904,34 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
     wedge; untethered -> coincidence-floor guard / unstable). It is
     pre-existing T1b code, so this is inherited coverage debt, not a T2
     regression. **T2+ follow-up**, alongside D4's radial end-cap vertex pair.
+
+- **T3 shipped** (2026-08-18): 2D mortar/ALM/tie/mortar-friction/`-thickness`
+  live -- `mortarSegmentPair2D` appended to `LadrunoContact2DKernel.h` (interval
+  clip on the slave-trace measure, 2-pt Gauss oracle-proven exact, `refusal` +
+  `cos_t` routing fields per oracle A2), stride-2 MORTAR adapter paths, the
+  shared `ladruno2DOrientationVote` extraction (token-identical code motion,
+  independently verified), C3 scalar friction on `MortarNormalState` slot [0]
+  (the T2 scalar-store rule; kn folded once), the MORTAR `-visc` port, the
+  conjunctive NTS-ownership routing (master-tag match AND slave-node coverage;
+  TIE pairs always warn) + `WARN_2D_PERP_NO_NTS`, edge-edge scope-fence FATAL,
+  `-thickness` with auto values NOT h-scaled (they absorb element thickness).
+  Design note: `_adr85_t3_design.md`.
+  - **Gates MEASURED** (artifacts 2026-08-18 15:09): `contact_dump`
+    bit-identical x2 to the fresh same-session baseline `B0F8F770...81E4`
+    (184 lines; T2's cross-session hash does NOT compare -- quirks row);
+    3D battery **142 passed, N unchanged**; 2D suite **54 -> 80**; all G-T3
+    letters (a)-(f) pass, incl. machine-precision non-matching patch (the
+    T1b NTS 4.73% band removed), epsN-independent augmentation with the
+    pure-penalty discriminator, T-junction tie exactness, fires-once routing,
+    mu=0 byte-identity, and bitwise-2x `-thickness` tractions over
+    byte-identical penetration.
+  - 8-angle review at high: 10 findings, 9 fixed in-PR, 1 disclosed
+    (`-thickness 1.0` exact-equality backstop on 3D). The stale-accumulator
+    and auto-x-h fixes are recorded as quirks; the failing-stamp table in the
+    design note shows the single stamped failure was test-side
+    (the holed `-slave-segments` listing -- quirks row).
+  - Debt: D4 re-deferred to T4 (end-cap + benchmark battery together);
+    D5 formally re-deferred demand-driven (4 rigs failed to reproduce);
+    D6 CLOSED by evidence (the described prescan loops do not exist).
 
 *(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*

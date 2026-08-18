@@ -194,6 +194,40 @@ class LadrunoContactFE : public FE_Element
                      double kt = 0.0, double mu = 0.0, bool consistentTan = false,
                      double muc = 0.0, double softScale = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0);
+    // ADR-85 T3 -- the 2D MORTAR ctor (mode == MORTAR, ndm == 2). 2D is a
+    // PARAMETERIZATION of MORTAR, not a new Mode (mirrors the T1b SEGMENT/ndm2
+    // decision): disambiguated from the 3D MORTAR ctor by `ndm2` (int) landing
+    // where the 3D ctor has `epsN` (double) as its 6th argument -- the SAME
+    // overload trick, one slot later because MORTAR's ctor has two arity
+    // params (nps_s, nps_m) instead of SEGMENT's one. slaveNodes/masterNodes
+    // are 2-node arrays (nps_s == nps_m == 2, enforced by the handler); sigma
+    // = the committed interface-level orientation vote (How/2, the SAME vote
+    // the 2D NTS lane uses, extracted to ladruno2DOrientationVote and shared);
+    // Lref = the mortar interval-clip relative gauge (min INITIAL segment
+    // length over BOTH surfaces -- mortar integrates both, unlike NTS's
+    // master-only Lref). epsN/epsT/cohesion/tauMax/muc arrive ALREADY
+    // h-scaled by the handler's ONE `-thickness` injection site (SS How/7) --
+    // mu is DIMENSIONLESS and is NEVER h-scaled (REVIEW FIX T3: an h-scaled
+    // mu is exactly the stick/slip-threshold error SS How/7 fences); lambda
+    // is NEVER separately scaled (it inherits h through epsN*h*gbar in the
+    // Uzawa update -- scaling it again is the gated h^2 error).
+    // ntsCoDeclared routes the ALIGN refusal (SS How/3 ownership protocol,
+    // decision 2b.4): true -> an NTS contact's slave node set covers both of
+    // this pair's slave nodes on the same master, so a near-perpendicular
+    // mortar pair stands down SILENTLY (NTS owns it, no double-count) --
+    // EXCEPT for a TIE pair, which always warns (an NTS unilateral contact
+    // cannot own an equality bond); false -> the pair fires
+    // WARN_2D_PERP_NO_NTS once, naming the pair -- never a silent zero.
+    // softScale is fixed at 0.0 (no ctor argument): SOFT=2 on 2D mortar draws
+    // the handler's handle()-time named FATAL (ADR-85 decision 2b.6 --
+    // deferred, not silently dropped; dimension is unknown at parse), so no
+    // 2D mortar adapter is ever soft.
+    LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
+                     int ndm2, double epsN, double sigma, double Lref,
+                     int contactTag = 0, int slaveFacetIndex = 0, Domain *theDomain = 0,
+                     double mu = 0.0, double epsT = 0.0, double cohesion = 0.0,
+                     double tauMax = 0.0, bool consistentTan = false, bool isTie = false,
+                     double muc = 0.0, bool ntsCoDeclared = false);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -365,6 +399,42 @@ class LadrunoContactFE : public FE_Element
     // the SEGMENT addKiToTang rule (gate Q5). Default false (addKtToTang = current slip/stick).
     void addMortarTang(double fact, bool initialStiff = false);
 
+    // ADR-85 T3 -- the 2D mortar pair evaluator (mode == MORTAR, ndm == 2). Gathers the
+    // CURRENT trial config of both 2-node segments and calls
+    // LadrunoContact2DKernel::mortarSegmentPair2D. Returns true iff status == MORT2D_OK
+    // (fills D/M/g + the per-pair CURRENT master normal n, re-derived from Xm exactly
+    // like the 3D mortarActive re-derives n via facetNormal -- PairResult2D carries no
+    // normal field by design, ADR-85 T3 spec); false on ANY refusal (EMPTY/DEGEN/ALIGN),
+    // with `refusalOut`/`cosOut` ALWAYS written (A2: the caller routes
+    // WARN_2D_PERP_NO_NTS off `refusalOut` without re-deriving cos_t -- the staleness
+    // trap on the exact quantity the gate turns on).
+    bool mortarActive2D(double D[2][2], double M[2][2], double g[2], double n[2],
+                        int &refusalOut, double &cosOut) const;
+    // ADR-85 T3 -- the 2D mortar Coulomb/Tresca friction FORCE (the C3.1 addMortarFriction
+    // twin, stride-2, SCALAR per slave node -- MortarNormalState slot [0] only, the T2
+    // scalar-store discipline: never a 2-vector differenced componentwise). p_normal[I] <
+    // 0 gates contact; N_I = -p_normal[I]; the slip is t_hat . (weighted relative
+    // DISPLACEMENT)/a_I, engagement-referenced (gT0[0]) then ALM-offset by
+    // lambdaT[0]/epsT (the C3.3 offset trick, epsT = kt); LadrunoFrictionKernel::
+    // returnMap1D does the scalar return map. Scatters tFric*t_hat via D (slave) / -M
+    // (master), exactly like the normal force.
+    void addMortarFriction2D(const double D[2][2], const double M[2][2], const double n[2],
+                             const double p_normal[2], class LadrunoContactDomain *cd);
+    // ADR-85 T3 -- the 2D MESH-TIE force (the C4 addMortarTieForce twin, stride-2). Builds
+    // the FULL 2-vec weighted relative DISPLACEMENT r_I (no gT0 -- the bond exists from
+    // the as-built config), z-pads it into the EXISTING 3-wide accumulateMortarTie/
+    // lambdaTie accumulators (the T1b n[3] idiom -- no overload), and assembles
+    // t_I = lambdaTie[0..1] + epsTie*(r_I/a_I) (NO clamp), scattered via D/-M.
+    void addMortarTie2D(const double D[2][2], const double M[2][2], class LadrunoContactDomain *cd);
+    // ADR-85 T3 -- the 2D mortar tangent (the C2/C3.2 addMortarTang twin, stride-2).
+    // isTie -> epsTie*Gram(x)I_2 (frozen active set, both components tied); else the
+    // penalty Gram epsN*Gram(x)(n(x)n) on the SAME W[I] KKT mask the residual used, plus
+    // (mu>0 || cohesion>0 || tauMax>0) the friction cross term via tangentBlock1D --
+    // K2[i][j] = Kss_s*that_i*that_j + dTN_s*that_i*n_j, dTN_s ALREADY carrying kn(=epsN)
+    // (LadrunoFrictionKernel.h:270-271 -- do NOT reapply it, the T2 kn^2 catch).
+    // initialStiff forces the SPD stick block (gtForKss = gpT[0]), mirroring addMortarTang.
+    void addMortarTang2D(double fact, bool initialStiff = false);
+
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
 
@@ -459,6 +529,21 @@ class LadrunoContactFE : public FE_Element
     double mortarCohesion;  // adhesive intercept c
     double mortarTauMax;    // Tresca shear cap (≤0 ⇒ no upper cap)
     bool   isTie;           // C4: MESH-TIE pair (full 3-vec r→0, no clamp/friction); kn carries epsTie
+
+    // ADR-85 T3 -- 2D MORTAR bindings (mode == MORTAR, ndm == 2). NSDMI so every 3D
+    // MORTAR ctor call leaves them at their default/inert value, untouched (the T1b
+    // nts2dSigma/nts2dLref NSDMI pattern generalized to MORTAR mode).
+    double mortar2dSigma        = 0.0;    // the committed interface-level orientation vote
+    double mortar2dLref         = 0.0;    // the mortar interval-clip relative gauge (BOTH surfaces)
+    bool   mortar2dNtsCoDeclared = false; // an NTS contact is declared on the same surfaces
+                                          // (How/3 ownership protocol, decision 2b.4): true ⇒
+                                          // an ALIGN refusal stands down SILENTLY (NTS owns it);
+                                          // false ⇒ WARN_2D_PERP_NO_NTS fires once, naming the pair.
+                                          // A TIE pair ignores it (always warns -- REVIEW FIX T3).
+    bool   mortar2dPerpWarned    = false; // REVIEW FIX (T3, efficiency): once this FE has fired (or
+                                          // lost the warnOnce race for) WARN_2D_PERP_NO_NTS, skip
+                                          // the per-eval warnOnce set lookup on a permanently
+                                          // perpendicular pair.
 
     // C3.1: assemble the mortar Coulomb/Tresca friction force into `resid` (called from the MORTAR
     // getResidual after the normal block). p_normal[I] = the per-node normal pressure (≤0; the

@@ -625,6 +625,15 @@ static int ladrunoContactImpl()
     // `-edgeAugTol <tol>` is the augmentation tolerance (metadata; the proc passes its own augTol). Needs -edgeedge.
     bool edgeAlm = false;
     double edgeAugTol = 0.0;
+    // Ladruno ADR-85 T3 -- `-thickness <h>` (default 1.0): the 2D mortar plane-model
+    // thickness (SS How/7). The interval integrals produce force PER UNIT THICKNESS, so
+    // 2D declarations need h applied where each density enters the residual (epsN/epsT/
+    // muc/cohesion/tauMax/epsTie) -- done ONCE at the handler's 2D injection site, never
+    // here. -mortar-only (validated after the loop, mirroring -tauMax); a 3D mortar pair's
+    // thickness lives in its elements, and using -thickness there is a named FATAL at
+    // handle() time (LadrunoContactHandler.cpp), not here (dimension is not known yet).
+    double hThickness = 1.0;
+    bool   hasThickness = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -758,6 +767,19 @@ static int ladrunoContactImpl()
                 return -1;
             }
             tauMax = v[0];
+        } else if (opt != 0 && strcmp(opt, "-thickness") == 0) {
+            // Ladruno ADR-85 T3 -- the 2D mortar plane-model thickness h (SS How/7).
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -thickness - need a value\n";
+                return -1;
+            }
+            if (v[0] <= 0.0) {
+                opserr << "WARNING contact -thickness - need h > 0 (got " << v[0] << ")\n";
+                return -1;
+            }
+            hThickness = v[0];
+            hasThickness = true;
         } else if (opt != 0 && strcmp(opt, "-edgeedge") == 0) {
             // ADR-57 E2: enable the perpendicular edge-edge fallback (requires -mortar).
             edgeEdge = true;
@@ -991,6 +1013,14 @@ static int ladrunoContactImpl()
                   "cap); remove it or use the mortar lane\n";
         return -1;
     }
+    // Ladruno ADR-85 T3 -- `-thickness` is a -mortar-only option (SS How/7: only the mortar
+    // interval integrals produce force PER UNIT THICKNESS; the NTS penalty is never a
+    // pressure). Mirrors the -tauMax rule immediately above.
+    if (!isMortar && hasThickness) {
+        opserr << "WARNING contact -thickness is a -mortar option (the NTS penalty kn is "
+                  "force/length, never a pressure); remove it or use the mortar lane\n";
+        return -1;
+    }
     if (isMortar && tauMax > 0.0 && mortarMu <= 0.0 && cohesion <= 0.0) {
         opserr << "WARNING contact -tauMax without -mu or -cohesion: the friction cone "
                   "min(mu*N + c, tauMax) = min(0, tauMax) = 0 (frictionless free slip). For a "
@@ -1104,7 +1134,8 @@ static int ladrunoContactImpl()
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
                                     muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand,
                                     edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan,
-                                    edgeSoftScale, edgeAlm, edgeAugTol);
+                                    edgeSoftScale, edgeAlm, edgeAugTol,
+                                    hThickness);   // Ladruno ADR-85 T3 -- 2D mortar -thickness
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).

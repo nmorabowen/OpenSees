@@ -421,6 +421,107 @@ ladrunoResolveAutoKn2D(Domain *theDomain, Node **segNodes, double sigma)
     return -1.0;   // no owning 2-DOF/node solid element found for this segment
 }
 
+// ADR-85 T3 -- PURE CODE MOTION (the phase brief's ONE sanctioned shared-line refactor):
+// the interface-level orientation vote (How/2), extracted VERBATIM from the T1b NTS
+// branch's inline block so the T3 mortar branch can share it without retyping the math.
+// EXACT SAME operation order and ALL message strings as the code this replaces -- the NTS
+// lane is shipped (54-test suite) and G-T3's dump gate would catch drift, so this is
+// literal code motion, not a rewrite.
+//
+// ONE sigma per interface, from the reference config: refDir = the explicit -outward (2
+// components) or the slave-surface reference centroid minus the master-surface reference
+// centroid over UNIQUE master nodes (the flat mTags double-counts shared vertices -- the
+// smoothSeed lesson; `sTags`' own duplicate-vertex handling is inherited unchanged from
+// the NTS call site -- see the T3 implementation report). Every master segment votes
+// sigmaFromRef2D(t_ref, refDir); the vote must be UNANIMOUS among nonzero voters.
+// Degenerate (no voter, or a centroid datum below the magnitude floor) or SPLIT => the
+// message is emitted and this returns false; the caller does `return
+// ladrunoContactFatal();`. sigma is FIXED at pairing (handle() re-runs re-derive it).
+static bool
+ladruno2DOrientationVote(Domain *theDomain, int ctag, bool hasOutward, const double outward[2],
+                         const ID &mTags, int nSeg, const ID &sTags, double Lref,
+                         double &sigmaOut)
+{
+    double refDir[2] = { 0.0, 0.0 };
+    if (hasOutward) {
+        refDir[0] = outward[0]; refDir[1] = outward[1];
+    } else {
+        double mc2[2] = { 0.0, 0.0 }; int mcn = 0;
+        std::set<int> mseen;
+        for (int i = 0; i < mTags.Size(); i++) {
+            if (mseen.count(mTags(i))) continue;
+            mseen.insert(mTags(i));
+            const Vector &X = theDomain->getNode(mTags(i))->getCrds();
+            mc2[0] += X(0); mc2[1] += X(1); mcn++;
+        }
+        double sc2[2] = { 0.0, 0.0 }; int scn = 0;
+        // REVIEW FIX (T3): dedup the SLAVE list too. At the original NTS call site
+        // sTags is a SLAVE_NODES set (duplicates structurally impossible, so this is
+        // arithmetically a NO-OP there -- same adds, same order); the T3 mortar call
+        // site passes a SLAVE_SEGMENTS flat pair list where every interior chain
+        // vertex appears TWICE, and a duplicate-weighted centroid can cross the
+        // magnitude floor or, on a curved interface, flip the vote (the smoothSeed
+        // lesson, now on the slave side).
+        std::set<int> sseen;
+        for (int i = 0; i < sTags.Size(); i++) {
+            if (sseen.count(sTags(i))) continue;
+            sseen.insert(sTags(i));
+            const Vector &X = theDomain->getNode(sTags(i))->getCrds();
+            sc2[0] += X(0); sc2[1] += X(1); scn++;
+        }
+        if (mcn > 0 && scn > 0) {
+            refDir[0] = sc2[0] / scn - mc2[0] / mcn;
+            refDir[1] = sc2[1] / scn - mc2[1] / mcn;
+        }
+    }
+    // ADR-85 T1b panel BLOCKER fix -- the MAGNITUDE gate on the CENTROID datum (see the
+    // original NTS site for the full rationale: an unguarded angle-only gate resolves a
+    // flush deck's noise-sized separation CONFIDENTLY to the wrong side).
+    bool voteMagOk = true;
+    if (!hasOutward) {
+        const double magFloor = 1.0e-6 * Lref;
+        voteMagOk = (refDir[0] * refDir[0] + refDir[1] * refDir[1] > magFloor * magFloor);
+    }
+    int votePlus = 0, voteMinus = 0;
+    for (int seg = 0; seg < nSeg; seg++) {
+        const Vector &A = theDomain->getNode(mTags(2 * seg))->getCrds();
+        const Vector &Bc = theDomain->getNode(mTags(2 * seg + 1))->getCrds();
+        const double t[2] = { Bc(0) - A(0), Bc(1) - A(1) };
+        double sg = LadrunoContact2DKernel::sigmaFromRef2D(t, refDir);
+        if (sg > 0.0) votePlus++;
+        else if (sg < 0.0) voteMinus++;
+    }
+    if ((votePlus == 0 && voteMinus == 0) || !voteMagOk) {
+        opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+               << ": the 2D interface orientation vote is DEGENERATE -- "
+               << (hasOutward
+                       ? "the given -outward direction is zero or (numerically) "
+                         "tangent to every master segment"
+                       : "the reference-config centroid vote (slave-surface "
+                         "centroid minus master-surface centroid) is zero or "
+                         "tangent to every master segment (a flush/coincident "
+                         "interface)")
+               << ". The outward side is genuinely ambiguous and is never "
+                  "guessed: pass -outward ox oy with a component along the "
+                  "expected contact normal. ABORTING (ADR-85 T1b orientation "
+                  "vote)\n";
+        return false;
+    }
+    if (votePlus > 0 && voteMinus > 0) {
+        opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+               << ": the 2D interface orientation vote SPLIT (" << votePlus
+               << " master segments vote +1, " << voteMinus << " vote -1) -- "
+                  "the master surface is strongly curved or inconsistently "
+                  "wound, so ONE per-surface sigma cannot orient it. Re-wind "
+                  "the master segments consistently, split the surface into "
+                  "separately declared contacts, or pass -outward ox oy. "
+                  "ABORTING (ADR-85 T1b orientation vote)\n";
+        return false;
+    }
+    sigmaOut = (votePlus > 0) ? 1.0 : -1.0;
+    return true;
+}
+
 // B1 (P4) — build the ASSEMBLED translational nodal-mass cache the SOFT=1 penalty needs. The explicit
 // integrator inverts the assembled global diagonal M = Σ_elements diag(M_e) + the nodal `mass`, but
 // Node::getMass() holds ONLY the nodal `mass` (element-density mass never reaches the node). So here we
@@ -1139,94 +1240,14 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 }
 
                 // ---- the INTERFACE-LEVEL orientation vote (How/2) ------------
-                //      ONE sigma per master surface, from the reference config:
-                //      refDir = the explicit -outward (2 components -- the T1b
-                //      parser branch) or the slave-surface reference centroid
-                //      minus the master-surface reference centroid over UNIQUE
-                //      master nodes (the flat mTags double-counts shared
-                //      vertices -- the smoothSeed lesson). Every segment votes
-                //      sigmaFromRef2D(t_ref, refDir); the vote must be UNANIMOUS
-                //      among nonzero voters. Degenerate (no voter) or split =>
-                //      named FATAL -- refuse, never guess: the shipped 3D
-                //      default silently DROPS a flush pair, and that silence is
-                //      exactly what this vote replaces. sigma is FIXED at
-                //      pairing; handle() re-runs (re-pairing) re-derive it.
-                double refDir[2] = { 0.0, 0.0 };
-                if (ct.hasOutward) {
-                    refDir[0] = ct.outward[0]; refDir[1] = ct.outward[1];
-                } else {
-                    double mc2[2] = { 0.0, 0.0 }; int mcn = 0;
-                    std::set<int> mseen;
-                    for (int i = 0; i < mTags.Size(); i++) {
-                        if (mseen.count(mTags(i))) continue;
-                        mseen.insert(mTags(i));
-                        const Vector &X = theDomain->getNode(mTags(i))->getCrds();
-                        mc2[0] += X(0); mc2[1] += X(1); mcn++;
-                    }
-                    double sc2[2] = { 0.0, 0.0 }; int scn = 0;
-                    for (int i = 0; i < sTags.Size(); i++) {
-                        const Vector &X = theDomain->getNode(sTags(i))->getCrds();
-                        sc2[0] += X(0); sc2[1] += X(1); scn++;
-                    }
-                    if (mcn > 0 && scn > 0) {
-                        refDir[0] = sc2[0] / scn - mc2[0] / mcn;
-                        refDir[1] = sc2[1] / scn - mc2[1] / mcn;
-                    }
-                }
-                // ADR-85 T1b panel BLOCKER fix -- the MAGNITUDE gate on the
-                // CENTROID datum. sigmaFromRef2D's angle gate is scale-
-                // invariant, so a flush deck seeded 1e-8 into penetration hands
-                // the vote refDir = (0, -1e-8) and it resolves CONFIDENTLY to
-                // the wrong side: every pair inert, ladrunoContactForce == 0,
-                // the run converges -- silent-nothing through the very
-                // mechanism built to prevent it (probe-confirmed). A centroid
-                // datum shorter than 1e-6*Lref is separation NOISE, not a side:
-                // route it into the degenerate-vote FATAL below. An explicit
-                // -outward keeps the angle-only gate -- a user direction of any
-                // magnitude is a deliberate input (normalized use only).
-                bool voteMagOk = true;
-                if (!ct.hasOutward) {
-                    const double magFloor = 1.0e-6 * Lref;
-                    voteMagOk = (refDir[0] * refDir[0] + refDir[1] * refDir[1] >
-                                 magFloor * magFloor);
-                }
-                int votePlus = 0, voteMinus = 0;
-                for (int seg = 0; seg < nSeg; seg++) {
-                    const Vector &A = theDomain->getNode(mTags(2 * seg))->getCrds();
-                    const Vector &Bc = theDomain->getNode(mTags(2 * seg + 1))->getCrds();
-                    const double t[2] = { Bc(0) - A(0), Bc(1) - A(1) };
-                    double sg = LadrunoContact2DKernel::sigmaFromRef2D(t, refDir);
-                    if (sg > 0.0) votePlus++;
-                    else if (sg < 0.0) voteMinus++;
-                }
-                if ((votePlus == 0 && voteMinus == 0) || !voteMagOk) {
-                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
-                           << ": the 2D interface orientation vote is DEGENERATE -- "
-                           << (ct.hasOutward
-                                   ? "the given -outward direction is zero or (numerically) "
-                                     "tangent to every master segment"
-                                   : "the reference-config centroid vote (slave-surface "
-                                     "centroid minus master-surface centroid) is zero or "
-                                     "tangent to every master segment (a flush/coincident "
-                                     "interface)")
-                           << ". The outward side is genuinely ambiguous and is never "
-                              "guessed: pass -outward ox oy with a component along the "
-                              "expected contact normal. ABORTING (ADR-85 T1b orientation "
-                              "vote)\n";
+                //      ADR-85 T3: extracted to the file-static
+                //      ladruno2DOrientationVote() (pure code motion, exact
+                //      operation order + message strings preserved) so the T3
+                //      mortar branch can share it.
+                double sigma = 0.0;
+                if (!ladruno2DOrientationVote(theDomain, ct.tag, ct.hasOutward, ct.outward,
+                                              mTags, nSeg, sTags, Lref, sigma))
                     return ladrunoContactFatal();
-                }
-                if (votePlus > 0 && voteMinus > 0) {
-                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
-                           << ": the 2D interface orientation vote SPLIT (" << votePlus
-                           << " master segments vote +1, " << voteMinus << " vote -1) -- "
-                              "the master surface is strongly curved or inconsistently "
-                              "wound, so ONE per-surface sigma cannot orient it. Re-wind "
-                              "the master segments consistently, split the surface into "
-                              "separately declared contacts, or pass -outward ox oy. "
-                              "ABORTING (ADR-85 T1b orientation vote)\n";
-                    return ladrunoContactFatal();
-                }
-                const double sigma = (votePlus > 0) ? 1.0 : -1.0;
 
                 // ---- CONCAVE-vertex candidates (How/1, the T1a decision) -----
                 //      Vertices shared by CONSECUTIVE segments in surface order
@@ -1861,19 +1882,280 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // pre-flight below (both used to build the same ternary separately).
             const char *laneMort = mc.isTie ? "mortar mesh-tie (-tie)"
                                             : "mortar segment-to-segment";
-            // ADR-85 T0 -- same argument as the NTS lane above: a 2D mortar/tie
-            // declaration is legal at the parser but the 2D interval integrator lands
-            // in T3, so refuse it by name before the shipped 3/4-arity message. A 3D
-            // mortar pair carries nps 3 or 4 on both sides and never enters this block.
-            // Nothing follows the pre-flight, for the reason given at the NTS twin.
+            // ADR-85 T3 -- the pre-flight now runs in LIVE mode (lane2DLive=true,
+            // &pairDim captured): a well-formed 2D pair PROCEEDS into the live 2D
+            // mortar lane below instead of drawing the T0 "lands in T3" refusal --
+            // exactly the T1b NTS collapse, generalized to the mortar loop. An all-3D
+            // pair passes silently (pairDim is a write-only out) and takes the shipped
+            // path below, textually untouched.
+            int pairDim = 3;
             if (npsM == 2 || npsS == 2) {
-                if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3"))
+                if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3",
+                                                 /*lane2DLive=*/true, &pairDim))
                     return ladrunoContactFatal();
+            }
+            if (pairDim == 2) {
+                // ==============================================================
+                // ADR-85 T3 -- the LIVE 2D mortar lane (interval clip on the
+                // slave-trace measure, ALM, tie, mortar friction). A 3D deck
+                // CANNOT enter: pairDim == 2 requires a surface whose every node
+                // carries 2-component coordinates (pre-flight above). Everything
+                // in this block ends in `continue`, so the shipped 3D mortar
+                // path below never sees a 2D node and stays textually untouched.
+                // ==============================================================
+                if (npsM != 2 || npsS != 2) {
+                    // only reachable through a stream restore (the parser pins
+                    // arity <-> dimension at declaration); refuse by name.
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": a 2D mortar contact needs nodesPerSeg == 2 on BOTH surfaces "
+                              "(got master " << npsM << ", slave " << npsS
+                           << "); ABORTING (ADR-85 nodesPerSeg)\n";
+                    return ladrunoContactFatal();
+                }
+                if (mc.softScale > 0.0) {
+                    // decision 2b.6 -- SOFT=2 segment-based explicit penalty is a
+                    // deferral, not a silent drop: it would ride the T3 mortar
+                    // interval exactly as B2 rides the 3D clip, but no 2D demand
+                    // has driven it yet (ADR-85 What / not-in-scope list).
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": SOFT=2 segment-based explicit penalty is deferred in 2D "
+                              "(ADR-85 deferral row) -- remove -soft or use the 3D lane. "
+                              "ABORTING\n";
+                    return ladrunoContactFatal();
+                }
+                if (mc.ngp != 2 &&
+                    cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_2D_NGP_NOOP)) {
+                    opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": -ngp is ACCEPTED AND IGNORED on the 2D mortar lane -- 2-point "
+                              "Gauss is EXACT for the straight-segment slave-trace integrands "
+                              "(ADR-85 SS How/3, oracle-proven), so the 2D kernel always uses it.\n";
+                }
+                const ID &mTags2 = ms->getNodeTags();
+                const ID &sTags2 = ss->getNodeTags();
+                int nSegM = mTags2.Size() / 2;
+                int nSegS = sTags2.Size() / 2;
+
+                // ---- Lref: the min INITIAL segment length over BOTH surfaces --
+                //      (mortar integrates BOTH -- the T1b NTS Lref is master-only
+                //      because NTS projects onto the master alone; the 2D mortar
+                //      interval clip projects the SLAVE endpoints too, so its
+                //      relative gauges need the smaller of the two surfaces).
+                double Lref = 0.0;
+                int LrefBadSurf = -1, LrefBadSeg = -1;
+                for (int seg = 0; seg < nSegM; seg++) {
+                    const Vector &A = theDomain->getNode(mTags2(2 * seg))->getCrds();
+                    const Vector &Bc = theDomain->getNode(mTags2(2 * seg + 1))->getCrds();
+                    double dx = Bc(0) - A(0), dy = Bc(1) - A(1);
+                    double L = std::sqrt(dx * dx + dy * dy);
+                    if (!(L > 0.0)) { LrefBadSurf = 0; LrefBadSeg = seg; break; }
+                    if (Lref <= 0.0 || L < Lref) Lref = L;
+                }
+                for (int seg = 0; LrefBadSeg < 0 && seg < nSegS; seg++) {
+                    const Vector &A = theDomain->getNode(sTags2(2 * seg))->getCrds();
+                    const Vector &Bc = theDomain->getNode(sTags2(2 * seg + 1))->getCrds();
+                    double dx = Bc(0) - A(0), dy = Bc(1) - A(1);
+                    double L = std::sqrt(dx * dx + dy * dy);
+                    if (!(L > 0.0)) { LrefBadSurf = 1; LrefBadSeg = seg; break; }
+                    if (Lref <= 0.0 || L < Lref) Lref = L;
+                }
+                if (nSegM <= 0 || nSegS <= 0 || LrefBadSeg >= 0 || !(Lref > 0.0)) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": ";
+                    if (nSegM <= 0 || nSegS <= 0)
+                        opserr << "a 2D mortar surface has no segments";
+                    else
+                        opserr << (LrefBadSurf == 0 ? "master" : "slave") << " segment "
+                               << LrefBadSeg << " has zero reference length (the kernel's "
+                                  "relative-gauge caller contract Lref would be disabled)";
+                    opserr << "; ABORTING (ADR-85 T3)\n";
+                    return ladrunoContactFatal();
+                }
+
+                // ---- the SAME interface-level orientation vote as the 2D NTS lane
+                //      (ADR-85 T3 -- pure code motion, shared via
+                //      ladruno2DOrientationVote; see that helper's block comment).
+                double sigma = 0.0;
+                if (!ladruno2DOrientationVote(theDomain, mc.tag, mc.hasOutward, mc.outward,
+                                              mTags2, nSegM, sTags2, Lref, sigma))
+                    return ladrunoContactFatal();
+
+                // ---- ntsCoDeclared union: an NTS contact declared on the SAME
+                //      interface (How/3 decision 2b.4). CONTRACT CORRECTION
+                //      (coordinator, supersedes the brief's "exact slave surface
+                //      tag" rule -- that rule is unimplementable: NTS slave
+                //      surfaces are SLAVE_NODES node sets while the mortar lane
+                //      requires SLAVE_SEGMENTS, so the two lanes necessarily use
+                //      DIFFERENT slave surface tags even on the identical physical
+                //      interface, e.g. G-T3(d)'s own gate deck: NTS -slave 1 is
+                //      surface 20, mortar -slave-segments 2 1 2 is surface 21).
+                //      Binding rule: union the slave node TAGS of every NTS
+                //      contact whose MASTER surface tag equals this mortar pair's
+                //      master tag; a given mortar SLAVE SEGMENT is "covered" iff
+                //      BOTH its node tags are in that union (tested per segment
+                //      at injection time below, not once per MortarContact -- a
+                //      mortar surface can have segments only partially shadowed
+                //      by the NTS slave set).
+                std::set<int> ntsSlaveUnion;
+                for (int ci = 0; ci < cd->getNumContacts(); ci++) {
+                    const LadrunoContactDomain::Contact &ntsCt = cd->getContact(ci);
+                    if (ntsCt.retired) continue;
+                    if (ntsCt.masterSurfTag != mc.masterSurfTag) continue;
+                    LadrunoContactSurface *ntsSlave = cd->getSurface(ntsCt.slaveSurfTag);
+                    if (ntsSlave == 0) continue;
+                    const ID &ntsSlaveTags = ntsSlave->getNodeTags();
+                    for (int ti = 0; ti < ntsSlaveTags.Size(); ti++)
+                        ntsSlaveUnion.insert(ntsSlaveTags(ti));
+                }
+
+                // penalty: epsN if given, else the kn slot; auto-size per pair if requested
+                // (the SAME rule as the 3D lane and the T1b NTS -kn resolution).
+                bool epsAuto = mc.epsNAuto || mc.knAuto;
+                double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
+                if (!epsAuto && epsFixed <= 0.0) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": needs a penalty (-epsN val|auto or kn > 0); "
+                              "ABORTING (ADR-78 P1)\n";
+                    return ladrunoContactFatal();
+                }
+
+                // ---- brute-force double loop (slave segment, master segment) -----
+                //      Mirrors the 3D mortar loop's reasoning: EVERY master segment
+                //      is a candidate per slave segment (no bucket sort, no pre-cull
+                //      -- the 3D loop injects one FE per (sf,seg) pair unconditionally
+                //      too and lets the kernel's own overlap clip decide EMPTY/DEGEN/
+                //      ALIGN lazily at each getResidual; mirrored faithfully here).
+                // REVIEW FIX (T3, efficiency): the 2D auto-penalty resolver's inputs
+                // (mNodes, sigma) are INVARIANT across slave segments -- unlike the 3D
+                // twin, whose orientDir varies per slave facet -- so it is resolved once
+                // per MASTER segment and memoized (-1.0 = not yet resolved).
+                std::vector<double> epsAutoPerSeg;
+                if (epsAuto) epsAutoPerSeg.assign(nSegM, -1.0);
+                for (int sf = 0; sf < nSegS; sf++) {
+                    Node *sNodes[2];
+                    for (int k = 0; k < 2; k++) {
+                        Node *sn = theDomain->getNode(sTags2(sf * 2 + k));
+                        if (sn == 0 || sn->getNumberDOF() != 2) {
+                            opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << " slave node " << sTags2(sf * 2 + k) << " ndf="
+                                   << (sn != 0 ? sn->getNumberDOF() : -1)
+                                   << " != 2; ABORTING (2D mortar is 2D translational -- "
+                                      "ADR-85 ndf equality contract)\n";
+                            return ladrunoContactFatal();
+                        }
+                        sNodes[k] = sn;
+                    }
+                    // per-SLAVE-SEGMENT coverage test (the coordinator's binding rule):
+                    // this segment's ALIGN refusal is silent iff BOTH its node tags are
+                    // in the NTS-slave union -- a mortar surface can have segments only
+                    // partially shadowed by the co-declared NTS slave set, so this is
+                    // computed per segment, not once per MortarContact.
+                    bool ntsCoDeclared = (ntsSlaveUnion.count(sNodes[0]->getTag()) > 0 &&
+                                         ntsSlaveUnion.count(sNodes[1]->getTag()) > 0);
+                    for (int seg = 0; seg < nSegM; seg++) {
+                        Node *mNodes[2];
+                        for (int k = 0; k < 2; k++) {
+                            Node *mn = theDomain->getNode(mTags2(seg * 2 + k));
+                            if (mn == 0 || mn->getNumberDOF() != 2) {
+                                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                                       << mc.tag << " master segment " << seg << " node "
+                                       << mTags2(seg * 2 + k) << ": ndf="
+                                       << (mn != 0 ? mn->getNumberDOF() : -1)
+                                       << " != 2 (or node absent); ABORTING (2D mortar master "
+                                          "segments are 2D translational -- ADR-85 ndf equality "
+                                          "contract)\n";
+                                return ladrunoContactFatal();
+                            }
+                            mNodes[k] = mn;
+                        }
+                        double epsUse = epsFixed;
+                        if (epsAuto) {
+                            if (epsAutoPerSeg[seg] < 0.0)
+                                epsAutoPerSeg[seg] =
+                                    ladrunoResolveAutoKn2D(theDomain, mNodes, sigma);
+                            epsUse = epsAutoPerSeg[seg];
+                            if (epsUse <= 0.0) {
+                                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
+                                       << mc.tag << " slave segment " << sf << " master segment "
+                                       << seg << ": auto penalty could not be sized (no owning "
+                                          "2-DOF/node solid element / degenerate segment); "
+                                          "ABORTING (ADR-78 P1). Give an explicit -epsN.\n";
+                                return ladrunoContactFatal();
+                            }
+                        }
+                        // C3.1 friction: epsT auto => size from the normal penalty; else the
+                        // given value (mirrors the 3D mortar lane, MINOR-1 default-and-warn).
+                        bool epsTFromEpsN = mc.epsTAuto;   // provenance for the h-scaling below
+                        double epsTuse = mc.epsTAuto ? epsUse : mc.epsT;
+                        bool wantFric = (mc.mu > 0.0 || mc.cohesion > 0.0 || mc.tauMax > 0.0);
+                        if (wantFric && mc.consistentTan &&
+                            cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_CSL)) {
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << ": -consistanttan (non-symmetric Coulomb friction "
+                                      "tangent) needs a non-symmetric solver (system FullGeneral/"
+                                      "UmfPack/BandGeneral); symmetric solvers will silently "
+                                      "corrupt it.\n";
+                        }
+                        if (wantFric && epsTuse <= 0.0) {
+                            epsTuse = epsUse;
+                            epsTFromEpsN = true;
+                            if (cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_EPST)) {
+                                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                       << mc.tag << ": friction requested without -epsT; "
+                                          "defaulting the tangential penalty to the normal penalty "
+                                          "(-epsT auto). Set -epsT explicitly to control it.\n";
+                            }
+                        }
+                        // ---- -thickness h applied ONCE, HERE, at the 2D injection site
+                        //      (ADR-85 SS How/7): epsN, epsT, muc, cohesion, tauMax all
+                        //      h-scale; lambda_N/lambda_T/lambda_Tie are NEVER touched
+                        //      here -- they inherit h through epsN*h*gbar in the Uzawa
+                        //      update (scaling them again is the gated h^2 error).
+                        // REVIEW FIX (T3): the AUTO-resolved penalty comes from the owning
+                        // element's getInitialStiff(), which ALREADY folds the element's
+                        // real thickness into K (the SS How/7 NTS argument: auto absorbs
+                        // h automatically) -- h-scaling it again is itself an h^2 error.
+                        // Only EXPLICIT per-unit-thickness user inputs h-scale; a
+                        // defaulted epsT inherits the provenance of the value it
+                        // derives from (epsTFromEpsN above).
+                        double h = mc.hThickness;
+                        double epsUseH  = epsAuto ? epsUse : epsUse * h;
+                        double epsTuseH = epsTFromEpsN ? epsUseH : epsTuse * h;
+                        double mucH      = mc.muc      * h;
+                        double cohesionH = mc.cohesion  * h;
+                        double tauMaxH   = mc.tauMax    * h;
+
+                        LadrunoContactFE *fe = new LadrunoContactFE(
+                            numFe++, sNodes, /*nps_s=*/2, mNodes, /*nps_m=*/2, /*ndm2=*/2,
+                            epsUseH, sigma, Lref, mc.tag, sf, theDomain,
+                            mc.mu, epsTuseH, cohesionH, tauMaxH, mc.consistentTan, mc.isTie,
+                            mucH, ntsCoDeclared);
+                        if (fe == 0) return -5;
+                        theModel->addFE_Element(fe);
+                        // C2.2 twin: this pair's slave nodes have a live lambda_N slot this
+                        // handle() (mortarNormalGCMark also covers the friction slot -- they
+                        // share the SAME per-(contactTag,slaveNodeTag) MortarNormalState
+                        // record, exactly as the 3D mortar loop relies on).
+                        cd->mortarNormalGCMark(mc.tag, sNodes[0]->getTag());
+                        cd->mortarNormalGCMark(mc.tag, sNodes[1]->getTag());
+                    }
+                }
+                continue;   // 2D mortar contact done -- the shipped 3D code below never sees it
             }
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) {
                 opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
                        << ": nodesPerSeg must be 3 or 4 (slave " << npsS << ", master " << npsM
                        << "); ABORTING (ADR-78 P1)\n";
+                return ladrunoContactFatal();
+            }
+            if (mc.hThickness != 1.0) {
+                // ADR-85 T3 -- -thickness is a 2D plane-model option; a 3D mortar deck's
+                // thickness lives in its elements (SS How/7). Only reachable here (a 3D
+                // pair) via a direct API / stream-restore call with hThickness != 1 --
+                // the command surface pairs -thickness with -mortar, not with dimension,
+                // so this is the dimension-aware backstop.
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": -thickness is a 2D plane-model option; a 3D mortar deck's "
+                          "thickness lives in its elements. ABORTING (ADR-85 T3)\n";
                 return ladrunoContactFatal();
             }
             // penalty: epsN if given, else the kn slot; auto-size per pair if requested.
@@ -1885,14 +2167,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                           "ABORTING (ADR-78 P1)\n";
                 return ladrunoContactFatal();
             }
-            // ADR-78 P1 (missing / bad-dimension node) + ADR-85 T0 pair gate, mirroring
-            // the NTS site. BOTH mortar surfaces are faceted (MASTER_SEGMENTS +
+            // ADR-78 P1 (missing / bad-dimension node) + ADR-85 T0/T3 pair gate,
+            // mirroring the NTS site. BOTH mortar surfaces are faceted (MASTER_SEGMENTS +
             // SLAVE_SEGMENTS), so both carry an arity and the shipped 3/4 check above
             // already implies 3D nodes by the parser's arity<->dimension pairing; this
             // is the defense-in-depth twin that does not depend on that inference
-            // holding (e.g. a surface rebuilt by unpackDefinitions, which never sees
-            // the parser).
-            if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3"))
+            // holding (e.g. a surface rebuilt by unpackDefinitions, which never sees the
+            // parser). Flipped to lane2DLive (ADR-85 T3) for uniformity with the earlier
+            // call; reaching here with pairDim == 2 would mean a corrupted stream (arity
+            // 3/4 declared over 2D node coordinates). REVIEW-CORRECTED rationale: only
+            // the SLAVE-node ndf==3 check below is a named FATAL (the master-node check
+            // is a silent per-facet skip) -- the invariant holds because the slave loop
+            // runs FIRST, a loop-ordering property, not a per-node gate. If that
+            // ordering ever changes, this corrupted-stream case needs its own branch.
+            if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3",
+                                             /*lane2DLive=*/true, &pairDim))
                 return ladrunoContactFatal();
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
@@ -2082,30 +2371,52 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
                 ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) continue;
             int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
-            // ADR-85 T0 -- BEFORE the silent `continue` below. That arity gate is how an
-            // opt-in lane stands down on a pair it cannot route, and it says nothing;
-            // harmless while nps 2 was impossible, but addSurface now admits it, and a
-            // STREAM-RESTORED surface (unpackDefinitions never runs the parser, so the
-            // arity<->dimension pairing is not re-checked) could arrive here with
-            // nps == 2. Standing down silently on it is exactly the do-nothing-quietly
-            // mode these gates exist to prevent, so refuse it by name first. A 3D pair
+            // ADR-85 T3 -- PERMANENT scope fence (was the ADR-85 T0 "lands in T3"
+            // not-yet-supported refusal; T3 has now landed and there is no 2D
+            // analogue to land -- naming a future phase here would be a lie). Edge-
+            // edge is the 3D vertex-face/face-face/edge-edge trichotomy's THIRD
+            // primitive; the 2D taxonomy is segments + concave vertices only (ADR-85
+            // "What" taxonomy note) -- there is no 2D feature an edge-edge fallback
+            // could ever route to. BEFORE the silent `continue` below (the arity
+            // gate says nothing; harmless while nps 2 was impossible, but a STREAM-
+            // RESTORED surface -- unpackDefinitions never runs the parser -- could
+            // arrive here with nps == 2, and standing down silently is exactly the
+            // do-nothing-quietly mode these gates exist to prevent). A 3D pair
             // (nps 3 or 4) never enters this block and reaches the `continue` unchanged.
             if (npsM == 2 || npsS == 2) {
+                int pairDimEE = 3;
                 if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss,
-                                                 "mortar edge-edge", "T3"))
+                                                 "mortar edge-edge", "T3",
+                                                 /*lane2DLive=*/true, &pairDimEE))
                     return ladrunoContactFatal();
+                if (pairDimEE == 2) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                           << ": edge-edge contact has no 2D analogue (ADR-85 scope fence) -- "
+                              "the 2D narrow-phase is segments + concave vertices; remove "
+                              "-edgeedge from this 2D declaration. ABORTING\n";
+                    return ladrunoContactFatal();
+                }
             }
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) continue;
             bool epsAuto = mc.epsNAuto || mc.knAuto;
             double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
-            // ADR-78 P1 (missing / bad-dimension node) + the ADR-85 T0 pair gate. NOTE
-            // the control flow: this loop's ARITY gate uses `continue`, but the
+            // ADR-78 P1 (missing / bad-dimension node) + the ADR-85 T0/T3 pair gate.
+            // NOTE the control flow: this loop's ARITY gate uses `continue`, but the
             // PRE-FLIGHT result has always been FATAL here, and the dimension gate rides
             // the pre-flight, not the arity -- so shipped control flow is preserved on
-            // both counts.
-            if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss,
-                                             "mortar edge-edge", "T3"))
-                return ladrunoContactFatal();
+            // both counts. Flipped to lane2DLive (ADR-85 T3) for uniformity; reaching
+            // here with pairDim == 2 would mean a corrupted stream (arity 3/4 declared
+            // over 2D node coordinates). REVIEW-CORRECTED rationale (mirrors the main
+            // mortar loop's second flipped site): the named FATAL relies on the SLAVE
+            // ndf loop running before the master's silent per-facet skip -- a loop-
+            // ordering property, not a per-node gate.
+            {
+                int pairDimEE2 = 3;
+                if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss,
+                                                 "mortar edge-edge", "T3",
+                                                 /*lane2DLive=*/true, &pairDimEE2))
+                    return ladrunoContactFatal();
+            }
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;

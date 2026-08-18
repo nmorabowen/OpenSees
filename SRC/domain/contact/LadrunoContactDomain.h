@@ -224,6 +224,16 @@ class LadrunoContactDomain
         // the proc passes its own augTol, mirroring the mortar augTol/maxAug).
         bool   edgeAlm;
         double edgeAugTol;
+        // ADR-85 T3 -- SS How/7 thickness convention: 2D mortar interval integrals produce
+        // force PER UNIT THICKNESS, so a 2D declaration carries a plane-model thickness h
+        // (default 1.0, loudly documented). Applied ONCE, where each density enters the
+        // residual, at the 2D injection site in the handler (epsN/epsT/muc/cohesion/tauMax/
+        // epsTie) -- NEVER to lambdaN/lambdaT/lambdaTie, which INHERIT h through epsN*h*gbar
+        // in the Uzawa update (scaling them again is the gated h^2 error, SS How/7). A 3D
+        // mortar deck's thickness lives in its elements; -thickness on a 3D pair is a named
+        // FATAL at handle() time. Meaningless (and refused at the command surface) without
+        // -mortar.
+        double hThickness;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -236,7 +246,8 @@ class LadrunoContactDomain
                          double edgeBand = 0.0, double edgeMu = 0.0, double edgeKt = 0.0,
                          double edgeCohesion = 0.0, double edgeTauMax = 0.0,
                          bool edgeConsistentTan = false, double edgeSoftScale = 0.0,
-                         bool edgeAlm = false, double edgeAugTol = 0.0);
+                         bool edgeAlm = false, double edgeAugTol = 0.0,
+                         double hThickness = 1.0);   // ADR-85 T3 -- 34th param, defaulted
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
@@ -573,8 +584,14 @@ class LadrunoContactDomain
                                     // (fold-back spike / wedge-boundary conditioning gate)
         WARN_2D_GEOMTAN_NOOP,       // ADR-85 T1b: -geomtan accepted as a documented no-op
                                     // on the 2D lane (curvature term = named deferral)
-        WARN_VTX2D_SIDE_FLIP        // ADR-85 T1b: committed vertex side sign disagrees with
+        WARN_VTX2D_SIDE_FLIP,       // ADR-85 T1b: committed vertex side sign disagrees with
                                     // the live wedge classification (corner changed type)
+        WARN_2D_PERP_NO_NTS,        // ADR-85 T3: a 2D mortar pair refused ALIGN (near-
+                                    // perpendicular) with no co-declared NTS contact on the
+                                    // same surfaces to cover it -- the ownership protocol's
+                                    // loud half (How/3 decision 2b.4)
+        WARN_2D_NGP_NOOP            // ADR-85 T3: -ngp accepted-and-ignored on 2D mortar
+                                    // (2-pt Gauss is exact for straight-segment overlaps)
     };
     bool warnOnce(int contactTag, int topic);
 

@@ -266,6 +266,64 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, in
     nts2dNextFarTag = (nextFar != 0) ? nextFar->getTag() : 0;
 }
 
+// ADR-85 T3 -- the 2D MORTAR ctor (mode == MORTAR, ndm == 2). 2D is a
+// PARAMETERIZATION of MORTAR (no new Mode, no new class tag), disambiguated from
+// the 3D MORTAR ctor by `ndm2` (int) landing where the 3D ctor has `epsN`
+// (double) as its 6th argument -- the SAME overload trick the T1b SEGMENT/ndm2
+// ctor uses. epsN/epsT/cohesion/tauMax/muc arrive ALREADY h-scaled by the
+// handler's ONE `-thickness` injection site (ADR-85 SS How/7) -- mu is
+// DIMENSIONLESS and is NEVER h-scaled (REVIEW FIX T3: it was wrongly listed
+// here; an h-scaled mu is exactly the silent stick/slip-threshold error SS
+// How/7 fences); softScale is fixed at 0.0 -- SOFT=2 is fenced out of 2D
+// mortar by the handler's handle()-time named FATAL (decision 2b.6; dimension
+// is unknown at parse, so the fence CANNOT live at the command surface), so
+// no 2D mortar adapter is ever soft.
+LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
+                                   Node **masterNodes, int nps_m, int ndm2,
+                                   double epsN, double sigma, double LrefIn,
+                                   int contactTag_, int slaveFacetIndex_, Domain *dom,
+                                   double mu_, double epsT_, double cohesion_,
+                                   double tauMax_, bool consistentTan_, bool isTie_,
+                                   double muc_, bool ntsCoDeclared_)
+  : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/ndm2 * (nps_s + nps_m)),
+    resid(ndm2 * (nps_s + nps_m)), tang(ndm2 * (nps_s + nps_m), ndm2 * (nps_s + nps_m)),
+    mode(MORTAR), theSlave(0), ndm(ndm2), kn(epsN), nps(0),
+    kt(epsT_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    consistentTan(consistentTan_), consistentNormal(false),
+    softScale(0.0),   // ADR-85 2b.6: -soft on 2D mortar draws a handle()-time named FATAL
+    npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
+    mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
+{
+    // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group,
+    // exactly like the 3D MORTAR ctor (setID() fills myID = [slave_0 xy | ... |
+    // master_0 xy | ...]); every node is ndf==ndm==2 EXACTLY (the handler's ADR-85
+    // equality guards) ⇒ exact ndof match.
+    for (int i = 0; i < nps_s; i++) {
+        mortarSlave[i] = slaveNodes[i];
+        if (slaveNodes[i] != 0) {
+            DOF_Group *dg = slaveNodes[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(i) = dg->getTag();
+        }
+    }
+    for (int i = 0; i < nps_m; i++) {
+        mortarMaster[i] = masterNodes[i];
+        if (masterNodes[i] != 0) {
+            DOF_Group *dg = masterNodes[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(nps_s + i) = dg->getTag();
+        }
+    }
+    for (int i = nps_s; i < 4; i++) mortarSlave[i] = 0;
+    for (int i = nps_m; i < 4; i++) mortarMaster[i] = 0;
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; edgeNode[i] = 0; }
+    edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
+    for (int d = 0; d < 3; d++) { orientDir[d] = 0.0; planeP0[d] = 0.0; planeN[d] = 0.0; }
+    useSmoothNormal = false;      // -smoothNormal is 3D-only (the handler refuses it in 2D)
+    for (int i = 0; i < 4; i++) for (int d = 0; d < 3; d++) nodalNorm[i][d] = 0.0;
+    mortar2dSigma = sigma;
+    mortar2dLref  = LrefIn;
+    mortar2dNtsCoDeclared = ntsCoDeclared_;
+}
+
 LadrunoContactFE::~LadrunoContactFE()
 {
 }
@@ -675,6 +733,291 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
     // per-facet master normal (flat facet ⇒ the per-GP projection normal), oriented
     // toward orientDir — the same n the weighted gap g̃ used inside integratePair.
     return LadrunoMortarKernel::facetNormal(npsM, Xm, orientDir, n);
+}
+
+// ADR-85 T3 — the A8 active-set tributary floor (proto_t3_mortar2d.py A8). A noise-sized
+// ACCEPTED interval is benign INSIDE the kernel (D/M/g̃ all scale with the clipped overlap
+// b-a, so the contribution is noise-sized too), but the enforcement layer below divides
+// ḡ = g̃/a_I by the tributary a_I — a RELATIVE floor (tauTrib*Lref, the ADR-57 P5 unit-trap
+// rule), NOT the 3D kernel's bare 1e-300 ABSOLUTE guard (which the oracle flags as the
+// wrong gauge for this division). a_I <= this floor ⇒ treat the node as unreferenced this
+// facet (no contribution — mirrors the 3D `aFacet <= 1e-300` skip, just relatively gauged).
+static const double MORT2D_TAU_TRIB = 1e-12;
+
+// ADR-85 T3 — 2D mortar pair evaluator (mode == MORTAR, ndm == 2). Gathers the current
+// trial config of both 2-node segments and calls LadrunoContact2DKernel::
+// mortarSegmentPair2D. `refusalOut`/`cosOut` are ALWAYS written (A2 of the T3 oracle):
+// the caller routes WARN_2D_PERP_NO_NTS off `refusalOut` alone, never re-deriving cos_t
+// from the coordinates (the staleness trap on the exact quantity the gate turns on).
+// PairResult2D carries no normal field by (T3) spec, so n is re-derived from the CURRENT
+// Xm here — exactly the pattern the 3D mortarActive uses (a second call to facetNormal
+// after integratePair): sigma*perp(t_m)/L_m, the SAME formula the kernel used internally.
+bool
+LadrunoContactFE::mortarActive2D(double D[2][2], double M[2][2], double g[2], double n[2],
+                                 int &refusalOut, double &cosOut) const
+{
+    using namespace LadrunoContact2DKernel;
+    double Xs[2][2], Xm[2][2];
+    for (int i = 0; i < 2; i++) {
+        const Vector &X = mortarSlave[i]->getCrds();
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        Xs[i][0] = X(0) + u(0); Xs[i][1] = X(1) + u(1);
+    }
+    for (int i = 0; i < 2; i++) {
+        const Vector &X = mortarMaster[i]->getCrds();
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        Xm[i][0] = X(0) + u(0); Xm[i][1] = X(1) + u(1);
+    }
+    PairResult2D pr;
+    mortarSegmentPair2D(Xs, Xm, mortar2dSigma, mortar2dLref, pr);
+    refusalOut = pr.refusal;
+    cosOut = pr.cos_t;
+    if (pr.status != MORT2D_OK)
+        return false;
+    for (int i = 0; i < 2; i++) {
+        g[i] = pr.g[i];
+        for (int j = 0; j < 2; j++) { D[i][j] = pr.D[i][j]; M[i][j] = pr.M[i][j]; }
+    }
+    const double tm[2] = { Xm[1][0] - Xm[0][0], Xm[1][1] - Xm[0][1] };
+    const double Lm = std::sqrt(tm[0]*tm[0] + tm[1]*tm[1]);
+    n[0] = -mortar2dSigma * tm[1] / Lm;
+    n[1] =  mortar2dSigma * tm[0] / Lm;
+    return true;
+}
+
+// ADR-85 T3 — the 2D mortar Coulomb/Tresca friction FORCE (the C3.1 addMortarFriction
+// twin, stride-2, SCALAR per slave node — MortarNormalState slot [0] only, the T2
+// scalar-store discipline carried into T3: never a 2-vector differenced componentwise
+// (the catastrophic-cancellation finding, LadrunoFrictionKernel.h file-level note)).
+void
+LadrunoContactFE::addMortarFriction2D(const double D[2][2], const double M[2][2],
+                                      const double n[2], const double p_normal[2],
+                                      LadrunoContactDomain *cd)
+{
+    double us[2][2], um[2][2];
+    for (int i = 0; i < 2; i++) {
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        us[i][0] = u(0); us[i][1] = u(1);
+    }
+    for (int i = 0; i < 2; i++) {
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        um[i][0] = u(0); um[i][1] = u(1);
+    }
+    const double th[2] = { -n[1], n[0] };             // t_hat = perp(n), ADR-85 How/4
+    double tFric[2] = { 0.0, 0.0 };
+    for (int I = 0; I < 2; I++) {
+        if (p_normal[I] >= 0.0) continue;             // friction only on in-contact nodes
+        double aFacet = D[I][0] + D[I][1];
+        if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;   // A8 tributary floor
+        double N_I = -p_normal[I];                    // contact pressure magnitude (>= 0)
+        // weighted relative DISPLACEMENT r_I = Sum_J D_IJ u_s,J - Sum_K M_IK u_m,K, projected
+        // onto t_hat and normalised by a_I — the ONE scalar tangential relative-displacement
+        // (never formed as a 2-vector and differenced componentwise).
+        double r[2] = { 0.0, 0.0 };
+        for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
+        for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
+        double gT = (r[0]*th[0] + r[1]*th[1]) / aFacet;
+        LadrunoContactDomain::MortarNormalState &st =
+            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // engagement origin captured ONCE at first contact (the ADR-39 P3 MAJOR-1, reused).
+        if (!st.engaged) { st.gT0[0] = gT; st.engaged = true; }
+        // C3.3 ALM offset trick: gTeff = (gT - gT0) + lambdaT/epsT (epsT rides `kt`); lambdaT
+        // slots [1],[2] stay 0 (never touched — the T2/T3 scalar-store contract).
+        double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
+        double gTeff = (gT - st.gT0[0]) + st.lambdaT[0] * invEpsT;
+        double tF_s, spTrial;
+        LadrunoFrictionKernel::returnMap1D(gTeff, st.gpT[0], N_I, kt, mu, tF_s, spTrial,
+                                           mortarCohesion, mortarTauMax);
+        st.gpTtrial[0] = spTrial;          // SET, never += (idempotent, BLOCKER-2)
+        st.lambdaTtrial[0] = -tF_s;        // Uzawa trial (committed in commit())
+        tFric[I] = tF_s;
+    }
+    // scatter tFric*t_hat via D (slave) / -M (master), exactly like the normal force.
+    for (int K = 0; K < 2; K++) {
+        double s0 = 0.0, s1 = 0.0;
+        for (int I = 0; I < 2; I++) { s0 += D[K][I]*tFric[I]*th[0]; s1 += D[K][I]*tFric[I]*th[1]; }
+        resid(2*K + 0) += s0; resid(2*K + 1) += s1;
+    }
+    for (int L = 0; L < 2; L++) {
+        double s0 = 0.0, s1 = 0.0;
+        for (int I = 0; I < 2; I++) { s0 += M[I][L]*tFric[I]*th[0]; s1 += M[I][L]*tFric[I]*th[1]; }
+        resid(2*(2 + L) + 0) += -s0; resid(2*(2 + L) + 1) += -s1;
+    }
+}
+
+// ADR-85 T3 — the 2D MESH-TIE force (the C4 addMortarTieForce twin, stride-2). r_I is the
+// FULL 2-vec weighted relative DISPLACEMENT (no gT0 — the bond exists from the as-built
+// config); z-padded into the EXISTING 3-wide accumulateMortarTie/lambdaTie accumulators
+// (the T1b n[3] idiom — no overload, ADR-85 Where).
+void
+LadrunoContactFE::addMortarTie2D(const double D[2][2], const double M[2][2],
+                                 LadrunoContactDomain *cd)
+{
+    double us[2][2], um[2][2];
+    for (int i = 0; i < 2; i++) {
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        us[i][0] = u(0); us[i][1] = u(1);
+    }
+    for (int i = 0; i < 2; i++) {
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        um[i][0] = u(0); um[i][1] = u(1);
+    }
+    double t[2][2] = { {0.0, 0.0}, {0.0, 0.0} };
+    for (int I = 0; I < 2; I++) {
+        double aFacet = D[I][0] + D[I][1];
+        if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) {
+            // REVIEW FIX (T3): zero-report, never bare-skip -- the tie accumulator is
+            // delta-keyed per feTag, so a bare `continue` freezes this facet's stale
+            // previous r in rtGlobal (see the getResidual normal-path twin fix).
+            if (cd != 0) {
+                double z[3] = { 0.0, 0.0, 0.0 };
+                cd->accumulateMortarTie(contactTag, mortarSlave[I]->getTag(),
+                                        this->getTag(), z, 0.0, kn);
+            }
+            continue;   // A8 tributary floor
+        }
+        double r[2] = { 0.0, 0.0 };
+        for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
+        for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
+        double lamTie[2] = { 0.0, 0.0 };
+        if (cd != 0) {
+            int nodeTag = mortarSlave[I]->getTag();
+            double rFacet[3] = { r[0], r[1], 0.0 };   // z-pad (the T1b n[3] idiom)
+            cd->accumulateMortarTie(contactTag, nodeTag, this->getTag(), rFacet, aFacet, kn);
+            const LadrunoContactDomain::MortarNormalState &st =
+                cd->getOrCreateMortarNormalState(contactTag, nodeTag);
+            lamTie[0] = st.lambdaTie[0]; lamTie[1] = st.lambdaTie[1];
+        }
+        t[I][0] = lamTie[0] + kn * (r[0] / aFacet);   // NO clamp — equality bond (kn = epsTie)
+        t[I][1] = lamTie[1] + kn * (r[1] / aFacet);
+    }
+    for (int K = 0; K < 2; K++) {
+        double s0 = 0.0, s1 = 0.0;
+        for (int I = 0; I < 2; I++) { s0 += D[K][I]*t[I][0]; s1 += D[K][I]*t[I][1]; }
+        resid(2*K + 0) = -s0; resid(2*K + 1) = -s1;
+    }
+    for (int L = 0; L < 2; L++) {
+        double s0 = 0.0, s1 = 0.0;
+        for (int I = 0; I < 2; I++) { s0 += M[I][L]*t[I][0]; s1 += M[I][L]*t[I][1]; }
+        resid(2*(2 + L) + 0) = s0; resid(2*(2 + L) + 1) = s1;
+    }
+}
+
+// ADR-85 T3 — the 2D mortar tangent (the C2/C3.2 addMortarTang twin, stride-2). isTie ->
+// epsTie*Gram(x)I_2 (frozen active set, both components tied, mirrors the 3D I_3 tie
+// tangent); else the penalty Gram epsN*Gram(x)(n(x)n) on the SAME per-facet W[I] KKT
+// mask the residual used, plus the friction cross term when the cone is live.
+void
+LadrunoContactFE::addMortarTang2D(double fact, bool initialStiff)
+{
+    double D[2][2], M[2][2], g[2], n[2];
+    int refusal; double cosT;
+    if (!mortarActive2D(D, M, g, n, refusal, cosT)) return;
+    const int nN = 4;   // 2 slave + 2 master nodes
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    if (isTie) {
+        double W[2] = { 0.0, 0.0 };
+        for (int I = 0; I < 2; I++) {
+            double aFacet = D[I][0] + D[I][1];
+            if (aFacet > MORT2D_TAU_TRIB * mortar2dLref) W[I] = 1.0 / aFacet;
+        }
+        for (int A = 0; A < nN; A++)
+            for (int B = 0; B < nN; B++) {
+                double Ks = 0.0;
+                for (int I = 0; I < 2; I++) {
+                    double bIA = (A < 2) ? D[I][A] : -M[I][A - 2];
+                    double bIB = (B < 2) ? D[I][B] : -M[I][B - 2];
+                    Ks += bIA * W[I] * bIB;
+                }
+                Ks *= kn;                              // epsTie
+                if (Ks == 0.0) continue;
+                tang(2*A + 0, 2*B + 0) += fact * Ks;   // (x) I_2 -- diagonal in the 2-space
+                tang(2*A + 1, 2*B + 1) += fact * Ks;
+            }
+        return;
+    }
+    double W[2] = { 0.0, 0.0 };                        // act_I / a_I^facet
+    for (int I = 0; I < 2; I++) {
+        double aFacet = D[I][0] + D[I][1];
+        if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
+        double lambdaI = (cd != 0)
+            ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN
+            : 0.0;
+        double pr = lambdaI + kn * (g[I] / aFacet);    // same p_I as the residual (kn = epsN)
+        if (pr < 0.0) W[I] = 1.0 / aFacet;             // active iff compression
+    }
+    for (int A = 0; A < nN; A++) {
+        for (int B = 0; B < nN; B++) {
+            double Ks = 0.0;
+            for (int I = 0; I < 2; I++) {
+                double bIA = (A < 2) ? D[I][A] : -M[I][A - 2];
+                double bIB = (B < 2) ? D[I][B] : -M[I][B - 2];
+                Ks += bIA * W[I] * bIB;
+            }
+            Ks *= kn;                                  // epsN
+            if (Ks == 0.0) continue;
+            for (int dA = 0; dA < 2; dA++)
+                for (int dB = 0; dB < 2; dB++)
+                    tang(2*A + dA, 2*B + dB) += fact * Ks * n[dA] * n[dB];
+        }
+    }
+
+    // --- friction TANGENT (the SYMMETRIC-by-default consistent tangent) ---
+    if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0) {
+        double us[2][2], um[2][2];
+        for (int i = 0; i < 2; i++) {
+            const Vector &u = mortarSlave[i]->getTrialDisp();
+            us[i][0] = u(0); us[i][1] = u(1);
+        }
+        for (int i = 0; i < 2; i++) {
+            const Vector &u = mortarMaster[i]->getTrialDisp();
+            um[i][0] = u(0); um[i][1] = u(1);
+        }
+        const double th[2] = { -n[1], n[0] };
+        for (int I = 0; I < 2; I++) {
+            double aFacet = D[I][0] + D[I][1];
+            if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
+            LadrunoContactDomain::MortarNormalState &st =
+                cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            if (pr >= 0.0) continue;                   // friction only on in-contact nodes
+            double N_I = -pr;
+            double r[2] = { 0.0, 0.0 };
+            for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
+            for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
+            double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
+            double gT = (r[0]*th[0] + r[1]*th[1]) / aFacet;
+            double gTeff = (gT - st.gT0[0]) + st.lambdaT[0] * invEpsT;   // same as the residual
+            // initial-stiffness path -> force the SPD STICK tangent (mirrors addMortarTang):
+            // pass gTeff == gpT so the trial traction is inside the cone.
+            double gtForKss = initialStiff ? st.gpT[0] : gTeff;
+            bool useConsistent = consistentTan && !initialStiff;
+            double Kss_s = 0.0, dTN_s = 0.0;
+            LadrunoFrictionKernel::tangentBlock1D(gtForKss, st.gpT[0], N_I, kn, kt, mu,
+                                                  useConsistent, Kss_s, dTN_s,
+                                                  mortarCohesion, mortarTauMax);
+            // ORCHESTRATOR REVIEW FIX PRECEDENT (T2, addFrictionTang2D): dTN_s ALREADY
+            // carries kn (LadrunoFrictionKernel.h:270-271, tangentBlock1D's dTN =
+            // -(dcap/dN)*kn*sgn) -- reapplying kn here would scale the consistent cross
+            // term as kn^2. kn appears EXACTLY ONCE, in tangentBlock1D itself.
+            double K2[2][2];
+            for (int i = 0; i < 2; i++)
+                for (int j = 0; j < 2; j++)
+                    K2[i][j] = Kss_s * th[i] * th[j] + dTN_s * th[i] * n[j];
+            for (int A = 0; A < nN; A++) {
+                double bIA = (A < 2) ? D[I][A] : -M[I][A - 2];
+                if (bIA == 0.0) continue;
+                for (int B = 0; B < nN; B++) {
+                    double bIB = (B < 2) ? D[I][B] : -M[I][B - 2];
+                    double w = fact * bIA * bIB / aFacet;
+                    if (w == 0.0) continue;
+                    for (int i = 0; i < 2; i++)
+                        for (int j = 0; j < 2; j++)
+                            tang(2*A + i, 2*B + j) += w * K2[i][j];
+                }
+            }
+        }
+    }
 }
 
 // ADR-57 E2 — EDGE_EDGE geometry at the current trial config. Gathers the 4 edge-node positions
@@ -1205,6 +1548,139 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                         for (int d = 0; d < 3; d++)
                             resid(3 * (1 + i) + d) += -N[i] * tFric[d];
                 }
+            }
+        }
+    } else if (mode == MORTAR && ndm == 2) {
+        // ADR-85 T3 -- the 2D mortar lane. No SOFT=2 here (softScale is fixed 0.0 by the
+        // 2D ctor -- decision 2b.6 fences -soft out of 2D mortar via the handler's
+        // handle()-time named FATAL; dimension is unknown at parse),
+        // so this branch is the penalty/ALM + tie + friction path only, stride-2, the
+        // direct twin of the `mode == MORTAR` branch below (which an ndm==2 adapter
+        // cannot reach -- it is checked first here exactly as the T1b/T2 SEGMENT branch
+        // precedes the 3D SEGMENT branch, and the shipped 3D MORTAR branch stays
+        // textually untouched).
+        double D[2][2], M[2][2], g[2], n[2];
+        int refusal = LadrunoContact2DKernel::MORT2D_REF_NONE; double cosT = 0.0;
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        bool active = mortarActive2D(D, M, g, n, refusal, cosT);
+        if (!active) {
+            // ADR-85 SS How/3 ownership protocol (decision 2b.4): an ALIGN refusal (near-
+            // perpendicular pair, the slave-trace Jacobian ill-conditioned) is covered
+            // iff an NTS contact is declared on the same surfaces -- silent stand-down
+            // (NTS owns it, no double-count). Otherwise it is LOUD: WARN_2D_PERP_NO_NTS
+            // fires once, naming the pair. EMPTY/DEGEN are ordinary "no overlap this
+            // eval" skips (mirrors the 3D empty-overlap branch below), never warned.
+            // REVIEW FIX (T3): a TIE pair NEVER stands down silently -- an NTS
+            // unilateral contact cannot own an equality bond, so ntsCoDeclared is
+            // ignored for ties and the guidance differs (re-mesh, not declare-NTS).
+            // The mortar2dPerpWarned latch spares the warnOnce set lookup on every
+            // subsequent eval of a permanently perpendicular pair.
+            if (refusal == LadrunoContact2DKernel::MORT2D_REF_ALIGN &&
+                !mortar2dPerpWarned &&
+                (isTie || !mortar2dNtsCoDeclared) && cd != 0) {
+                mortar2dPerpWarned = true;   // latch on the ATTEMPT (win or lose the
+                                             // warnOnce race) -- never re-probe the set
+                if (cd->warnOnce(contactTag,
+                                 LadrunoContactDomain::WARN_2D_PERP_NO_NTS)) {
+                    opserr << "WARNING LadrunoContactFE - contact " << contactTag
+                           << ": 2D mortar slave segment " << slaveFacetIndex
+                           << " is near-PERPENDICULAR to its master (|t_hat_s.t_hat_m| = "
+                           << cosT << ") and refuses to integrate -- ";
+                    if (isTie)
+                        opserr << "a mesh-tie bond cannot be owned by an NTS contact: "
+                                  "re-mesh the junction or split the tie surface; "
+                                  "ADR-85 T3\n";
+                    else
+                        opserr << "covered only if an NTS contact is declared on the "
+                                  "same surfaces -- declare one or re-mesh; ADR-85 T3\n";
+                }
+            }
+            // the pair contributes nothing this eval: zero this facet's contribution so
+            // it stops biasing the shared node's accumulated global gap/tie residual --
+            // the SAME empty-overlap reset the 3D MORTAR branch below applies.
+            if (cd != 0) {
+                if (isTie) {
+                    double z[3] = { 0.0, 0.0, 0.0 };
+                    for (int I = 0; I < 2; I++)
+                        cd->accumulateMortarTie(contactTag, mortarSlave[I]->getTag(),
+                                                this->getTag(), z, 0.0, kn);
+                } else {
+                    for (int I = 0; I < 2; I++)
+                        cd->accumulateMortarGap(contactTag, mortarSlave[I]->getTag(),
+                                                this->getTag(), 0.0, 0.0, kn);
+                }
+            }
+            return resid;
+        }
+        if (isTie) {
+            addMortarTie2D(D, M, cd);
+            return resid;
+        }
+        double p[2] = { 0.0, 0.0 };
+        for (int I = 0; I < 2; I++) {
+            double aFacet = D[I][0] + D[I][1];         // a_I^facet = Sum_J D_IJ = INT N_I dGamma_s
+            if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) {
+                // REVIEW FIX (T3): the accumulator is delta-keyed per feTag -- a facet
+                // that once reported MUST keep reporting or report ZERO, or its stale
+                // previous (g,a) biases the shared node's Uzawa update and the
+                // penetration query (the same discipline the !active branch above
+                // enforces; the 3D twin's 1e-300 floor is unreachable, this RELATIVE
+                // floor is not).
+                if (cd != 0)
+                    cd->accumulateMortarGap(contactTag, mortarSlave[I]->getTag(),
+                                            this->getTag(), 0.0, 0.0, kn);
+                continue;   // A8 tributary floor
+            }
+            double lambdaI = 0.0;
+            if (cd != 0) {
+                int nodeTag = mortarSlave[I]->getTag();
+                cd->accumulateMortarGap(contactTag, nodeTag, this->getTag(), g[I], aFacet, kn);
+                lambdaI = cd->getOrCreateMortarNormalState(contactTag, nodeTag).lambdaN;
+            }
+            double pr = lambdaI + kn * (g[I] / aFacet);   // lambda_I + epsN*gbar_I^facet
+            p[I] = (pr < 0.0) ? pr : 0.0;               // active iff compression (KKT clamp)
+        }
+        for (int K = 0; K < 2; K++) {                   // slave block: -(D.p)_K n
+            double Dp = D[K][0]*p[0] + D[K][1]*p[1];
+            resid(2*K + 0) = -Dp * n[0]; resid(2*K + 1) = -Dp * n[1];
+        }
+        for (int L = 0; L < 2; L++) {                   // master block: +(M^T.p)_L n
+            double Mp = M[0][L]*p[0] + M[1][L]*p[1];
+            resid(2*(2 + L) + 0) = Mp * n[0]; resid(2*(2 + L) + 1) = Mp * n[1];
+        }
+        // --- C3.1-analogue Coulomb/Tresca friction (SCALAR return map, ADR-85 How/4) ---
+        if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)
+            addMortarFriction2D(D, M, n, p, cd);
+
+        // --- D2.2-analogue viscous normal stabilization (force; tangent in addCtoTang) ---
+        if (viscousActive(theIntegrator)) {
+            double vs[2][2], vm[2][2];
+            for (int i = 0; i < 2; i++) {
+                const Vector &v = mortarSlave[i]->getTrialVel();
+                vs[i][0] = v(0); vs[i][1] = v(1);
+            }
+            for (int i = 0; i < 2; i++) {
+                const Vector &v = mortarMaster[i]->getTrialVel();
+                vm[i][0] = v(0); vm[i][1] = v(1);
+            }
+            double pv[2] = { 0.0, 0.0 };
+            for (int I = 0; I < 2; I++) {
+                if (p[I] >= 0.0) continue;              // viscous only on in-contact nodes
+                double aFacet = D[I][0] + D[I][1];
+                if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
+                double rdot[2] = { 0.0, 0.0 };
+                for (int J = 0; J < 2; J++) { rdot[0] += D[I][J]*vs[J][0]; rdot[1] += D[I][J]*vs[J][1]; }
+                for (int K = 0; K < 2; K++) { rdot[0] -= M[I][K]*vm[K][0]; rdot[1] -= M[I][K]*vm[K][1]; }
+                double gdot = (rdot[0]*n[0] + rdot[1]*n[1]) / aFacet;
+                pv[I] = muc * gdot;                     // p_visc_I = muc*gbardot_I (NO clamp)
+            }
+            for (int K = 0; K < 2; K++) {
+                double Dp = D[K][0]*pv[0] + D[K][1]*pv[1];
+                resid(2*K + 0) += -Dp * n[0]; resid(2*K + 1) += -Dp * n[1];
+            }
+            for (int L = 0; L < 2; L++) {
+                double Mp = M[0][L]*pv[0] + M[1][L]*pv[1];
+                resid(2*(2 + L) + 0) += Mp * n[0]; resid(2*(2 + L) + 1) += Mp * n[1];
             }
         }
     } else if (mode == MORTAR) {
@@ -1894,6 +2370,8 @@ LadrunoContactFE::addKtToTang(double fact)
                 }
             }
         }
+    } else if (mode == MORTAR && ndm == 2) {
+        addMortarTang2D(fact);   // ADR-85 T3
     } else if (mode == MORTAR) {
         addMortarTang(fact);
     } else if (mode == EDGE_EDGE) {
@@ -2146,6 +2624,8 @@ LadrunoContactFE::addKiToTang(double fact)
                 addFrictionTang(fact, n, N, tn, zero, zero, false);
             }
         }
+    } else if (mode == MORTAR && ndm == 2) {
+        addMortarTang2D(fact, /*initialStiff=*/true);   // ADR-85 T3
     } else if (mode == MORTAR) {
         addMortarTang(fact, /*initialStiff=*/true);  // penalty K_initial == K_current; friction =
                                                      // the SPD stick tangent (geometric terms deferred)
@@ -2231,6 +2711,40 @@ LadrunoContactFE::addCtoTang(double fact)
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * muc * B[i] * B[j];
+        }
+    } else if (mode == MORTAR && ndm == 2 && !isTie) {
+        // ADR-85 T3 -- the 2D mortar -visc damping tangent (the D2.2 twin, stride-2):
+        // C_visc = muc * Btilde^T diag(W) Btilde (x) (n(x)n), Btilde=[D,-M], W_I=1/a_I on
+        // the SAME contact active set (p_I<0) the residual's viscous force used.
+        double D[2][2], M[2][2], g[2], n[2];
+        int refusal; double cosT;
+        if (!mortarActive2D(D, M, g, n, refusal, cosT)) return;
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        double W[2] = { 0.0, 0.0 };
+        for (int I = 0; I < 2; I++) {
+            double aFacet = D[I][0] + D[I][1];
+            if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
+            double lambdaI = (cd != 0)
+                ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN
+                : 0.0;
+            double pr = lambdaI + kn * (g[I] / aFacet);
+            if (pr < 0.0) W[I] = 1.0 / aFacet;
+        }
+        const int nN = 4;
+        for (int A = 0; A < nN; A++) {
+            for (int B = 0; B < nN; B++) {
+                double Ks = 0.0;
+                for (int I = 0; I < 2; I++) {
+                    double bIA = (A < 2) ? D[I][A] : -M[I][A - 2];
+                    double bIB = (B < 2) ? D[I][B] : -M[I][B - 2];
+                    Ks += bIA * W[I] * bIB;
+                }
+                Ks *= muc;
+                if (Ks == 0.0) continue;
+                for (int dA = 0; dA < 2; dA++)
+                    for (int dB = 0; dB < 2; dB++)
+                        tang(2*A + dA, 2*B + dB) += fact * Ks * n[dA] * n[dB];
+            }
         }
     } else if (mode == MORTAR && !isTie) {
         // D2.2 — C_visc = μ_c · B̃ᵀ diag(W) B̃ ⊗ (n⊗n), B̃=[D,−M], W_I=1/a_I on the contact active
