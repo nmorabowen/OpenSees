@@ -61,13 +61,21 @@ LadrunoContactDomain::addSurface(LadrunoContactSurface *surf)
     // segments — the handler computes nSeg = size/nps, so a mis-counted tag list silently
     // DROPPED the trailing partial segment (a missing contact facet = localized silent
     // pass-through with no diagnostic anywhere).
+    //
+    // ADR-85 T0: nps == 2 (a 2D LINE segment) joins the accepted set. The
+    // arity <-> node-dimension pairing (2 <=> 2D nodes, 3/4 <=> 3D nodes) is
+    // enforced in the parser, which is the only place with a Domain handle to
+    // read getCrds() from; this choke point keeps the whole-number-of-segments
+    // invariant the handler's nSeg = size/nps relies on. A 3D surface (nps 3 or
+    // 4) takes exactly the shipped path.
     if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
         int nps = surf->getNodesPerSeg();
         int n   = surf->getNodeTags().Size();
-        if (nps < 3 || nps > 4 || (n % nps) != 0) {
+        if (nps < 2 || nps > 4 || (n % nps) != 0) {
             opserr << "WARNING LadrunoContactDomain::addSurface() - surface tag "
                    << surf->getTag() << ": " << n << " connectivity entries is not a whole "
-                      "number of " << nps << "-node segments (nps must be 3 or 4)\n";
+                      "number of " << nps << "-node segments (nps must be 2 for a 2D line "
+                      "segment, or 3 or 4 for a 3D facet)\n";
             return -1;
         }
     }

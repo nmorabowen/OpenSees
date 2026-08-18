@@ -84,10 +84,21 @@
 // past unread. Callers turn a false return into `return -1` from handle(), which
 // StaticAnalysis/DirectIntegrationAnalysis::domainChanged() report as a failure.
 // ----------------------------------------------------------------------------
+// ADR-85 T0 (2026-08-18): the coordinate rule is now dimension CONSISTENCY, not
+// "must be 3D". A surface whose nodes are ALL 2D or ALL 3D passes this
+// pre-flight and reports its common dimension through `dimOut`; the LANE gate
+// (ladrunoContact2DLaneOk, below) then decides what a 2D surface is allowed to
+// do on the lane that referenced it. What stays refused is precisely what the
+// pre-3D guard incident was about: a node set that MIXES getCrds() sizes, where
+// getCrds()(2) reads out of bounds on the 2D members (unchecked in release =>
+// nondeterministic garbage geometry). An all-3D surface takes exactly the
+// shipped path and emits exactly the shipped messages.
 static bool
-ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s)
+ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
+                      int *dimOut = 0)
 {
     const ID &tags = s->getNodeTags();
+    int dim = 0;                       // ADR-85: the surface's common getCrds() size
     for (int i = 0; i < tags.Size(); i++) {
         Node *n = dom->getNode(tags(i));
         if (n == 0) {
@@ -97,15 +108,148 @@ ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s)
                       "silently dropped -- ADR-78 P1)\n";
             return false;
         }
-        if (n->getCrds().Size() < 3) {
+        int nd = n->getCrds().Size();
+        if (nd < 2) {
             opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
                    << ": node " << tags(i) << " of contactSurface " << s->getTag()
-                   << " has " << n->getCrds().Size() << "D coordinates (contact needs "
-                      "-ndm 3); ABORTING (ADR-78 P1)\n";
+                   << " has " << nd << "D coordinates; contact needs 2D or 3D nodes; "
+                      "ABORTING (ADR-85 dimension; was ADR-78 P1)\n";
+            return false;
+        }
+        if (dim == 0)
+            dim = nd;
+        else if (nd != dim) {
+            opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+                   << ": contactSurface " << s->getTag() << " MIXES node dimensions -- node "
+                   << tags(i) << " has " << nd << "D coordinates but an earlier node of the "
+                      "same surface has " << dim << "D. A contact surface must be "
+                      "dimension-consistent (this is the historical out-of-bounds "
+                      "reproducer: getCrds()(2) on a 2D node is unchecked in release); "
+                      "ABORTING (ADR-85 dimension)\n";
             return false;
         }
     }
+    if (dimOut != 0)
+        *dimOut = dim;               // 0 for an empty surface => the shipped 3D path
     return true;
+}
+
+// ----------------------------------------------------------------------------
+// ADR-85 T0 -- the 2D LANE gate.
+//
+// A DECLARATION may now be 2D (`contactSurface -master 2` over 2-coordinate
+// nodes), but the 2D NTS kernel + FE SEGMENT path lands in T1b and the 2D mortar
+// interval integrator in T3. A 2D surface on one of those lanes is therefore
+// refused BY NAME. Silently skipping it is the failure mode this subsystem's
+// abort discipline exists to prevent: the run converges, balances its reactions
+// and transmits no contact force (ADR-78 P0 -- wrong by a factor of two, and
+// entirely plausible-looking).
+//
+// `dim` is what ladrunoSurfaceNodesOk() wrote. dim != 2 returns true before
+// touching anything else, so no 3D deck can reach a single statement below the
+// first line of this function.
+//
+// The ndf check comes FIRST and is EXACT equality (ADR-85 Why + How/8): a
+// `-ndm 2 -ndf 3` frame node is the historical reproducer, and FE_Element::setID()
+// packs each node's FULL DOF_Group ID sequentially -- an extra rotation DOF
+// pushes equations into the contact's myID slots and shifts every later slot
+// (silent mis-assembly). Reporting "not yet supported" for such a deck would
+// hide a modeling error behind a roadmap message.
+// ----------------------------------------------------------------------------
+static bool
+ladrunoContact2DLaneOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
+                       int dim, const char *lane, const char *phase)
+{
+    if (dim != 2)
+        return true;                 // 3D (or an empty surface): shipped path, untouched
+    const ID &tags = s->getNodeTags();
+    for (int i = 0; i < tags.Size(); i++) {
+        Node *n = dom->getNode(tags(i));
+        if (n != 0 && n->getNumberDOF() != 2) {
+            opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+                   << ": node " << tags(i) << " of contactSurface " << s->getTag()
+                   << " has ndf=" << n->getNumberDOF() << " on a 2D contact surface. The "
+                   << lane << " lane requires ndf == ndm == 2 EXACTLY (FE_Element::setID() "
+                      "packs each node's FULL DOF_Group ID, so an extra DOF pushes equations "
+                      "into the contact's myID slots and shifts every later slot -- silent "
+                      "mis-assembly). ABORTING (ADR-85 ndf equality contract)\n";
+            return false;
+        }
+    }
+    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+           << ": contactSurface " << s->getTag() << " is 2D and the " << lane
+           << " lane is NOT YET SUPPORTED in 2D -- it lands in ADR-85 " << phase
+           << ". ABORTING rather than skipping the pair: a silently dropped contact "
+              "converges, balances its reactions and transmits nothing (ADR-85 T0; the "
+              "ADR-78 P0 failure mode)\n";
+    return false;
+}
+
+// ----------------------------------------------------------------------------
+// ADR-85 T0 -- the PAIR-level dimension gate, run at each shipped
+// ladrunoSurfaceNodesOk() call-site pair. This is where an ARITY-FREE surface is
+// first seen, and it closes a hole the per-surface gate above cannot:
+//
+// ladrunoContact2DLaneOk keys off ONE surface, and the `nps == 2` early blocks
+// only fire when the MASTER declares a 2-node segment. Neither covers the NTS
+// lane's SLAVE, which is a SLAVE_NODES set with NO nodesPerSeg at all. So a 3D
+// master (nps 3, 3D nodes) could be paired with an all-2D slave node-set: the
+// nps == 2 block would not fire, and the rewritten ladrunoSurfaceNodesOk would
+// PASS the consistent all-2D slave where the shipped "< 3 coords" check refused
+// it. That 2D slave then flows into the 3D NTS lane, where a `-ndm 2 -ndf 3`
+// node clears the `ndf != 3` guard and `getCrds()(2)` reads OUT OF BOUNDS --
+// exactly the historical incident this subsystem's guard exists for.
+//
+// The pair is therefore gated on BOTH dimensions together:
+//   * MIXED across the two surfaces -> named FATAL. New territory: the shipped
+//     pre-flight refused every 2D surface, so a cross-dimension pair was
+//     previously impossible and no 3D deck can reach this branch.
+//   * both 2D -> the per-surface lane gate (ndf equality first, then "not yet
+//     supported"), same as the nps == 2 blocks.
+// An all-3D pair returns on the first line, so the shipped path is untouched and
+// the dimension capture that feeds this is write-only (dimOut) -- no side effects.
+// ----------------------------------------------------------------------------
+static bool
+ladrunoContactPairDimOk(Domain *dom, int ctag,
+                        const LadrunoContactSurface *ms, int mdim,
+                        const LadrunoContactSurface *ss, int sdim,
+                        const char *lane, const char *phase)
+{
+    if (mdim == 3 && sdim == 3)
+        return true;                 // the shipped 3D path, evaluated no further
+    if (mdim != 0 && sdim != 0 && mdim != sdim) {
+        opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
+               << ": this pair MIXES a " << mdim << "D master surface (" << ms->getTag()
+               << ") with a " << sdim << "D slave surface (" << ss->getTag()
+               << "). Both surfaces of one contact must carry the SAME node dimension: a "
+                  "2D node set fed to a 3D lane reads getCrds()(2) out of bounds "
+                  "(unchecked in release => nondeterministic garbage geometry), and a "
+                  "`-ndm 2 -ndf 3` node clears the ndf == 3 guard on the way in. "
+                  "ABORTING (ADR-85 dimension)\n";
+        return false;
+    }
+    // dim 0 (an empty surface) and dim 3 pass ladrunoContact2DLaneOk unchanged.
+    return ladrunoContact2DLaneOk(dom, ctag, ms, mdim, lane, phase) &&
+           ladrunoContact2DLaneOk(dom, ctag, ss, sdim, lane, phase);
+}
+
+// ADR-85 T0 -- the whole pre-flight scaffold in one place, so the four call sites
+// cannot drift: resolve BOTH surfaces (existence + per-surface dimension
+// consistency), then gate the PAIR (cross-dimension refusal, then the per-surface
+// lane gates). Returns false with the message ALREADY emitted, so every caller
+// reads `return ladrunoContactFatal();`. An all-3D pair costs two dimOut writes
+// and one comparison -- no output, no state change.
+static bool
+ladrunoContactPairPreflight(Domain *dom, int ctag,
+                            const LadrunoContactSurface *ms,
+                            const LadrunoContactSurface *ss,
+                            const char *lane, const char *phase)
+{
+    int mdim = 0, sdim = 0;
+    if (!ladrunoSurfaceNodesOk(dom, ctag, ms, &mdim) ||
+        !ladrunoSurfaceNodesOk(dom, ctag, ss, &sdim))
+        return false;
+    return ladrunoContactPairDimOk(dom, ctag, ms, mdim, ss, sdim, lane, phase);
 }
 
 // ----------------------------------------------------------------------------
@@ -556,6 +700,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         // full model has a complete mass cache and would size SOFT correctly, but
         // that is indistinguishable from manual domain decomposition from inside
         // handle() -- so it refuses too. Named in the message.
+        //
+        // ADR-85 T0 ordering note: this whole -soft pre-scan runs BEFORE the ADR-85
+        // dimension gates in the lane loops below, so a 2D `-soft` deck is refused by
+        // the -soft subsystem's own message rather than the ADR-85 named one -- still
+        // loud, never silent (and the mass paths it touches are size-guarded for
+        // 2-DOF nodes), so the ordering is deliberately left alone in T0; revisit when
+        // T1b rebuilds this loop.
         if (anySoft && (hostPartitioned || ladrunoContactNumRanks() > 1)) {
             // Review F4: each offender is its own newline-terminated line (a
             // multi-offender abort used to concatenate the fragments into one
@@ -696,15 +847,40 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 return ladrunoContactFatal();
             }
             int nps = ms->getNodesPerSeg();
+            // ADR-85 T0 -- a 2D declaration (nps == 2 over 2D nodes) is now legal at
+            // the parser, so it arrives here with the 2D NTS wiring not yet built.
+            // Catch it BEFORE the shipped 3/4-arity refusal so the message names the
+            // ADR and the phase instead of reading as a generic "unsupported". A 3D
+            // contact carries nps 3 or 4 and never enters this block.
+            if (nps == 2) {
+                // The pre-flight already ends in the pair-dimension gate and then the
+                // per-surface lane gates, so a genuinely 2D pair is refused by name
+                // here and a 2D-master/3D-slave-set pair gets the cross-dimension
+                // message rather than a misleading "wait for T1b". Nothing follows it
+                // ON PURPOSE: if this returns true the pair is NOT 2D (nps 2 over 3D
+                // nodes -- only reachable through a stream restore, since the parser
+                // pins arity to dimension), and the truthful message for that is the
+                // shipped arity refusal immediately below, not a 2D one.
+                if (!ladrunoContactPairPreflight(theDomain, ct.tag, ms, ss,
+                                                 "NTS node-to-segment", "T1b"))
+                    return ladrunoContactFatal();
+            }
             if (nps < 3 || nps > 4) {
                 opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
                        << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); "
                           "ABORTING (ADR-78 P1)\n";
                 return ladrunoContactFatal();
             }
-            if (!ladrunoSurfaceNodesOk(theDomain, ct.tag, ms) ||
-                !ladrunoSurfaceNodesOk(theDomain, ct.tag, ss))
-                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
+            // ADR-78 P1 (missing / bad-dimension node) + ADR-85 T0 (the arity-free
+            // hole): `ss` is a SLAVE_NODES set with no nodesPerSeg, so the `nps == 2`
+            // block above cannot see its dimension -- a 3D master paired with an all-2D
+            // slave node-set reaches here with both per-surface pre-flights passing.
+            // The pair is gated before ANY of the 3D geometry below (the
+            // auto-orientation centroid loops and the per-slave
+            // `slavePt[3] = {Xs0(0), Xs0(1), Xs0(2)}` read) touches a 2D node.
+            if (!ladrunoContactPairPreflight(theDomain, ct.tag, ms, ss,
+                                             "NTS node-to-segment", "T1b"))
+                return ladrunoContactFatal();
             if (!ct.knAuto && ct.kn <= 0.0) {
                 // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
                 // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert —
@@ -1110,6 +1286,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 return ladrunoContactFatal();
             }
             int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
+            // ADR-85 T0: ONE lane name per iteration, shared by the early block and the
+            // pre-flight below (both used to build the same ternary separately).
+            const char *laneMort = mc.isTie ? "mortar mesh-tie (-tie)"
+                                            : "mortar segment-to-segment";
+            // ADR-85 T0 -- same argument as the NTS lane above: a 2D mortar/tie
+            // declaration is legal at the parser but the 2D interval integrator lands
+            // in T3, so refuse it by name before the shipped 3/4-arity message. A 3D
+            // mortar pair carries nps 3 or 4 on both sides and never enters this block.
+            // Nothing follows the pre-flight, for the reason given at the NTS twin.
+            if (npsM == 2 || npsS == 2) {
+                if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3"))
+                    return ladrunoContactFatal();
+            }
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) {
                 opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
                        << ": nodesPerSeg must be 3 or 4 (slave " << npsS << ", master " << npsM
@@ -1125,9 +1314,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                           "ABORTING (ADR-78 P1)\n";
                 return ladrunoContactFatal();
             }
-            if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
-                !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
-                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
+            // ADR-78 P1 (missing / bad-dimension node) + ADR-85 T0 pair gate, mirroring
+            // the NTS site. BOTH mortar surfaces are faceted (MASTER_SEGMENTS +
+            // SLAVE_SEGMENTS), so both carry an arity and the shipped 3/4 check above
+            // already implies 3D nodes by the parser's arity<->dimension pairing; this
+            // is the defense-in-depth twin that does not depend on that inference
+            // holding (e.g. a surface rebuilt by unpackDefinitions, which never sees
+            // the parser).
+            if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss, laneMort, "T3"))
+                return ladrunoContactFatal();
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;
@@ -1316,12 +1511,30 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
                 ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) continue;
             int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
+            // ADR-85 T0 -- BEFORE the silent `continue` below. That arity gate is how an
+            // opt-in lane stands down on a pair it cannot route, and it says nothing;
+            // harmless while nps 2 was impossible, but addSurface now admits it, and a
+            // STREAM-RESTORED surface (unpackDefinitions never runs the parser, so the
+            // arity<->dimension pairing is not re-checked) could arrive here with
+            // nps == 2. Standing down silently on it is exactly the do-nothing-quietly
+            // mode these gates exist to prevent, so refuse it by name first. A 3D pair
+            // (nps 3 or 4) never enters this block and reaches the `continue` unchanged.
+            if (npsM == 2 || npsS == 2) {
+                if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss,
+                                                 "mortar edge-edge", "T3"))
+                    return ladrunoContactFatal();
+            }
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) continue;
             bool epsAuto = mc.epsNAuto || mc.knAuto;
             double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
-            if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
-                !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
-                return ladrunoContactFatal();  // ADR-78 P1: missing / non-3D node (message above)
+            // ADR-78 P1 (missing / bad-dimension node) + the ADR-85 T0 pair gate. NOTE
+            // the control flow: this loop's ARITY gate uses `continue`, but the
+            // PRE-FLIGHT result has always been FATAL here, and the dimension gate rides
+            // the pre-flight, not the arity -- so shipped control flow is preserved on
+            // both counts.
+            if (!ladrunoContactPairPreflight(theDomain, mc.tag, ms, ss,
+                                             "mortar edge-edge", "T3"))
+                return ladrunoContactFatal();
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;

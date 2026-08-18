@@ -49,7 +49,7 @@ LadrunoGeneralizedAlpha — sensitivity/DDM Chung-Hulbert generalized-α (DDM)
 LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
 LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)
 LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar incl. quad8/tri6-master quadratic facets, -dual sparse biorthogonal basis; solid + ndf-6 shell rotational DOFs, -hermite rotation-consistent w–θ edge transfer, -shellSolid plane-section shell-edge↔solid-face tie; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)
-LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership)
+LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership; 2D plane lane (T0: rigid plane + declarations) -- dimension-consistent surfaces from node coordinates, nodesPerSeg 2 line segments, 7-arg contactPlane, NTS/mortar 2D refused by name until T1b/T3)
 stressesPlaneStrain — exact out-of-plane σ_zz element response (plane strain)
 Ladruno — modular HDF5 .ladruno recorder
 LadrunoMonitor — live SWMR-HDF5 analysis monitor (recorder Monitor; -every/-hz gated streaming)
