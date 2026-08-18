@@ -182,9 +182,16 @@ class LadrunoContactFE : public FE_Element
     // Frictionless by construction (2D friction is ADR-85 T2 -- the handler
     // refuses -mu); -visc muc (the T1b dashpot port) and -soft softScale
     // (size-safe B1 mass helpers) are live.
+    // Ladruno ADR-85 T2 -- kt/mu/consistentTan added (WORK ITEM 2/3): 2D friction is
+    // frictionless-by-default (mu<=0 short-circuits, byte-identical to the T1b lane,
+    // same short-circuit discipline as the 3D SEGMENT ctor). mu>0 wires the SCALAR
+    // return map (LadrunoFrictionKernel::returnMap1D) through getResidual/addKtToTang/
+    // addKiToTang; consistentTan selects the non-symmetric pressure-coupling cross
+    // term (ADR-85 How/5), default false ⇒ symmetric (design-gate Q2).
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, int ndm2,
                      double kn, double sigma, double Lref,
                      Node *prevFar, Node *nextFar,
+                     double kt = 0.0, double mu = 0.0, bool consistentTan = false,
                      double muc = 0.0, double softScale = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0);
     ~LadrunoContactFE();
@@ -256,8 +263,15 @@ class LadrunoContactFE : public FE_Element
     // captured, so the LIVE wedge sign is used this eval and reported through
     // *liveSideOut for the caller to commit -- the edgeGeom capture idiom).
     // Returns true only when this adapter OWNS the pair AND it is penetrating.
+    // Ladruno ADR-85 T2 -- gTout (optional, default 0): when non-null, filled with the
+    // ONE scalar tangential relative-DISPLACEMENT gT = (u_slave - Sum N_i*u_i).t_hat,
+    // t_hat = perp(n) (ADR-85 How/4), formed at the SAME xi/N/n the gap used -- one
+    // consistent contact point, mirroring segmentActive's gTvec (3D) but projected to
+    // a scalar (never stored/differenced as a componentwise 2-vector -- the T2 design
+    // note's BINDING requirement; see LadrunoFrictionKernel.h's file-level note).
     bool segment2DActive(double &gap, double n[3], double N[2], double B[6],
-                         double committedSide, double *liveSideOut) const;
+                         double committedSide, double *liveSideOut,
+                         double *gTout = 0) const;
 
     // ADR-85 T1b: the domain-committed side sign for a VERTEX pair (0 when not
     // a 2D vertex pair, no engine, or not yet captured).
@@ -268,6 +282,21 @@ class LadrunoContactFE : public FE_Element
     // with w = [1, −N_0, …, −N_nps]. consistent ⇒ include the non-symmetric d_TN⊗n.
     void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
                          const double gTeff[3], const double gpT[3], bool consistent);
+
+    // Ladruno ADR-85 T2 -- the 2D sibling of addFrictionTang: K_fric = G^T K_ss G,
+    // G = [I_2 | -N_i I_2] (the SAME scatter discipline, 2x2 identity blocks instead
+    // of 3x3). K_ss is RECONSTRUCTED here (not returned by the kernel as a matrix,
+    // since the kernel's tangentBlock1D is scalar-only by design -- WORK ITEM 1) from
+    // the two scalars the kernel DOES return:
+    //   Kss_2x2 = Kss_scalar*(t_hat (x) t_hat) + dTN_scalar*kn*(t_hat (x) n)
+    // via the chain rule through the pair's two independent local gradients:
+    // d(gTeff)/d(u_rel) = t_hat (this pair's B-operator for the tangential slip,
+    // exactly as t_hat forms gT in segment2DActive) and d(tn)/d(u_rel) = kn*n (the
+    // SAME normal B-operator the residual's tn uses). gTeff/gpT are the SCALAR slip
+    // and committed plastic slip (never 2-vectors); n/N2 are this pair's CURRENT
+    // normal + shape weights (from segment2DActive); tn = kn*<-gap>_+.
+    void addFrictionTang2D(double fact, const double n[3], const double N2[2], double tn,
+                           double gTeff, double gpT, bool consistent);
 
     // contact-review P5 — the -visc gate: true iff muc>0 AND the integrator is NOT a
     // StaticIntegrator. Trial velocities are state, not rates, under statics (a static stage
@@ -402,10 +431,27 @@ class LadrunoContactFE : public FE_Element
     // them null/0 untouched; only the 2D ctor sets them.
     double nts2dSigma   = 0.0;   // per-master-surface committed orientation (How/2 vote)
     double nts2dLref    = 0.0;   // min INITIAL master segment length (kernel relative gauge)
-    Node  *nts2dPrevFar = 0;     // previous chained segment's far node (ownership stand-
-                                 // down); null <=> the X0 side is an open terminal end
-    Node  *nts2dNextFar = 0;     // next chained segment's far node; null <=> the X1
-                                 // side is an open terminal end (end-window marker)
+    // ADR-85 T2 (D5) -- prevFar/nextFar are stored as (armed-flag, TAG) rather than a
+    // raw Node*. The far node is OUTSIDE this pair's own connectivity (the FE_Element
+    // DOF_Groups are only [slave | segNodes]), so nothing re-validates it the way the
+    // framework re-validates connectivity nodes on removal. A raw pointer captured at
+    // handle() time and held across getResidual/getTangent calls would read freed
+    // memory if that node is later removed without an intervening handle() rebuild --
+    // a genuine use-after-free, not a bookkeeping slip (the contact-review recon
+    // note). Re-resolving through theDomain by TAG on every access (see
+    // nts2dPrevFarNode/nts2dNextFarNode below) turns "the node is gone" into a clean
+    // domain->getNode()==0, which every consumer already treats as "no neighbour /
+    // open terminal end" (the null-Node* contract these fields always had) -- so a
+    // pruned far node stands the pair down to that SAME already-handled state instead
+    // of dereferencing freed memory, and contact continues on the surviving pairs.
+    bool nts2dHasPrevFar = false;   // was a predecessor armed at construction?
+    int  nts2dPrevFarTag = 0;       // its node tag (meaningless unless nts2dHasPrevFar)
+    bool nts2dHasNextFar = false;   // was a successor armed at construction?
+    int  nts2dNextFarTag = 0;       // its node tag (meaningless unless nts2dHasNextFar)
+    // live re-resolution: 0 <=> "no neighbour" (never armed OR the node no longer
+    // resolves in theDomain -- both collapse to the SAME, already-handled null case).
+    Node *nts2dPrevFarNode(void) const;
+    Node *nts2dNextFarNode(void) const;
 
     // C3.1 MORTAR friction (active in MORTAR mode when mu>0 ∨ cohesion>0 ∨ tauMax>0). epsT (the
     // tangential penalty) rides `kt`; mu reuses the friction `mu` member. cohesion/tauMax complete

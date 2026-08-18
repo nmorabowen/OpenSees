@@ -106,6 +106,7 @@ GLOBS = [
     "SRC/domain/contact/LadrunoContactDomain.*",
     "SRC/domain/contact/LadrunoContactSurface.*",
     "SRC/domain/contact/LadrunoContactKernel.h",
+    "SRC/domain/contact/LadrunoContact2DKernel.h",   # ADR-85 T1a header; GLOBS debt discharged in T2
     "SRC/domain/contact/LadrunoContactProjection.h",
     "SRC/domain/contact/LadrunoFrictionKernel.h",
     "SRC/domain/contact/LadrunoMortarKernel.h",
