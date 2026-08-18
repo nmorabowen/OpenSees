@@ -273,11 +273,43 @@ adjacent segment normals — never re-derived from the current position (the
 ADR-57 committed-sign lesson: a position-derived sign flips exactly while
 interpenetrating); and (b) **shared-vertex ownership dedup**: a slave node is
 owned by *either* a segment pair *or* a vertex pair per surface per step,
-never both — the two adjacent segments and their shared vertex must not
-double-count. Sliding around a convex corner hands off
-segment → vertex → segment with the normal rotating continuously through the
-wedge. G-T1a gates corner impact, slide-around-corner normal continuity, and
-the no-double-count property.
+never both. G-T1a gates corner impact, slide-around-corner normal continuity,
+and the no-double-count property.
+
+**T1a oracle corrections (2026-08-18) — the shipped kernel contract, which
+T1b wires verbatim:**
+
+1. **The rev-2 premise was inverted.** A **convex** corner's exterior wedge is
+   strictly non-penetrating (20000/20000 random wedge points, `gap > 0`,
+   cross-checked against a half-plane material test), so a convex vertex pair
+   **never carries force**; the convex corner's *interior* is covered twice by
+   the adjacent segment strips — a double-count, handled by ownership, not a
+   hole. The real hole is **concave (re-entrant)**: no exterior wedge exists,
+   and the material-side region behind the corner is refused by *both*
+   adjacent segments while being entirely penetrating — an unowned arc of
+   length `R·|turn|` at penetration depth R (19.7% of a sweep path at
+   R = 0.25, scaling linearly). **The handler instantiates vertex pairs at
+   concave corners only.**
+2. **Ownership is an ordered rule, not the slacked XOR.** "Segment in-bounds
+   XOR wedge" is algebraically right but not floating-point closable:
+   `xi_prev − 1` resolves an overshoot only to ulp(1) while the wedge
+   predicate resolves it exactly (measured disagreement 1.15e-15 parametric,
+   5.2 ulp; a 16400-station seam scan gave the XOR 80 double-owners and 1
+   zero-owner; no tolerance closes a resolution mismatch). Shipped rule
+   (ADR-57 E7 style): **segment precedence in surface order, then the
+   unslacked vertex claim (`aPrev > 0 && aNext < 0`), else no owner** — total
+   and unique over the full scan; in the seam overlap both candidates are the
+   same contact (relative gap difference ≤ 1.7e-14, normal disagreement
+   within its analytic `atan(tolIn·L/|gap|)` bound).
+3. **The vertex side sign** comes from the adjacent-normal **bisector**, with
+   the conditioning gate on `|r|` alone — NOT `|r|·|bis|`, because the
+   bisector is a cancelling sum of unit vectors carrying ~eps *absolute*
+   noise (the scaled gate produced 707 wrong signs in 48902 wedge hits; the
+   `|r|` gate produced 0). `sign((xs−Xv)·n_prev)` is valid only for turns
+   ≤ 90° and is not used.
+4. The 2D B-operators FD-gate as the **exact** first variation of the gap
+   (the `∂n/∂u`, `∂ξ/∂u` contributions cancel identically in 2D) — this is
+   the proof behind §How/5 keeping `kn·BᵀB` as the main term.
 
 Shape functions `N = [1−ξ*, ξ*]`; segment B-operator over `[slave | X₀ | X₁]`:
 
@@ -655,11 +687,12 @@ stride in shipped 3D staging that still converges).
 > is authoritative either way.
 
 > [!question]
-> **Vertex-policy sign robustness.** The committed side-sign for vertex pairs
-> (§How/1) is designed from the wedge of adjacent segment normals; a
-> *concave* corner's wedge is exterior — T1a must decide whether concave
-> vertices simply never activate (the adjacent segments cover them) or need
-> their own rule. The oracle settles it.
+> ~~**Vertex-policy sign robustness / concave activation.**~~ **ANSWERED by
+> the T1a oracle (2026-08-18), with the rev-2 premise inverted** — see the
+> T1a corrections block in §How/1: convex vertex pairs never carry force,
+> concave corners are the real hole and the only vertex pairs the handler
+> instantiates; ownership is the ordered rule; the side sign is the
+> `|r|`-gated bisector.
 
 > [!question]
 > **Does the T0 rigid-plane acceptance find real 2D bugs?** The lane appears
@@ -723,5 +756,19 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
 
 ## Implementation log
 
-*(filled in as phases execute; per-phase design notes go to
-`_adr85_t*_design.md` if a phase needs one)*
+- **T0 shipped** (PR #749, 2026-08-18): declarations + guards + rigid-plane
+  acceptance + `contact_dump.py`. Gates: dump bit-identical pre/post (twice),
+  battery 121/121, T0 suite 13/13 (8-row refusal matrix + control + 5
+  rigid-plane tests). 8-angle review: 10 findings — 7 fixed in-PR, 1
+  disclosed over-refusal, 2 deferred to T1b by name. Review also caught (and
+  the test matrix now locks) the cross-surface dimension hole in the first
+  C++ cut.
+- **T1a shipped** (2026-08-18): `LadrunoContact2DKernel.h` (header-only, no
+  TU includes it ⇒ build byte-identical by construction) +
+  `proto_t1_nts2d.py` (95/95) + `t1a_cpp_check.cpp` (44/44); 190600-record
+  C++↔numpy parity **bit-for-bit** on every continuous field; gap validated
+  against 60-digit arithmetic (≤ 8·eps·|x|). Design corrections recorded in
+  §How/1 (concave-only vertex pairs; ordered ownership; bisector side sign).
+  Owed to T1b: add the header to `stamp_headers.py` GLOBS.
+
+*(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*
