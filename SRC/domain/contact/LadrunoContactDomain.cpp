@@ -384,7 +384,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand,
                                        double edgeMu, double edgeKt, double edgeCohesion,
                                        double edgeTauMax, bool edgeConsistentTan, double edgeSoftScale,
-                                       bool edgeAlm, double edgeAugTol)
+                                       bool edgeAlm, double edgeAugTol,
+                                       double hThickness)   // ADR-85 T3
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -417,6 +418,13 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     if (kn < 0.0 || epsN < 0.0) {
         opserr << "WARNING LadrunoContactDomain::addMortarContact() - kn/epsN must be >= 0 "
                   "(got kn " << kn << ", epsN " << epsN << ")\n";
+        return -1;
+    }
+    // ADR-85 T3 -- SS How/7: h > 0, loudly (the parser already validates this; this choke
+    // point also covers a direct API call / a stream restore).
+    if (hThickness <= 0.0) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - -thickness must be > 0 "
+                  "(got " << hThickness << ")\n";
         return -1;
     }
     // C4 — a tie is an equality bond: it has no friction cone. Refuse the combination here too (the
@@ -472,6 +480,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.edgeSoftScale = (edgeSoftScale > 0.0) ? edgeSoftScale : 0.0;  // ADR-57 E5 explicit SOFT (≤0 ⇒ off)
     m.edgeAlm = edgeAlm;                                // ADR-57 E6 one-scalar ALM (off ⇒ byte-identical)
     m.edgeAugTol = (edgeAugTol > 0.0) ? edgeAugTol : 1e-8;
+    m.hThickness = (hThickness > 0.0) ? hThickness : 1.0;   // ADR-85 T3 (guarded above; belt+braces)
     theMortarContacts.push_back(m);
     return 0;
 }
@@ -539,10 +548,13 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
 // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
 
 namespace {
-    const int LCD_FMT_VERSION  = 1;
+    const int LCD_FMT_VERSION  = 2;    // ADR-85 T3 -- BUMPED with the mortar-record growth
+                                       // below, per the protocol above (REVIEW FIX: a v1
+                                       // 37-slot stream must draw the NAMED version refusal,
+                                       // not a downstream misalignment misdiagnosis)
     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
     const int LCD_NTS_SLOTS    = 21;
-    const int LCD_MORTAR_SLOTS = 37;
+    const int LCD_MORTAR_SLOTS = 38;   // ADR-85 T3 -- +1 (hThickness), appended at the tail
     const int LCD_PLANE_SLOTS  = 12;
 }
 
@@ -633,6 +645,7 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
         v(p++) = m.edgeSoftScale;
         v(p++) = m.edgeAlm ? 1.0 : 0.0;
         v(p++) = m.edgeAugTol;
+        v(p++) = m.hThickness;   // ADR-85 T3 -- appended at the tail (field order is append-only)
     }
     for (size_t i = 0; i < theRigidPlanes.size(); i++) {
         const RigidPlane &r = theRigidPlanes[i];
@@ -727,12 +740,13 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         double eSoft = v(p++);
         bool eAlm = (v(p++) != 0.0);
         double eAugTol = v(p++);
+        double hThk = v(p++);   // ADR-85 T3 -- appended at the tail (field order is append-only)
         if (this->addMortarContact(tag, ms, ss, kn, knAuto, epsN, epsNAuto,
                                    augTol, maxAug, ngp, hasOut ? out : 0, cellFrac,
                                    mu, epsT, epsTAuto, cohesion, tauMax, cTan,
                                    isTie, muc, soft,
                                    eEdge, eKn, eKnAuto, eBand, eMu, eKt, eCoh, eTau,
-                                   eCTan, eSoft, eAlm, eAugTol) < 0)
+                                   eCTan, eSoft, eAlm, eAugTol, hThk) < 0)
             goto unpack_fail;
         theMortarContacts.back().retired = retired;
     }
