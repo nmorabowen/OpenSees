@@ -31,6 +31,7 @@
 #include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (normalOriented projection geometry)
 #include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
+#include <LadrunoContact2DKernel.h>  // Ladruno: ADR-85 T1b (2D NTS orientation vote + auto-kn normal)
 #include <LadrunoContactReemit.h>   // Ladruno: ADR-60 (finite-sliding re-emit band/metric)
 #include <LadrunoContactNormalField.h> // Ladruno: ADR-63 #4a (nodal-normal smoothing status/build)
 #include <LadrunoEdgeKernel.h>       // Ladruno: ADR-57 E2 (edge-edge routing + closest point)
@@ -156,9 +157,14 @@ ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
 // (silent mis-assembly). Reporting "not yet supported" for such a deck would
 // hide a modeling error behind a roadmap message.
 // ----------------------------------------------------------------------------
+// ADR-85 T1b: the ndf == ndm == 2 EQUALITY gate, split out of
+// ladrunoContact2DLaneOk so the now-LIVE 2D NTS lane keeps the equality
+// contract (same message, same "ADR-85 ndf" literal) without the
+// not-yet-supported refusal that T1b replaces. The T3 lanes still get both,
+// through ladrunoContact2DLaneOk below.
 static bool
-ladrunoContact2DLaneOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
-                       int dim, const char *lane, const char *phase)
+ladrunoContact2DNdfOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
+                      int dim, const char *lane)
 {
     if (dim != 2)
         return true;                 // 3D (or an empty surface): shipped path, untouched
@@ -176,6 +182,17 @@ ladrunoContact2DLaneOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
             return false;
         }
     }
+    return true;
+}
+
+static bool
+ladrunoContact2DLaneOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
+                       int dim, const char *lane, const char *phase)
+{
+    if (dim != 2)
+        return true;                 // 3D (or an empty surface): shipped path, untouched
+    if (!ladrunoContact2DNdfOk(dom, ctag, s, dim, lane))
+        return false;
     opserr << "FATAL LadrunoContactHandler::handle() - contact " << ctag
            << ": contactSurface " << s->getTag() << " is 2D and the " << lane
            << " lane is NOT YET SUPPORTED in 2D -- it lands in ADR-85 " << phase
@@ -209,12 +226,22 @@ ladrunoContact2DLaneOk(Domain *dom, int ctag, const LadrunoContactSurface *s,
 // An all-3D pair returns on the first line, so the shipped path is untouched and
 // the dimension capture that feeds this is write-only (dimOut) -- no side effects.
 // ----------------------------------------------------------------------------
+// ADR-85 T1b: `lane2DLive` opts a lane's call site into the LIVE 2D path -- a
+// well-formed 2D pair then passes (after the ndf-equality gate on both
+// surfaces) instead of drawing the T0 not-yet-supported refusal, and
+// `pairDimOut` (write-only) reports the pair dimension so the caller can
+// branch. Every OTHER gate (existence, per-surface consistency, the
+// cross-dimension refusal) is shared verbatim between the live and the T0
+// modes. Defaults keep the T3 call sites byte-identical.
 static bool
 ladrunoContactPairDimOk(Domain *dom, int ctag,
                         const LadrunoContactSurface *ms, int mdim,
                         const LadrunoContactSurface *ss, int sdim,
-                        const char *lane, const char *phase)
+                        const char *lane, const char *phase,
+                        bool lane2DLive = false, int *pairDimOut = 0)
 {
+    if (pairDimOut != 0)             // ADR-85 T1b (write-only; no 3D effect)
+        *pairDimOut = (mdim == 2 || sdim == 2) ? 2 : 3;
     if (mdim == 3 && sdim == 3)
         return true;                 // the shipped 3D path, evaluated no further
     if (mdim != 0 && sdim != 0 && mdim != sdim) {
@@ -228,6 +255,13 @@ ladrunoContactPairDimOk(Domain *dom, int ctag,
                   "ABORTING (ADR-85 dimension)\n";
         return false;
     }
+    // ADR-85 T1b: a LIVE lane keeps the ndf == ndm == 2 equality contract on
+    // both (2D) surfaces and then PROCEEDS -- the not-yet-supported refusal is
+    // exactly what T1b replaces on the NTS lane. Only reachable with a 2D
+    // surface in the pair, so no 3D deck can enter.
+    if (lane2DLive)
+        return ladrunoContact2DNdfOk(dom, ctag, ms, mdim, lane) &&
+               ladrunoContact2DNdfOk(dom, ctag, ss, sdim, lane);
     // dim 0 (an empty surface) and dim 3 pass ladrunoContact2DLaneOk unchanged.
     return ladrunoContact2DLaneOk(dom, ctag, ms, mdim, lane, phase) &&
            ladrunoContact2DLaneOk(dom, ctag, ss, sdim, lane, phase);
@@ -243,13 +277,15 @@ static bool
 ladrunoContactPairPreflight(Domain *dom, int ctag,
                             const LadrunoContactSurface *ms,
                             const LadrunoContactSurface *ss,
-                            const char *lane, const char *phase)
+                            const char *lane, const char *phase,
+                            bool lane2DLive = false, int *pairDimOut = 0)
 {
     int mdim = 0, sdim = 0;
     if (!ladrunoSurfaceNodesOk(dom, ctag, ms, &mdim) ||
         !ladrunoSurfaceNodesOk(dom, ctag, ss, &sdim))
         return false;
-    return ladrunoContactPairDimOk(dom, ctag, ms, mdim, ss, sdim, lane, phase);
+    return ladrunoContactPairDimOk(dom, ctag, ms, mdim, ss, sdim, lane, phase,
+                                   lane2DLive, pairDimOut);
 }
 
 // ----------------------------------------------------------------------------
@@ -330,6 +366,59 @@ ladrunoResolveAutoKn(Domain *theDomain, Node **segNodes, int nps,
         return (kn > 0.0) ? kn : -1.0;
     }
     return -1.0;   // no owning solid element found for this segment
+}
+
+// ADR-85 T1b -- the 2D sibling of ladrunoResolveAutoKn (ADR-85 Where: auto-kn
+// "needs more than the advertised 3*nn -> ndm*nn generalization"). Same LS-DYNA
+// element-stiffness reduction kn = f_si * mean_over_seg_nodes(n^T K_block n),
+// with (a) the 2-DOF/node owning-solid gate (getNumDOF() == 2*nn -- the fork's
+// plane-element family), (b) 2x2 nodal stiffness blocks, and (c) the KERNEL's
+// segment normal in place of the tri/quad-only
+// LadrunoContactProjection::normalOriented: n = sigma*perp(t)/L at the REFERENCE
+// segment (LadrunoContact2DKernel::perp2; sigma is the per-surface How/2 vote,
+// already resolved by the caller, so the 3D resolver's ambiguous-orientation
+// failure path is structurally absent here -- and n^T K n is sign-independent
+// anyway). Returns <= 0 on failure (degenerate segment / no owning 2-DOF solid /
+// bad K size); callers convert that to the same FATAL the 3D lane uses.
+static double
+ladrunoResolveAutoKn2D(Domain *theDomain, Node **segNodes, double sigma)
+{
+    const double F_SI = 0.10;
+    if (segNodes[0] == 0 || segNodes[1] == 0) return -1.0;
+    const Vector &XA = segNodes[0]->getCrds();
+    const Vector &XB = segNodes[1]->getCrds();
+    const double t[2] = { XB(0) - XA(0), XB(1) - XA(1) };
+    const double L = std::sqrt(t[0]*t[0] + t[1]*t[1]);
+    if (!(L > 0.0)) return -1.0;                       // zero-length reference segment
+    double p[2];
+    LadrunoContact2DKernel::perp2(t, p);
+    const double n[2] = { sigma * p[0] / L, sigma * p[1] / L };
+    int segTags[2] = { segNodes[0]->getTag(), segNodes[1]->getTag() };
+    ElementIter &theEle = theDomain->getElements();
+    Element *e;
+    while ((e = theEle()) != 0) {
+        const ID &en = e->getExternalNodes();
+        int nn = en.Size();
+        if (nn <= 0 || e->getNumDOF() != 2 * nn) continue;   // not a 2-DOF/node solid
+        int loc[2]; bool allIn = true;
+        for (int k = 0; k < 2; k++) {
+            loc[k] = en.getLocation(segTags[k]);
+            if (loc[k] < 0) { allIn = false; break; }
+        }
+        if (!allIn) continue;
+        const Matrix &K = e->getInitialStiff();
+        if (K.noRows() != 2 * nn || K.noCols() != 2 * nn) return -1.0;
+        double acc = 0.0;
+        for (int k = 0; k < 2; k++) {
+            int c = 2 * loc[k];
+            double Kn0 = K(c + 0, c + 0) * n[0] + K(c + 0, c + 1) * n[1];
+            double Kn1 = K(c + 1, c + 0) * n[0] + K(c + 1, c + 1) * n[1];
+            acc += n[0] * Kn0 + n[1] * Kn1;
+        }
+        double kn = F_SI * acc / 2.0;
+        return (kn > 0.0) ? kn : -1.0;
+    }
+    return -1.0;   // no owning 2-DOF/node solid element found for this segment
 }
 
 // B1 (P4) — build the ASSEMBLED translational nodal-mass cache the SOFT=1 penalty needs. The explicit
@@ -805,6 +894,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         cd->frictionGCBegin();
         cd->clearReemit();   // ADR-60: drop last epoch's re-emit anchors (re-registered per opted-in contact below)
         cd->clearNormalFields();  // ADR-63 #4a: drop last handle's nodal-normal fields (rebuilt per opted-in contact below)
+        cd->clearVtx2DSide();     // ADR-85 T1b: vertex side signs are per-PAIRING-EPOCH state (sigma is
+                                  // fixed at pairing and re-derived on re-pairing, How/2); a 3D deck's
+                                  // map is always empty, so this is a no-op there.
 
         // P3 cross-contact shared-slave warning: a slave node in two contacts' slave
         // sets gets two adapters → double traction (a modeling error the engine can't
@@ -847,23 +939,473 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 return ladrunoContactFatal();
             }
             int nps = ms->getNodesPerSeg();
-            // ADR-85 T0 -- a 2D declaration (nps == 2 over 2D nodes) is now legal at
-            // the parser, so it arrives here with the 2D NTS wiring not yet built.
-            // Catch it BEFORE the shipped 3/4-arity refusal so the message names the
-            // ADR and the phase instead of reading as a generic "unsupported". A 3D
-            // contact carries nps 3 or 4 and never enters this block.
-            if (nps == 2) {
-                // The pre-flight already ends in the pair-dimension gate and then the
-                // per-surface lane gates, so a genuinely 2D pair is refused by name
-                // here and a 2D-master/3D-slave-set pair gets the cross-dimension
-                // message rather than a misleading "wait for T1b". Nothing follows it
-                // ON PURPOSE: if this returns true the pair is NOT 2D (nps 2 over 3D
-                // nodes -- only reachable through a stream restore, since the parser
-                // pins arity to dimension), and the truthful message for that is the
-                // shipped arity refusal immediately below, not a 2D one.
-                if (!ladrunoContactPairPreflight(theDomain, ct.tag, ms, ss,
-                                                 "NTS node-to-segment", "T1b"))
+            // ADR-85 T1b -- the pre-flight now runs ONCE, in LIVE mode, before the
+            // arity gate: the same existence / per-surface dimension / cross-
+            // dimension / ndf-equality checks as T0 (same functions, same message
+            // text), but a well-formed all-2D pair PROCEEDS into the 2D lane below
+            // instead of drawing the T0 "lands in T1b" refusal -- that refusal is
+            // what this phase replaces, and it is the ONLY T0 message the NTS lane
+            // loses. An all-3D pair passes silently (pairDim is a write-only out)
+            // and takes the shipped path below, textually untouched. (T0's two call
+            // sites -- the nps == 2 early block and the general one after the arity
+            // gate, both closing the arity-free-slave hole -- collapse into this
+            // single earlier call; on a VALID deck all of them are silent passes,
+            // so the collapse is observable only on already-fatal decks, where at
+            // most the message ORDER changes.)
+            int pairDim = 3;
+            if (!ladrunoContactPairPreflight(theDomain, ct.tag, ms, ss,
+                                             "NTS node-to-segment", "T1b",
+                                             /*lane2DLive=*/true, &pairDim))
+                return ladrunoContactFatal();
+            if (pairDim == 2) {
+                // ==============================================================
+                // ADR-85 T1b -- the LIVE 2D NTS lane (frictionless penalty).
+                // A 3D deck CANNOT enter: pairDim == 2 requires a surface whose
+                // every node carries 2-component coordinates (pre-flight above).
+                // Everything in this block is new 2D code ending in `continue`,
+                // so the shipped 3D path below never sees a 2D node and stays
+                // textually untouched. Wired VERBATIM to the
+                // LadrunoContact2DKernel contract (How/1 + the T1a corrections):
+                // CONCAVE-only vertex pairs, ORDERED ownership (segment
+                // precedence in surface order, then the UNSLACKED vertex claim
+                // aPrev > 0 && aNext < 0 -- evaluated inside the adapters), and
+                // the bisector side sign committed at first capture. The
+                // interface-level orientation vote (How/2) replaces the 3D
+                // default's per-pair datum -- never inherited (its ridge-flip +
+                // silent-flush-drop hazards are on record).
+                // ==============================================================
+                if (nps != 2) {
+                    // only reachable through a stream restore (the parser pins
+                    // arity <-> dimension at declaration); refuse by name --
+                    // T0's parser rule, enforced again at handle() time.
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": a 2D NTS contact needs nodesPerSeg == 2 (got " << nps
+                           << "); ABORTING (ADR-85 nodesPerSeg)\n";
                     return ladrunoContactFatal();
+                }
+                // ---- capability fence: what T1b does NOT wire is refused BY
+                //      NAME, never silently ignored (the T0 discipline).
+                //      -geomtan (ct.consistentNormal) is deliberately not a
+                //      refusal: it is ACCEPTED as a no-op (see LadrunoContactFE::
+                //      addKtToTang's 2D branch) and announced once by the
+                //      WARN_2D_GEOMTAN_NOOP latch below. kt / -consistanttan
+                //      without -mu are inert in 3D and stay inert here (same
+                //      semantics, no new silence).
+                if (ct.mu > 0.0) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": 2D NTS friction (-mu) is NOT YET SUPPORTED -- it lands in "
+                              "ADR-85 T2. The frictionless 2D pair lane is live; drop -mu "
+                              "(and kt) or keep the model 3D. ABORTING (ADR-85 T2)\n";
+                    return ladrunoContactFatal();
+                }
+                if (ct.smoothNormal) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": -smoothNormal is 3D-only (ADR-63 nodal-normal smoothing is "
+                              "built on Newell facet normals) and is fenced out of the 2D "
+                              "lane; the 2D corner coverage is the vertex policy, not "
+                              "smoothing. Drop -smoothNormal. ABORTING (ADR-85 fence)\n";
+                    return ladrunoContactFatal();
+                }
+                if (ct.enableReemit) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": -reemit (finite-sliding re-emission, ADR-60) is 3D-only and "
+                              "fenced out of the 2D lane (ADR-85 not-in-scope). Drop -reemit. "
+                              "ABORTING (ADR-85 fence)\n";
+                    return ladrunoContactFatal();
+                }
+                // panel fix: -geomtan is ACCEPTED as a documented no-op in 2D,
+                // but accepted-and-SILENT hides the deferral from the user --
+                // surface it once per contact (the WARN_VTX2D_DEFER idiom).
+                if (ct.consistentNormal &&
+                    cd->warnOnce(ct.tag, LadrunoContactDomain::WARN_2D_GEOMTAN_NOOP)) {
+                    opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": -geomtan is ACCEPTED AS A NO-OP on the 2D NTS lane -- the "
+                              "2D B-operator is already the exact FIRST variation of the "
+                              "gap, and the geometric curvature term is a named deferral "
+                              "(ADR-85 How/5); the assembled tangent is kn*B^T*B with or "
+                              "without the flag.\n";
+                }
+                if (!ct.knAuto && ct.kn <= 0.0) {
+                    // the 2D twin of the shipped kn > 0 gate below (same rationale:
+                    // dead adapters are a declared contact transmitting nothing).
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": segment contact needs kn > 0 (got " << ct.kn << "); "
+                              "ABORTING (ADR-78 P1)\n";
+                    return ladrunoContactFatal();
+                }
+                const ID &mTags = ms->getNodeTags();
+                const ID &sTags = ss->getNodeTags();
+                int nSeg = mTags.Size() / 2;
+
+                // ---- Lref: the master surface's MIN INITIAL segment length ----
+                //      The kernel's caller contract: every relative gauge
+                //      (tauSeg zero-length refusal, vertexEval2D's tolLen) hangs
+                //      off it, computed ONCE per contact at handle(). Nodes
+                //      exist (pre-flight), so the derefs are safe.
+                double Lref = 0.0;
+                int    LrefBadSeg = -1;
+                for (int seg = 0; seg < nSeg; seg++) {
+                    const Vector &A = theDomain->getNode(mTags(2 * seg))->getCrds();
+                    const Vector &Bc = theDomain->getNode(mTags(2 * seg + 1))->getCrds();
+                    double dx = Bc(0) - A(0), dy = Bc(1) - A(1);
+                    double L = std::sqrt(dx * dx + dy * dy);
+                    if (!(L > 0.0)) { LrefBadSeg = seg; break; }
+                    if (Lref <= 0.0 || L < Lref) Lref = L;
+                }
+                if (nSeg <= 0 || LrefBadSeg >= 0 || !(Lref > 0.0)) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": 2D master surface " << ct.masterSurfTag;
+                    if (nSeg <= 0)
+                        opserr << " has no segments";
+                    else
+                        opserr << " segment " << LrefBadSeg << " has zero reference length "
+                                  "(the kernel's relative zero-length gauge Lref would be "
+                                  "disabled)";
+                    opserr << "; ABORTING (ADR-85 T1b)\n";
+                    return ladrunoContactFatal();
+                }
+
+                // ---- CHAIN-INTEGRITY scan (panel MAJOR fix) ------------------
+                //      Surface order is the 2D adjacency contract: the ordered-
+                //      ownership stand-down and the concave vertex pairs key off
+                //      CONSECUTIVE head-to-tail links. That contract was
+                //      previously assumed, not validated -- a permuted listing
+                //      reproduces the exact T1a double-owner closed form, and a
+                //      reversed one silently disarms BOTH the stand-down and the
+                //      vertex pairs (probe-confirmed). O(nSeg) rule: a node tag
+                //      shared by two segments is legal ONLY as segment k's
+                //      SECOND node and segment (k+1)%nSeg's FIRST node (the
+                //      wrap covers a closed loop); any other sharing (permuted /
+                //      reversed / forked / >2 uses) is a named FATAL.
+                {
+                    std::map<int, std::vector<std::pair<int, int> > > occ;
+                    for (int seg = 0; seg < nSeg; seg++) {
+                        occ[mTags(2 * seg)].push_back(std::make_pair(seg, 0));
+                        occ[mTags(2 * seg + 1)].push_back(std::make_pair(seg, 1));
+                    }
+                    for (std::map<int, std::vector<std::pair<int, int> > >::const_iterator
+                             it = occ.begin(); it != occ.end(); ++it) {
+                        const std::vector<std::pair<int, int> > &v = it->second;
+                        if (v.size() <= 1) continue;         // terminal / unshared
+                        bool okLink = false;
+                        if (v.size() == 2 && v[0].second != v[1].second) {
+                            int tailSeg = (v[0].second == 1) ? v[0].first : v[1].first;
+                            int headSeg = (v[0].second == 1) ? v[1].first : v[0].first;
+                            if (nSeg > 1 && headSeg == (tailSeg + 1) % nSeg)
+                                okLink = true;
+                        }
+                        if (!okLink) {
+                            opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                                   << ct.tag << ": 2D master surface " << ct.masterSurfTag
+                                   << " node " << it->first << " is shared by segments "
+                                   << v[0].first << " and " << v[1].first
+                                   << " without being a consecutive head-to-tail link "
+                                      "(segment k's SECOND node must be segment k+1's "
+                                      "FIRST node in declaration order; a closed loop "
+                                      "wraps last-to-first). Surface order is the 2D "
+                                      "adjacency contract -- the ownership stand-down and "
+                                      "the concave vertex pairs key off it, and a "
+                                      "permuted/reversed/forked listing would silently "
+                                      "re-open the corner double-count. Re-order and "
+                                      "re-wind the master segment list head-to-tail. "
+                                      "ABORTING (ADR-85 chain integrity)\n";
+                            return ladrunoContactFatal();
+                        }
+                    }
+                }
+
+                // ---- the INTERFACE-LEVEL orientation vote (How/2) ------------
+                //      ONE sigma per master surface, from the reference config:
+                //      refDir = the explicit -outward (2 components -- the T1b
+                //      parser branch) or the slave-surface reference centroid
+                //      minus the master-surface reference centroid over UNIQUE
+                //      master nodes (the flat mTags double-counts shared
+                //      vertices -- the smoothSeed lesson). Every segment votes
+                //      sigmaFromRef2D(t_ref, refDir); the vote must be UNANIMOUS
+                //      among nonzero voters. Degenerate (no voter) or split =>
+                //      named FATAL -- refuse, never guess: the shipped 3D
+                //      default silently DROPS a flush pair, and that silence is
+                //      exactly what this vote replaces. sigma is FIXED at
+                //      pairing; handle() re-runs (re-pairing) re-derive it.
+                double refDir[2] = { 0.0, 0.0 };
+                if (ct.hasOutward) {
+                    refDir[0] = ct.outward[0]; refDir[1] = ct.outward[1];
+                } else {
+                    double mc2[2] = { 0.0, 0.0 }; int mcn = 0;
+                    std::set<int> mseen;
+                    for (int i = 0; i < mTags.Size(); i++) {
+                        if (mseen.count(mTags(i))) continue;
+                        mseen.insert(mTags(i));
+                        const Vector &X = theDomain->getNode(mTags(i))->getCrds();
+                        mc2[0] += X(0); mc2[1] += X(1); mcn++;
+                    }
+                    double sc2[2] = { 0.0, 0.0 }; int scn = 0;
+                    for (int i = 0; i < sTags.Size(); i++) {
+                        const Vector &X = theDomain->getNode(sTags(i))->getCrds();
+                        sc2[0] += X(0); sc2[1] += X(1); scn++;
+                    }
+                    if (mcn > 0 && scn > 0) {
+                        refDir[0] = sc2[0] / scn - mc2[0] / mcn;
+                        refDir[1] = sc2[1] / scn - mc2[1] / mcn;
+                    }
+                }
+                // ADR-85 T1b panel BLOCKER fix -- the MAGNITUDE gate on the
+                // CENTROID datum. sigmaFromRef2D's angle gate is scale-
+                // invariant, so a flush deck seeded 1e-8 into penetration hands
+                // the vote refDir = (0, -1e-8) and it resolves CONFIDENTLY to
+                // the wrong side: every pair inert, ladrunoContactForce == 0,
+                // the run converges -- silent-nothing through the very
+                // mechanism built to prevent it (probe-confirmed). A centroid
+                // datum shorter than 1e-6*Lref is separation NOISE, not a side:
+                // route it into the degenerate-vote FATAL below. An explicit
+                // -outward keeps the angle-only gate -- a user direction of any
+                // magnitude is a deliberate input (normalized use only).
+                bool voteMagOk = true;
+                if (!ct.hasOutward) {
+                    const double magFloor = 1.0e-6 * Lref;
+                    voteMagOk = (refDir[0] * refDir[0] + refDir[1] * refDir[1] >
+                                 magFloor * magFloor);
+                }
+                int votePlus = 0, voteMinus = 0;
+                for (int seg = 0; seg < nSeg; seg++) {
+                    const Vector &A = theDomain->getNode(mTags(2 * seg))->getCrds();
+                    const Vector &Bc = theDomain->getNode(mTags(2 * seg + 1))->getCrds();
+                    const double t[2] = { Bc(0) - A(0), Bc(1) - A(1) };
+                    double sg = LadrunoContact2DKernel::sigmaFromRef2D(t, refDir);
+                    if (sg > 0.0) votePlus++;
+                    else if (sg < 0.0) voteMinus++;
+                }
+                if ((votePlus == 0 && voteMinus == 0) || !voteMagOk) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": the 2D interface orientation vote is DEGENERATE -- "
+                           << (ct.hasOutward
+                                   ? "the given -outward direction is zero or (numerically) "
+                                     "tangent to every master segment"
+                                   : "the reference-config centroid vote (slave-surface "
+                                     "centroid minus master-surface centroid) is zero or "
+                                     "tangent to every master segment (a flush/coincident "
+                                     "interface)")
+                           << ". The outward side is genuinely ambiguous and is never "
+                              "guessed: pass -outward ox oy with a component along the "
+                              "expected contact normal. ABORTING (ADR-85 T1b orientation "
+                              "vote)\n";
+                    return ladrunoContactFatal();
+                }
+                if (votePlus > 0 && voteMinus > 0) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": the 2D interface orientation vote SPLIT (" << votePlus
+                           << " master segments vote +1, " << voteMinus << " vote -1) -- "
+                              "the master surface is strongly curved or inconsistently "
+                              "wound, so ONE per-surface sigma cannot orient it. Re-wind "
+                              "the master segments consistently, split the surface into "
+                              "separately declared contacts, or pass -outward ox oy. "
+                              "ABORTING (ADR-85 T1b orientation vote)\n";
+                    return ladrunoContactFatal();
+                }
+                const double sigma = (votePlus > 0) ? 1.0 : -1.0;
+
+                // ---- CONCAVE-vertex candidates (How/1, the T1a decision) -----
+                //      Vertices shared by CONSECUTIVE segments in surface order
+                //      (mTags(2i+1) == mTags(2(i+1)), with wrap-around so a
+                //      closed loop gets its seam vertex too). Turn sign from
+                //      sigma at the REFERENCE config; only CONCAVE (turnSin > 0
+                //      == C2D_CONCAVE) corners get a vertex pair -- the T1a
+                //      oracle proved a convex vertex pair can NEVER carry force
+                //      (its wedge is strictly exterior) while the concave wedge
+                //      is the real, entirely-penetrating coverage hole.
+                //      SURFACE ORDER IS THE ADJACENCY CONTRACT, and the chain-
+                //      integrity scan above ENFORCES it: non-consecutive sharing
+                //      is refused by name rather than silently disarming the
+                //      stand-down and the vertex pairs -- which, with the
+                //      open-end acceptance window, would be an OVERLAP (a
+                //      double-count), not a hole.
+                struct LadrunoVtx2D {
+                    int segPrev, segNext;              // adjacent segment ordinals
+                    Node *prevFar, *vtx, *nextFar;     // X_prev0, Xv, X_next1
+                };
+                std::vector<LadrunoVtx2D> vtx2d;
+                for (int seg = 0; nSeg >= 2 && seg < nSeg; seg++) {
+                    int nxt = (seg + 1) % nSeg;
+                    if (nxt == seg) break;
+                    if (mTags(2 * seg + 1) != mTags(2 * nxt)) continue;  // not chained here
+                    Node *pF = theDomain->getNode(mTags(2 * seg));
+                    Node *vN = theDomain->getNode(mTags(2 * seg + 1));
+                    Node *nF = theDomain->getNode(mTags(2 * nxt + 1));
+                    const Vector &XP = pF->getCrds();
+                    const Vector &XV = vN->getCrds();
+                    const Vector &XN = nF->getCrds();
+                    const double tPrev[2] = { XV(0) - XP(0), XV(1) - XP(1) };
+                    const double tNext[2] = { XN(0) - XV(0), XN(1) - XV(1) };
+                    // sign(turn) == the kernel's CornerType seen from the contact
+                    // side (normalization dropped -- a sign-only decision).
+                    double turn = sigma * (tPrev[0] * tNext[1] - tPrev[1] * tNext[0]);
+                    if (turn > 0.0) {                  // C2D_CONCAVE
+                        LadrunoVtx2D v;
+                        v.segPrev = seg; v.segNext = nxt;
+                        v.prevFar = pF; v.vtx = vN; v.nextFar = nF;
+                        vtx2d.push_back(v);
+                    }
+                }
+
+                // ---- broad phase: the STRIDE-3 bucket grid, z = 0 padded -----
+                //      LadrunoContactBucketSort stays stride-3 and is reused
+                //      UNTOUCHED (ADR-85 Where); the handler feeds it the 2D
+                //      reference coords with the third component pinned to 0 --
+                //      its degenerate-axis handling collapses NZ to 1. Nodes
+                //      exist (pre-flight), so the shipped missing-node backfill
+                //      idiom is unnecessary here.
+                std::vector<double> segCoords((size_t)nSeg * 2 * 3, 0.0);
+                for (int seg = 0; seg < nSeg; seg++) {
+                    double *S = &segCoords[(size_t)seg * 2 * 3];
+                    for (int k = 0; k < 2; k++) {
+                        const Vector &X = theDomain->getNode(mTags(seg * 2 + k))->getCrds();
+                        S[k * 3 + 0] = X(0); S[k * 3 + 1] = X(1); S[k * 3 + 2] = 0.0;
+                    }
+                }
+                LadrunoContactBucketSort::Grid grid(nSeg, 2, segCoords.data(),
+                                                    ct.cellFrac, 1.0);
+                std::vector<int> cand(nSeg);
+
+                // ---- per-slave pair loop -------------------------------------
+                //      Ownership note (the panel's checklist question): the
+                //      handler builds ONE stateless adapter per (slave, candidate
+                //      segment) and per (slave, near concave vertex); the
+                //      per-slave ORDERED-OWNERSHIP decision itself is evaluated
+                //      at the TRIAL config inside LadrunoContactFE::
+                //      segment2DActive on every residual/tangent evaluation --
+                //      it cannot live at this loop level because ownership moves
+                //      with the trial configuration between two handle() calls.
+                //      This loop's job is to ARM it: each segment adapter gets
+                //      its surface-order predecessor's far node, each vertex
+                //      adapter its two adjacent far nodes.
+                for (int si = 0; si < sTags.Size(); si++) {
+                    Node *sn = theDomain->getNode(sTags(si));
+                    if (sn == 0 || sn->getNumberDOF() != 2) {
+                        // the 2D twin of the shipped != 3 backstop (the
+                        // pre-flight's ndf-equality gate already refused this;
+                        // keep the same defense-in-depth the 3D loop has).
+                        opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
+                               << " slave node " << sTags(si) << " ndf="
+                               << (sn != 0 ? sn->getNumberDOF() : 0)
+                               << " != 2; ABORTING (2D NTS is 2D translational -- ADR-85 "
+                                  "ndf equality contract)\n";
+                        return ladrunoContactFatal();
+                    }
+                    const Vector &Xs0 = sn->getCrds();
+                    double slavePt[3] = { Xs0(0), Xs0(1), 0.0 };
+                    int nCand = grid.candidates(slavePt, cand.data());
+                    for (int ci = 0; ci < nCand; ci++) {
+                        int seg = cand[ci];
+                        Node *segNodes[2];
+                        // panel fix: a bool sentinel, NOT `badTag != 0` -- node
+                        // tag 0 is legal in OpenSees, and the tag-keyed idiom
+                        // would silently skip the refusal for it.
+                        bool badNode = false;
+                        int badTag = 0, badNdf = 0;
+                        for (int k = 0; k < 2; k++) {
+                            Node *mn = theDomain->getNode(mTags(seg * 2 + k));
+                            if (mn == 0 || mn->getNumberDOF() != 2) {
+                                badNode = true;
+                                badTag = mTags(seg * 2 + k);
+                                badNdf = (mn != 0) ? mn->getNumberDOF() : -1;
+                                break;
+                            }
+                            segNodes[k] = mn;
+                        }
+                        if (badNode) {
+                            opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                                   << ct.tag << " master segment " << seg << " node "
+                                   << badTag << ": ndf=" << badNdf
+                                   << " != 2 (or node absent); ABORTING (2D NTS master "
+                                      "segments are 2D translational -- ADR-85 ndf "
+                                      "equality contract)\n";
+                            return ladrunoContactFatal();
+                        }
+                        double knUse = ct.kn;
+                        if (ct.knAuto) {
+                            knUse = ladrunoResolveAutoKn2D(theDomain, segNodes, sigma);
+                            if (knUse <= 0.0) {
+                                opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                                       << ct.tag << " slave node " << sTags(si) << " segment "
+                                       << seg << ": -kn auto could not size a penalty (no "
+                                          "owning 2-DOF/node solid element / degenerate "
+                                          "segment); ABORTING (ADR-78 P1). Give an explicit "
+                                          "-kn, or ensure the master segment's plane element "
+                                          "is in the model.\n";
+                                return ladrunoContactFatal();
+                            }
+                        }
+                        // the PREDECESSOR segment in surface order (shares this
+                        // segment's first node): its far node arms the adapter's
+                        // ordered-ownership stand-down (kernel rule step 1 -- the
+                        // previous segment owns whenever IT projects the slave
+                        // in-bounds). No chained predecessor => no stand-down,
+                        // and the X0 side is an OPEN TERMINAL end. The SUCCESSOR
+                        // far node mirrors it for the X1 side: non-null <=>
+                        // chained (strict seam); null <=> an open end, where the
+                        // adapter applies the NTS2D_END_SLACK acceptance window
+                        // (the tilt-drift discontinuity fix -- see
+                        // LadrunoContactFE::segment2DActive).
+                        Node *prevFar = 0, *nextFarSeg = 0;
+                        if (nSeg > 1) {
+                            int prv = (seg + nSeg - 1) % nSeg;
+                            if (prv != seg && mTags(2 * prv + 1) == mTags(2 * seg))
+                                prevFar = theDomain->getNode(mTags(2 * prv));
+                            int nx2 = (seg + 1) % nSeg;
+                            if (nx2 != seg && mTags(2 * seg + 1) == mTags(2 * nx2))
+                                nextFarSeg = theDomain->getNode(mTags(2 * nx2 + 1));
+                        }
+                        LadrunoContactFE *fe = new LadrunoContactFE(
+                            numFe++, sn, segNodes, /*nps=*/2, /*ndm2=*/2, knUse,
+                            sigma, Lref, prevFar, nextFarSeg,
+                            ct.muc,        // T1b SEGMENT dashpot port (0 => off)
+                            ct.softScale,  // B1 SOFT=1 (free in 2D: size-safe mass helpers)
+                            theDomain, ct.tag, seg);
+                        if (fe == 0) return -5;
+                        theModel->addFE_Element(fe);
+                    }
+                    // one VERTEX adapter per (slave, concave vertex) whose
+                    // adjacent segments are broad-phase candidates of this slave
+                    // (superset-preserving: the vertex lies on both segments, so
+                    // any slave near the vertex has at least one of them in its
+                    // 27-neighbour candidate set). segIndex = nSeg + segPrev
+                    // keys the force snapshot / side-sign state uniquely and
+                    // rebuild-stably (disjoint from the real segment ordinals).
+                    for (size_t vi = 0; vi < vtx2d.size(); vi++) {
+                        const LadrunoVtx2D &v = vtx2d[vi];
+                        bool nearV = false;
+                        for (int ci = 0; ci < nCand && !nearV; ci++)
+                            if (cand[ci] == v.segPrev || cand[ci] == v.segNext)
+                                nearV = true;
+                        if (!nearV) continue;
+                        double knV = ct.kn;
+                        if (ct.knAuto) {
+                            // size the vertex penalty from the PREVIOUS adjacent
+                            // segment (deterministic; both segments share Xv).
+                            Node *prevSeg[2] = { v.prevFar, v.vtx };
+                            knV = ladrunoResolveAutoKn2D(theDomain, prevSeg, sigma);
+                            if (knV <= 0.0) {
+                                opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                                       << ct.tag << " slave node " << sTags(si)
+                                       << " concave vertex node " << v.vtx->getTag()
+                                       << ": -kn auto could not size the vertex-pair penalty "
+                                          "(no owning 2-DOF/node solid element on the "
+                                          "adjacent segment); ABORTING (ADR-78 P1). Give an "
+                                          "explicit -kn.\n";
+                                return ladrunoContactFatal();
+                            }
+                        }
+                        Node *vNodes[1] = { v.vtx };
+                        LadrunoContactFE *fe = new LadrunoContactFE(
+                            numFe++, sn, vNodes, /*nps=*/1, /*ndm2=*/2, knV,
+                            sigma, Lref, v.prevFar, v.nextFar,
+                            ct.muc, ct.softScale, theDomain, ct.tag,
+                            /*segIndex=*/nSeg + v.segPrev);
+                        if (fe == 0) return -5;
+                        theModel->addFE_Element(fe);
+                    }
+                }
+                continue;   // 2D contact done -- the shipped 3D code below never sees it
             }
             if (nps < 3 || nps > 4) {
                 opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
@@ -871,16 +1413,6 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                           "ABORTING (ADR-78 P1)\n";
                 return ladrunoContactFatal();
             }
-            // ADR-78 P1 (missing / bad-dimension node) + ADR-85 T0 (the arity-free
-            // hole): `ss` is a SLAVE_NODES set with no nodesPerSeg, so the `nps == 2`
-            // block above cannot see its dimension -- a 3D master paired with an all-2D
-            // slave node-set reaches here with both per-surface pre-flights passing.
-            // The pair is gated before ANY of the 3D geometry below (the
-            // auto-orientation centroid loops and the per-slave
-            // `slavePt[3] = {Xs0(0), Xs0(1), Xs0(2)}` read) touches a 2D node.
-            if (!ladrunoContactPairPreflight(theDomain, ct.tag, ms, ss,
-                                             "NTS node-to-segment", "T1b"))
-                return ladrunoContactFatal();
             if (!ct.knAuto && ct.kn <= 0.0) {
                 // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
                 // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert —

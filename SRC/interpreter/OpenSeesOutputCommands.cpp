@@ -837,13 +837,71 @@ static int ladrunoContactImpl()
             if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeAugTol - need a value\n"; return -1; }
             edgeAugTol = v[0];
         } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
-            double o[3]; int m = 3;
-            if (OPS_GetDoubleInput(&m, o) < 0) {
-                opserr << "WARNING contact -outward - need ox oy oz\n";
-                return -1;
+            // Ladruno ADR-85 T1b -- the -outward ARITY follows the referenced
+            // surfaces' node dimension: the 2-component read ONLY when EVERY
+            // resolvable referenced surface is 2D (and at least one resolves);
+            // the shipped 3-double read otherwise. The dimension ORACLE is the
+            // referenced surfaces' node coordinates (the contactSurface/
+            // contactPlane oracle, ADR-85 How/8 -- never OPS_GetNDM()). BOTH
+            // surfaces are peeked (panel fix: committing on the FIRST
+            // resolvable one made a 2D-master + 3D-slave deck read 2 components
+            // and die on a generic token error) -- on disagreement, or any 3D
+            // surface, the shipped 3-read runs verbatim and the pair-level
+            // cross-dimension FATAL fires at handle() with its own name. When
+            // NEITHER surface resolves, the 3-read is assumed and, if it then
+            // fails, one clarifying line names the actual problem (declare the
+            // contactSurface first -- the contactPlane T0 pattern).
+            int owDim = 3;
+            bool owHaveSurf = false;
+            {
+                Domain *dPeek = OPS_GetDomain();
+                LadrunoContactDomain *cdPeek =
+                    (dPeek != 0) ? dPeek->getLadrunoContactDomain() : 0;
+                bool owAll2d = true;
+                for (int sTry = 0; sTry < 2; sTry++) {
+                    LadrunoContactSurface *spk =
+                        (cdPeek != 0) ? cdPeek->getSurface(idata[1 + sTry]) : 0;
+                    if (spk == 0) continue;
+                    const ID &stg = spk->getNodeTags();
+                    for (int i = 0; i < stg.Size(); i++) {
+                        Node *nd = (dPeek != 0) ? dPeek->getNode(stg(i)) : 0;
+                        if (nd != 0) {
+                            owHaveSurf = true;
+                            if (nd->getCrds().Size() != 2)
+                                owAll2d = false;
+                            break;
+                        }
+                    }
+                }
+                if (owHaveSurf && owAll2d)
+                    owDim = 2;
             }
-            outward[0] = o[0]; outward[1] = o[1]; outward[2] = o[2];
-            hasOutward = true;
+            if (owDim == 2) {
+                double o[2]; int m = 2;
+                if (OPS_GetDoubleInput(&m, o) < 0) {
+                    opserr << "WARNING contact -outward - need ox oy (the referenced "
+                              "surfaces are 2D. ADR-85)\n";
+                    return -1;
+                }
+                outward[0] = o[0]; outward[1] = o[1]; outward[2] = 0.0;
+                hasOutward = true;
+            } else {
+                double o[3]; int m = 3;
+                if (OPS_GetDoubleInput(&m, o) < 0) {
+                    opserr << "WARNING contact -outward - need ox oy oz\n";
+                    // Ladruno ADR-85 T1b: only when the dimension could not be
+                    // resolved -- say what is actually wrong instead of naming a
+                    // layout the user may never have written.
+                    if (!owHaveSurf)
+                        opserr << "  (contact " << idata[0] << ": neither referenced "
+                                  "contactSurface is defined yet, so the 3-component 3D "
+                                  "form is assumed; declare the contactSurfaces BEFORE "
+                                  "contact for the 2-component 2D form. ADR-85)\n";
+                    return -1;
+                }
+                outward[0] = o[0]; outward[1] = o[1]; outward[2] = o[2];
+                hasOutward = true;
+            }
         } else if (opt != 0 && strcmp(opt, "-cell") == 0) {
             // Ladruno ADR-39 P2.5: broad-phase cell-size scale (median seg diag).
             // A huge value => 1 bucket => every segment a candidate = brute force.

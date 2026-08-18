@@ -9,9 +9,28 @@ WHAT THIS FILE IS
 
     EXPECTED STATE: every refusal test here FAILS before ADR-85 T0-C lands and
     PASSES after.  That is the point -- the tests are the specification T0-C is
-    written against.  The one PASSING control (the last test) is the falsifier
-    on the falsifiers: it proves the guards refuse the unsupported cases rather
-    than refusing everything 2D.
+    written against.  The PASSING controls are the falsifiers on the falsifiers:
+    they prove the guards refuse the unsupported cases rather than refusing
+    everything 2D.
+
+ROW COUNT (keep this in sync with the REFUSALS dict below)
+    SIX refusal rows + TWO acceptance rows = eight tests.
+
+    The matrix shrank by one at T1b.  T0 shipped a SEVENTH refusal row,
+    `pair_2d_not_yet_supported`: a well-formed all-2D NTS pair had to be refused
+    by name pointing at T1b, because T0-C opened the DECLARATION path while the
+    FE SEGMENT 2D construction path did not exist yet.  T1b built that path, so
+    the row inverted: the same deck is now the `pair_2d_now_live` ACCEPTANCE row
+    (`test_pair_2d_now_live`), which asserts the pair does not merely run but
+    TRANSMITS FORCE -- because "assembles and transmits nothing" is precisely
+    the ADR-78 P0 failure the retired refusal existed to foreclose, and retiring
+    a refusal without replacing its guarantee would have re-opened it.
+
+    The mortar row (`mortar_2d_not_yet_supported`, -> T3) is UNTOUCHED and stays
+    a refusal; the T1b battery re-asserts it, and the ndf equality row, from the
+    other side (tests/test_adr85_contact2d_t1b_nts.py::
+    test_2d_mortar_still_refused / ::test_2d_ndf3_still_refused) so that opening
+    the NTS lane cannot silently widen either guard.
 
 WHY A CHILD PROCESS
     Contact refusals are not ordinary Python exceptions.  Every declaration verb
@@ -61,6 +80,10 @@ NOT COVERED HERE, DELIBERATELY
     guards, the declaration path and the rigid-plane lane, none of which
     construct a vote.  The row is therefore not testable at T0 and is omitted;
     it belongs in the T1b battery.  (Raised for the ADR to correct.)
+
+    That row now EXISTS, in tests/test_adr85_contact2d_t1b_nts.py::
+    test_2d_orientation_vote_flush -- same child-process shape, same
+    substring contract ("ADR-85" + "outward").
 """
 import os
 import subprocess
@@ -103,13 +126,14 @@ REFUSALS = {
     # its T0-C replacement must keep a 3D deck from declaring nps = 2.
     "nps2_on_3d_deck": ("ADR-85", "nodesPerSeg"),
 
-    # A well-formed ALL-2D NTS pair.  The kernel and the FE SEGMENT 2D path do
-    # not exist until T1b, so the handler must REFUSE and say where the
-    # capability lands -- never silently accept a 2D pair and assemble nothing
-    # (the ADR-78 P0 failure mode).
-    "pair_2d_not_yet_supported": ("ADR-85", "T1b"),
+    # (RETIRED AT T1b -- see the ROW COUNT note in the module docstring.  The
+    # well-formed ALL-2D NTS pair that used to be refused here with a named
+    # "not yet supported ... T1b" now RUNS: its successor is the
+    # `pair_2d_now_live` ACCEPTANCE case below, which asserts force transfer
+    # rather than a refusal, so the ADR-78 P0 guarantee the refusal carried --
+    # a 2D pair never assembles and transmits nothing -- survives the swap.)
 
-    # Same for -mortar: the 2D interval integrator lands in T3.
+    # -mortar is UNCHANGED by T1b: the 2D interval integrator lands in T3.
     "mortar_2d_not_yet_supported": ("ADR-85", "T3"),
 
     # A 3D master facet paired with an all-2D -slave NODE SET.  The slave set is
@@ -260,20 +284,67 @@ elif CASE == "nps2_on_3d_deck":
     ops.load(1, 0.0, 0.0, -1.0)
     rc = _static_1_step()
 
-elif CASE == "pair_2d_not_yet_supported":
-    # A well-formed all-2D NTS pair (ndf == ndm == 2, nps == 2, all nodes 2D).
-    # DECLARATION may be accepted -- T0-C opens nps = 2 on 2D nodes -- but
-    # ASSEMBLY must be refused by name: the FE SEGMENT 2D path lands in T1b.
-    ops.model("basic", "-ndm", 2, "-ndf", 2)
-    m = _line_master_2d()
-    ops.node(1, 0.0, -1.0e-8)
-    ops.fix(1, 1, 0)
-    ops.contactSurface(10, "-master", 2, *m)
-    ops.contactSurface(20, "-slave", 1)
-    ops.contact(1, 10, 20, KN, 0.0, 0.0)
-    _pattern()
-    ops.load(1, 0.0, -1.0)
-    rc = _static_1_step()
+elif CASE == "pair_2d_now_live":
+    # ADR-85 T1b: the successor to the retired `pair_2d_not_yet_supported` row.
+    # The SAME well-formed all-2D NTS pair (ndf == ndm == 2, nps == 2, all nodes
+    # 2D), opposite verdict -- it must now assemble, solve and TRANSMIT FORCE.
+    #
+    # "It ran" is deliberately NOT the assertion.  A 2D pair that assembles and
+    # transmits nothing converges, balances its reactions and is silently wrong
+    # -- the ADR-78 P0 incident, which is the entire reason the T0 refusal
+    # existed.  So the child solves the deck TWICE and prints both answers:
+    #
+    #   leg 1  the slave held by a soft y-spring AND the contact pair;
+    #   leg 2  the IDENTICAL deck with the contact pair deleted (spring only).
+    #
+    # The spring is what makes leg 2 solvable at all (a slave held only by a
+    # penalty has no stiffness once the pair is gone) and it makes the contrast
+    # quantitative rather than pass/fail: with KN/KS = 1e3 a live pair collapses
+    # the free-spring displacement by three orders of magnitude, and the parent
+    # checks BOTH legs against their closed forms, so "transmitted something"
+    # cannot pass for "transmitted the right thing".
+    #
+    # `-outward 0 1` is REQUIRED here and is itself the T1b 2-component parser
+    # branch under test: the slave is seeded 1e-8 BELOW the master line so the
+    # pair is active from step 1, which leaves the interface-level centroid vote
+    # degenerate (ADR-85 How/2) -- exactly the flush case that must be given an
+    # explicit orientation instead of guessed.
+    P, KS = 1.0e3, 1.0e3
+
+    def _leg(with_contact):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        m = _line_master_2d()
+        ops.node(1, 0.0, -1.0e-8)
+        ops.fix(1, 1, 0)                       # x fixed, y free
+        ops.node(2, 0.0, -1.0e-8)              # spring ground, coincident
+        ops.fix(2, 1, 1)
+        ops.uniaxialMaterial("Elastic", 1, KS)
+        ops.element("zeroLength", 1, 2, 1, "-mat", 1, "-dir", 2)
+        if with_contact:
+            ops.contactSurface(10, "-master", 2, *m)
+            ops.contactSurface(20, "-slave", 1)
+            ops.contact(1, 10, 20, KN, 0.0, 0.0, "-outward", 0.0, 1.0)
+        _pattern()
+        ops.load(1, 0.0, -P)
+        code = _static_1_step()
+        if code != 0:
+            return code, 0.0, 0.0
+        f = ops.ladrunoContactForce(1) if with_contact else 0.0
+        return 0, ops.nodeDisp(1, 2), f
+
+    rc_c, u_c, f_c = _leg(True)
+    rc_f, u_f, _junk = _leg(False)
+    if rc_c != 0 or rc_f != 0:
+        print("PAIR2D_ANALYZE_FAILED rc_contact=" + str(rc_c) + " rc_free=" + str(rc_f))
+        sys.exit(5)
+    # NOTE: string CONCATENATION, on purpose.  This whole template is rendered
+    # by the percent operator against a one-key mapping (see _run_child), so a
+    # bare percent-r conversion anywhere in this source -- even inside a comment
+    # -- is consumed by that substitution and dies with "not enough arguments
+    # for format string" BEFORE the child ever runs.  repr() is the escape.
+    print("PAIR2D_LIVE uc=" + repr(u_c) + " uf=" + repr(u_f) + " fc=" + repr(f_c))
+    sys.exit(0)
 
 elif CASE == "mortar_2d_not_yet_supported":
     # Same, for the mortar lane: the 2D interval integrator lands in T3.
@@ -368,6 +439,22 @@ def _run_child(case):
     return proc
 
 
+def _grab(out, marker, key):
+    """Pull `key=<float>` off the child's `marker ...` line.
+
+    The child prints repr(value), so it is a full-precision Python float literal
+    and float() round-trips it exactly -- the acceptance rows compare against
+    closed forms at 1e-8/1e-9, which a shortened number could not support.
+    """
+    for line in out.splitlines():
+        if not line.startswith(marker):
+            continue
+        for tok in line.split():
+            if tok.startswith(key + "="):
+                return float(tok[len(key) + 1:])
+    raise AssertionError(f"no {key!r} on a {marker!r} line in the child output:\n{out}")
+
+
 def _assert_refused(case):
     """The child must have died (nonzero exit) AND said why (contract
     substrings).  Exit code alone is too weak: a non-converging deck also exits
@@ -423,16 +510,67 @@ def test_refuse_nps2_on_3d_deck():
     _assert_refused("nps2_on_3d_deck")
 
 
-def test_refuse_pair_2d_not_yet_supported():
-    """A valid all-2D NTS pair -> refused by name, pointing at T1b.
+def test_pair_2d_now_live():
+    """A valid all-2D NTS pair -> ACCEPTED, and it transmits force.
 
-    EXPECTED TO FAIL until ADR-85 T0-C.  The failure mode this forecloses is
-    the expensive one: T0-C opens the DECLARATION path (nps = 2 on 2D nodes)
-    while the FE SEGMENT 2D construction path does not exist until T1b.  If the
-    handler simply skipped such a pair, a 2D deck would converge, balance its
-    reactions and transmit no contact force -- the ADR-78 P0 incident, again.
+    THE SUCCESSOR TO A RETIRED REFUSAL (ADR-85 T1b).  Until T1b this row was
+    `test_refuse_pair_2d_not_yet_supported`: T0-C opened the DECLARATION path
+    (nps = 2 on 2D nodes) while the FE SEGMENT 2D construction path did not
+    exist, so the pair had to be refused BY NAME.  T1b builds that path, and the
+    guarantee the refusal carried has to survive the inversion -- a 2D deck that
+    converges, balances its reactions and transmits NO contact force is the
+    ADR-78 P0 incident, and it is indistinguishable from a green run unless
+    something measures the force.  This does.
+
+    Three independent checks on the child's two legs (see the CASE comment for
+    the deck).  Every one is a CLOSED FORM, not a threshold:
+
+      1. the contact-free control is the pure spring: u = -P/KS;
+      2. the contacted leg is the spring in PARALLEL with the penalty, started
+         from a 1e-8 seed penetration:
+                 KN*(seed - u) = P + KS*u   =>   u = (KN*seed - P)/(KN + KS)
+         i.e. |u| smaller by ~KN/KS = 1e3.  A pair that assembled but stayed
+         inert would land on leg 1's answer; a pair with the WRONG stiffness
+         lands on neither;
+      3. `ladrunoContactForce` reports the transmitted normal force.  Its call
+         site (LadrunoContactFE.cpp:689, the B3 snapshot) sits OUTSIDE the ndm
+         loops in the SEGMENT branch, so it is dimension-agnostic by
+         construction -- a zero here means the 2D SEGMENT path was wired
+         without it, which would leave the whole 2D lane unobservable to the
+         battery even though checks 1-2 pass.
     """
-    _assert_refused("pair_2d_not_yet_supported")
+    proc = _run_child("pair_2d_now_live")
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    assert proc.returncode == 0, (
+        "a well-formed all-2D NTS pair must now be ACCEPTED and run "
+        f"(exit {proc.returncode}).\n{out}"
+    )
+    assert "PAIR2D_LIVE" in out, f"the child did not finish both legs.\n{out}"
+
+    u_c = _grab(out, "PAIR2D_LIVE", "uc")
+    u_f = _grab(out, "PAIR2D_LIVE", "uf")
+    f_c = _grab(out, "PAIR2D_LIVE", "fc")
+
+    KN_, KS_, P_, SEED_ = 1.0e6, 1.0e3, 1.0e3, 1.0e-8
+    u_f_ref = -P_ / KS_
+    u_c_ref = (KN_ * SEED_ - P_) / (KN_ + KS_)
+    f_c_ref = KN_ * (SEED_ - u_c_ref)
+
+    assert abs(u_f - u_f_ref) / abs(u_f_ref) < 1.0e-9, (
+        f"the contact-free control is not the pure spring: {u_f!r} vs {u_f_ref!r} "
+        f"-- the deck changed, so leg 1 no longer isolates the contact.\n{out}")
+    assert abs(u_c - u_c_ref) / abs(u_c_ref) < 1.0e-8, (
+        f"2D NTS pair equilibrium {u_c!r} != closed form {u_c_ref!r}: the pair "
+        f"assembled but does not carry kn.\n{out}")
+    assert abs(u_c) < 1.0e-2 * abs(u_f), (
+        f"the pair transmitted (almost) nothing: |u| with contact {abs(u_c):.6e} "
+        f"vs free {abs(u_f):.6e} -- the ADR-78 P0 silent-drop signature.\n{out}")
+    assert f_c > 0.0, (
+        "ladrunoContactForce reports 0 on a 2D NTS pair that demonstrably "
+        "carries load (legs 1-2 passed): the B3 setNtsForce snapshot was not "
+        f"wired into the 2D SEGMENT path.\n{out}")
+    assert abs(f_c - f_c_ref) / f_c_ref < 1.0e-6, (
+        f"ladrunoContactForce {f_c!r} != kn*penetration {f_c_ref!r}.\n{out}")
 
 
 def test_refuse_mortar_2d_not_yet_supported():
@@ -480,7 +618,7 @@ def test_nps2_on_2d_deck_declares_ok():
     check refuses it (OpenSeesOutputCommands.cpp:371).
 
     Without this row the refusal matrix above is vacuous: a T0-C that refused
-    every 2D contact declaration outright would pass all five falsifiers.  The
+    every 2D contact declaration outright would pass all six falsifiers.  The
     split is also the ADR's own contract -- declaration-time acceptance is
     decided by the referenced nodes' coordinates (How/8), while the "not yet
     supported" refusals fire at handle time.

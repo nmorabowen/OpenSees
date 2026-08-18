@@ -310,6 +310,34 @@ T1b wires verbatim:**
 4. The 2D B-operators FD-gate as the **exact** first variation of the gap
    (the `∂n/∂u`, `∂ξ/∂u` contributions cancel identically in 2D) — this is
    the proof behind §How/5 keeping `kn·BᵀB` as the main term.
+5. **T1b gate correction (2026-08-18): the ownership contract had an
+   open-chain-end hole.** Step 4 ("else nobody") was oracled on *interior*
+   seams only; at a surface's **terminal ends** a hard refusal on a pair
+   carrying O(P) force is a discontinuity no consistent-tangent Newton
+   survives (probe-traced: master tilt pushes a boundary slave's ξ to
+   −1.25e-7, both end pairs refuse, the block goes singular or limit-cycles —
+   the measured patch/slice-twin stall). T1b interim: a **terminal-side
+   acceptance window** (`NTS2D_END_SLACK = 1e-3`, parametric, on unchained
+   ends only; gap = signed distance to the infinite line, B stays the exact
+   first variation, so residual/tangent are consistent and C0 across the
+   band; the cliff moves to 1+1e-3, disclosed). Interior seams keep the
+   strict ordered rule untouched. The honest permanent treatment is a
+   **radial end-cap vertex pair** at open terminals (C0, no window) — named
+   as a T2+ item in LEDGER_quirks. Also from the same gate round: the vertex
+   coincidence floor uses the **conditioning gauge** (`τ_perp·Lref`), not
+   `τ_seg·Lref` — the two relative gauges collided with the standard 1e-8
+   seed penetration (the concave singular-matrix failure).
+6. **T1b panel correction (2026-08-18): segment chaining is an ENFORCED input
+   contract, not a convention.** `prevFar`/`nextFar` arming assumes the
+   master's 2-node segments are declared head-to-tail in surface order; the
+   panel probe showed a *permuted* listing silently produced the exact
+   double-owner answer (2× stiffness in the end-window band) and a *reversed*
+   listing disarms the stand-down and drops every concave vertex pair — the
+   T1a hole reopened silently. handle() therefore runs an O(nSeg)
+   chain-integrity scan: any node shared by two segments must be a
+   consecutive head-to-tail link (or the closed-loop wrap); anything else is
+   a named FATAL (`ADR-85 chain`) with re-order/re-wind guidance. This is a
+   user-facing declaration contract and goes in the T4 user guide.
 
 Shape functions `N = [1−ξ*, ξ*]`; segment B-operator over `[slave | X₀ | X₁]`:
 
@@ -349,7 +377,15 @@ Newell machinery), with:
 - **named abort** when the vote is degenerate and no `-outward ox oy` is given
   (flush interfaces with coincident centroids are genuinely ambiguous — refuse,
   never guess; this is NEW behavior relative to the 3D default's silent drop,
-  and is called out as such);
+  and is called out as such). **T1b panel correction (2026-08-18): degeneracy
+  needs a MAGNITUDE gate, not only an angle gate.** The centroid datum must
+  satisfy `|refDir| > 1e-6·Lref` — a flush deck seeded the fork-standard 1e-8
+  into penetration gives `refDir = (0, −1e-8)`, perfectly conditioned in
+  angle, and the vote then resolves *inverted off the seed's sign*: every
+  pair inert, force ≡ 0, run converges (probe-confirmed — the ADR-78 P0
+  signature through the lane's own safety mechanism). Below the magnitude
+  gate the vote falls into the named refusal. A user `-outward` keeps the
+  angle-only gate (an explicit direction is a deliberate input);
 - `-outward` as the explicit override (2 components in 2D; the parser currently
   reads exactly 3 doubles, `:782` — a 2D branch);
 - σ **fixed at pairing**, re-evaluated only on re-pairing (ADR-57 lesson);
@@ -424,14 +460,28 @@ degenerately; keep whichever is simpler to maintain if both are exact), and
 the plane-constrained test is demoted to what it actually is: an
 equivalence/regression gate.
 
-### 5. Consistent tangent (rev 2: correct flag names)
+### 5. Consistent tangent (rev 2: correct flag names; T1b correction)
 
-`K_c = kn·BᵀB` (main term) plus the 2D geometric term (`∂n/∂u` of a unit perp
-— a small per-node block, far simpler than the 3D B3 derivation). Flag
-mapping, per the shipped parser:
+`K_c = kn·BᵀB` — and in 2D this main term is **gradient-exact**: the T1a FD
+gate proved the B-operator is the exact first variation of the gap (the
+`∂n/∂u`, `∂ξ/∂u` contributions cancel identically in 2D), so `kn·BᵀB` is the
+consistent force-linearization on a *fixed* geometry.
+
+**T1b correction (2026-08-18):** the phase-plan inference "therefore the
+`-geomtan` geometric term is zero in 2D" was an over-read — first variation
+exact ≠ second variation zero. The Newton **curvature block** (master-segment
+rotation, `g` nonlinear in the master DOFs) is nonzero — the same class the 3D
+B3 term assembles. T1b ships `-geomtan` on a 2D pair as **accepted,
+documented no-op** (identical to the 3D *default* path: never wrong forces,
+only Newton rate on rotating masters); the true 2D curvature term is
+**deferred, demand-driven** (a Hertz-style curved-master 2D benchmark is the
+trigger). G-T1b(e) is therefore a **byte-identity gate** (± flag identical),
+not an iteration-count gate.
+
+Flag mapping, per the shipped parser:
 
 - geometric **normal** term → **`-geomtan`** (`OpenSeesOutputCommands.cpp:809`)
-  — **symmetric, correct on any solver**, exactly as 3D;
+  — symmetric, any solver in 3D; accepted no-op in 2D (above);
 - the **non-symmetric consistent friction** tangent → **`-consistanttan`**
   (`:798`) — keeps its shipped unsymmetric-solver warning.
 
@@ -591,10 +641,16 @@ not just a nonzero exit: a declaration refusal raises in-process in serial
   contact **observables** (summed normal force, per-node gaps) to agree within
   floor + 2%; (d) **plane-stress acceptance** (a plane-stress patch under
   contact vs its analytic through-thickness force — the §Why headline, now
-  gated); (e) `-geomtan` gate: flat master ⇒ identical iteration count;
-  curved ⇒ fewer iterations (the 3D Hertz-test idiom); (f) auto-kn sizes
-  within the 3D-twin's factor; (g) flush-interface degenerate orientation
-  vote → named abort (moved here from G-T0 — the vote lands in this phase).
+  gated); (e) `-geomtan` gate — **restated at T1b** (§How/5 correction):
+  byte-identity of results with and without the flag (accepted no-op; the
+  iteration-count form was unsatisfiable once the no-op decision landed);
+  (f) auto-kn sizes within the 3D-twin's factor; (g) flush-interface
+  degenerate orientation vote → named abort (moved here from G-T0 — the vote
+  lands in this phase). **T1b vote policy addition:** a per-surface sigma
+  requires a unanimous nonzero vote across the master segments — a SPLIT vote
+  (strongly curved or inconsistently wound master) is a named refusal with
+  re-wind / split-the-surface / `-outward` guidance, never a guess; a
+  >90°-curved master surface is declared as separate contacts in T1b.
 - **T2 — NTS friction + explicit parity.** Pre-T2: the recorded numpy
   reuse-vs-scalar experiment (§How/4). Scalar return map; SOFT/visc/removal
   gate coverage.
@@ -770,5 +826,29 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
   against 60-digit arithmetic (≤ 8·eps·|x|). Design corrections recorded in
   §How/1 (concave-only vertex pairs; ordered ownership; bisector side sign).
   Owed to T1b: add the header to `stamp_headers.py` GLOBS.
+- **T1b panel deferrals (2026-08-18 — recorded per the FIX-FIRST verdicts;
+  each with a phase owner):**
+  - **D1 (T4):** G-T1b(f) auto-kn gates positivity, boundedness, `∝ E`, and
+    equilibrium — NOT the absolute magnitude; the 2D↔brick-twin `kn = P/pen`
+    comparison lands with the T4 benchmark battery.
+  - **D2 (closed in T1b):** the segment-chaining input contract — enforced by
+    the handle()-time scan (§How/1 item 6); T4 documents it in the user
+    guide.
+  - **D3 (T2):** the `-initial` (`addKiToTang`) 2D arm gains its first test
+    in this PR (ModifiedNewton `-initial` patch rerun); the full
+    implicit-transient 2D lane (`addCtoTang` under HHT/GN) is T2's gate.
+  - **D4 (T2+):** the `NTS2D_END_SLACK = 1e-3` width is engineering margin
+    (~3.9 orders above the measured tilt drift), not a measured optimum; the
+    radial end-cap vertex pair replaces the window and its cliff.
+  - **D5 (T2):** G-T2(f)'s removal gate must name the **vertex case**: a
+    removed concave-vertex node whose adapter holds `prevFar`/`nextFar`
+    pointers outside its connectivity. Also T2: the cross-type caveat — a
+    reference-concave corner deformed convex keeps its committed side sign
+    (the new side-flip warn latch makes it loud; collapse decks are the
+    reachable case).
+  - **D6 (T2):** the `-soft` pre-scan refusal-ordering cleanup, listed in
+    rev 2's T1b bullet, was NOT done in T1b (with the lane live it is now
+    correctly attributed in serial anyway); T2 owns it alongside the loop
+    rebuild for friction.
 
 *(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*
