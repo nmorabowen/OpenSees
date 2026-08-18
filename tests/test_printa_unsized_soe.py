@@ -59,6 +59,7 @@ WHAT EACH ROW GATES
 
 Upstream elements/material only (quad / stdBrick + ElasticIsotropic) => zone_a.
 """
+import functools
 import json
 import os
 import subprocess
@@ -119,6 +120,76 @@ SYSTEMS_SOLVABLE = [s for s in SYSTEMS_ALL if s != "Diagonal"]
 SYSTEMS_DENSE_A = ["FullGeneral"]
 
 HANDLERS = ["LadrunoContact", "Plain"]
+
+# Not every `system` above exists in every build. `Pardiso` is compiled only when
+# MKL is present (`#ifdef _PARDISO`), so on the Linux CI runner -- which has no
+# MKL -- `ops.system("Pardiso")` emits "WARNING unknown system type Pardiso" and
+# raises OpenSeesError. The child then exits 1, and to `_run_child` that is
+# indistinguishable from the crash this whole file exists to detect: the first CI
+# run of this gate reported "child process DIED" on 4 Pardiso rows while the
+# other 1965 cases passed.
+#
+# Hardcoding the list was the mistake; deleting `Pardiso` from it would be worse,
+# because the row is real and load-bearing on any box that HAS MKL (it is one of
+# the six systems whose `printB` was measured dying pre-fix). So the list stays
+# and unsupported systems are SKIPPED, per build, with a reason that names why.
+#
+# The probe must not become a second way to hide the bug, so it distinguishes the
+# two failure modes explicitly: a child that exits nonzero having printed
+# "unknown system type" is an ABSENT system (skip); a child that dies any other
+# way is a CRASH, and we deliberately do NOT skip -- we let the real test run and
+# fail loudly. "Unsupported" is only ever concluded from OpenSees saying so.
+_PROBE = r'''
+import os, sys
+
+_D = %(ENGINE_DIR)r
+if os.path.isdir(_D):
+    os.environ["PATH"] = _D + os.pathsep + os.environ.get("PATH", "")
+    _add = getattr(os, "add_dll_directory", None)
+    if _add is not None:
+        try:
+            _add(_D)
+        except OSError:
+            pass
+    sys.path.insert(0, _D)
+
+try:
+    import opensees as ops
+except ModuleNotFoundError:
+    import openseespy.opensees as ops
+
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.system(sys.argv[1])
+print("SUPPORTED")
+'''
+
+
+@functools.lru_cache(maxsize=None)
+def _system_supported(system):
+    """True / False / None -- None meaning 'the probe itself crashed, do not skip'."""
+    proc = subprocess.run(
+        [sys.executable, "-c", _PROBE % {"ENGINE_DIR": ENGINE_DIR}, system],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300,
+        encoding="utf-8", errors="replace",
+        env=dict(os.environ, LADRUNO_OPENSEES_QUIET="1"),
+    )
+    if proc.returncode == 0 and "SUPPORTED" in proc.stdout:
+        return True
+    if "unknown system type" in (proc.stderr + proc.stdout):
+        return False
+    return None       # something else went wrong -- let the caller fail loudly
+
+
+def _require_system(system):
+    if _system_supported(system) is False:
+        pytest.skip(
+            f"`system {system}` is not compiled into this build (OpenSees reports "
+            f"'unknown system type'), so there is no SOE of that type to leave "
+            f"unsized. Not a pass and not a failure -- this row simply does not "
+            f"apply here. `Pardiso` needs MKL (`#ifdef _PARDISO`)."
+        )
+
 
 CHILD = r'''
 import json, os, sys
@@ -275,6 +346,7 @@ def _run_child(handler, system, scenario):
 @pytest.mark.parametrize("handler", HANDLERS)
 def test_printa_before_analyze_survives(handler, system):
     """printA/printB with the SOE never sized: must return empty, not exit()."""
+    _require_system(system)
     out = _run_child(handler, system, "before_analyze")
     # The contract is "no tangent to report", expressed as an empty result --
     # NOT a fabricated matrix. Anything nonempty here would mean printA read a
@@ -286,6 +358,7 @@ def test_printa_before_analyze_survives(handler, system):
 @pytest.mark.parametrize("system", SYSTEMS_ALL)
 def test_printa_after_refused_contact_survives(system):
     """The reported crash: a refused contact fails handle(), then printA."""
+    _require_system(system)
     out = _run_child("LadrunoContact", system, "refused_contact")
     # analyze() MUST have failed -- if it ever starts succeeding, the deck no
     # longer reproduces the unsized-SOE state and this row is vacuous.
@@ -300,6 +373,7 @@ def test_printa_after_refused_contact_survives(system):
 @pytest.mark.parametrize("system", SYSTEMS_DENSE_A)
 def test_printa_still_returns_the_real_tangent(system):
     """Falsifier on the falsifiers: a good analyze still yields a real matrix."""
+    _require_system(system)
     out = _run_child("LadrunoContact", system, "ok")
     assert out["rc"] == 0, out
     assert len(out["A"]) == 16, out            # dense 4x4 over 4 free equations
@@ -317,6 +391,7 @@ def test_printb_still_returns_the_real_rhs(system):
     empty right-hand side on a perfectly good model. This is the row that
     notices. 4 free equations => 4 entries, not all zero (the deck is loaded).
     """
+    _require_system(system)
     out = _run_child("LadrunoContact", system, "ok")
     assert out["rc"] == 0, out
     assert len(out["B"]) == 4, out

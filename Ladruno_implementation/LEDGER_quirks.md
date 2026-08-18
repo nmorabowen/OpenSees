@@ -2824,6 +2824,19 @@ is immune (uses eigenvalues only, never Φ).
   unsized state NO rank has them, every rank returns, and the collective is never
   entered. Whenever you add a bail-out to a collective, write down why the
   predicate is rank-uniform.
+- **A `system` your box has and CI does not turns a crash-probe into a false
+  alarm.** `system Pardiso` exists only under `#ifdef _PARDISO`, i.e. only where
+  MKL is present. On the Linux CI runner `ops.system("Pardiso")` prints
+  `WARNING unknown system type Pardiso` and raises `OpenSeesError`, so the child
+  exits 1 -- **indistinguishable, to a probe that asserts on the exit code, from
+  the very crash the gate exists to detect.** First CI run of this gate: 4 Pardiso
+  rows reported "child process DIED", 1965 other cases green, nothing actually
+  wrong. Deleting `Pardiso` from the list would be the wrong fix (it is one of the
+  six systems measured dying pre-fix, on any box that HAS MKL). The gate now
+  probes each `system` once per build and SKIPS the unsupported ones -- and the
+  probe concludes "unsupported" **only** when OpenSees itself says
+  `unknown system type`; a child that dies any other way is treated as a crash and
+  is NOT skipped, so the escape hatch cannot swallow a regression.
 - **`stdin=DEVNULL` is not optional in a subprocess-spawning test, and three files
   still lack it.** Under pytest's capture, fd 0 is left in a state `Popen` cannot
   `DuplicateHandle`, so any child that INHERITS stdin dies with
