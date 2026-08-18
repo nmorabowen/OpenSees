@@ -2831,11 +2831,31 @@ printA(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       else if ((strcmp(argv[currentArg], "sparse") == 0) ||
           (strcmp(argv[currentArg], "-sparse") == 0)) {
           fileSparse = true;
-          currentArg++;
-          if (currentArg < argc) {
-              if (Tcl_GetInt(interp, argv[currentArg], &baseIndex) != TCL_OK) {
-                  opserr << "WARNING: printA - failed to read -sparse <baseIndex>\n";
-                  return TCL_ERROR;
+          // Ladruno: the twin of the openseespy fix in
+          // OpenSeesCommands.cpp::OPS_printA -- see that site for the full note.
+          // `<baseIndex>` is OPTIONAL, but the read was unconditional, so
+          // `printA -sparse -ret` consumed `-ret` as the index and failed with
+          // "failed to read -sparse <baseIndex>". Here the damage was slightly
+          // worse than on the Python path: `currentArg++` happens BEFORE the
+          // bounds test, so on `printA -sparse` (index omitted, nothing after
+          // it) the cursor lands on argc and the loop just ends -- fine by luck,
+          // but with a flag after it the flag was eaten.
+          //
+          // Tcl hands EVERY token over as a string, so a number arrives as "0"
+          // and a negative one as "-1": classify as a FLAG only when '-' is
+          // followed by a LETTER, so a negative base index is still a number.
+          // Consume the token only when it is not a flag.
+          if (currentArg + 1 < argc) {
+              const char *nxt = argv[currentArg + 1];
+              bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                                 ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                                  (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+              if (!nextIsFlag) {
+                  currentArg++;
+                  if (Tcl_GetInt(interp, argv[currentArg], &baseIndex) != TCL_OK) {
+                      opserr << "WARNING: printA - failed to read -sparse <baseIndex>\n";
+                      return TCL_ERROR;
+                  }
               }
           }
       }
