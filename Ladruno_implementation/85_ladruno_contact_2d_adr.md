@@ -851,4 +851,52 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
     correctly attributed in serial anyway); T2 owns it alongside the loop
     rebuild for friction.
 
+- **T2 shipped** (2026-08-18): 2D NTS friction live -- the scalar return map
+  (`returnMap1D`/`tangentBlock1D` appended to `LadrunoFrictionKernel.h`, a pure
+  append so the 3D kernel is byte-identical by construction), the `-mu` FATAL
+  retired into the live lane, `-consistanttan` wired, `softKt`'s 2D branch
+  reached for the first time, and D3/D5/D6 discharged (D6 partially -- see
+  below). Design note: `_adr85_t2_design.md`.
+  - **The pre-T2 experiment (How/4) settled REUSE-vs-SCALAR on measurement, not
+    taste**: evaluating the shipped 3D kernel degenerately takes the WRONG
+    stick/slip branch in **89.2%** of disagreements adjudicated in exact
+    rational arithmetic (vs 10.8% scalar), and -- the dominant finding -- a
+    GLOBAL-FRAME VECTOR slip store loses the slip increment to catastrophic
+    cancellation (median **1.5e-2**, max 100% relative error at
+    `|ds|/|s| ~ 1e-15`, the regime a converging Newton lives in) where a
+    tangential SCALAR store is exactly zero-error. This is the ADR-41 C3
+    displacement-not-position crux resurfacing in a new frame; it is now a
+    LEDGER_quirk. Artifacts:
+    `contact_prototypes/t2_reuse_vs_scalar_check.cpp` (includes and calls the
+    SHIPPED header) + `proto_t2_{reuse_vs_scalar,slip_cancellation}.py`.
+  - **Gates MEASURED** at stamp `bce163ccf`: `contact_dump`
+    `da73b6f8...7782` bit-identical to the pre-change baseline (184 lines, 0
+    decks failed, captured twice); 3D battery **142 passed, N unchanged**; 2D
+    suite **38 -> 54**; **G-T2(a) exact** -- last-STICK r = 0.99999999999999989,
+    first-SLIP r = 1, a **0.5 ulp** bracket around T/N == mu.
+  - **Three ADR corrections found during T2 and owed back to this document:**
+    1. **The 3D battery is 142, not 121.** No subset of the adr39/41/57 globs
+       (70/50/22) sums to 121, and no adr39/41/57 test changed since T0
+       (`git diff 87a882464..HEAD -- tests/`), so 142 was the T0 count too and
+       "121" is a stale/unreconstructible figure. There is also **no
+       `tests/test_adr78_*.py`** at all, though the gate language names an
+       "adr78 glob". T2 pins the glob explicitly and records N = 142.
+    2. **There was no `-mu` refusal row to invert.** The phase plan describes
+       "the retired `-mu` row" inverting into an acceptance test, but no test
+       in `tests/test_adr85_contact2d_*.py` ever asserted the `-mu` 2D FATAL.
+       T2 therefore ADDS a friction acceptance row (on the `pair_2d_now_live`
+       precedent, asserting force TRANSFER); nothing was retired.
+    3. **D6 is only partially discharged.** The ordering fix is scoped to the
+       Contact/NTS `-soft` prescan (the lane the T0 note named); the
+       RigidPlane and Mortar `-soft` mass-check loops were not re-audited and
+       keep the original mis-attributing order.
+  - **NOT gated (carried forward):** the D5 cross-type caveat -- a
+    reference-concave corner deformed convex keeping its committed side sign.
+    The `WARN_VTX2D_SIDE_FLIP` latch is wired
+    (`LadrunoContactFE.cpp:1032`, shipped T1b) but no rig reproduced it across
+    four attempts (kinematic drive -> singular; tethered -> slave leaves the
+    wedge; untethered -> coincidence-floor guard / unstable). It is
+    pre-existing T1b code, so this is inherited coverage debt, not a T2
+    regression. **T2+ follow-up**, alongside D4's radial end-cap vertex pair.
+
 *(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*

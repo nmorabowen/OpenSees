@@ -790,12 +790,18 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         // that is indistinguishable from manual domain decomposition from inside
         // handle() -- so it refuses too. Named in the message.
         //
-        // ADR-85 T0 ordering note: this whole -soft pre-scan runs BEFORE the ADR-85
-        // dimension gates in the lane loops below, so a 2D `-soft` deck is refused by
-        // the -soft subsystem's own message rather than the ADR-85 named one -- still
-        // loud, never silent (and the mass paths it touches are size-guarded for
-        // 2-DOF nodes), so the ordering is deliberately left alone in T0; revisit when
-        // T1b rebuilds this loop.
+        // ADR-85 T2 (D6) ordering fix: this whole -soft pre-scan still runs BEFORE the
+        // ADR-85 dimension/pairing gates in the main lane loops below, but the Contact
+        // (NTS) mass-check loop now runs `ladrunoContactPairPreflight` on each
+        // softScale>0 contact BEFORE inspecting its slave nodes' mass (see below) -- so
+        // a deck that is refusable for a dimension/guard reason (mixed dimensions,
+        // ndf!=ndm, ...) is refused by THAT named guard first, never mis-attributed to
+        // this generic "-soft needs an assembled mass" complaint reached first. (T0
+        // left this deliberately alone -- "revisit when T1b rebuilds this loop" -- T1b
+        // deferred it again by name as D6, "T2 owns it alongside the loop rebuild for
+        // friction"; this is that fix, scoped to the Contact/NTS lane the T0 note named.
+        // RigidPlane/Mortar are unchanged here -- neither was named by the T0 note, and
+        // this pass did not re-audit their own -soft mass-check loops below.)
         if (anySoft && (hostPartitioned || ladrunoContactNumRanks() > 1)) {
             // Review F4: each offender is its own newline-terminated line (a
             // multi-offender abort used to concatenate the fragments into one
@@ -861,6 +867,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 if (ct.softScale <= 0.0) continue;
                 const LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
                 if (ss == 0) continue;   // surface-undefined is caught, fatally, below
+                // ADR-85 T2 (D6): run the SAME dimension/ndf/pairing guard the main
+                // NTS loop runs (below) BEFORE this generic mass check, so a deck
+                // that is ALSO dimension-broken is named correctly and first. Purely
+                // read-only (inspects Domain state, no engine mutation), so calling
+                // it here and again in the main loop is redundant but harmless on a
+                // valid deck; on an already-fatal deck it just changes which of the
+                // two (equivalent, both-correct) messages fires first.
+                const LadrunoContactSurface *msPre = cd->getSurface(ct.masterSurfTag);
+                if (msPre != 0) {
+                    int pairDimPre = 3;
+                    if (!ladrunoContactPairPreflight(theDomain, ct.tag, msPre, ss,
+                                                     "NTS node-to-segment", "T1b",
+                                                     /*lane2DLive=*/true, &pairDimPre))
+                        return ladrunoContactFatal();
+                }
                 const ID &tg = ss->getNodeTags();
                 for (int i = 0; i < tg.Size(); i++) {
                     double m[3];
@@ -983,21 +1004,24 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                            << "); ABORTING (ADR-85 nodesPerSeg)\n";
                     return ladrunoContactFatal();
                 }
-                // ---- capability fence: what T1b does NOT wire is refused BY
-                //      NAME, never silently ignored (the T0 discipline).
-                //      -geomtan (ct.consistentNormal) is deliberately not a
-                //      refusal: it is ACCEPTED as a no-op (see LadrunoContactFE::
-                //      addKtToTang's 2D branch) and announced once by the
-                //      WARN_2D_GEOMTAN_NOOP latch below. kt / -consistanttan
-                //      without -mu are inert in 3D and stay inert here (same
-                //      semantics, no new silence).
-                if (ct.mu > 0.0) {
-                    opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
-                           << ": 2D NTS friction (-mu) is NOT YET SUPPORTED -- it lands in "
-                              "ADR-85 T2. The frictionless 2D pair lane is live; drop -mu "
-                              "(and kt) or keep the model 3D. ABORTING (ADR-85 T2)\n";
-                    return ladrunoContactFatal();
-                }
+                // ---- capability fence: what T1b did NOT wire was refused BY
+                //      NAME, never silently ignored (the T0 discipline). ADR-85
+                //      T2 turns 2D NTS friction (-mu) into the LIVE scalar
+                //      return map (LadrunoFrictionKernel::returnMap1D via
+                //      LadrunoContactFE::getResidual/addKtToTang/addKiToTang) --
+                //      the retired FATAL used to sit here; ct.kt/ct.mu/
+                //      ct.consistentTan are threaded into the 2D adapters below.
+                //      mu<=0 stays byte-identical to the T1b frictionless lane
+                //      (the adapter's own short-circuit, mirroring the 3D
+                //      SEGMENT `mu > 0.0` discipline -- no new silence).
+                //      -geomtan (ct.consistentNormal) is still an ACCEPTED no-op
+                //      (see LadrunoContactFE::addKtToTang's 2D branch), announced
+                //      once by the WARN_2D_GEOMTAN_NOOP latch below.
+                //      -consistanttan's non-symmetric-solver warning is emitted
+                //      at PARSE time (OpenSeesOutputCommands.cpp), dimension-
+                //      independent, so 2D needs no extra handle()-time latch --
+                //      exactly the 3D NTS lane's own contract (only the MORTAR
+                //      lane additionally re-warns per contact at handle() time).
                 if (ct.smoothNormal) {
                     opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
                            << ": -smoothNormal is 3D-only (ADR-63 nodal-normal smoothing is "
@@ -1358,11 +1382,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         LadrunoContactFE *fe = new LadrunoContactFE(
                             numFe++, sn, segNodes, /*nps=*/2, /*ndm2=*/2, knUse,
                             sigma, Lref, prevFar, nextFarSeg,
+                            ct.kt, ct.mu, ct.consistentTan,  // ADR-85 T2: the scalar friction lane
                             ct.muc,        // T1b SEGMENT dashpot port (0 => off)
                             ct.softScale,  // B1 SOFT=1 (free in 2D: size-safe mass helpers)
                             theDomain, ct.tag, seg);
                         if (fe == 0) return -5;
                         theModel->addFE_Element(fe);
+                        // ADR-85 T2: mark this segment pair's friction slot LIVE this
+                        // handle() (the frictionGCBegin/…/frictionGCEnd sweep at the
+                        // end of the NTS loop), mirroring the 3D loop's `ct.mu > 0.0`
+                        // mark below. mu<=0 ⇒ no slot is ever created (getResidual's
+                        // own short-circuit) ⇒ nothing to mark ⇒ identical to T1b.
+                        if (ct.mu > 0.0)
+                            cd->frictionGCMark(ct.tag, sTags(si), seg);
                     }
                     // one VERTEX adapter per (slave, concave vertex) whose
                     // adjacent segments are broad-phase candidates of this slave
@@ -1399,10 +1431,17 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         LadrunoContactFE *fe = new LadrunoContactFE(
                             numFe++, sn, vNodes, /*nps=*/1, /*ndm2=*/2, knV,
                             sigma, Lref, v.prevFar, v.nextFar,
+                            ct.kt, ct.mu, ct.consistentTan,  // ADR-85 T2: the scalar friction lane
                             ct.muc, ct.softScale, theDomain, ct.tag,
                             /*segIndex=*/nSeg + v.segPrev);
                         if (fe == 0) return -5;
                         theModel->addFE_Element(fe);
+                        // ADR-85 T2: vertex pairs key their friction slot under the
+                        // SAME segIndex = nSeg + segPrev convention setNtsForce/
+                        // getOrCreateFrictionState already use (ADR-85 What/T1b) --
+                        // mark it live so the GC sweep does not drop it.
+                        if (ct.mu > 0.0)
+                            cd->frictionGCMark(ct.tag, sTags(si), nSeg + v.segPrev);
                     }
                 }
                 continue;   // 2D contact done -- the shipped 3D code below never sees it

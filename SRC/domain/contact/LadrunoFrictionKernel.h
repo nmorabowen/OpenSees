@@ -175,6 +175,132 @@ inline void frictionTangentBlock(const double gTeff[3], const double gpT[3],
     }
 }
 
+// ==========================================================================
+// Ladruno ADR-85 T2 -- the 2D NTS scalar friction kernel (SS How/4). Added BESIDE the
+// 3D functions above, SHARING frictionCap (the unified cone) -- no duplicated cone
+// logic. The existing 3D frictionReturnMap/frictionTangentBlock are UNTOUCHED above
+// this marker (byte-identity-gated, shipped).
+//
+// DECISION (measured, not a style preference -- see Ladruno_implementation/
+// _adr85_t2_design.md S1, "THE PRE-T2 EXPERIMENT"): a 2D contact's tangent space is
+// ONE-dimensional (t_hat = perp(n)), so the ADR-41 covariant-metric 3D return map
+// degenerates trivially -- but evaluating the SHIPPED 3D kernel degenerately (a 3rd
+// component pinned to 0) was measured, not assumed, against an independent scalar
+// path over 200 000 randomized configs (34% parked astride the cone radius) with
+// every stick/slip disagreement adjudicated in EXACT rational arithmetic:
+//   (1) threshold correctness -- the degenerate 3D path takes the WRONG stick/slip
+//       branch in 149/167 (89.2%) of adjudicated disagreements, vs 18/167 (10.8%)
+//       for the scalar path, whose only error is the SINGLE unavoidable rounding of
+//       fl(kt*(s-sp)); the 3D path adds avoidable sqrt(tx^2+ty^2)-vs-fabs and
+//       normalization rounding on top;
+//   (2) the dominant finding -- storing the slip as a GLOBAL-FRAME VECTOR (the 3D
+//       kernel's gpT[3]/gT0[3]) causes CATASTROPHIC CANCELLATION in the slip
+//       INCREMENT: median relative error 1.5e-2 (max 100%) in the |ds|/|s| ~
+//       1e-16..1e-14 regime a converging Newton iteration actually lives in, because
+//       the tangential origin and the current slip are each rounded on the GLOBAL
+//       axes before their componentwise difference is taken. A tangential SCALAR
+//       store (this file) is exactly ZERO relative error there (Sterbenz's lemma
+//       applies cleanly to a single close subtraction; it does not reconstruct
+//       cleanly across a vector's separately-rounded components) -- this is the
+//       ADR-41 C3 displacement-not-position crux resurfacing in a new frame: the
+//       slip must be KEPT as a scalar in the tangential frame, never differenced
+//       componentwise as a global-frame vector (the BINDING implementation
+//       consequence T2 wiring must honor);
+//   (3) in a 1-D tangent space the slip-branch tangential tangent (Pt - n_hat(x)n_hat)
+//       is IDENTICALLY ZERO; the degenerate 3D path reaches exact zero in only 28.9%
+//       of slip cases (residual <= 4.5e-16*kt otherwise) -- so this kernel WRITES THE
+//       LITERAL 0.0 rather than compute a tangent-plane projector that is already
+//       known to collapse to nothing;
+//   (4) leakage -- the degenerate 3D path leaks friction force into the NORMAL
+//       direction up to 3.85e-8 relative (|tF.n|/|tF|), silently perturbing the
+//       normal equilibrium the frictionless T1b lane already gates; the scalar path
+//       is structurally incapable of a normal-direction component (there is none).
+// Exactness and simplicity point the SAME way (no trade-off to arbitrate): scalar,
+// ~20 lines, wins every measured axis.
+//
+// SEMANTICS mirror the 3D kernel EXACTLY otherwise (ADR-85 T2 work item 1):
+//   * the cap<=0.0 FREE-SLIP branch (zero traction, slip absorbs the whole motion --
+//     the frictionReturnMap HIGH-2 defense-in-depth, reproduced verbatim);
+//   * the ALREADY-NEGATED sign convention: tFric = -tT, so the returned force OPPOSES
+//     the slave's tangential motion (design-gate BLOCKER-1);
+//   * spTrial (gpTtrial) a PURE function of COMMITTED state (set, never +=), so it is
+//     idempotent across CDL's firstStep double getResidual (design-gate BLOCKER-2).
+//
+// std::fabs / a literal sgn(), NEVER sqrt(t*t) or a normalize (t/|t|): finding (1)'s
+// mechanism is exactly sqrt-vs-fabs and normalization rounding; in 1-D there is only
+// a SIGN to recover (the magnitude is already |tTtr|), so a normalize is not just
+// slower, it is the reintroduced source of the measured error.
+inline double sgn1D(double x) { return (x < 0.0) ? -1.0 : 1.0; }
+
+// The 2D scalar return map (ADR-85 T2 work item 1). s/sp are the tangential relative-
+// displacement and the committed plastic slip, BOTH scalars in the t_hat = perp(n)
+// frame (never a 2-vector -- see the file-level note above); tFric/spTrial mirror
+// frictionReturnMap's tFric[3]/gpTtrial[3] one-for-one, degree-of-freedom for
+// degree-of-freedom. Returns true iff slipping (diagnostic, mirrors the 3D map).
+inline bool returnMap1D(double s, double sp, double N, double kt, double mu,
+                        double &tFric, double &spTrial,
+                        double cohesion = 0.0, double tauMax = 0.0)
+{
+    const double tTtr = kt * (s - sp);        // trial elastic SCALAR tangential traction
+    const double cap  = frictionCap(N, mu, cohesion, tauMax);   // the SHARED unified cone
+    const double atr  = std::fabs(tTtr);      // NEVER sqrt(tTtr*tTtr) -- finding (1)
+    if (cap <= 0.0) {
+        // mirrors frictionReturnMap's cap<=0.0 free-slip defense-in-depth (review
+        // 2026-07 HIGH-2): zero cone radius => zero tangential traction, the slip
+        // absorbs the whole tangential motion (never the raw elastic trial).
+        tFric = 0.0; spTrial = s;
+        return true;
+    }
+    if (atr <= cap) {                          // STICK
+        tFric = -tTtr; spTrial = sp;
+        return false;
+    }
+    const double sg   = sgn1D(tTtr);           // direction ONLY -- never a normalize
+    const double dlam = (atr - cap) / kt;      // atr > cap >= 0 => safe
+    tFric   = -cap * sg;
+    spTrial = sp + dlam * sg;
+    return true;
+}
+
+// The 2D scalar friction tangent (ADR-85 T2 work item 1/3; the tangentBlock1D name in
+// the phase brief). Kss = d(tFric)/d(s) restricted to the tangential direction (the
+// STICK/SLIP block); dTN = the SCALAR pressure-coupling coefficient of ADR-85 How/5,
+// -(dcap/dN)*kn -- the caller (LadrunoContactFE::addFrictionTang2D) scatters it as the
+// scalar-times-n_hat outer term dTN*(t_hat (x) n) the ADR calls for -- dTN ALREADY carries
+// kn, so the caller must NOT reapply it -- since in 2D the
+// full cross term is a 2x2 outer product of the ONE tangential direction with the
+// normal direction, not a 3x3 block. consistent=false (the default) leaves dTN at 0.0
+// and the caller therefore stays SYMMETRIC (design-gate Q2: a symmetric SOE silently
+// drops an asymmetric contribution, so a non-symmetric default would corrupt the solve).
+inline void tangentBlock1D(double s, double sp, double N, double kn, double kt, double mu,
+                           bool consistent, double &Kss, double &dTN,
+                           double cohesion = 0.0, double tauMax = 0.0)
+{
+    const double tTtr   = kt * (s - sp);
+    const double capC   = (N > 0.0) ? (mu * N + cohesion) : 0.0;
+    const bool   capped = (tauMax > 0.0 && tauMax < capC);   // tauMax cap binds => dcap/dN = 0
+    const double cap    = capped ? tauMax : capC;
+    const double atr    = std::fabs(tTtr);
+    dTN = 0.0;
+    if (cap <= 0.0) {                          // FREE SLIP: mirrors frictionTangentBlock's Kss=0
+        Kss = 0.0;
+        return;
+    }
+    if (atr <= cap) {                          // STICK: exactly kt -- no projector exists in 1-D
+        Kss = kt;
+        return;
+    }
+    // SLIP: the 1-D slip-branch tangential tangent IS the (Pt - n_hat(x)n_hat) block, and in a
+    // 1-D tangent space that projector is IDENTICALLY ZERO (finding (3) above) -- write the
+    // literal, never compute it (the design brief's explicit requirement).
+    Kss = 0.0;
+    if (consistent) {
+        const double dCap_dN = (capped || N <= 0.0) ? 0.0 : mu;   // the min()-selected coupling
+        const double sg = sgn1D(tTtr);
+        dTN = -dCap_dN * kn * sg;
+    }
+}
+
 } // namespace LadrunoFrictionKernel
 
 #endif

@@ -215,16 +215,20 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mN
 // ADR-85 T1b -- the 2D NTS SEGMENT (nps == 2) / concave-VERTEX (nps == 1) adapter.
 // See the header for the degenerate-segment representation decision (no new Mode
 // value, no new class tag -- 2D is a parameterization of SEGMENT).
+// ADR-85 T2 -- kt_/mu_/consistentTan_ wire the SCALAR friction return map (WORK ITEM
+// 2/3); mu_<=0 (the default) short-circuits before any state touch, exactly the 3D
+// SEGMENT ctor's contract, so a frictionless 2D deck is byte-identical to T1b.
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps_,
                                    int ndm2, double kn_, double sigma, double LrefIn,
                                    Node *prevFar, Node *nextFar,
+                                   double kt_, double mu_, bool consistentTan_,
                                    double muc_, double softScale_,
                                    Domain *dom, int contactTag_, int segIndex_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/ndm2 * (1 + nps_)),
     resid(ndm2 * (1 + nps_)), tang(ndm2 * (1 + nps_), ndm2 * (1 + nps_)),
     mode(SEGMENT), theSlave(slaveNode), ndm(ndm2), kn(kn_), nps(nps_),
-    kt(0.0), mu(0.0), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
-    consistentTan(false), consistentNormal(false),
+    kt(kt_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
+    consistentTan(consistentTan_), consistentNormal(false),
     softScale(softScale_ > 0.0 ? softScale_ : 0.0)
 {
     // Connectivity = slave DOF_Group + each master-node DOF_Group. Each node has
@@ -252,12 +256,40 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, in
     for (int i = 0; i < 4; i++) for (int d = 0; d < 3; d++) nodalNorm[i][d] = 0.0;
     nts2dSigma   = sigma;
     nts2dLref    = LrefIn;
-    nts2dPrevFar = prevFar;
-    nts2dNextFar = nextFar;
+    // ADR-85 T2 (D5) -- store the TAG, not the pointer (see the header comment on
+    // nts2dPrevFarNode/nts2dNextFarNode): the pointer is only used to prove "a
+    // neighbour was armed" and to read its tag, both fine to do ONCE here (the
+    // handler just fetched it live, this same handle()).
+    nts2dHasPrevFar = (prevFar != 0);
+    nts2dPrevFarTag = (prevFar != 0) ? prevFar->getTag() : 0;
+    nts2dHasNextFar = (nextFar != 0);
+    nts2dNextFarTag = (nextFar != 0) ? nextFar->getTag() : 0;
 }
 
 LadrunoContactFE::~LadrunoContactFE()
 {
+}
+
+// ADR-85 T2 (D5) -- live re-resolution of the far-neighbour nodes through theDomain,
+// by tag, on every access. Returns 0 both when no neighbour was ever armed AND when
+// an armed neighbour no longer resolves (removed by the analysis since this adapter
+// was built) -- the caller already treats a null far node as "open terminal end" /
+// "not a vertex pair" (segment2DActive's existing null checks), so a removed
+// neighbour stands the pair down to that SAME behaviour instead of reading freed
+// memory. theDomain==0 (never expected for a live 2D adapter, but defensive) also
+// resolves to "no neighbour".
+Node *
+LadrunoContactFE::nts2dPrevFarNode(void) const
+{
+    if (!nts2dHasPrevFar || theDomain == 0) return 0;
+    return theDomain->getNode(nts2dPrevFarTag);
+}
+
+Node *
+LadrunoContactFE::nts2dNextFarNode(void) const
+{
+    if (!nts2dHasNextFar || theDomain == 0) return 0;
+    return theDomain->getNode(nts2dNextFarTag);
 }
 
 bool
@@ -333,13 +365,24 @@ static const double NTS2D_END_SLACK = 1.0e-3;
 // a kernel call (the T1a "T1b adds no geometry" contract).
 bool
 LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double B[6],
-                                  double committedSide, double *liveSideOut) const
+                                  double committedSide, double *liveSideOut,
+                                  double *gTout) const
 {
     using namespace LadrunoContact2DKernel;
     gap = 0.0; n[0] = n[1] = n[2] = 0.0; N[0] = N[1] = 0.0;
     for (int k = 0; k < 6; k++) B[k] = 0.0;
     if (liveSideOut != 0) *liveSideOut = 0.0;
+    if (gTout != 0) *gTout = 0.0;
     if (mode != SEGMENT || ndm != 2 || theSlave == 0) return false;
+
+    // ADR-85 T2 (D5) -- re-resolve the far neighbours THROUGH theDomain by tag, not
+    // through a raw pointer held since construction (see the header comment on
+    // nts2dPrevFarNode/nts2dNextFarNode). A neighbour removed since this adapter was
+    // built resolves to 0 here -- the SAME value "never armed" already produces --
+    // so every existing null check below stands this pair down exactly as it would
+    // for a genuine open end / non-vertex, never dereferencing freed memory.
+    Node *prevFarNode = nts2dPrevFarNode();
+    Node *nextFarNode = nts2dNextFarNode();
 
     const Vector &Xs = theSlave->getCrds();
     const Vector &us = theSlave->getTrialDisp();
@@ -378,17 +421,17 @@ LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double 
         // untouched; the honest permanent end treatment (a radial END-CAP
         // vertex, C0 with no window) is deferred by name -- see LEDGER_quirks.
         if (st == SEG2D_OUT_LOW &&
-            !(nts2dPrevFar == 0 && xi >= -NTS2D_END_SLACK))
+            !(prevFarNode == 0 && xi >= -NTS2D_END_SLACK))
             return false;
         if (st == SEG2D_OUT_HIGH &&
-            !(nts2dNextFar == 0 && xi <= 1.0 + NTS2D_END_SLACK))
+            !(nextFarNode == 0 && xi <= 1.0 + NTS2D_END_SLACK))
             return false;
         // Ordered-ownership step 1: the predecessor owns whenever IT is in-bounds
         // too. Its geometry is read at the SAME trial config; the in-bounds
         // status is sigma-independent, so passing the surface sigma is exact.
-        if (nts2dPrevFar != 0) {
-            const Vector &Xp = nts2dPrevFar->getCrds();
-            const Vector &up = nts2dPrevFar->getTrialDisp();
+        if (prevFarNode != 0) {
+            const Vector &Xp = prevFarNode->getCrds();
+            const Vector &up = prevFarNode->getTrialDisp();
             const double XP[2] = { Xp(0) + up(0), Xp(1) + up(1) };
             double xiP, gP, nP[2];
             if (projectSegment2D(XP, X0, xs, nts2dSigma, nts2dLref, xiP, gP, nP)
@@ -399,17 +442,30 @@ LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double 
         gap = g2; n[0] = n2[0]; n[1] = n2[1];
         shape2D(xi, N);
         bOperatorSegment2D(N[0], N[1], n2, B);
+        // ADR-85 T2 -- the ONE scalar tangential relative-DISPLACEMENT (never a
+        // 2-vector differenced componentwise -- see the file-level note in
+        // LadrunoFrictionKernel.h). t_hat = perp(n) (ADR-85 How/4); drel is the
+        // displacement-not-position residual segmentActive's gTvec also uses,
+        // just projected to a scalar instead of a tangent-plane 3-vector.
+        if (gTout != 0) {
+            const Vector &u0 = segNode[0]->getTrialDisp();
+            const Vector &u1 = segNode[1]->getTrialDisp();
+            const double ubar[2] = { N[0]*u0(0) + N[1]*u1(0), N[0]*u0(1) + N[1]*u1(1) };
+            const double drel[2] = { us(0) - ubar[0], us(1) - ubar[1] };
+            const double th[2] = { -n2[1], n2[0] };
+            *gTout = drel[0]*th[0] + drel[1]*th[1];
+        }
         return true;
     }
 
     // nps == 1: the concave-vertex pair (degenerate-segment representation).
-    if (nps != 1 || segNode[0] == 0 || nts2dPrevFar == 0 || nts2dNextFar == 0)
+    if (nps != 1 || segNode[0] == 0 || prevFarNode == 0 || nextFarNode == 0)
         return false;
     double XP[2], XV[2], XN[2];
     {
-        const Vector &Xp = nts2dPrevFar->getCrds(); const Vector &up = nts2dPrevFar->getTrialDisp();
-        const Vector &Xv = segNode[0]->getCrds();   const Vector &uv = segNode[0]->getTrialDisp();
-        const Vector &Xn = nts2dNextFar->getCrds(); const Vector &un = nts2dNextFar->getTrialDisp();
+        const Vector &Xp = prevFarNode->getCrds(); const Vector &up = prevFarNode->getTrialDisp();
+        const Vector &Xv = segNode[0]->getCrds();  const Vector &uv = segNode[0]->getTrialDisp();
+        const Vector &Xn = nextFarNode->getCrds(); const Vector &un = nextFarNode->getTrialDisp();
         XP[0] = Xp(0) + up(0); XP[1] = Xp(1) + up(1);
         XV[0] = Xv(0) + uv(0); XV[1] = Xv(1) + uv(1);
         XN[0] = Xn(0) + un(0); XN[1] = Xn(1) + un(1);
@@ -462,6 +518,16 @@ LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double 
     gap = g2; n[0] = n2[0]; n[1] = n2[1];
     N[0] = 1.0; N[1] = 0.0;                     // |B| weight of the one vertex node (B = [n | -n])
     bOperatorVertex2D(n2, B);
+    // ADR-85 T2 -- the vertex pair's scalar tangential slip: the relative
+    // DISPLACEMENT between the slave and the ONE vertex node, projected onto
+    // t_hat = perp(n) (same construction as the segment branch above; the vertex
+    // pair's B = [n | -n] has only one "master" node, so ubar collapses to uv).
+    if (gTout != 0) {
+        const Vector &uv = segNode[0]->getTrialDisp();
+        const double drel[2] = { us(0) - uv(0), us(1) - uv(1) };
+        const double th[2] = { -n2[1], n2[0] };
+        *gTout = drel[0]*th[0] + drel[1]*th[1];
+    }
     return true;
 }
 
@@ -497,6 +563,47 @@ LadrunoContactFE::addFrictionTang(double fact, const double n[3], const double N
             for (int i = 0; i < 3; i++)
                 for (int j = 0; j < 3; j++)
                     tang(3 * a + i, 3 * b + j) += wab * Kss[i][j];
+        }
+}
+
+// ADR-85 T2 -- the 2D sibling of addFrictionTang (WORK ITEM 3). The kernel's
+// tangentBlock1D returns two SCALARS (Kss_scalar on the tangential direction,
+// dTN_scalar the consistent pressure-coupling coefficient); this method
+// reconstructs the 2x2 physical block via the SAME chain rule addFrictionTang's
+// 3x3 Kss embeds: d(gTeff)/d(u_rel) = t_hat (this pair's tangential B-operator,
+// identical to the projection segment2DActive's gTout uses) and d(tn)/d(u_rel) =
+// kn*n (the pair's NORMAL B-operator, i.e. n itself for a unit-weighted node) --
+// so Kss_2x2 = Kss_scalar*(t_hat⊗t_hat) + dTN_scalar*(t_hat⊗n) -- dTN_scalar ALREADY
+// carries kn (see tangentBlock1D), so kn is NOT reapplied here -- then scattered
+// via the SAME G = [I_2 | −N_i I_2] discipline as the 3D block.
+void
+LadrunoContactFE::addFrictionTang2D(double fact, const double n[3], const double N2[2],
+                                    double tn, double gTeff, double gpT, bool consistent)
+{
+    const double th[2] = { -n[1], n[0] };             // t_hat = perp(n), ADR-85 How/4
+    double Kss_s = 0.0, dTN_s = 0.0;
+    LadrunoFrictionKernel::tangentBlock1D(gTeff, gpT, tn, kn, kt, mu, consistent, Kss_s, dTN_s);
+    double Kss2[2][2];
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 2; j++)
+            // ORCHESTRATOR REVIEW FIX (ADR-85 T2): dTN_s ALREADY carries kn --
+            // tangentBlock1D returns dTN = -(dcap/dN)*kn*sgn, exactly as the 3D
+            // frictionTangentBlock carries it ONCE in `(-dCap_dN*kn*nh[i])*n[j]`.
+            // Multiplying by kn again here scaled the consistent cross term as
+            // kn^2; with kn ~ 1e6..1e9 that is a catastrophically wrong
+            // -consistanttan tangent. (The symmetric DEFAULT was unaffected:
+            // dTN_s is identically 0 unless consistent==true.) kn appears ONCE.
+            Kss2[i][j] = Kss_s * th[i] * th[j] + dTN_s * th[i] * n[j];
+    double w[3];
+    w[0] = 1.0;
+    for (int i = 0; i < nps; i++) w[1 + i] = -N2[i];
+    int nn = 1 + nps;
+    for (int a = 0; a < nn; a++)
+        for (int b = 0; b < nn; b++) {
+            double wab = fact * w[a] * w[b];
+            for (int i = 0; i < 2; i++)
+                for (int j = 0; j < 2; j++)
+                    tang(2 * a + i, 2 * b + j) += wab * Kss2[i][j];
         }
 }
 
@@ -766,10 +873,13 @@ LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const dou
     // dimensional, t = perp(n) -- EXACT per-mode. The 3D least-aligned-axis
     // construction below would pick the OUT-OF-PLANE axis as t1 for an in-plane
     // n (the wrong space entirely); it stays textually untouched for ndm == 3.
-    // Unreachable until T2 wires 2D friction (softKt is called only from the
-    // friction path and the handler refuses -mu in 2D), but coded now so T2
-    // inherits it. The B2 coupled-K_c anisotropic-mass caveat (m_x != m_y makes
-    // the per-mode bound necessary-not-sufficient) transfers to 2D verbatim.
+    // ADR-85 T2 (WORK ITEM 4, verified): this branch is now LIVE -- T2 wires 2D
+    // friction through getResidual/addKtToTang/addKiToTang (LadrunoContactFE::
+    // returnMap1D call sites), and softKt is called only from that friction
+    // path, so a `-soft`+`-mu` 2D deck now REACHES this branch under the
+    // explicit CentralDifferenceLadruno exactly as coded. The B2 coupled-K_c
+    // anisotropic-mass caveat (m_x != m_y makes the per-mode bound necessary-
+    // not-sufficient) transfers to 2D verbatim.
     if (ndm == 2) {
         double t1[3] = { -n[1], n[0], 0.0 };      // perp(n), z-padded for the mass helpers
         double invT = gapModeInvMass(t1, N);
@@ -899,14 +1009,16 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             }
         }
     } else if (mode == SEGMENT && ndm == 2) {
-        // ADR-85 T1b -- the 2D NTS pair (segment nps == 2 / concave vertex
-        // nps == 1). Frictionless by construction (2D friction is T2; the
-        // handler refuses -mu). The shipped 3D SEGMENT branch below is textually
-        // untouched -- an ndm == 2 adapter cannot reach it, and every 3D adapter
-        // carries ndm == 3 so it skips this arm on one comparison.
-        double gap, n[3], N2[2], B[6], liveSide = 0.0;
+        // ADR-85 T1b/T2 -- the 2D NTS pair (segment nps == 2 / concave vertex
+        // nps == 1). mu<=0 is frictionless (byte-identical to the T1b lane,
+        // the SAME short-circuit discipline the 3D SEGMENT branch below uses);
+        // mu>0 wires the SCALAR return map (ADR-85 T2, below). The shipped 3D
+        // SEGMENT branch below is textually untouched -- an ndm == 2 adapter
+        // cannot reach it, and every 3D adapter carries ndm == 3 so it skips
+        // this arm on one comparison.
+        double gap, n[3], N2[2], B[6], liveSide = 0.0, gTnow = 0.0;
         const double committedSide = vtx2DCommittedSide();
-        bool act2d = segment2DActive(gap, n, N2, B, committedSide, &liveSide);
+        bool act2d = segment2DActive(gap, n, N2, B, committedSide, &liveSide, &gTnow);
         // panel MINOR diagnostic: a committed side sign that DISAGREES with the
         // live wedge classification means the corner has deformed past its
         // reference-config type -- a reference-concave corner gone convex would
@@ -976,6 +1088,48 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                     for (int d = 0; d < 2; d++) gdot += B[2 * (1 + i) + d] * vm(d);
                 }
                 for (int k = 0; k < ndof; k++) resid(k) += -muc * gdot * B[k];
+            }
+
+            // --- ADR-85 T2 -- 2D NTS Coulomb friction (SCALAR return map) ---
+            // mu<=0 SHORT-CIRCUITS before any state touch ⇒ byte-identical to the
+            // T1b frictionless 2D pair (the SAME `mu > 0.0` discipline the 3D
+            // SEGMENT branch below uses -- no new silence). The engine is
+            // re-fetched lazily (wipe deletes it) and null-checked, exactly like
+            // the 3D path; the ONLY new state this touches is the EXISTING
+            // FrictionState slot 0 (gpT[0]/gpTtrial[0]/gT0[0]/gT0committed[0] --
+            // no new members, ADR-85 T2 binding).
+            if (mu > 0.0 && theDomain != 0) {
+                LadrunoContactDomain *cdFr = theDomain->getLadrunoContactDomain();
+                if (cdFr != 0) {
+                    int slaveTag = theSlave->getTag();
+                    LadrunoContactDomain::FrictionState &st =
+                        cdFr->getOrCreateFrictionState(contactTag, slaveTag, segIndex);
+                    // capture the ENGAGEMENT-config tangential origin ONCE, as a
+                    // SCALAR (gTnow is already the ONE t_hat-projected number
+                    // segment2DActive formed from the relative DISPLACEMENT --
+                    // never a 2-vector to difference componentwise; the ADR-85
+                    // T2 design note's BINDING implementation consequence).
+                    if (!st.engaged) { st.gT0[0] = gTnow; st.engaged = true; }
+                    double gTeff = gTnow - st.gT0[0];      // scalar - scalar (Sterbenz-exact)
+                    // B1 (kt): the SAME softKt this contact's normal block used to
+                    // size ktEff (softKt already carries a NAMED 2D branch, How/6 --
+                    // now REACHED for the first time, WORK ITEM 4).
+                    double ktEff = softKt(theIntegrator, n, N4);
+                    double tFricScalar, gpTtrial0;
+                    LadrunoFrictionKernel::returnMap1D(gTeff, st.gpT[0], tn, ktEff, mu,
+                                                       tFricScalar, gpTtrial0);
+                    st.gpTtrial[0] = gpTtrial0;            // SET, not += (idempotent, BLOCKER-2)
+                    // scatter tFricScalar*t_hat exactly like the normal block scatters
+                    // tn*n (B = [n | -N_i n]); t_hat = perp(n), the SAME direction
+                    // gTnow was projected onto.
+                    const double th[2] = { -n[1], n[0] };
+                    resid(0) += tFricScalar * th[0];
+                    resid(1) += tFricScalar * th[1];
+                    for (int i = 0; i < nps; i++) {
+                        resid(2 * (1 + i) + 0) += -N2[i] * tFricScalar * th[0];
+                        resid(2 * (1 + i) + 1) += -N2[i] * tFricScalar * th[1];
+                    }
+                }
             }
         }
     } else if (mode == SEGMENT) {
@@ -1679,12 +1833,31 @@ LadrunoContactFE::addKtToTang(double fact)
         // master segment carries a curvature block, omitted here exactly like
         // the shipped default 3D path omits it when -geomtan is off. The no-op
         // costs Newton RATE on rotating masters, never force correctness.)
-        double gap, n[3], N2[2], B[6];
-        if (segment2DActive(gap, n, N2, B, vtx2DCommittedSide(), 0)) {
+        double gap, n[3], N2[2], B[6], gTnow = 0.0;
+        if (segment2DActive(gap, n, N2, B, vtx2DCommittedSide(), 0, &gTnow)) {
             int ndof = 2 * (1 + nps);
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
+            // ADR-85 T2 -- friction tangent (IMPLICIT only -- CDL never calls
+            // addKtToTang). Reads COMMITTED gpT (not gpTtrial), exactly the 3D
+            // SEGMENT rule below, so the tangent is the derivative of the
+            // residual evaluated at the SAME state. Default consistentTan=false
+            // (ct.consistentTan, threaded through the 2D ctor) ⇒ symmetric
+            // (drop the dTN cross term, design-gate Q2); true ⇒ the full
+            // non-symmetric consistent tangent (needs FullGeneral/UmfPack -- the
+            // SAME parse-time WARNING the 3D -consistanttan path already emits,
+            // dimension-independent).
+            if (mu > 0.0 && theDomain != 0) {
+                LadrunoContactDomain *cdT = theDomain->getLadrunoContactDomain();
+                if (cdT != 0) {
+                    LadrunoContactDomain::FrictionState &st =
+                        cdT->getOrCreateFrictionState(contactTag, theSlave->getTag(), segIndex);
+                    double gTeff = st.engaged ? (gTnow - st.gT0[0]) : 0.0;
+                    double tn = LadrunoContactKernel::traction(kn, gap);
+                    addFrictionTang2D(fact, n, N2, tn, gTeff, st.gpT[0], consistentTan);
+                }
+            }
         }
     } else if (mode == SEGMENT) {
         // K_c = kn BᵀB (main NTS term — EXACT for a flat/fixed master where n is constant).
@@ -1935,15 +2108,25 @@ LadrunoContactFE::addKiToTang(double fact)
                 tang(i, j) += fact * kn * planeN[i] * planeN[j];
     } else if (mode == SEGMENT && ndm == 2) {
         // ADR-85 T1b -- initial-stiffness path: K_initial == K_current == kn*B^TB
-        // for the frictionless 2D pair (mirror addKtToTang so Newton -initial /
-        // ModifiedNewton -initial do not silently drop the contact stiffness --
-        // the shipped SEGMENT rationale, ndm-generalized).
+        // (mirror addKtToTang so Newton -initial / ModifiedNewton -initial do not
+        // silently drop the contact stiffness -- the shipped SEGMENT rationale,
+        // ndm-generalized).
         double gap, n[3], N2[2], B[6];
         if (segment2DActive(gap, n, N2, B, vtx2DCommittedSide(), 0)) {
             int ndof = 2 * (1 + nps);
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
+            // ADR-85 T2 -- the friction INITIAL stiffness is the SPD STICK
+            // tangent kt*(t_hat⊗t_hat) (mirrors the 3D SEGMENT rule below, gate
+            // Q5): gTeff==gpT==0.0 forces tangentBlock1D's stick branch
+            // regardless of the actual committed state (|kt*(0-0)| = 0 <= any
+            // positive cap), so no engine slot is needed; consistent=false is
+            // forced too (stick carries no Csl cross term).
+            if (mu > 0.0) {
+                double tn = LadrunoContactKernel::traction(kn, gap);
+                addFrictionTang2D(fact, n, N2, tn, 0.0, 0.0, false);
+            }
         }
     } else if (mode == SEGMENT) {
         // initial-stiffness path: same kn BᵀB (flat segment ⇒ K_initial == K_current)
