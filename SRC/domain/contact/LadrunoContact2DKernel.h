@@ -85,8 +85,13 @@
 //             REFUSED, never silently treated as "no guard".
 //   tolLen -- vertexEval2D's degenerate-coincidence floor. It is a LENGTH and has no
 //             default on purpose: a hardcoded absolute length is exactly the unit trap
-//             ADR-57 P5 fixed. Pass tauSeg*Lref so it lives on the same scale as the
-//             segment refusal.
+//             ADR-57 P5 fixed. Keep it RELATIVE to Lref. T1b AMENDMENT (measured): the
+//             original "pass tauSeg*Lref" suggestion collides with the fork's standard
+//             1e-8 seeded penetration (tauSeg*Lref = 1.118e-8 on the G-T1b notch deck
+//             refused its own seed -> singular slave DOF; boundary probed at exactly
+//             tauSeg*Lref). The floor guards DIRECTION conditioning, not segment
+//             degeneracy -- pass the conditioning gauge tauPerp*Lref instead, as the
+//             T1b adapter does.
 //   tauPerp -- dimensionless conditioning gate for the two ambiguity fail-safes
 //             (refDir tangent to the segment; a fold-back "spike" corner whose two
 //             outward normals are antiparallel). Mirrors normalOriented's 1e-12.
@@ -372,10 +377,12 @@ inline WedgeResult vertexWedge2D(const double tPrev[2], const double tNext[2],
 // segment's evaluation at xi = 1 exactly, and on aNext = 0 it equals the next segment's
 // at xi = 0. Both seams are gated in the oracle (families CB / CD).
 //
-// tolLen is REQUIRED and is a LENGTH: pass tauSeg*Lref so the coincidence floor sits on
-// the same relative scale as the segment refusal. A hardcoded absolute floor here would
-// be the ADR-57 P5 unit trap (a model meshed in small units silently loses all vertex
-// contact). tolLen <= 0 / NaN is a contract violation -> refuse.
+// tolLen is REQUIRED and is a LENGTH, kept RELATIVE to the surface scale (a hardcoded
+// absolute floor here would be the ADR-57 P5 unit trap -- a model meshed in small units
+// silently loses all vertex contact). Pass tauPerp*Lref, the DIRECTION-CONDITIONING
+// gauge (see the T1b amendment in the tolerance block at the top of this file: the
+// original tauSeg*Lref suggestion sat ON the fork's standard 1e-8 seeded penetration
+// and refused its own seed). tolLen <= 0 / NaN is a contract violation -> refuse.
 inline int vertexEval2D(const double Xv[2], const double xs[2], double sigmaSide,
                         double &gap, double n[2], double tolLen)
 {
@@ -417,14 +424,19 @@ inline double sigmaFromRef2D(const double t[2], const double refDir[2],
 }
 
 // ---------------------------------------------------------------- B-operators
-// First variation of the gap, d(gap) = B . [du_slave, du_master...]. In 2D BOTH
-// operators are EXACT (no dropped curvature term), which is why ADR-85 SS How/5 can
-// state K_c = kn*B^T B as the main term with only a small geometric addition:
+// FIRST variation of the gap, d(gap) = B . [du_slave, du_master...]. In 2D both
+// operators are the EXACT GRADIENT -- which grounds ADR-85 SS How/5 keeping
+// K_c = kn*B^T B as the MAIN tangent term:
 //   segment: xs - x(xi) is exactly gap*n (the closest-point residual is parallel to n
 //            because n is perpendicular to the ONE tangent), and n.dn = 0 for a unit
-//            normal, so the dn and dxi contributions cancel identically.
+//            normal, so the dn and dxi FIRST-ORDER contributions cancel identically.
 //   vertex:  d||xs-Xv|| = u.(dxs - dXv) with u = (xs-Xv)/||xs-Xv|| = sigmaSide*n.
-// Both identities are FD-gated in the oracle (family F8).
+// Both identities are FD-gated in the oracle (family F8). NOTE (T1b correction of an
+// earlier over-read): an exact first variation does NOT make the SECOND variation zero.
+// The Newton geometric term kn*g*(d2 g/du2) is nonzero whenever the MASTER moves (a
+// rotating segment rotates n; the vertex distance carries the radial (I - u u^T)/||r||
+// Hessian) -- it is a NAMED DEFERRAL (the 3D default path omits its analogue too), so
+// kn*B^T B is Gauss-Newton, exact for a FIXED master, superlinear otherwise.
 //
 // DOF ORDER, segment: [slave_x, slave_y, X0_x, X0_y, X1_x, X1_y]  (ndof = 6)
 //   B = [ n | -N0*n | -N1*n ],  r = B^T * tn,  tn = kn*<-gap>_+

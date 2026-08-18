@@ -159,6 +159,34 @@ class LadrunoContactFE : public FE_Element
                      Domain *theDomain = 0, double mu = 0.0, double kt = 0.0,
                      double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
                      double softScale = 0.0, bool edgeAlm = false);  // E6 one-scalar commit-cycle ALM
+    // ADR-85 T1b -- the 2D NTS ctor (SEGMENT mode with ndm == 2). nps == 2 binds a
+    // slave node vs a 2-node master LINE segment (ndof = 2*(1+2) = 6); nps == 1
+    // binds the CONCAVE-VERTEX pair as a DEGENERATE SEGMENT (segNodes[0] = the
+    // shared vertex; ndof = 4, B = [n | -n]) -- deliberately NO new Mode value and
+    // no new class tag: 2D is a parameterization of the shipped SEGMENT mode
+    // (ADR-85 Where), and the degenerate-segment representation is the smaller
+    // diff (every SEGMENT-mode dispatch arm and every ndm*(1+nps) sizing covers
+    // it for free; a new mode would add an arm to getResidual/addKtToTang/
+    // addKiToTang/addCtoTang each). sigma = the per-master-surface committed
+    // orientation from the interface-level reference vote (ADR-85 How/2, fixed
+    // at pairing); Lref = the master surface's min INITIAL segment length (the
+    // kernel's relative-gauge caller contract); prevFar/nextFar = the far nodes
+    // of the adjacent CHAINED segments in surface order, null <=> that side is
+    // an OPEN TERMINAL end. On a SEGMENT pair, prevFar arms the ordered-
+    // ownership stand-down (kernel rule step 1) and a null prevFar/nextFar arms
+    // the open-end acceptance window on that side (NTS2D_END_SLACK -- the
+    // tilt-drift discontinuity fix, see segment2DActive); on a VERTEX pair both
+    // arm the wedge classifier. They are NOT in the connectivity: they steer
+    // only the ACTIVE-SET decision (like the 3D in-bounds test), never the
+    // force map -- forces/tangents involve only [slave | segNodes].
+    // Frictionless by construction (2D friction is ADR-85 T2 -- the handler
+    // refuses -mu); -visc muc (the T1b dashpot port) and -soft softScale
+    // (size-safe B1 mass helpers) are live.
+    LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, int ndm2,
+                     double kn, double sigma, double Lref,
+                     Node *prevFar, Node *nextFar,
+                     double muc = 0.0, double softScale = 0.0,
+                     Domain *theDomain = 0, int contactTag = 0, int segIndex = 0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -212,6 +240,28 @@ class LadrunoContactFE : public FE_Element
     // (x_s − x̄)_tangential (slip measure for the friction return map).
     bool segmentActive(double &gap, double n[3], double N[4], double *B,
                        double *gTvec = 0) const;
+
+    // ADR-85 T1b: the 2D NTS narrow phase (SEGMENT mode, ndm == 2), wired
+    // VERBATIM to the LadrunoContact2DKernel ownership contract (How/1 + the
+    // T1a corrections): nps == 2 projects the slave onto the master segment
+    // (projectSegment2D) and applies the ORDERED-OWNERSHIP stand-down -- the
+    // PREVIOUS segment in surface order owns whenever it is in-bounds too;
+    // nps == 1 evaluates the concave-VERTEX pair (adjacent segments first, then
+    // the UNSLACKED wedge claim aPrev > 0 && aNext < 0, then vertexEval2D with
+    // the COMMITTED side sign). Fills gap (< 0 = penetration), the z-padded
+    // normal n[3] (n[2] = 0 so the shipped mass helpers project correctly), the
+    // |B|-weights N[2] (segment: shape fns; vertex: {1, 0}) and the gap operator
+    // B over [slave xy | node xy ...] (ndof = 2*(1+nps) <= 6). committedSide is
+    // the domain-committed vertex side sign (ignored for nps == 2; 0 = not yet
+    // captured, so the LIVE wedge sign is used this eval and reported through
+    // *liveSideOut for the caller to commit -- the edgeGeom capture idiom).
+    // Returns true only when this adapter OWNS the pair AND it is penetrating.
+    bool segment2DActive(double &gap, double n[3], double N[2], double B[6],
+                         double committedSide, double *liveSideOut) const;
+
+    // ADR-85 T1b: the domain-committed side sign for a VERTEX pair (0 when not
+    // a 2D vertex pair, no engine, or not yet captured).
+    double vtx2DCommittedSide(void) const;
 
     // P3.5: scatter the 3×3 friction tangent block K_ss (LadrunoContactKernel::
     // frictionTangentBlock) into `tang` via G = [I | −N_i I]: block (a,b) = w_a w_b K_ss
@@ -346,6 +396,16 @@ class LadrunoContactFE : public FE_Element
     // epsN rides `kn`, contactTag keys the Domain-owned EdgeEdgeState (with the ordered node tags).
     Node *edgeNode[4];      // {slave edge node A, slave edge node B, master edge node A, B}
     bool  edgeAlm;          // E6: inject the per-pair λ_N (p = min(0, λ_N + εN·gN)); off ⇒ λ_N≡0 (E2 penalty)
+
+    // ADR-85 T1b -- 2D NTS bindings (SEGMENT mode with ndm == 2). Default member
+    // initializers (the useSmoothNormal NSDMI pattern) so every 3D ctor leaves
+    // them null/0 untouched; only the 2D ctor sets them.
+    double nts2dSigma   = 0.0;   // per-master-surface committed orientation (How/2 vote)
+    double nts2dLref    = 0.0;   // min INITIAL master segment length (kernel relative gauge)
+    Node  *nts2dPrevFar = 0;     // previous chained segment's far node (ownership stand-
+                                 // down); null <=> the X0 side is an open terminal end
+    Node  *nts2dNextFar = 0;     // next chained segment's far node; null <=> the X1
+                                 // side is an open terminal end (end-window marker)
 
     // C3.1 MORTAR friction (active in MORTAR mode when mu>0 ∨ cohesion>0 ∨ tauMax>0). epsT (the
     // tangential penalty) rides `kt`; mu reuses the friction `mu` member. cohesion/tauMax complete

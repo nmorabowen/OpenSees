@@ -1079,6 +1079,30 @@ LadrunoContactDomain::getNtsForce(int slaveTag) const
     return f;
 }
 
+// ADR-85 T1b -- the 2D concave-vertex pair's committed side sign (see the header:
+// per-pairing-epoch, committed once at first capture, deliberately not
+// double-buffered). PairKey's g slot carries the VERTEX NODE TAG here.
+double
+LadrunoContactDomain::getVtx2DSide(int contactTag, int slaveTag, int vtxNodeTag) const
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = vtxNodeTag;
+    std::map<PairKey, double>::const_iterator it = theVtx2DSide.find(k);
+    return (it != theVtx2DSide.end()) ? it->second : 0.0;
+}
+
+void
+LadrunoContactDomain::setVtx2DSide(int contactTag, int slaveTag, int vtxNodeTag, double side)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = vtxNodeTag;
+    theVtx2DSide[k] = side;
+}
+
+void
+LadrunoContactDomain::clearVtx2DSide(void)
+{
+    theVtx2DSide.clear();       // handle() = a re-pairing epoch: sides re-capture fresh
+}
+
 // B1 (P4) — assembled nodal-mass cache (the SOFT=1 gap-mode effective mass; see the header).
 void
 LadrunoContactDomain::clearNodalMass(void)
@@ -1267,6 +1291,7 @@ LadrunoContactDomain::revertToStart(void)
     theEdgeEdgeStates.clear();
     theMortarFacetContribs.clear();
     theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)
+    theVtx2DSide.clear();               // ADR-85 T1b vertex side signs (re-captured on a fresh run)
     theNodalMass.clear();               // B1 assembled-mass cache (rebuilt when soft contacts exist)
     // ADR-60 re-emit: drop anchors + membership fingerprints + the persistent Trigger —
     // the handler re-registers everything at the next handle() (one conservative

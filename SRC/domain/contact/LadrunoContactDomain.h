@@ -445,6 +445,23 @@ class LadrunoContactDomain
     void   setNtsForce(int contactTag, int slaveTag, int segIndex, double tn);
     double getNtsForce(int slaveTag) const;   // Σ over (contactTag, slaveTag, *segIndex)
 
+    // --- ADR-85 T1b: the 2D concave-VERTEX pair's committed side sign, keyed
+    //     (contactTag, slaveNodeTag, vertexNodeTag). Committed ONCE at first
+    //     capture from the wedge bisector classifier (LadrunoContact2DKernel
+    //     handler-flow step 3 -- a per-step re-derived sign flips exactly while
+    //     interpenetrating, the ADR-57 committed-sign lesson) and passed
+    //     verbatim to vertexEval2D thereafter. PER-PAIRING-EPOCH state: sigma is
+    //     "fixed at pairing, re-evaluated only on re-pairing" (ADR-85 How/2), so
+    //     the handler clears the store at every handle() (clearVtx2DSide) -- a
+    //     re-paired vertex re-captures fresh. Deliberately NOT double-buffered
+    //     for implicit revert (unlike the C3.2 MAJOR-2 slots): with concave-only
+    //     instantiation every successful capture is -1 (sideSign = -corner
+    //     inside the wedge), so a capture latched at a later-REJECTED trial
+    //     config commits the same value a clean capture would. ---
+    double getVtx2DSide(int contactTag, int slaveTag, int vtxNodeTag) const; // 0 = uncaptured
+    void   setVtx2DSide(int contactTag, int slaveTag, int vtxNodeTag, double side);
+    void   clearVtx2DSide(void);
+
     // --- B1 (P4) ASSEMBLED nodal mass cache. The SOFT=1 penalty needs the gap-mode effective mass,
     //     which uses the mass the EXPLICIT integrator actually inverts: the assembled global diagonal
     //     M = Σ_elements diag(M_e) + the nodal `mass`. Node::getMass() carries ONLY the nodal `mass`
@@ -551,7 +568,13 @@ class LadrunoContactDomain
         WARN_SOFT2_NOMASS,          // SOFT=2 could not size
         WARN_VISC_STATIC,           // -visc under a StaticIntegrator: dashpot disabled
         WARN_MORTAR_ORIENT,         // mortar AUTO orientation degenerate (coincident facets)
-        WARN_EDGE_SIGN_DEFER        // edge-edge sign capture deferred (orientDir ⟂ n)
+        WARN_EDGE_SIGN_DEFER,       // edge-edge sign capture deferred (orientDir ⟂ n)
+        WARN_VTX2D_DEFER,           // ADR-85 T1b: 2D vertex-pair side-sign capture deferred
+                                    // (fold-back spike / wedge-boundary conditioning gate)
+        WARN_2D_GEOMTAN_NOOP,       // ADR-85 T1b: -geomtan accepted as a documented no-op
+                                    // on the 2D lane (curvature term = named deferral)
+        WARN_VTX2D_SIDE_FLIP        // ADR-85 T1b: committed vertex side sign disagrees with
+                                    // the live wedge classification (corner changed type)
     };
     bool warnOnce(int contactTag, int topic);
 
@@ -622,6 +645,8 @@ class LadrunoContactDomain
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // GC scratch (per handle())
     std::map<PairKey, double> theNtsForce;              // B3: per-pair normal force snapshot
+    std::map<PairKey, double> theVtx2DSide;             // ADR-85 T1b: committed vertex side
+                                                        // signs (c, slaveTag, g = vertexTag)
     struct NodeMass { double m[3]; };                   // B1: assembled translational nodal mass
     std::map<int, NodeMass> theNodalMass;               // B1: per-node assembled mass (SOFT=1)
 
