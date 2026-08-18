@@ -53,7 +53,18 @@ DiagonalSOE::DiagonalSOE(DiagonalSolver &the_Solver, bool ld)
 :LinearSOE(the_Solver, LinSOE_TAGS_DiagonalSOE), lumpDiagonal(ld),
  size(0), A(0), B(0), X(0), vectX(0), vectB(0), matA(0), isAfactored(false)
 {
-  if (size > 0) {
+  // Ladruno: this was `if (size > 0)`, testing the member that the init list had
+  // just set to 0 -- and `size = N` lives INSIDE the block, so the guard could
+  // never be true and the sized constructor allocated NOTHING. The whole body was
+  // dead code: an SOE built as DiagonalSOE(N, solver) came back with size 0 and
+  // null A/B/X, i.e. indistinguishable from the default constructor.
+  //
+  // Harmless in practice today only because nobody uses this overload -- all
+  // three call sites (commands.cpp x2, DiagonalDirectSolver.cpp) use the
+  // 2-argument form, and setSize() allocates later regardless. Guarding on the
+  // PARAMETER makes the overload behave as its signature promises, and cannot
+  // change behaviour for any existing caller precisely because there are none.
+  if (N > 0) {
     size = N;
     A = new double[size];
     B = new double[size];

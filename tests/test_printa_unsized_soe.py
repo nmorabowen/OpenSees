@@ -338,3 +338,239 @@ def test_contact_handler_tangent_matches_plain():
         f"with no contact declared:\ncontact={a['A']}\nplain={b['A']}"
     )
     assert a["B"] == b["B"], (a["B"], b["B"])
+
+
+# ===========================================================================
+#  The MPI-only half of the same defect
+# ===========================================================================
+# The 12 classes above are every SOE a serial desktop build can reach. Five more
+# carry the identical `exit(-1)` accessors and could be neither compiled nor run
+# on a serial box, so they were deliberately excluded from the first pass. Their
+# reachability is NOT uniform, and it decides what a test can honestly claim:
+#
+#   MPIDiagonalSOE                 REACHABLE  `system MPIDiagonal`, gated on
+#                                             _PARALLEL_INTERPRETERS => OpenSeesMP
+#                                             (openseesmp.pyd). Exercised below.
+#   MumpsSOE                       REACHABLE  `system Mumps`, gated on _MUMPS.
+#                                             MumpsParallelSOE derives from it and
+#                                             does NOT override getX/getB, so the
+#                                             same fix covers both. Exercised below.
+#   DistributedDiagonalSOE         Tcl-ONLY   built into every target, but only
+#                                             instantiated under
+#                                             _PARALLEL_PROCESSING (OpenSeesSP) via
+#                                             Tcl `system Diagonal`, plus the object
+#                                             broker's recvSelf path. openseespy
+#                                             always gets plain DiagonalSOE.
+#   DistributedSparseGenRowLinSOE  DEAD       compiled into MP/SP and holds
+#                                             classTag 21, but NOTHING in the tree
+#                                             ever constructs it -- not the Tcl
+#                                             tables, not OpenSeesCommands, not even
+#                                             FEM_ObjectBrokerAllClasses. Compile-
+#                                             checked only.
+#   PetscSOE                       NOT BUILT  `add_subdirectory(petsc)` is commented
+#                                             out in linearSOE/CMakeLists.txt, so the
+#                                             file never compiles. Pattern-only fix.
+#
+# So two of the five are gated here and three cannot be. That is a scoping fact,
+# not an omission -- see the ledger rows.
+#
+# WHY exit(-1) IS WORSE HERE THAN IN THE SERIAL TWINS
+#     These solvers are collective in every phase. exit(-1) on whichever rank
+#     touched the accessor leaves the others blocked in their next MPI call, so
+#     the job does not fail -- it HANGS to the launcher timeout. Same shape as the
+#     rank-local `return -1` fixed in #742.
+#
+# WHY THE `reached_end` MARKER, AND WHY "no output" IS NOT A SKIP
+#     The sibling SymSparse destructor bug fired at INTERPRETER EXIT, after the
+#     script's output had flushed: it read as a clean run with a nonzero exit
+#     code, and a probe that greps stdout for a success line reports PASS. So
+#     these rows assert on the mpiexec RETURN CODE and on a marker written AFTER
+#     printA/printB, never on stdout.
+#
+#     That creates a trap of its own, which `mp_ready` exists to defuse: a plain
+#     `skip("no rank output -- MPI infra?")` would swallow exactly the regression
+#     we are hunting, because a crashing rank also produces no output. So MPI
+#     health is established ONCE by a control driver that does not touch an SOE.
+#     After that control passes, missing output is a FAILURE, not a skip.
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+DIST_MP = os.path.join(_ROOT, "dist", "openseesmp")
+
+# Only the two that an interpreter can actually instantiate (see the table above).
+SYSTEMS_MPI = ["MPIDiagonal", "Mumps"]
+
+# Positive controls need a system that can solve the deck. `MPIDiagonal` cannot,
+# for the same reason serial `Diagonal` is excluded above: it retains only the
+# diagonal, so Newton degenerates to Jacobi and does not converge.
+SYSTEMS_MPI_SOLVABLE = ["Mumps"]
+
+# Shared preamble: openseesmp.pyd link-loads impi.dll, so the Intel MPI, MKL and
+# compiler runtime dirs must be on the DLL search path before the import.
+_MP_PREAMBLE = r'''
+import os, sys, json
+MODDIR = sys.argv[1]; OUT = sys.argv[2]
+_IMPI = r"C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
+_LIBFABRIC = r"C:\Program Files (x86)\Intel\oneAPI\mpi\latest\opt\mpi\libfabric\bin"
+_MKL = r"C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin"
+_ICOMP = r"C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
+for d in (MODDIR, _IMPI, _LIBFABRIC, _MKL, _ICOMP):
+    if d and os.path.isdir(d):
+        os.add_dll_directory(d)
+os.environ["PATH"] = os.pathsep.join(
+    [p for p in (_IMPI, _LIBFABRIC, MODDIR, os.environ.get("PATH", "")) if p])
+sys.path.insert(0, MODDIR)
+import openseesmp as ops
+'''
+
+# Touches no SOE at all: proves mpiexec + openseesmp.pyd + the MPI runtime work
+# in this environment, so that a later empty result means a crash, not infra.
+_MP_CONTROL = _MP_PREAMBLE + r'''
+pid = ops.getPID(); nproc = ops.getNP()
+with open(os.path.join(OUT, "mpctl_rank%d.json" % pid), "w") as fh:
+    json.dump({"pid": pid, "nproc": nproc}, fh)
+print("CONTROL RANK %d/%d OK" % (pid, nproc))
+'''
+
+_MP_PROBE = _MP_PREAMBLE + r'''
+SYS = sys.argv[3]; SCEN = sys.argv[4]
+pid = ops.getPID(); nproc = ops.getNP()
+ops.start()
+
+E, NU = 1000.0, 0.25
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.nDMaterial("ElasticIsotropic", 1, E, NU)
+# One quad per rank, sharing nodes 2 and 3 across the partition boundary.
+if pid == 0:
+    ops.node(1, 0.0, 0.0); ops.node(2, 1.0, 0.0)
+    ops.node(3, 1.0, 1.0); ops.node(4, 0.0, 1.0)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+    ops.fix(1, 1, 1); ops.fix(4, 1, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, -1.0)
+else:
+    ops.node(2, 1.0, 0.0); ops.node(5, 2.0, 0.0)
+    ops.node(6, 2.0, 1.0); ops.node(3, 1.0, 1.0)
+    ops.element("quad", 2, 2, 5, 6, 3, 1.0, "PlaneStrain", 1)
+    ops.fix(5, 1, 1); ops.fix(6, 1, 1)
+
+ops.constraints("Transformation")
+ops.numberer("ParallelPlain")
+if SYS == "Mumps":
+    ops.system("Mumps", "-ICNTL14", 200)
+else:
+    ops.system(SYS)
+ops.test("NormDispIncr", 1.0e-8, 30, 0)
+ops.algorithm("Newton")
+ops.integrator("LoadControl", 1.0)
+ops.analysis("Static")
+
+res = {"pid": pid, "nproc": nproc, "system": SYS, "scenario": SCEN}
+if SCEN == "ok":
+    res["rc"] = ops.analyze(1)
+# before_analyze: setSize() has never run on this rank -> the wrappers are null.
+res["A"] = list(ops.printA("-ret"))
+res["B"] = list(ops.printB("-ret"))
+# Written AFTER the accessors on purpose: its presence is the survival proof.
+res["reached_end"] = True
+with open(os.path.join(OUT, "printa_mp_rank%d.json" % pid), "w") as fh:
+    json.dump(res, fh)
+print("RANK %d/%d DONE" % (pid, nproc))
+'''
+
+
+def _mp_available():
+    return (os.path.isfile(os.path.join(DIST_MP, "mpiexec.exe"))
+            and os.path.isfile(os.path.join(DIST_MP, "openseesmp.pyd")))
+
+
+def _run_mpi(script, out_dir, extra_args=(), nranks=2):
+    """Launch `script` under mpiexec -n <nranks>. Returns the CompletedProcess."""
+    driver = os.path.join(out_dir, "mp_driver.py")
+    with open(driver, "w", encoding="utf-8") as fh:
+        fh.write(script)
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    env["PATH"] = DIST_MP + os.pathsep + env.get("PATH", "")
+    # `-S` keeps the installed boot .pth from preloading a DIFFERENT engine's
+    # DLLs ahead of this worktree's build.
+    cmd = [os.path.join(DIST_MP, "mpiexec.exe"), "-n", str(nranks),
+           sys.executable, "-S", driver, DIST_MP, out_dir] + list(extra_args)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                          stdin=subprocess.DEVNULL, env=env,
+                          encoding="utf-8", errors="replace")
+
+
+@pytest.fixture(scope="module")
+def mp_ready(tmp_path_factory):
+    """Establish MPI health ONCE, so a later empty result cannot be alibi'd away."""
+    if not _mp_available():
+        pytest.skip("openseesmp build absent "
+                    "(dist/openseesmp/{mpiexec.exe,openseesmp.pyd}) -- build "
+                    "with: Ladruno_scripts\\build.bat OpenSeesMP OpenSeesPyMP")
+    out = str(tmp_path_factory.mktemp("mpctl"))
+    try:
+        proc = _run_mpi(_MP_CONTROL, out)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        pytest.skip(f"MPI launcher unusable in this environment: {exc}")
+    files = [os.path.join(out, f"mpctl_rank{r}.json") for r in (0, 1)]
+    if proc.returncode != 0 or not all(os.path.isfile(f) for f in files):
+        pytest.skip(
+            "MPI control run failed, so nothing below can be attributed to the "
+            f"SOE fix (rc={proc.returncode}).\n"
+            f"stdout:\n{proc.stdout[-800:]}\nstderr:\n{proc.stderr[-800:]}")
+    return True
+
+
+def _run_mp_probe(system, scenario, out_dir):
+    """Run the probe and assert SURVIVAL. Never skips -- mp_ready cleared infra."""
+    proc = _run_mpi(_MP_PROBE, out_dir, extra_args=(system, scenario))
+    files = [os.path.join(out_dir, f"printa_mp_rank{r}.json") for r in (0, 1)]
+    missing = [f for f in files if not os.path.isfile(f)]
+    assert proc.returncode == 0 and not missing, (
+        f"{system}/{scenario}: the MPI job did NOT survive printA/printB "
+        f"(mpiexec rc={proc.returncode}, missing rank output: "
+        f"{[os.path.basename(f) for f in missing]}).\n"
+        "An unsized SOE must warn and return empty. A rank that exit()s here "
+        "strands its peers in their next collective, so this also shows up as a "
+        f"launcher-timeout hang.\nstdout:\n{proc.stdout[-1500:]}\n"
+        f"stderr:\n{proc.stderr[-1500:]}"
+    )
+    out = {}
+    for f in files:
+        with open(f, encoding="utf-8") as fh:
+            d = json.load(fh)
+        assert d.get("reached_end") is True, f"{system}/{scenario}: {d}"
+        out[d["pid"]] = d
+    assert set(out) == {0, 1}, out
+    return out
+
+
+@pytest.mark.parametrize("system", SYSTEMS_MPI)
+def test_mp_printa_before_analyze_survives(mp_ready, system, tmp_path):
+    """The MPI twin of the first row: no analyze(), so setSize() never ran.
+
+    No contact here on purpose. Under MP a contact DECLARATION refusal now tears
+    the whole job down by design (#742), which would mask the very thing being
+    measured -- and it is not needed: skipping analyze() reaches the unsized SOE
+    directly, under the stock Transformation handler.
+    """
+    out = _run_mp_probe(system, "before_analyze", str(tmp_path))
+    for pid, d in out.items():
+        assert d["A"] == [], (pid, d)
+        assert d["B"] == [], (pid, d)
+
+
+@pytest.mark.parametrize("system", SYSTEMS_MPI_SOLVABLE)
+def test_mp_printb_still_returns_the_real_rhs(mp_ready, system, tmp_path):
+    """Falsifier: the empty-Vector fallback must not shadow a GOOD MP solve.
+
+    Without this row, "return an empty Vector" would pass every MPI row above
+    while silently reporting an empty right-hand side on a healthy partitioned
+    model. Each rank owns one loaded quad, so each must see a nonzero local RHS.
+    """
+    out = _run_mp_probe(system, "ok", str(tmp_path))
+    for pid, d in out.items():
+        assert d["rc"] == 0, (pid, d)
+        assert len(d["B"]) > 0, (pid, d)
+    assert any(any(v != 0.0 for v in d["B"]) for d in out.values()), out

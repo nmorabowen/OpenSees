@@ -471,9 +471,48 @@ MumpsParallelSOE::zeroB(void)
 }
 
 
+// Ladruno: the collective getB() below merged the per-rank right-hand sides with
+// NO null check of any kind -- it went straight to `*myVectB` / `*vectB`, which
+// are null from the constructor until setSize() allocates them. So `printB` on an
+// SOE that was never sized was a raw null dereference (measured 0xC0000005 on the
+// worker rank, with the master rank taken down alongside it). This is the same
+// unsized-SOE family as the getX()/getB() `exit(-1)` sites in the serial classes
+// -- see FullGenLinSOE.cpp for the full argument -- but it was MISSED by the
+// survey that scoped those, because this override has no FATAL text to grep for:
+// it simply crashes. It was found by sweeping every getX/getB definition in the
+// tree for a null guard instead of grepping for `exit(`.
+//
+// WHY THE EARLY RETURN CANNOT DEADLOCK, which is the whole design question here:
+// this method is COLLECTIVE (workers send and receive, the master receives from
+// each and replies), so a guard that fired on some ranks and not others would
+// leave the others blocked forever -- strictly worse than the crash. It cannot
+// diverge: the wrappers are allocated in setSize(), reached only through the
+// collective domainChanged(), so in the unsized state NO rank has them and EVERY
+// rank takes this return. No message is posted by anybody, and the collective is
+// simply not entered. (A mixed state -- some ranks sized, some not -- is not
+// reachable through that flow, and the pre-fix code would have crashed or hung
+// there too.)
+//
+// Function-local static (not file-scope) so it is initialized on first use --
+// no static-initialization-order dependency on Vector's own machinery.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 MumpsParallelSOE::getB(void)
 {
+  if (myVectB == 0 || vectB == 0 || theChannels == 0) {
+    opserr << "WARNING MumpsParallelSOE::getB - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no right-hand "
+              "side); returning an empty Vector. Run a successful "
+              "analyze() first.\n";
+    return ladrunoEmptyVector();
+  }
+
 
   if (processID != 0) {
     Channel *theChannel = theChannels[0];
