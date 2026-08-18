@@ -609,12 +609,33 @@ ProfileSPDLinSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper -- whole-process
+// death with no Python traceback (a clean exit(), so faulthandler stays silent,
+// and the FATAL text goes to opserr, which the pyd redirects). The wrappers are
+// allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printB` after a
+// failed analyze() killed the interpreter. Measured before the fix: 6 of 10
+// `system` choices died this way. Now it reports itself and returns an EMPTY
+// result: size 0 is the honest description of an SOE that was never sized,
+// OPS_printB already has a `size == 0` branch, and callers inside the analysis
+// flow only run post-domainChanged(), where the wrappers exist.
+// See tests/test_printa_unsized_soe.py.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 ProfileSPDLinSOE::getX(void)
 {
     if (vectX == 0) {
-	opserr << "FATAL ProfileSPDLinSOE::getX - vectX == 0";
-	exit(-1);
+	opserr << "WARNING ProfileSPDLinSOE::getX - the SOE has not been sized "
+	          "yet (setSize() has not run, so there is no solution vector); "
+	          "returning an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
     }    
     return *vectX;
 }
@@ -623,8 +644,10 @@ const Vector &
 ProfileSPDLinSOE::getB(void)
 {
     if (vectB == 0) {
-	opserr << "FATAL ProfileSPDLinSOE::getB - vectB == 0";
-	exit(-1);
+	opserr << "WARNING ProfileSPDLinSOE::getB - the SOE has not been sized "
+	          "yet (setSize() has not run, so there is no right-hand side); "
+	          "returning an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
     }        
     return *vectB;
 }

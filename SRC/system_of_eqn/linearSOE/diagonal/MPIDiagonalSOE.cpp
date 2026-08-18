@@ -489,10 +489,30 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
 const Vector&
 MPIDiagonalSOE::getpartofA(Vector& At, const ID& ids)
 {
+  // Ladruno: same unsized-SOE story as getX()/getB() above, with two extra
+  // upstream defects of its own. (a) The message named the WRONG METHOD --
+  // "getA - A == 0" inside getpartofA() -- so the one clue a user got pointed at
+  // a method that is not even overridden here; stale copy-paste from a getA()
+  // that no longer exists on this class. (b) exit(-1) again, on an MPI-only
+  // class, i.e. the rank-local teardown that hangs the job (see above).
+  //
+  // `A` is the raw diagonal array, allocated in setSize(); it is null from the
+  // constructor until then. The empty result here is a ZEROED At rather than a
+  // size-0 Vector, because At is the CALLER'S buffer passed by reference and
+  // already sized -- returning it untouched would hand back whatever
+  // uninitialized garbage the caller allocated, which is worse than a warning
+  // plus a defined zero. The signature returns At either way.
+  //
+  // Note this method currently has NO CALLERS anywhere in the tree (it is
+  // declared in MPIDiagonalSOE.h and defined here, and that is all), so the fix
+  // is latent-defect hygiene, not an observed crash. It is left in place rather
+  // than deleted because removing public API is a separate decision.
   if (A == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getA - A == 0";
-    exit(-1);
-  } 
+    opserr << "WARNING MPIDiagonalSOE::getpartofA - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no diagonal); returning a "
+              "zeroed Vector. Run a successful analyze() first.\n";
+    At.Zero();
+  }
   else if (isAfactored) {
     for (int i=0; i<ids.Size(); i++)
       At(i) = 1.0/A[ids(i)];
@@ -806,12 +826,45 @@ MPIDiagonalSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper. The wrappers are
+// allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printA`/`printB`
+// after a failed analyze() killed the process. See the serial twins in
+// FullGenLinSOE.cpp / SymSparseLinSOE.cpp for the full argument, and
+// tests/test_printa_unsized_soe.py for the gate.
+//
+// This class is MPI-only, which makes the old behaviour STRICTLY WORSE than in
+// the serial twins: exit(-1) fires on whichever rank happens to touch the
+// accessor, tearing that rank out from under a solver whose every phase is
+// collective. The surviving ranks stay blocked in their next MPI call, so the
+// job does not fail -- it HANGS, until the launcher's timeout. That is the same
+// failure shape as the rank-local `return -1` fixed in #742; the lesson there
+// was that a diagnostic must never take down one rank unilaterally. Note the
+// warning below is emitted per-rank, so an unsized SOE prints once per process.
+//
+// A null wrapper now reports itself and returns an EMPTY result: size 0 is the
+// honest description of an SOE that was never sized, and OPS_printB already has
+// a `size == 0` branch. Behaviour for a sized SOE is unchanged -- callers inside
+// the analysis flow only ever run post-domainChanged(), where the wrappers exist.
+//
+// Function-local static (not file-scope) so it is initialized on first use --
+// no static-initialization-order dependency on Vector's own machinery.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 MPIDiagonalSOE::getX(void)
 {
   if (vectX == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getX - vectX == 0";
-    exit(-1);
+    opserr << "WARNING MPIDiagonalSOE::getX - the SOE has not been sized yet "
+              "(setSize() has not run, so there is no solution vector); returning "
+              "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }    
   //opserr << "MPIDiagonalSOE::getX(void) : " << vectX->Size() << endln;
   return *vectX;
@@ -821,8 +874,10 @@ const Vector &
 MPIDiagonalSOE::getB(void)
 {
   if (vectB == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getB - vectB == 0";
-    exit(-1);
+    opserr << "WARNING MPIDiagonalSOE::getB - the SOE has not been sized yet "
+              "(setSize() has not run, so there is no right-hand side); returning "
+              "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }        
   return *vectB;
 }
