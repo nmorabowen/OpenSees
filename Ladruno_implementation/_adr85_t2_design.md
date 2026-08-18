@@ -203,6 +203,32 @@ overload — the one taking `ndm2`, called only from the two 2D sites
 overload used at `:1809`. This is *structural* grounds for the μ=0 byte-identity
 expectation, independent of the gate that measures it.
 
+### Byte-identity refuter on the shipped 3D friction path (pre-merge condition)
+
+The phase brief required a refuter pass "if the implementation touches ANY shipped
+3D friction path (`LadrunoFrictionKernel` or the 3D SEGMENT friction arms)". The 3D
+*functions* were not modified (pure append), but the *file* was edited, so the
+condition was discharged rather than argued away.
+
+`contact_prototypes/t2_3d_byteidentity_refuter.cpp` compiles the **pre-PR (HEAD~1)**
+and **post-PR** kernels into two separate namespaces and adversarially tries to make
+`frictionReturnMap` / `frictionTangentBlock` / `frictionCap` disagree **bit-for-bit**
+over 400 000 randomized configs, deliberately including every branch boundary
+(`cap <= 0` free slip, the exact stick/slip threshold, the `tauMax` cap binding,
+separated `N <= 0`, both `consistent` settings, `kn`/`kt` over 1e1..1e9).
+
+**Result: 0 differing bits / branches — refutation FAILED, i.e. the 3D friction
+kernel is bit-identical across this PR.** Corroborated independently by the
+`contact_dump` harness (whose 7 canonical decks include a 3D NTS-friction deck)
+hashing `da73b6f8...7782`, unchanged, and by the 3D battery at 142 passed.
+
+Reproduce:
+
+```bash
+git show HEAD~1:SRC/domain/contact/LadrunoFrictionKernel.h > old.h   # + strip guards
+g++ -O2 -std=c++17 -I. Ladruno_implementation/contact_prototypes/t2_3d_byteidentity_refuter.cpp -o refute.exe
+```
+
 ## 4. Failing STAMPED builds (pre-committed escalation)
 
 Escalation rule: the **second** failing stamped build of the parity/gate tests
