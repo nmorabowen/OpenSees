@@ -368,16 +368,22 @@ static int ladrunoContactSurfaceImpl()
     } else if (strcmp(kindStr, "-master") == 0) {
         kind = LadrunoContactSurface::MASTER_SEGMENTS;
         n = 1;
-        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 3) {
-            opserr << "WARNING contactSurface -master - need nodesPerSeg (>=3)\n";
+        // Ladruno ADR-85 T0: nodesPerSeg 2 (a 2D LINE segment) joins the accepted
+        // set. The arity must still MATCH the referenced nodes' dimension -- that
+        // pairing is checked below, once the node tags are read and resolvable.
+        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 2) {
+            opserr << "WARNING contactSurface -master - need nodesPerSeg (2 for a 2D line "
+                      "segment, 3 or 4 for a 3D facet)\n";
             return -1;
         }
     } else if (strcmp(kindStr, "-slave-segments") == 0) {
         // Ladruno ADR-41 C2: a FACETED slave surface (same layout as -master, slave side).
         kind = LadrunoContactSurface::SLAVE_SEGMENTS;
         n = 1;
-        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 3) {
-            opserr << "WARNING contactSurface -slave-segments - need nodesPerSeg (>=3)\n";
+        // Ladruno ADR-85 T0: see the -master branch above.
+        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 2) {
+            opserr << "WARNING contactSurface -slave-segments - need nodesPerSeg (2 for a 2D "
+                      "line segment, 3 or 4 for a 3D facet)\n";
             return -1;
         }
     } else {
@@ -429,6 +435,58 @@ static int ladrunoContactSurfaceImpl()
                       "tags are pinned at declaration (ADR-78 removal lane).\n";
             return -1;
         }
+    }
+
+    // Ladruno ADR-85 T0 -- DIMENSION CONSISTENCY + arity <-> dimension pairing.
+    //
+    // The dimension oracle is the referenced NODES' coordinates, never the
+    // interpreter's ndm: a repeated `model` command changes ndm WITHOUT wiping the
+    // domain (so ndm can disagree with what the Domain actually holds), there is no
+    // ndm in {0,1} story, and on the classic Tcl path OPS_GetNDM() resolves through
+    // a static TclModelBuilder* with no null guard -- a builder dependency the
+    // contact parser has never had. See ADR-85 How/8.
+    //
+    // Two rules, both declaration-time (the handler's ladrunoSurfaceNodesOk() is the
+    // handle()-time backstop for the first one):
+    //   1. every node of ONE surface carries the SAME getCrds().Size() in {2,3}.
+    //      A mixed set is the historical out-of-bounds reproducer -- getCrds()(2)
+    //      on the 2D members is unchecked in release => garbage geometry.
+    //   2. that size matches the declared segment arity: 2 <=> nodesPerSeg 2,
+    //      3 <=> nodesPerSeg 3 or 4. This is what keeps a 3D deck from declaring
+    //      2-node segments now that the `>= 3` gate above has been opened.
+    // A 3D deck passes both rules with no observable change.
+    int surfDim = 0;
+    for (int i = 0; i < nodeTags.Size(); i++) {
+        Node *sNd = theDomain->getNode(nodeTags(i));       // exists (checked above)
+        int di = sNd->getCrds().Size();
+        if (surfDim == 0) {
+            surfDim = di;
+        } else if (di != surfDim) {
+            opserr << "WARNING contactSurface " << tag << " - node " << nodeTags(i)
+                   << " has " << di << " coordinates but an earlier node of the same "
+                      "surface has " << surfDim << ". A contact surface must be "
+                      "dimension-consistent: every node the same getCrds() size. "
+                      "REFUSED (ADR-85 dimension)\n";
+            return -1;
+        }
+    }
+    if (surfDim != 0 && surfDim != 2 && surfDim != 3) {
+        opserr << "WARNING contactSurface " << tag << " - its nodes carry " << surfDim
+               << " coordinates; contact needs 2D or 3D nodes. REFUSED (ADR-85 dimension)\n";
+        return -1;
+    }
+    if (nodesPerSeg == 2 && surfDim != 2) {
+        opserr << "WARNING contactSurface " << tag << " - nodesPerSeg 2 declares a 2D LINE "
+                  "segment, but the referenced nodes have " << surfDim << " coordinates. "
+                  "A 3D surface needs nodesPerSeg 3 (tri) or 4 (quad). "
+                  "REFUSED (ADR-85 nodesPerSeg)\n";
+        return -1;
+    }
+    if (nodesPerSeg >= 3 && surfDim == 2) {
+        opserr << "WARNING contactSurface " << tag << " - nodesPerSeg " << nodesPerSeg
+               << " declares a 3D facet, but the referenced nodes are 2D. A 2D surface uses "
+                  "nodesPerSeg 2 (a line segment). REFUSED (ADR-85 dimension)\n";
+        return -1;
     }
 
     LadrunoContactDomain *cd = OPS_getOrCreateContactDomain();
@@ -1005,12 +1063,65 @@ int OPS_LadrunoContact()
     return (res < 0) ? ladrunoContactFatal() : res;
 }
 
+// Ladruno ADR-85 T0 -- count the leading NUMERIC run at the current parse position
+// WITHOUT consuming it, so `contactPlane` can tell its 5-number 2D layout from the
+// legacy 7-number zero-padded one before committing to a read.
+//
+// What a peeked token actually IS, which is not what it looks like:
+//   * OPS_GetString() NEVER returns null (OpenSeesCommands.cpp:1202-1211): it
+//     intercepts the interpreter's null and hands back the literal string
+//     "Invalid String Input!". On the PYTHON path a numeric argument is a
+//     PyLong/PyFloat, so PythonModule::getString() returns 0 (after advancing the
+//     cursor) and the caller sees that literal. Since it is not '-'-prefixed it
+//     classifies as A NUMBER, which is the correct answer -- but by accident of the
+//     literal's spelling, so it is written down here rather than relied on silently.
+//     The `tok != 0` test below is belt-and-braces for a future direct caller.
+//   * That literal is ALSO what end-of-input returns, so a null/sentinel token can
+//     mean either "a number" or "nothing left" and is useless as a terminator: the
+//     loop is bounded by OPS_GetNumRemainingInputArgs() instead. Load-bearing.
+//   * On the TCL path EVERY token arrives as a string, so a number shows up as
+//     "0.0" or "-1.0". A token is therefore classified as an option FLAG only when
+//     '-' is followed by a LETTER; a NEGATIVE NUMBER also starts with '-' and must
+//     not be mistaken for one.
+// So the rule is "anything that is not -<letter> counts as a number". KNOWN
+// LIMITATION of that direction: a dropped-dash typo (`visc` for `-visc`) counts as
+// a number, so it surfaces as the double-read failure below rather than as the
+// option loop's "unexpected token" message. Loud either way, just less specific.
+// The cursor is rewound by exactly the number of tokens consumed.
+static int ladrunoCountLeadingNumbers(int cap)
+{
+    int nrem = OPS_GetNumRemainingInputArgs();
+    if (cap > nrem) cap = nrem;
+    int consumed = 0, nnum = 0;
+    bool hitFlag = false;
+    while (consumed < cap && !hitFlag) {
+        const char *tok = OPS_GetString();
+        consumed++;
+        bool isFlag = (tok != 0 && tok[0] == '-' &&
+                       ((tok[1] >= 'a' && tok[1] <= 'z') ||
+                        (tok[1] >= 'A' && tok[1] <= 'Z')));
+        if (isFlag) hitFlag = true;
+        else        nnum++;
+    }
+    if (consumed > 0)
+        OPS_ResetCurrentInputArg(-consumed);      // un-read everything we peeked
+    return nnum;
+}
+
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c> <-soft SOFSCL>  (P2a rigid plane)
+// Ladruno ADR-85 T0: on a 2D slave surface the ergonomic 7-arg form
+// `contactPlane tag slaveSurfTag nx ny px py kn <opts>` is accepted too; the
+// zero-padded 9-arg form above stays PERMANENTLY valid in both dimensions.
 static int ladrunoContactPlaneImpl()
 {
-    if (OPS_GetNumRemainingInputArgs() < 9) {
+    // Ladruno ADR-85 T0: the arity floor is the 2D form's 7 (was 9); a 3D deck is
+    // re-checked against the shipped floor of 9 once the dimension is known, so the
+    // 3D usage diagnostic survives verbatim (see the nrem0 block below).
+    const int nrem0 = OPS_GetNumRemainingInputArgs();
+    if (nrem0 < 7) {
         opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn "
-                  "<-visc muc> <-soft SOFSCL>\n";
+                  "<-visc muc> <-soft SOFSCL>   (2D slave surface: contactPlane tag "
+                  "slaveSurfTag nx ny px py kn <-visc muc> <-soft SOFSCL>)\n";
         return -1;
     }
     int idata[2], ni = 2;
@@ -1018,15 +1129,103 @@ static int ladrunoContactPlaneImpl()
         opserr << "WARNING contactPlane - could not read tag/slaveSurfTag\n";
         return -1;
     }
-    double d[7];
-    int nd = 7;
-    if (OPS_GetDoubleInput(&nd, d) < 0) {
-        opserr << "WARNING contactPlane - could not read nx ny nz px py pz kn\n";
+    // Ladruno ADR-85 T0 -- the DIMENSION ORACLE is the referenced slave surface's
+    // node coordinates, exactly as in contactSurface, and never the interpreter's
+    // ndm (mutable across `model` commands; no null guard on the Tcl builder path
+    // -- ADR-85 How/8). The lookup has to happen HERE, after the two ints and
+    // before deciding how many doubles to read.
+    //
+    // A surface that cannot be resolved (no engine yet, unknown tag, no live node)
+    // leaves planeDim at 3, i.e. the shipped 9-arg parse, so every pre-existing
+    // refusal below -- "define the slave contactSurface first" and
+    // LadrunoContactDomain::addRigidPlane()'s "slave surface N not defined" --
+    // still fires with its shipped text, in its shipped order.
+    int planeDim = 3;
+    bool haveSlaveSurf = false;
+    {
+        Domain *dPeek = OPS_GetDomain();
+        LadrunoContactDomain *cdPeek = (dPeek != 0) ? dPeek->getLadrunoContactDomain() : 0;
+        LadrunoContactSurface *ssPeek = (cdPeek != 0) ? cdPeek->getSurface(idata[1]) : 0;
+        if (ssPeek != 0 && dPeek != 0) {
+            haveSlaveSurf = true;
+            const ID &st = ssPeek->getNodeTags();
+            for (int i = 0; i < st.Size(); i++) {
+                Node *sn = dPeek->getNode(st(i));
+                if (sn != 0) { planeDim = sn->getCrds().Size(); break; }
+            }
+        }
+    }
+    // Ladruno ADR-85 T0 -- restore the SHIPPED underflow diagnostic for the 3D form.
+    // Lowering the entry gate to 7 would otherwise turn a 3D 7- or 8-argument typo
+    // from a usage line into the far less helpful "could not read nx ny nz px py pz
+    // kn" further down. Now that the dimension is resolved, a non-2D plane is held to
+    // the shipped floor of 9 and gets the shipped text back, verbatim.
+    //
+    // The same branch catches the genuinely confusing case: someone wrote the 7-arg
+    // 2D form but the slave surface does not exist yet, so planeDim defaulted to 3
+    // and the message would blame the argument count. Say what is actually wrong.
+    if (planeDim != 2 && nrem0 < 9) {
+        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn "
+                  "<-visc muc> <-soft SOFSCL>\n";
+        if (!haveSlaveSurf)
+            opserr << "  (contactPlane " << idata[0] << ": slave surface " << idata[1]
+                   << " is NOT DEFINED YET, so its dimension is unknown and the 3D "
+                      "9-argument form is assumed. The 7-argument 2D form is resolved "
+                      "from the surface's node coordinates -- declare the contactSurface "
+                      "BEFORE contactPlane. ADR-85)\n";
         return -1;
     }
-    double n[3] = {d[0], d[1], d[2]};
-    double p0[3] = {d[3], d[4], d[5]};
-    double kn = d[6];
+    double d[7];
+    double n[3] = {0.0, 0.0, 0.0}, p0[3] = {0.0, 0.0, 0.0}, kn = 0.0;
+    if (planeDim == 2) {
+        // 5 numbers => the 2D layout (nx ny px py kn); 7 => the legacy zero-padded
+        // 3D layout, whose nz/pz must BE zero on a 2D surface (a nonzero
+        // out-of-plane component is a modelling error, not a rounding artifact:
+        // there is no third coordinate for it to act on).
+        int nnum = ladrunoCountLeadingNumbers(7);
+        if (nnum == 5) {
+            int nd = 5;
+            if (OPS_GetDoubleInput(&nd, d) < 0) {
+                opserr << "WARNING contactPlane - could not read nx ny px py kn\n";
+                return -1;
+            }
+            n[0] = d[0]; n[1] = d[1]; n[2] = 0.0;
+            p0[0] = d[2]; p0[1] = d[3]; p0[2] = 0.0;
+            kn = d[4];
+        } else if (nnum == 7) {
+            int nd = 7;
+            if (OPS_GetDoubleInput(&nd, d) < 0) {
+                opserr << "WARNING contactPlane - could not read nx ny nz px py pz kn\n";
+                return -1;
+            }
+            if (d[2] != 0.0 || d[5] != 0.0) {
+                opserr << "WARNING contactPlane " << idata[0] << " - slave surface "
+                       << idata[1] << " is 2D, so the zero-padded 9-argument form must "
+                          "carry nz = pz = 0 (got nz=" << d[2] << ", pz=" << d[5]
+                       << "). There is no out-of-plane coordinate for them to act on. "
+                          "REFUSED (ADR-85 dimension)\n";
+                return -1;
+            }
+            n[0] = d[0]; n[1] = d[1]; n[2] = 0.0;
+            p0[0] = d[3]; p0[1] = d[4]; p0[2] = 0.0;
+            kn = d[6];
+        } else {
+            opserr << "WARNING contactPlane " << idata[0] << " - slave surface " << idata[1]
+                   << " is 2D: give 5 numbers (nx ny px py kn) or the zero-padded 7 "
+                      "(nx ny 0 px py 0 kn); found " << nnum
+                   << " before the first option flag. REFUSED (ADR-85 dimension)\n";
+            return -1;
+        }
+    } else {
+        int nd = 7;
+        if (OPS_GetDoubleInput(&nd, d) < 0) {
+            opserr << "WARNING contactPlane - could not read nx ny nz px py pz kn\n";
+            return -1;
+        }
+        n[0] = d[0]; n[1] = d[1]; n[2] = d[2];
+        p0[0] = d[3]; p0[1] = d[4]; p0[2] = d[5];
+        kn = d[6];
+    }
     // ADR-41 D2: optional trailing `-visc <μ_c>` viscous normal-stabilization coefficient (0 ⇒ off).
     double muc = 0.0;
     // ADR-39 B1 (P4): optional `-soft <SOFSCL>` — the explicit SOFT=1 Courant-stable penalty (size

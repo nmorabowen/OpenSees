@@ -156,11 +156,15 @@ own headline applications). §How/1 designs the vertex policy; G-T1a gates it.
   - `Ladruno_implementation/contact_prototypes/proto_t*_contact2d.py` — the
     numpy oracles, one per phase gate.
   - `tests/_testbed/contact_dump.py` — **the T0 byte-identity harness** (§Phase
-    plan): runs ~6 canonical 3D contact decks and writes full-precision nodal
-    displacements + `ladrunoContactForce` + `ladrunoMortarPenetration` to a
+    plan): runs 7 canonical 3D contact decks (rigid plane, NTS, NTS auto-kn,
+    NTS friction, mortar ALM, mortar tie, edge-edge) and writes full-precision
+    (hexfloat) nodal displacements + the per-lane queries to a physics-only
     text artifact for bit-for-bit diffing across builds (the existing battery
     is pass/fail-with-tolerance and cannot certify byte-identity — panel
-    finding).
+    finding). Note `ladrunoContactForce` is **NTS-only** (fed from the SEGMENT
+    branch via `setNtsForce`); the other lanes use their own queries, and the
+    rigid-plane lane has none — its force checks go through the penalty-depth
+    identity `kn·Σ⟨−g⟩₊ = P` (T0-A erratum).
   - `tests/test_adr85_contact2d_*.py` — the OpenSeesPy battery additions.
 - **Modify (extend, do not duplicate):**
   - `SRC/analysis/handler/LadrunoContactHandler.cpp` —
@@ -444,8 +448,10 @@ stiffness). Contact must match:
   Uzawa update and inherits h; scaling it again would be an h² error (panel
   catch). Mismatched slave/master element thicknesses: the declared h is
   authoritative; warn-latch if a discoverable element thickness disagrees.
-- Queries: `ladrunoContactForce` returns force; `ladrunoMortarPenetration` is
-  geometric (length) — both dimension-blind.
+- Queries: `ladrunoContactForce` returns force **(NTS lane only** — it is fed
+  exclusively from the SEGMENT branch; rigid-plane/mortar/tie/edge decks must
+  use their own queries or the penalty-depth identity); `ladrunoMortarPenetration`
+  is geometric (length) — dimension-blind.
 
 ### 8. API and dimension routing (rev 2: one oracle, not two)
 
@@ -475,6 +481,22 @@ has never had. Instead:
   lanes **`ndf == ndm` exactly** (the shipped equality contract — §Why). Only
   the RIGID_PLANE lane keeps `ndf ≥ ndm` (its adapter couples the first ndm
   DOFs by construction). Any violation is a **named abort**.
+- **Guard-contract precision (T0 review):** the `ndf == ndm` equality is a
+  **multi-node-FE packing requirement** — `FE_Element::setID()` packs each
+  node's full DOF_Group sequentially, so extra DOFs shift *later nodes'*
+  slots; that shifting needs ≥2 DOF_Groups. The single-node RIGID_PLANE
+  adapter deliberately keeps `ndf ≥ ndm`: 3D shells-on-plane (`ndf 6`) rely
+  on it today, `setID` truncates with an upstream warning, and the retained
+  translational equations are correct. A 2D `ndf 3` deck on the plane lane is
+  therefore accepted-with-warning, exactly like its shipped 3D analogue.
+- **Disclosed over-refusal (T0 review):** the declaration-time
+  dimension-consistency rule applies to **all** surface kinds, including
+  `-slave` node sets whose only consumer is the per-node-capable rigid-plane
+  lane. A mixed 2D/3D `-slave` set that previously reached `contactPlane` is
+  now refused at declaration — deliberate: the set's future consumers are
+  unknown at declaration time, and a mixed set on any pair lane is the
+  historical OOB reproducer. Loud over-refusal beats a consumer-dependent
+  contract (the ADR-78 P2 disclosed-over-refusal precedent).
 
 ## Phase plan (oracle-first, gated; T = two-D lane)
 
@@ -487,9 +509,14 @@ rows + `// Ladruno` markers for the files that PR touches, **in that PR**
 Gate language (rev 2): "battery green, **N passed with N unchanged** from the
 pre-PR count, recorded in the PR body" is the checkable regression clause (the
 shipped ADR-39/41/57 idiom); **byte-identity** claims run through the
-`contact_dump.py` harness — full-precision observables from ~6 canonical 3D
+`contact_dump.py` harness — full-precision observables from 7 canonical 3D
 decks, diffed bit-for-bit against the pre-change binary (both `ladrunoBuild`
-stamps recorded).
+stamps recorded). Refusal falsifiers assert the **named message substring**,
+not just a nonzero exit: a declaration refusal raises in-process in serial
+(`return −1` → `OpenSeesError`) and tears the job down only under MPI
+(`LadrunoContactAbort`), and a handler-time refusal surfaces as a failed
+`analyze` — the child-process test pattern covers all three shapes uniformly
+(T0-A erratum).
 
 - **T0 — guards, declaration, rigid-plane acceptance, dump harness.**
   Dimension-consistency pre-flight (with the `ndf == ndm` equality contract);
@@ -501,8 +528,11 @@ stamps recorded).
   converges, holds `g ≥ 0`, reactions balance; SOFT + visc variants;
   (c) falsifier matrix: mixed-dim abort; `-ndm 2 -ndf 3` node on an NTS
   surface refused (equality guard — the historical OOB reproducer); 3D deck
-  declaring `nps = 2` refused; flush-interface degenerate vote → named abort;
-  9-arg `contactPlane` on a 2D surface still works (back-compat).
+  declaring `nps = 2` refused; 2D pair/mortar declarations get a **named
+  not-yet-supported refusal** (T1b/T3) rather than silent acceptance;
+  9-arg `contactPlane` on a 2D surface still works (back-compat). (The
+  flush-interface degenerate-vote falsifier was misfiled here in rev 2 — the
+  vote is built in T1b and its falsifier lives in G-T1b.)
 - **T1a — 2D NTS kernel + oracle (header-only PR).** `LadrunoContact2DKernel.h`
   projection/normal/vertex-policy/B + `proto_t1_nts2d.py`. The header is
   included by **no TU** ⇒ the build is byte-identical **by construction** (the
@@ -515,7 +545,12 @@ stamps recorded).
 - **T1b — 2D NTS wiring.** FE SEGMENT 2D path (ctor, buffers, dashpot port);
   handler 2D branch (z-padded `segCoords`, `ndm*nn` auto-kn + 2D
   `normalOriented` sibling); the new interface-level orientation vote;
-  `softKt` 2D branch.
+  `softKt` 2D branch; the `contact -outward` **2-component 2D branch** (T0
+  left the 3-double read — a 2D deck writing `-outward ox oy` today gets an
+  unnamed 3D-signature error; T1b gives it the named 2D form) and the
+  `-soft`-pre-scan refusal-ordering cleanup (T0 documents that a 2D `-soft`
+  deck is refused by the `-soft` subsystem's message before the ADR-85 named
+  refusal — loud but wrongly attributed; fix when this loop is rebuilt).
   **Gate G-T1b:** (a) 3D battery N-unchanged + `contact_dump` bit-identical;
   (b) 2D compression patch across a non-matching interface transmits the load
   (NTS tolerance); (c) **slice-twin gate, honestly stated**: first measure the
@@ -526,7 +561,8 @@ stamps recorded).
   contact vs its analytic through-thickness force — the §Why headline, now
   gated); (e) `-geomtan` gate: flat master ⇒ identical iteration count;
   curved ⇒ fewer iterations (the 3D Hertz-test idiom); (f) auto-kn sizes
-  within the 3D-twin's factor.
+  within the 3D-twin's factor; (g) flush-interface degenerate orientation
+  vote → named abort (moved here from G-T0 — the vote lands in this phase).
 - **T2 — NTS friction + explicit parity.** Pre-T2: the recorded numpy
   reuse-vs-scalar experiment (§How/4). Scalar return map; SOFT/visc/removal
   gate coverage.
