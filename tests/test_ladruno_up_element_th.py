@@ -570,6 +570,7 @@ def test_v_btet10_winding_acceptance(tmp_path):
     # text-mode decode raises in the reader thread => proc.stdout is None and
     # the assert dies with TypeError instead of a diagnosis (quirks ledger).
     proc = subprocess.run([sys.executable, "-S", str(driver), _DIST],
+                          stdin=subprocess.DEVNULL,   # load-bearing on Windows
                           capture_output=True, text=True, timeout=200, env=env,
                           encoding="utf-8", errors="replace")
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")

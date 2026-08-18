@@ -848,13 +848,44 @@ PetscSOE::zeroB(void)
 }
 
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper. The wrappers are
+// allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printA`/`printB`
+// after a failed analyze() killed the process. See the serial twins in
+// FullGenLinSOE.cpp / SymSparseLinSOE.cpp for the full argument, and
+// tests/test_printa_unsized_soe.py for the gate.
+//
+// PETSc-specific note: this file is NOT COMPILED by the current CMake build --
+// `add_subdirectory(petsc)` is commented out in linearSOE/CMakeLists.txt -- so
+// this edit is pattern-only and has NEVER been compiled or run. It is kept
+// faithful to the verified serial twins so that whenever the PETSc lane is
+// revived it does not carry the defect back in. `cerr` is retained over
+// `opserr` because that is what every other diagnostic in this file uses.
+//
+// A null wrapper now reports itself and returns an EMPTY result: size 0 is the
+// honest description of an SOE that was never sized, and OPS_printB already has
+// a `size == 0` branch. Behaviour for a sized SOE is unchanged -- callers inside
+// the analysis flow only ever run post-domainChanged(), where the wrappers exist.
+//
+// Function-local static (not file-scope) so it is initialized on first use --
+// no static-initialization-order dependency on Vector's own machinery.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 PetscSOE::getX(void)
 {
   if (vectX == 0)
   {
-    cerr << "FATAL PetscSOE::getX - vectX == 0!";
-    exit(-1);
+    cerr << "WARNING PetscSOE::getX - the SOE has not been sized yet "
+            "(setSize() has not run, so there is no solution vector); returning "
+            "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }
 
   return *vectX;
@@ -866,8 +897,10 @@ PetscSOE::getB(void)
 {
   if (vectB == 0)
   {
-    cerr << "FATAL PetscSOE::getB - vectB == 0!";
-    exit(-1);
+    cerr << "WARNING PetscSOE::getB - the SOE has not been sized yet "
+            "(setSize() has not run, so there is no right-hand side); returning "
+            "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }
 
   return *vectB;

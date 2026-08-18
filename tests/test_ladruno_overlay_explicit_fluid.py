@@ -440,11 +440,13 @@ def _run_child(body, timeout=300, merge=False):
         f.write(body)
     if merge:
         proc = subprocess.run([sys.executable, "-S", "-u", path],
+                              stdin=subprocess.DEVNULL,   # load-bearing on Windows
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, timeout=timeout,
                               encoding="utf-8", errors="replace")
         return proc.stdout, proc.returncode
     proc = subprocess.run([sys.executable, "-S", "-u", path],
+                          stdin=subprocess.DEVNULL,   # load-bearing on Windows
                           capture_output=True, text=True, timeout=timeout,
                           encoding="utf-8", errors="replace")
     return proc.stdout + proc.stderr, proc.returncode

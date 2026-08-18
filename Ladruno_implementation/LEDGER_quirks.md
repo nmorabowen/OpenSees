@@ -1588,7 +1588,7 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
 - **The clean trick (no stored state):** the leap-frog uses `system Diagonal`, whose `DiagonalDirectSolver` factors A IN PLACE — **post-solve `getDiagonalA()` holds `A[i] = 1/mass_i`**. That single array is BOTH the Jacobi preconditioner AND the way to recover the RHS: the incoming `a = M_lump⁻¹ r`, so `r = M_lump .* a = a(i)/A[i]`. A protected base no-op hook `refineAccel(Vector&)` (default no-op ⇒ the lumped path stays **byte-identical**, not something to prove) is overridden to recover `r`, run a matrix-free Jacobi-preconditioned CG (`consistentMatVec` gathers/scatters element DOFs via `FE_Element::getID()`), and replace `a` with `M̃⁻¹ r`. CG converges in **3–21 iters** because `M_bar` is a small perturbation of the dominant lumped diagonal. NO `Node::setMass` mutation — the cross-node coupling can't live in per-node mass, so there's also no inject/restore lifecycle.
 - **General lessons:** (1) to change WHAT a leap-frog explicit integrator inverts without writing a new SOE/solver, hook the post-solve accel and reuse the factored `DiagonalSOE` as preconditioner; (2) consistent (Olovsson) scaling preserves f1 (`−0.17%` measured via transient FFT) where lumped craters it (`−53%`) at the same dtTarget, because `M_bar`'s row sums are zero (rigid translation gets no added inertia). Learned 2026-06-20, [[38_ladruno_consistent_mass_scaling_adr]] / [[project_ladruno_mass_scaling]].
 - **Consistent SMS needs a STRICTER constraint exclusion than lumped (slave AND master MP nodes), or the matvec reads M_bar out of bounds.** The lumped SMS excludes only MP *slave* nodes (`getNodeConstrained`) — fine, because it injects into `Node` mass and the constraint handler then transforms it (`TᵀMT`). The CONSISTENT path is matrix-free in equation space via `FE_Element::getID()`, so it bypasses the handler. Under the **default `TransformationConstraintHandler`** an element attached to an MP-constrained node gets a TRANSFORMED FE id — different basis AND different size: a *retained/master* node's `TransformationDOF_Group` absorbs the slave's DOFs, so `getID().Size()` can EXCEED the element's own `n`. Pairing that oversized id with the original-basis `n×n` M_bar both scatters in the wrong basis and reads `Mbar(a,b)` out of bounds (no bounds check in release `Matrix::operator()`). Fix (ADR 38): exclude any scaled element touching EITHER a slave OR a master MP node (`getNodeConstrained` + `getNodeRetained`) AND a defensive `if (getID().Size()!=n) skip`. Side benefit: with no M_bar on any constrained equation, the ADR-30 projector's lumped-diagonal mass stays exact (no consistent/projector mass mismatch). Caught by a 45-min adversarial review (the OOB fires on the exact SSI/diaphragm models the feature targets); regression `tests/test_centralDifferenceSMSConsistent_integrator.py::test_consistent_excludes_constraint_touching_elements`. **General lesson: a matrix-free element-DOF kernel that uses `FE_Element::getID()` MUST assume the id can be transformed (resized + rebased) by the constraint handler — never assume `getID().Size()==getMass().noRows()`.** Learned 2026-06-20, [[38_ladruno_consistent_mass_scaling_adr]].
-- **Consistent SMS energy: the `EnergyBalanceRecorder` KE did NOT include the M_bar term — FIXED by V4 (global registry conduit).** KE is `½vᵀMv` summed over element+nodal `getMass()` (`EnergyBalanceKernel.h`); the consistent scaling mass `M_bar` lives only in the integrator's matrix-free blocks, never in `Node`/element mass, so the recorder under-reported KE by `½vᵀ(ΣM_bar)v` and the balance did NOT close for the consistent integrators (it DOES for the lumped siblings, whose nodal injection is visible to the recorder). **The recorder holds only a `Domain*` — no integrator handle — so the fix is a process-global `Ladruno::MassScalingEnergyRegistry` (`LadrunoMassScalingEnergy.{h,cpp}`):** the active consistent integrator `publish()`es its per-element node-major `M̄ₑ` keyed by element tag (`ConsistentBlock` gained `eleTag`) at the end of `domainChanged` and `clear()`s on dtor/recvSelf (owner-guarded — a stale teardown can't wipe a newer publisher); the shared kernel queries it per element and adds `½vᵀM̄ₑv`. The `M̄ₑ` is stored node-major, the exact order `addElementEnergy` already gathers velocities, so NO equation-number bookkeeping. EMPTY for the lumped path + every base integrator (`active()==false`) ⇒ recorded KE byte-identical there, no double count. **General lesson: when a recorder needs live state the active integrator owns but the recorder can't reach (only `Domain*`), a process-global owner-guarded registry the integrator publishes to in `domainChanged` / clears in its dtor is the minimal seam (single active integrator per process; NOT parallel-shared-node aware — that's a separate concern).** Learned 2026-06-20, V4 (this PR), [[38_ladruno_consistent_mass_scaling_adr]].
+- **Consistent SMS energy: the `EnergyBalanceRecorder` KE did NOT include the M_bar term — FIXED by V4 (global registry conduit).** KE is `½vᵀMv` summed over element+nodal `getMass()` (`EnergyBalanceKernel.h`); the consistent scaling mass `M_bar` lives only in the integrator's matrix-free blocks, never in `Node`/element mass, so the recorder under-reported KE by `½vᵀ(ΣM_bar)v` and the balance did NOT close for the consistent integrators (it DOES for the lumped siblings, whose nodal injection is visible to the recorder). **The recorder holds only a `Domain*` — no integrator handle — so the fix is a process-global `Ladruno::MassScalingEnergyRegistry` (`LadrunoMassScalingEnergy.{h,cpp}`):** the active consistent integrator `publish()`es its per-element node-major `M̄ₑ` keyed by element tag (`ConsistentBlock` gained `eleTag`) at the end of `domainChanged` and `clear()`s on dtor/recvSelf (owner-guarded — a stale teardown can't wipe a newer publisher); the shared kernel queries it per element and adds `½vᵀM̄ₑv`. The `M̄ₑ` is stored node-major, the exact order `addElementEnergy` already gathers velocities, so NO equation-number bookkeeping. EMPTY for the lumped path + every base integrator (`active()==false`) ⇒ recorded KE byte-identical there, no double count. **General lesson: when a recorder needs live state the active integrator owns but the recorder can't reach (only `Domain*`), a process-global owner-guarded registry the integrator publishes to in `domainChanged` / clears in its dtor is the minimal seam (single active integrator per process; NOT parallel-shared-node aware — that's a separate concern).** Learned 2026-06-20, V4 [#331](https://github.com/nmorabowen/OpenSees/pull/331), [[38_ladruno_consistent_mass_scaling_adr]].
 - **Energy-balance closure test design: a `RES`/`ERR%` gate is the WRONG metric for the consistent path; use `KE+IE` conservation with a VELOCITY IC, or an instantaneous analytic-KE oracle.** Two traps when validating V4: (1) **the closure RES sign depends on the IC.** `RES = ULW − (KE+IE+DW)`; for free vibration (`ULW=DW=0`) `RES = −(KE+IE)`. A **displacement** IC (`KE₀=0`) gives `IE = SE(t)−SE₀` and `KE+IE → 0` so `RES→0` (closes); a **velocity** IC seeds `KE₀=E₀` as an *initial condition* the balance never accounts as work, so `RES = −E₀` PERMANENTLY (`ERR%≈100%`) — by design, not a bug. The existing lumped T-ENERGY test exploits this: velocity IC, assert `KE+IE` stays at the constant level `E₀` (drift), NOT `RES→0`. (2) **`ERR%` does NOT converge with `dt` for the consistent path** because consistent scaling pushes the *deformation* modes to MARGINAL stability (`dt_e→dtTarget`), and the recorder's instantaneous `½vᵀM̃v` + trapezoidal `IE` can't track central-difference's *modified* energy for a mode at the stability edge — `ERR%` actually grew (14%→30%) as `dt` shrank. The robust V4 test is the **instantaneous analytic oracle**: seed an ALTERNATING (deformation-rich) velocity field so `M̄` carries a large majority of the KE (≈77% here — `M̄`'s zero row sums mean a SMOOTH/rigid field loads it almost not at all), then per step assert recorder `KE == ½vᵀM_lump v + ½Σ_e β_e(m_a/2)(v_a−v_b)²` (truss closed form, `dt_e=L/c`, `β=(dtTarget/dt_e)²−1`) to ~machine precision. Dissipation- and stability-independent ⇒ works for the Noh-Bathe families too. Learned 2026-06-20, V4 `tests/test_massScaling_consistent_energy.py`, [[38_ladruno_consistent_mass_scaling_adr]].
 ### LUMPED SMS is parallel-correct WITHOUT an explicit ΔM reduction — the distributed/MPI diagonal solver already sums shared-node mass across ranks. CONSISTENT (Olovsson) is NOT (rank-local PCG). Tcl can't reach SMS.
 - **The non-obvious truth (validated bit-identical):** the instinct is that lumped SMS injecting `(s−1)·m` via `Node::setMass` on a partition-boundary node only adds rank-local mass (so shared nodes "desync"). FALSE. A parallel build auto-swaps the explicit `system Diagonal` → **`DistributedDiagonalSOE`** (OpenSeesSP, `SRC/tcl/commands.cpp:3213` under `_PARALLEL_PROCESSING`) and `system MPIDiagonal` → **`MPIDiagonalSOE`** (OpenSeesMP). BOTH solvers **sum the shared-DOF diagonal across ranks at solve time** (`DistributedDiagonalSolver`: gather→P0→`*vectShared+=otherShared`→broadcast; `MPIDiagonalSolver::intersectionsAB`: accumulates `A` on the first solve, reduces only `B` thereafter). `CentralDifferenceLadruno` reads M through `formTangent→theLinSOE->solve()` — i.e. the REDUCED diagonal, not raw `Node::getMass()`. Each element lives wholly on one rank ⇒ per-element `dt_e`/`s` are correct rank-locally; each rank injects its own elements' ΔM into its local node copy; the solve-time sum reconstructs the exact physical total. `dtTarget` is a user input (same on all ranks) ⇒ no dt desync.
@@ -2724,6 +2724,216 @@ is immune (uses eigenvalues only, never Φ).
   `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
   which today never passes one either.
 
+### `printA` / `printB` report the OLD size after an SOE SHRINKS — a silent wrong answer, no crash
+
+- **Bites:** any model whose equation count goes DOWN between analyses on the same
+  SOE under `system FullGeneral` — a second `analyze` with more DOFs constrained,
+  staged construction, `remove element`, a contact set that retires. `printA`/
+  `printB` then hand back the PREVIOUS, larger system: measured on a 12 -> 6
+  shrink, `systemSize()` correctly reported 6 while `printA("-ret")` returned 144
+  values and `printB("-ret")` 12. 108 stale entries presented as the tangent.
+- **Why:** `FullGenLinSOE::setSize()` built `vectX`/`vectB`/`matA` with **`Bsize`**
+  (and `Bsize x Bsize`), which is a grow-only high-water CAPACITY, not `size`, the
+  live equation count. `Asize`/`Bsize` only ever grow, so after a shrink the
+  wrappers describe the old system over the same storage. It never faulted because
+  `Bsize**2 == Asize` exactly — the read stays in bounds, it is just wrong.
+- **Why it hid for so long:** it is not a crash, and it is invisible unless you
+  compare the returned LENGTH against an independent oracle. `len(B)` is NOT that
+  oracle — it is the very quantity that goes stale, so a probe that checks
+  `len(A) == len(B)**2` passes happily on the bug. Use `systemSize()`.
+- **Status (2026-08-18): FIXED** — wrappers now dimensioned by `size`. `size` is
+  correct by construction: `addA` indexes `A + col*size`, `addB`/`setB` over
+  `[0,size)`. **FullGen was the lone outlier**: BandGen, BandSPD, ProfileSPD,
+  SProfileSPD, Diagonal, SparseGenCol and SymSparse already used `size` (surveyed,
+  so this quirk is FullGeneral-only). Allocation still tracks capacity — only the
+  wrapper extent changed, no reallocation behaviour moved. Gate:
+  `tests/test_printa_unsized_soe.py::test_printa_after_shrink_reports_the_live_size`.
+- **Sibling of the entry below**, and the reason to read both: that one is `printA`
+  KILLING the process on an SOE that was never sized; this one is `printA` LYING
+  about an SOE that was sized and then shrank. Same command, same file, opposite
+  symptom — one is impossible to miss, the other impossible to notice.
+
+### `printA` / `printB` KILL the interpreter whenever the SOE was never sized — and `constraints LadrunoContact` is what makes that reachable
+
+- **Bites:** any `ops.printA("-ret")` / `ops.printB("-ret")` under `system FullGeneral`
+  or `system Diagonal` when the SOE has not been sized -- i.e. before the first
+  successful `analyze()`, or after ANY `analyze()` that failed in
+  `domainChanged()`. The process dies with exit code -1/255, **no Python
+  traceback, no exception, and nothing printed**: `exit(-1)` is a clean exit so
+  `faulthandler` is silent, and the `FATAL` text goes to `opserr`, which the pyd
+  redirects. It looks exactly like a bug in your own script (reported 2026-08-18
+  while debugging ADR-85 T1b).
+- **Why it looks like a CONTACT bug, and why it is not:** `printA` ends in
+  `LinearSOE::getA()`. Only **two** classes in the entire
+  `SRC/system_of_eqn/linearSOE` tree override that virtual -- `FullGenLinSOE` and
+  `DiagonalSOE` -- and both used to `exit(-1)` on a null `matA`. Everything else
+  inherits `LinearSOE::getA()`'s `return 0` and was always safe (`UmfPack`,
+  `BandGeneral`, ... return an empty result). `matA` is allocated in `setSize()`,
+  which `StaticAnalysis::domainChanged()` reaches **only after
+  `ConstraintHandler::handle()` returns `>= 0`**. Under the upstream handlers
+  `handle()` essentially never fails, so nobody hit this. But the contact
+  subsystem's whole ADR-78/ADR-85 abort discipline is BUILT on `handle()`
+  returning -1 through `ladrunoContactFatal()` for a refused contact -- a failed
+  `domainChanged()` is a *designed, routine* outcome there. So: refused contact ->
+  `handle()` -1 -> `domainChanged()` fails -> `analyze()` != 0 -> SOE unsized ->
+  and the very next thing you reach for to debug the refusal is `printA`, which
+  takes the interpreter with it. Hence "printA crashes under LadrunoContact" on a
+  deck where contact is not even the thing being measured.
+- **Corollary worth internalizing:** after a nonzero `analyze()` under
+  `constraints LadrunoContact`, the SOE holds NO tangent for your model. A
+  `printA` there was never going to answer your question even when it did not
+  crash -- read the FATAL/refusal line above it instead.
+- **`printA` had a SECOND, unrelated crash on exactly one system**, found by
+  sweeping all ten `system` choices instead of trusting the getA survey:
+  `system SparseSYM` died with a real **ACCESS VIOLATION (0xC0000005)**, not a
+  clean `exit()`. `SymSparseLinSOE` does NOT override `getA()`, so the fault was
+  never in an accessor -- it is in `zeroA()`, reached via `formTangent()`, where
+  `penv[size]` dereferences a null `penv` and `blkPtr->beg` a null `first`. The
+  `memset(diag, 0, size*sizeof(double))` one line earlier is harmless at size 0,
+  which is why the fault appears on the following statement. Lesson: `printA`
+  calls `formTangent()` BEFORE `getA()`, so an unsized SOE has two distinct ways
+  to die and fixing the accessors alone is not enough. Measure every system.
+- **And a THIRD crash in the same class, on the same null-`first` path: the
+  DESTRUCTOR.** `~SymSparseLinSOE` walks the row segments with
+  `while (1) { if (blkPtr->next == blkPtr) { if (blkPtr != NULL) ...` -- it
+  dereferences `blkPtr->next` BEFORE the null check inside the loop. Destroying a
+  never-sized SOE therefore access-violates at TEARDOWN. **Its failure shape is
+  the reason it hid for so long:** it fires on interpreter exit, after the
+  script's final output has already flushed, so the run looks completely normal
+  and merely exits nonzero. My own ad-hoc probe grepped stdout for a success line
+  and reported SURVIVED for it -- twice -- while the process was dying every time;
+  only the pytest gate, which asserts on `returncode`, caught it. **If you write a
+  crash probe, assert on the EXIT CODE, not on output.** A process can print
+  everything you asked for and still be dead.
+- **Status (2026-08-18): FIXED, and wider than first scoped.** Measured
+  per-system on an unsized SOE, `printA` died on 2 of 10 and `printB` on 6 of 10.
+  Fixed in **12** SOE classes: `getA` (the only two that override it,
+  `FullGenLinSOE` + `DiagonalSOE`), `getX`/`getB` in all twelve, and in
+  `SymSparseLinSOE` two further null dereferences -- `zeroA()` and the
+  destructor. All three accessors in
+  both classes now report themselves and return an empty result -- `getA()` returns
+  0 (which `OPS_printA` and `LinearSOE::saveSparseA` already branch on), `getX()`/
+  `getB()` return a shared size-0 `Vector` (which `OPS_printB` already branches on).
+  Nothing in the analysis flow changes: those callers only run post-`domainChanged()`.
+  Gate: `tests/test_printa_unsized_soe.py` (zone_a, subprocess-isolated -- on a
+  regression the CHILD dies and the parent reports a normal failure instead of the
+  whole pytest run being killed). It parametrizes over EVERY serial `system` and
+  over both `printA` and `printB`, because the first cut of this gate covered only
+  three systems and would have passed while six others still died.
+- **Follow-up pass (2026-08-18): the MPI-only half is now fixed too, and the
+  remaining three items are closed.** `getX`/`getB` fixed in `MumpsSOE` (which
+  also covers `MumpsParallelSOE` -- it derives and overrides neither),
+  `MPIDiagonalSOE`, `DistributedDiagonalSOE`, `DistributedSparseGenRowLinSOE` and
+  `PetscSOE`; plus `MPIDiagonalSOE::getpartofA` (stale `"FATAL ...::getA"` text
+  inside `getpartofA`, and its own `exit(-1)`) and `DiagonalSOE`'s sized
+  constructor.
+- **The `grep exit(` survey MISSED AN ENTIRE SUBFAMILY, and the MP gate caught it
+  on its first run.** Five *parallel* classes override `getB()` with a COLLECTIVE
+  merge that had **no null check of any kind** -- straight to `*myVectB` /
+  `*vectB`: `MumpsParallelSOE`, `DistributedBandGenLinSOE`,
+  `DistributedBandSPDLinSOE`, `DistributedProfileSPDLinSOE`,
+  `DistributedSparseGenColLinSOE`. They are invisible to a survey built on
+  `grep exit(` **because they have no `FATAL` text to find -- they just crash.**
+  Measured on `MumpsParallelSOE` (the only one with a Python door, via MP
+  `system Mumps`): `mpiexec -n 2` + `printB` on an unsized SOE => rank 1
+  `0xC0000005`, rank 0 down with it at `EXIT STATUS: -1`. A two-step probe
+  bisected it cleanly -- `printA` alone survives both ranks (`len=0`), `printB`
+  alone kills both. **Method that actually finds this family: enumerate every
+  `getX`/`getB`/`getA` DEFINITION in the tree and ask "does it null-guard?",
+  rather than grepping for the symptom you already know about.** The same sweep
+  cleared four look-alike false positives -- `UmfpackGenLinSOE`, `PFEMLinSOE`,
+  `SparsePythonCOOLinSOE`, `SparsePythonCompressedLinSOE` hold their `Vector` BY
+  VALUE (`return X;`), so they were always safe. **22 SOE classes total.**
+- **A guard inside a COLLECTIVE method must fire on every rank or not at all.**
+  These `getB()` overrides have workers send-then-receive while the master gathers
+  from each and replies. An early return taken by only some ranks leaves the rest
+  blocked forever -- a hang is strictly worse than the crash it replaced. The
+  guard is safe here for a specific, checkable reason: the wrappers are allocated
+  in `setSize()`, reached only through the collective `domainChanged()`, so in the
+  unsized state NO rank has them, every rank returns, and the collective is never
+  entered. Whenever you add a bail-out to a collective, write down why the
+  predicate is rank-uniform.
+- **A `system` your box has and CI does not turns a crash-probe into a false
+  alarm.** `system Pardiso` exists only under `#ifdef _PARDISO`, i.e. only where
+  MKL is present. On the Linux CI runner `ops.system("Pardiso")` prints
+  `WARNING unknown system type Pardiso` and raises `OpenSeesError`, so the child
+  exits 1 -- **indistinguishable, to a probe that asserts on the exit code, from
+  the very crash the gate exists to detect.** First CI run of this gate: 4 Pardiso
+  rows reported "child process DIED", 1965 other cases green, nothing actually
+  wrong. Deleting `Pardiso` from the list would be the wrong fix (it is one of the
+  six systems measured dying pre-fix, on any box that HAS MKL). The gate now
+  probes each `system` once per build and SKIPS the unsupported ones -- and the
+  probe concludes "unsupported" **only** when OpenSees itself says
+  `unknown system type`; a child that dies any other way is treated as a crash and
+  is NOT skipped, so the escape hatch cannot swallow a regression.
+- **`stdin=DEVNULL` is not optional in a subprocess-spawning test, and three files
+  still lack it.** Under pytest's capture, fd 0 is left in a state `Popen` cannot
+  `DuplicateHandle`, so any child that INHERITS stdin dies with
+  `OSError: [WinError 6] The handle is invalid` (its sibling is `[WinError 50]`).
+  It depends on the handle type the invoking shell supplies, which makes it look
+  like a flaky code regression: measured on
+  `tests/test_adr74_numberer_1.py` + `tests/test_ladruno_up_mp_smoke.py` with **no
+  other file collected**, 20 passed under a piped stdin and 17 FAILED under
+  `< NUL`, same binary, same commit. `tests/test_printa_unsized_soe.py` is immune
+  in every configuration because it passes `stdin=subprocess.DEVNULL`. If an MPI
+  or subprocess test starts failing at `subprocess.py` with an `OSError`, check
+  the launcher before you touch the physics -- and add `stdin=DEVNULL`.
+- **Deliberately NOT touched:** `ShadowPetscSOE::getX/getB` (same `petsc/` dir, so
+  also never compiled) are unguarded too, but their shape is genuinely different
+  -- an `MPI_Bcast`-driven shadow/actor protocol where an early return would
+  desynchronize the actor, a design question that cannot be settled without a
+  build. `badPetscSOE.cpp` is a stale duplicate of `PetscSOE` carrying the same
+  defect and is left alone.
+- **In MPI, `exit(-1)` in an accessor is a HANG, not a crash — and that is worse.**
+  These solvers are collective in every phase. A rank that `exit()`s unilaterally
+  leaves its peers blocked in their next MPI call, so the job does not fail with a
+  diagnosable error; it stops making progress until the launcher's timeout fires.
+  Identical failure shape to the rank-local parser `return -1` fixed in #742. When
+  you are tempted to bail out of a rank-local code path, ask what the other ranks
+  are waiting for.
+- **The build map is NOT what the directory layout implies — check it before you
+  promise a fix is compiled.** In `linearSOE/CMakeLists.txt`, both
+  `add_subdirectory(petsc)` and `add_subdirectory(mumps)` are **commented out**.
+  MUMPS still ships because the top-level `CMakeLists.txt` adds
+  `mumps/Mumps*.cpp` straight to the `OpenSeesSP`/`OpenSeesMP` targets, bypassing
+  that subdirectory entirely. PETSc has no such bypass, so **`PetscSOE.cpp`
+  compiles in no target at all** and neither does `badPetscSOE.cpp` -- correcting
+  the assumption that the latter is dead because it is "not in any CMake target":
+  it IS listed in `petsc/CMakeLists.txt` (next to a stray `main.cpp`); that file
+  is simply never processed. Conversely `DistributedDiagonalSOE.cpp` is compiled
+  into **every** target, serial included, because `diagonal/CMakeLists.txt` is
+  unconditional -- being named "Distributed" says nothing about where it builds.
+- **Compiled, reachable, and exercised are three different things.** Of those five
+  MPI classes: `MumpsSOE` and `MPIDiagonalSOE` are genuinely reachable from
+  openseespy-MP (`system Mumps`, `system MPIDiagonal`) and are gated by the new MP
+  rows. `DistributedDiagonalSOE` is instantiated only under `_PARALLEL_PROCESSING`
+  via **Tcl** `system Diagonal` (openseespy's `system Diagonal` has no `#ifdef` and
+  always yields plain `DiagonalSOE`), so it is compile-verified but has no Python
+  door. `DistributedSparseGenRowLinSOE` is **dead**: it owns `classTag 21` and
+  compiles into MP/SP, yet nothing in the tree ever constructs it -- not the Tcl
+  `soe_table`, not `OpenSeesCommands.cpp`, not even `FEM_ObjectBrokerAllClasses`,
+  which does have a case for its `DistributedDiagonalSOE` sibling. `PetscSOE` is
+  not compiled. So 2 of 5 are testable and the ledger says so per row rather than
+  implying uniform coverage.
+- **`system MPIDiagonal` in a SERIAL build silently gives you a plain
+  `DiagonalSOE`** (the `#else` arm of the `_PARALLEL_INTERPRETERS` guard, in both
+  the Tcl and Python front-ends). A serial "pass" on that system therefore proves
+  nothing about `MPIDiagonalSOE` -- it is a FALSE pass. The MP rows of the gate
+  run under `mpiexec` for exactly this reason.
+- **Do not let a "no output -> skip" guard swallow the bug you are hunting.** The
+  natural way to make an MPI test portable is to skip when no rank output appears
+  ("MPI infra?"). But a rank that `exit()`s produces no output either, so that
+  guard converts the regression into a green skip. The gate establishes MPI health
+  ONCE with a control driver that touches no SOE; after that control passes,
+  missing rank output is a hard FAILURE. Same lesson as the destructor bug above,
+  one level up: pick a signal that cannot be produced by the failure you are
+  looking for.
+- **Same family as the entry below**, reached by the other door: that one is
+  `setSize()` skipping its wrapper-creation block on a model with ZERO free
+  equations (`size == oldSize == 0`); this one is `setSize()` never running at all.
+  Both ended in the same `exit(-1)`. If you are adding a new `LinearSOE`
+  subclass, do not write `exit()` in an accessor -- return an empty result.
+
 ### A fully-prescribed model (zero free DOFs) under `constraints Transformation` FATALLY exits the process — `FullGenLinSOE::getX - vectX == 0`
 
 - **Bites:** any prescribed-displacement rig that pins/`sp()`s EVERY DOF of a small
@@ -3647,7 +3857,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 ### A relative-to-first-residual convergence test with a `count >= 1` guard can NEVER pass when the loop starts converged — and eas starts converged on every assembly
 - **Bites:** `LadrunoBrick::formEAStrue` / `LadrunoQuad::formEAStrue` (the Simo-Rifai inner Newton on the enhanced parameters). The element's `update()` solves alpha, but `formResidAndTangent` calls `formEAStrue` AGAIN on the same trial state — so the inner loop routinely *enters* with `r0` at the fp noise floor (e.g. 8.4e-15). The old test `count >= 1 && r <= tolRel*r0 + tolAbs` (a) refused to declare convergence before taking one Newton step, and (b) that forced step solves a pure-roundoff RHS and lands at the material-evaluation noise floor — which for large-unit models sits ABOVE the fixed `tolAbs = 1e-12` (units: force×length², so the floor's reachability scales with E·V; the observed run stalled at 1.4e-12 vs a 1.0e-12 threshold). Result: 12 wasted material sweeps + a "did not converge" warning **per element per global iteration** — a 6-step probe wrote 37 MB of log; the queued 2000-step run would have written ~12 GB. It also inflated the eas per-step cost (~12x the inner-loop material work).
 - **Tell:** warnings quoting `||r||` a few ×1e-12 against `r0` at 1e-14/1e-15 — the "residual" is smaller than anything physical; the test is comparing noise to noise.
-- **Rule:** an iterative-solve floor on a residual with physical units must be SCALED. The fix (this PR) tests from `count == 0`, adds a noise floor `tolNoise * rScale` with `rScale = Σ_GP ||M^T σ dV||` (the magnitude of the terms whose cancellation produces the residual — below ~1e-12 of that, the residual is roundoff, not signal), and breaks silently on stagnation (`r >= rPrev && r <= r0`: a Newton step that fails to reduce the residual while no worse than entry means roundoff dominates). Same family as the buildEAStrue scale-invariant degeneracy check: absolute thresholds on dimensional quantities are always wrong at some unit system.
+- **Rule:** an iterative-solve floor on a residual with physical units must be SCALED. The fix [#683](https://github.com/nmorabowen/OpenSees/pull/683) tests from `count == 0`, adds a noise floor `tolNoise * rScale` with `rScale = Σ_GP ||M^T σ dV||` (the magnitude of the terms whose cancellation produces the residual — below ~1e-12 of that, the residual is roundoff, not signal), and breaks silently on stagnation (`r >= rPrev && r <= r0`: a Newton step that fails to reduce the residual while no worse than entry means roundoff dominates). Same family as the buildEAStrue scale-invariant degeneracy check: absolute thresholds on dimensional quantities are always wrong at some unit system.
 - *2026-07-29 (eas inner-Newton warning spam).*
 ### A worktree's `dist/bin` can be MONTHS behind its branch, and an "engine guard" that checks the module's PATH will happily wave it through
 - **Bites:** any harness that pins itself to a worktree build. The `hypo_bearing`
@@ -4225,6 +4435,7 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Why:** with `stdin` unset, `Popen` duplicates the PARENT's fd 0. When pytest's `fd` capture has replaced fd 0, and the shell that launched pytest is itself non-interactive (no console — an agent harness, a service, a detached CI runner), the resulting handle can be one that `DuplicateHandle` refuses. Run the same pytest with `-s` (capture off) and it passes, which is the fastest confirmation.
 - **The part that wastes the time — it is NOT deterministic.** Measured 2026-08-13 across separate non-interactive PowerShell invocations of the SAME unpatched command: one invocation failed 15 of 45 cases, another ran a 3-file subset of the very same tests green, a third failed a single-file run with `WinError 50` while failing a minimal 2-line probe with `WinError 6`, and a fourth ran that probe green. Selection order, `-p no:cacheprovider`, and whether the OpenSees pyd had been imported were all ruled out; the variable is the **parent shell session**. So a green local run does not clear a test of this, and a red CI run is not necessarily a code regression.
 - **Workaround/status (2026-08-13):** pass **`stdin=subprocess.DEVNULL`** at every such call site. None of these children read stdin (a g++ invocation, a kernel exe, a child interpreter running a generated script), so handing them an explicit null device is correct on its own terms and removes the dependency on the parent's fd 0 entirely. Applied to all 33 sites across the 16 `*_cpp.py`/kernel test files; all 45 cases in them pass afterwards. Precedent and the sibling `WinError 50` trap (an oversized `PYTHONPATH` env block blowing Windows' 32 KB environment limit) are commented in `tests/test_soe_zero_free_equations.py::_run_child`. **Rule for new tests: any `subprocess` call from a test passes `stdin=subprocess.DEVNULL` unless it genuinely feeds the child input.**
+- **Follow-up (2026-08-18) -- the 2026-08-13 sweep was incomplete, and the leftovers were the EXPENSIVE ones.** That pass covered only the `*_cpp.py`/kernel family. **14 further call sites across 9 harnesses** -- the ones that shell out to something other than a compiler -- still inherited fd 0: `tests/test_adr74_numberer_1.py` (3 x `mpiexec` plus the `taskkill` reaper), `tests/test_ladruno_up_mp_smoke.py` (2), `tests/test_initial_state_analysis_lifetime.py`, `tests/test_ladruno_up_element_th.py`, and the child-runners of the five `tests/test_ladruno_overlay_*.py`. Measured on worktree `hopeful-turing-1ceb94`: with ONLY `test_adr74_numberer_1.py` + `test_ladruno_up_mp_smoke.py` collected, same binary and same commit, a **piped** stdin gave `20 passed` while **`< NUL`** gave `17 failed` -- every failure an `OSError` at `subprocess.py:1416`, none numerical. Two of these files additionally **disguise** the trap rather than report it: `test_mp_two_rank_smoke` catches `OSError` and calls `pytest.skip("MP launcher failed to run")`, so the run looks green-with-a-skip instead of red, and `_run_mp_nofix`'s missing `stdin` would have surfaced as a bogus "expected N dumps" assertion pointing at the numberer. All 14 now pass `stdin=subprocess.DEVNULL`; **`tests/` is clean at 53/53 call sites.** Audit recipe (cheaper than grepping for `stdin=`, which misses wrapped calls): walk every `subprocess.(run|Popen|check_output|check_call|call)(` occurrence, paren-match to the end of the call expression, and assert `stdin` appears inside it. Two corrections to the older note: the reference site it names, `tests/test_printa_unsized_soe.py`, is **not on `ladruno`** (it arrives with the unsized-SOE branch) -- the merged precedent to copy is `tests/test_soe_zero_free_equations.py::_run_child`; and the patched set was verified green **both** ways (83 passed under `< NUL` and under a piped stdin, zone_b deps present via `opensees_env`) while the *unpatched* baseline also ran green in that same session -- which is the entry's own point restated: a green run is a no-regression check, never a reproduction.
 
 ### `OPS_GetNDM()` is NOT a safe dimension oracle for a parser -- interpreter ndm is mutable without wiping the domain, and the classic-Tcl path dereferences a null-unguarded static builder
 - **Bites:** any command parser that branches on model dimension by asking `OPS_GetNDM()`. Two independent failures. (1) **It can disagree with the domain.** A repeated `model basic -ndm N` command changes the builder's ndm but does NOT wipe the domain, so nodes of BOTH dimensions can coexist and `OPS_GetNDM()` reports only whichever `model` line ran last -- it describes the builder, not the objects the command is about to reference. (There is also no story for ndm in {0,1}.) (2) **On classic Tcl it can crash.** `SRC/api/elementAPI_TCL.cpp` implements it as a bare `return theModelBuilder->getNDM();` with NO null guard, and `theModelBuilder` is a file-static set by the `model` command -- so a command issued before any `model` line, or from a context that never built one (the `OpenSeesMP` route goes through this file), dereferences null. A parser that never touched the builder before now has a builder dependency.
@@ -4274,3 +4485,64 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Bites:** any lane that composes `-thickness h` (or any per-unit-thickness density) with an `auto` stiffness resolved from `getInitialStiff()` -- the assembled element K already folds the element's real thickness, so multiplying the auto value by h again scales the penalty as t*h ~ h^2 (the same class as the gated lambda double-scale, one call site earlier).
 - **Why:** the ADR SS How/7 states it for NTS auto-kn ("absorbs h automatically... no thickness parameter") but the T3 mortar injection initially h-scaled `epsUse` unconditionally; caught by 3 independent review finders. A defaulted `-epsT` must inherit the PROVENANCE of the value it derives from (auto-derived => no h; explicit => h), not a blanket rule.
 - **Workaround/status (2026-08-18, ADR-85 T3):** fixed at the single injection site (`epsAuto ? epsUse : epsUse*h`, `epsTFromEpsN` provenance flag); no test targets `-epsN auto -thickness` yet -- flagged for the T4 battery.
+### Amendment to the collective-`getB()` guard: the predicate is rank-uniform because `setSize()` GLOBALIZES `size`, which is a stronger guarantee than "no rank has sized yet"
+- **Why this needs saying:** the entry `printA` / `printB` KILL the interpreter whenever the
+  SOE was never sized (earlier in this file) justifies the early return in the five
+  collective `getB()` overrides with "the wrappers are allocated in `setSize()`, reached only
+  through the collective `domainChanged()`, so in the unsized state NO rank has them". That is
+  true and it covers the reported bug, but it is an argument about the **never-sized** state
+  only -- and it is not the whole guarantee. There is a second way to reach a null wrapper
+  that the sentence does not reach: a `setSize()` that RAN and still left the wrappers null.
+- **The mechanism, verified in all five classes.** `setSize()` is ITSELF a collective -- P0 and
+  the subprocess SOEs exchange `sendID`/`recvID` -- and it **globalizes `size`**: P0 reduces
+  `maxVertexTag` across every rank and broadcasts the result back, so all ranks leave
+  `setSize()` with the same value. The wrapper-creation block is then gated on that
+  rank-identical `size != oldSize` (`size` first, `oldSize` captured on entry). So "the
+  wrappers are null" is a function of a value **every rank agrees on** -- and the ranks cannot
+  diverge on the way in either, because they must rendezvous inside `setSize()` to get there
+  at all. That is what makes the predicate rank-uniform, and it is checkable per class rather
+  than inferred from the call graph.
+- **What the stronger form buys, concretely: the ZERO-FREE-EQUATION door.** On a model whose
+  every DOF is fixed or `sp`-prescribed the graph is empty, `size` comes out 0, `size !=
+  oldSize` is FALSE, and a **completely successful** `setSize()` leaves the wrappers at their
+  constructor nulls. Every rank HAS run `setSize()`, so the "no rank has them yet" phrasing
+  does not apply -- but the guard is still symmetric, because `size` is 0 on every rank by
+  construction. This is the same door as the `FullGenLinSOE::getX - vectX == 0` entry
+  elsewhere in this ledger, arriving at the parallel classes; the guard covers it, and it is
+  worth knowing that it does.
+- **Rule, restated:** when you bail out of a collective, do not justify it with "this state
+  cannot happen on one rank only" -- justify it by naming the **rank-identical value** the
+  predicate is a function of. If you cannot name one, the guard is not safe yet.
+- **Measured (2026-08-18), separately from the sibling probe:** `mpiexec -n 2` on
+  `dist/openseesmp`, asserting on the launcher EXIT CODE. Pre-fix `printB` on an unsized SOE
+  under `system Mumps` kills rank 1 with `c0000005` and rank 0 follows at `-1`. Post-fix
+  **both** ranks emit the warning and the job exits 0 in ~0.1 s against a 120 s timeout -- the
+  early return is demonstrably taken on both ranks, and nothing hangs. Two controls made the
+  verdict mean something: a POSITIVE control (a case that actually analyzes -- guard silent,
+  collective still merges a real `B`, `len=6` both ranks) so "returns empty" cannot pass
+  everything, and a NEGATIVE control (rebuild with a single guarded file reverted -- exactly
+  its rows crash `c0000005` again while the others stay green). `system ParallelProfileSPD`
+  gives `DistributedProfileSPDLinSOE` a second runtime-gated door from the same build; the
+  remaining three are constructed only under `_PARALLEL_PROCESSING` from the Tcl `OpenSeesSP`
+  binary and stay compile-checked.
+
+### `Copy-Item` PRESERVES the source's LastWriteTime, so restoring a file from a backup copy leaves ninja convinced the object is up to date — the "rebuild" silently keeps testing the OLD code
+- **Bites:** the standard A/B pattern for a negative control -- save a fixed source aside,
+  `git checkout --` it to get the broken version, rebuild, measure, then `Copy-Item` the fixed
+  version back and rebuild again. The **restore** build is a no-op: `Copy-Item` stamps the
+  destination with the SOURCE file's timestamp (that of the aside copy, taken *before* the
+  negative-control build), so the restored `.cpp` is OLDER than the `.obj` ninja produced from
+  the broken one and ninja skips it. The binary you then test is still the broken build, and
+  it reads as "my fix does not work". Hit exactly this on 2026-08-18: the pytest gate reported
+  an already-fixed file as crashing again.
+- **Why it is nastier than an ordinary stale build:** every honest signal says the restore
+  worked. `git diff` shows the fix present, the build script exits 0, and the log even shows a
+  relink (other targets moved). Only that file's own compile line is missing from the log,
+  which is not a thing anyone looks for. It also inverts the usual reading of a red gate --
+  the test is right and the binary is lying, so the instinct to go debug the test is wrong.
+- **Workaround/status (2026-08-18):** after restoring a file from a copy, **touch it** --
+  `(Get-Item path).LastWriteTime = Get-Date` -- then rebuild; or restore with `git checkout --`
+  / `git stash pop`, which write fresh mtimes. Cheap verification: `grep` the build log for
+  that file's own compile line, or check that the artifact's mtime is newer than the source's.
+  `cp -p` and `robocopy` preserve timestamps by default too. Sibling of the stale-`.pyd` trap
+  already recorded for `build.bat`.

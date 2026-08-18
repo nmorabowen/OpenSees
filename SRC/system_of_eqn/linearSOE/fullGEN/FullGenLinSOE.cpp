@@ -203,9 +203,28 @@ FullGenLinSOE::setSize(Graph &theGraph)
 	if (matA != 0)
 	    delete matA;
 	
-	vectX = new Vector(X,Bsize);
-	vectB = new Vector(B,Bsize);	
-	matA = new Matrix(A,Bsize, Bsize);	
+	// Ladruno: dimension the wrappers by `size` (the LIVE equation count), not
+	// by `Bsize`/`Asize`, which are grow-only high-water CAPACITIES. They differ
+	// the moment an SOE SHRINKS -- a second analysis with more DOFs constrained,
+	// staged construction, `remove element`, a contact set that retires -- and
+	// the wrappers then described the OLD, larger system over the same storage.
+	// Nothing crashed (Bsize^2 == Asize exactly, so it stayed in bounds); it
+	// reported a plausible WRONG ANSWER, which is this fork's booked worst case.
+	// Measured on a 12 -> 6 equation shrink: systemSize() said 6 while
+	// printA("-ret") returned 144 values (the stale 12x12) and printB("-ret") 12
+	// -- 108 stale entries presented as the tangent, with no warning.
+	//
+	// `size` is the right dimension by construction: addA indexes `A + col*size`
+	// and addB/setB index B/X over [0,size), so the live system is exactly
+	// size x size from A[0] and size from B[0]. Every other dense SOE in the
+	// tree (BandGen, BandSPD, ProfileSPD, SProfileSPD, Diagonal, SparseGenCol,
+	// SymSparse) already builds its wrappers with `size`; FullGen was the lone
+	// outlier. Capacity still governs ALLOCATION above -- only the wrapper
+	// EXTENT changes here, so no reallocation behaviour is affected.
+	// Gate: tests/test_printa_unsized_soe.py::test_printa_after_shrink_*.
+	vectX = new Vector(X,size);
+	vectB = new Vector(B,size);
+	matA = new Matrix(A,size, size);
     }
 
     // invoke setSize() on the Solver    
@@ -430,12 +449,48 @@ FullGenLinSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: the three accessors below used to `exit(-1)` when their wrapper was
+// still null. That is a state a USER can reach from the interpreter -- the
+// wrappers are created in setSize(), which the analysis only reaches once
+// ConstraintHandler::handle() has succeeded -- so any diagnostic that reads the
+// SOE before a successful analyze() KILLED THE PROCESS. From Python that is a
+// silent death: exit() unwinds nothing, so there is no traceback and no
+// exception, just a dead interpreter (the `printA` report, 2026-08-18).
+//
+// It is `constraints LadrunoContact` that makes this reachable in practice.
+// Under the upstream handlers handle() essentially never fails, but the contact
+// handler's whole ADR-78/ADR-85 abort discipline is built on returning -1 from
+// handle() for a refused contact -- domainChanged() then fails, setSize() is
+// never called, and the very next `printA` (the standard tangent-extraction
+// probe, and exactly what a user reaches for to debug the refusal) took the
+// interpreter down with it.
+//
+// A null wrapper now reports itself and returns an EMPTY result. getA() returns
+// 0, which is what LinearSOE::getA() itself returns by default and which every
+// caller must therefore already handle (LinearSOE::saveSparseA and OPS_printA
+// both already branch on it). getX()/getB() return a shared empty Vector: size 0
+// is the honest description of an SOE that has never been sized, and OPS_printB
+// already has a size == 0 branch. Callers inside the analysis flow are unchanged
+// -- they only ever run after a successful domainChanged(), where setSize() has
+// allocated the wrappers.
+//
+// Function-local static (not file-scope) so it is initialized on first use --
+// no static-initialization-order dependency on Vector's own machinery.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 FullGenLinSOE::getX(void)
 {
     if (vectX == 0) {
-	opserr << "FATAL FullGenLinSOE::getX - vectX == 0";
-	exit(-1);
+	opserr << "WARNING FullGenLinSOE::getX - the SOE has not been sized yet "
+	          "(setSize() has not run, so there is no solution vector); returning "
+	          "an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
     }
     return *vectX;
 }
@@ -444,9 +499,11 @@ const Vector &
 FullGenLinSOE::getB(void)
 {
     if (vectB == 0) {
-	opserr << "FATAL FullGenLinSOE::getB - vectB == 0";
-	exit(-1);
-    }        
+	opserr << "WARNING FullGenLinSOE::getB - the SOE has not been sized yet "
+	          "(setSize() has not run, so there is no right-hand side); returning "
+	          "an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
+    }
     return *vectB;
 }
 
@@ -454,9 +511,13 @@ const Matrix *
 FullGenLinSOE::getA(void)
 {
     if (matA == 0) {
-	opserr << "FATAL FullGenLinSOE::getB - vectB == 0";
-	exit(-1);
-    }        
+	opserr << "WARNING FullGenLinSOE::getA - the SOE has not been sized yet "
+	          "(setSize() has not run, so there is no system matrix); returning 0. "
+	          "Run a successful analyze() first -- if analyze() reported a failure "
+	          "(e.g. a refused contact aborting ConstraintHandler::handle()), fix "
+	          "that first: the tangent for this model was never assembled.\n";
+	return 0;
+    }
     return matA;
 }
 
