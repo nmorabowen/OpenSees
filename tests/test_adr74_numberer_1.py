@@ -162,6 +162,7 @@ def _run_mp(workdir: Path, np: int, analysis: str, numberer: str = "ParallelRCM"
 
     proc = subprocess.run(
         [MPIEXEC, "-n", str(np), MP_EXE, deck.name],
+        stdin=subprocess.DEVNULL,   # load-bearing on Windows -- see quirks ledger
         cwd=workdir, env=env, capture_output=True, text=True, timeout=300,
     )
     (workdir / "run_output.txt").write_text(proc.stdout + proc.stderr,
@@ -431,6 +432,7 @@ def _run_mp_nofix(workdir, np, analysis, numberer):
     if tcl_lib.exists():
         env.setdefault("TCL_LIBRARY", str(tcl_lib))
     proc = subprocess.run([MPIEXEC, "-n", str(np), MP_EXE, deck.name],
+                          stdin=subprocess.DEVNULL,
                           cwd=workdir, env=env, capture_output=True, text=True,
                           timeout=300)
     dumps = sorted(workdir.glob("numbering_*.txt"))
@@ -482,6 +484,7 @@ def test_lagrange_negative_ref_fails_loudly(tmp_path):
     # surface; the harness must reap the process TREE itself.
     proc = subprocess.Popen([MPIEXEC, "-n", "2", MP_EXE, deck.name],
                             cwd=workdir, env=env,
+                            stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True)
     try:
@@ -491,7 +494,7 @@ def test_lagrange_negative_ref_fails_loudly(tmp_path):
     finally:
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                           capture_output=True)
+                           stdin=subprocess.DEVNULL, capture_output=True)
         else:
             proc.kill()
         try:

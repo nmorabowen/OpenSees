@@ -144,6 +144,7 @@ def test_serial_database_roundtrip(tmp_path):
     # and the assert dies with TypeError (quirks ledger).
     proc = subprocess.run(
         [sys.executable, "-S", str(driver), DIST_BIN, db],
+        stdin=subprocess.DEVNULL,   # load-bearing on Windows -- quirks ledger
         capture_output=True, text=True, timeout=300, env=env,
         encoding="utf-8", errors="replace")
 
@@ -225,7 +226,8 @@ def test_mp_two_rank_smoke(tmp_path):
     cmd = [mpiexec, "-n", "2", sys.executable, "-S", str(driver),
            DIST_MP, str(tmp_path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True,
                               timeout=300, env=env,
                               encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as exc:  # infra, not the element

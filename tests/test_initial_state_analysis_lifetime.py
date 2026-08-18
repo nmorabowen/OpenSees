@@ -95,6 +95,7 @@ def test_isa_survives_wipe_and_repeat(tmp_path):
     try:
         proc = subprocess.run(
             [sys.executable, "-S", str(driver), _DIST],
+            stdin=subprocess.DEVNULL,   # load-bearing on Windows -- quirks ledger
             capture_output=True, text=True, timeout=120, env=env,
             encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:  # heap corruption can hang, not crash
