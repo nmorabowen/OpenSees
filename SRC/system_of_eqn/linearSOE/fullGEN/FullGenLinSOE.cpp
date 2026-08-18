@@ -203,9 +203,28 @@ FullGenLinSOE::setSize(Graph &theGraph)
 	if (matA != 0)
 	    delete matA;
 	
-	vectX = new Vector(X,Bsize);
-	vectB = new Vector(B,Bsize);	
-	matA = new Matrix(A,Bsize, Bsize);	
+	// Ladruno: dimension the wrappers by `size` (the LIVE equation count), not
+	// by `Bsize`/`Asize`, which are grow-only high-water CAPACITIES. They differ
+	// the moment an SOE SHRINKS -- a second analysis with more DOFs constrained,
+	// staged construction, `remove element`, a contact set that retires -- and
+	// the wrappers then described the OLD, larger system over the same storage.
+	// Nothing crashed (Bsize^2 == Asize exactly, so it stayed in bounds); it
+	// reported a plausible WRONG ANSWER, which is this fork's booked worst case.
+	// Measured on a 12 -> 6 equation shrink: systemSize() said 6 while
+	// printA("-ret") returned 144 values (the stale 12x12) and printB("-ret") 12
+	// -- 108 stale entries presented as the tangent, with no warning.
+	//
+	// `size` is the right dimension by construction: addA indexes `A + col*size`
+	// and addB/setB index B/X over [0,size), so the live system is exactly
+	// size x size from A[0] and size from B[0]. Every other dense SOE in the
+	// tree (BandGen, BandSPD, ProfileSPD, SProfileSPD, Diagonal, SparseGenCol,
+	// SymSparse) already builds its wrappers with `size`; FullGen was the lone
+	// outlier. Capacity still governs ALLOCATION above -- only the wrapper
+	// EXTENT changes here, so no reallocation behaviour is affected.
+	// Gate: tests/test_printa_unsized_soe.py::test_printa_after_shrink_*.
+	vectX = new Vector(X,size);
+	vectB = new Vector(B,size);
+	matA = new Matrix(A,size, size);
     }
 
     // invoke setSize() on the Solver    

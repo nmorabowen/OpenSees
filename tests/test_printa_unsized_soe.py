@@ -290,6 +290,42 @@ elif SCEN == "refused_contact":
     # The refusal left the SOE unsized. THIS is the reported crash.
     out["A"] = list(ops.printA("-ret"))
     out["B"] = list(ops.printB("-ret"))
+elif SCEN == "shrink":
+    # The SAME SOE resized DOWN: analyze a 12-equation mesh, then constrain the
+    # top row and analyze again at 6. No wipe() -- wiping destroys the SOE and
+    # builds a fresh one, which is why an earlier version of this probe saw
+    # nothing. `systemSize()` is the independent oracle here: asserting against
+    # len(B) would be circular, because len(B) is exactly what can be stale.
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    t = {}
+    n = 1
+    for j in range(3):
+        for i in range(3):
+            ops.node(n, float(i), float(j)); t[(i, j)] = n; n += 1
+    for i in range(3):
+        ops.fix(t[(i, 0)], 1, 1)
+    ops.nDMaterial("ElasticIsotropic", 1, E, NU)
+    e = 1
+    for j in range(2):
+        for i in range(2):
+            ops.element("quad", e, t[(i, j)], t[(i + 1, j)],
+                        t[(i + 1, j + 1)], t[(i, j + 1)], 1.0, "PlaneStrain", 1)
+            e += 1
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(t[(1, 1)], 0.0, -1.0)
+    setup()
+    out["rc"] = ops.analyze(1)
+    out["n1"] = ops.systemSize()
+    out["A1"] = len(ops.printA("-ret"))
+    out["B1"] = len(ops.printB("-ret"))
+    for i in range(3):                      # shrink: constrain the top row
+        ops.fix(t[(i, 2)], 1, 1)
+    out["rc2"] = ops.analyze(1)
+    out["n2"] = ops.systemSize()
+    out["A2"] = len(ops.printA("-ret"))
+    out["B2"] = len(ops.printB("-ret"))
 else:  # "ok"
     build_quad()
     setup()
@@ -649,3 +685,39 @@ def test_mp_printb_still_returns_the_real_rhs(mp_ready, system, tmp_path):
         assert d["rc"] == 0, (pid, d)
         assert len(d["B"]) > 0, (pid, d)
     assert any(any(v != 0.0 for v in d["B"]) for d in out.values()), out
+
+
+def test_printa_after_shrink_reports_the_live_size():
+    """A SHRUNK SOE must report the LIVE system, not the old high-water one.
+
+    The other half of "printA tells the truth", and the one that is not a crash:
+    `FullGenLinSOE::setSize` built its wrappers with `Bsize`/`Asize` -- grow-only
+    CAPACITIES -- instead of `size`, the live equation count. They diverge the
+    moment an SOE shrinks (a second analysis with more DOFs constrained, staged
+    construction, `remove element`, a retiring contact set), and the wrappers then
+    described the OLD, larger system over the same storage.
+
+    Nothing crashed: Bsize**2 == Asize exactly, so the read stayed in bounds. It
+    returned a plausible WRONG ANSWER instead -- measured 144 values for a
+    6-equation system, i.e. 108 stale entries handed back as the tangent with no
+    warning. That is this fork's booked worst case, so it gets a gate.
+
+    `systemSize()` is the oracle. Asserting against len(B) would be circular:
+    len(B) is precisely the quantity that goes stale.
+    """
+    out = _run_child("LadrunoContact", "FullGeneral", "shrink")
+    assert out["rc"] == 0 and out["rc2"] == 0, out
+    # the shrink actually happened -- otherwise the row proves nothing
+    assert out["n2"] < out["n1"], (
+        "the SOE did not shrink (%s -> %s); this row no longer tests anything"
+        % (out["n1"], out["n2"]), out)
+    # phase 1 (grow-from-nothing) was always correct; keep it as the control
+    assert out["A1"] == out["n1"] ** 2 and out["B1"] == out["n1"], out
+    # phase 2 is the regression
+    assert out["A2"] == out["n2"] ** 2, (
+        "printA returned %d values for a %d-equation system (expected %d) -- the "
+        "wrappers are sized by the grow-only capacity again"
+        % (out["A2"], out["n2"], out["n2"] ** 2), out)
+    assert out["B2"] == out["n2"], (
+        "printB returned %d values for a %d-equation system (expected %d)"
+        % (out["B2"], out["n2"], out["n2"]), out)
