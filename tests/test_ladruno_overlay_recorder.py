@@ -530,6 +530,7 @@ def _run_self(env_extra):
     env.update(env_extra)
     return subprocess.run(
         [sys.executable, "-S", os.path.abspath(__file__)],
+        stdin=subprocess.DEVNULL,   # load-bearing on Windows -- quirks ledger
         env=env, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=300,
     )
