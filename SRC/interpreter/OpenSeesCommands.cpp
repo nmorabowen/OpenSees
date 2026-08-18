@@ -2598,11 +2598,35 @@ int OPS_printA()
             ret = true;
         } else if ((strcmp(flag,"sparse") == 0) || (strcmp(flag,"-sparse") == 0)) {
             fileSparse = true;
+            // Ladruno: `<baseIndex>` is OPTIONAL (hence the remaining-args guard),
+            // but the read was unconditional -- so `printA -sparse -ret`, the
+            // natural way to ask for a sparse matrix BACK, consumed `-ret` as the
+            // base index, failed to parse it, and returned -1 with
+            // "failed to read -sparse <baseIndex>". The working order was the
+            // non-obvious `printA -ret -sparse 0`. PEEK first and only consume a
+            // token that is not the next option flag.
+            //
+            // Classification rule and its one caveat are the contact parser's
+            // (ladrunoCountLeadingNumbers, OpenSeesOutputCommands.cpp): a token is
+            // a FLAG only when '-' is followed by a LETTER, so a NEGATIVE NUMBER is
+            // never mistaken for one. OPS_GetString() never returns null -- it hands
+            // back the literal "Invalid String Input!" both for a non-string
+            // (a Python int argument) and at end of input -- which is not
+            // '-'-prefixed and so classifies as a number here; that is the right
+            // answer for a numeric argument, and end-of-input cannot reach this
+            // branch because the remaining-args guard already excluded it.
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                int numdata = 1;
-                if (OPS_GetIntInput(&numdata, &baseIndex) < 0) {
-                    opserr << "WARNING: printA - failed to read -sparse <baseIndex>\n";
-                    return -1;
+                const char *nxt = OPS_GetString();
+                bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                                   ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                                    (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+                OPS_ResetCurrentInputArg(-1);          // un-read the peeked token
+                if (!nextIsFlag) {
+                    int numdata = 1;
+                    if (OPS_GetIntInput(&numdata, &baseIndex) < 0) {
+                        opserr << "WARNING: printA - failed to read -sparse <baseIndex>\n";
+                        return -1;
+                    }
                 }
             }
         } else if ((strcmp(flag,"precision") == 0) || (strcmp(flag,"-precision") == 0)) {

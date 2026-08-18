@@ -290,6 +290,29 @@ elif SCEN == "refused_contact":
     # The refusal left the SOE unsized. THIS is the reported crash.
     out["A"] = list(ops.printA("-ret"))
     out["B"] = list(ops.printB("-ret"))
+elif SCEN == "sparse_flags":
+    # `-sparse <baseIndex>` is optional, but the read used to be unconditional,
+    # so `printA -sparse -ret` ate `-ret` as the index and failed. Exercise every
+    # ordering plus an explicit index, and record each outcome rather than
+    # letting one bad form abort the child.
+    build_quad()
+    setup()
+    out["rc"] = ops.analyze(1)
+    forms = {
+        "ret_then_sparse0": ("-ret", "-sparse", 0),   # the old working order
+        "sparse_then_ret":  ("-sparse", "-ret"),      # the natural order (was broken)
+        "ret_sparse_base1": ("-ret", "-sparse", 1),   # explicit 1-based index
+    }
+    got = {}
+    for name, args in forms.items():
+        try:
+            r = ops.printA(*args)
+            got[name] = ("ok", len(r["rowIndices"]) if isinstance(r, dict) else -1,
+                         min(r["rowIndices"]) if isinstance(r, dict) and r["rowIndices"] else None)
+        except Exception as ex:
+            got[name] = ("raised", type(ex).__name__, None)
+    out["forms"] = got
+    out["n"] = ops.systemSize()
 elif SCEN == "shrink":
     # The SAME SOE resized DOWN: analyze a 12-equation mesh, then constrain the
     # top row and analyze again at 6. No wipe() -- wiping destroys the SOE and
@@ -721,3 +744,33 @@ def test_printa_after_shrink_reports_the_live_size():
     assert out["B2"] == out["n2"], (
         "printB returned %d values for a %d-equation system (expected %d)"
         % (out["B2"], out["n2"], out["n2"]), out)
+
+
+def test_printa_sparse_flag_order_is_free():
+    """`-sparse`'s OPTIONAL base index must not swallow the next option flag.
+
+    `printA -sparse -ret` -- the natural way to ask for the sparse matrix BACK --
+    used to consume `-ret` as the base index, fail to parse it, and return -1
+    with "failed to read -sparse <baseIndex>". The only working order was the
+    non-obvious `printA -ret -sparse 0`, which reads like the flags are
+    positional when they are not.
+
+    The parser now PEEKS: it consumes a following token only when that token is
+    not an option flag ('-' followed by a LETTER, so a negative number is still
+    read as a number -- the contact parser's rule, reused deliberately).
+
+    All three forms must return the SAME matrix; only the base index differs,
+    which shifts the reported indices by exactly 1.
+    """
+    out = _run_child("LadrunoContact", "FullGeneral", "sparse_flags")
+    assert out["rc"] == 0, out
+    f = out["forms"]
+    for name in ("ret_then_sparse0", "sparse_then_ret", "ret_sparse_base1"):
+        assert f[name][0] == "ok", (
+            "printA form %r failed (%s) -- the optional -sparse index is eating "
+            "the next flag again" % (name, f[name]), out)
+    # same system => same number of stored entries, whatever the flag order
+    assert f["ret_then_sparse0"][1] == f["sparse_then_ret"][1] == f["ret_sparse_base1"][1], out
+    # and the base index is honoured: 0-based starts at 0, 1-based at 1
+    assert f["ret_then_sparse0"][2] == 0, out
+    assert f["ret_sparse_base1"][2] == 1, out
