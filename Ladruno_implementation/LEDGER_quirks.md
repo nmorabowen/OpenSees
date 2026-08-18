@@ -2724,6 +2724,85 @@ is immune (uses eigenvalues only, never Φ).
   `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
   which today never passes one either.
 
+### `printA` / `printB` KILL the interpreter whenever the SOE was never sized — and `constraints LadrunoContact` is what makes that reachable
+
+- **Bites:** any `ops.printA("-ret")` / `ops.printB("-ret")` under `system FullGeneral`
+  or `system Diagonal` when the SOE has not been sized -- i.e. before the first
+  successful `analyze()`, or after ANY `analyze()` that failed in
+  `domainChanged()`. The process dies with exit code -1/255, **no Python
+  traceback, no exception, and nothing printed**: `exit(-1)` is a clean exit so
+  `faulthandler` is silent, and the `FATAL` text goes to `opserr`, which the pyd
+  redirects. It looks exactly like a bug in your own script (reported 2026-08-18
+  while debugging ADR-85 T1b).
+- **Why it looks like a CONTACT bug, and why it is not:** `printA` ends in
+  `LinearSOE::getA()`. Only **two** classes in the entire
+  `SRC/system_of_eqn/linearSOE` tree override that virtual -- `FullGenLinSOE` and
+  `DiagonalSOE` -- and both used to `exit(-1)` on a null `matA`. Everything else
+  inherits `LinearSOE::getA()`'s `return 0` and was always safe (`UmfPack`,
+  `BandGeneral`, ... return an empty result). `matA` is allocated in `setSize()`,
+  which `StaticAnalysis::domainChanged()` reaches **only after
+  `ConstraintHandler::handle()` returns `>= 0`**. Under the upstream handlers
+  `handle()` essentially never fails, so nobody hit this. But the contact
+  subsystem's whole ADR-78/ADR-85 abort discipline is BUILT on `handle()`
+  returning -1 through `ladrunoContactFatal()` for a refused contact -- a failed
+  `domainChanged()` is a *designed, routine* outcome there. So: refused contact ->
+  `handle()` -1 -> `domainChanged()` fails -> `analyze()` != 0 -> SOE unsized ->
+  and the very next thing you reach for to debug the refusal is `printA`, which
+  takes the interpreter with it. Hence "printA crashes under LadrunoContact" on a
+  deck where contact is not even the thing being measured.
+- **Corollary worth internalizing:** after a nonzero `analyze()` under
+  `constraints LadrunoContact`, the SOE holds NO tangent for your model. A
+  `printA` there was never going to answer your question even when it did not
+  crash -- read the FATAL/refusal line above it instead.
+- **`printA` had a SECOND, unrelated crash on exactly one system**, found by
+  sweeping all ten `system` choices instead of trusting the getA survey:
+  `system SparseSYM` died with a real **ACCESS VIOLATION (0xC0000005)**, not a
+  clean `exit()`. `SymSparseLinSOE` does NOT override `getA()`, so the fault was
+  never in an accessor -- it is in `zeroA()`, reached via `formTangent()`, where
+  `penv[size]` dereferences a null `penv` and `blkPtr->beg` a null `first`. The
+  `memset(diag, 0, size*sizeof(double))` one line earlier is harmless at size 0,
+  which is why the fault appears on the following statement. Lesson: `printA`
+  calls `formTangent()` BEFORE `getA()`, so an unsized SOE has two distinct ways
+  to die and fixing the accessors alone is not enough. Measure every system.
+- **And a THIRD crash in the same class, on the same null-`first` path: the
+  DESTRUCTOR.** `~SymSparseLinSOE` walks the row segments with
+  `while (1) { if (blkPtr->next == blkPtr) { if (blkPtr != NULL) ...` -- it
+  dereferences `blkPtr->next` BEFORE the null check inside the loop. Destroying a
+  never-sized SOE therefore access-violates at TEARDOWN. **Its failure shape is
+  the reason it hid for so long:** it fires on interpreter exit, after the
+  script's final output has already flushed, so the run looks completely normal
+  and merely exits nonzero. My own ad-hoc probe grepped stdout for a success line
+  and reported SURVIVED for it -- twice -- while the process was dying every time;
+  only the pytest gate, which asserts on `returncode`, caught it. **If you write a
+  crash probe, assert on the EXIT CODE, not on output.** A process can print
+  everything you asked for and still be dead.
+- **Status (2026-08-18): FIXED, and wider than first scoped.** Measured
+  per-system on an unsized SOE, `printA` died on 2 of 10 and `printB` on 6 of 10.
+  Fixed in **12** SOE classes: `getA` (the only two that override it,
+  `FullGenLinSOE` + `DiagonalSOE`), `getX`/`getB` in all twelve, and in
+  `SymSparseLinSOE` two further null dereferences -- `zeroA()` and the
+  destructor. All three accessors in
+  both classes now report themselves and return an empty result -- `getA()` returns
+  0 (which `OPS_printA` and `LinearSOE::saveSparseA` already branch on), `getX()`/
+  `getB()` return a shared size-0 `Vector` (which `OPS_printB` already branches on).
+  Nothing in the analysis flow changes: those callers only run post-`domainChanged()`.
+  Gate: `tests/test_printa_unsized_soe.py` (zone_a, subprocess-isolated -- on a
+  regression the CHILD dies and the parent reports a normal failure instead of the
+  whole pytest run being killed). It parametrizes over EVERY serial `system` and
+  over both `printA` and `printB`, because the first cut of this gate covered only
+  three systems and would have passed while six others still died.
+  **Still NOT fixed** (no serial build reaches them, so they are untested here):
+  the same `getX`/`getB` `exit(-1)` in the MPI-only `PetscSOE`, `MumpsSOE`,
+  `MPIDiagonalSOE`, `DistributedDiagonalSOE` and `DistributedSparseGenRowLinSOE`.
+  Also still open: `MPIDiagonalSOE::getpartofA`'s stale `"FATAL ...::getA"` text,
+  and `DiagonalSOE::DiagonalSOE(int N, ...)`, whose allocation block tests
+  `size > 0` BEFORE `size = N` is assigned, so the sized ctor allocates nothing.
+- **Same family as the entry below**, reached by the other door: that one is
+  `setSize()` skipping its wrapper-creation block on a model with ZERO free
+  equations (`size == oldSize == 0`); this one is `setSize()` never running at all.
+  Both ended in the same `exit(-1)`. If you are adding a new `LinearSOE`
+  subclass, do not write `exit()` in an accessor -- return an empty result.
+
 ### A fully-prescribed model (zero free DOFs) under `constraints Transformation` FATALLY exits the process — `FullGenLinSOE::getX - vectX == 0`
 
 - **Bites:** any prescribed-displacement rig that pins/`sp()`s EVERY DOF of a small
