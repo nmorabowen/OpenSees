@@ -53,7 +53,18 @@ DiagonalSOE::DiagonalSOE(DiagonalSolver &the_Solver, bool ld)
 :LinearSOE(the_Solver, LinSOE_TAGS_DiagonalSOE), lumpDiagonal(ld),
  size(0), A(0), B(0), X(0), vectX(0), vectB(0), matA(0), isAfactored(false)
 {
-  if (size > 0) {
+  // Ladruno: this read `if (size > 0)`, but `size` is initialized to 0 in the
+  // ctor-init-list two lines up and is only assigned from N INSIDE the block --
+  // so the condition was ALWAYS false and this constructor allocated NOTHING,
+  // leaving a DiagonalSOE whose size/A/B/X stayed at their null defaults. Plain
+  // dead code, and the guard is obviously meant to be on the argument.
+  //
+  // The behaviour change is nil in practice: nothing constructs this overload.
+  // Every call site in the tree uses the 2-arg DiagonalSOE(solver) and lets
+  // setSize() allocate (SRC/tcl/commands.cpp:3576,3589 and
+  // DiagonalDirectSolver.cpp:54). Fixed so the overload does what it says rather
+  // than silently no-op if it is ever used.
+  if (N > 0) {
     size = N;
     A = new double[size];
     B = new double[size];
@@ -351,13 +362,31 @@ DiagonalSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: the twin of the FullGenLinSOE change -- see the long note there for
+// the full argument. These three used to `exit(-1)` on a null wrapper, which is
+// whole-process death with no traceback from Python, reachable from the
+// interpreter whenever the SOE has not been sized (setSize() runs only after
+// ConstraintHandler::handle() succeeds, and under `constraints LadrunoContact` a
+// refused contact makes handle() return -1 BY DESIGN). DiagonalSOE matters here
+// because it is one of only TWO classes in the tree that override getA() at all
+// -- so it is one of only two `system` choices whose `printA` could kill the
+// interpreter. Return an empty result and say why instead.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+  static Vector theEmptyVector;   // default ctor => Size() == 0
+  return theEmptyVector;
+}
+
 const Vector &
 DiagonalSOE::getX(void)
 {
   if (vectX == 0) {
-    opserr << "FATAL DiagonalSOE::getX - vectX == 0";
-    exit(-1);
-  }    
+    opserr << "WARNING DiagonalSOE::getX - the SOE has not been sized yet "
+              "(setSize() has not run, so there is no solution vector); returning "
+              "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
+  }
   return *vectX;
 }
 
@@ -365,9 +394,11 @@ const Vector &
 DiagonalSOE::getB(void)
 {
   if (vectB == 0) {
-    opserr << "FATAL DiagonalSOE::getB - vectB == 0";
-    exit(-1);
-  }        
+    opserr << "WARNING DiagonalSOE::getB - the SOE has not been sized yet "
+              "(setSize() has not run, so there is no right-hand side); returning "
+              "an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
+  }
   return *vectB;
 }
 
@@ -375,9 +406,13 @@ const Matrix *
 DiagonalSOE::getA(void)
 {
   if (matA == 0) {
-    opserr << "FATAL DiagonalSOE::getA - matA == 0";
-    exit(-1);
-  }        
+    opserr << "WARNING DiagonalSOE::getA - the SOE has not been sized yet "
+              "(setSize() has not run, so there is no system matrix); returning 0. "
+              "Run a successful analyze() first -- if analyze() reported a failure "
+              "(e.g. a refused contact aborting ConstraintHandler::handle()), fix "
+              "that first: the tangent for this model was never assembled.\n";
+    return 0;
+  }
   return matA;
 }
 

@@ -848,13 +848,40 @@ PetscSOE::zeroB(void)
 }
 
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper -- whole-process
+// death with no Python traceback (a clean exit(), so faulthandler stays silent,
+// and the FATAL text goes to cerr, which the pyd redirects). The wrappers
+// are allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printB` after a
+// failed analyze() killed the interpreter. Now it reports itself and returns an
+// EMPTY result: size 0 is the honest description of an SOE that was never sized,
+// OPS_printB already has a `size == 0` branch, and callers inside the analysis
+// flow only run post-domainChanged(), where the wrappers exist.
+//
+// NOTE: petsc/ is commented out of every CMake target in this tree (see
+// SRC/system_of_eqn/linearSOE/CMakeLists.txt), so this file is NOT compiled by
+// any build here -- the change is REVIEWED ONLY, neither compile-checked nor
+// run. Kept in step with its siblings so the pattern is uniform if petsc is ever
+// re-enabled, and deliberately keeps this file's own `cerr` idiom rather than
+// introducing an opserr include that nothing here could verify.
+// See tests/test_printa_unsized_soe.py.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+  static Vector theEmptyVector;   // default ctor => Size() == 0
+  return theEmptyVector;
+}
+
 const Vector &
 PetscSOE::getX(void)
 {
   if (vectX == 0)
   {
-    cerr << "FATAL PetscSOE::getX - vectX == 0!";
-    exit(-1);
+    cerr << "WARNING PetscSOE::getX - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no solution vector); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }
 
   return *vectX;
@@ -866,8 +893,10 @@ PetscSOE::getB(void)
 {
   if (vectB == 0)
   {
-    cerr << "FATAL PetscSOE::getB - vectB == 0!";
-    exit(-1);
+    cerr << "WARNING PetscSOE::getB - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no right-hand side); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }
 
   return *vectB;

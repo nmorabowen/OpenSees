@@ -2724,6 +2724,156 @@ is immune (uses eigenvalues only, never Φ).
   `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
   which today never passes one either.
 
+### `printA` / `printB` KILL the interpreter whenever the SOE was never sized — and `constraints LadrunoContact` is what makes that reachable
+
+- **Bites:** any `ops.printA("-ret")` / `ops.printB("-ret")` under `system FullGeneral`
+  or `system Diagonal` when the SOE has not been sized -- i.e. before the first
+  successful `analyze()`, or after ANY `analyze()` that failed in
+  `domainChanged()`. The process dies with exit code -1/255, **no Python
+  traceback, no exception, and nothing printed**: `exit(-1)` is a clean exit so
+  `faulthandler` is silent, and the `FATAL` text goes to `opserr`, which the pyd
+  redirects. It looks exactly like a bug in your own script (reported 2026-08-18
+  while debugging ADR-85 T1b).
+- **Why it looks like a CONTACT bug, and why it is not:** `printA` ends in
+  `LinearSOE::getA()`. Only **two** classes in the entire
+  `SRC/system_of_eqn/linearSOE` tree override that virtual -- `FullGenLinSOE` and
+  `DiagonalSOE` -- and both used to `exit(-1)` on a null `matA`. Everything else
+  inherits `LinearSOE::getA()`'s `return 0` and was always safe (`UmfPack`,
+  `BandGeneral`, ... return an empty result). `matA` is allocated in `setSize()`,
+  which `StaticAnalysis::domainChanged()` reaches **only after
+  `ConstraintHandler::handle()` returns `>= 0`**. Under the upstream handlers
+  `handle()` essentially never fails, so nobody hit this. But the contact
+  subsystem's whole ADR-78/ADR-85 abort discipline is BUILT on `handle()`
+  returning -1 through `ladrunoContactFatal()` for a refused contact -- a failed
+  `domainChanged()` is a *designed, routine* outcome there. So: refused contact ->
+  `handle()` -1 -> `domainChanged()` fails -> `analyze()` != 0 -> SOE unsized ->
+  and the very next thing you reach for to debug the refusal is `printA`, which
+  takes the interpreter with it. Hence "printA crashes under LadrunoContact" on a
+  deck where contact is not even the thing being measured.
+- **Corollary worth internalizing:** after a nonzero `analyze()` under
+  `constraints LadrunoContact`, the SOE holds NO tangent for your model. A
+  `printA` there was never going to answer your question even when it did not
+  crash -- read the FATAL/refusal line above it instead.
+- **`printA` had a SECOND, unrelated crash on exactly one system**, found by
+  sweeping all ten `system` choices instead of trusting the getA survey:
+  `system SparseSYM` died with a real **ACCESS VIOLATION (0xC0000005)**, not a
+  clean `exit()`. `SymSparseLinSOE` does NOT override `getA()`, so the fault was
+  never in an accessor -- it is in `zeroA()`, reached via `formTangent()`, where
+  `penv[size]` dereferences a null `penv` and `blkPtr->beg` a null `first`. The
+  `memset(diag, 0, size*sizeof(double))` one line earlier is harmless at size 0,
+  which is why the fault appears on the following statement. Lesson: `printA`
+  calls `formTangent()` BEFORE `getA()`, so an unsized SOE has two distinct ways
+  to die and fixing the accessors alone is not enough. Measure every system.
+- **And a THIRD crash in the same class, on the same null-`first` path: the
+  DESTRUCTOR.** `~SymSparseLinSOE` walks the row segments with
+  `while (1) { if (blkPtr->next == blkPtr) { if (blkPtr != NULL) ...` -- it
+  dereferences `blkPtr->next` BEFORE the null check inside the loop. Destroying a
+  never-sized SOE therefore access-violates at TEARDOWN. **Its failure shape is
+  the reason it hid for so long:** it fires on interpreter exit, after the
+  script's final output has already flushed, so the run looks completely normal
+  and merely exits nonzero. My own ad-hoc probe grepped stdout for a success line
+  and reported SURVIVED for it -- twice -- while the process was dying every time;
+  only the pytest gate, which asserts on `returncode`, caught it. **If you write a
+  crash probe, assert on the EXIT CODE, not on output.** A process can print
+  everything you asked for and still be dead.
+- **Status (2026-08-18): FIXED -- the `exit(-1)` family is closed** (but see the
+  SECOND family below, which is NOT). Measured
+  per-system on an unsized SOE before the fix, `printA` died on 2 of 10 `system`
+  choices and `printB` on 6 of 10. Fixed in **17** SOE classes -- every class in
+  `SRC/system_of_eqn/linearSOE` that had the pattern: `getA()` in the only two that
+  override it (`FullGenLinSOE`, `DiagonalSOE`), `getX()`/`getB()` in all 17, plus in
+  `SymSparseLinSOE` the two further null dereferences above (`zeroA()` and the
+  destructor). Each now reports itself and returns an EMPTY result: `getA()` returns
+  0 (which `OPS_printA` and `LinearSOE::saveSparseA` already branch on), `getX()`/
+  `getB()` return a shared size-0 `Vector` from a function-local static (which
+  `OPS_printB` already branches on). Nothing in the analysis flow changes: those
+  callers only run post-`domainChanged()`, where the wrappers exist.
+- **The gate, and what it does NOT cover.**
+  `tests/test_printa_unsized_soe.py` (zone_a, subprocess-isolated -- on a regression
+  the CHILD dies and the parent reports an ordinary failure instead of the whole
+  pytest run being killed) parametrizes over EVERY serial `system` and over both
+  `printA` and `printB`, because the first cut of it covered only three systems and
+  PASSED while six others still died. It carries positive controls too, so
+  "returns empty" cannot pass everything. But the 17 files sit in **three tiers of
+  verification**, and the difference is worth knowing before trusting a row:
+  **(1) runtime-gated** -- the 10 systems the serial gate actually drives;
+  **(2) compile-checked only** -- `MumpsSOE` and `MPIDiagonalSOE` (compiled into
+  `OpenSeesSP`/`OpenSeesMP`/`OpenSeesPyMP`), plus `DistributedDiagonalSOE`,
+  `DistributedSparseGenRowLinSOE`, `SparseGenRowLinSOE` and `ItpackLinSOE`, which
+  compile into the serial build but that no `system` verb constructs;
+  **(3) reviewed only** -- `PetscSOE`, which **no build in this tree compiles at
+  all** (`#add_subdirectory(petsc)` is commented out and it appears in no other
+  target). Tier 3 was still changed rather than skipped, on the reasoning that a
+  documented-but-unfixed landmine is worse than a uniform pattern: the edit is
+  mechanically identical to its 16 siblings and strictly reduces the failure from
+  process death to a warning. It keeps that file's own `cerr` idiom, since an
+  `opserr` include there could never be verified.
+- **Two latent bugs found in passing and fixed with it** (both pure upstream
+  defects, both dead code today, both worth having correct):
+  `MPIDiagonalSOE::getpartofA`'s abort text said `"FATAL MPIDiagonalSOE::getA"` --
+  a method that does not exist on that class, so the abort named the wrong
+  function. Its `exit(-1)` was deliberately KEPT: `getpartofA` has no callers
+  anywhere in the tree, and it is a solver-internal path (post-`setSize()`), not a
+  user-reachable diagnostic, so returning an unfilled `At` would trade a loud stop
+  for a silently wrong answer. And `DiagonalSOE::DiagonalSOE(int N, ...)` guarded
+  its allocation with `if (size > 0)` where `size` is 0 from the ctor-init-list and
+  only assigned from `N` inside the block -- always false, so **the sized
+  constructor allocated nothing**. Now `if (N > 0)`. Nothing constructs that
+  overload (every site uses the 2-arg form and lets `setSize()` allocate), so the
+  fix is dead-code-only.
+- **`petsc/badPetscSOE.cpp` still has the two `exit(-1)`s** at :377/:395 and was
+  left alone ON PURPOSE -- it is dead: referenced only by the never-added
+  `petsc/CMakeLists.txt`, and it redefines `PetscSOE::` symbols, so it could not
+  link alongside `PetscSOE.cpp` even if petsc were re-enabled. Do not "finish the
+  sweep" by editing it.
+- **A SECOND, DISTINCT family is still OPEN: the `Distributed*` / `*Parallel`
+  `getB()` overrides, which have NO null guard at all.** Found while verifying the
+  above, by surveying every `getX`/`getB` in the tree for a guard instead of only
+  grepping for `exit(`. These do not `exit()` -- they dereference a null wrapper
+  outright, so the failure is an ACCESS VIOLATION, and they are MPI-only:
+  `MumpsParallelSOE::getB` (derefs its own `myVectB`, null until `setSize()`),
+  `DistributedBandGenLinSOE`, `DistributedBandSPDLinSOE`,
+  `DistributedProfileSPDLinSOE`, `DistributedSparseGenColLinSOE` (each declares its
+  own `Vector *` and overrides `getB` to merge across ranks).
+  **Why this matters for `system Mumps` specifically:** that verb constructs
+  `MumpsParallelSOE`, never the serial `MumpsSOE` (the serial branch of
+  `OPS_MumpsSolver()` sits in an `#else` that has never compiled -- there is an
+  ADR-75 comment at `OpenSeesCommands.cpp` saying exactly that). `MumpsParallelSOE`
+  does NOT override `getX`, so the `MumpsSOE::getX` fix above IS on the live path --
+  but `getB` IS overridden, so `printB` under `system Mumps` on an unsized SOE still
+  crashes. Fixing the serial `MumpsSOE::getB` did not reach it.
+  **Why it was left for its own change rather than folded in here:** it is a
+  different bug class in an MPI **collective** -- `MumpsParallelSOE::getB` does
+  `sendVector`/`recvVector` between ranks, so a guard has to be rank-SYMMETRIC or it
+  deadlocks instead of crashing. The analysis says a check at the very top, before
+  the rank branch, is symmetric by construction (an unsized SOE is unsized on every
+  rank, so all ranks return early and no rank posts a message), but that is a
+  deadlock-freedom claim and this desktop has no MPI probe to *demonstrate* it. An
+  unverifiable edit to a collective is exactly the trade this PR declined; the
+  `exit(-1)` family it does close is verifiable and closed. Wants: an `mpiexec -n 2`
+  probe asserting on EXIT CODE (see the destructor lesson above), then the same
+  warn-and-return-empty pattern.
+  **The clean structural fix, for whoever takes it:** `UmfpackGenLinSOE` -- the
+  gate's never-died control -- holds `Vector X, B;` **BY VALUE**, not as pointers.
+  That is why it cannot have this bug at all, and it is the design the rest of the
+  tree should converge on: with by-value wrappers an unsized SOE is naturally a
+  size-0 SOE and every accessor is safe with no guard to forget. `SparsePython*`,
+  `PFEMLinSOE` and `ShadowPetscSOE` also show up "unguarded" in that survey and were
+  NOT audited -- check whether they are by-value-safe like UmfPack before assuming
+  they are broken. **"Unguarded" is not the same as "buggy"; the question is always
+  whether the wrapper can be null.**
+- **All of the `exit(-1)` work is upstreamable** -- pure upstream defects with no
+  fork concepts, so the whole set is a clean candidate for the small-correctness
+  wave of [[upstream_pr_campaign]] (as is the open second family). The only
+  fork-flavoured thing about any of it is HOW it was found (`constraints
+  LadrunoContact` making a failed `handle()` routine); the bugs and the fixes are
+  upstream's.
+- **Same family as the entry below**, reached by the other door: that one is
+  `setSize()` skipping its wrapper-creation block on a model with ZERO free
+  equations (`size == oldSize == 0`); this one is `setSize()` never running at all.
+  Both ended in the same `exit(-1)`. If you are adding a new `LinearSOE`
+  subclass, do not write `exit()` in an accessor -- return an empty result.
+
 ### A fully-prescribed model (zero free DOFs) under `constraints Transformation` FATALLY exits the process — `FullGenLinSOE::getX - vectX == 0`
 
 - **Bites:** any prescribed-displacement rig that pins/`sp()`s EVERY DOF of a small

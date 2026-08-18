@@ -489,8 +489,20 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
 const Vector&
 MPIDiagonalSOE::getpartofA(Vector& At, const ID& ids)
 {
+  // Ladruno: this said "FATAL MPIDiagonalSOE::getA" -- a copy-paste naming a
+  // method that does not exist on this class, so the abort blamed the wrong
+  // function. Message corrected to getpartofA.
+  //
+  // The exit(-1) STAYS here, unlike getX()/getB() above. Two reasons: this
+  // method has NO callers anywhere in the tree (grep finds only its own
+  // declaration and definition), and if it is ever wired up it is a
+  // solver-internal path reached during solve -- strictly post-setSize() --
+  // not a user-facing diagnostic. A null `A` there is a broken invariant, and
+  // the alternative would be returning `At` unfilled, i.e. trading a loud stop
+  // for a silently wrong answer. The getX/getB fix is about a state a USER can
+  // reach from the interpreter; this is not one.
   if (A == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getA - A == 0";
+    opserr << "FATAL MPIDiagonalSOE::getpartofA - A == 0";
     exit(-1);
   } 
   else if (isAfactored) {
@@ -806,12 +818,36 @@ MPIDiagonalSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper -- whole-process
+// death with no Python traceback (a clean exit(), so faulthandler stays silent,
+// and the FATAL text goes to opserr, which the pyd redirects). The wrappers
+// are allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printB` after a
+// failed analyze() killed the interpreter. Now it reports itself and returns an
+// EMPTY result: size 0 is the honest description of an SOE that was never sized,
+// OPS_printB already has a `size == 0` branch, and callers inside the analysis
+// flow only run post-domainChanged(), where the wrappers exist.
+//
+// This file is MPI-only: it is compiled into OpenSeesSP / OpenSeesMP /
+// OpenSeesPyMP, so the change is COMPILE-CHECKED but not exercised by the
+// serial desktop gate in that test -- it cannot reach this class at all.
+// See tests/test_printa_unsized_soe.py.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+  static Vector theEmptyVector;   // default ctor => Size() == 0
+  return theEmptyVector;
+}
+
 const Vector &
 MPIDiagonalSOE::getX(void)
 {
   if (vectX == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getX - vectX == 0";
-    exit(-1);
+    opserr << "WARNING MPIDiagonalSOE::getX - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no solution vector); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }    
   //opserr << "MPIDiagonalSOE::getX(void) : " << vectX->Size() << endln;
   return *vectX;
@@ -821,8 +857,10 @@ const Vector &
 MPIDiagonalSOE::getB(void)
 {
   if (vectB == 0) {
-    opserr << "FATAL MPIDiagonalSOE::getB - vectB == 0";
-    exit(-1);
+    opserr << "WARNING MPIDiagonalSOE::getB - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no right-hand side); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }        
   return *vectB;
 }

@@ -65,7 +65,24 @@ SymSparseLinSOE::~SymSparseLinSOE()
     OFFDBLK *tempBlk;
     int curRow = -1;
 
-    while (1) {
+    // Ladruno: `while (1)` dereferenced blkPtr->next BEFORE the `if (blkPtr !=
+    // NULL)` guard inside the loop -- a check-AFTER-use. `first` is null from the
+    // constructor until setSize() allocates the row segments, so destroying an
+    // SOE that was never sized was an ACCESS VIOLATION at teardown (measured
+    // 0xC0000005). Reachable exactly like the zeroA() twin: any script that
+    // selects `system SparseSYM` and never completes a successful analyze --
+    // e.g. a contact refusal aborting handle() -- then dies on INTERPRETER EXIT,
+    // after its own output has flushed. That last part is what makes it nasty:
+    // the crash lands after the script's final print, so it reads as a clean run
+    // with a mysterious nonzero exit code, and a probe that greps stdout for a
+    // success line (rather than checking the exit code) reports PASS. Ours did,
+    // until tests/test_printa_unsized_soe.py asserted on returncode.
+    //
+    // `while (blkPtr != 0)` is behaviour-preserving for a sized SOE -- the loop
+    // still terminates on its own `blkPtr->next == blkPtr` sentinel -- and makes
+    // the never-sized case a no-op. The now-redundant inner null check is left
+    // alone to keep the diff minimal.
+    while (blkPtr != 0) {
       if (blkPtr->next == blkPtr) {
 	if (blkPtr != NULL) {
 	  free(blkPtr);
@@ -509,6 +526,27 @@ SymSparseLinSOE::setB(const Vector &v, double fact)
  */
 void SymSparseLinSOE::zeroA(void)
 {
+    // Ladruno: bail out when the SOE has never been sized. Every pointer touched
+    // below is null from the constructor until setSize() allocates it, and this
+    // is reachable from the interpreter: `printA` calls the integrator's
+    // formTangent(), which calls zeroA(), and setSize() runs only once
+    // ConstraintHandler::handle() has succeeded (under `constraints
+    // LadrunoContact` a refused contact makes handle() return -1 BY DESIGN).
+    //
+    // Unlike its siblings' `exit(-1)`, this one was a genuine ACCESS VIOLATION
+    // (measured 0xC0000005): `penv[size]` dereferences a null `penv`, and
+    // `blkPtr->beg` a null `first`. The `memset(diag, 0, 0)` below happens to be
+    // harmless at size 0, which is why the fault landed on the NEXT statement.
+    //
+    // Guarded here rather than in getA() because this class does NOT override
+    // getA() -- it inherits LinearSOE's safe `return 0`, so zeroA() was the whole
+    // crash, and `system SparseSYM` was the one system where `printA` still died
+    // after the getA() fixes. See tests/test_printa_unsized_soe.py.
+    if (size == 0 || penv == 0 || first == 0) {
+        factored = false;
+        return;
+    }
+
     memset(diag, 0, size*sizeof(double));
 
     int profileSize = penv[size] - penv[0];
@@ -550,12 +588,33 @@ SymSparseLinSOE::setX(const Vector &x)
 }
 
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper -- whole-process
+// death with no Python traceback (a clean exit(), so faulthandler stays silent,
+// and the FATAL text goes to opserr, which the pyd redirects). The wrappers are
+// allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printB` after a
+// failed analyze() killed the interpreter. Measured before the fix: 6 of 10
+// `system` choices died this way. Now it reports itself and returns an EMPTY
+// result: size 0 is the honest description of an SOE that was never sized,
+// OPS_printB already has a `size == 0` branch, and callers inside the analysis
+// flow only run post-domainChanged(), where the wrappers exist.
+// See tests/test_printa_unsized_soe.py.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+    static Vector theEmptyVector;   // default ctor => Size() == 0
+    return theEmptyVector;
+}
+
 const Vector &
 SymSparseLinSOE::getX(void)
 {
     if (vectX == 0) {
-	opserr << "FATAL SymSparseLinSOE::getX - vectX == 0";
-	exit(-1);
+	opserr << "WARNING SymSparseLinSOE::getX - the SOE has not been sized "
+	          "yet (setSize() has not run, so there is no solution vector); "
+	          "returning an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
     }
     return *vectX;
 }
@@ -564,8 +623,10 @@ const Vector &
 SymSparseLinSOE::getB(void)
 {
     if (vectB == 0) {
-	opserr << "FATAL SymSparseLinSOE::getB - vectB == 0";
-	exit(-1);
+	opserr << "WARNING SymSparseLinSOE::getB - the SOE has not been sized "
+	          "yet (setSize() has not run, so there is no right-hand side); "
+	          "returning an empty Vector. Run a successful analyze() first.\n";
+	return ladrunoEmptyVector();
     }        
     return *vectB;
 }

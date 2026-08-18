@@ -468,12 +468,36 @@ DistributedDiagonalSOE::setX(const Vector &x)
     *vectX = x;
 }
 
+// Ladruno: getX()/getB() used to `exit(-1)` on a null wrapper -- whole-process
+// death with no Python traceback (a clean exit(), so faulthandler stays silent,
+// and the FATAL text goes to opserr, which the pyd redirects). The wrappers
+// are allocated in setSize(), which the analysis reaches only after
+// ConstraintHandler::handle() succeeds -- and under `constraints LadrunoContact`
+// a refused contact makes handle() return -1 BY DESIGN -- so `printB` after a
+// failed analyze() killed the interpreter. Now it reports itself and returns an
+// EMPTY result: size 0 is the honest description of an SOE that was never sized,
+// OPS_printB already has a `size == 0` branch, and callers inside the analysis
+// flow only run post-domainChanged(), where the wrappers exist.
+//
+// This file is MPI-only: it is compiled into OpenSeesSP / OpenSeesMP /
+// OpenSeesPyMP, so the change is COMPILE-CHECKED but not exercised by the
+// serial desktop gate in that test -- it cannot reach this class at all.
+// See tests/test_printa_unsized_soe.py.
+static const Vector &
+ladrunoEmptyVector(void)
+{
+  static Vector theEmptyVector;   // default ctor => Size() == 0
+  return theEmptyVector;
+}
+
 const Vector &
 DistributedDiagonalSOE::getX(void)
 {
   if (vectX == 0) {
-    opserr << "FATAL DistributedDiagonalSOE::getX - vectX == 0";
-    exit(-1);
+    opserr << "WARNING DistributedDiagonalSOE::getX - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no solution vector); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }    
   return *vectX;
 }
@@ -482,8 +506,10 @@ const Vector &
 DistributedDiagonalSOE::getB(void)
 {
   if (vectB == 0) {
-    opserr << "FATAL DistributedDiagonalSOE::getB - vectB == 0";
-    exit(-1);
+    opserr << "WARNING DistributedDiagonalSOE::getB - the SOE has not been sized "
+              "yet (setSize() has not run, so there is no right-hand side); "
+              "returning an empty Vector. Run a successful analyze() first.\n";
+    return ladrunoEmptyVector();
   }        
   return *vectB;
 }
