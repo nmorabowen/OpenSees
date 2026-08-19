@@ -119,7 +119,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  bool knAuto, double cellFrac, bool consistentTan, double muc,
                                  bool consistentNormal, double softScale,
                                  bool enableReemit, double resortFrac, int resortEvery,
-                                 bool smoothNormal)
+                                 bool smoothNormal, bool outwardWinding)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -164,6 +164,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.resortFrac   = (resortFrac > 0.0) ? resortFrac : 0.5;
     c.resortEvery  = (resortEvery > 0) ? resortEvery : 0;
     c.smoothNormal = smoothNormal;                     // ADR-63 #4a nodal-normal smoothing (off ⇒ identical)
+    c.outwardWinding = outwardWinding;                 // ADR-85 F1 `-outward winding` (off ⇒ identical)
     theContacts.push_back(c);
     return 0;
 }
@@ -548,12 +549,17 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
 // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
 
 namespace {
-    const int LCD_FMT_VERSION  = 2;    // ADR-85 T3 -- BUMPED with the mortar-record growth
-                                       // below, per the protocol above (REVIEW FIX: a v1
-                                       // 37-slot stream must draw the NAMED version refusal,
-                                       // not a downstream misalignment misdiagnosis)
+    const int LCD_FMT_VERSION  = 3;    // ADR-85 F1 -- BUMPED with the NTS-record growth below
+                                       // (outwardWinding), per the protocol above. ADR-85 T3
+                                       // bumped 1 -> 2 for the mortar-record growth on the
+                                       // same rule (REVIEW FIX then: a v1 37-slot stream must
+                                       // draw the NAMED version refusal, not a downstream
+                                       // misalignment misdiagnosis). WIRE-FORMAT BREAK, stated
+                                       // plainly: a stored v2 definitions stream (an ADR-78 P2
+                                       // database, or an MPI peer built pre-F1) is now refused
+                                       // by name at unpackDefinitions() below.
     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
-    const int LCD_NTS_SLOTS    = 21;
+    const int LCD_NTS_SLOTS    = 22;   // ADR-85 F1 -- +1 (outwardWinding), appended at the tail
     const int LCD_MORTAR_SLOTS = 38;   // ADR-85 T3 -- +1 (hThickness), appended at the tail
     const int LCD_PLANE_SLOTS  = 12;
 }
@@ -617,6 +623,8 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
         v(p++) = c.resortFrac;
         v(p++) = (double)c.resortEvery;
         v(p++) = c.smoothNormal ? 1.0 : 0.0;
+        v(p++) = c.outwardWinding ? 1.0 : 0.0;   // ADR-85 F1 -- appended at the tail
+                                                 // (field order is append-only)
     }
     for (size_t i = 0; i < theMortarContacts.size(); i++) {
         const MortarContact &m = theMortarContacts[i];
@@ -710,9 +718,10 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         double rFrac = v(p++);
         int rEvery = (int)v(p++);
         bool smooth = (v(p++) != 0.0);
+        bool owWind = (v(p++) != 0.0);          // ADR-85 F1
         if (this->addContact(tag, ms, ss, kn, kt, mu, hasOut ? out : 0, knAuto,
                              cellFrac, cTan, muc, cNorm, soft,
-                             reemit, rFrac, rEvery, smooth) < 0)
+                             reemit, rFrac, rEvery, smooth, owWind) < 0)
             goto unpack_fail;
         theContacts.back().retired = retired;   // runtime datum; no add* parameter
     }

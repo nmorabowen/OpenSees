@@ -94,7 +94,8 @@ class LadrunoContactDomain
                    bool consistentTan = false, double muc = 0.0,
                    bool consistentNormal = false, double softScale = 0.0,
                    bool enableReemit = false, double resortFrac = 0.5, int resortEvery = 0,
-                   bool smoothNormal = false);   // ADR-63 #4a nodal-normal smoothing (off ⇒ identical)
+                   bool smoothNormal = false,    // ADR-63 #4a nodal-normal smoothing (off ⇒ identical)
+                   bool outwardWinding = false); // ADR-85 F1 `-outward winding` (2D NTS; off ⇒ identical)
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -142,6 +143,19 @@ class LadrunoContactDomain
         // BLOCKER-IDENTITY, mirrors enableReemit). OFF (default) ⇒ no field built ⇒ the faceted
         // normalOriented() path ⇒ byte-identical to the shipped contact.
         bool   smoothNormal = false;
+        // ADR-85 F1: `-outward winding` — the 2D NTS interface-level orientation vote is
+        // BYPASSED and sigma is fixed at +1, i.e. every master segment's normal is
+        // perp(t) = (-t_y, t_x) of ITS OWN travel direction (the slave lies to the LEFT of
+        // the chain's traversal). Unlocks flush interfaces (coincident centroids ⇒ the vote
+        // is degenerate) and closed-loop / strongly-curved masters (⇒ the vote SPLITS).
+        // Because the vote is what today catches a mis-wound run, winding carries its OWN
+        // handle()-time requirement that the master form ONE CONNECTED CHAIN — the
+        // chain-integrity scan is vacuous for disjoint segments. 2D NTS only: refused with
+        // -mortar and with an explicit -outward vector at the command surface. Mutually
+        // exclusive with hasOutward by construction. Default-initialized so stack
+        // construction can never flip it on (the enableReemit/smoothNormal precedent);
+        // OFF (default) ⇒ the shipped vote runs ⇒ byte-identical.
+        bool   outwardWinding = false;
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
