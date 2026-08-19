@@ -1,7 +1,7 @@
 ---
 title: Ladruno Contact — 2D plane-model contact engine
 project: Ladruno
-status: draft (rev 2 — post adversarial panel 2026-08-18)
+status: shipped (T0-T4 complete 2026-08-18 -- 2D contact lane closed)
 priority: medium
 owner: nmora
 tags:
@@ -933,5 +933,85 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
   - Debt: D4 re-deferred to T4 (end-cap + benchmark battery together);
     D5 formally re-deferred demand-driven (4 rigs failed to reproduce);
     D6 CLOSED by evidence (the described prescan loops do not exist).
+
+- **T4 shipped** (2026-08-18, PR #763): the final phase -- the 2D Hertz
+  cylinder-on-plane benchmark, the D4 radial end-cap, T4 hardening, and the
+  user guide. **The 2D contact lane is COMPLETE (T0-T4).**
+  - **D4 end-cap**: `NTS2D_END_SLACK` (the T1b parametric acceptance window
+    and its 1+1e-3 cliff) is RETIRED. `segment2DActive`'s `nps==1` branch
+    splits on both-far-nodes-present (CONCAVE vertex, unchanged) vs
+    exactly-one-far-node-present (the new END-CAP), reusing `vertexEval2D`/
+    `bOperatorVertex2D` verbatim -- C0 at xi=0/1 by construction (the
+    slave-minus-vertex vector is parallel to the segment's own fixed normal
+    exactly at the boundary). Reach bounded by `NTS2D_ENDCAP_REACH_TOL`
+    (5e-2, relative to `Lref` after the review fix below -- not the segment's
+    own length, and not a parametric window): measured necessary after an
+    UNBOUNDED first draft spuriously claimed a slave a neighbour-segment's
+    length away from the terminal (caught by G-T2(f)'s removal-continuity
+    gate). Side sign: the sign of the adjoining segment's own fixed-normal
+    gap at first capture, gated on the same noise-conditioning floor
+    (`tauPerp*Lref`) the concave branch already uses (review fix).
+  - **Engine defect found + fixed (2D only)**: `ladrunoContactForce` kept a
+    STALE value on a released pair (`setNtsForce` ran only on the active
+    path; `theNtsForce` clears once per `handle()` epoch, not once per
+    residual eval) -- invisible to every prior battery deck (active sets
+    only ever grew) but a Hertz interference-fit deck's active set SHRINKS
+    as it converges, over-reporting summed contact force by 2-3 orders of
+    magnitude. Fixed by zeroing the snapshot on the non-active path in the
+    2D `getResidual` branch; permanent regression guard
+    `test_2d_hertz_released_pair_force_is_stale`. The identical 3D defect
+    (reproduced on an isolated facet rig) is DEFERRED -- see LEDGER_quirks --
+    to keep this PR's 3D `contact_dump` gate meaningful; `probe_b3_hertz3.py`'s
+    own numbers are therefore suspect until that follow-up lands.
+  - **T4 hardening**: (a) master-side NTS/mortar routing widened from
+    master-surface TAG identity to NODE-SET equality (T3 review item 9,
+    widen-only, safe in the direction that matters); (b) `-epsN auto` x
+    `-thickness h != 1` gains its first test, confirming the T3 review fix
+    still holds; (c) the D5 `WARN_VTX2D_SIDE_FLIP` rig REPRODUCED for the
+    first time (four prior T1b-T3 attempts on the concave-vertex path
+    failed) via the end-cap's single-tangent commit path -- a converged,
+    permanent regression rig is left as a follow-up (the reproduction itself
+    was the debt owed).
+  - **Benchmark**: `proto_t4_hertz2d.py` pins the 2D line-contact Hertz
+    convention `b^2 = 4P'R/(pi E*)`, `p_max = 2P'/(pi b)` (P' = force per
+    unit thickness; E* = the plane-strain combination), independently
+    verified (force closure by quadrature, self-similarity, same-material
+    reduction, monotonicity, 11/11).
+    `tests/test_adr85_contact2d_t4_hertz.py`: rigid cylinder indenting an
+    elastic half-plane via interference-fit, with the deformable surface as
+    the SLAVE and the rigid arc as the MASTER (the reverse role gives an
+    arbitrary indenter-node pressure tributary instead of the real elastic
+    mesh spacing) and the master facet length sized from the expected
+    penetration depth, decoupled from the elastic mesh spacing (a curved
+    master's narrow phase disarms past ~2 facet lengths of penetration --
+    a new, previously-undocumented 2D lane constraint, now in the user
+    guide). Measured `a/b` and `p0/p_max` within ~1% of theory at coarse and
+    refined meshes, well inside the +-10% G-T4 ceiling.
+  - **Docs**: new `Ladruno_implementation/LadrunoContact2D_guide.md` (the
+    2D units/thickness table, the flush-interface `-outward` requirement,
+    the chained stride-2 pair-list convention in bold, the curved-master
+    facet-length rule, and the D5 status). Banner finalized (`T4: radial
+    end-cap open-terminal vertices... -- 2D lane complete`).
+  - **Review**: 9-angle `/code-review` at high (8 standard + an adversarial
+    pass against the end-cap's ownership-totality/uniqueness, C0, and
+    committed-sign contract -- 4/5 items confirmed clean, 1 [totality]
+    surfaced a real edge case). 6 findings fixed in-PR (the side-sign
+    conditioning gate and the Lref-relative reach bound above, both
+    review-driven; a redundant force-snapshot double-write; corner-specific
+    warning wording generalized to cover the end-cap; a stale comment; the
+    two end-cap instantiation blocks deduplicated). 2 disclosed and
+    deferred (a pre-existing, T4-widened `segIndex` numbering weakness that
+    can alias stale friction state across a topology change -- needs a
+    domain-wide fix, not a 2D-local one; a double-count edge case reachable
+    only by compounding an already-discouraged "holed" master declaration)
+    -- see LEDGER_quirks.md for both.
+  - **Gates MEASURED** (this PR, artifacts 2026-08-18): `contact_dump`
+    bit-identical x2, matching the pre-change baseline exactly
+    (`B0F8F770...81E4`, 184 lines, 0 decks failed); 3D battery **142 passed,
+    N unchanged**; 2D suite **80 -> 83 passed**; full Zone-A sweep **1980
+    passed, 64 skipped, 192 deselected, 1 xfailed**.
+
+**2D contact lane closed.** Six PRs shipped as estimated: ADR #748, T0 #749,
+T1a #750, T1b #751, T2 #752, T3 #757, T4 #763.
 
 *(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*
