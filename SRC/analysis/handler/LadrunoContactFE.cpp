@@ -399,15 +399,6 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
     return true;
 }
 
-// ADR-85 T1b -- the OPEN-END parametric acceptance window (dimensionless slack on
-// xi past a TERMINAL chain side; see the block comment inside segment2DActive).
-// Sized ~4 orders above the measured tilt-induced drift of a boundary slave on
-// the G-T1b gate decks (1.25e-7 at load; scale pen*tilt/L^2 -- the 6-order figure
-// is the drift against tolIn = 1e-9, not against this window) and 3 orders below
-// anything a gate measures geometrically (1e-3*L past the block corner). Only
-// OPEN ends see it -- interior seams keep the kernel's strict tolIn.
-static const double NTS2D_END_SLACK = 1.0e-3;
-
 // ADR-85 T1b -- the 2D NTS narrow phase. Wired VERBATIM to the
 // LadrunoContact2DKernel ownership contract (ADR-85 How/1, T1a corrections):
 //   1. previous segment SEG2D_IN_BOUNDS  -> the PREVIOUS SEGMENT owns
@@ -459,30 +450,17 @@ LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double 
         int st = projectSegment2D(X0, X1, xs, nts2dSigma, nts2dLref, xi, g2, n2);
         if (st == SEG2D_DEGENERATE)
             return false;
-        // ADR-85 T1b OPEN-END acceptance window (post-gate fix, measured). At an
-        // interior (chained) side, out-of-bounds is a REFUSAL, never a clamp --
-        // the T1a seam contract, untouched. But a chain's OPEN TERMINAL side has
-        // no neighbour and no vertex pair, so the strict tolIn = 1e-9 slack
-        // turns TILT-INDUCED projection drift of a boundary slave into a hard
-        // force discontinuity: on the G-T1b compression patch the master's end
-        // nodes settle ~5e-3 more than its interior node, the end slave's xi
-        // drifts to -1.25e-7, both end pairs refuse in the SAME iterate, the top
-        // block loses its only contact anchors and Newton explodes (du ~ 1e13,
-        // singular block; probe-traced). Accept the projection within
-        // NTS2D_END_SLACK parametric of a TERMINAL side only (prevFar == 0 <=>
-        // the X0 side is an open end; nextFar == 0 <=> X1 is). The gap is then
-        // the kernel's signed distance to the segment's INFINITE LINE and B is
-        // still its EXACT first variation (the T1a cross-form identity is
-        // algebraic in xi, not restricted to [0,1]), so residual and tangent
-        // stay consistent and C0 across the boundary band. Interior seams keep
-        // the strict predicate, so the T1a ownership/uniqueness contract is
-        // untouched; the honest permanent end treatment (a radial END-CAP
-        // vertex, C0 with no window) is deferred by name -- see LEDGER_quirks.
-        if (st == SEG2D_OUT_LOW &&
-            !(prevFarNode == 0 && xi >= -NTS2D_END_SLACK))
-            return false;
-        if (st == SEG2D_OUT_HIGH &&
-            !(nextFarNode == 0 && xi <= 1.0 + NTS2D_END_SLACK))
+        // ADR-85 T4 (D4) -- OUT_LOW/OUT_HIGH is a plain REFUSAL on every side,
+        // interior or open-terminal alike. The T1b NTS2D_END_SLACK parametric
+        // acceptance window (and its 1+1e-3 cliff) is RETIRED: a chain's OPEN
+        // TERMINAL side (prevFarNode == 0 <=> the X0 side is open; nextFarNode
+        // == 0 <=> X1 is) is now owned by its own END-CAP vertex pair instead
+        // (this function's nps == 1 branch below, "exactly one far node"
+        // sub-case) -- a radial vertex pair, C0 at xi = 0/1 by construction
+        // (see that branch's comment) and active UNCONDITIONALLY past the end,
+        // so no window width is needed and there is no cliff to disclose. See
+        // _adr85_t4_design.md SS "D4 end-cap" and LEDGER_quirks (retired entry).
+        if (st == SEG2D_OUT_LOW || st == SEG2D_OUT_HIGH)
             return false;
         // Ordered-ownership step 1: the predecessor owns whenever IT is in-bounds
         // too. Its geometry is read at the SAME trial config; the in-bounds
@@ -516,48 +494,154 @@ LadrunoContactFE::segment2DActive(double &gap, double n[3], double N[2], double 
         return true;
     }
 
-    // nps == 1: the concave-vertex pair (degenerate-segment representation).
-    if (nps != 1 || segNode[0] == 0 || prevFarNode == 0 || nextFarNode == 0)
-        return false;
-    double XP[2], XV[2], XN[2];
+    // nps == 1: either the CONCAVE-vertex pair (T1a/T1b interior-corner
+    // primitive, BOTH far nodes present) or the ADR-85 T4 (D4) OPEN-TERMINAL
+    // end-cap (EXACTLY one far node present -- segNode[0] IS the chain's open
+    // end, so there is no second segment to wedge against). Both share the
+    // SAME radial pair geometry below (vertexEval2D / bOperatorVertex2D, DOF =
+    // [slave, segNode[0]]); only how OWNERSHIP and the committed SIDE SIGN are
+    // derived differs, so the two branches just resolve a common (XV, side)
+    // pair that a single shared tail then consumes.
+    if (nps != 1 || segNode[0] == 0) return false;
+    if (prevFarNode == 0 && nextFarNode == 0) return false;  // no adjacency: malformed
+
+    double XV[2];
     {
-        const Vector &Xp = prevFarNode->getCrds(); const Vector &up = prevFarNode->getTrialDisp();
-        const Vector &Xv = segNode[0]->getCrds();  const Vector &uv = segNode[0]->getTrialDisp();
-        const Vector &Xn = nextFarNode->getCrds(); const Vector &un = nextFarNode->getTrialDisp();
-        XP[0] = Xp(0) + up(0); XP[1] = Xp(1) + up(1);
+        const Vector &Xv = segNode[0]->getCrds();
+        const Vector &uv = segNode[0]->getTrialDisp();
         XV[0] = Xv(0) + uv(0); XV[1] = Xv(1) + uv(1);
-        XN[0] = Xn(0) + un(0); XN[1] = Xn(1) + un(1);
     }
-    // Ownership steps 1-2: either adjacent segment in-bounds => a SEGMENT owns.
-    {
-        double xiT, gT, nT[2];
-        if (projectSegment2D(XP, XV, xs, nts2dSigma, nts2dLref, xiT, gT, nT) == SEG2D_IN_BOUNDS)
+    double side = 0.0;
+
+    if (prevFarNode != 0 && nextFarNode != 0) {
+        // ---- CONCAVE vertex (T1a/T1b, contract unchanged) -----------------
+        double XP[2], XN[2];
+        {
+            const Vector &Xp = prevFarNode->getCrds(); const Vector &up = prevFarNode->getTrialDisp();
+            const Vector &Xn = nextFarNode->getCrds(); const Vector &un = nextFarNode->getTrialDisp();
+            XP[0] = Xp(0) + up(0); XP[1] = Xp(1) + up(1);
+            XN[0] = Xn(0) + un(0); XN[1] = Xn(1) + un(1);
+        }
+        // Ownership steps 1-2: either adjacent segment in-bounds => a SEGMENT owns.
+        {
+            double xiT, gT, nT[2];
+            if (projectSegment2D(XP, XV, xs, nts2dSigma, nts2dLref, xiT, gT, nT) == SEG2D_IN_BOUNDS)
+                return false;
+            if (projectSegment2D(XV, XN, xs, nts2dSigma, nts2dLref, xiT, gT, nT) == SEG2D_IN_BOUNDS)
+                return false;
+        }
+        const double tPrev[2] = { XV[0] - XP[0], XV[1] - XP[1] };
+        const double tNext[2] = { XN[0] - XV[0], XN[1] - XV[1] };
+        WedgeResult w = vertexWedge2D(tPrev, tNext, nts2dSigma, xs, XV, nts2dLref);
+        // Step 3, UNSLACKED (this -- not the tolIn-slacked w.inWedge -- is what closes
+        // the 5.2-ulp seam band the T1a oracle measured; kernel contract, verbatim).
+        if (!(w.aPrev > 0.0 && w.aNext < 0.0))
             return false;
-        if (projectSegment2D(XV, XN, xs, nts2dSigma, nts2dLref, xiT, gT, nT) == SEG2D_IN_BOUNDS)
+        if (liveSideOut != 0) *liveSideOut = w.sideSign;
+        side = (committedSide != 0.0) ? committedSide : w.sideSign;
+        if (side == 0.0) {
+            // AMBIGUOUS (fold-back spike / conditioning gate): DEFER the capture --
+            // never guess (kernel handler-flow step 2). Loud once per contact, the
+            // WARN_EDGE_SIGN_DEFER precedent.
+            LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+            if (cd != 0 && cd->warnOnce(contactTag, LadrunoContactDomain::WARN_VTX2D_DEFER))
+                opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": 2D vertex-pair "
+                          "side-sign capture DEFERRED -- the corner is (numerically) a fold-back "
+                          "spike or the slave sits on the wedge-boundary conditioning gate, so the "
+                          "side sign is undecidable; the pair stays inert until the geometry "
+                          "disambiguates (ADR-85 How/1).\n";
             return false;
+        }
+    } else {
+        // ---- ADR-85 T4 (D4): the OPEN-TERMINAL end-cap --------------------
+        // Exactly one far node: prevFarNode == 0 <=> segNode[0] is the X0 end
+        // of its one adjacent segment (far = nextFarNode, that segment's X1);
+        // nextFarNode == 0 <=> segNode[0] is X1 (far = prevFarNode, its X0).
+        // Replaces NTS2D_END_SLACK's parametric window and cliff (retired in
+        // segment2DActive's SEGMENT branch above): the terminal is capped
+        // with the SAME radial vertex-pair machinery the concave corner uses
+        // below, so activation across the boundary xi = 0/1 is UNCONDITIONAL
+        // (no cliff there -- see the C0 argument below). REACH_TOL bounds how
+        // far TANGENTIALLY the cap claims territory (see the reach check
+        // right after onOpenSide): a radial gap grows with distance from the
+        // vertex, so past a reasonably-bounded reach it stops representing
+        // "this terminal, slightly extended" and starts spuriously claiming
+        // points that belong to nothing (measured: a slave 0.5*L past a
+        // pruned neighbour segment's far node picked up a full kn*O(1) force
+        // under an earlier, UNBOUNDED version of this branch -- G-T2(f)'s
+        // removal-continuity gate caught it). tolIn-scale (1e-9) is the
+        // WRONG gauge here (that guards the segment's OWN in-bounds test, at
+        // the opposite, far-tighter end of the scale); REACH_TOL is chosen
+        // with huge margin on BOTH sides of the two measured extremes: the
+        // T1b tilt-drift signal this lane exists for (~1.25e-7 parametric,
+        // LadrunoContactFE.cpp's now-retired NTS2D_END_SLACK comment) and the
+        // "genuinely unrelated, a neighbour segment away" signal the removal
+        // gate measured (|xi| ~ 0.5) -- 5e5x headroom below, 10x below above.
+        bool isX0Cap = (prevFarNode == 0);
+        Node *far = isX0Cap ? nextFarNode : prevFarNode;
+        const Vector &Xf = far->getCrds();
+        const Vector &uf = far->getTrialDisp();
+        const double XF[2] = { Xf(0) + uf(0), Xf(1) + uf(1) };
+        double X0[2], X1[2];
+        if (isX0Cap) { X0[0] = XV[0]; X0[1] = XV[1]; X1[0] = XF[0]; X1[1] = XF[1]; }
+        else         { X0[0] = XF[0]; X0[1] = XF[1]; X1[0] = XV[0]; X1[1] = XV[1]; }
+        double xiChk, gChk, nEnd[2];
+        int stChk = projectSegment2D(X0, X1, xs, nts2dSigma, nts2dLref, xiChk, gChk, nEnd);
+        if (stChk == SEG2D_DEGENERATE) return false;
+        bool onOpenSide = isX0Cap ? (stChk == SEG2D_OUT_LOW) : (stChk == SEG2D_OUT_HIGH);
+        if (!onOpenSide) return false;  // in bounds (or past the FAR end): not this cap's region
+        // REVIEW FIX (T4): the reach bound is a fraction of nts2dLref (the
+        // SAME stable, surface-wide relative gauge tolLen uses a few lines
+        // below), NOT of this one segment's own length -- a per-segment
+        // gauge is not mesh-invariant (refining near a terminal shrinks the
+        // absolute reach) and, on a strongly graded mesh, a long terminal
+        // segment's own-length-relative reach can exceed the broad-phase
+        // grid's single-cell search radius (sized off the surface's MEDIAN
+        // segment length), silently dropping candidates the cap should see.
+        static const double NTS2D_ENDCAP_REACH_TOL = 5.0e-2;  // dimensionless,
+                                                               // fraction of nts2dLref
+        const double tSeg[2] = { X1[0] - X0[0], X1[1] - X0[1] };
+        const double Lseg = std::sqrt(tSeg[0]*tSeg[0] + tSeg[1]*tSeg[1]);
+        double xiPast = isX0Cap ? -xiChk : (xiChk - 1.0);     // >= 0 by construction (onOpenSide)
+        double distPast = xiPast * Lseg;                      // absolute physical distance
+        if (distPast > NTS2D_ENDCAP_REACH_TOL * nts2dLref) return false;  // too far: no owner
+        // Side sign: the sign of the adjoining segment's OWN fixed-normal
+        // (infinite-line) gap at THIS evaluation -- the single-tangent
+        // analogue of the concave branch's bisector test (there is only one
+        // adjacent normal here, so no bisector is needed or well-defined).
+        // At the boundary xi = 0/1 exactly, xs - XV is parallel to that fixed
+        // normal (the tangential component of xs - XV vanishes there by
+        // definition of xi), so this sign is EXACTLY the segment's own gap
+        // sign at the join: the radial vertex formula (gap = side*||xs-XV||)
+        // and the segment's flat-line formula agree at xi = 0/1, giving C0
+        // continuity across the boundary by construction, not by tolerance.
+        // REVIEW FIX (T4): unlike the CONCAVE branch's structurally-fixed
+        // sideSign (-1 inside any concave wedge, so WHICH trial iterate
+        // captures it never matters), the end-cap's sign is a genuine live
+        // geometric quantity -- gate it on the SAME conditioning gauge
+        // vertexEval2D's tolLen uses (TAU_PERP_DEFAULT*Lref) instead of a
+        // bit-exact gChk==0.0 test, so a noise-scale gChk at an early,
+        // unconverged trial DEFERS instead of locking in a coin-flip sign.
+        // Fed through the SAME commit-on-first-capture / WARN_VTX2D_SIDE_FLIP
+        // machinery the concave vertex already relies on (getResidual, the
+        // ADR-57 committed-sign discipline) rather than re-invented here.
+        double liveSide;
+        if (std::fabs(gChk) < TAU_PERP_DEFAULT * nts2dLref) liveSide = 0.0;
+        else liveSide = (gChk > 0.0) ? 1.0 : -1.0;
+        if (liveSideOut != 0) *liveSideOut = liveSide;
+        side = (committedSide != 0.0) ? committedSide : liveSide;
+        if (side == 0.0) {
+            LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+            if (cd != 0 && cd->warnOnce(contactTag, LadrunoContactDomain::WARN_VTX2D_DEFER))
+                opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": 2D end-cap "
+                          "vertex-pair side-sign capture DEFERRED -- the slave sits within the "
+                          "conditioning floor of the terminal's extended line, so the side sign "
+                          "is undecidable; the pair stays inert until the geometry disambiguates "
+                          "(ADR-85 T4 D4).\n";
+            return false;
+        }
     }
-    const double tPrev[2] = { XV[0] - XP[0], XV[1] - XP[1] };
-    const double tNext[2] = { XN[0] - XV[0], XN[1] - XV[1] };
-    WedgeResult w = vertexWedge2D(tPrev, tNext, nts2dSigma, xs, XV, nts2dLref);
-    // Step 3, UNSLACKED (this -- not the tolIn-slacked w.inWedge -- is what closes
-    // the 5.2-ulp seam band the T1a oracle measured; kernel contract, verbatim).
-    if (!(w.aPrev > 0.0 && w.aNext < 0.0))
-        return false;
-    if (liveSideOut != 0) *liveSideOut = w.sideSign;
-    const double side = (committedSide != 0.0) ? committedSide : w.sideSign;
-    if (side == 0.0) {
-        // AMBIGUOUS (fold-back spike / conditioning gate): DEFER the capture --
-        // never guess (kernel handler-flow step 2). Loud once per contact, the
-        // WARN_EDGE_SIGN_DEFER precedent.
-        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
-        if (cd != 0 && cd->warnOnce(contactTag, LadrunoContactDomain::WARN_VTX2D_DEFER))
-            opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": 2D vertex-pair "
-                      "side-sign capture DEFERRED -- the corner is (numerically) a fold-back "
-                      "spike or the slave sits on the wedge-boundary conditioning gate, so the "
-                      "side sign is undecidable; the pair stays inert until the geometry "
-                      "disambiguates (ADR-85 How/1).\n";
-        return false;
-    }
+
     double g2, n2[2];
     // tolLen = tauPerp*Lref, NOT the kernel comment's suggested tauSeg*Lref
     // (post-gate fix, measured): tauSeg = 1e-8 is the ZERO-LENGTH-SEGMENT gauge,
@@ -1362,25 +1446,54 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         double gap, n[3], N2[2], B[6], liveSide = 0.0, gTnow = 0.0;
         const double committedSide = vtx2DCommittedSide();
         bool act2d = segment2DActive(gap, n, N2, B, committedSide, &liveSide, &gTnow);
+        // ADR-85 T4 -- zero the NTS force snapshot on a NON-active evaluation
+        // (bug found while building the T4 Hertz gate, see
+        // tests/test_adr85_contact2d_t4_hertz.py::
+        // test_2d_hertz_released_pair_force_is_stale). setNtsForce used to be
+        // called ONLY on the active path, so a pair that engaged and later
+        // RELEASED kept reporting its last-active force forever -- theNtsForce
+        // is cleared once per handle() epoch (frictionGCBegin), not once per
+        // residual evaluation, so nothing else zeroed it. A Hertz-style deck's
+        // active set SHRINKS as the solve converges (every node inside the
+        // seeded interference starts active), so the stale reading dominated
+        // the summed ladrunoContactForce query by 2-3 orders of magnitude.
+        // REVIEW FIX (T4): gated on `!act2d` (was unconditional) -- the active
+        // branch below always overwrites the SAME key with the real tn a few
+        // lines later, so zeroing first there was pure wasted work (write,
+        // then immediately clobber) on the hottest path in the 2D solver; the
+        // "a refusal leaks no stale geometry" discipline only needs to run on
+        // the refusal path.
+        if (!act2d && theDomain != 0 && theSlave != 0) {
+            LadrunoContactDomain *cdZ = theDomain->getLadrunoContactDomain();
+            if (cdZ != 0)
+                cdZ->setNtsForce(contactTag, theSlave->getTag(), segIndex, 0.0);
+        }
         // panel MINOR diagnostic: a committed side sign that DISAGREES with the
-        // live wedge classification means the corner has deformed past its
-        // reference-config type -- a reference-concave corner gone convex would
-        // silently ATTRACT under the committed sign. The committed sign is kept
-        // for the pairing epoch (the How/1 contract); this latch makes the
-        // configuration loud instead of silent. liveSide is nonzero only when
-        // the wedge CLAIMED this eval, so separated pairs never warn.
+        // live classification means the pair's geometry has moved past its
+        // reference-config type since the sign was captured -- silently
+        // ATTRACTING under the stale committed sign if not caught. The
+        // committed sign is kept for the pairing epoch (the How/1 contract);
+        // this latch makes the configuration loud instead of silent. liveSide
+        // is nonzero only when the pair CLAIMED this eval, so separated pairs
+        // never warn. REVIEW FIX (T4): the message used to be written only in
+        // concave-CORNER language ("the corner has deformed..."), but this
+        // latch is equally reachable from the new END-CAP path (nps==1 with
+        // exactly one far node) -- which is not a corner at all -- so the
+        // wording is now generic to both provenances.
         if (nps == 1 && committedSide != 0.0 && liveSide != 0.0 &&
             liveSide != committedSide && theDomain != 0) {
             LadrunoContactDomain *cdS = theDomain->getLadrunoContactDomain();
             if (cdS != 0 && cdS->warnOnce(contactTag, LadrunoContactDomain::WARN_VTX2D_SIDE_FLIP))
                 opserr << "WARNING LadrunoContactFE - contact " << contactTag
                        << ": 2D vertex-pair COMMITTED side sign disagrees with the LIVE "
-                          "wedge classification at vertex node " << segNode[0]->getTag()
+                          "classification at vertex node " << segNode[0]->getTag()
                        << " (committed " << committedSide << ", live " << liveSide
-                       << ") -- the corner has deformed past its reference-config type "
-                          "(a reference-concave corner gone convex would silently attract "
-                          "under the committed sign). Inspect the deck; the committed sign "
-                          "is kept for this pairing epoch (ADR-85 How/1).\n";
+                       << ") -- the pair's geometry (a concave corner's turn, or an "
+                          "end-cap's position relative to its terminal's extended line) "
+                          "has moved past what the committed sign assumed, and a stale "
+                          "sign can silently ATTRACT instead of repel. Inspect the deck; "
+                          "the committed sign is kept for this pairing epoch (ADR-85 "
+                          "How/1).\n";
         }
         if (act2d) {
             // FIRST-CAPTURE commit of the vertex side sign (kernel handler-flow
@@ -1390,6 +1503,14 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // (sideSign = -corner inside the wedge), so a capture at a later-
             // rejected implicit trial config commits the same value a clean
             // capture would -- no double-buffer needed (see LadrunoContactDomain).
+            // For the T4 END-CAP the captured value is NOT structurally fixed
+            // (it is the live sign of the adjoining segment's flat-line gap,
+            // which a later, better-converged iterate could disagree with) --
+            // segment2DActive's own noise-floor conditioning gate keeps a
+            // clearly-resolved capture from being noise, but a genuine
+            // disagreement between an early capture and later geometry is by
+            // design surfaced via WARN_VTX2D_SIDE_FLIP above, not silently
+            // re-derived (the ADR-57 committed-sign lesson applies here too).
             if (nps == 1 && committedSide == 0.0 && liveSide != 0.0 && theDomain != 0) {
                 LadrunoContactDomain *cdV = theDomain->getLadrunoContactDomain();
                 if (cdV != 0)
@@ -1488,6 +1609,13 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
 
             // B3: report the normal force into the engine snapshot (the `ladrunoContactForce`
             // query). Pure side-channel — no effect on resid/tang. Overwrites this pair's slot.
+            // KNOWN DEFECT (ADR-85 T4, LEDGER_quirks.md): this call, like its 2D twin used to,
+            // only runs on the ACTIVE path -- a pair that engages and later RELEASES keeps
+            // reporting its last-active force (theNtsForce clears once per handle() epoch, not
+            // once per residual eval). Reproduced on an isolated 3D facet rig. FIXED for 2D
+            // (LadrunoContactFE::getResidual's SEGMENT/ndm==2 branch, above); DEFERRED here to
+            // avoid perturbing the shipped contact_dump byte-identity gate -- see the ledger for
+            // the follow-up PR this owes (fix + re-measure probe_b3_hertz3.py + re-baseline dump).
             if (theDomain != 0) {
                 LadrunoContactDomain *cdF = theDomain->getLadrunoContactDomain();
                 if (cdF != 0)

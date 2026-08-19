@@ -340,30 +340,41 @@ def test_2d_removal_concave_vertex_survives():
     VERTEX'S OWN adjacent segment (101,102) -- a concave vertex needs TWO
     adjacent segments to exist as a vertex at all, so node 102 correctly
     stops being a vertex mid-run and is reclassified as the OPEN-TERMINAL end
-    of the one surviving segment (102,103). That segment's own outward
-    normal, (-0.4472, 0.8944) (the T1b corner file's own NOTCH comment,
-    tests/test_adr85_contact2d_t1b_corner.py), is NOT the vertex bisector
-    (0, 1) the pair used in phase 1 -- so the CORRECT post-removal behavior
-    is a DIFFERENT effective y-stiffness (kn*n_y^2 = 0.8*kn on this
-    fixed-x/free-y slave, vs kn*1.0^2 = kn before), not an unchanged one.
-    Asserting the PRE-removal formula on POST-removal data would be asserting
-    a physically wrong expectation, not gating a real bug -- this was
-    measured directly against the current WIP build while writing this file
-    (the per-step trace showed a clean, monotonic sequence matching exactly
-    this reclassified stiffness from the second post-removal step onward,
-    with one transient step at the topology change itself).
+    of the one surviving segment (102,103).
+
+    ADR-85 T4 (D4) UPDATE: node 102's reclassified pair is now the RADIAL
+    end-cap (segment2DActive's nps==1 "exactly one far node" branch), not the
+    old NTS2D_END_SLACK flat-line window this test was originally written
+    against -- so the post-removal closed form changed, and changed BY
+    DESIGN, not by regression (D4 retired NTS2D_END_SLACK entirely; see
+    LadrunoContactFE.cpp and _adr85_t4_design.md).  The radial cap's normal
+    is n = side*(x_slave - X_v)/||x_slave - X_v||, i.e. it points from the
+    reclassified vertex (102, fixed at (0,0)) STRAIGHT AT the slave -- and
+    this slave's x is FIXED at 0, IDENTICAL to X_v's x (`ops.fix(1, 1, 0)`:
+    x fixed, y free; node 102 at x=0). So x_slave - X_v is EXACTLY (0, y) for
+    every step, any y: the radial normal is (0, +-1), PURELY VERTICAL, not
+    the surviving segment's own tilted (-0.4472, 0.8944) the old flat-line
+    formula used. Post-removal stiffness is therefore kn*n_y^2 = kn*1.0^2 =
+    kn (the SAME as phase 1's vertex bisector (0,1), by coincidence of this
+    slave's on-axis placement -- not because the mechanism is unchanged: a
+    slave placed off-axis from 102 would see a genuinely different, non-1.0
+    n_y^2 under the radial cap). Measured against the T4 build (this
+    session): the per-step trace is a clean, monotonic sequence matching
+    n_y^2 = 1.0 from the FIRST post-removal step (no transient at all --
+    unlike the old flat-line reclassification, the radial cap's C0-at-the-
+    boundary property holds exactly here since x_slave == X_v.x already,
+    with no window to cross).
 
     THE ASSERTIONS, from the full per-step trace (not just two endpoints):
       (a) phase 1 (3 steps, pre-removal): pen_k == k*P_step/KN, tight
           (1e-6), P_step = 0.2*P -- unchanged vertex mechanics;
       (b) phase 2: MONOTONIC, bounded growth (rules out NaN / sign flip /
           wild jump -- the coarse, mechanism-agnostic corruption check);
-      (c) the LAST post-removal step's INCREMENT (steps 7-6, i.e. deep into
-          phase 2, past the one transient reclassification step) equals
-          P_step/(0.8*KN) at 1e-4 relative -- the reclassified closed form,
-          confirming the surviving pair is not merely stable but STILL
-          COMPUTING THE PHYSICALLY CORRECT geometry (0.8 = n_y^2 for the
-          surviving segment's own normal), not a corrupted-but-smooth
+      (c) the LAST post-removal step's INCREMENT (steps 7-6) equals
+          P_step/KN at 1e-4 relative -- the reclassified closed form under
+          the T4 radial end-cap (n_y^2 = 1.0 for THIS on-axis slave, see
+          above), confirming the surviving pair is not merely stable but
+          STILL COMPUTING THE PHYSICALLY CORRECT geometry, not a corrupted-but-smooth
           reading.
     """
     proc, out = _run_uaf_child()
@@ -400,16 +411,20 @@ def test_2d_removal_concave_vertex_survives():
             f"penetration exploded at step {k} (tunnelling / corrupted read): "
             f"{pens}")
 
-    # the reclassified closed form, checked deep into phase 2 (steps 6 -> 7),
-    # past the one transient step at the topology change itself.
-    ref_incr = P_STEP / (0.8 * KN_)
+    # ADR-85 T4 (D4): the reclassified closed form under the radial end-cap,
+    # n_y^2 = 1.0 for this on-axis slave (x_slave == X_v.x == 0 always -- see
+    # the module docstring), NOT the old flat-line n_y^2 = 0.8. Checked deep
+    # into phase 2 (steps 6 -> 7); with the radial cap there is no transient
+    # step to skip past (C0 holds exactly here), but the later station is
+    # kept to stay comparable with phase 1's own steady-state check above.
+    ref_incr = P_STEP / (1.0 * KN_)
     got_incr = pens[7] - pens[6]
     assert abs(got_incr - ref_incr) / ref_incr < 1.0e-4, (
         f"post-removal steady-state increment {got_incr!r} != the "
         f"reclassified open-terminal closed form {ref_incr!r} "
-        f"(P_step/(n_y^2*kn), n_y^2=0.8 for the surviving segment's own "
-        f"normal) -- the pair survived without crashing but is computing the "
-        f"wrong geometry.\ntrace={pens}")
+        f"(P_step/(n_y^2*kn), n_y^2=1.0 for the T4 radial end-cap on this "
+        f"on-axis slave) -- the pair survived without crashing but is "
+        f"computing the wrong geometry.\ntrace={pens}")
 
 
 

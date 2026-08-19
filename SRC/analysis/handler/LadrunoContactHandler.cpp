@@ -1388,9 +1388,11 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         // and the X0 side is an OPEN TERMINAL end. The SUCCESSOR
                         // far node mirrors it for the X1 side: non-null <=>
                         // chained (strict seam); null <=> an open end, where the
-                        // adapter applies the NTS2D_END_SLACK acceptance window
-                        // (the tilt-drift discontinuity fix -- see
-                        // LadrunoContactFE::segment2DActive).
+                        // ADR-85 T4 (D4) end-cap owns that region instead (see
+                        // LadrunoContactFE::segment2DActive's nps==1 "exactly one
+                        // far node" branch, and the end-cap instantiation just
+                        // below) -- the retired NTS2D_END_SLACK window no longer
+                        // exists.
                         Node *prevFar = 0, *nextFarSeg = 0;
                         if (nSeg > 1) {
                             int prv = (seg + nSeg - 1) % nSeg;
@@ -1416,6 +1418,56 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         // own short-circuit) ⇒ nothing to mark ⇒ identical to T1b.
                         if (ct.mu > 0.0)
                             cd->frictionGCMark(ct.tag, sTags(si), seg);
+                        // ---- ADR-85 T4 (D4): the OPEN-TERMINAL end-cap -----------
+                        //      One END-CAP vertex adapter per (slave, open end of
+                        //      this candidate segment), replacing the retired
+                        //      NTS2D_END_SLACK window (LadrunoContactFE::
+                        //      segment2DActive). nps=1 with EXACTLY ONE far node
+                        //      non-null (prevFar==0 XOR nextFar==0) is what lets
+                        //      segment2DActive tell an end-cap apart from a
+                        //      CONCAVE interior vertex (both far nodes non-null,
+                        //      built by the separate vtx2d loop below). knUse is
+                        //      reused as-is (same segment, same physical
+                        //      terminal -- no separate auto-kn resolution).
+                        //      segIndex uses a range DISJOINT from both the plain
+                        //      segment ordinals [0,nSeg) and the concave-vertex
+                        //      range [nSeg,2*nSeg) (LadrunoVtx2D, "segIndex = nSeg
+                        //      + segPrev" below): friction state keys off
+                        //      (contactTag, slaveTag, segIndex)
+                        //      (LadrunoContactFE.h:80), so a collision there would
+                        //      silently cross-contaminate two physically distinct
+                        //      pairs' slip state, not just a bookkeeping label.
+                        // REVIEW FIX (T4): the X0-cap and X1-cap constructions
+                        // differ only in which node is capped, which far-node
+                        // pointer is null, and the segIndex offset -- factored
+                        // into one local helper so the two call sites (and any
+                        // future edit to either) cannot drift out of lockstep,
+                        // exactly the "silently cross-contaminate" hazard the
+                        // segIndex comment above warns about.
+                        auto makeEndCap = [&](Node *capNode, Node *prevFarCap,
+                                              Node *nextFarCap, int segIndexCap) -> int {
+                            Node *capNodes[1] = { capNode };
+                            LadrunoContactFE *feCap = new LadrunoContactFE(
+                                numFe++, sn, capNodes, /*nps=*/1, /*ndm2=*/2, knUse,
+                                sigma, Lref, prevFarCap, nextFarCap,
+                                ct.kt, ct.mu, ct.consistentTan, ct.muc, ct.softScale,
+                                theDomain, ct.tag, segIndexCap);
+                            if (feCap == 0) return -5;
+                            theModel->addFE_Element(feCap);
+                            if (ct.mu > 0.0)
+                                cd->frictionGCMark(ct.tag, sTags(si), segIndexCap);
+                            return 0;
+                        };
+                        if (prevFar == 0) {
+                            int rc = makeEndCap(segNodes[0], /*prevFar=*/0, /*nextFar=*/segNodes[1],
+                                                /*segIndex=*/2 * nSeg + seg);
+                            if (rc != 0) return rc;
+                        }
+                        if (nextFarSeg == 0) {
+                            int rc = makeEndCap(segNodes[1], /*prevFar=*/segNodes[0], /*nextFar=*/0,
+                                                /*segIndex=*/3 * nSeg + seg);
+                            if (rc != 0) return rc;
+                        }
                     }
                     // one VERTEX adapter per (slave, concave vertex) whose
                     // adjacent segments are broad-phase candidates of this slave
@@ -1995,11 +2047,36 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 //      at injection time below, not once per MortarContact -- a
                 //      mortar surface can have segments only partially shadowed
                 //      by the NTS slave set).
+                // ADR-85 T4 hardening (T3 review item 9): match NTS contacts by
+                // MASTER NODE-SET equality, not master surface TAG identity.
+                // The same physical master interface can legally be declared
+                // under two different surface tags (e.g. once for the NTS
+                // lane, once for the mortar lane, both listing the identical
+                // node tags) -- exact-tag matching then MISSES genuine NTS
+                // coverage and fires a spurious (never silent-wrong)
+                // WARN_2D_PERP_NO_NTS. A mismatch here can only ever produce
+                // an EXTRA loud warning, never a missed one (loud-not-silent
+                // was already the failure mode), so widening the match to
+                // node-set equality is safe in the direction that matters;
+                // the common same-tag case short-circuits before building
+                // either set, so it stays exactly as cheap as before.
+                // REVIEW FIX (T4): a single ID->set helper instead of writing
+                // the same 2-line conversion out three times below.
+                auto idToSet = [](const ID &ids) -> std::set<int> {
+                    std::set<int> s;
+                    for (int ti = 0; ti < ids.Size(); ti++) s.insert(ids(ti));
+                    return s;
+                };
+                std::set<int> mcMasterNodes = idToSet(ms->getNodeTags());
                 std::set<int> ntsSlaveUnion;
                 for (int ci = 0; ci < cd->getNumContacts(); ci++) {
                     const LadrunoContactDomain::Contact &ntsCt = cd->getContact(ci);
                     if (ntsCt.retired) continue;
-                    if (ntsCt.masterSurfTag != mc.masterSurfTag) continue;
+                    if (ntsCt.masterSurfTag != mc.masterSurfTag) {
+                        LadrunoContactSurface *ntsMaster = cd->getSurface(ntsCt.masterSurfTag);
+                        if (ntsMaster == 0) continue;
+                        if (idToSet(ntsMaster->getNodeTags()) != mcMasterNodes) continue;
+                    }
                     LadrunoContactSurface *ntsSlave = cd->getSurface(ntsCt.slaveSurfTag);
                     if (ntsSlave == 0) continue;
                     const ID &ntsSlaveTags = ntsSlave->getNodeTags();

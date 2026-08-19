@@ -251,3 +251,98 @@ def test_2d_thickness_default_is_one_no_op():
         f"explicit -thickness 1.0 differs from the omitted-flag default "
         f"(reaction): ({r1_default!r},{r2_default!r}) vs "
         f"({r1_explicit!r},{r2_explicit!r})")
+
+
+# ---------------------------------------------------------------------------
+# ADR-85 T4 hardening (b): `-epsN auto` x `-thickness h` -- zero coverage until
+# now. T3's review fix #2 (this file's module docstring cites A6/How-7) made
+# auto-resolved penalties SKIP the h-multiply entirely (they come from
+# getInitialStiff(), which already folds the owning element's OWN thickness --
+# h-multiplying them again would be the h^2 error the review caught). That fix
+# has run untested since T3: every existing -thickness test here uses an
+# EXPLICIT numeric -epsN, and every existing "auto" test (T1b/T2 NTS) declares
+# no -thickness. This is the first deck to combine both.
+E_TH, NU_TH, THICK_TH = 1.0e4, 0.0, 1.0     # nu=0 keeps PlaneStrain modulus == E
+W_TH, H_TH, SEED_TH = 2.0, 1.0, 1.0e-8
+
+
+def _autothickness_deck(h, P=1.0e2):
+    """A matching-mesh 2-element/2-element PlaneStrain patch (real quad
+    elements on BOTH sides -- `-epsN auto` needs an owning 2-DOF/node solid
+    element to resolve from, unlike the bare-node interference-fit decks
+    above) under a uniform load, `-mortar -epsN auto -thickness h`."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, E_TH, NU_TH)
+
+    base, mid = [], []
+    for i in range(3):
+        x = W_TH * i / 2.0
+        ops.node(100 + i, x, 0.0)
+        ops.fix(100 + i, 1, 1)
+        ops.node(110 + i, x, H_TH)
+        ops.fix(110 + i, 1, 0)
+        base.append(100 + i)
+        mid.append(110 + i)
+    for i in range(2):
+        ops.element("quad", 300 + i, base[i], base[i + 1], mid[i + 1], mid[i],
+                    THICK_TH, "PlaneStrain", 1)
+
+    slave, top = [], []
+    for j in range(3):
+        x = W_TH * j / 2.0
+        ops.node(200 + j, x, H_TH - SEED_TH)
+        ops.fix(200 + j, 1, 0)
+        ops.node(210 + j, x, 2.0 * H_TH)
+        ops.fix(210 + j, 1, 0)
+        slave.append(200 + j)
+        top.append(210 + j)
+    for j in range(2):
+        ops.element("quad", 400 + j, slave[j], slave[j + 1], top[j + 1], top[j],
+                    THICK_TH, "PlaneStrain", 1)
+
+    ops.contactSurface(10, "-master", 2, mid[0], mid[1], mid[1], mid[2])
+    ops.contactSurface(20, "-slave-segments", 2, slave[0], slave[1], slave[1], slave[2])
+    ops.contact(1, 10, 20, "-mortar", "-epsN", "auto", "-thickness", h,
+                "-outward", 0.0, 1.0)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in top:
+        ops.load(t, 0.0, -P / 3.0)
+
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 60, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, f"h={h}: -epsN auto x -thickness deck did not converge"
+    return ops.ladrunoMortarPenetration()
+
+
+def test_2d_epsN_auto_thickness_no_double_count():
+    """ADR-85 T4 hardening (b): `-epsN auto` under `-thickness h != 1` must
+    NOT h-scale the resolved penalty (T3 review fix #2 -- getInitialStiff()
+    already folds the owning element's thickness, so h-multiplying the
+    AUTO value again would be an h^2 error).
+
+    The observable: with epsN AUTO-resolved, the contact stiffness is
+    independent of the contact's own -thickness flag, so under the SAME
+    applied load the converged PENETRATION (a geometric quantity driven by
+    kn = epsN alone, not by anything -thickness touches for a frictionless
+    normal-only pair) must be the SAME for h=1 and h=4 -- if the h^2 bug were
+    reintroduced, kn would come out h^2 = 16x stiffer at h=4 and the
+    penetration would shrink by that same factor, not match.
+    """
+    gap_h1 = _autothickness_deck(1.0)
+    gap_h4 = _autothickness_deck(4.0)
+    assert gap_h1 > 0.0 and gap_h4 > 0.0, (
+        f"the deck must actually be in contact: gap(h=1)={gap_h1!r} "
+        f"gap(h=4)={gap_h4!r}")
+    rel = abs(gap_h4 - gap_h1) / gap_h1
+    assert rel < 1.0e-9, (
+        f"-epsN auto is being h-scaled: gap(h=1)={gap_h1!r} vs gap(h=4)={gap_h4!r} "
+        f"(rel {rel:.3e}) -- an h^2 double-count would shrink gap(h=4) by ~16x, "
+        "not leave it unchanged")
