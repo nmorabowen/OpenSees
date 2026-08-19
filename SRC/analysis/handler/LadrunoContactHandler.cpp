@@ -1239,14 +1239,68 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     }
                 }
 
+                // ---- ADR-85 F1: the WINDING CONNECTIVITY guard ---------------
+                //      `-outward winding` bypasses the vote below, and the vote
+                //      is what today catches a mis-wound run (it SPLITS). The
+                //      chain-integrity scan above cannot stand in for it: it is
+                //      VACUOUS for DISJOINT segments -- `v.size() <= 1` skips
+                //      every node used exactly once, and a disjoint master (two
+                //      separate runs with a hole between them) is explicitly
+                //      legal and documented as such. So winding, and ONLY
+                //      winding, additionally requires ONE CONNECTED CHAIN.
+                //
+                //      Given the scan above, connectivity is exactly "segment k
+                //      ends where segment k+1 begins, for every k": the scan has
+                //      already refused every OTHER way two segments could share
+                //      a node, so a single consecutive-adjacency pass is
+                //      necessary AND sufficient. A closed loop satisfies it and
+                //      its wrap is already legal above. O(nSeg).
+                //
+                //      Without this the bypass would convert a NAMED FATAL into
+                //      a SILENT wrong-side normal on the second run -- converged,
+                //      balanced, wrong (ADR-78 P0), which is the one outcome this
+                //      lane refuses to ship.
+                if (ct.outwardWinding) {
+                    for (int seg = 0; seg + 1 < nSeg; seg++) {
+                        if (mTags(2 * seg + 1) == mTags(2 * seg + 2)) continue;
+                        opserr << "FATAL LadrunoContactHandler::handle() - contact "
+                               << ct.tag << ": -outward winding requires 2D master surface "
+                               << ct.masterSurfTag << " to form ONE CONNECTED CHAIN, but "
+                                  "segment " << seg << " ends at node "
+                               << mTags(2 * seg + 1) << " while segment " << (seg + 1)
+                               << " starts at node " << mTags(2 * seg + 2)
+                               << " -- the master is DISJOINT (two or more separate runs). "
+                                  "The chain-integrity scan cannot see this: a node used "
+                                  "only once is skipped, and a disjoint master is otherwise "
+                                  "legal. With the orientation vote bypassed there is "
+                                  "nothing left to catch a second run wound the OTHER way, "
+                                  "so it would become a silent wrong-side normal instead of "
+                                  "a named refusal. Declare ONE contact per connected run, "
+                                  "or re-wind the runs into a single head-to-tail chain. "
+                                  "ABORTING (ADR-85 F1 winding connectivity)\n";
+                        return ladrunoContactFatal();
+                    }
+                }
+
                 // ---- the INTERFACE-LEVEL orientation vote (How/2) ------------
                 //      ADR-85 T3: extracted to the file-static
                 //      ladruno2DOrientationVote() (pure code motion, exact
                 //      operation order + message strings preserved) so the T3
                 //      mortar branch can share it.
+                //      ADR-85 F1: `-outward winding` SHORT-CIRCUITS it. sigma is
+                //      already one scalar per interface and the kernel evaluates
+                //      n = sigma*perp(t_k)/L_k from each segment's OWN tangent
+                //      (LadrunoContact2DKernel::projectSegment2D), so sigma = +1
+                //      IS "the slave lies to the left of the chain's traversal".
+                //      No new normal path exists or is needed; every consumer
+                //      (the FE adapter, the concave-vertex classifier, the D4
+                //      end-cap, ladrunoResolveAutoKn2D) takes sigma opaquely.
                 double sigma = 0.0;
-                if (!ladruno2DOrientationVote(theDomain, ct.tag, ct.hasOutward, ct.outward,
-                                              mTags, nSeg, sTags, Lref, sigma))
+                if (ct.outwardWinding) {
+                    sigma = 1.0;
+                } else if (!ladruno2DOrientationVote(theDomain, ct.tag, ct.hasOutward,
+                                                     ct.outward, mTags, nSeg, sTags,
+                                                     Lref, sigma))
                     return ladrunoContactFatal();
 
                 // ---- CONCAVE-vertex candidates (How/1, the T1a decision) -----

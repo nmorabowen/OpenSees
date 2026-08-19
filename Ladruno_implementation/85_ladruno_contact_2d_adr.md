@@ -1014,4 +1014,110 @@ referee to regression gate; thickness list completed (clamps, μ_c, ε_T) with
 **2D contact lane closed.** Six PRs shipped as estimated: ADR #748, T0 #749,
 T1a #750, T1b #751, T2 #752, T3 #757, T4 #763.
 
+## Amendment F1 — `-outward winding` (2026-08-19)
+
+**Amends §How/2 (Normal orientation) and §How/8 (API and dimension
+routing). NTS lane only. Everything else in this ADR stands.**
+
+§How/2 closed with "flush 2D interfaces effectively require `-outward`
+unless the centroid vote resolves — stated in the user guide, not discovered
+at runtime." That was the right call for T1b, and it stays the *default*.
+But it leaves two deck classes with no route at all:
+
+1. **Flush interfaces** — the masonry joint, the footing on soil, every
+   zero-gap deck this lane's headline applications name. They can be
+   declared, but only by hand-supplying a direction the geometry already
+   implies.
+2. **Closed-loop / strongly curved masters** — a ring, a full indenter
+   profile. §How/2's one-sigma-per-interface decision means the vote SPLITS,
+   and it splits *even with* `-outward`, because no single direction vector
+   agrees with every segment's own perpendicular. There is no route at all,
+   not even a laborious one. (The closed loop already satisfies chain
+   integrity — the `headSeg == (tailSeg + 1) % nSeg` wrap is explicitly
+   legal — so the split vote was the sole blocker.)
+
+**Decision.** `-outward` gains a third form, the keyword `winding`: σ is
+fixed at **+1**, i.e. every master segment's normal is `perp(t) = (−t_y,
+t_x)` of *its own travel direction* — the slave lies to the **left** of the
+chain's traversal. The interface-level centroid vote is bypassed.
+
+**This is a parameterization, not a new formulation.** §How/2's "σ FIXED at
+pairing" contract is unchanged; σ was always one scalar per interface, and
+the kernel always evaluated `n = σ·perp(t_k)/L_k` from segment k's own
+tangent (`LadrunoContact2DKernel::projectSegment2D`). So the kernel,
+`LadrunoContactFE`, the concave-vertex classifier, the D4 end-cap and
+`ladrunoResolveAutoKn2D` need **zero** edits — three of them are
+sign-independent anyway (`ladrunoResolveAutoKn2D` reads only `nᵀKn`, so
+σ² = 1). The whole change is: parse the keyword, store one bool, assign
+σ = +1 instead of voting.
+
+**The guard that is not optional.** The handle()-time chain-integrity scan
+is **vacuous for disjoint segments** — it skips any node used exactly once —
+and a disjoint master is explicitly legal (the guide's stride-2 pair-list
+section says so). Today the SPLIT-VOTE refusal is what catches a mis-wound
+second run. Bypassing the vote would convert that named FATAL into a
+**silent wrong-side normal**, which is the ADR-78 P0 shape this whole lane
+is built to refuse. So `-outward winding` carries its own requirement: the
+master must form **one connected chain**, refused by name otherwise. Given
+the scan (which has already refused every other way two segments may share a
+node), that is exactly one consecutive-adjacency pass, `mTags(2k+1) ==
+mTags(2k+2)` for every k — necessary and sufficient, O(nSeg), and satisfied
+by open chains, single segments and closed loops alike.
+
+**Disclosed, not fixed: a COARSE closed loop transmits nothing.** Making
+closed loops declarable also makes a pre-existing property of the NTS
+ownership rule reachable for the first time. Measured at F1 for a regular
+n-gon of circumradius 1 at the default `-cell`: **n ≤ 8 transmits exactly
+zero** (converges, balances, assembled tangent = the tether spring alone),
+**n ≥ 9 is exact**; one broad-phase bucket reproduces the zero at any n.
+Chain: the grid is capped at `nSeg` cells with a ±1-cell search, so a coarse
+ring is not separated from its own far side → the far facet arms with a
+body-diameter "penetration" and kicks the slave toward the interior → from
+the interior every facet is in-bounds and the ordered-ownership deferral,
+which has no starting point on a *closed* chain, cycles all the way around.
+Not fixed here because the fix is not F1-local: giving a closed chain a
+deterministic ownership origin (or making the stand-down "nearest in-bounds
+predecessor wins") changes force distribution on every shipped 2D deck and
+needs its own gate. Pinned by a labelled limitation test and written up in
+`LEDGER_quirks.md`; the guide states the sizing rule.
+
+**Disclosed, not fixed: winding moves one check to the caller.** The
+centroid vote is also what today catches a master boundary that faces *away*
+from its slave (the far side of the beam, the wrong edge of the block).
+Under winding that deck runs and produces a converged wrong answer — pinned
+as a fact, not a defect, by
+`test_adr85_contact2d_t5_winding.py::test_winding_sign_flip_is_equal_and_opposite`'s
+DISARM leg. The engine cannot distinguish it from a genuinely separated
+interface. The declaring layer above (an apeGmsh-style generator) should own
+a "does the master face the slave" check when it emits `winding`.
+
+**Scope fence: NTS only; the mortar hoist is a separate decision.** The
+chain-integrity scan is NTS-only; the 2D mortar lane (§How/3) has no chain
+scan at all — `Lref` → vote → the double loop. Hoisting the scan would newly
+FATAL permuted or reversed mortar masters that ship **accepted** today: a
+behavior change on a shipped lane, which deserves its own ADR decision once
+the NTS mode has real usage. So winding is refused by name with `-mortar`,
+**flush mortar interfaces still abort**, and mortar users still pass
+`-outward ox oy`. *Follow-up ADR note (not implemented here): decide whether
+to hoist the chain-integrity scan onto the 2D mortar lane, and if so with
+what migration story for decks it would newly refuse.*
+
+**Wire-format break (§How/8's serialization contract).** One new NTS field
+means `LCD_FMT_VERSION 2 → 3` and `LCD_NTS_SLOTS 21 → 22`
+(`LadrunoContactDomain.cpp`), exactly as the in-source protocol prescribes
+("bump FMT_VERSION if a lane grows a field, and the unpack refuses a version
+it does not know"). Mechanical, but it means a **stored v2 definitions
+stream** — an ADR-78 P2 database written by a pre-F1 build, or a pre-F1 MPI
+peer — now draws the named version refusal. Same class of break as T3's
+1 → 2 bump.
+
+**Gate MEASURED** (2026-08-19): new `tests/test_adr85_contact2d_t5_winding.py`
+(13 rows: 7 in-process acceptance, 6 child-process refusals/controls);
+`contact_dump` `B0F8F770…81E4` bit-identical ×2 against the pre-change
+baseline captured with the same toolchain in the same session (184 lines,
+0 decks failed, `git diff --no-index` clean); 3D battery **142 passed, N
+unchanged**; 2D suite **83 → 96**; full Zone-A sweep **1995 passed, 64
+skipped, 192 deselected, 1 xfailed** (T4 recorded 1980 passed + 2 then-red
+ledger-stamp rows; 1980 + 2 + 13 new = 1995, so nothing else moved).
+
 *(per-phase design notes go to `_adr85_t*_design.md` if a phase needs one)*

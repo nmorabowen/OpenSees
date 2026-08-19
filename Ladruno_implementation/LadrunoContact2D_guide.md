@@ -13,7 +13,9 @@ Companion to [[85_ladruno_contact_2d_adr]] (the design record) and the
 existing 3D `LadrunoContact` documentation. This page covers only what is
 specific to `-ndm 2` decks. All lanes shipped across ADR-85 T0–T4: rigid
 plane, NTS penalty (with friction), mortar/ALM (with friction and tie), and
-the D4 radial end-cap. The 2D contact lane is **complete**.
+the D4 radial end-cap. The 2D contact lane is **complete**. ADR-85 **F1**
+added one follow-on orientation mode on the NTS lane, `-outward winding`
+(see "Orientation" below).
 
 ## Command surface (2D forms)
 
@@ -23,7 +25,7 @@ contactSurface <slaveTag>  -slave  <n0> <n1> ...
 contactSurface <slaveTag>  -slave-segments 2 <n0> <n1> <n1> <n2> ...
 
 contact <tag> <masterTag> <slaveTag> <kn>|auto <kt> <mu> \
-    [-outward <ox> <oy>] [-consistanttan] [-geomtan] [-visc <muc>]
+    [-outward <ox> <oy> | -outward winding] [-consistanttan] [-geomtan] [-visc <muc>]
 
 contact <tag> <masterTag> <slaveTag> "-mortar" -epsN <val>|auto \
     [-thickness <h>] [-tie] [-outward <ox> <oy>] ...
@@ -82,6 +84,13 @@ shape above through THAT specific mistake; the hole above is legal precisely
 because it declares two genuinely separate segments, which the scan cannot
 (and must not) refuse.
 
+**One exception, and it is the ONLY place the holed shape is refused:**
+under `-outward winding` (ADR-85 F1, below) the master must form one
+connected chain, so the four-tag declaration above draws a named FATAL. That
+is not the scan getting smarter — it is a separate requirement that exists
+because winding bypasses the orientation vote, which is what otherwise
+catches a second run wound the wrong way.
+
 ## Vertex / corner policy
 
 At an **interior** shared vertex between two consecutive (chained) segments,
@@ -120,7 +129,7 @@ notes:
 - Friction on an end-cap pair, if `-mu > 0` is declared on the contact, uses
   the same scalar return map as every other 2D NTS pair.
 
-## Flush interfaces require `-outward`
+## Orientation: the centroid vote, and `-outward winding`
 
 The 2D NTS and mortar lanes derive their orientation from an
 **interface-level reference vote** computed once at `handle()` from the
@@ -129,18 +138,96 @@ per-pair, ridge-flip-prone datum). If the master and slave surfaces are
 **flush** (coincident or nearly coincident centroids — e.g. a zero-gap
 masonry joint or a footing seated directly on soil with no initial gap),
 the centroid vote is genuinely ambiguous and the deck draws a **named
-abort** rather than guessing. **Flush 2D interfaces must supply `-outward
-ox oy`** (a unit-ish 2-component direction, the ONLY form accepted in 2D —
-the legacy 3-component 3D form is rejected on a 2D surface):
+abort** rather than guessing. A vote that resolves for *some* master
+segments but not others (a strongly curved or inconsistently wound master —
+a closed loop is the extreme case) is also a named refusal; the engine will
+not guess a per-segment sign.
+
+There are therefore **two** ways to orient a 2D interface. Pick one — giving
+both is a named refusal.
+
+### 1. `-outward ox oy` — declare a direction
+
+A unit-ish 2-component direction toward the slave's allowed half-space. The
+ONLY vector form accepted in 2D; the legacy 3-component 3D form is rejected
+on a 2D surface. Works on **both** the NTS and the mortar lanes.
 
 ```tcl
 contact 1 10 20 $kn 0.0 0.0 -outward 0.0 1.0
 ```
 
-A vote that resolves for *some* master segments but not others (a strongly
-curved or inconsistently wound master) is also a named refusal — split the
-surface into separate contacts or re-wind it; the engine will not guess a
-per-segment sign.
+### 2. `-outward winding` — let the chain declare the side (**NTS only**, ADR-85 F1)
+
+```tcl
+contactSurface 10 -master 2  101 102  102 103  103 104
+contact 1 10 20 $kn 0.0 0.0 -outward winding
+```
+
+The centroid vote is **bypassed**: `sigma` is fixed at `+1`, so every master
+segment's normal is `perp(t) = (-t_y, t_x)` of **its own travel direction**.
+Read it as: **the slave lies to the LEFT of the chain's traversal.**
+
+Because the sign is per-segment-tangent rather than one global direction,
+this is what unlocks the two decks the vote refuses:
+
+- **flush interfaces** (masonry joint, footing on soil, any zero-gap deck) —
+  no centroid separation is needed, because none is consulted;
+- **closed-loop and strongly curved masters** (a ring, a full indenter
+  profile) — every segment gets its own perpendicular, so there is nothing
+  to split. List a closed loop **clockwise** for outward-facing normals,
+  **counter-clockwise** for inward-facing ones.
+
+**The cost, stated plainly: winding turns a wrong master into a converged
+wrong answer.** The centroid vote is currently what catches a master
+boundary that faces *away* from its slave; bypassing it, that deck runs and
+transmits nothing (or transmits on the wrong side) instead of aborting. The
+engine keeps the one check it can still make — see the connectivity
+requirement below — but "is this the face I meant?" is now the caller's.
+
+**Winding requires ONE CONNECTED CHAIN.** A **disjoint** master (the
+four-tag `-master 2 101 102 103 104` shape from the pair-list section above:
+two separate runs, legal, and invisible to the chain-integrity scan because
+every node is used exactly once) is a **named FATAL** under `-outward
+winding`. It has to be: with the vote bypassed, a second run wound the other
+way would be a silent wrong-side normal rather than the split-vote refusal
+that catches it today. Declare one `contact` per connected run, or re-wind
+the runs into a single head-to-tail chain. Open chains, single segments and
+closed loops all satisfy it.
+
+**Winding is refused on the `-mortar` lane, deliberately.** The
+chain-integrity scan is an NTS-lane construct; the 2D mortar lane runs no
+such scan, so the connectivity invariant winding leans on is not established
+there, and hoisting the scan would newly FATAL permuted or reversed mortar
+masters that ship accepted today. The consequence is an asymmetry worth
+stating twice: **flush 2D MORTAR interfaces still abort, and mortar users
+still pass `-outward ox oy`.**
+
+### Closed loops: give the ring ENOUGH SEGMENTS, or it transmits nothing
+
+Winding makes a closed-loop master declarable for the first time, which also
+makes a pre-existing property of the NTS ownership rule reachable for the
+first time. **A ring whose facets are coarse relative to its own diameter
+converges, balances its reactions, and transmits EXACTLY ZERO.** Measured for
+a regular n-gon of circumradius 1 with a slave seeded just inside one facet,
+at the default `-cell 1.0`: **n ≤ 8 inert, n ≥ 9 exact.** Forcing a single
+broad-phase bucket (a very large `-cell`) reproduces the inert result at any
+n, which is the tell.
+
+Why, in one sentence each: the broad-phase grid is capped at `nSeg` cells
+with a ±1-cell search, so a coarse ring cannot be separated from its own far
+side; the far-side facet then arms with a body-diameter "penetration" and
+kicks the slave toward the ring's interior; and from the interior every facet
+projects the slave in bounds, so the ordered-ownership rule ("stand down if
+your predecessor is in bounds") has no starting point on a closed chain and
+the deferrals cycle all the way around. An open chain cannot do this — its
+first segment has no predecessor and always arms.
+
+Practical rule: **size a closed loop's facets from the loop's own extent,
+not from the surrounding elastic mesh** — the same rule as the curved-master
+section below, now with a second reason. If a ring transmits nothing, refine
+it (or check `printA`: a spring-only tangent with no `kn` in it is the
+signature). Full write-up in `LEDGER_quirks.md`; the limitation is pinned by
+`tests/test_adr85_contact2d_t5_winding.py::test_coarse_closed_loop_transmits_nothing`.
 
 ## 2D units / thickness table
 
@@ -201,3 +288,12 @@ instead, independent of the elastic mesh's own resolution — see
 - **2D axisymmetric contact** and **parallel/DDM 2D contact** are explicitly
   out of scope (see the ADR's "Not in scope" section) — both are
   formulation changes, not parameterizations of the shipped 2D lane.
+- **Coarse CLOSED LOOPS transmit nothing** (ADR-85 F1) — see "Closed loops:
+  give the ring ENOUGH SEGMENTS" under Orientation above. Disclosed and
+  measured, not fixed: the fix touches the shared 2D ordered-ownership
+  precedence rule, which would move every existing 2D deck's force
+  distribution and needs its own gate.
+- **`-outward winding` does not check that the master FACES its slave**
+  (ADR-85 F1) — the centroid vote was silently doing that job as well, and
+  winding bypasses the vote. A backwards-wound master runs and gives a
+  converged wrong answer. Whatever generates the deck should own that check.

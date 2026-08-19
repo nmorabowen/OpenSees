@@ -560,6 +560,12 @@ static int ladrunoContactImpl()
     // optional -cell <frac>      : P2.5 bucket-sort cell = frac * median seg diagonal
     bool hasOutward = false;
     double outward[3] = {0.0, 0.0, 0.0};
+    // Ladruno ADR-85 F1: `-outward winding` -- the THIRD form of the option, 2D NTS only.
+    // The interface-level centroid vote is BYPASSED and sigma is fixed at +1, i.e. every
+    // master segment's normal is perp(t) = (-t_y, t_x) of ITS OWN travel direction, so the
+    // slave lies to the LEFT of the chain's traversal. Mutually exclusive with the vector
+    // form and refused on the mortar lane (both checked after the option loop).
+    bool outwardWinding = false;
     double cellFrac = 1.0;
     // Ladruno ADR-60: finite-sliding NTS re-emit (off ⇒ byte-identical). -reemit opts in; -resortFrac
     // sets the drift fraction of the search band that triggers a re-sort; -resortEvery sets the min
@@ -899,15 +905,58 @@ static int ladrunoContactImpl()
                     owDim = 2;
             }
             if (owDim == 2) {
-                double o[2]; int m = 2;
-                if (OPS_GetDoubleInput(&m, o) < 0) {
-                    opserr << "WARNING contact -outward - need ox oy (the referenced "
-                              "surfaces are 2D. ADR-85)\n";
-                    return -1;
+                // Ladruno ADR-85 F1 -- the `winding` KEYWORD form, peeked before the
+                // 2-double read. Peek idiom + hazards are the ones this file documents
+                // at ladrunoCountLeadingNumbers() below: OPS_GetString() NEVER returns
+                // null (it hands back the literal "Invalid String Input!" when the
+                // interpreter has no string, e.g. a PyFloat on the Python path) and it
+                // CONSUMES the token on both paths, so the only safe classification is
+                // "read one, compare, un-read exactly what was read". A numeric ox --
+                // "0.0" on Tcl, the sentinel literal on Python -- never equals
+                // "winding", so the shipped 2-double read below is reached verbatim.
+                bool isWinding = false;
+                if (OPS_GetNumRemainingInputArgs() > 0) {
+                    const char *wtok = OPS_GetString();      // consumes 1
+                    isWinding = (wtok != 0 && strcmp(wtok, "winding") == 0);
+                    if (!isWinding)
+                        OPS_ResetCurrentInputArg(-1);        // un-read: it is ox
                 }
-                outward[0] = o[0]; outward[1] = o[1]; outward[2] = 0.0;
-                hasOutward = true;
+                if (isWinding) {
+                    outwardWinding = true;
+                } else {
+                    double o[2]; int m = 2;
+                    if (OPS_GetDoubleInput(&m, o) < 0) {
+                        opserr << "WARNING contact -outward - need ox oy (the referenced "
+                                  "surfaces are 2D. ADR-85)\n";
+                        return -1;
+                    }
+                    outward[0] = o[0]; outward[1] = o[1]; outward[2] = 0.0;
+                    hasOutward = true;
+                }
             } else {
+                // Ladruno ADR-85 F1 -- intercept the `winding` keyword BY NAME on the 3D
+                // arm. Without this it falls into the 3-double read and dies with "need
+                // ox oy oz", naming a layout the user never wrote (the same complaint the
+                // T1b 2-component branch was built to answer, from the other side). The
+                // token is un-read either way, so the shipped 3D read below is untouched.
+                if (OPS_GetNumRemainingInputArgs() > 0) {
+                    const char *wtok = OPS_GetString();      // consumes 1
+                    bool isWinding = (wtok != 0 && strcmp(wtok, "winding") == 0);
+                    OPS_ResetCurrentInputArg(-1);
+                    if (isWinding) {
+                        opserr << "WARNING contact -outward winding is a 2D NTS-lane mode "
+                                  "(ADR-85 F1): it declares the side through the master "
+                                  "CHAIN's traversal (sigma=+1, n = perp(t) of each "
+                                  "segment's own tangent), and a 3D facet surface has no "
+                                  "traversal. Give -outward ox oy oz on a 3D pair.\n";
+                        if (!owHaveSurf)
+                            opserr << "  (contact " << idata[0] << ": neither referenced "
+                                      "contactSurface is defined yet, so the 3D form is "
+                                      "assumed; declare the contactSurfaces BEFORE contact "
+                                      "if this pair is 2D. ADR-85)\n";
+                        return -1;
+                    }
+                }
                 double o[3]; int m = 3;
                 if (OPS_GetDoubleInput(&m, o) < 0) {
                     opserr << "WARNING contact -outward - need ox oy oz\n";
@@ -1019,6 +1068,26 @@ static int ladrunoContactImpl()
     if (!isMortar && hasThickness) {
         opserr << "WARNING contact -thickness is a -mortar option (the NTS penalty kn is "
                   "force/length, never a pressure); remove it or use the mortar lane\n";
+        return -1;
+    }
+    // Ladruno ADR-85 F1 -- the two cross-option rules for `-outward winding`. Checked
+    // HERE (not in the option loop) because -mortar is itself a flag and may be written
+    // either side of -outward, and because both forms of -outward have to have been seen
+    // before "both were given" can be decided.
+    if (outwardWinding && hasOutward) {
+        opserr << "WARNING contact -outward winding was given together with an explicit "
+                  "-outward direction. They are two declarations of the SAME fact -- "
+                  "winding declares the side through the master chain's traversal, the "
+                  "vector declares it through a direction -- and the engine never picks "
+                  "one silently. Give exactly one (ADR-85 F1)\n";
+        return -1;
+    }
+    if (outwardWinding && isMortar) {
+        opserr << "WARNING contact -outward winding is an NTS (node-to-segment) option; it "
+                  "does not apply to -mortar. The 2D mortar lane runs NO chain-integrity "
+                  "scan, so the one-connected-chain invariant winding relies on is not "
+                  "established there. Flush 2D MORTAR interfaces still require -outward "
+                  "ox oy (ADR-85 F1 scope fence)\n";
         return -1;
     }
     if (isMortar && tauMax > 0.0 && mortarMu <= 0.0 && cohesion <= 0.0) {
@@ -1140,10 +1209,11 @@ static int ladrunoContactImpl()
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
     // B1: -soft SOFSCL ⇒ the explicit SOFT=1 Courant-stable penalty (off ⇒ byte-identical).
+    // ADR-85 F1: outwardWinding ⇒ the 2D NTS orientation vote is bypassed (sigma = +1).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc,
                           consistentNormal, softScale, enableReemit, resortFrac, resortEvery,
-                          smoothNormal);
+                          smoothNormal, outwardWinding);
 }
 
 int OPS_LadrunoContact()
