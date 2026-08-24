@@ -34,6 +34,25 @@ of what diverged from upstream:
 > regenerates the `FEATURES-START/END` blocks in `tclMain.cpp` (Tcl) and
 > `PythonModule.cpp` (openseespy/mp).
 
+> [!warning] Known stale content, audited 2026-08-23 (at `b17e8bd82`)
+> Two classes of rot are flagged in place rather than silently fixed, so nobody
+> re-discovers them:
+>
+> - **12 shipped ADRs still carry a pre-implementation `status:`** — 09, 19, 20
+>   (stabilized arc-length), 30 (explicit constraint projection), 31, 32, 35, 36, 45,
+>   52, 75, 78 (parallel contact). Each now opens with a `> [!warning]` banner.
+>   **Rule: trust [[LEDGER_implementations]] for *does it work*, the ADR for *why*.**
+>   A CI check cross-validating frontmatter `status:` against the ledger's Status cell
+>   would stop this recurring; none exists yet.
+> - **12 unresolved `[[NN_topic]]` links in [[Ladruno_explicit_roadmap]]** are forward
+>   references to section docs that were never written, under a local numbering that is
+>   *not* the ADR numbering. Explained in a banner at the top of that file.
+>
+> Everything else that this audit found was fixed outright: the `ELE_TAG_LadrunoUP`
+> 33017 "RESERVED" cells, the superseded contact ELE-33016 reservation (in the ledger
+> and in ADR-61/62), a `Fix` bullet stranded in the wrong [[LEDGER_quirks]] entry by a
+> squash merge, and renumbering-damaged links in ADR 42, 40 and 25.
+
 ## Element selection & usage
 
 - [[ladruno_continuum_elements_guide]] — **Continuum Elements — Modeling &

@@ -17,6 +17,22 @@ updated: 2026-05-01
 
 # Ladruno — Explicit & Multi-Body Research Roadmap
 
+> [!note] The `[[NN_topic]]` links below are FORWARD references, not broken links
+> This roadmap numbers its own sections and links them as though each were already a
+> document. Twelve of those targets were never written as files —
+> `[[02_batch_element_dispatch]]`, `[[03_soa_native_explicit_hex]]`,
+> `[[04_modular_damage_decorator]]`, `[[06_joint_family]]`, `[[07_contact_domain]]`,
+> `[[08_sph_element_family]]`, `[[09_efg_meshfree]]`, `[[10_kinematic_convention]]`,
+> `[[11_parallel_scatter_coloring]]`, `[[12_gpu_offload]]`,
+> `[[13_matrix_free_implicit]]`, `[[14_xpbd_relaxation]]`. Several topics that *did*
+> get written landed under a different number (selective mass scaling became
+> [[36_ladruno_selective_mass_scaling_adr|ADR 36]], contact became
+> [[39_ladruno_contact_domain_adr|ADR 39]], rigid bodies + joints became
+> [[58_ladruno_rigid_body_adr|ADR 58]]), so this roadmap's local numbering is NOT the
+> ADR numbering. Treat an unresolved link here as "not yet written", and when you do
+> write one, allocate the next free ADR number rather than this roadmap's local one —
+> see [[README]] §Conventions on number permanence. Audited 2026-08-23.
+
 > [!summary]
 > Roadmap for extending OpenSees with capabilities currently missing or weak: **explicit dynamics performance**, **rigid bodies + joints**, **contact**, **meshfree (SPH/EFG)**, **modular damage**. Direction is informed by an architectural comparison with LS-DYNA. Each item below will graduate to its own per-feature plan in this folder using [[_template]] when work begins.
 

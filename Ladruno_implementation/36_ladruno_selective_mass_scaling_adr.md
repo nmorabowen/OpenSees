@@ -13,6 +13,12 @@ tags:
   - mass-scaling
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # Selective mass scaling for explicit dynamics (`CentralDifferenceSMS`)
 
 > **Design / ADR (pre-implementation).** Implements roadmap

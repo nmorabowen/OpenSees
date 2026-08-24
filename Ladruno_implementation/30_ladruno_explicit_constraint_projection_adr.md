@@ -14,6 +14,12 @@ tags: [adr, constraints, explicit-dynamics, projection, momentum-conserving, cen
 updated: 2026-06-09
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # ADR 30 — `LadrunoProjectionHandler` (explicit constraint projection)
 
 **Status:** scoped, no code. This ADR locks the formulation, the architecture seams, the

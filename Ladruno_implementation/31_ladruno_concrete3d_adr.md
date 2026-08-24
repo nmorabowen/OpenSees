@@ -15,6 +15,12 @@ tags: [adr, material, concrete, plastic-damage, cdpm2, menetrey-willam, triaxial
 updated: 2026-06-16
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # ADR 31 — `LadrunoConcrete3D` (CDPM2-grade solid concrete)
 
 **Status:** PROPOSED. Formulation scoped and **adversarially reviewed** (15-agent workflow:
