@@ -44,7 +44,7 @@ element('LadrunoCST',  tag, n1,n2,n3,    matTag, '-geom', <linear|corot|finite>,
   rank-sufficient — no hourglass, and `bbar`/`ssp`/`eas` have nothing to average
   against), plus the geometry layer and material seam. It exists as the trivial
   baseline, the triangular-mesh fallback, and the future carrier for E-FEM
-  ([[18_ladruno_efem_adr]]) — **not** as a contribution. See [[26_ladruno_plane_frontier_adr]] §CST
+  ([[53_ladruno_embedded_discontinuity_adr]]) — **not** as a contribution. See [[26_ladruno_plane_frontier_adr]] §CST
   for the honest verdict (plain CST is a dead end for fracture/plasticity).
 
 This collapses the upstream 2D scatter — `Tri31`, `FourNodeQuad`, `SSPquad`,

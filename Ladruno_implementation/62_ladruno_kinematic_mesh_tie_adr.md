@@ -90,7 +90,7 @@ objects `equalDOF`/`rigidLink` create). No upstream edit; any touch → `LEDGER_
 
 **None** — the generator creates ordinary `MP_Constraint`s (no new tag); enforcement reuses
 `HANDLER_TAG_LadrunoProjectionHandler 33001`. (If the generator is later realized as a
-distinct constraint-set object needing a tag, the free contact ELE slot is **33016**.)
+distinct constraint-set object needing a tag, the next free contact ELE slot is **33022** — the old 33016 reservation was superseded by `ELE_TAG_LadrunoLST` (ADR-70 P3).)
 
 ---
 

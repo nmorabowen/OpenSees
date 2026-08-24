@@ -1,11 +1,13 @@
 ---
 title: "ADR 71 — LadrunoUP: Biot u-p saturated-porous continuum family (one element, shape providers, shared kernel)"
-status: draft — planning, NO code
+status: SHIPPED — P0–P4 complete; ADR-78 `-geom corot` (#677); `ELE_TAG_LadrunoUP` 33017 live since #557
 ---
 
 # ADR 71 — LadrunoUP: the u-p (solid displacement + pore pressure) continuum family
 
-**Status:** draft. Planning only — no code yet. Opens the saturated-porous-media
+**Status:** SHIPPED — P0–P4 complete, plus ADR-78 `-geom corot` (#677); `ELE_TAG_LadrunoUP`
+33017 has been live since #557. See `[[LEDGER_implementations]]` for the per-phase PR trail.
+Opens the saturated-porous-media
 axis for the whole fork continuum family (LadrunoQuad/CST geometry class, LadrunoBrick,
 BezierTri6/BezierTet10, future LadrunoLST/Q9/H20). Companion theory for this ADR:
 `/quake-research` (liquefaction/SSI framing), `/abaqus-theory` (coupled pore-fluid
