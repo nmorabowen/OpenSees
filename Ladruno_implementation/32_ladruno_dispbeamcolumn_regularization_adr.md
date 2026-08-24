@@ -16,6 +16,12 @@ tags:
   - research
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # LadrunoDispBeamColumn — regularized displacement-based frame
 
 > Siblings: [[14_ladruno_imk_beam]] (the **lumped**-plasticity end-hinge beam; this is its **distributed**-plasticity, fiber-section, regularized cousin — they share the cohesive-law idea but NOT the condensation algebra, see §"False reuse" risk), [[19_ladruno_brick_eas_simo_rifai]] + [[20_ladruno_brick_eas_stabilization]] (the EAS / static-condensation machinery this element ports), [[26_ladruno_plane_frontier_adr]] (the regularized crack-band materials whose softening this element is built to carry on a frame), [[31_ladruno_robust_solve_driver_adr]] (`ladruno_drive`, the snap-back solve orchestration this element's Stage-2 gates run under), and the FB analog `RegularizedHingeIntegration` (Scott & Hamutçuoğlu 2008). This is a **decision document**: it lands on a two-tier element, sequences what ships in v1, and pins the corotational-composition contract that one scoping pass got wrong.

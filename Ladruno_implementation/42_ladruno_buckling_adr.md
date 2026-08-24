@@ -13,8 +13,8 @@ related:
   - "[[46_ladruno_complex_modal_adr]]"          # SIBLING ADR 46 — complex/state-space modal (QZ on Φᵀ{M,C,K}Φ)
   - "[[43_ladruno_feast_eigensolver_adr]]"      # SIBLING ADR 43 — FEAST/Sturm robust+parallel eigensolver
   - "[[44_ladruno_frequency_domain_adr]]"       # SIBLING ADR 44 — modal FRF / SSD / random
-  - "[[20_ladruno_arclength_adr]]"              # NON-goal boundary: nonlinear post-buckling (arc-length)
-  - "[[22_ladruno_dynamic_relaxation_adr]]"     # NON-goal boundary: quasi-static collapse path
+  - "[[20_ladruno_arclength_stabilized_adr]]"              # NON-goal boundary: nonlinear post-buckling (arc-length)
+  - "[[21_ladruno_dynamic_relaxation_adr]]"     # NON-goal boundary: quasi-static collapse path
   - "[[LEDGER_implementations]]"
   - "[[LEDGER_quirks]]"
 tags: [adr, analysis, integrator, eigen, buckling, prestressed-modal, stress-stiffening, geometric-stiffness, jia-mang, arpack]
@@ -156,8 +156,8 @@ Record in `SRC/classTags.h` + `LEDGER_implementations.md` at reservation time so
 **NOT in scope (explicit boundaries)**
 
 - **Nonlinear / imperfection-seeded post-buckling collapse** — that is the **arc-length** family
-  ([[20_ladruno_arclength_adr|ADR 20]]) and quasi-static collapse via dynamic relaxation
-  ([[22_ladruno_dynamic_relaxation_adr|ADR 22]]). `LadrunoBuckle` estimates the *bifurcation*; it
+  ([[20_ladruno_arclength_stabilized_adr|ADR 20 (stabilized arc-length)]]) and quasi-static collapse via dynamic relaxation
+  ([[21_ladruno_dynamic_relaxation_adr|ADR 21]]). `LadrunoBuckle` estimates the *bifurcation*; it
   does **not** trace the secondary path. (Mirrors Abaqus's `*BUCKLE` → seed → `STATIC, RIKS` split.)
 - **A general `Kg` element assembler** — deliberately avoided (§2).
 - **Plasticity / rate effects in the buckling estimate** — like Abaqus `*BUCKLE`, the linearized
@@ -444,7 +444,7 @@ modal to the *same* `Kg`).
 
 **Cross-checks.**
 - **vs analytic** — every case above has a closed form (primary acceptance).
-- **vs fine arc-length collapse** — run an imperfection-seeded arc-length ([[20_ladruno_arclength_adr|ADR 20]])
+- **vs fine arc-length collapse** — run an imperfection-seeded arc-length ([[20_ladruno_arclength_stabilized_adr|ADR 20 (stabilized arc-length)]])
   to the limit/bifurcation load on the Euler column and the plate; the linear-buckling
   `λ·P` should bound/approximate the nonlinear collapse load (within a few % for near-linear
   prebuckling; the *gap* itself documents the linear-buckling validity envelope).
@@ -548,7 +548,7 @@ modal to the *same* `Kg`).
   the indefinite `ΔK` buckling solve **robust** (certify no critical mode is missed) and parallel.
   When ADR 43 lands, `buckling` should be re-pointable at the FEAST backend with no formulation
   change (it is still `A φ = λ M φ` with `(A,M) = (K_ref, ΔK)`).
-- [[20_ladruno_arclength_adr|ADR 20]] / [[22_ladruno_dynamic_relaxation_adr|ADR 22]] — the
+- [[20_ladruno_arclength_stabilized_adr|ADR 20 (stabilized arc-length)]] / [[21_ladruno_dynamic_relaxation_adr|ADR 21]] — the
   **non-goal** boundary: nonlinear/imperfection post-buckling collapse. `LadrunoBuckle` estimates
   the bifurcation; arc-length traces the secondary path. The two compose (buckling mode → arc-length
   imperfection seed), exactly the Abaqus `*BUCKLE` → `STATIC, RIKS` workflow.

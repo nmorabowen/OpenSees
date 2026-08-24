@@ -60,7 +60,13 @@ composable axes. Validation must exercise each axis *and their interactions*.
 > Combined hardening is validated only in the **small-rotation finite** and
 > **corot** regimes (where it *is* objective — verified, `test_corot_kinematic_hardening_objectivity`).
 
-Out of scope here: contact ([[11_ladruno_contact|scoped, unbuilt]]), thermal coupling, rate-dependent viscoplasticity, fracture/XFEM. ASDConcrete crack-band validation is its own track ([[11_brick_asdconcrete_integration]]).
+Out of scope here: contact, thermal coupling, rate-dependent viscoplasticity, fracture/XFEM.
+<!-- Was: [[11_ladruno_contact|scoped, unbuilt]] — stale on both counts as of 2026-08-23.
+     Contact was neither numbered 11 nor left unbuilt: it shipped as
+     [[39_ladruno_contact_domain_adr|ADR 39]] and the ADR-85 2D lane. It remains out of
+     scope *for this validation plan*, which is what the sentence is asserting. -->
+Contact has since shipped ([[39_ladruno_contact_domain_adr|ADR 39]]) and is validated on its
+own track; it is still out of scope for *this* plan. ASDConcrete crack-band validation is its own track ([[11_brick_asdconcrete_integration]]).
 
 ---
 

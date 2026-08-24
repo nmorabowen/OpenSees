@@ -17,6 +17,12 @@ tags:
   - adr
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # Ladruno nonlinear RC shell stack — a header-only RC kernel on the ASDShellQ4 + LayeredShellFiberSection frontier
 
 **What.** A fork-authored, header-only, OpenSees-free reinforced-concrete constitutive kernel

@@ -299,7 +299,7 @@ Per-rank grounding is curated in the `opensees-performance` skill →
   `profiler` registered; `UmfpackGenLinSolver.cpp:206/234` hardcode `UMFPACK_STRATEGY_SYMMETRIC`.
 - **2026-06-21 — v1.1 review pass (11-agent discussion + adversarial review, source-re-verified).**
   Added item **3b** DOF-numberer bench hygiene (default is already RCM; the bench downgrades to
-  `numberer Plain`; band/profile only, ~neutral for sparse; orthogonal to [[30]]). Sharpened **rank 8**
+  `numberer Plain`; band/profile only, ~neutral for sparse; orthogonal to [[30_ladruno_parallel_numberer_adr|ADR 30 (parallel numberer)]]). Sharpened **rank 8**
   (UMFPACK `Symbolic` already retained — only `Numeric` is freed per solve, so this avoids a numeric
   *re-factorization*; added `umfpack_*_refactor` + Davis vocabulary). Added **rank 2** `PIVOT_TOLERANCE
   1.0` detail + expose `-strategy`/`-pivotTol`. Re-characterized **rank 6** as a nested 25×50 Newton and

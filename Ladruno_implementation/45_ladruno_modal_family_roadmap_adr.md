@@ -20,6 +20,12 @@ tags: [adr, program-plan, roadmap, modal, eigen, complex-modes, buckling, feast,
 updated: 2026-07-08
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # ADR 45 — Modal-analysis family: implementation roadmap & sequencing plan
 
 **Status:** draft. **Planning only — no code.** This is the *umbrella ADR* governing the rollout of

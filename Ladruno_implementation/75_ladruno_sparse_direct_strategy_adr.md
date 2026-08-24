@@ -20,6 +20,12 @@ tags:
   - sub-adr
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # ADR-75 — Sparse-direct solver strategy: PARDISO (desktop) + MUMPS (cluster) + threaded assembly
 
 > ADR-75. The **solve/parallelism-lane** perf sub-ADR that [[40_ladruno_performance_adr]] levers

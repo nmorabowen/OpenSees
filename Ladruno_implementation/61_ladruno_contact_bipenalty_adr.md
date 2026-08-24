@@ -194,7 +194,7 @@ Bipenalty is a **mode/flag on existing classes**, **no new class tag** (verified
 
 **None.** Verified: bipenalty is a flag on the shipped `LadrunoContactFE` +
 `LadrunoContactHandler (33002)`. *Note (finding D6):* if a contact element ever needs a
-broker tag, the free ELE slot is **33016** — **33015 is taken (LadrunoRigidBody, ADR-58)**;
+broker tag, the next free ELE slot is **33022** — the old 33015/33016 reservations are SUPERSEDED (33015 = LadrunoRigidBody ADR-58, 33016 = LadrunoLST ADR-70 P3, 33017 = LadrunoUP ADR-71, 33018 = LadrunoBrick20, 33019 pencilled H27, 33020 SolidShell, 33021 CSTPair);
 the historical ADR-39 "33015" note is dead. This ADR allocates nothing.
 
 ---
@@ -528,7 +528,7 @@ bipenalty legs (`tests/test_ladrunoKinematicCoupling_element.py`).
   a `CentralDifferenceSMS` integrator in v1 — at `handle()` time the previous cycle's SMS
   injection still sits on the nodes (SMS's `removeScaling` runs later, inside the integrator
   `domainChanged`), so bipenalty would size off SMS-inflated mass; coexistence is deferred*.
-- `classTags.h` — **no change** (free contact ELE slot is 33016, not 33015).
+- `classTags.h` — **no change** (next free contact ELE slot is **33022**; 33015-33021 are all taken — the earlier 33015/33016 reservations were superseded by ADR-58/70/71/72).
 - Banner — no new feature line unless we surface "contact bipenalty" distinctly.
 
 ---

@@ -18,6 +18,12 @@ updated: 2026-06-23
 parent: "[[49_ladruno_integrator_study_workflow_adr]]"
 ---
 
+> [!warning] The `status:` above is STALE — this ADR has shipped
+> Its frontmatter still carries the pre-implementation value. Trust
+> [[LEDGER_implementations]] for *does it work / which PR*, and this ADR for *why*.
+> Flagged 2026-08-23 by a ledger audit; see [[README]] §Conventions. Remove this
+> banner when `status:` is corrected.
+
 # ADR-52 — Integrator strengthening (fork-scoped)
 
 > **Rev 2 (2026-06-23):** revised after a multi-agent adversarial review
