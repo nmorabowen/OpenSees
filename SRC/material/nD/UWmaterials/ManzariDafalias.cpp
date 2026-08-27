@@ -1387,7 +1387,25 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
                        << "warnings suppressed (budget 10 per process)." << endln;
         }
         NextStress = GetDevPart(NextStress) + m_Pmin * mI1;
-		p = m_Pmin;
+        // Ladruno (ADR-86 PR-2): this was `p = m_Pmin;`, which CONTRADICTS the tensor
+        // the line above just wrote. Everywhere in ModifiedEuler `p` denotes
+        // `one3*GetTrace(sigma) + m_Presidual` (:1359 above, :1420, :1479, :1564 below),
+        // and the rebuilt NextStress has `one3*GetTrace(NextStress) == m_Pmin` exactly.
+        // The value consistent with that tensor is therefore `m_Pmin + m_Presidual`, not
+        // `m_Pmin`: at the vanilla defaults (m_Pmin = 1e-4*P_atm, m_Presidual = 1e-2*
+        // P_atm) that is 1.0201 vs 0.0101, a factor of 101. The site was also the family
+        // outlier -- Stress_Correction() writes `m_Pmin + m_Presidual` at its analogous
+        // clamp, and RungeKutta45() recomputes p from the rebuilt stress.
+        // THIS IS NUMERICALLY INERT, because the store is DEAD: `p` is a local, the
+        // `while (T < 1.0)` loop below is always entered (T == 0.0), and the first
+        // statement in it that touches `p` is the unconditional recompute at :1420 --
+        // nothing reads `p` in between. Verified by inspection of every line from here
+        // to that recompute, and measured (see the commit message). Repaired regardless:
+        // a dead wrong value is one inserted read away from being a live wrong value,
+        // and this block is exactly where a future diagnostic would be added.
+        // Written as a recompute rather than as the literal `m_Pmin + m_Presidual` so it
+        // cannot drift if the rebuild on the line above is ever changed.
+        p = one3 * GetTrace(NextStress) + m_Presidual;   // Ladruno (ADR-86 PR-2)
     }
     // Set aCep_Consistent to zero for substepping process
     aCep_Consistent.Zero();
