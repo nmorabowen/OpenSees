@@ -33,13 +33,24 @@ them is a general "does it run" smoke.
      (JacoType), the ``p < m_Pmin + m_Presidual`` clamp, cyclic reversal, or
      the plane-strain wrapper.  It is a strong inertness gate on one path, not
      a proof of inertness everywhere.
-     It carries a SENSITIVITY companion
-     (``test_vanilla_equivalence_is_not_vacuous``): the same comparison with
-     ``-Presidual 0`` must give a MATERIALLY different answer.
-     Without it, a parser that silently dropped the flags (exactly the defect
-     ADR 86 sec.7.1 documents in the sibling ``OPS_SAniSandMSMaterial``) would
-     make this test compare vanilla with vanilla and pass while proving
-     nothing.
+     WHAT THE READER MUST BE TOLD ABOUT ITS DECK: both legs run with the
+     calibrated ``M_c = 1.3309`` silently raised to 1.99878 -- about +50 % --
+     by ``Elastic2Plastic`` at the stage switch, 8 times per leg, one per Gauss
+     point, on vanilla ``ManzariDafalias`` too.  This deck's plastic leg does
+     not run Gorini's soil.  That is acceptable for THIS test and for no other:
+     an inertness gate compares two class names on one deck, both legs take the
+     same repair, and it cancels exactly -- inertness across a path that
+     traverses the repair is if anything a stronger claim.  It is NOT
+     acceptable for any test that reads a difference as "the constant did
+     this", and every such test now runs on the confine-first deck instead.
+     It carries a SENSITIVITY companion,
+     ``test_vanilla_equivalence_is_not_vacuous``, which runs on the
+     CONFINE-FIRST deck and makes two comparisons: 1.01 vs 0 (the parser-drop
+     fingerprint -- without it, a parser that silently dropped the flags, the
+     defect ADR 86 sec.7.1 documents in the sibling ``OPS_SAniSandMSMaterial``,
+     would make this test compare vanilla with vanilla and pass while proving
+     nothing) and 1.01 vs 0.5 (two interior values, both legs genuinely
+     plastic, which isolates the CONSTANT rather than a branch flip).
   2. ``test_echo_and_defaults`` -- the material must SAY what it is running,
      once per construction and not latched behind a static bool (a latched
      message is observable only by whichever test in a session runs first,
@@ -83,8 +94,26 @@ them is a general "does it run" smoke.
        * a ``getCopy(const char*)`` "PlaneStrain" branch that quietly built a
          vanilla `ManzariDafaliasPlaneStrain`: the same deck is run at
          ``-Presidual`` 1.01 and 0 and the answers must differ materially
-         (measured 3.18e-2), which they cannot if the Gauss-point copy never
-         received the constants.
+         (measured 1.091772e-01), which they cannot if the Gauss-point copy
+         never received the constants.
+     It runs on the CONFINE-FIRST plane-strain deck.  On the ramp deck it used
+     before, the sign fingerprint's discriminating quantity -- the mirrored
+     deck's stress deviator -- was +0.187 against the correct deck's -31.132,
+     i.e. 0.6 % of it, because that deck's mirror leg spends its whole plastic
+     history clamped at the low-p floor.  Confining first makes those -21.643
+     and +19.157, a factor of 147 more margin, and drops the clamp warnings to
+     zero.  The settings-reach comparison improved 3.178e-2 -> 1.091772e-01.
+
+  6b. ``test_radial_ramp_with_pr0_never_yields`` -- not a fork fingerprint at
+     all, but a CHARACTERISATION of upstream behaviour that several tests here
+     now depend on.  A proportional-ramp deck run at ``p_residual = 0`` with a
+     stage-0 (staged-gravity) leg in front of it gets silent pure elasticity:
+     ``ManzariDafalias.cpp:974-977`` re-pins the back-stress ratio from the
+     current stress at every elastic step, and on a radial path with p_r = 0
+     that freezes alpha at the stress ratio and holds ``f < 0`` for ever.  The
+     test pins the two-sided signature -- exactly zero plastic strain with the
+     elastic leg, non-zero without it -- and doubles as the positive control
+     for the "Outside Bounding" absence the two confined tests assert.
   7. ``test_print_states_what_it_ran`` -- the fingerprint for the ``Print``
      override, which nothing called before.  Deleting it outright left the
      battery green: `test_echo_and_defaults` exercises the CONSTRUCTOR echo
@@ -116,16 +145,77 @@ that driver -- the same unit square, the same rollers-plus-``sp`` recipe, again
 with zero free equations -- so the two lanes are compared on the same protocol
 and not on two different analyses.
 
-SLOW TIER: ``test_presidual_is_the_low_p_defect`` is marked
-``@pytest.mark.slow``; measured wall time 21.4 s on the dev box (Windows,
-2026-08-26) -- two 1200-step drained triaxial legs at p ~ 1 kPa.  Everything
-else in this file runs in about 0.25 s total (tests 6 and 7 together cost about
-0.05 s of that, so neither needs the marker).  22 s is not minutes-scale, so
-the marker is NOT primarily about cost: it is there because ADR 86 risk 6 says
-no gate should depend on an extreme-low-p leg completing, and this test does
-(its p_r = 0 leg fails outright at 400 steps, where vanilla survives).  If the
-project decides that gate is worth paying for on every push, dropping the
-marker costs 22 s -- that is a scoping call, not a technical obstacle.
+TWO DECKS, and which test uses which.  The driver above comes in a RAMP form
+(``_build``/``_drive``, one proportional strain ramp from zero stress) and a
+CONFINE-FIRST form (``_build_confined``/``_drive_confined``: isotropic strain
+confinement at stage 0, stage flip at eta = 0, then isochoric deviatoric
+loading).  Both are zero-free-DOF; both have plane-strain twins.  Tests 1, 3
+and 4 are on the ramp deck and 2 and 6 on the confined one, for reasons each
+states in its own docstring.  The short version: a test that asserts an
+EQUALITY between two runs of the same deck is indifferent to the deck's
+quirks, because they cancel exactly; a test that reads a DIFFERENCE and
+attributes it to p_residual is not, and belongs on the confined deck.
+
+CONFINEMENT LEVEL, and the ADR 86 risk-6 exposure it carries.  The confined
+deck sits at p0 = 1.7175 kPa after its confinement stage -- that is
+0.017*P_atm, squarely in the extreme-low-p territory ADR 86 sec.8 risk 6 says
+no gate should depend on.  Three things mitigate it, and they are stated rather
+than assumed:
+  * the p_residual signal only EXISTS at low p.  Measured on this deck, holding
+    everything else fixed and raising the confinement:
+        p0 =   1.72 kPa   reldiff(p_r=1.01, p_r=0) = 9.325164e-02
+        p0 =   5.73 kPa                              3.167012e-02
+        p0 =  17.18 kPa                              1.424105e-02
+        p0 =  57.25 kPa                              5.363259e-03
+        p0 = 200.38 kPa                              1.451334e-03
+    At 200 kPa the signal is barely above the 1e-3 sensitivity floor.  Running
+    the sensitivity tests at a comfortable confinement would mean running them
+    where there is almost nothing to measure.
+  * there is no Newton anywhere in a zero-free-DOF deck, so the failure mode
+    risk 6 is about -- an equilibrium iteration that cannot converge at
+    vanishing p -- has no equation to fail in.  ``analyze(1)`` still returns 0
+    or non-0 and every step is asserted.
+  * measured: of the 80-plus confined legs run across the sweeps behind these
+    numbers -- both lanes, p_residual 0 / 0.5 / 1.01, mirrored and not, n_dev
+    20 / 40 / 80 / 160, p0 from 1.7 to 200 kPa -- not one failed a step.
+The one gate that genuinely does depend on an extreme-low-p leg completing is
+test 5, and that one is marked slow for exactly that reason.
+
+STEP-SIZE CONVERGENCE -- neither deck has it, and it matters for one kind of
+claim only.  Measured, halving the deviatoric step:
+    confined 3D, p_r = 1.01, n_dev  20 ->  40   reldiff 4.467130e-03
+                                    40 ->  80           1.580339e-02
+                                    80 -> 160           1.147915e-02
+    ramp 3D, p_r = 1.01, (N_EL,N_PL) x1 -> x2   reldiff 4.094500e-02
+                                        x2 -> x4        2.189826e-02
+                                        x4 -> x8        1.134525e-02
+So the answers are still moving at the ~1e-2 level at the step counts shipped.
+The EQUIVALENCE gates (tests 1, 3, 4) are completely unaffected: they compare
+runs at identical step counts, so the discretisation error is common to both
+sides and cancels exactly -- that is why they hold to 1e-12 and not to 1e-2.
+What the wobble does bound is how much a SENSITIVITY number means.  On the
+confined deck the 9.325164e-02 sensitivity is about 5.9x the 1.58e-2 wobble at
+the nearest refinement, so it is a signal and not discretisation noise.  On the
+ramp deck it is NOT comfortable: 5.579874e-02 against a 4.09e-2 wobble is a
+factor of 1.4, which is a further reason the sensitivity tests moved.  Neither
+number should be quoted as a converged physical quantity; both are quoted as
+what this deck reproducibly returns.
+
+SLOW TIER: ``test_presidual_is_the_low_p_defect`` is the only test marked
+``@pytest.mark.slow``; measured wall time 28.5 s on the dev box (Windows,
+2026-08-27) -- two 1200-step drained triaxial legs at p ~ 1 kPa.  Measured in
+the shape CI actually runs (no ``--runslow``), the whole file is 10.32 s, of
+which the confine-first decks are ~8.8 s: test 2 5.75 s (3 legs; 6.77 s run
+alone) and test 6 3.05 s (3 legs; 4.10 s run alone).  Test 6b costs 0.08 s.
+Before those two moved decks the same run was ~1.5 s, so the port costs about
+8.8 s.  They are deliberately NOT marked slow: ``tests/conftest.py`` makes that
+tier opt-in and no workflow passes ``--runslow`` or sets ``LADRUNO_RUN_SLOW``,
+so a slow marker means the test never runs in CI at all -- which is exactly the
+defect just fixed for the Tcl smoke.  ~9 s on a ~15-minute Zone-A job is the
+right price for the two tests that carry the file's only plastic-regime
+measurements.  Test 5 keeps the marker for the reason above -- ADR 86 risk 6,
+not cost: 28 s is not minutes-scale, but its p_r = 0 leg fails outright at 400
+steps where vanilla survives, and no gate should depend on that.
 """
 import math
 import os
@@ -182,6 +272,13 @@ _OPTS_VANILLA = ("-Presidual", _VANILLA_PR, "-Pmin", _VANILLA_PMIN, "-honorTolR"
 # Same deck, p_residual switched off, p_min PINNED to vanilla's so that exactly
 # ONE variable moves (ADR 86 risk 4: two variables at low p if -Pmin is loose).
 _OPTS_PR0 = ("-Presidual", 0.0, "-Pmin", _VANILLA_PMIN, "-honorTolR", 0)
+# A THIRD, strictly-interior value.  0 is a special number on some paths (it is
+# the branch that turns the `if (p > small)` alpha update off, and it is the
+# class default), so an A/B that only ever compares 1.01 against 0 cannot tell
+# "the constant is being used" from "a branch flipped".  0.5 kPa is neither
+# endpoint and is producible by no default, so a leg run at it is a plain
+# quantitative sample of the same continuous parameter.  Same `-Pmin` pin.
+_OPTS_PR05 = ("-Presidual", 0.5, "-Pmin", _VANILLA_PMIN, "-honorTolR", 0)
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +293,39 @@ _OPTS_PR0 = ("-Presidual", 0.0, "-Pmin", _VANILLA_PMIN, "-honorTolR", 0)
 #
 #  _N_EL steps are taken with the material at stage 0 (elastic, the community
 #  staged-gravity idiom), then the stage is flipped and _N_PL steps are taken
-#  with the elastoplastic integrator running.  The plastic leg is genuinely
-#  plastic: it ends at p ~ 13.7 kPa with an active yield surface, and the
-#  p_residual sensitivity below (5.6 %) exists ONLY on plastic paths --
-#  GetElasticModuli does not read m_Presidual at all, so an elastic-only path
-#  would show zero sensitivity and prove nothing.
+#  with the elastoplastic integrator running.
+#
+#  TWO MEASURED DEFECTS OF THIS DECK.  An earlier revision of this comment
+#  claimed the plastic leg is "genuinely plastic ... so an elastic-only path
+#  would show zero sensitivity and prove nothing".  Both halves of that are
+#  wrong and the corrections are why the CONFINE-FIRST driver below exists:
+#
+#   (1) THE p_r = 0 LEG NEVER YIELDS.  Measured on this build,
+#       `eleResponse(1,'material',1,'plasticstrains')` after the full history
+#       is identically [-0,-0,-0, 0,-0,-0] on the `_OPTS_PR0` leg -- the norm
+#       is exactly 0.0, not small.  The mechanism is the radial freeze
+#       characterised by `test_radial_ramp_with_pr0_never_yields` below and it
+#       is upstream (ManzariDafalias.cpp:974-977).  The `_OPTS_VANILLA` leg
+#       DOES yield, but only barely: |eps_pl| = 3.349e-05, three orders below
+#       the 5.67e-03 the confined deck reaches.  So the 5.58e-2
+#       "sensitivity" this deck reports is a PLASTIC-vs-ELASTIC gap, not a
+#       plastic A/B of the constant.  It is a real, reproducible difference and
+#       it is fine as a NON-VACUITY witness for the tests that only need to
+#       know the two legs are distinguishable (3, 4) -- but it does not isolate
+#       p_residual, and the test that claimed to (test 2) has been moved to the
+#       confined deck.
+#   (2) EVERY LEG ENTERS STAGE 1 OUTSIDE THE BOUNDING SURFACE.  Measured 8
+#       times per leg (once per Gauss point), on vanilla `ManzariDafalias` too:
+#       "stage-switch stress ratio (1.81707) exceeded the bounding surface M_c
+#       (1.3309); raising M_c to 1.99878 (Outside Bounding!)" -- and on the
+#       p_r = 0 leg 1.3309 -> 2.3514.  `ManzariDafalias::Elastic2Plastic`
+#       inflates the calibrated friction constant by 50-77 % before the plastic
+#       leg starts, so this deck's plastic leg does not run Gorini's soil.
+#
+#  Neither defect touches the EQUIVALENCE gates (tests 1, 3, 4): those compare
+#  two runs of the IDENTICAL deck, so whatever the deck does to M_c it does
+#  identically to both legs and it cancels exactly.  What the defects break is
+#  any claim that a difference measured here isolates the constant.
 # ---------------------------------------------------------------------------
 _XY = [(0., 0.), (1., 0.), (1., 1.), (0., 1.)]
 _LAT = 0.25          # lateral extension / axial compression
@@ -281,18 +406,318 @@ def _reldiff(u, v):
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(u, v))) / nu
 
 
+# ---------------------------------------------------------------------------
+#  CONFINE-FIRST zero-free-DOF driver  (ADR 86 PR-2 test-deck rebuild)
+#
+#  USED BY `test_vanilla_equivalence_is_not_vacuous` (3D) and, through its
+#  plane-strain twin below, by `test_planestrain_lane_carries_the_settings`.
+#  The other tests deliberately stay on `_drive` -- see the note at the end of
+#  this block for which, and why.
+#
+#  WHY.  `_drive` above runs ONE proportional strain ramp from a zero stress
+#  state, and that has two measured defects:
+#
+#   (1) THE p_r = 0 LEGS NEVER YIELD.  Every stage-0 step re-sets the
+#       back-stress ratio (ManzariDafalias.cpp:974-977)
+#           p = one3*GetTrace(NextStress) + m_Presidual;
+#           if (p > small) NextAlpha = GetDevPart(NextStress)/p;
+#       On an exactly radial path (a proportional ramp at fixed K/G) with
+#       p_r = 0 the ratio s/p is constant along the ray, so `alpha` is frozen
+#       AT the current stress ratio and f = ||s - p*alpha|| - root23*m*p
+#       collapses to -root23*m*p < 0 for ever.  Measured on `_drive`:
+#       `eleResponse(1,'material',1,'plasticstrains')` is identically
+#       [0,0,0,0,0,0] on the p_r = 0 leg.  The 5.58e-2 gap that
+#       `test_vanilla_equivalence_is_not_vacuous` USED to measure here was
+#       therefore a PLASTIC-vs-ELASTIC gap, not a plastic A/B.  The mechanism
+#       is characterised in its own right by
+#       `test_radial_ramp_with_pr0_never_yields`.
+#   (2) EVERY 3D LEG ENTERS STAGE 1 OUTSIDE THE BOUNDING SURFACE.  Measured 8
+#       times per leg (once per Gauss point), on vanilla `ManzariDafalias`
+#       too:  "stage-switch stress ratio (1.81707) exceeded the bounding
+#       surface M_c (1.3309); raising M_c to 1.99878 (Outside Bounding!)".
+#       `ManzariDafalias::Elastic2Plastic` inflates the calibrated friction
+#       constant by 50 % before the plastic leg starts, so the deck's plastic
+#       leg does not run Gorini's soil.
+#       SCOPE, measured, and NARROWER than an earlier draft of this comment
+#       claimed: this is a property of the 3D ramp deck only.  The PLANE-STRAIN
+#       ramp deck `_drive_ps` fires ZERO "Outside Bounding" on its correct leg
+#       -- eps_zz == 0 holds the stage-flip ratio below M_c there.  Its MIRROR
+#       leg is the one that misbehaves, and differently: it fires 8 copies of
+#       the low-p CLAMP warning ("mean stress p = 0.63108 is below the floor
+#       m_Pmin + m_Presidual = 1.0201; CLAMPING ...").  Both go to zero on the
+#       confined twin.
+#
+#  THE FIX is `_drained_triaxial`'s idea -- confine FIRST -- carried onto
+#  `_drive`'s zero-free-DOF cube so that no Newton tolerance enters:
+#
+#    stage 1  isotropic strain confinement at material stage 0.  Isotropic
+#             strain on an isotropic elastic material gives an exactly
+#             isotropic stress, so GetDevPart(sigma) == 0 and alpha == 0.
+#    stage 2  updateMaterialStage -> 1 with eta == 0 << M_c, so
+#             Elastic2Plastic finds nothing to repair and M_c is untouched.
+#    stage 3  ISOCHORIC (constant-volume, i.e. undrained-triaxial-compression)
+#             stepped deviatoric loading: d_eps_zz = -de, d_eps_xx = d_eps_yy
+#             = +de/2, hence `_C_LAT = 0.5`.  Isochoric and not the drained
+#             0.25 ratio because with zero free DOFs there is no cell pressure
+#             to hold p down: a net-compressive strain path drives p to
+#             ~9000 kPa (measured) and washes out the p_residual signal, which
+#             is a LOW-p effect by construction.  Constant volume keeps the
+#             void ratio EXACTLY at e_init - (1+e_init)*tr(eps_conf) -- an
+#             independent check that the path is what it claims -- and lets
+#             dilatancy alone carry the state up to the bounding surface.
+#
+#  ZERO FREE DOFs IS PRESERVED.  Both stages are prescribed with `sp`, exactly
+#  one per (node, dof) as in `_build`; the two stages differ only in the SHAPE
+#  of the ramp, and a shape is a time series.  So the lateral DOFs and the
+#  axial DOFs each get their own always-active `Plain` pattern carrying a
+#  `Path` series, and NO `loadConst` is used -- the whole history stays a pure
+#  function of pseudo-time and is therefore replayable after `ops.reset()`
+#  exactly the way `_build`'s single Linear series is.  Verified by execution:
+#  run, reset, replay gives a BIT-IDENTICAL committed stress.
+#
+#  MEASURED (dev box, 2026-08-27, this build), all three legs of test 2:
+#
+#     leg          p_end     eta/M^b   |eps_pl|    void ratio      "Outside
+#                  (kPa)                                           Bounding"
+#     p_r = 1.01   9.45882   0.974787  5.665e-03   0.694384750     0
+#     p_r = 0.5    9.99822   0.935808  5.672e-03   0.694384750     0
+#     p_r = 0      10.62689  0.902355  5.675e-03   0.694384750     0
+#
+#     p after confinement 1.7175 kPa;  eta at the stage flip 0.0 (exact);
+#     void ratio identical to all 9 digits across the three legs, which is the
+#     isochoric claim above checking itself.
+#     reldiff(p_r=1.01, p_r=0)   = 9.325164e-02   (`_drive`: 5.579874e-02)
+#     reldiff(p_r=1.01, p_r=0.5) = 4.241113e-02   (`_drive`: not meaningful --
+#                                                  the p_r=0 leg there is
+#                                                  elastic, so there is no
+#                                                  plastic A/B to take)
+#     wall time  ~1.7-3.0 s/leg  (on `_drive`: ~0.003-0.12 s/leg)
+#  The cost is the price of the deck: it is spent inside the material's
+#  adaptive ModifiedEuler substepping over 0.5 % of axial strain, and measuring
+#  it against n_dev 20/40/80/160 shows it barely moves with the LOAD step
+#  count -- so it cannot be bought back by taking fewer steps, only by
+#  travelling less strain (and then eta/M^b stops short of 1).
+#
+#  WHICH TESTS MOVED, AND WHICH DID NOT.  Only the two that MEASURE a
+#  difference and interpret it as "the constant did this" were ported:
+#  `test_vanilla_equivalence_is_not_vacuous` and
+#  `test_planestrain_lane_carries_the_settings`.  Tests 1, 3 and 4 stay on
+#  `_drive` on purpose:
+#    * test 1 (`test_vanilla_equivalence`) is an INERTNESS gate.  It asserts two
+#      class names agree to 1e-12 on the same deck; that claim is regime-free,
+#      and the ramp deck additionally drags the comparison through the
+#      `Elastic2Plastic` M_c-repair path, which is strictly MORE code for the
+#      subclass to be inert across, not less.  Porting it would cost ~5 s and
+#      weaken it.
+#    * tests 3 and 4 (`revertToStart`, the database wire) test a MECHANISM, not
+#      a regime, and each needs only that its two reference answers be
+#      distinguishable -- which the ramp deck's 5.4e-2 plastic-vs-elastic gap
+#      supplies perfectly well.  Test 3 additionally reads `plasticstrains`
+#      territory after a `reset()`, where that response is known to carry an
+#      offset (see `_plastic_strains`), so moving it would add risk for no gain.
+#  Every one of those three now says so in its own docstring rather than
+#  leaving the reader to infer it.
+# ---------------------------------------------------------------------------
+_C_E_CONF = 3.0e-6      # isotropic compressive strain per direction, stage 1
+_C_N_CONF = 10          # stage-0 confinement steps
+_C_E_AX = 5.0e-3        # further axial compressive strain, stage 3
+_C_LAT = 0.5            # lateral extension / axial compression -- 0.5 = isochoric
+_C_N_DEV = 40           # stage-1 deviatoric steps
+_C_LAT_PS = 1.0         # the plane-strain analogue: eps_zz == 0, so d_eps_xx =
+                        # -d_eps_yy is what keeps the volume constant
+
+
+def _c_series(n_conf=_C_N_CONF, n_dev=_C_N_DEV, e_conf=_C_E_CONF,
+              e_ax=_C_E_AX, lat=_C_LAT):
+    """The two ramp SHAPES, on a unit pseudo-time grid.
+
+    Both are multiplied by the same `sp` magnitude `-e_conf`, so the shape
+    carries the whole path:
+
+        lateral   0 -> 1                    (confine, compression -e_conf)
+                  1 -> 1 - lat*e_ax/e_conf  (deviator, EXTENSION)
+        axial     0 -> 1                    (confine)
+                  1 -> 1 + e_ax/e_conf      (deviator, further COMPRESSION)
+
+    One `sp` per (node, dof) and one series per direction group: no DOF is
+    constrained twice, which is what keeps the equation count at zero.
+
+    TRAP FOR WHOEVER MEASURES THIS DECK NEXT.  `n_conf`, `n_dev`, `e_conf`,
+    `e_ax` and `lat` are DEFAULT ARGUMENTS, bound to the module constants once
+    at def time.  Monkeypatching `_C_N_DEV` or `_C_E_CONF` to sweep the deck
+    therefore changes `_deviator_leg`'s loop count and `_build_confined`'s `sp`
+    magnitude but NOT the series this function builds, and the two silently
+    disagree: with `_C_N_DEV = 80` the analysis walks 80 steps along a 51-point
+    Path, runs off its end where `PathSeries` returns 0, and unloads the model
+    to a meaningless near-zero stress (observed: reldiff 1.6e+01).  Pass the
+    values in as ARGUMENTS and thread them through a local copy of
+    `_build_confined` instead.
+    """
+    s_lat = [i / n_conf for i in range(n_conf + 1)]
+    s_ax = list(s_lat)
+    r_lat = lat * e_ax / e_conf
+    r_ax = e_ax / e_conf
+    for i in range(1, n_dev + 1):
+        s_lat.append(1.0 - r_lat * i / n_dev)
+        s_ax.append(1.0 + r_ax * i / n_dev)
+    # One extra HOLD point.  `PathSeries::getFactor` returns 0 at and beyond
+    # its LAST time point, so without this the final load step would silently
+    # unload the whole model back to zero displacement -- measured: the last
+    # step returned sigma ~ 0 and a nonsense eta of 63.6.
+    s_lat.append(s_lat[-1])
+    s_ax.append(s_ax[-1])
+    return s_lat, s_ax
+
+
+def _analysis_confined():
+    """`_analysis` with a unit time step, to match the unit-dt Path series."""
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def _build_confined(matcmd, tag, opts=()):
+    """The confine-first twin of `_build`: same cube, same rollers, same
+    zero free equations, two Path-driven patterns instead of one Linear."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial(matcmd, tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):                       # rollers on the three negative faces
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    s_lat, s_ax = _c_series()
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)               # lateral DOFs
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -_C_E_CONF)
+            if y == 1.:
+                ops.sp(n, 2, -_C_E_CONF)
+    ops.pattern('Plain', 2, 2)               # axial DOFs
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -_C_E_CONF)
+    _analysis_confined()
+
+
+def _confine_leg(tag):
+    # EXPLICIT, every time -- static mElastFlag, ADR 86 risk 3, as everywhere.
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(_C_N_CONF):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+
+
+def _deviator_leg(tag):
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+    for step in range(_C_N_DEV):
+        assert ops.analyze(1) == 0, f'deviatoric step {step + 1} failed'
+
+
+def _drive_confined(matcmd, tag, opts=()):
+    """wipe -> build -> confine (stage 0) -> stage flip -> shear -> stress."""
+    _build_confined(matcmd, tag, opts)
+    _confine_leg(tag)
+    _deviator_leg(tag)
+    return _stress()
+
+
+def _plastic_strains():
+    """Committed plastic strain at Gauss point 1.
+
+    CAVEAT, measured: `revertToStart` restores the total strain but not the
+    elastic-strain accumulator this response subtracts, so after an
+    `ops.reset()` this reads an OFFSET (exactly minus the previous run's final
+    elastic strain) even though the committed STRESS is bit-identical.  Present
+    on `_drive` too -- it is upstream, not a property of this deck -- but any
+    assertion on plastic strain across a reset has to account for it.
+    """
+    return list(ops.eleResponse(1, 'material', 1, 'plasticstrains'))
+
+
+def _state_probe():
+    """p, q, eta, M^b and eta/M^b from the committed state.  3D LANE ONLY.
+
+    NOTE M^b is computed from the CALIBRATED `_PARAMS[3]` (M_c = 1.3309).  On
+    any deck that fires "Outside Bounding" the material is no longer running
+    that M_c -- `Elastic2Plastic` overwrote it -- so eta/M^b measured there is
+    against a surface the material has stopped using.  That is precisely why
+    the confined deck asserts zero such events.
+
+    REFUSES the plane-strain lane rather than answering wrongly: there the
+    'stress' response is the 3-vector (sigma_xx, sigma_yy, sigma_xy) with no
+    sigma_zz in it, so p and q are not computable from it -- and read as if it
+    were the 3D 6-vector it silently returns a CONSTANT eta of -1.5 on every
+    leg, which is a number that looks like a measurement and is not one.
+    """
+    sig = ops.eleResponse(1, 'material', 1, 'stress')
+    assert len(sig) == 6, (
+        'p/q/eta are not computable from this response: got %d components, '
+        'need the 3D 6-vector. The plane-strain response omits sigma_zz.'
+        % len(sig))
+    state = ops.eleResponse(1, 'material', 1, 'state')
+    s = [-v for v in sig[:3]]                      # compression positive
+    p = (s[0] + s[1] + s[2]) / 3.0
+    q = s[2] - 0.5 * (s[0] + s[1])
+    void_ratio = state[24]
+    e_c = _PARAMS[6] - _PARAMS[5] * (max(p, 1e-12) / _P_ATM) ** _PARAMS[7]
+    psi = void_ratio - e_c
+    m_b = _PARAMS[3] * math.exp(-_PARAMS[12] * psi)
+    eta = q / p if p != 0.0 else float('nan')
+    return dict(p=p, q=q, eta=eta, e=void_ratio, psi=psi, Mb=m_b, ratio=eta / m_b)
+
+
 # ===========================================================================
 #  1. vanilla equivalence -- the load-bearing gate
 # ===========================================================================
 
 _EQ_TOL = 1.0e-12
-_SENSITIVITY_FLOOR = 1.0e-3    # measured 5.6e-2; see below
+_SENSITIVITY_FLOOR = 1.0e-3    # measured 9.3e-2 / 4.2e-2 on the confined deck
+# A leg that yielded at all is ~5.7e-3; a leg that did not is EXACTLY 0.0, so
+# any floor in between separates them.  1e-5 is two orders under the measured
+# value and infinitely above the defect's, i.e. it is a "did plasticity happen"
+# gate and not a calibration of how much.
+_PLASTIC_FLOOR = 1.0e-5
+# The diagnostic `ManzariDafalias::Elastic2Plastic` emits when it silently
+# raises M_c at a stage switch.  Asserted ABSENT on every confined leg, and
+# asserted PRESENT on the ramp deck by
+# `test_radial_ramp_with_pr0_never_yields`, so the absence can never go vacuous
+# by the message being reworded or removed.
+_OB_MARKER = 'Outside Bounding'
 
 
 def test_vanilla_equivalence():
     """LadrunoSANISAND handed vanilla's two constants IS vanilla, to 1e-12.
 
     Measured on the dev box: identically 0.0 (bit-for-bit), well inside 1e-12.
+
+    STAYS ON `_drive`, THE RAMP DECK, DELIBERATELY -- and the reader is owed the
+    disclosure that this deck runs BOTH legs with M_c inflated by
+    `Elastic2Plastic`.  Measured, 8 events per leg (one per Gauss point) and on
+    vanilla `ManzariDafalias` too: the stage-switch ratio is 1.81707 against the
+    calibrated M_c = 1.3309, so M_c is raised to 1.99878 -- about +50 % -- before
+    the plastic leg starts.  This deck's plastic leg therefore does NOT run
+    Gorini's calibrated soil.
+
+    That is acceptable HERE and nowhere else in this file, because this test is
+    an INERTNESS gate, not a measurement: it asserts that two class names give
+    the same answer on the same deck.  Both legs take the same repair, so the
+    repair cancels exactly, and inertness across a path that traverses the
+    repair is a strictly STRONGER statement than inertness across one that does
+    not.  Any test that instead interprets a DIFFERENCE as "p_residual did this"
+    has been moved to the confine-first deck, which fires zero such events.
 
     Order-independence is asserted explicitly because `mElastFlag` is static:
     building the second leg resets the stage flag that the first leg set, so a
@@ -322,28 +747,206 @@ def test_vanilla_equivalence():
         md_first, sani_first, rel)
 
 
-def test_vanilla_equivalence_is_not_vacuous():
-    """The companion to test 1: the SAME path must be sensitive to p_residual.
+def test_vanilla_equivalence_is_not_vacuous(capfd):
+    """The companion to test 1: a PLASTIC path must be sensitive to p_residual.
 
-    If it were not -- e.g. because the parser silently dropped `-Presidual`
-    (ADR 86 sec.7.1 documents exactly that bug in the sibling
-    `OPS_SAniSandMSMaterial`), or because the strain path never left the
-    elastic range -- then test_vanilla_equivalence would be comparing vanilla
-    with vanilla and would pass while proving nothing.
+    ON THE CONFINE-FIRST DECK (`_drive_confined`), not the ramp deck test 1
+    uses, and the difference is the whole point of this test.  Its previous
+    revision ran on `_drive`, asserted a 5.58e-2 gap, and its docstring claimed
+    that gap proved the strain path "is sensitive to p_residual" on a plastic
+    path.  Measured, it did not: on `_drive` the p_r = 0 leg never yields at all
+    (|eps_pl| identically 0.0 -- see `test_radial_ramp_with_pr0_never_yields`),
+    so 5.58e-2 was the distance between a barely-plastic answer and an ELASTIC
+    one.  That is a real difference and it does prove the flags were parsed, but
+    it does not isolate the constant, which is what the docstring said it did.
 
-    Only `-Presidual` moves between the two legs: `-Pmin` is pinned to
-    vanilla's 1e-4*P_atm in both (ADR 86 risk 4).  Measured: 5.58e-2, i.e.
-    5.6 % -- ten orders of magnitude above the 1e-12 equivalence tolerance.
+    THREE LEGS, TWO COMPARISONS, PROVING DIFFERENT THINGS.  Keep both:
+
+      p_r = 1.01 vs p_r = 0    THE PARSER-DROP FINGERPRINT.  0 is the class
+          default, so if the deck's `-Presidual` were accepted and dropped (ADR
+          86 sec.7.1 documents exactly that bug in the sibling
+          `OPS_SAniSandMSMaterial`) BOTH legs would run the default, this
+          reldiff would collapse to 0, and `test_vanilla_equivalence` would be
+          comparing vanilla with vanilla.  Measured 9.325164e-02.
+
+      p_r = 1.01 vs p_r = 0.5  THE CONSTANT ITSELF.  Neither endpoint is a
+          default and neither is the `p > small` branch boundary, and BOTH legs
+          are genuinely, comparably plastic (|eps_pl| 5.665e-03 and 5.672e-03).
+          So this one cannot be explained by a branch flip or by one leg simply
+          not yielding: it is a quantitative response to moving a continuous
+          material constant.  This is the assertion the old docstring claimed to
+          be making and was not.  Measured 4.241113e-02.
+
+    THE |eps_pl| > 0 ASSERTION IS THE GUARD.  It is asserted on every leg,
+    and it is the single line that makes the whole class of defect above
+    impossible to reintroduce silently: any future edit to the deck that lets a
+    leg go elastic -- a different strain path, a smaller strain, a p_r that
+    re-freezes alpha -- fails here instead of quietly turning this test back
+    into an elastic-vs-plastic comparison wearing a plastic-A/B docstring.
+
+    THE ZERO-M_c-INFLATION GUARD.  `Elastic2Plastic` silently raises M_c when
+    the stage-switch stress ratio already exceeds the bounding surface; on the
+    ramp deck that fires 8 times per leg and lifts the calibrated 1.3309 to
+    1.99878.  Confining first puts eta = 0 (exact) at the flip, so it fires
+    zero times -- measured 0 across all three legs -- and this test asserts that
+    absence.  That assertion is what makes the confined deck's reason for
+    existing something the suite ENFORCES rather than something a comment
+    claims.  `test_radial_ramp_with_pr0_never_yields` supplies the matching
+    positive control, so a reworded or deleted diagnostic cannot make this
+    silently vacuous.
+
+    Only `-Presidual` moves between legs: `-Pmin` is pinned to vanilla's
+    1e-4*P_atm in all three (ADR 86 risk 4).  Measured wall time under pytest:
+    5.75 s in a full-file run, 6.77 s run alone.
     """
-    vanilla_consts = _drive('LadrunoSANISAND', 5, _OPTS_VANILLA)
-    no_cohesion = _drive('LadrunoSANISAND', 6, _OPTS_PR0)
+    legs = {}
+    for name, tag, opts in (('p_r = 1.01', 5, _OPTS_VANILLA),
+                            ('p_r = 0', 6, _OPTS_PR0),
+                            ('p_r = 0.5', 9, _OPTS_PR05)):
+        legs[name] = (_drive_confined('LadrunoSANISAND', tag, opts),
+                      _plastic_strains())
 
-    rel = _reldiff(vanilla_consts, no_cohesion)
-    assert rel >= _SENSITIVITY_FLOOR, (
+    err = capfd.readouterr().err
+
+    # --- the deck ran the soil it was calibrated for --------------------------
+    assert _OB_MARKER not in err, (
+        'a confined leg fired the Elastic2Plastic M_c repair. The point of the '
+        'confine-first deck is that it enters stage 1 at eta = 0, so nothing '
+        'is outside the bounding surface and the calibrated M_c = %g survives '
+        'into the plastic leg. If this fires, the numbers below are being '
+        'measured on a soil with a different friction angle than the one the '
+        'parameter set names' % _PARAMS[3], err)
+
+    # --- every leg is genuinely plastic --------------------------------------
+    for name, (_, eps) in legs.items():
+        mag = math.sqrt(sum(x * x for x in eps))
+        assert mag >= _PLASTIC_FLOOR, (
+            f'the {name} leg accumulated |eps_pl| = {mag:.3e}, below the '
+            f'{_PLASTIC_FLOOR:g} floor -- it did not meaningfully yield. Any '
+            'difference measured against it is then a plastic-vs-elastic gap '
+            'and does NOT isolate p_residual, which is exactly the defect this '
+            'test was moved off the ramp deck to escape', eps)
+
+    # --- (i) the parser-drop fingerprint: 1.01 vs the class default ----------
+    rel_branch = _reldiff(legs['p_r = 1.01'][0], legs['p_r = 0'][0])
+    assert rel_branch >= _SENSITIVITY_FLOOR, (
         'switching p_residual from 1.01 kPa to 0 changed the committed stress '
-        f'by only {rel:.3e} -- this strain path is NOT sensitive to '
-        'p_residual, so test_vanilla_equivalence proves nothing on it',
-        vanilla_consts, no_cohesion)
+        f'by only {rel_branch:.3e}. Either the deck is not sensitive to '
+        'p_residual, or -Presidual was accepted and dropped so both legs ran '
+        'the class default -- in which case test_vanilla_equivalence is '
+        'comparing vanilla with vanilla',
+        legs['p_r = 1.01'][0], legs['p_r = 0'][0])
+
+    # --- (ii) the constant itself: two interior, both plastic ----------------
+    rel_const = _reldiff(legs['p_r = 1.01'][0], legs['p_r = 0.5'][0])
+    assert rel_const >= _SENSITIVITY_FLOOR, (
+        'moving p_residual between two INTERIOR values, 1.01 and 0.5 kPa, with '
+        f'both legs plastic, changed the committed stress by only {rel_const:.3e}. '
+        'The 1.01-vs-0 comparison above can be explained by a branch flip or by '
+        'a default; this one cannot, and without it nothing here shows the '
+        'constant is being USED rather than merely SWITCHED',
+        legs['p_r = 1.01'][0], legs['p_r = 0.5'][0])
+
+
+# ---------------------------------------------------------------------------
+#  1b. the radial freeze -- why the tests above had to move decks
+# ---------------------------------------------------------------------------
+
+def test_radial_ramp_with_pr0_never_yields(capfd):
+    """CHARACTERISATION of upstream behaviour a real user can hit.
+
+    NOT a fingerprint for anything this fork wrote, and not a bug report against
+    `LadrunoSANISAND`: it pins a property of `ManzariDafalias` that the meaning
+    of several tests in this file now turns on, so that it cannot change under
+    them silently.
+
+    THE MECHANISM, ManzariDafalias.cpp:974-977.  Every ELASTIC (stage-0) step
+    re-sets the back-stress ratio from the current stress:
+
+        p = one3*GetTrace(NextStress) + m_Presidual;
+        if (p > small) NextAlpha = GetDevPart(NextStress)/p;
+
+    On an exactly RADIAL stress path -- which a proportional strain ramp at
+    fixed K/G is -- the ratio s/p is constant along the ray.  With
+    m_Presidual = 0 that `p` is the true mean stress, so `alpha` is pinned to
+    the current stress ratio at every step, and the yield function
+
+        f = ||s - p*alpha|| - root23*m*p
+
+    collapses to -root23*m*p < 0 for the whole history.  The stage flip then
+    hands the elastoplastic integrator a state that is interior by construction
+    and it never yields.  A non-zero m_Presidual breaks the collinearity --
+    s/(p_true + p_r) is NOT constant along the ray -- and the freeze lifts.
+
+    WHAT A USER HITS.  A single-element calibration deck that runs staged
+    gravity (stage 0) and then a proportional load ramp, with p_residual = 0,
+    gets SILENT PURE ELASTICITY: no warning, no non-convergence, a perfectly
+    plausible stress history, and no plastic strain anywhere in it.  This is not
+    an exotic configuration -- `NTUASand02` (Gorini) ships p_residual = 0 with
+    the identical alpha code, and is used for staged foundation problems.  Those
+    are safe: the freeze is a property of PROPORTIONAL decks, not of the
+    default, and a foundation problem's stress DIRECTION changes as the load
+    spreads, which is all it takes to break the collinearity.
+
+    QUALITATIVE ON PURPOSE.  An earlier draft of this check asserted the
+    residual yield-function value sits in 0.023-0.024 kPa.  That number tracks
+    `m`, the K/G ratio and the step count, so it would fail on any re-tuning of
+    the deck for reasons that have nothing to do with the mechanism.  What is
+    asserted instead is the mechanism's own two-sided signature, which is exact:
+    with the radial elastic leg the plastic strain is EXACTLY zero, and removing
+    that leg -- the only change -- makes it non-zero.
+
+    ALSO THE POSITIVE CONTROL for the `_OB_MARKER` guard in the two confined
+    tests.  Those assert the diagnostic is ABSENT; if it were reworded or
+    removed in C++ their assertions would pass vacuously for ever.  Here the
+    same marker is asserted PRESENT, 8 times, on the deck that is known to
+    trigger it.  If this half fails, the marker is stale -- fix the string, do
+    not relax the guards.
+
+    Cost: 0.08 s for both halves.
+    """
+    # --- (i) radial ramp + elastic leg + p_r = 0 -> exactly zero plastic strain
+    _build('LadrunoSANISAND', 10, _OPTS_PR0)
+    _elastic_leg(10)
+    _plastic_leg(10)
+    frozen = _plastic_strains()
+    assert all(v == 0.0 for v in frozen), (
+        'the p_r = 0 radial ramp accumulated plastic strain. That is a BETTER '
+        'outcome than the one characterised here -- if upstream changed the '
+        'alpha update at ManzariDafalias.cpp:974-977 the freeze is gone -- but '
+        'it invalidates the reasoning in this file about what the ramp deck '
+        'measures, so read it as a notification and re-derive, not as a '
+        'regression', frozen)
+
+    ob_after_ramp = capfd.readouterr().err
+
+    # --- (ii) the SAME deck with the elastic leg skipped -> it yields ---------
+    # The only change is that stage 1 is asserted before the first step, so the
+    # material never takes a stage-0 step and `alpha` is never re-pinned. If the
+    # zero above were caused by the deck being too gentle to yield rather than
+    # by the freeze, this half would be zero too.
+    _build('LadrunoSANISAND', 11, _OPTS_PR0)
+    ops.updateMaterialStage('-material', 11, '-stage', 1)
+    for step in range(_NTOT):
+        assert ops.analyze(1) == 0, f'no-elastic-leg step {step + 1} failed'
+    thawed = _plastic_strains()
+    mag = math.sqrt(sum(x * x for x in thawed))
+    assert mag >= _PLASTIC_FLOOR, (
+        f'with the stage-0 leg removed the same strain path still accumulated '
+        f'only |eps_pl| = {mag:.3e}. Then the zero above is not the alpha '
+        'freeze -- the deck simply never reaches yield -- and the explanation '
+        'this file gives for moving tests onto the confined deck is wrong',
+        thawed)
+
+    # --- the positive control for the confined decks' zero-M_c-inflation guard
+    n_ob = ob_after_ramp.count(_OB_MARKER)
+    assert n_ob > 0, (
+        'the ramp deck did not emit %r at its stage switch. Measured on this '
+        'build it fires 8 times, once per Gauss point, raising M_c from 1.3309 '
+        'to 2.3514 on this p_r = 0 leg. If the diagnostic was reworded or '
+        'removed, the "not in err" guards in the confined tests are now vacuous '
+        'and the marker must be updated there too' % _OB_MARKER,
+        ob_after_ramp)
 
 
 # ===========================================================================
@@ -541,11 +1144,30 @@ def test_revert_to_start_preserves_settings():
     warning.
 
     WHY THIS DECK WOULD NOTICE (a test that would pass with or without the
-    override is worthless): the strain path ends at p ~ 13.7 kPa, and the
+    override is worthless): the strain path ends at p ~ 13.6 kPa, and the
     identical path run with p_r = 1.01 instead of 0 gives a committed stress
     5.4e-2 (5.4 %) away -- see the `_reldiff(first, reverted)` assertion at the
     bottom, which measures that gap in this very test rather than trusting it.
     The pass/fail margin is therefore ~5e-2 against a 1e-12 tolerance.
+
+    STAYS ON `_drive`, AND WHAT THAT GAP ACTUALLY IS.  Measured, this deck's
+    p_r = 0 leg never yields -- |eps_pl| is identically 0.0, the radial freeze
+    characterised by `test_radial_ramp_with_pr0_never_yields` -- and both legs
+    enter stage 1 outside the bounding surface, so `Elastic2Plastic` raises M_c
+    (1.3309 -> 2.3514 on the p_r = 0 leg, 1.99878 on the p_r = 1.01 one).  The
+    5.4e-2 gap is therefore a plastic-vs-elastic distance measured on a soil
+    with an inflated friction constant.
+
+    That is FINE HERE, and the reason is that this test does not interpret the
+    gap.  It needs one thing from it: that the two settings are DISTINGUISHABLE,
+    so that "the same history replayed after reset() gives the same answer"
+    is a claim with content.  Any reproducible difference serves.  What the test
+    actually gates is `revertToStart` -- a mechanism, not a regime -- via the
+    1e-12 equality above, and that comparison is between two runs of the
+    identical deck, so the M_c repair cancels exactly.  Moving it to the
+    confine-first deck would cost ~5 s and would additionally have to reason
+    about `plasticstrains` reading an offset after a `reset()` (see
+    `_plastic_strains`); it would buy nothing.
 
     The reset is taken MID-LIFE, after a full analysis, which is the case the
     override exists for.  The material stage must be re-asserted after the
@@ -637,6 +1259,19 @@ def test_db_roundtrip_carries_presidual():
     because `Vector(97)` has no slot for `m_Presidual` and `recvSelf` never
     re-runs `initialize()`.  If that assertion ever fails, upstream fixed the
     wire format -- read it as a notification, not as a regression here.
+
+    STAYS ON `_drive` for the same reason as test 3: this tests the WIRE, and
+    every assertion in it is either an equality between two runs of the identical
+    deck (where the deck's quirks cancel exactly) or a "these two are
+    distinguishable" non-vacuity check, which any reproducible difference
+    satisfies.  The reader should still know what that difference is on this
+    deck: the p_r = 0 leg never yields (|eps_pl| identically 0.0, the radial
+    freeze), and both legs run with M_c inflated by `Elastic2Plastic`.  So
+    "the restored material finished on the p_r = 0 answer" means it finished on
+    the ELASTIC answer -- which is a perfectly sharp thing to land on, and is
+    arguably a harsher target than a nearby plastic one, but it is not evidence
+    about how p_residual behaves in the plastic regime.  That evidence lives in
+    `test_vanilla_equivalence_is_not_vacuous` and test 5.
     """
     ref_pr0 = _drive('LadrunoSANISAND', 20, _OPTS_PR0)
     ref_vanilla = _drive('LadrunoSANISAND', 21, _OPTS_VANILLA)
@@ -956,20 +1591,31 @@ def test_presidual_is_the_low_p_defect():
 #  Gauss-point strain is exactly the prescribed uniform field, and no Newton
 #  tolerance enters the answer.  No compromise was needed for 2D.
 #
-#  Strain path: the plane-strain analogue of the cube's -- lateral EXTENSION
-#  0.25*a in x, axial COMPRESSION a in y, with eps_zz = 0 by the kinematics.
-#  Same _N_EL elastic steps, same stage flip, same _N_PL elastoplastic steps.
+#  Strain path: `_build_ps` is the RAMP twin -- lateral EXTENSION 0.25*a in x,
+#  axial COMPRESSION a in y, eps_zz = 0 by the kinematics, _N_EL elastic steps
+#  then _N_PL elastoplastic ones.  `_build_ps_confined` (below) is the
+#  CONFINE-FIRST twin and is what the test now uses; `_build_ps` is kept because
+#  it is the deck the previous revision measured and the two are compared here.
 #
-#  MEASURED (dev box, this build; `eleResponse(1,'material',1,'stress')`,
-#  i.e. sigma_xx, sigma_yy, sigma_xy at the element face):
+#  MEASURED ON THE RAMP TWIN `_drive_ps` (dev box, this build;
+#  `eleResponse(1,'material',1,'stress')` = sigma_xx, sigma_yy, sigma_xy at the
+#  element face):
 #
 #     leg                                sigma_xx    sigma_yy   sigma_yy-sigma_xx
 #     compressive, p_r = 1.01           -10.8022    -41.9341        -31.1318
 #     compressive, p_r = 0               -9.9742    -43.0331        -33.0589
 #     MIRRORED (== the +1.0 mutant)      -0.9172     -0.7306         +0.1866
 #
-#  reldiff(p_r = 1.01, p_r = 0) = 3.178e-2 -- the settings-reach-the-Gauss-point
-#  assertion, 30x the 1e-3 floor and ten orders above the 1e-12 equivalence tol.
+#  reldiff(p_r = 1.01, p_r = 0) = 3.178e-2, and the mirror margin is +0.1866
+#  against -31.13 -- i.e. the mutant is separated from the correct answer by
+#  0.19 kPa of deviator, 0.6 % of the correct deck's own deviator.  The
+#  confined twin moves that margin to +19.157 against -21.643: 103x more
+#  deviator in absolute kPa, and 147x more relative to the correct deck's own.
+#  That, plus the fact that this deck's mirror leg spends its whole plastic
+#  history CLAMPED at the low-p floor (8 copies of "mean stress p = 0.63108 is
+#  below the floor m_Pmin + m_Presidual = 1.0201; CLAMPING ..."), is why the
+#  test moved.  Both numbers are recorded because a fingerprint whose margin
+#  used to be 0.6 % is worth remembering as such.
 
 _PS_TOL_SIGMA = 1.0e-9      # absolute kPa floor: "distinctly", not "by a hair"
 
@@ -1011,10 +1657,122 @@ def _drive_ps(tag, opts=(), mirror=False):
     return _stress()
 
 
-def test_planestrain_lane_carries_the_settings():
+# ---------------------------------------------------------------------------
+#  The plane-strain twin of the CONFINE-FIRST driver.  USED by
+#  `test_planestrain_lane_carries_the_settings`.
+#
+#  ONE HONEST DIFFERENCE FROM THE 3D DECK, and it cannot be designed away:
+#  plane strain pins eps_zz == 0, so an isotropic IN-PLANE strain is NOT an
+#  isotropic stress.  With eps = (-e, -e, 0) the elastic answer carries a
+#  deviator, and the stage-switch ratio works out to G/K = 3*(1-2*nu)/
+#  (2*(1+nu)) = 0.4276 at nu = 0.3129 -- not 0 as it is in 3D.  That is an
+#  ALGEBRAIC estimate, not a measurement: the plane-strain 'stress' response
+#  has no sigma_zz in it, so the ratio cannot be read back off the deck.  What
+#  IS measured is the consequence that matters -- ZERO "Outside Bounding"
+#  events, i.e. `Elastic2Plastic` found nothing to repair and M_c was left at
+#  its calibrated 1.3309.  "alpha == 0 exactly" is not available on this lane
+#  and is not claimed.
+#
+#  For reference the 3D deck's flip state IS measured, and is exact:
+#  sigma = (-1.7175383, -1.7175383, -1.7175383, 0, ~1e-17, ~4e-18), so
+#  ||dev(sigma)|| = 1.8e-17 and the ratio `Elastic2Plastic` computes is
+#  1.1e-17 -- zero to machine precision, against M_c = 1.3309.
+#
+#  Constant volume in plane strain means d_eps_xx = -d_eps_yy, i.e.
+#  `_C_LAT_PS = 1.0` where the 3D deck uses 0.5.
+#
+#  THE MIRROR LEG ON THIS DECK, measured, because it is NOT simply the correct
+#  deck with signs flipped and the difference has to be stated.  `mirror=True`
+#  negates the prescribed path, so at the FACE the confinement stage becomes
+#  hydrostatic in-plane TENSION: sigma = (+1.3082, +1.3082, 0) after the confine
+#  leg, exactly minus the correct leg's (-1.3082, -1.3082, 0).  Internally that
+#  is extension, so at the stage flip `Elastic2Plastic` takes its FIRST branch
+#  (GetTrace(mSigma) < 3*m_Pmin) and RESETS the state: measured, the face stress
+#  immediately after `updateMaterialStage ... 1` is (-0.0101, -0.0101, 0), i.e.
+#  m_Pmin*I, with mAlpha zeroed.  The mirror leg therefore begins its deviatoric
+#  stage at the p_min floor, not at 1.72 kPa of confinement.
+#
+#  THAT DOES NOT WEAKEN THE FINGERPRINT, and the reason is worth being exact
+#  about.  The claim is never "the mirror leg is a physically sensible run"; it
+#  is "the mirror leg's INTERNAL history is bit-for-bit the +1.0 mutant's on the
+#  correct path".  That identity is purely a statement about the wrapper's two
+#  negations and about the Gauss-point strain being exactly the prescribed one
+#  (zero free DOFs), both of which hold here exactly as on `_build_ps`.  So
+#  whatever branch the internal path takes -- including this reset -- is
+#  precisely the branch the mutant would take, and exhibiting it is the point.
+#  What HAD to be checked, and was: the mirror leg still CONVERGES on this deck
+#  (all 10 + 40 steps return 0) and still reverses the deviator.
+#
+#  MEASURED (dev box, 2026-08-27, this build):
+#     sigma after confinement    (-1.3082019, -1.3082019, 0)  isotropic in plane
+#     final, p_r = 1.01          (-1.1484102, -22.790964, 0)  |eps_pl| 6.595e-3
+#     final, p_r = 0             (-2.1092998, -25.089619, 0)  |eps_pl| 6.609e-3
+#     final, p_r = 0.5           (-1.6334022, -23.900908, 0)  |eps_pl| 6.602e-3
+#     reldiff(1.01, 0)            1.091772e-01  (on `_drive_ps`: 3.178e-2)
+#     reldiff(1.01, 0.5)          5.307990e-02
+#     "Outside Bounding"          0 on all four legs, mirror included
+#     low-p CLAMP warnings        0 on all four legs (on `_drive_ps` the mirror
+#                                 leg fires 8)
+#     mirrored (the +1.0 mutant)  (-20.018304, -0.8613164, 0), deviator +19.157
+#                                 vs -21.643 on the correct deck.  On
+#                                 `_drive_ps` those were +0.187 vs -31.132.
+#                                 The mutant/correct separation, measured as
+#                                 |dev_mutant| / |dev_correct|, goes from 0.006
+#                                 to 0.885 -- a factor of 147.
+#     wall time                   ~0.6-1.3 s/leg  (on `_drive_ps`: ~0.01 s/leg)
+# ---------------------------------------------------------------------------
+
+def _build_ps_confined(tag, opts=(), mirror=False):
+    sgn = -1.0 if mirror else 1.0
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.node(j + 1, x, y)
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('quad', 1, 1, 2, 3, 4, 1.0, 'PlaneStrain', tag)
+    for j, (x, y) in enumerate(_XY):         # rollers on the two negative edges
+        ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+    s_lat, s_ax = _c_series(lat=_C_LAT_PS)
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)               # x: confine then EXTEND
+    for j, (x, y) in enumerate(_XY):
+        if x == 1.:
+            ops.sp(j + 1, 1, sgn * -_C_E_CONF)
+    ops.pattern('Plain', 2, 2)               # y: confine then COMPRESS further
+    for j, (x, y) in enumerate(_XY):
+        if y == 1.:
+            ops.sp(j + 1, 2, sgn * -_C_E_CONF)
+    _analysis_confined()
+
+
+def _drive_ps_confined(tag, opts=(), mirror=False):
+    _build_ps_confined(tag, opts, mirror)
+    _confine_leg(tag)
+    _deviator_leg(tag)
+    return _stress()
+
+
+def test_planestrain_lane_carries_the_settings(capfd):
     """The plane-strain lane must keep the sign convention AND the constants.
 
-    TWO silent reverts, one deck.
+    TWO silent reverts, one deck -- now the CONFINE-FIRST deck
+    (`_drive_ps_confined`).  Its previous revision ran on `_drive_ps`, the ramp
+    twin, and both halves got measurably weaker for it:
+
+      * the mutant margin.  The sign fingerprint separates the correct answer
+        from the mutant's by the DEVIATOR.  On the ramp deck those were -31.132
+        and +0.187 -- the mutant's deviator was 0.6 % of the correct one, i.e.
+        the discriminating quantity was a rounding error away from zero, and it
+        was small because that deck's mirror leg spends its whole plastic
+        history CLAMPED at the low-p floor (8 copies of the "mean stress p =
+        0.63108 is below the floor ...; CLAMPING" warning).  On the confined
+        deck they are -21.643 and +19.157: 88.5 %, a factor of 147, and no
+        clamp warnings on any leg.
+      * the settings-reach comparison, 3.178e-2 -> 1.091772e-01.
+
+    The structure is UNCHANGED -- same two halves, same order, same reasoning.
+    Only the deck under them moved.
 
     (A) THE SIGN CONVENTION.  `LadrunoSANISANDPlaneStrain::setTrialStrain` is
     ported byte-for-byte from `ManzariDafaliasPlaneStrain::setTrialStrain`
@@ -1039,16 +1797,32 @@ def test_planestrain_lane_carries_the_settings():
     does not merely claim the flip would be caught -- it exhibits the flip's
     own output and shows the assertion rejecting it.
 
-    WHY A BARE "the stress is negative" ASSERTION IS NOT ENOUGH, measured: the
-    mutant returns sigma = (-0.9172, -0.7306, 0), which is STILL compressive at
-    the face -- fed extension, the sand loses its confinement, `p` pins near
-    `m_Pmin + m_Presidual` and the face sees a small residual compression rather
-    than tension.  So the sign of sigma alone does not separate the two.  What
-    does separate them is the DEVIATOR: under the correct convention the
-    direction that was compressed carries the GREATER compression
-    (sigma_yy - sigma_xx = -31.13), while the mutant reverses that ordering
-    (+0.1866) because internally it compressed x and extended y.  Both
-    statements are asserted; the deviatoric one is the discriminating half.
+    THE ARGUMENT SURVIVES THE MOVE TO THE CONFINED DECK, and it had to be
+    checked rather than assumed, because mirroring a CONFINEMENT stage means
+    driving hydrostatic in-plane TENSION at the face.  Measured: it does.  The
+    identity above depends only on the wrapper's two negations and on the
+    Gauss-point strain being exactly the prescribed one, and both hold on
+    `_build_ps_confined` exactly as on `_build_ps`.  What the tension does is
+    send the internal state into `Elastic2Plastic`'s low-p branch at the stage
+    flip, which resets the stress to m_Pmin*I -- measured, face sigma goes
+    (+1.3082, +1.3082, 0) -> (-0.0101, -0.0101, 0) across the flip.  That is not
+    a defect in the argument: it is a branch the MUTANT would also take, on the
+    same internal history, so exhibiting it is exactly what this leg is for.
+    The two things that could have broken -- convergence and the deviator
+    reversal -- were both verified: all 10 + 40 steps return 0, and the deviator
+    comes back +19.157.
+
+    WHY A BARE "the stress is negative" ASSERTION IS NOT ENOUGH, measured: on
+    the ramp deck the mutant returned sigma = (-0.9172, -0.7306, 0) and on the
+    confined deck it returns (-20.0183, -0.8613, 0) -- STILL compressive at the
+    face in both cases.  Fed extension, the sand loses its confinement, `p` pins
+    near `m_Pmin + m_Presidual`, and the face sees compression rather than
+    tension.  So the sign of sigma alone does not separate the two.  What does
+    separate them is the DEVIATOR: under the correct convention the direction
+    that was compressed carries the GREATER compression (sigma_yy - sigma_xx =
+    -21.643 here), while the mutant reverses that ordering (+19.157) because
+    internally it compressed x and extended y.  Both statements are asserted;
+    the deviatoric one is the discriminating half.
 
     (B) THE CONSTANTS REACHING THE GAUSS POINT.  `LadrunoSANISAND::getCopy(const
     char*)` exists only because the base version hardcodes
@@ -1058,11 +1832,20 @@ def test_planestrain_lane_carries_the_settings():
     cannot catch, because `echoLadrunoConstants` is class-tag-guarded and
     Gauss-point copies deliberately stay quiet.  So the same deck is run at
     `-Presidual` 1.01 and at 0 with `-Pmin` PINNED in both (ADR 86 risk 4, one
-    variable), and the two answers must differ materially: measured 3.18e-2.
+    variable), and the two answers must differ materially: measured 1.091772e-01.
+
+    GUARDS, as on the 3D confined test: zero `Elastic2Plastic` M_c inflation
+    (measured 0 on all three legs run here, mirror included), and |eps_pl| above
+    the floor on every leg (measured 6.595e-03 / 6.609e-03 / 6.258e-03), so this
+    test can never regress into comparing an elastic leg either.
+
+    Measured wall time under pytest: 3.05 s in a full-file run, 4.10 s alone.
     """
     # --- (B) the settings reach the plane-strain Gauss points ----------------
-    ps_vanilla = _drive_ps(40, _OPTS_VANILLA)
-    ps_pr0 = _drive_ps(41, _OPTS_PR0)
+    ps_vanilla = _drive_ps_confined(40, _OPTS_VANILLA)
+    eps_vanilla = _plastic_strains()
+    ps_pr0 = _drive_ps_confined(41, _OPTS_PR0)
+    eps_pr0 = _plastic_strains()
 
     rel = _reldiff(ps_vanilla, ps_pr0)
     assert rel >= _SENSITIVITY_FLOOR, (
@@ -1091,13 +1874,14 @@ def test_planestrain_lane_carries_the_settings():
     dev = syy - sxx
     assert dev < -_PS_TOL_SIGMA, (
         f'sigma_yy - sigma_xx = {dev:+.4f} >= 0: the axis driven in COMPRESSION '
-        '(y, -3e-4) is not the one carrying the greater compression, so the '
-        'strain reached the model with its sign inverted -- ADR 86 sec.4.2',
+        '(y) is not the one carrying the greater compression, so the strain '
+        'reached the model with its sign inverted -- ADR 86 sec.4.2',
         ps_vanilla)
 
     # ... and prove that assertion had something to catch, by running the deck
     # whose Gauss-point history is bit-identical to the +1.0 mutant's.
-    mutant = _drive_ps(42, _OPTS_VANILLA, mirror=True)
+    mutant = _drive_ps_confined(42, _OPTS_VANILLA, mirror=True)
+    eps_mutant = _plastic_strains()
     dev_mutant = mutant[1] - mutant[0]
     assert dev_mutant > _PS_TOL_SIGMA, (
         'the mirrored deck -- which reproduces exactly what a +1.0 sign flip in '
@@ -1109,6 +1893,22 @@ def test_planestrain_lane_carries_the_settings():
         'the correct and mirrored decks agree on the sign of the stress '
         'deviator, so the sign convention is not observable on this path',
         ps_vanilla, mutant)
+
+    # --- the same two guards the 3D confined test carries --------------------
+    err = capfd.readouterr().err
+    assert _OB_MARKER not in err, (
+        'a confined plane-strain leg fired the Elastic2Plastic M_c repair, so '
+        'the numbers above were measured on a soil whose friction constant was '
+        'silently raised above the calibrated %g' % _PARAMS[3], err)
+
+    for name, eps in (('p_r = 1.01', eps_vanilla), ('p_r = 0', eps_pr0),
+                      ('mirror', eps_mutant)):
+        mag = math.sqrt(sum(x * x for x in eps))
+        assert mag >= _PLASTIC_FLOOR, (
+            f'the plane-strain {name} leg accumulated |eps_pl| = {mag:.3e}, '
+            f'below the {_PLASTIC_FLOOR:g} floor -- it did not meaningfully '
+            'yield, so the comparisons above are not between two plastic runs',
+            eps)
 
 
 # ===========================================================================

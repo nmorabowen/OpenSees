@@ -145,6 +145,8 @@ rather than about a build hash.
 | **D5b** | The sigmoid's **unit dependence is fixed in vanilla**, at all four sites, in **PR-2** — *not* in the subclass, and not deferred. It is a **no-op** in the calibrated units. §7.2.1 | Accepted, amended 2026-08-26 |
 | **D6** | The `m_e_init` elastic modulus is **not** corrected in v1 — it moves a calibrated quantity (§7.3) | Accepted |
 | **D7** | Behaviour-changing items (`mTolR`, the interpolant) go in PR-2, each with a ledger row and its own commit | Accepted |
+| **D8** | **We do NOT upstream these fixes ourselves.** The interpolant, the `D_factor` units repair and the clamp/`getState` corrections are all genuinely upstreamable, and holding them is a permanent rebase liability (that is what [[LEDGER_vanilla_files]] IS). We carry them anyway: **Prof. Gorini is to be informed, and the decision whether an upstream PR is worth making is his.** Do not re-propose upstreaming as a Ladruno action item — it has been considered and declined at the fork level. | Accepted 2026-08-27 |
+| **D9** | **Vanilla `ManzariDafalias.cpp` may be edited for genuine ERRORS**, superseding D3's "vanilla is not edited" (which was a scoping device for PR-1, not an architecture). The test is **error vs opinion**: an error is repaired in vanilla (everyone should get it); an *opinion* — a modelling choice such as the `alpha` re-set, `Elastic2Plastic`'s `M_c` repair, or D5a's sigmoid shape — goes behind a **flag seam** (default = vanilla, bit-identical) or waits for the fork decision in §8. A calibration-moving error (§7.3's `m_e_init`) takes the flag seam too, because fixing it silently invalidates fits made against the old form. | Accepted 2026-08-27 |
 
 ## How
 
