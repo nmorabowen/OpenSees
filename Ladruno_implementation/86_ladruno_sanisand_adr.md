@@ -145,6 +145,8 @@ rather than about a build hash.
 | **D5b** | The sigmoid's **unit dependence is fixed in vanilla**, at all four sites, in **PR-2** — *not* in the subclass, and not deferred. It is a **no-op** in the calibrated units. §7.2.1 | Accepted, amended 2026-08-26 |
 | **D6** | The `m_e_init` elastic modulus is **not** corrected in v1 — it moves a calibrated quantity (§7.3) | Accepted |
 | **D7** | Behaviour-changing items (`mTolR`, the interpolant) go in PR-2, each with a ledger row and its own commit | Accepted |
+| **D8** | **We do NOT upstream these fixes ourselves.** The interpolant, the `D_factor` units repair and the clamp/`getState` corrections are all genuinely upstreamable, and holding them is a permanent rebase liability (that is what [[LEDGER_vanilla_files]] IS). We carry them anyway: **Prof. Gorini is to be informed, and the decision whether an upstream PR is worth making is his.** Do not re-propose upstreaming as a Ladruno action item — it has been considered and declined at the fork level. | Accepted 2026-08-27 |
+| **D9** | **Vanilla `ManzariDafalias.cpp` may be edited for genuine ERRORS**, superseding D3's "vanilla is not edited" (which was a scoping device for PR-1, not an architecture). The test is **error vs opinion**: an error is repaired in vanilla (everyone should get it); an *opinion* — a modelling choice such as the `alpha` re-set, `Elastic2Plastic`'s `M_c` repair, or D5a's sigmoid shape — goes behind a **flag seam** (default = vanilla, bit-identical) or waits for the fork decision in §8. A calibration-moving error (§7.3's `m_e_init`) takes the flag seam too, because fixing it silently invalidates fits made against the old form. | Accepted 2026-08-27 |
 
 ## How
 
@@ -355,7 +357,7 @@ nb 3.5      A0 0.05     nd 5.75         z_max 12.5   cz 1100.0 Rho 2.0
 | PR-1 (new class) | **None** — vanilla untouched | Ledger, banner |
 | PR-2 `mTolR` seam | None (flag defaults false; vanilla bit-identical). Migrated decks asking for tight `TolR` on scheme 1 start **getting** it — slower, more accurate | Echo prints the honoured tolerance |
 | PR-2 clamp warning | Diagnostics only | PR text |
-| PR-2 interpolant fix | **Yes** — all vanilla ModifiedEuler decks move ~0.012 % on `M^b`. Own commit for bisection | `LEDGER_vanilla_files` row |
+| PR-2 interpolant fix | **Yes**, but smaller than this row originally claimed and confined to ONE of three sites. MEASURED in PR-2: committed stress moves **2.8e-6 relative** on the G1 deck, and on this ADR's own instrument at `p0 = 1.01 kPa` the `M^b` departure moves **+18.1297 % -> +18.1258 %** (0.004 percentage points). The row's original "~0.012 % on `M^b`" was never reproduced. **`RungeKutta4` does not move; `RungeKutta45` DOES.** The original claim that both were inert was REFUTED by an adversarial pre-merge review and independently re-verified: RK4's loop reads a separate `CurVoidRatio` (7 in-loop reads, 0 of `NextVoidRatio`), so there the bad interpolant only corrupted the RETURNED void ratio -- but **RK45's loop reads `NextVoidRatio` at all 11 in-loop `GetStateDependent`/`GetElasticModuli` sites and `CurVoidRatio` at none**, so RK45 is a genuine behaviour change. Measured by A/B rebuild on a NON-isochoric drained triaxial: scheme 1 and scheme 3 bit-identical, **scheme 45 reldiff 6.33e-3** (sigma_zz -1204.82 vs -1209.38 kPa). PR-2's own measurement reported zero because the confine-first test deck's deviator leg is **exactly isochoric** (trace(d_eps) = 0) and the two interpolant anchors differ by exactly trace(d_eps) -- true on that deck, falsely generalised. Own commit for bisection | `LEDGER_vanilla_files` row |
 | `-Pmin` default `1e-3` vs vanilla `1e-4` | New class only, but it moves the clamp trigger `p < m_Pmin + m_Presidual` | Echo; A/B protocols must pin `-Pmin` |
 
 ## 7. Adjacent defects found in the same reading — NOT part of this ADR
@@ -402,7 +404,7 @@ input file, and OpenSees has no unit system to catch it.
 
 ### 7.2.1 The units fix is a no-op in kPa, and therefore belongs in vanilla (D5b)
 
-Rewrite as `D_factor = 1/(1 + exp(a - b*p/m_P_atm))` with **`b = 7.2713 * 101.0 = 734.401`**
+Rewrite as `D_factor = 1/(1 + exp(a - b*p/m_P_atm))` with **`b = 7.2713 * 101.0`  (write it as the **product**, not as the literal `734.401`: `734.401/101` is `7.27129703`, a 4.1e-7 relative shift, so the rounded literal silently breaks the no-op that is this fix's whole justification. `(7.2713*101.0)/101.0 == 7.2713` bit-for-bit.)**
 (`a` unchanged at 7.6349). Wherever `P_atm = 101.0` kPa this reproduces the shipped
 function **exactly** — `b*p/P_atm` *is* `7.2713*p` there — measured at 0.00 % change for
 every pressure in 0.2 … 5 kPa. It changes behaviour only for a deck that declared its

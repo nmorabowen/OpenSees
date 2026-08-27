@@ -158,6 +158,44 @@ class ManzariDafalias : public NDMaterial
 	char unsigned mTangType;// 0: Elastic Tangent, 1: Contiuum ElastoPlastic Tangent, 2: Consistent ElastoPlastic Tangent
 	bool    mUseElasticTan;
         bool    mStressCorrectionInUse;
+	// Ladruno (ADR-86 PR-2, D7): flag seam for ModifiedEuler's hardcoded error
+	// tolerance. ManzariDafalias::ModifiedEuler() opened with a bare `TolE = 1e-4`
+	// and ignored mTolR entirely, so a deck passing a tight TolR on IntScheme 1
+	// silently ran error control at 1e-4 (RungeKutta45 and SAniSandMS both honour
+	// mTolR). Defaults to false in EVERY ManzariDafalias constructor, which makes
+	// the seam expression reduce to exactly 1e-4 and vanilla bit-identical; only a
+	// derived constructor sets it true.
+	// NAMING: deliberately NOT `mHonorTolR` -- that name is already taken by
+	// LadrunoSANISAND's `int mHonorTolR`, the deck-level request. This is the
+	// base-side seam that request acts on; keeping the names distinct keeps the
+	// two greppable apart.
+	bool    mHonorTolRInME;
+	// Ladruno (ADR-86 PR-2, D9 + ADR sec.7.3): flag seam for the elastic shear
+	// modulus's void ratio. Dafalias & Manzari (2004) p.623 give
+	// G = G0*p_at*(2.97-e)^2/(1+e)*(p/p_at)^0.5 with `e` the CURRENT void ratio.
+	// All three ManzariDafalias::GetElasticModuli overloads use m_e_init, the
+	// INITIAL one, at six lines -- while the function is handed the current void
+	// ratio as parameter `en` and does not use it, the correct line sits commented
+	// out three lines above the first of them, `b0` in the same file uses the
+	// current `e`, and SAniSandMS uses `en`.
+	// THIS IS NOT SHIPPED AS A PLAIN BUGFIX, and that is deliberate: it moves a
+	// CALIBRATED quantity. The reporting project's G0 = 264.32 was fitted against
+	// the frozen m_e_init form, so correcting G without revisiting G0 would
+	// preserve one error by means of another. It therefore takes the flag seam
+	// (ADR sec.4.1), exactly like mHonorTolRInME above: false in EVERY
+	// ManzariDafalias constructor, read as `(mUseCurrentVoidRatioInG ? en :
+	// m_e_init)`, so the vanilla build selects the m_e_init operand verbatim and
+	// is bit-identical. This commit OPENS the seam only -- nothing in the subclass
+	// or the parser is wired to it yet.
+	// DO NOT "TIDY" THIS BY MAKING GetElasticModuli VIRTUAL. ManzariDafaliasRO
+	// (ManzariDafaliasRO.h:93-97) SHADOWS initialize() and two of these three
+	// overloads with identical signatures; promoting them would convert those
+	// shadows into overrides and start running Ramberg-Osgood elasticity inside
+	// every base integrator, silently changing every existing RO deck. Adding a
+	// data member, as here, is safe -- RO's own bodies compute
+	// Gmax = B*P_atm/(0.3+0.7*en*en)*sqrt(p/P_atm) and never mention m_e_init or
+	// this flag.
+	bool    mUseCurrentVoidRatioInG;
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	double	m_Pmin;			// Minimum allowable mean effective stress
     double  m_Presidual;    // small residual pressure (due to cohesion)

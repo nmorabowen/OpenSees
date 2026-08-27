@@ -192,10 +192,13 @@ OPS_LadrunoSANISAND(void)
                 // that claims to have done something it did not do is exactly the
                 // class of defect this ADR exists to fix.
                 opserr << "ERROR nDMaterial LadrunoSANISAND tag " << tag
-                       << ": -honorTolR " << honorTolR << " is NOT IMPLEMENTED in PR-1."
-                       << " The ModifiedEuler error-control seam is ADR 86 PR-2 (decision D7);"
-                       << " it needs a flag-seam line in ManzariDafalias.cpp, which PR-1 does"
-                       << " not touch. Use -honorTolR 0, or omit the flag." << endln;
+                       << ": -honorTolR " << honorTolR << " is NOT WIRED YET."
+                       << " ADR 86 PR-2 opened the base flag seam (ManzariDafalias mHonorTolRInME,"
+                       << " read in ModifiedEuler), but nothing sets it from this class or this"
+                       << " parser -- that wiring is PR-3. Accepting the flag now would claim an"
+                       << " error tolerance the integrator is not honouring, which is the exact"
+                       << " defect class ADR 86 exists to fix. Use -honorTolR 0, or omit the flag."
+                       << endln;
                 return 0;
             }
         }

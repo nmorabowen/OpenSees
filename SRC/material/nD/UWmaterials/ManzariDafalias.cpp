@@ -202,6 +202,15 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     // TIMs report item 7.
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
+    // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
+    mHonorTolRInME = false;
+
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off, so
+    // this class keeps the vanilla frozen m_e_init. See ManzariDafalias.h and the
+    // three GetElasticModuli overloads.
+    mUseCurrentVoidRatioInG = false;
+
     initialize();
 }
 
@@ -276,6 +285,15 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     // for the staged-gravity rationale. TIMs report item 7.
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
+    // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
+    mHonorTolRInME = false;
+
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off, so
+    // this class keeps the vanilla frozen m_e_init. See ManzariDafalias.h and the
+    // three GetElasticModuli overloads.
+    mUseCurrentVoidRatioInG = false;
+
     initialize();
 }
 
@@ -329,6 +347,13 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
+    mHonorTolRInME = false;
+
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off
+    // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
+    mUseCurrentVoidRatioInG = false;
+
     this->initialize();
 }
 
@@ -381,6 +406,13 @@ ManzariDafalias ::ManzariDafalias()
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
     
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
+    mHonorTolRInME = false;
+
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off
+    // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
+    mUseCurrentVoidRatioInG = false;
+
     this->initialize();
 }
 
@@ -1317,7 +1349,13 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
     Vector n(6), d(6), b(6), R(6), dDevStrain(6), r(6), dStrain(6), tmp0(6), tmp1(6), tmp2(6), tmp3(6);
     double Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0,A, B, C, D, p, Kp;
 
-    double T = 0.0, dT = 1.0, dT_min = 1e-6 , TolE = 1e-4;
+    // Ladruno (ADR-86 PR-2, D7): TolE was the bare literal 1e-4 here, so IntScheme 1
+    // ignored the user's TolR outright (RungeKutta45 below uses `TolE = mTolR`, and so
+    // does SAniSandMS). mHonorTolRInME is false in every ManzariDafalias constructor and
+    // is written nowhere in this class, so the conditional selects the 1e-4 operand
+    // verbatim -- no arithmetic, vanilla bit-identical. Only a derived constructor turns
+    // it on; nothing else in this function reads the flag.
+    double T = 0.0, dT = 1.0, dT_min = 1e-6 , TolE = mHonorTolRInME ? mTolR : 1e-4; // Ladruno
     
     Vector nStress(6), nAlpha(6), nFabric(6), ndPStrain(6);
     Vector dSigma1(6), dSigma2(6), dAlpha1(6), dAlpha2(6), dFabric1(6), dFabric2(6),
@@ -1341,16 +1379,72 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
     {
         if (debugFlag)
             opserr << "Tag = " << this->getTag() << " : I have a problem (p < 0) - This should not happen!!!" << endln;        
+        // Ladruno (ADR-86 PR-2): the clamp on the next line REBUILDS the stress, i.e. it
+        // silently changes the answer -- the returned point is set by m_Pmin, not by the
+        // constitutive model. The notice above has never printed for anybody: `debugFlag`
+        // is a `static const bool` defined `false` at :56, so it is a recompile-only
+        // switch. Warn for real, but THROTTLED. This site sits inside a `while (T < 1.0)`
+        // substep loop, inside a Gauss-point update, inside a Newton iteration, inside a
+        // load step, AND every Gauss point is its own material instance (getCopy(const
+        // char*) runs a full constructor per integration point), so neither "once per
+        // call" nor "once per instance" bounds the output -- a 50k-element mesh holds
+        // ~400k instances, and a per-instance echo of exactly this shape measured 83 MB
+        // of stderr during ADR-86 PR-1. The throttle is therefore a PROCESS-WIDE budget:
+        // the first 10 events print, then one suppression notice, then silence -- worst
+        // case 11 lines for a mesh of any size. Diagnostics only; no numerics change.
+        static int ladrunoClampWarnCount = 0;                               // Ladruno
+        if (ladrunoClampWarnCount < 10) {                                   // Ladruno
+            opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
+                   << this->getTag() << ": mean stress p = " << p
+                   << " is below the floor m_Pmin + m_Presidual = " << m_Pmin + m_Presidual
+                   << "; CLAMPING the stress to p = " << m_Pmin
+                   << " (deviator preserved). The result at this integration point is set "
+                   << "by the clamp, not by the model." << endln;
+            if (++ladrunoClampWarnCount == 10)                              // Ladruno
+                opserr << "WARNING ManzariDafalias: further ModifiedEuler() low-p clamp "
+                       << "warnings suppressed (budget 10 per process)." << endln;
+        }
         NextStress = GetDevPart(NextStress) + m_Pmin * mI1;
-		p = m_Pmin;
+        // Ladruno (ADR-86 PR-2): this was `p = m_Pmin;`, which CONTRADICTS the tensor
+        // the line above just wrote. Everywhere in ModifiedEuler `p` denotes
+        // `one3*GetTrace(sigma) + m_Presidual` (:1359 above, :1420, :1479, :1564 below),
+        // and the rebuilt NextStress has `one3*GetTrace(NextStress) == m_Pmin` exactly.
+        // The value consistent with that tensor is therefore `m_Pmin + m_Presidual`, not
+        // `m_Pmin`: at the vanilla defaults (m_Pmin = 1e-4*P_atm, m_Presidual = 1e-2*
+        // P_atm) that is 1.0201 vs 0.0101, a factor of 101. The site was also the family
+        // outlier -- Stress_Correction() writes `m_Pmin + m_Presidual` at its analogous
+        // clamp, and RungeKutta45() recomputes p from the rebuilt stress.
+        // THIS IS NUMERICALLY INERT, because the store is DEAD: `p` is a local, the
+        // `while (T < 1.0)` loop below is always entered (T == 0.0), and the first
+        // statement in it that touches `p` is the unconditional recompute at :1420 --
+        // nothing reads `p` in between. Verified by inspection of every line from here
+        // to that recompute, and measured (see the commit message). Repaired regardless:
+        // a dead wrong value is one inserted read away from being a live wrong value,
+        // and this block is exactly where a future diagnostic would be added.
+        // Written as a recompute rather than as the literal `m_Pmin + m_Presidual` so it
+        // cannot drift if the rebuild on the line above is ever changed.
+        p = one3 * GetTrace(NextStress) + m_Presidual;   // Ladruno (ADR-86 PR-2)
     }
     // Set aCep_Consistent to zero for substepping process
     aCep_Consistent.Zero();
 
     while (T < 1.0)
     {
-        // NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
-		tmp0 = dStrain; tmp0 *= T; tmp0 += NextStrain;
+        // Ladruno (ADR-86 PR-2): the substep interpolant started from the WRONG END.
+        // T sweeps 0->1 across the increment, so the void ratio at substep pseudo-
+        // time T must be evaluated at CurStrain + T*dStrain. Upstream evaluated at
+        // NextStrain + T*dStrain: at T=0 that is a full increment ahead of where the
+        // substep starts, and at T=1 it overshoots by one. The commented-out
+        // reference line carried the same error, so the later tmp0 rewrite faithfully
+        // preserved a typo rather than introducing one.
+        // The sibling UW models settle it: PM4Sand::ModifiedEuler and
+        // PM4Silt::ModifiedEuler use the SAME tmp0 idiom in the SAME loop and both
+        // start from CurStrain. Void ratio -> psi -> M^b, so this displaces the
+        // bounding surface. Same defect at RungeKutta4 and RungeKutta45 below; all
+        // three are fixed together (patching one replica and not its siblings is the
+        // trap ADR 86 section 7.2 documents for the D_factor sigmoid).
+        // NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));
+		tmp0 = dStrain; tmp0 *= T; tmp0 += CurStrain;   // Ladruno: was += NextStrain
 		NextVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(tmp0);
         
         // dVolStrain = dT * GetTrace(NextStrain - CurStrain);
@@ -1606,7 +1700,7 @@ void ManzariDafalias::RungeKutta4(const Vector& CurStress, const Vector& CurStra
 
     while (T < 1.0)
     {
-        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
+        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));   // Ladruno (ADR-86 PR-2): was NextStrain + T*(...) -- see the note in ModifiedEuler
         
         dVolStrain = dT * GetTrace(NextStrain - CurStrain);
         dDevStrain = dT * GetDevPart(NextStrain - CurStrain);
@@ -1809,6 +1903,23 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
     {
         if (debugFlag)
             opserr << "ManzariDafalias::RungeKutta45() - Tag = " << this->getTag() << " : I have a problem (p < 0) - This should not happen!!!" << endln;        
+        // Ladruno (ADR-86 PR-2): same silent clamp as in ModifiedEuler(), same
+        // debugFlag-only notice, same throttle (independent process-wide budget of 10,
+        // worst case 11 lines). See the long comment at the ModifiedEuler() site for the
+        // reasoning. Guard here is `p < m_Pmin` -- RungeKutta45() computes p WITHOUT
+        // m_Presidual, unlike ModifiedEuler(). Diagnostics only; no numerics change.
+        static int ladrunoClampWarnCountRK45 = 0;                           // Ladruno
+        if (ladrunoClampWarnCountRK45 < 10) {                               // Ladruno
+            opserr << "WARNING ManzariDafalias::RungeKutta45() - material tag "
+                   << this->getTag() << ": mean stress p = " << p
+                   << " is below the floor m_Pmin = " << m_Pmin
+                   << "; CLAMPING the stress to p = " << m_Pmin
+                   << " (deviator preserved). The result at this integration point is set "
+                   << "by the clamp, not by the model." << endln;
+            if (++ladrunoClampWarnCountRK45 == 10)                          // Ladruno
+                opserr << "WARNING ManzariDafalias: further RungeKutta45() low-p clamp "
+                       << "warnings suppressed (budget 10 per process)." << endln;
+        }
         NextStress = GetDevPart(NextStress) + m_Pmin * mI1;
         p = one3 * GetTrace(NextStress);
     }
@@ -1818,7 +1929,7 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
 
     while (T < 1.0)
     {
-        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
+        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));   // Ladruno (ADR-86 PR-2): was NextStrain + T*(...) -- see the note in ModifiedEuler
         
         dVolStrain = dT * GetTrace(NextStrain - CurStrain);
         dDevStrain = dT * GetDevPart(NextStrain - CurStrain);
@@ -3017,9 +3128,23 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -3832,9 +3957,23 @@ ManzariDafalias::NewtonSol_negP(const Vector &xo, const Vector &inVar, Vector& d
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -4297,9 +4436,23 @@ ManzariDafalias::GetJacobian(const Vector &x, const Vector &inVar)
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = (D_factor * dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -4560,10 +4713,22 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
         G = 1.5 * (1 - 2 * m_nu) / (1 + m_nu) * K;
     }
     */
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam, site 1
+    // of 3. Dafalias & Manzari (2004) p.623 make `e` in (2.97-e)^2/(1+e) the CURRENT
+    // void ratio -- which this function is handed as `en` and did not use; note the
+    // commented-out block just above already spells the correct form. m_e_init is the
+    // INITIAL one. Not corrected outright because it moves a CALIBRATED quantity
+    // (G0 = 264.32 was fitted against this frozen form), so it opens as a seam
+    // instead. mUseCurrentVoidRatioInG is false in all four ManzariDafalias
+    // constructors and written nowhere in this class, so `eG` binds to m_e_init and
+    // the expressions below are the vanilla ones character for character.
+    // A reference, not a copy: the conditional's operands are both double lvalues, so
+    // eG names m_e_init itself -- there is no conversion and no rounding step.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
@@ -4575,10 +4740,15 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     double pn = one3 * GetTrace(sigma);
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
+    // long note at the first GetElasticModuli overload above; all three overloads carry
+    // the identical seam so they cannot drift apart. Flag false in every constructor
+    // => eG binds to m_e_init and this is the vanilla expression verbatim.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
@@ -4590,10 +4760,15 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     double pn = one3 * GetTrace(sigma);
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
+    // long note at the first GetElasticModuli overload above; all three overloads carry
+    // the identical seam so they cannot drift apart. Flag false in every constructor
+    // => eG binds to m_e_init and this is the vanilla expression verbatim.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
@@ -4773,7 +4948,14 @@ ManzariDafalias::GetStateDependent(const Vector &stress, const Vector &alpha, co
     // Apply a factor to D so it doesn't go very big when p is small
     if (p < 0.05 * m_P_atm)
     {
-        D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+        // Ladruno (ADR-86 PR-2, D5b): fourth and last replica of the D_factor sigmoid --
+        // see the long note at the first Jacobian site for why the bare 7.2713 was a
+        // 1/stress constant and why b = 7.2713*101.0 over m_P_atm is an exact no-op at
+        // P_atm = 101 (kPa). `7.2713 * 101.0 / m_P_atm * p` groups left-to-right, so the
+        // constant folds to 734.4013, divides back to exactly 7.2713, and only then
+        // multiplies p. This site has no derivative of its own (GetStateDependent returns
+        // D, not dD/dsigma); the three Jacobian replicas carry it.
+        D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * 101.0 / m_P_atm * p)));
     } else {
         D_factor = 1.0;
     }
