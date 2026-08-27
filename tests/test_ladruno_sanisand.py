@@ -388,6 +388,32 @@ puts "LADRUNO-SANISAND-TCL-OK"
 """
 
 
+_TCL_INIT_MISSING = "Can't find a usable init.tcl"
+
+
+def _find_tcl_library():
+    """Locate a `tcl8.6` library directory containing `init.tcl`.
+
+    Mirrors the discovery idiom WORKFLOW_GOTCHAS.md sec.7 uses in the CI shell
+    (`find ~/.conan2 -name init.tcl -path '*/tcl8.6/*'`), but bounded: it only
+    descends into directories whose name hints at Tcl, so it does not walk the
+    whole conan cache.  Returns None if nothing is found.
+    """
+    roots = [os.path.join(os.path.expanduser('~'), '.conan2'),
+             os.path.join(_ROOT, 'build')]
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            if 'init.tcl' in filenames and 'tcl8.6' in dirpath.replace('\\', '/'):
+                return dirpath
+            # prune: only follow branches that can still lead to a tcl runtime
+            dirnames[:] = [d for d in dirnames
+                           if 'tcl' in d.lower() or d in
+                           ('p', 'b', 'lib', 'library', 'share', 'Release', 'res')]
+    return None
+
+
 def _opensees_exe():
     """Locate a classic-Tcl OpenSees binary.
 
@@ -419,16 +445,39 @@ def test_tcl_subprocess_smoke(tmp_path):
     """
     exe = _opensees_exe()
     if exe is None:
-        pytest.skip(f'no OpenSees executable in {_DIST_BIN}')
+        pytest.skip(f'no OpenSees executable in {_DIST_BIN} or build/Release')
 
     deck = tmp_path / 'sanisand_smoke.tcl'
     deck.write_text(_TCL_DECK.format(
         params=' '.join(repr(v) for v in _PARAMS),
         pr=_TCL_PRESIDUAL, pmin=_TCL_PMIN))
 
-    proc = subprocess.run([exe, str(deck)], cwd=str(tmp_path),
-                          capture_output=True, text=True, timeout=180)
-    out = proc.stdout + proc.stderr
+    def _run(env):
+        p = subprocess.run([exe, str(deck)], cwd=str(tmp_path), env=env,
+                           capture_output=True, text=True, timeout=180)
+        return p, p.stdout + p.stderr
+
+    proc, out = _run(None)
+
+    # WORKFLOW_GOTCHAS.md sec.7: on the CI runner this binary aborts Tcl
+    # initialization -- "Can't find a usable init.tcl" -- because TCL_LIBRARY is
+    # unset and the conan Tcl runtime is not on its search list.  Retry ONCE with
+    # a discovered TCL_LIBRARY rather than skipping: a skip here is what kept this
+    # gate silently disarmed on every CI run in the first place.  Retry-on-failure
+    # (not set-always) so a working environment is never perturbed.
+    if _TCL_INIT_MISSING in out:
+        tcl_lib = _find_tcl_library()
+        if tcl_lib is None:
+            pytest.skip(
+                'the Tcl runtime is missing for this binary: it cannot find '
+                'init.tcl and no tcl8.6 library dir was found in the conan '
+                'cache to point TCL_LIBRARY at. This is an environment gap, '
+                'not a defect in LadrunoSANISAND -- see '
+                'Ladruno_internal/WORKFLOW_GOTCHAS.md sec.7.')
+        env = dict(os.environ, TCL_LIBRARY=tcl_lib)
+        proc, out = _run(env)
+        assert _TCL_INIT_MISSING not in out, (
+            f'TCL_LIBRARY={tcl_lib} did not satisfy this binary', out)
 
     assert proc.returncode == 0, (
         f'OpenSees.exe exited {proc.returncode} on a 3-command LadrunoSANISAND '
