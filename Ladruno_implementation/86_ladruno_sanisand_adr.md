@@ -1,7 +1,7 @@
 ---
 title: LadrunoSANISAND — Manzari-Dafalias with settable, wired and echoed low-stress constants
 project: Ladruno
-status: ready-to-implement
+status: implemented (PR-1); PR-2 and PR-3 outstanding
 priority: high
 owner: nmora
 tags:
@@ -17,7 +17,7 @@ tags:
 
 # LadrunoSANISAND (`nDMaterial LadrunoSANISAND`)
 
-> **Design / ADR (pre-implementation).** A thin **subclass of `ManzariDafalias`** —
+> **ADR. PR-1 implemented 2026-08-26 — see the Log; §5 test 5 carries a correction box.** A thin **subclass of `ManzariDafalias`** —
 > ND classTags **33019 / 33020 / 33021** (3D and PlaneStrain wrappers) — whose only v1
 > difference is that the two low-stress constants `m_Presidual` and `m_Pmin`, currently
 > hardcoded in `initialize()`, become **optional constructor arguments, carried on the
@@ -239,8 +239,12 @@ First 18 positional args and the 5 optional ones are **identical to
 ```tcl
 nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm $m \
     $h0 $ch $nb $A0 $nd $z_max $cz $Rho <$IntScheme $TanType $JacoType $TolF $TolR> \
-    <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0|1>
+    <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0>
 ```
+
+> `-honorTolR` accepts **only `0`** in PR-1. The seam it would control is one line in
+> `ManzariDafalias.cpp:1320`, and PR-1 does not edit vanilla (D3/D7) — so `-honorTolR 1`
+> is a **hard parse error**, not a silent no-op. It becomes `0|1` when PR-2 lands the seam.
 
 ### 4.6 Registration — five sites, not one
 
@@ -438,7 +442,7 @@ Not fixed here because it moves a **calibrated** quantity — the reporting proj
 1. **An un-audited `initialize()` call site** restoring 1.01 kPa post-construction. Known
    sites are the four constructors (`:205`, `:279`, `:332`, `:384`) and `revertToStart`
    (`:472`). Grep for new ones on the PR checklist; test 3 is the tripwire.
-2. **Single-path registration** — four sites, two gates.
+2. **Single-path registration** — five sites (§4.6), two gates.
 3. **Static `mElastFlag`, inherited and not fixable by a subclass.** Constructing any
    Manzari-family material resets the stage flag for every instance in the process.
    Existing quirks-ledger rule (explicit `updateMaterialStage` per tag) still governs.

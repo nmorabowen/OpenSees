@@ -971,7 +971,7 @@ features:
     pr: null
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # NOT COVERED BY A PlaneStrain LEG. The battery is 3D-only (ndm=3 stdBrick); nothing in the repo drives this wrapper, and broker case 33021 is never exercised. Row kept so the G9 gate accounts for the tag, but read this as UNTESTED, not as coverage. Owed: a plane-strain leg asserting the {0,1,3} index map and the geotechnical sign flip. Surfaced by the ADR-86 PR-1 adversarial review (S6/F1), which caught this cell overclaiming.
+    pytest: tests/test_ladruno_sanisand.py   # NOT COVERED BY A PlaneStrain LEG. The battery is 3D-only (ndm=3 stdBrick); nothing in the repo drives this wrapper, and broker case 33021 is never exercised. Row kept so the G9 gate accounts for the tag, but read this as UNTESTED, not as coverage. Owed: a plane-strain leg asserting the {0,1,3} index map and the geotechnical sign flip. Surfaced by the ADR-86 PR-1 adversarial review, which caught this cell overclaiming; a later mutation campaign PROVED the gap by flipping the geotechnical sign convention in LadrunoSANISANDPlaneStrain::setTrialStrain -- the defect the ADR calls catastrophic-and-silent -- and watching the whole battery stay green.
     tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
     core_files:
       - SRC/classTags.h

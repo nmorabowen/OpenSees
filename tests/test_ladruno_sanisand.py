@@ -45,8 +45,7 @@ them is a general "does it run" smoke.
      message is observable only by whichever test in a session runs first,
      which is exactly how the p_residual defect stayed invisible).  Paired
      with ``test_tcl_subprocess_smoke``, which runs a 3-command deck through
-     ``dist/bin/OpenSees.exe``: registration in this fork is four sites and
-     two gates, and a feature wired only into openseespy fails in classic Tcl
+     ``OpenSees.exe``: registration in this fork is FIVE sites and two gates, and a feature wired only into openseespy fails in classic Tcl
      with an error that reads like a broken install.  That deck uses the
      fullest argument form (18 positional + 5 positional optionals + all three
      -flags) with a ``-Presidual`` no default can produce, so it also proves
@@ -101,6 +100,7 @@ marker costs 22 s -- that is a scoping call, not a technical obstacle.
 """
 import math
 import os
+import re
 import subprocess
 import tempfile
 
@@ -337,8 +337,12 @@ def test_echo_and_defaults(capfd):
     assert 'LadrunoSANISAND tag 1' in err, (
         'no per-construction echo at all -- a record that cannot state what it '
         'ran is exactly what the Print/echo overrides exist to prevent', err)
-    assert 'p_residual = 0' in err, (
-        'the default p_residual is not 0, or is not echoed', err)
+    # EXACT, not a substring prefix.  `'p_residual = 0' in err` also matches
+    # `p_residual = 0.101` and `p_residual = 0.0101`, so a copy-paste slip that
+    # echoed m_Pmin in m_Presidual's slot passed this assertion -- measured, by
+    # mutation, during the pre-merge adversarial review.
+    assert re.search(r'p_residual = 0(?![.\d])', err), (
+        'the default p_residual is not exactly 0, or is not echoed', err)
     assert '(default, cohesionless)' in err, err
     # 1e-3 * 101.0 = 0.101 kPa.  Asserted as the number AND as the rule, so a
     # change to either the default or the P_atm it is derived from is caught.
@@ -385,17 +389,29 @@ puts "LADRUNO-SANISAND-TCL-OK"
 
 
 def _opensees_exe():
-    for name in ('OpenSees.exe', 'OpenSees'):
-        cand = os.path.join(_DIST_BIN, name)
-        if os.path.isfile(cand):
-            return cand
+    """Locate a classic-Tcl OpenSees binary.
+
+    Searches the dev-box `dist/bin` layout AND the CI build tree.  The second
+    location is load-bearing: `.github/workflows/ladruno.yml` builds the
+    `OpenSees` target into `build/Release` and copies only `opensees.so` into
+    `tests/` -- it never creates `dist/bin`.  Looking only there made this test
+    skip on EVERY CI run, which silently disarmed the sole gate on the
+    classic-Tcl registration path (the fork's most common silent failure) and
+    the only exact assertion on the echoed p_residual/p_min values.  Found by
+    mutation testing during the pre-merge adversarial review.
+    """
+    for root in (_DIST_BIN, os.path.join(_ROOT, "build", "Release")):
+        for name in ('OpenSees.exe', 'OpenSees'):
+            cand = os.path.join(root, name)
+            if os.path.isfile(cand):
+                return cand
     return None
 
 
 def test_tcl_subprocess_smoke(tmp_path):
     """The classic-Tcl registration path must work too.
 
-    Registration in this fork is four sites and two gates; a material wired
+    Registration in this fork is FIVE sites and two gates; a material wired
     only into `SRC/interpreter/OpenSeesNDMaterialCommands.cpp` works in
     openseespy and fails in `OpenSees.exe` with an error that reads like a
     broken install.  Every other test in this file drives the openseespy gate
@@ -605,7 +621,14 @@ def test_db_roundtrip_mp_two_rank_smoke():
             'the 2-rank leg cannot run here. The serial FileDatastore round '
             'trip in test_db_roundtrip_carries_presidual covers the same '
             'sendSelf/recvSelf path.')
-    pytest.skip('MP build present but no LadrunoSANISAND MP driver is written yet')
+    # NOT self-arming: an MP build alone is not enough, a 2-rank driver deck
+    # still has to be written.  Stated plainly because an earlier draft of the
+    # PR text claimed this test would arm itself once an MP build appeared --
+    # it will not, and a coverage claim that waits on a file nobody has written
+    # is exactly the kind of overclaim this material exists to stop making.
+    pytest.skip('MP build present, but the 2-rank LadrunoSANISAND driver deck '
+                'has not been written -- this is a PLACEHOLDER, not a gate. '
+                'Writing it is owed work, tracked in the manifest row.')
 
 
 # ===========================================================================
@@ -630,18 +653,24 @@ def test_db_roundtrip_mp_two_rank_smoke():
 #  lateral faces carry constant nodal loads and the axial is driven by
 #  DisplacementControl.  Two consequences, both measured, both ugly:
 #
-#   * A displacement-norm convergence test on this material reports SUCCESS
-#     without equilibrium at loose tolerances -- at tol 1e-10 the same deck
-#     "converged" every step while running the elastic branch up to
-#     sigma_zz = 100 MPa at 5 % strain (eta = 3.0 against M^b = 0.67, i.e. the
-#     plastic integrator never engaged).  The tolerance below (1e-8) is the one
-#     at which the run reproduces ADR 86's table; do NOT loosen it.
+#   * A displacement-norm convergence test on this material CAN report
+#     SUCCESS without equilibrium -- observed during development on a
+#     stress-controlled variant of this deck, which "converged" every step
+#     while the plastic integrator never engaged.  That observation is why
+#     tests 1-4 use the zero-free-DOF cube (no Newton at all) instead of a
+#     load-driven stack.  CAVEAT, measured 2026-08-26 during the pre-merge
+#     adversarial review: the anecdote does NOT reproduce on the deck as
+#     shipped below -- at 1e-10 this deck FAILS at axial step 3, and at 1e-6 it
+#     completes with the correct +18.12 %.  So do not read the number 1e-8 as a
+#     cliff edge; it is simply the value these results were measured at, and
+#     the band in the assertions is what actually guards the answer.
 #   * Prescribing the axial with an `sp` added mid-analysis forces the node
 #     back to zero displacement at load factor 0 and destroys the step.
 #     DisplacementControl is used precisely to avoid that.
 #   * The p_r = 0 leg is markedly HARDER to converge than vanilla at this
-#     pressure -- it needs ~3x the steps (it fails at axial step 2 of 400 and
-#     completes at 1200).  That is not a defect in this class; it is what the
+#     pressure -- it needs ~3x the steps (it fails at axial step 1 of 400 and
+#     completes at 450; 1200 is used for margin -- the cliff was bracketed
+#     between 400 and 450 by sweep during the pre-merge review).  That is not a defect in this class; it is what the
 #     residual pressure was silently buying, and it is ADR 86 risk 6 in the
 #     flesh.  1200 steps is used for BOTH legs so the protocol is identical.
 #

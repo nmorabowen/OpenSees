@@ -546,7 +546,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 
 // ===========================================================================
 //  Print -- a record that cannot state what it ran is the thing this override
-//  exists to prevent (ADR 86 section 4.4, and D5 in section 4.5 / 7.2).
+//  exists to prevent (ADR 86 section 4.4, and D5a/D5b in section 7.2 / 7.2.1).
 // ===========================================================================
 void
 LadrunoSANISAND::Print(OPS_Stream &s, int flag)
