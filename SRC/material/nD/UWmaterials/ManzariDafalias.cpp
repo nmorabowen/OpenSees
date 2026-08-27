@@ -3079,9 +3079,23 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -3894,9 +3908,23 @@ ManzariDafalias::NewtonSol_negP(const Vector &xo, const Vector &inVar, Vector& d
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -4359,9 +4387,23 @@ ManzariDafalias::GetJacobian(const Vector &x, const Vector &inVar)
 
 	if (p < 0.05 * m_P_atm)
 	{
-		double be = 7.2713;
-		double temp1 = exp(7.6349 - 7.2713 * p);
-		double D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+		// Ladruno (ADR-86 PR-2, D5b): non-dimensionalise the D_factor dilatancy sigmoid.
+		// `7.2713` multiplied a RAW stress, so the bare literal silently carried units of
+		// 1/stress: at 1 kPa true confinement the factor is 0.410 in kPa, 1.000 in Pa
+		// (never fires) and 0.0005 in MPa (total suppression) -- three different materials
+		// from one input file, and OpenSees has no unit system to catch it. Rewritten as
+		// b/m_P_atm with b = 7.2713*101.0 it reproduces the shipped function EXACTLY
+		// wherever P_atm = 101 (kPa), the units it was calibrated in: (7.2713*101.0)/101.0
+		// == 7.2713 bit-for-bit in IEEE double. Keep the product spelled out -- the ROUNDED
+		// literal 734.401 divides back to 7.27129703, which is NOT bit-exact. `a` (7.6349)
+		// is dimensionless and unchanged. This block is one of FOUR replicas of the same
+		// sigmoid (three in the analytical Jacobian, one in GetStateDependent); all four
+		// move together or the consistent Jacobian stops linearising its own residual.
+		// `be` IS d(exponent)/dp, so the derivative on the dDOverdSigma line below picks
+		// the new coefficient up with no further edit: same symbol, now correctly scaled.
+		double be = 7.2713 * 101.0 / m_P_atm;
+		double temp1 = exp(7.6349 - be * p);
+		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
 		dDOverdSigma = (D_factor * dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;
@@ -4835,7 +4877,14 @@ ManzariDafalias::GetStateDependent(const Vector &stress, const Vector &alpha, co
     // Apply a factor to D so it doesn't go very big when p is small
     if (p < 0.05 * m_P_atm)
     {
-        D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * p)));
+        // Ladruno (ADR-86 PR-2, D5b): fourth and last replica of the D_factor sigmoid --
+        // see the long note at the first Jacobian site for why the bare 7.2713 was a
+        // 1/stress constant and why b = 7.2713*101.0 over m_P_atm is an exact no-op at
+        // P_atm = 101 (kPa). `7.2713 * 101.0 / m_P_atm * p` groups left-to-right, so the
+        // constant folds to 734.4013, divides back to exactly 7.2713, and only then
+        // multiplies p. This site has no derivative of its own (GetStateDependent returns
+        // D, not dD/dsigma); the three Jacobian replicas carry it.
+        D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * 101.0 / m_P_atm * p)));
     } else {
         D_factor = 1.0;
     }
