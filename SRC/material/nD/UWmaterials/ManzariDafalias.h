@@ -158,6 +158,18 @@ class ManzariDafalias : public NDMaterial
 	char unsigned mTangType;// 0: Elastic Tangent, 1: Contiuum ElastoPlastic Tangent, 2: Consistent ElastoPlastic Tangent
 	bool    mUseElasticTan;
         bool    mStressCorrectionInUse;
+	// Ladruno (ADR-86 PR-2, D7): flag seam for ModifiedEuler's hardcoded error
+	// tolerance. ManzariDafalias::ModifiedEuler() opened with a bare `TolE = 1e-4`
+	// and ignored mTolR entirely, so a deck passing a tight TolR on IntScheme 1
+	// silently ran error control at 1e-4 (RungeKutta45 and SAniSandMS both honour
+	// mTolR). Defaults to false in EVERY ManzariDafalias constructor, which makes
+	// the seam expression reduce to exactly 1e-4 and vanilla bit-identical; only a
+	// derived constructor sets it true.
+	// NAMING: deliberately NOT `mHonorTolR` -- that name is already taken by
+	// LadrunoSANISAND's `int mHonorTolR`, the deck-level request. This is the
+	// base-side seam that request acts on; keeping the names distinct keeps the
+	// two greppable apart.
+	bool    mHonorTolRInME;
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	double	m_Pmin;			// Minimum allowable mean effective stress
     double  m_Presidual;    // small residual pressure (due to cohesion)

@@ -202,6 +202,10 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     // TIMs report item 7.
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
+    // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
+    mHonorTolRInME = false;
+
     initialize();
 }
 
@@ -276,6 +280,10 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     // for the staged-gravity rationale. TIMs report item 7.
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
+    // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
+    mHonorTolRInME = false;
+
     initialize();
 }
 
@@ -329,6 +337,9 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     
     mElastFlag = 0;
 
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
+    mHonorTolRInME = false;
+
     this->initialize();
 }
 
@@ -381,6 +392,9 @@ ManzariDafalias ::ManzariDafalias()
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
     
+    // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
+    mHonorTolRInME = false;
+
     this->initialize();
 }
 
@@ -1317,7 +1331,13 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
     Vector n(6), d(6), b(6), R(6), dDevStrain(6), r(6), dStrain(6), tmp0(6), tmp1(6), tmp2(6), tmp3(6);
     double Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0,A, B, C, D, p, Kp;
 
-    double T = 0.0, dT = 1.0, dT_min = 1e-6 , TolE = 1e-4;
+    // Ladruno (ADR-86 PR-2, D7): TolE was the bare literal 1e-4 here, so IntScheme 1
+    // ignored the user's TolR outright (RungeKutta45 below uses `TolE = mTolR`, and so
+    // does SAniSandMS). mHonorTolRInME is false in every ManzariDafalias constructor and
+    // is written nowhere in this class, so the conditional selects the 1e-4 operand
+    // verbatim -- no arithmetic, vanilla bit-identical. Only a derived constructor turns
+    // it on; nothing else in this function reads the flag.
+    double T = 0.0, dT = 1.0, dT_min = 1e-6 , TolE = mHonorTolRInME ? mTolR : 1e-4; // Ladruno
     
     Vector nStress(6), nAlpha(6), nFabric(6), ndPStrain(6);
     Vector dSigma1(6), dSigma2(6), dAlpha1(6), dAlpha2(6), dFabric1(6), dFabric2(6),
