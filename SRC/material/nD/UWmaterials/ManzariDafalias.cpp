@@ -1361,6 +1361,31 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
     {
         if (debugFlag)
             opserr << "Tag = " << this->getTag() << " : I have a problem (p < 0) - This should not happen!!!" << endln;        
+        // Ladruno (ADR-86 PR-2): the clamp on the next line REBUILDS the stress, i.e. it
+        // silently changes the answer -- the returned point is set by m_Pmin, not by the
+        // constitutive model. The notice above has never printed for anybody: `debugFlag`
+        // is a `static const bool` defined `false` at :56, so it is a recompile-only
+        // switch. Warn for real, but THROTTLED. This site sits inside a `while (T < 1.0)`
+        // substep loop, inside a Gauss-point update, inside a Newton iteration, inside a
+        // load step, AND every Gauss point is its own material instance (getCopy(const
+        // char*) runs a full constructor per integration point), so neither "once per
+        // call" nor "once per instance" bounds the output -- a 50k-element mesh holds
+        // ~400k instances, and a per-instance echo of exactly this shape measured 83 MB
+        // of stderr during ADR-86 PR-1. The throttle is therefore a PROCESS-WIDE budget:
+        // the first 10 events print, then one suppression notice, then silence -- worst
+        // case 11 lines for a mesh of any size. Diagnostics only; no numerics change.
+        static int ladrunoClampWarnCount = 0;                               // Ladruno
+        if (ladrunoClampWarnCount < 10) {                                   // Ladruno
+            opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
+                   << this->getTag() << ": mean stress p = " << p
+                   << " is below the floor m_Pmin + m_Presidual = " << m_Pmin + m_Presidual
+                   << "; CLAMPING the stress to p = " << m_Pmin
+                   << " (deviator preserved). The result at this integration point is set "
+                   << "by the clamp, not by the model." << endln;
+            if (++ladrunoClampWarnCount == 10)                              // Ladruno
+                opserr << "WARNING ManzariDafalias: further ModifiedEuler() low-p clamp "
+                       << "warnings suppressed (budget 10 per process)." << endln;
+        }
         NextStress = GetDevPart(NextStress) + m_Pmin * mI1;
 		p = m_Pmin;
     }
@@ -1829,6 +1854,23 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
     {
         if (debugFlag)
             opserr << "ManzariDafalias::RungeKutta45() - Tag = " << this->getTag() << " : I have a problem (p < 0) - This should not happen!!!" << endln;        
+        // Ladruno (ADR-86 PR-2): same silent clamp as in ModifiedEuler(), same
+        // debugFlag-only notice, same throttle (independent process-wide budget of 10,
+        // worst case 11 lines). See the long comment at the ModifiedEuler() site for the
+        // reasoning. Guard here is `p < m_Pmin` -- RungeKutta45() computes p WITHOUT
+        // m_Presidual, unlike ModifiedEuler(). Diagnostics only; no numerics change.
+        static int ladrunoClampWarnCountRK45 = 0;                           // Ladruno
+        if (ladrunoClampWarnCountRK45 < 10) {                               // Ladruno
+            opserr << "WARNING ManzariDafalias::RungeKutta45() - material tag "
+                   << this->getTag() << ": mean stress p = " << p
+                   << " is below the floor m_Pmin = " << m_Pmin
+                   << "; CLAMPING the stress to p = " << m_Pmin
+                   << " (deviator preserved). The result at this integration point is set "
+                   << "by the clamp, not by the model." << endln;
+            if (++ladrunoClampWarnCountRK45 == 10)                          // Ladruno
+                opserr << "WARNING ManzariDafalias: further RungeKutta45() low-p clamp "
+                       << "warnings suppressed (budget 10 per process)." << endln;
+        }
         NextStress = GetDevPart(NextStress) + m_Pmin * mI1;
         p = one3 * GetTrace(NextStress);
     }
