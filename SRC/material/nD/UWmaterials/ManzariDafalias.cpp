@@ -1394,8 +1394,21 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 
     while (T < 1.0)
     {
-        // NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
-		tmp0 = dStrain; tmp0 *= T; tmp0 += NextStrain;
+        // Ladruno (ADR-86 PR-2): the substep interpolant started from the WRONG END.
+        // T sweeps 0->1 across the increment, so the void ratio at substep pseudo-
+        // time T must be evaluated at CurStrain + T*dStrain. Upstream evaluated at
+        // NextStrain + T*dStrain: at T=0 that is a full increment ahead of where the
+        // substep starts, and at T=1 it overshoots by one. The commented-out
+        // reference line carried the same error, so the later tmp0 rewrite faithfully
+        // preserved a typo rather than introducing one.
+        // The sibling UW models settle it: PM4Sand::ModifiedEuler and
+        // PM4Silt::ModifiedEuler use the SAME tmp0 idiom in the SAME loop and both
+        // start from CurStrain. Void ratio -> psi -> M^b, so this displaces the
+        // bounding surface. Same defect at RungeKutta4 and RungeKutta45 below; all
+        // three are fixed together (patching one replica and not its siblings is the
+        // trap ADR 86 section 7.2 documents for the D_factor sigmoid).
+        // NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));
+		tmp0 = dStrain; tmp0 *= T; tmp0 += CurStrain;   // Ladruno: was += NextStrain
 		NextVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(tmp0);
         
         // dVolStrain = dT * GetTrace(NextStrain - CurStrain);
@@ -1651,7 +1664,7 @@ void ManzariDafalias::RungeKutta4(const Vector& CurStress, const Vector& CurStra
 
     while (T < 1.0)
     {
-        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
+        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));   // Ladruno (ADR-86 PR-2): was NextStrain + T*(...) -- see the note in ModifiedEuler
         
         dVolStrain = dT * GetTrace(NextStrain - CurStrain);
         dDevStrain = dT * GetDevPart(NextStrain - CurStrain);
@@ -1880,7 +1893,7 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
 
     while (T < 1.0)
     {
-        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(NextStrain + T * (NextStrain - CurStrain));
+        NextVoidRatio     = m_e_init - (1 + m_e_init) * GetTrace(CurStrain + T * (NextStrain - CurStrain));   // Ladruno (ADR-86 PR-2): was NextStrain + T*(...) -- see the note in ModifiedEuler
         
         dVolStrain = dT * GetTrace(NextStrain - CurStrain);
         dDevStrain = dT * GetDevPart(NextStrain - CurStrain);

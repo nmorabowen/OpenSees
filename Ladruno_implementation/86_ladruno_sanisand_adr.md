@@ -355,7 +355,7 @@ nb 3.5      A0 0.05     nd 5.75         z_max 12.5   cz 1100.0 Rho 2.0
 | PR-1 (new class) | **None** — vanilla untouched | Ledger, banner |
 | PR-2 `mTolR` seam | None (flag defaults false; vanilla bit-identical). Migrated decks asking for tight `TolR` on scheme 1 start **getting** it — slower, more accurate | Echo prints the honoured tolerance |
 | PR-2 clamp warning | Diagnostics only | PR text |
-| PR-2 interpolant fix | **Yes** — all vanilla ModifiedEuler decks move ~0.012 % on `M^b`. Own commit for bisection | `LEDGER_vanilla_files` row |
+| PR-2 interpolant fix | **Yes**, but smaller than this row originally claimed and confined to ONE of three sites. MEASURED in PR-2: committed stress moves **2.8e-6 relative** on the G1 deck, and on this ADR's own instrument at `p0 = 1.01 kPa` the `M^b` departure moves **+18.1297 % -> +18.1258 %** (0.004 percentage points). The row's original "~0.012 % on `M^b`" was never reproduced. **`RungeKutta4`/`RungeKutta45` do not move at all**: their loops assign `NextVoidRatio` but read a separate `CurVoidRatio`, so the fix corrects the *returned* void ratio there without touching stress. Own commit for bisection | `LEDGER_vanilla_files` row |
 | `-Pmin` default `1e-3` vs vanilla `1e-4` | New class only, but it moves the clamp trigger `p < m_Pmin + m_Presidual` | Echo; A/B protocols must pin `-Pmin` |
 
 ## 7. Adjacent defects found in the same reading — NOT part of this ADR
@@ -402,7 +402,7 @@ input file, and OpenSees has no unit system to catch it.
 
 ### 7.2.1 The units fix is a no-op in kPa, and therefore belongs in vanilla (D5b)
 
-Rewrite as `D_factor = 1/(1 + exp(a - b*p/m_P_atm))` with **`b = 7.2713 * 101.0 = 734.401`**
+Rewrite as `D_factor = 1/(1 + exp(a - b*p/m_P_atm))` with **`b = 7.2713 * 101.0`  (write it as the **product**, not as the literal `734.401`: `734.401/101` is `7.27129703`, a 4.1e-7 relative shift, so the rounded literal silently breaks the no-op that is this fix's whole justification. `(7.2713*101.0)/101.0 == 7.2713` bit-for-bit.)**
 (`a` unchanged at 7.6349). Wherever `P_atm = 101.0` kPa this reproduces the shipped
 function **exactly** — `b*p/P_atm` *is* `7.2713*p` there — measured at 0.00 % change for
 every pressure in 0.2 … 5 kPa. It changes behaviour only for a deck that declared its
