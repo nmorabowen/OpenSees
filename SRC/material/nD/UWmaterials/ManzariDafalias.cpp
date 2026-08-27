@@ -206,6 +206,11 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
     mHonorTolRInME = false;
 
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off, so
+    // this class keeps the vanilla frozen m_e_init. See ManzariDafalias.h and the
+    // three GetElasticModuli overloads.
+    mUseCurrentVoidRatioInG = false;
+
     initialize();
 }
 
@@ -284,6 +289,11 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
     mHonorTolRInME = false;
 
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off, so
+    // this class keeps the vanilla frozen m_e_init. See ManzariDafalias.h and the
+    // three GetElasticModuli overloads.
+    mUseCurrentVoidRatioInG = false;
+
     initialize();
 }
 
@@ -340,6 +350,10 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
     mHonorTolRInME = false;
 
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off
+    // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
+    mUseCurrentVoidRatioInG = false;
+
     this->initialize();
 }
 
@@ -394,6 +408,10 @@ ManzariDafalias ::ManzariDafalias()
     
     // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
     mHonorTolRInME = false;
+
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off
+    // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
+    mUseCurrentVoidRatioInG = false;
 
     this->initialize();
 }
@@ -4695,10 +4713,22 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
         G = 1.5 * (1 - 2 * m_nu) / (1 + m_nu) * K;
     }
     */
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam, site 1
+    // of 3. Dafalias & Manzari (2004) p.623 make `e` in (2.97-e)^2/(1+e) the CURRENT
+    // void ratio -- which this function is handed as `en` and did not use; note the
+    // commented-out block just above already spells the correct form. m_e_init is the
+    // INITIAL one. Not corrected outright because it moves a CALIBRATED quantity
+    // (G0 = 264.32 was fitted against this frozen form), so it opens as a seam
+    // instead. mUseCurrentVoidRatioInG is false in all four ManzariDafalias
+    // constructors and written nowhere in this class, so `eG` binds to m_e_init and
+    // the expressions below are the vanilla ones character for character.
+    // A reference, not a copy: the conditional's operands are both double lvalues, so
+    // eG names m_e_init itself -- there is no conversion and no rounding step.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
@@ -4710,10 +4740,15 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     double pn = one3 * GetTrace(sigma);
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
+    // long note at the first GetElasticModuli overload above; all three overloads carry
+    // the identical seam so they cannot drift apart. Flag false in every constructor
+    // => eG binds to m_e_init and this is the vanilla expression verbatim.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
@@ -4725,10 +4760,15 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     double pn = one3 * GetTrace(sigma);
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
-    if (mElastFlag == 0) 
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init);
+    // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
+    // long note at the first GetElasticModuli overload above; all three overloads carry
+    // the identical seam so they cannot drift apart. Flag false in every constructor
+    // => eG binds to m_e_init and this is the vanilla expression verbatim.
+    const double& eG = mUseCurrentVoidRatioInG ? en : m_e_init;   // Ladruno (ADR-86 PR-2)
+    if (mElastFlag == 0)
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG);   // Ladruno (ADR-86 PR-2): was m_e_init
     else
-        G = m_G0 * m_P_atm * pow((2.97 - m_e_init),2) / (1 + m_e_init) * sqrt(pn / m_P_atm);
+        G = m_G0 * m_P_atm * pow((2.97 - eG),2) / (1 + eG) * sqrt(pn / m_P_atm);   // Ladruno (ADR-86 PR-2): was m_e_init
     K = two3 * (1 + m_nu) / (1 - 2 * m_nu) * G;
 }
 
