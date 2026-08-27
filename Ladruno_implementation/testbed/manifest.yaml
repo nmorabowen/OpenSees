@@ -904,6 +904,91 @@ features:
       ELEMENT is the objective route. Consumed by element LadrunoBrick -geom finite.
       Plan/ADR: Ladruno_implementation/19_ladruno_rc_shell_adr.md.
 
+  - feature: LadrunoSANISAND
+    classtag: 33019          # ND_TAG family; thin ManzariDafalias subclass making m_Presidual/m_Pmin optional ctor args, wired on the sendSelf/recvSelf wire, and echoed at construction; after ND_TAG_LadrunoRCFiniteStrain=33018
+    tag_symbol: ND_TAG_LadrunoSANISAND
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_sanisand.py   # test_vanilla_equivalence (load-bearing gate vs ManzariDafalias, ~1e-12 rel); test_echo_and_defaults (+ subprocess Tcl smoke); test_revert_to_start_preserves_settings; test_db_roundtrip_carries_presidual; test_presidual_is_the_low_p_defect
+    tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch added to TclModelBuilderNDMaterialCommand.cpp is exercised by test_echo_and_defaults's subprocess smoke, a short Tcl deck run through OpenSees.exe, inside the pytest file above)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}   # unlike most fork ND materials, this one IS wired into the classic-Tcl ladder (TclModelBuilderNDMaterialCommand.cpp), confirmed by grep before writing this row
+    status: active
+    notes: >
+      ADR 86 PR-1. Base class of the LadrunoSANISAND family: a thin subclass of
+      ManzariDafalias (Ghofrani/Arduino, U.Washington, after Dafalias & Manzari 2004)
+      whose only v1 difference is that the two low-stress constants m_Presidual and
+      m_Pmin -- hardcoded unconditionally inside ManzariDafalias::initialize() --
+      become optional constructor arguments, carried on the wire (sendSelf/recvSelf
+      add one Vector(4) after the base's unchanged Vector(97)), and echoed at
+      construction. Defaults 0.0 and 1.0e-3*P_atm (NTUASand02 convention: a
+      cohesionless sand has no cohesion). Motivated by a source audit finding that
+      vanilla's m_Presidual has NO wire slot, so an OpenSeesMP worker or a
+      database-restored material silently runs p_r=0 while the serial process beside
+      it runs 1.01 kPa -- see LEDGER_quirks.md. -honorTolR accepts only 0 in PR-1 (the
+      mTolR seam is PR-2); D5a/D5b (D_factor sigmoid shape/units) and Section 7.3
+      (m_e_init vs current-e elastic modulus) are explicitly deferred, family-wide.
+      Vanilla ManzariDafalias is not edited. Six overrides required and implemented:
+      initialize() shadow (non-virtual -- see the ManzariDafaliasRO hazard in
+      LEDGER_quirks.md), revertToStart(), sendSelf/recvSelf, both getCopy() forms,
+      Print(). Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
+
+  - feature: LadrunoSANISAND3D
+    classtag: 33020          # ND_TAG family; ThreeDimensional wrapper for LadrunoSANISAND (mirrors ManzariDafalias3D); after ND_TAG_LadrunoSANISAND=33019
+    tag_symbol: ND_TAG_LadrunoSANISAND3D
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_sanisand.py   # same battery as ND_TAG_LadrunoSANISAND; the 3D wrapper IS exercised end-to-end (single-element stdBrick drives -- zero-free-DOF prescribed-strain cube for G1, load-driven drained triaxial for the low-p gate), which necessarily exercises the -1.0 geotechnical sign flip on the way in and out
+    tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR 86 PR-1. ThreeDimensional wrapper for LadrunoSANISAND, mirroring
+      ManzariDafalias3D's ~140-line pattern. Numerically equals ELE_TAG_LadrunoSolidShell
+      33020 in the ELE registry -- different registry, deliberately not a collision.
+      MUST preserve the geotechnical sign flip (mEpsilon = -1.0 * strain_from_element,
+      matching stress out) that ManzariDafalias3D.cpp:80 applies -- losing it is
+      catastrophic and silent. Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
+
+  - feature: LadrunoSANISANDPlaneStrain
+    classtag: 33021          # ND_TAG family; PlaneStrain wrapper for LadrunoSANISAND (mirrors ManzariDafaliasPlaneStrain); after ND_TAG_LadrunoSANISAND3D=33020
+    tag_symbol: ND_TAG_LadrunoSANISANDPlaneStrain
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_sanisand.py   # NOT COVERED BY A PlaneStrain LEG. The battery is 3D-only (ndm=3 stdBrick); nothing in the repo drives this wrapper, and broker case 33021 is never exercised. Row kept so the G9 gate accounts for the tag, but read this as UNTESTED, not as coverage. Owed: a plane-strain leg asserting the {0,1,3} index map and the geotechnical sign flip. Surfaced by the ADR-86 PR-1 adversarial review (S6/F1), which caught this cell overclaiming.
+    tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation      # wired and compiling, but NO test drives the PlaneStrain lane -- see the pytest cell
+    notes: >
+      ADR 86 PR-1. PlaneStrain wrapper for LadrunoSANISAND, mirroring
+      ManzariDafaliasPlaneStrain. Numerically equals ELE_TAG_LadrunoCSTPair 33021 in
+      the ELE registry -- different registry, deliberately not a collision. Same
+      geotechnical sign-flip requirement as the 3D wrapper.
+      Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
+
   - feature: LadrunoConcrete3D
     classtag: 33017          # ND_TAG family; CDPM2-grade solid-concrete plastic-damage (Menétrey-Willam 3-invariant + non-associated flow + confinement-aware hardening + dual scalar omega_t/omega_c damage with crack-band Gf/Gc + auto unilateral); after LogStrain2D=33016 reserved, before LadrunoRCFiniteStrain=33018
     tag_symbol: ND_TAG_LadrunoConcrete3D

@@ -185,6 +185,9 @@ using namespace OpenSees::Hash::literals;
 #include "UWmaterials/ManzariDafaliasRO.h"
 #include "UWmaterials/ManzariDafalias3DRO.h"
 #include "UWmaterials/ManzariDafaliasPlaneStrainRO.h"
+#include "LadrunoSANISAND.h"             // Ladruno — ManzariDafalias subclass with settable/wired/echoed p_residual, p_min (ADR 86)
+#include "LadrunoSANISAND3D.h"           // Ladruno — 3D wrapper for LadrunoSANISAND (ADR 86)
+#include "LadrunoSANISANDPlaneStrain.h"  // Ladruno — PlaneStrain wrapper for LadrunoSANISAND (ADR 86)
 #include "UWmaterials/PM4Sand.h"
 #include "UWmaterials/PM4Silt.h"
 #include "J2CyclicBoundingSurface.h"
@@ -1316,6 +1319,15 @@ TclPackageClassBroker::getNewNDMaterial(int classTag)
 
   case ND_TAG_ManzariDafaliasPlaneStrainRO:
     return new ManzariDafaliasPlaneStrainRO();
+
+  case ND_TAG_LadrunoSANISAND:                    // Ladruno — ManzariDafalias subclass with settable/wired/echoed p_residual, p_min (ADR 86)
+    return new LadrunoSANISAND();
+
+  case ND_TAG_LadrunoSANISAND3D:                  // Ladruno — 3D wrapper for LadrunoSANISAND (ADR 86)
+    return new LadrunoSANISAND3D();
+
+  case ND_TAG_LadrunoSANISANDPlaneStrain:         // Ladruno — PlaneStrain wrapper for LadrunoSANISAND (ADR 86)
+    return new LadrunoSANISANDPlaneStrain();
 
   case ND_TAG_PM4Sand:
     return new PM4Sand();

@@ -23,6 +23,7 @@ void* OPS_LogStrain2D();          // Ladruno — 2D (plane) Hencky finite-strain
 void* OPS_LadrunoCohesiveHingeBiaxial(); // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
 void* OPS_LadrunoJ2();            // Ladruno — combined iso + Chaboche AF kinematic J2
 void* OPS_LadrunoJ2Finite();      // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+void* OPS_LadrunoSANISAND();      // Ladruno — ManzariDafalias subclass with settable/wired/echoed p_residual, p_min (ADR 86)
 void* OPS_InitDefGradNDMaterial();// Ladruno — multiplicative staged-activation wrapper (stress-free birth); aliased as StagedDefGrad
 void* OPS_StagedStrainNDMaterial();// Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 void* OPS_LadrunoRCConcrete();    // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
@@ -139,6 +140,7 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("LadrunoCohesiveHingeBiaxial", &OPS_LadrunoCohesiveHingeBiaxial)); // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
 	nDMaterialsMap.insert(std::make_pair("LadrunoJ2", &OPS_LadrunoJ2));                    // Ladruno — combined iso + Chaboche AF kinematic J2
 	nDMaterialsMap.insert(std::make_pair("LadrunoJ2Finite", &OPS_LadrunoJ2Finite));        // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+	nDMaterialsMap.insert(std::make_pair("LadrunoSANISAND", &OPS_LadrunoSANISAND));        // Ladruno — ManzariDafalias subclass with settable/wired/echoed p_residual, p_min (ADR 86)
 	nDMaterialsMap.insert(std::make_pair("InitDefGrad", &OPS_InitDefGradNDMaterial));       // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
 	nDMaterialsMap.insert(std::make_pair("InitDefGradNDMaterial", &OPS_InitDefGradNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("StagedDefGrad", &OPS_InitDefGradNDMaterial));      // Ladruno — Staged* family alias for InitDefGrad (finite-strain staged activation)
