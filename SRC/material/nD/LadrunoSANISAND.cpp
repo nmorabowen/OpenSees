@@ -77,6 +77,17 @@
 
 static int numLadrunoSANISANDMaterials = 0;
 
+// Ladruno (ADR-86 PR-3): IntScheme numbers, re-declared here because
+// ManzariDafalias's own INT_* macros are defined in ManzariDafalias.cpp (:38-49)
+// and are therefore not visible outside that TU. Prefixed so they can never
+// collide with the base's if that ever changes. Only the three this file needs.
+// KEEP IN SYNC with ManzariDafalias.cpp:38-49 -- there is no compile-time link
+// between the two, which is why schemeReachesModifiedEuler() spells out the
+// dispatch it is asserting rather than trusting the names.
+#define INT_LSANISAND_MAXENE_MFE     0    // ManzariDafalias INT_MAXENE_MFE
+#define INT_LSANISAND_ModifiedEuler  1    // ManzariDafalias INT_ModifiedEuler
+#define INT_LSANISAND_RungeKutta45  45    // ManzariDafalias INT_RungeKutta45
+
 void *
 OPS_LadrunoSANISAND(void)
 {
@@ -110,7 +121,8 @@ OPS_LadrunoSANISAND(void)
 
     double presidual = 0.0;    // Ladruno: default -- a cohesionless sand has no cohesion
     double pmin      = -1.0;   // Ladruno: sentinel -- resolve to 1.0e-3 * P_atm in the ctor
-    int    honorTolR = 0;      // Ladruno: PR-2 seam
+    int    honorTolR = 0;      // Ladruno: default = vanilla's hardcoded ModifiedEuler
+                               //          substep tolerance 1e-4 (ADR-86 PR-3)
 
     int numData = 1;
     if (OPS_GetIntInput(&numData, &tag) != 0) {
@@ -184,21 +196,18 @@ OPS_LadrunoSANISAND(void)
                        << ": -honorTolR wants 0 or 1" << endln;
                 return 0;
             }
-            if (honorTolR != 0) {
-                // Ladruno: PR-2 seam. The flag would be one line at
-                // ManzariDafalias.cpp:1320 (`TolE = mHonorTolRInME ? mTolR : 1e-4`),
-                // and PR-1 does not edit vanilla ManzariDafalias (ADR 86 D3/D7).
-                // Failing loudly beats accepting a flag that does nothing -- a flag
-                // that claims to have done something it did not do is exactly the
-                // class of defect this ADR exists to fix.
-                opserr << "ERROR nDMaterial LadrunoSANISAND tag " << tag
-                       << ": -honorTolR " << honorTolR << " is NOT WIRED YET."
-                       << " ADR 86 PR-2 opened the base flag seam (ManzariDafalias mHonorTolRInME,"
-                       << " read in ModifiedEuler), but nothing sets it from this class or this"
-                       << " parser -- that wiring is PR-3. Accepting the flag now would claim an"
-                       << " error tolerance the integrator is not honouring, which is the exact"
-                       << " defect class ADR 86 exists to fix. Use -honorTolR 0, or omit the flag."
-                       << endln;
+            if (honorTolR != 0 && honorTolR != 1) {
+                // Ladruno (ADR-86 PR-3): the seam is wired now, but it is a BOOLEAN
+                // seam -- the base member it drives is a `bool`, so 2 and -1 would
+                // both silently mean 1. Refuse them rather than quietly widening.
+                // (PR-1 refused every value but 0, because the seam did not exist
+                // yet and a flag that claims to have done something it did not do is
+                // the exact defect class this ADR exists to fix. PR-2 opened the seam
+                // in vanilla; PR-3 connects it, so 1 is now a real request.)
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -honorTolR wants 0 or 1 (got " << honorTolR
+                       << "). 0 = vanilla's hardcoded ModifiedEuler substep tolerance"
+                       << " 1e-4; 1 = honour this deck's TolR." << endln;
                 return 0;
             }
         }
@@ -266,22 +275,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
-    if (mPresidualInput < 0.0) {                                                      // Ladruno
-        opserr << "WARNING LadrunoSANISAND tag " << tag << ": p_residual = " << mPresidualInput
-               << " < 0 is meaningless; using 0." << endln;
-        mPresidualInput = 0.0;
-    }
-    if (mPminInput == 0.0) {                                                          // Ladruno
-        opserr << "WARNING LadrunoSANISAND tag " << tag
-               << ": p_min = 0 disables the low-stress clamp; using the default 1.0e-3*P_atm." << endln;
-        mPminInput = -1.0;   // back to the sentinel
-    }
-    if (mHonorTolR != 0) {                                                            // Ladruno: PR-2 seam
-        opserr << "ERROR LadrunoSANISAND tag " << tag << ": honorTolR = " << mHonorTolR
-               << " is not implemented in PR-1 (ADR 86 D7 puts the ModifiedEuler mTolR"
-               << " seam in PR-2); forcing 0." << endln;
-        mHonorTolR = 0;
-    }
+    this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
     this->applyLadrunoConstants();
     this->echoLadrunoConstants();
@@ -299,22 +293,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mPminInput(Pmin),
     mHonorTolR(honorTolR)                                                             // Ladruno
 {
-    if (mPresidualInput < 0.0) {                                                      // Ladruno
-        opserr << "WARNING LadrunoSANISAND tag " << tag << ": p_residual = " << mPresidualInput
-               << " < 0 is meaningless; using 0." << endln;
-        mPresidualInput = 0.0;
-    }
-    if (mPminInput == 0.0) {                                                          // Ladruno
-        opserr << "WARNING LadrunoSANISAND tag " << tag
-               << ": p_min = 0 disables the low-stress clamp; using the default 1.0e-3*P_atm." << endln;
-        mPminInput = -1.0;
-    }
-    if (mHonorTolR != 0) {                                                            // Ladruno: PR-2 seam
-        opserr << "ERROR LadrunoSANISAND tag " << tag << ": honorTolR = " << mHonorTolR
-               << " is not implemented in PR-1 (ADR 86 D7 puts the ModifiedEuler mTolR"
-               << " seam in PR-2); forcing 0." << endln;
-        mHonorTolR = 0;
-    }
+    this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
     this->applyLadrunoConstants();
     this->echoLadrunoConstants();
@@ -346,19 +325,112 @@ LadrunoSANISAND::~LadrunoSANISAND()
 {
 }
 
+// Ladruno (ADR-86 PR-3): input sanitising, in ONE place.
+//
+// Both full constructors used to carry byte-identical copies of these three
+// checks, and PR-3 made that worse before it made it better -- adding the
+// honorTolR check took the count from four duplicated blocks to six. The header's
+// own design note praises "one place" for the base-side WRITES
+// (applyLadrunoConstants); this is the same rule applied to the input side, which
+// is where a future rule change would otherwise have to be made twice.
+//
+// The parser already rejects all three cases with a hard error, so nothing a DECK
+// can write reaches these. They exist because the wrappers and getCopy(const
+// char*) also reach this constructor, and a clone must not be able to smuggle in a
+// value the parser would have refused.
+void
+LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
+{
+    if (mPresidualInput < 0.0) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": p_residual = " << mPresidualInput
+               << " < 0 is meaningless; using 0." << endln;
+        mPresidualInput = 0.0;
+    }
+    if (mPminInput == 0.0) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag
+               << ": p_min = 0 disables the low-stress clamp; using the default 1.0e-3*P_atm." << endln;
+        mPminInput = -1.0;   // back to the sentinel
+    }
+    if (mHonorTolR != 0 && mHonorTolR != 1) {
+        // The base member this drives is a `bool`, so any nonzero would collapse to
+        // 1 silently. Refuse rather than widen.
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": honorTolR = " << mHonorTolR
+               << " is not 0 or 1; using 0 (vanilla's hardcoded ModifiedEuler"
+               << " substep tolerance 1e-4)." << endln;
+        mHonorTolR = 0;
+    }
+}
+
 // ===========================================================================
 //  the "win the last write" helper + the echo
 // ===========================================================================
 
-// Ladruno: the whole class, in three lines. Every base integrator reads
+// Ladruno: the whole class, in four lines. Every base integrator reads
 // m_Presidual / m_Pmin as protected data at run time, so re-asserting them after
 // anything that may have recomputed them is sufficient -- no integrator override
 // is needed, and none is wanted.
+//
+// PR-3 adds the third line. `mHonorTolRInME` is the flag seam PR-2 opened in
+// vanilla (ManzariDafalias.h, read once in ModifiedEuler() as
+// `TolE = mHonorTolRInME ? mTolR : 1e-4`); it is a protected base member set
+// `false` in all four ManzariDafalias constructors and written nowhere else in
+// that class, so vanilla stays bit-identical and THIS is the only writer. It
+// belongs here rather than in the constructor bodies for the same reason the
+// other two do: applyLadrunoConstants() is also reached from initialize() (hence
+// revertToStart) and from recvSelf, and a seam re-asserted in only some of those
+// places is a seam that silently reverts -- which is the exact failure mode the
+// `revertToStart` override exists to prevent for m_Presidual.
+//
+// NOT set here, deliberately: the sibling seam `mUseCurrentVoidRatioInG`
+// (ADR 86 sec.7.3). Wiring it moves a CALIBRATED quantity -- Gorini's
+// G0 = 264.32 was fitted against the frozen m_e_init form -- so it stays open
+// pending the decision recorded in 86_ladruno_sanisand_pr3_tripwire_memo.md.
 void
 LadrunoSANISAND::applyLadrunoConstants(void)
 {
-    m_Presidual = mPresidualInput;
-    m_Pmin      = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
+    m_Presidual     = mPresidualInput;
+    m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
+    mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
+}
+
+// Ladruno (ADR-86 PR-3): does this deck's IntScheme actually reach the code that
+// reads the seam?
+//
+// `mHonorTolRInME` is read at EXACTLY ONE site: ManzariDafalias::ModifiedEuler().
+// So on a scheme that never calls ModifiedEuler, `-honorTolR 1` is accepted,
+// stored, echoed, wired -- and inert. That is the "a flag claims to have done
+// something it did not do" defect this ADR was written about, so it is warned
+// about rather than left for the user to discover.
+//
+// Traced through the dispatch in ManzariDafalias.cpp, and the answer is NOT the
+// obvious one:
+//   scheme  1  INT_ModifiedEuler  explicit_integrator -> ModifiedEuler      REACHES
+//   scheme  0  INT_MAXENE_MFE     MaxEnergyInc        -> ModifiedEuler      REACHES
+//   anything not in {0..9, 45}    explicit_integrator -> default:           REACHES
+//   scheme  2  INT_BackwardEuler  integrate() branches to BackwardEuler_CPPM  no
+//   scheme  3  INT_RungeKutta                         -> RungeKutta4          no
+//   scheme  5  INT_ForwardEuler                       -> ForwardEuler         no
+//   scheme 45  INT_RungeKutta45                       -> RungeKutta45         no  (it
+//              already uses `TolE = mTolR` unconditionally -- the seam exists
+//              because ModifiedEuler was the outlier that did NOT)
+//   schemes 4, 6                  MaxEnergyInc -> ForwardEuler / RungeKutta4  no
+//   schemes 7, 8, 9               MaxStrainInc -> ForwardEuler in BOTH switch
+//              branches, including `case INT_MAXSTR_MFE` -- so 7 does NOT reach
+//              ModifiedEuler despite its name. Read the switch, not the name.
+bool
+LadrunoSANISAND::schemeReachesModifiedEuler(void) const
+{
+    // mScheme is `char unsigned` in the base, so s is in [0, 255] -- there is no
+    // negative case to test for, and writing one would be dead code that reads as
+    // a guard.
+    const int s = (int)mScheme;
+    if (s == INT_LSANISAND_ModifiedEuler || s == INT_LSANISAND_MAXENE_MFE)
+        return true;
+    // Scheme numbers the base's switch does not enumerate fall through
+    // explicit_integrator's `default:`, which is ModifiedEuler.
+    if (s > 9 && s != INT_LSANISAND_RungeKutta45)
+        return true;
+    return false;
 }
 
 // Ladruno: PER-DECK-MATERIAL echo (ADR 86 section 4.4).
@@ -401,10 +473,49 @@ LadrunoSANISAND::echoLadrunoConstants(void)
     else
         opserr << " (user)";
 
-    // ADR 86 D5a/D5b (amended 2026-08-26): declared, not fixed, in PR-1.
-    opserr << " [D5a/D5b: D_factor dilatancy sigmoid ships UNCHANGED and is still"
-              " kPa-dimensional in this PR]"
-           << endln;
+    // Ladruno (ADR-86 PR-3): the honoured ModifiedEuler substep error tolerance.
+    // Named as a NUMBER, not as a flag state -- "honorTolR = 1" tells the reader
+    // what was asked for, "TolE = 1e-06" tells them what the integrator ran.
+    opserr << ", honorTolR = " << mHonorTolR
+           << " (ModifiedEuler substep TolE = "
+           << (mHonorTolR ? mTolR : 1.0e-4)
+           << (mHonorTolR ? ", this deck's TolR" : ", vanilla's hardcoded value")
+           << ")";
+
+    // ADR 86 D5a (still open) / D5b (repaired in vanilla by PR-2).
+    // The PR-1 text here read "D_factor ... ships UNCHANGED and is still
+    // kPa-dimensional in this PR". PR-2 non-dimensionalised the sigmoid at all
+    // four sites, so that sentence became FALSE the moment PR-2 merged and stayed
+    // in the echo -- a stale claim in exactly the channel this class exists to
+    // make trustworthy. Corrected in PR-3.
+    // NB the wording avoids the literal token `p_residual = <value>`: the battery
+    // counts echo LINES by that signature to prove the echo is not latched, and
+    // an earlier draft of this sentence containing "once p_residual = 0" doubled
+    // that count. Prose in a machine-read stream has to stay out of the machine's
+    // way.
+    opserr << " [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2),"
+              " an exact no-op at P_atm = 101; D5a: whether it should exist at all"
+              " once the residual pressure is zero is still OPEN]";
+
+    opserr << endln;
+
+    // Ladruno (ADR-86 PR-3): -honorTolR 1 on a scheme that never calls
+    // ModifiedEuler() is accepted, stored and wired -- and does nothing. Say so
+    // at construction rather than letting the deck's author infer it from a
+    // runtime that did not change.
+    if (mHonorTolR != 0 && !this->schemeReachesModifiedEuler()) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -honorTolR 1 has NO EFFECT with IntScheme " << (int)mScheme
+               << ". The seam it sets (ManzariDafalias mHonorTolRInME) is read at"
+               << " exactly one site, inside ModifiedEuler(), and this scheme does"
+               << " not route there."
+               << (((int)mScheme == INT_LSANISAND_RungeKutta45)
+                     ? " IntScheme 45 (RungeKutta45) already honours TolR"
+                       " unconditionally -- ModifiedEuler was the outlier that did"
+                       " not, which is why the seam exists."
+                     : " Use IntScheme 1 (ModifiedEuler) if you want it.")
+               << endln;
+    }
 }
 
 // SHADOW of ManzariDafalias::initialize() -- non-virtual, same signature, on
@@ -593,19 +704,35 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     s << "  P_atm      = " << m_P_atm << ",  IntScheme = " << (int)mScheme
       << ",  TanType = " << (int)mTangType << ",  JacoType = " << (int)mJacoType << endln;
     s << "  TolF       = " << mTolF << ",  TolR = " << mTolR
-      << ",  honorTolR = " << mHonorTolR << " (ADR 86 PR-2 seam, inactive in PR-1)" << endln;
+      << ",  honorTolR = " << mHonorTolR << endln;
+    // Ladruno (ADR-86 PR-3): the seam is wired now (it was "inactive in PR-1").
+    // Report the tolerance the integrator ACTUALLY ran with, and whether this
+    // deck's scheme even reaches the site that reads it -- a record that says
+    // "honorTolR = 1" while the scheme never calls ModifiedEuler is a record that
+    // overstates what happened.
+    s << "             ModifiedEuler substep TolE = " << (mHonorTolR ? mTolR : 1.0e-4)
+      << (mHonorTolR ? "  (this deck's TolR, via the ManzariDafalias mHonorTolRInME seam)"
+                     : "  (vanilla's hardcoded 1e-4; -honorTolR 1 selects TolR instead)") << endln;
+    if (mHonorTolR != 0 && !this->schemeReachesModifiedEuler())
+        s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
+             " ModifiedEuler(), so -honorTolR 1 is INERT on this deck." << endln;
 
-    // ADR 86 D5a/D5b / section 7.2, 7.2.1 (amended 2026-08-26) -- declared here,
-    // deliberately not fixed in PR-1.
-    s << "  ADR 86 D5a/D5b: the D_factor dilatancy sigmoid ships UNCHANGED from ManzariDafalias." << endln;
-    s << "             It is still kPa-DIMENSIONAL in this PR: for p < 0.05*P_atm the model" << endln;
-    s << "             applies D_factor = 1/(1 + exp(7.6349 - 7.2713*p)) in which 7.2713" << endln;
-    s << "             multiplies a raw stress and is a bare literal, so it carries units" << endln;
-    s << "             of 1/stress. At a true confinement of 1 kPa the factor is 0.410 in kPa," << endln;
-    s << "             1.000 in Pa (never fires) and 0.0005 in MPa (total suppression). These" << endln;
-    s << "             results are as intended ONLY if this deck's stress unit is kPa." << endln;
-    s << "             D5b: the UNIT dependence is repaired in vanilla ManzariDafalias in PR-2" << endln;
-    s << "             (b = 7.2713*101.0 on p/P_atm, all four sites; a no-op at P_atm = 101)." << endln;
-    s << "             D5a: whether the sigmoid should exist at all once p_residual = 0 is a" << endln;
-    s << "             separate, still-open modelling question -- see ADR 86 section 7.2.1." << endln;
+    // ADR 86 section 7.2 / 7.2.1.  D5b is DONE (vanilla, PR-2); D5a is open.
+    // The PR-1 text this replaces asserted the sigmoid "ships UNCHANGED" and "is
+    // still kPa-DIMENSIONAL in this PR", then contradicted itself two lines later
+    // by reporting the PR-2 repair.  Both halves cannot be true after PR-2 merged.
+    s << "  ADR 86 D5b (DONE, vanilla, PR-2): the D_factor dilatancy sigmoid is" << endln;
+    s << "             non-dimensionalised at all four sites. For p < 0.05*P_atm the model" << endln;
+    s << "             applies D_factor = 1/(1 + exp(7.6349 - 7.2713*101.0/P_atm * p))." << endln;
+    s << "             The shipped form multiplied a RAW stress by the bare literal 7.2713," << endln;
+    s << "             which therefore carried units of 1/stress: at a true confinement of" << endln;
+    s << "             1 kPa the factor was 0.410 in kPa, 1.000 in Pa (never fires) and" << endln;
+    s << "             0.0005 in MPa (total suppression). The repair is an EXACT no-op" << endln;
+    s << "             wherever P_atm = 101 (kPa); it changes only Pa/MPa decks, and a deck" << endln;
+    s << "             declaring P_atm = 101.3 shifts ~1.3% in D_factor at 1 kPa." << endln;
+    s << "  ADR 86 D5a (OPEN): whether the sigmoid should exist AT ALL once p_residual = 0" << endln;
+    s << "             is a separate modelling question and is NOT settled by the units" << endln;
+    s << "             repair. This class does not change its shape. Half-suppression sits" << endln;
+    s << "             at p = 7.6349/7.2713 = 1.050 kPa, within 4% of vanilla's p_residual" << endln;
+    s << "             of 1.01 kPa -- see ADR 86 section 7.2.1 and the PR-3 tripwire memo." << endln;
 }

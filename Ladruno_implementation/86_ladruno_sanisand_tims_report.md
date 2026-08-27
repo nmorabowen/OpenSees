@@ -122,8 +122,17 @@ bare literal, so it silently carries units of 1/stress.
 
 > **At 1 kPa true confinement** the factor is **0.410 in kPa**, **1.000 in Pa** (never fires),
 > **0.0005 in MPa** (total suppression). Three different materials from one input file, and OpenSees
-> has no unit system to catch it. Now non-dimensionalised at all four sites; an exact no-op at
-> `P_atm = 101`.
+> has no unit system to catch it. Now non-dimensionalised at all four LIVE sites; an exact no-op
+> at `P_atm = 101`.
+>
+> **Added 2026-08-27 (ADR-86 PR-3): there is a fifth copy, and it is worse — but it is dead.**
+> `ManzariDafalias.cpp:3556-3563`, inside `NewtonSol2`, carries a *different* sigmoid with trigger
+> `p < 0.001·P_atm` and `be = 207232.6584 · 2 · m_Pmin`, `exp(20.72326584 − be·p)`. Two things are
+> wrong with it: `be·p` carries **stress²**, so it is dimensionally worse than the four repaired
+> above; and its steepness is **proportional to `m_Pmin`**, so it silently assumes that constant
+> still holds its vanilla value. It is currently **unreachable** — `NewtonSol2` is called only from
+> `NewtonIter3`, which has no caller anywhere in `SRC/` — so it is recorded and left alone rather
+> than repaired blind. If `NewtonIter3` is ever wired up, this becomes live.
 
 ### 3.4 A stress clamp that had never printed for anyone — *now observable*
 
@@ -282,7 +291,18 @@ Recorded rather than fixed, so nothing here is hidden behind a green build:
   decision that is yours to make.
 - Whether the dilatancy sigmoid should exist at all once `p_residual = 0` is a modelling question
   for the model's authors. The two look like overlapping patches for the same problem applied at
-  different times.
+  different times — **and as of 2026-08-27 that is measured, not conjectured, which changes how
+  urgent the question is.** `GetStateDependent` computes one `p` that **includes `m_Presidual`**
+  (`ManzariDafalias.cpp:4914`) and hands it to both `GetPSI` and the sigmoid. The sigmoid's
+  half-suppression point is `7.6349/7.2713 = 1.0500 kPa`; vanilla's `p_residual` is **1.01 kPa** —
+  the same number to within 4 %. So **`p_residual` has been bounding the sigmoid from below at
+  `D_factor = 0.4278`**: in vanilla it can never suppress dilatancy by more than ~2.3×, however low
+  the true confinement. With `p_residual = 0` the floor drops to `4.830e-4`, a factor of **886**.
+  Measured on one deck, identical prescribed strain path on both legs: the minimum `D_factor`
+  reached along the path is **0.7227** at `p_r = 1.01` and **0.0016821** at `p_r = 0`.
+  **Setting `p_residual = 0` does not only remove an apparent cohesion — it un-masks a dilatancy
+  suppressor that the residual pressure had been keeping bounded.** Anyone adopting `p_r = 0`
+  should see this number before they calibrate against it.
 - `SAniSandMS` carries the same interpolant bug, an argument-parsing bug that silently drops
   `TolF`/`TolR`, and a sigmoid trigger of `0.001·P_atm` rather than `0.05` — over that window it
   kills dilatancy by a factor of about 1000. Scheduled for its own change with its own regression

@@ -1,5 +1,5 @@
 ---
-title: LadrunoSANISAND — session handoff (after PR-1 and PR-2)
+title: LadrunoSANISAND — session handoff (after PR-1, PR-2 and PR-3)
 project: Ladruno
 status: active
 owner: nmora
@@ -13,8 +13,8 @@ tags:
 
 # LadrunoSANISAND handoff
 
-State after PR-1 ([#767](https://github.com/nmorabowen/OpenSees/pull/767), merged) and PR-2
-([#768](https://github.com/nmorabowen/OpenSees/pull/768)). Spec is
+State after PR-1 ([#767](https://github.com/nmorabowen/OpenSees/pull/767), merged), PR-2
+([#768](https://github.com/nmorabowen/OpenSees/pull/768), merged) and PR-3. Spec is
 [[86_ladruno_sanisand_adr]]; read it first, **including its correction boxes** — several of its
 original numbers were refuted by measurement and corrected in place.
 
@@ -136,25 +136,88 @@ confined deck, and now asserted.
 
 ## 5. Owed work
 
-**PR-3 candidates**
-- Wire `-honorTolR 1` through to `mHonorTolRInME`; the parser currently rejects `1` by design.
-- A **behavioural** `-Pmin` gate. Our default is `1e-3·P_atm`, **10× vanilla's**, is demonstrably not
-  inert at low stress (via `Elastic2Plastic`'s `3*m_Pmin` reset), and every test pins `-Pmin` to
-  vanilla's value. PR-2's clamp diagnostic is the observable that finally makes this writable.
-- `LadrunoSANISAND3D::getCopy(void)` is uncovered (proven by mutation).
-- **D5a** — should the `D_factor` sigmoid exist at all once `p_r = 0`? Modelling question. **This is
-  the fork tripwire.**
-- **§7.3** `m_e_init` — seam is open, unwired. Wiring it moves a calibrated quantity: `G0 = 264.32`
-  was fitted against the frozen form.
+**DONE in PR-3** (kept here so the next reader can see what moved, and what the doing of it taught)
+- ~~Wire `-honorTolR 1` through to `mHonorTolRInME`~~ — wired from `applyLadrunoConstants()`.
+  **Learned:** the seam is read at exactly ONE site, inside `ModifiedEuler`, so the flag is inert
+  on IntScheme 2/3/4/5/6/7/8/9/45 (measured 0.0 on 3 and 45). Read the dispatch, not the names:
+  IntScheme 7 is called `INT_MAXSTR_MFE` and reaches `ForwardEuler`.
+- ~~A behavioural `-Pmin` gate~~ — shipped. **The predicted mechanism was wrong.** This section
+  said the gate was writable "via `Elastic2Plastic`'s `3*m_Pmin` reset" and via PR-2's clamp
+  diagnostic. Neither fires: on the gate's deck `Elastic2Plastic` does not trigger (`p` at the
+  stage flip stays above `m_Pmin`) and **zero clamp warnings are emitted**. What fires is a
+  silent whole-tensor reset to `m_Pmin*mI1` at a site PR-2 did not instrument.
+- ~~`LadrunoSANISAND3D::getCopy(void)` is uncovered~~ — covered, and proven by mutation.
+  **But only the 3D twin.** `LadrunoSANISANDPlaneStrain::getCopy(void)` is still uncovered and
+  the same route does not reach it: `InitStrainNDMaterial::getCopy(const char*)` delegates to
+  the no-argument form only for `"ThreeDimensional"` (`:292-293`); the `"PlaneStrain"` branch
+  calls `theMaterial->getCopy(type)`, the string form (`:310`). No deck-reachable caller of the
+  no-argument form was found on that lane. Recorded in the manifest row, not claimed closed.
 
-**Subclass strengthening (proposed, not done)**
+**Still owed. The first item is the one to fix first.**
+
+- **CI verifies none of this ADR's headline claim.** `test_presidual_is_the_low_p_defect` is the
+  ONLY test that measures the +18.13 % vs +0.075 % departure from the model's own bounding-surface
+  identity -- the silent-wrong-answer defect the whole ADR exists to fix -- and it is
+  `@pytest.mark.slow`, so it runs on **no CI push** (no workflow passes `--runslow` or sets
+  `LADRUNO_RUN_SLOW`). Measured by adversarial review: of the file's 17 tests, **15 execute in CI**;
+  this one and the MP smoke do not. The marker is honestly disclosed and has a real reason (ADR
+  risk 6: its `p_r = 0` leg fails at 400 steps and needs 1200), but disclosure is not coverage.
+  Options, cheapest first: run the slow tier on a nightly/self-hosted job; or split out a
+  cheaper-but-still-diagnostic leg at a less extreme `p0` that can carry the identity assertion in
+  the default tier. **Do not simply unmark it** -- that reintroduces the convergence fragility the
+  marker exists for.
+- Add a **subprocess** gate for `-honorTolR 1` on IntScheme 3. Its inertness is measured once and
+  argued from the dispatch, but nothing pins it, and it cannot be pinned in-process:
+  `ManzariDafalias`'s scheme-3/5 warning is behind a once-per-process static latch that
+  `test_manzari_safety_pack.py::test_scheme3_warns_no_error_control` must observe first.
+- `-Presidual`/`-Pmin` **parser error paths** have no test (only `-honorTolR`'s do). Same defect
+  family as ADR sec.7.1.
+- `revertToStart`'s **`ops_InitialStateAnalysis` branch** is untested; only the plain mid-life
+  `reset()` path is exercised, though the guard is the reason the override exists (sec.4.4).
+- The **analytical Jacobian** (`JacoType`) branch is never exercised on this class.
+
+**Also owed, and PR-3 added the first two**
+- **Instrument the other `m_Pmin` resets.** PR-2's throttled clamp diagnostic covers
+  `ModifiedEuler:1378` and `RungeKutta45:1902`. **Three** more sites rebuild the whole stress
+  tensor from `m_Pmin` and say nothing: `explicit_integrator:1074/1078`,
+  `Stress_Correction:2555/2557/2624` (a **live** `p = m_Pmin + m_Presidual` store — the twin PR-2
+  found dead in `ModifiedEuler` is live here), and `BackwardEuler_CPPM:2213/2229`. Same throttle
+  shape as PR-2's: a PROCESS budget, not per instance.
+  **Note which way the asymmetry runs:** the two INSTRUMENTED sites preserve the deviator
+  (`GetDevPart(NextStress) + m_Pmin*mI1`); all three UNINSTRUMENTED ones write a purely isotropic
+  tensor and zero `alpha`. The warning covers the gentler rebuild.
+  *(A draft of this list also named `Stress_Correction:2608`. It is dead code — inside the
+  `if (false)` opening at `:2559` — and was one logical site counted twice. Caught by adversarial
+  review; do not re-add it.)*
+- **The fifth `D_factor` sigmoid** (`NewtonSol2:3556-3563`) is dimensionally worse than the four
+  PR-2 repaired and its steepness is proportional to `m_Pmin`. It is **dead code** today
+  (`NewtonIter3` has no caller anywhere in `SRC/`), so it is recorded rather than fixed — but
+  PR-2's "all four sites" is incomplete about source, and this is why.
 - A **silent-elasticity diagnostic**: override `commitState()`, and if the plastic stage is active
   while `mDGamma` has been identically zero for N consecutive commits, warn (throttled, process
   budget — *not* per instance; `getCopy` makes every Gauss point an instance). Catches the radial
-  freeze for any user on any deck. Entirely subclass-side.
+  freeze for any user on any deck. Entirely subclass-side. **Considered for PR-3 and deliberately
+  not taken** (owner's scope call), not blocked.
 - Extend the echo/`Print`: `p_r = 0` costs more than cohesion — it also removes a **numerical
   regulariser** (the low-`p` leg fails at 400 steps where vanilla survives; needs 1200) and permits
-  the radial degeneracy.
+  the radial degeneracy. PR-3 got part of the way: the echo and `Print` now name the honoured
+  `TolE` and the true D5a/D5b state, but neither yet warns about the regulariser.
+
+**FORK TRIPWIRE — investigated in PR-3, NOT taken. Read the memo before touching either.**
+[[86_ladruno_sanisand_pr3_tripwire_memo]] measures both and takes no decision.
+- **D5a** — should the `D_factor` sigmoid exist at all once `p_r = 0`? **This question is no longer
+  neutral for us.** `GetStateDependent` hands the sigmoid a `p` that INCLUDES `m_Presidual`, the
+  sigmoid's half-suppression point is 1.0500 kPa and vanilla's `p_r` is 1.01 kPa — so vanilla's
+  residual pressure was **bounding `D_factor` from below at 0.4278**, and our `p_r = 0` default
+  drops that floor to `4.830e-4`, a factor of **886**. Measured on one deck: min `D_factor` 0.7227
+  vs 0.0016821. Setting `p_r = 0` does not only remove a cohesion; it un-masks a dilatancy
+  suppressor. The memo lists the four experiments that would settle it.
+- **§7.3** `m_e_init` — seam is open, unwired. Wiring it moves a calibrated quantity: `G0 = 264.32`
+  was fitted against the frozen form. Quantified: `dG/G = 2.489 · d tr(eps)`, i.e. **~2.5 % per 1 %
+  volumetric strain**, and **no single `G0` rescale reproduces the old model** because the
+  correction is state-dependent. Note the current battery **cannot see this change at all** — the
+  confine-first deck is exactly isochoric, so `e` never leaves `e_init` — which means a
+  non-isochoric gate is a prerequisite for the seam, not a follow-up to it.
 
 **Separate PR — `SAniSandMS`**
 - §7.1: `numData = numArgs - 19` at `:134` and `numData -= 5` at `:143` silently drop `TolF`/`TolR`

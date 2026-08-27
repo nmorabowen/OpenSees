@@ -907,10 +907,10 @@ features:
   - feature: LadrunoSANISAND
     classtag: 33019          # ND_TAG family; thin ManzariDafalias subclass making m_Presidual/m_Pmin optional ctor args, wired on the sendSelf/recvSelf wire, and echoed at construction; after ND_TAG_LadrunoRCFiniteStrain=33018
     tag_symbol: ND_TAG_LadrunoSANISAND
-    pr: null
+    pr: 767
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # test_vanilla_equivalence (load-bearing gate vs ManzariDafalias, ~1e-12 rel); test_echo_and_defaults (+ subprocess Tcl smoke); test_revert_to_start_preserves_settings; test_db_roundtrip_carries_presidual; test_presidual_is_the_low_p_defect
+    pytest: tests/test_ladruno_sanisand.py   # test_vanilla_equivalence (load-bearing gate vs ManzariDafalias, ~1e-12 rel); test_echo_and_defaults (+ subprocess Tcl smoke); test_revert_to_start_preserves_settings; test_db_roundtrip_carries_presidual; test_presidual_is_the_low_p_defect. ADR-86 PR-3 adds five: test_honor_tolr_is_inert_at_1e_4 / _changes_the_answer_when_tolr_is_tight / _warns_when_the_scheme_cannot_honour_it (the mHonorTolRInME seam, wired), and test_pmin_is_inert_at_ordinary_confinement / _is_behavioural_at_low_confinement (the first gates that vary -Pmin on purpose). Both new mechanisms PROVEN by mutation: removing the one wiring line in applyLadrunoConstants fails test_honor_tolr_changes_the_answer AND ONLY THAT TEST (1 of 15); making applyLadrunoConstants ignore mPminInput fails test_pmin_is_behavioural_at_low_confinement plus two incidental catches (test_radial_ramp_with_pr0_never_yields, test_print_states_what_it_ran)
     tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch added to TclModelBuilderNDMaterialCommand.cpp is exercised by test_echo_and_defaults's subprocess smoke, a short Tcl deck run through OpenSees.exe, inside the pytest file above)
     core_files:
       - SRC/classTags.h
@@ -932,9 +932,24 @@ features:
       cohesionless sand has no cohesion). Motivated by a source audit finding that
       vanilla's m_Presidual has NO wire slot, so an OpenSeesMP worker or a
       database-restored material silently runs p_r=0 while the serial process beside
-      it runs 1.01 kPa -- see LEDGER_quirks.md. -honorTolR accepts only 0 in PR-1 (the
-      mTolR seam is PR-2); D5a/D5b (D_factor sigmoid shape/units) and Section 7.3
-      (m_e_init vs current-e elastic modulus) are explicitly deferred, family-wide.
+      it runs 1.01 kPa -- see LEDGER_quirks.md. -honorTolR is WIRED as of ADR-86 PR-3
+      and accepts 0|1: it drives ManzariDafalias's mHonorTolRInME seam (opened in PR-2),
+      which ModifiedEuler reads as `TolE = mHonorTolRInME ? mTolR : 1e-4`. At TolR = 1e-4
+      the flag is bit-identical by construction; at TolR = 1e-6 it moves the answer
+      2.641e-04 on the confine-first deck. It is INERT on any scheme that does not call
+      ModifiedEuler, so the material WARNS at construction rather than accepting a flag
+      that does nothing. NB that inertness is MEASURED ONCE for both schemes but GATED only
+      for IntScheme 45 -- test_honor_tolr_warns_when_the_scheme_cannot_honour_it constructs
+      schemes 1 and 45 only. IntScheme 3 is deliberately not gated here: ManzariDafalias's
+      scheme-3/5 warning sits behind a once-per-process static latch that
+      test_manzari_safety_pack.py::test_scheme3_warns_no_error_control depends on observing
+      first, so constructing scheme 3 in this file would break that test in one file order
+      and not the other. D5b (the
+      D_factor sigmoid's UNITS) was repaired in vanilla by PR-2; D5a (its shape) and
+      Section 7.3 (m_e_init vs current-e elastic modulus) remain deferred, family-wide --
+      see Ladruno_implementation/86_ladruno_sanisand_pr3_tripwire_memo.md, which measures
+      that p_residual was bounding D_factor from below at 0.43 and that setting it to 0
+      (this class's default) lets the same sigmoid suppress dilatancy 886x harder.
       Vanilla ManzariDafalias is not edited. Six overrides required and implemented:
       initialize() shadow (non-virtual -- see the ManzariDafaliasRO hazard in
       LEDGER_quirks.md), revertToStart(), sendSelf/recvSelf, both getCopy() forms,
@@ -943,10 +958,10 @@ features:
   - feature: LadrunoSANISAND3D
     classtag: 33020          # ND_TAG family; ThreeDimensional wrapper for LadrunoSANISAND (mirrors ManzariDafalias3D); after ND_TAG_LadrunoSANISAND=33019
     tag_symbol: ND_TAG_LadrunoSANISAND3D
-    pr: null
+    pr: 767
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # same battery as ND_TAG_LadrunoSANISAND; the 3D wrapper IS exercised end-to-end (single-element stdBrick drives -- zero-free-DOF prescribed-strain cube for G1, load-driven drained triaxial for the low-p gate), which necessarily exercises the -1.0 geotechnical sign flip on the way in and out
+    pytest: tests/test_ladruno_sanisand.py   # same battery as ND_TAG_LadrunoSANISAND; the 3D wrapper IS exercised end-to-end (single-element stdBrick drives -- zero-free-DOF prescribed-strain cube for G1, load-driven drained triaxial for the low-p gate), which necessarily exercises the -1.0 geotechnical sign flip on the way in and out. getCopy(void) -- the ONE override PR-1 shipped knowingly uncovered, proven uncovered by mutation -- is COVERED as of ADR-86 PR-3 by test_getcopy_void_carries_the_settings. A brick only ever calls getCopy("ThreeDimensional"), so the no-arg form has no caller on an ordinary deck; the test reaches it by interposing an eps0=0 `nDMaterial InitStrain` wrapper, whose own getCopy(const char*) delegates to getCopy() on the ALREADY-3D inner material (InitStrainNDMaterial.cpp:285, :293), once per Gauss point. Asserts the wrapper is a bit-exact pass-through at both p_residual values AND that the wrapped deck still responds to p_residual (8.6042e-02). PROVEN by mutation: letting the clone fall back to p_residual = 1e-2*P_atm fails THIS TEST AND ONLY THIS TEST (1 of 15)
     tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
     core_files:
       - SRC/classTags.h
@@ -963,12 +978,18 @@ features:
       33020 in the ELE registry -- different registry, deliberately not a collision.
       MUST preserve the geotechnical sign flip (mEpsilon = -1.0 * strain_from_element,
       matching stress out) that ManzariDafalias3D.cpp:80 applies -- losing it is
-      catastrophic and silent. Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
+      catastrophic and silent. getCopy(void) clones via `new LadrunoSANISAND3D(); *clone
+      = *this;` and was PR-1's last knowingly-uncovered override; ADR-86 PR-3 covers it
+      (see the pytest note above). NB `nDMaterial InitStress` cannot be used for that
+      route: its 3-argument constructor calls getCopy() on the DIMENSIONLESS prototype,
+      whose getCopy(void) is the base's "subclass responsibility" + exit(-1) -- true of
+      vanilla ManzariDafalias too.
+      Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
 
   - feature: LadrunoSANISANDPlaneStrain
     classtag: 33021          # ND_TAG family; PlaneStrain wrapper for LadrunoSANISAND (mirrors ManzariDafaliasPlaneStrain); after ND_TAG_LadrunoSANISAND3D=33020
     tag_symbol: ND_TAG_LadrunoSANISANDPlaneStrain
-    pr: null
+    pr: 767
     feature_class: material
     required_tiers: [T0m, T1]
     pytest: tests/test_ladruno_sanisand.py   # COVERED as of ADR-86 PR-1 by test_planestrain_lane_carries_the_settings: an ndm=2 quad (FourNodeQuad, PlaneStrain) zero-free-DOF cell -- 8 of 8 DOFs constrained, so the Gauss-point strain IS the prescribed field. Asserts (a) the geotechnical sign convention via the DEVIATOR sign, not the stress sign -- a bare 'stress is compressive' assertion does NOT catch the flip, because the mutant still returns compression (-0.73 kPa); and (b) that -Presidual reaches the Gauss points on this lane (reldiff 3.18e-2), which is what a getCopy("PlaneStrain") branch silently building a vanilla ManzariDafaliasPlaneStrain cannot survive. PROVEN a real fingerprint by mutation: flipping -1.0 -> +1.0 in setTrialStrain, rebuilding, and re-running makes THIS TEST AND ONLY THIS TEST fail (deviator +0.1866 vs the required < 0). Before this test the same mutation left the entire battery green.
@@ -987,6 +1008,15 @@ features:
       ManzariDafaliasPlaneStrain. Numerically equals ELE_TAG_LadrunoCSTPair 33021 in
       the ELE registry -- different registry, deliberately not a collision. Same
       geotechnical sign-flip requirement as the 3D wrapper.
+      KNOWN GAP, recorded rather than claimed closed: getCopy(void) on THIS wrapper is
+      still uncovered. ADR-86 PR-3 covered the 3D twin by interposing an eps0=0
+      `nDMaterial InitStrain` wrapper, but that route does NOT generalise to this lane --
+      InitStrainNDMaterial::getCopy(const char*) delegates to getCopy() only for
+      "ThreeDimensional" (InitStrainNDMaterial.cpp:292-293); for "PlaneStrain" it takes
+      the native branch and calls theMaterial->getCopy(TYPE) (:310), the STRING form. No
+      other deck-reachable caller of the no-argument form was found on this lane, so the
+      function may be unreachable outside the NDMaterial interface it satisfies. Do not
+      assume symmetry with the 33020 row above.
       Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
 
   - feature: LadrunoConcrete3D

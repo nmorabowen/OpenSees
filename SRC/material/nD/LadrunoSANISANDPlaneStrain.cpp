@@ -70,7 +70,17 @@ LadrunoSANISANDPlaneStrain::LadrunoSANISANDPlaneStrain(int tag, double G0, doubl
 LadrunoSANISANDPlaneStrain::LadrunoSANISANDPlaneStrain()
   : LadrunoSANISAND(ND_TAG_LadrunoSANISANDPlaneStrain) // Ladruno: vanilla ManzariDafaliasPlaneStrain() calls the base's
                                                         // plain null ctor here, which hardcodes ND_TAG_ManzariDafalias --
-                                                        // that classTag bug is deliberately NOT replicated (see report)
+                                                        // that classTag bug is deliberately NOT replicated.
+// WHY IT MATTERS HERE AND NOT IN VANILLA (do not "align" this with the original):
+// nothing ever repairs the tag -- there is no setClassTag call in ManzariDafalias.cpp
+// and recvSelf does not restore it -- so a broker- or database-constructed object keeps
+// it for life. In vanilla that is nearly invisible, because the usual getCopy() path
+// (`*clone = *this`) copies a correct tag over the wrong one. For THIS class it would
+// not be: echoLadrunoConstants() and Print() both branch on
+// `getClassTag() == ND_TAG_LadrunoSANISAND`, so a restored PlaneStrain carrying the base
+// tag would echo ONCE PER GAUSS POINT -- the ~83 MB-of-stderr failure ADR 86 sec.4.4's
+// refinement box exists to prevent. See LEDGER_quirks.md; the vanilla fix is one token
+// and is deliberately NOT made here (WORKFLOW_GOTCHAS sec.6: ask first).
 {
 }
 
