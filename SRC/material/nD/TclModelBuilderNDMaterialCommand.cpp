@@ -112,6 +112,7 @@ extern  void *OPS_LogStrain2D(void);                   // Ladruno
 extern  void *OPS_LadrunoCohesiveHingeBiaxial(void);   // Ladruno
 extern  void *OPS_LadrunoJ2(void);                     // Ladruno
 extern  void *OPS_LadrunoJ2Finite(void);               // Ladruno
+extern  void *OPS_LadrunoSANISAND(void);               // Ladruno
 extern  void *OPS_InitDefGradNDMaterial(void);         // Ladruno
 extern  void *OPS_StagedStrainNDMaterial(void);        // Ladruno
 extern  void *OPS_LadrunoRCConcrete(void);             // Ladruno
@@ -298,6 +299,14 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 
     else if ((strcmp(argv[1],"LadrunoJ2Finite") == 0)) {
       void *theMat = OPS_LadrunoJ2Finite();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoSANISAND") == 0)) {
+      void *theMat = OPS_LadrunoSANISAND();
       if (theMat != 0)
         theMaterial = (NDMaterial *)theMat;
       else

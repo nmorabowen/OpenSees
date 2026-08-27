@@ -94,8 +94,16 @@ jobs:
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv OpenSeesPy.so opensees.so
+      # TCL_LIBRARY (WORKFLOW_GOTCHAS §7), same export the two Tcl steps below
+      # already carry: any Zone-A test that shells out to `build/Release/OpenSees`
+      # dies before a single OpenSees command is registered without the conan Tcl
+      # runtime. Added for ADR-86 PR-1's classic-Tcl subprocess smoke, which is
+      # the gate on the five-site registration this fork most often half-wires.
+      # That test discovers TCL_LIBRARY itself as a fallback, but exporting it
+      # here keeps the discovery off the hot path and matches the proven idiom.
       - name: pytest Zone-A
         run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
           cp build/Release/opensees.so tests/
           cd tests
           pytest -v -m "zone_a"

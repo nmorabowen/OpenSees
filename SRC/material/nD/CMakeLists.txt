@@ -65,6 +65,9 @@ target_sources(OPS_Material
     LadrunoCohesiveHingeBiaxial.cpp
     LadrunoJ2.cpp
     LadrunoJ2Finite.cpp
+    LadrunoSANISAND.cpp
+    LadrunoSANISAND3D.cpp
+    LadrunoSANISANDPlaneStrain.cpp
     LadrunoRCConcrete.cpp
     LadrunoRCFiniteStrain.cpp
     LadrunoConcrete3D.cpp
@@ -155,6 +158,9 @@ target_sources(OPS_Material
     LadrunoJ2.h
     LadrunoJ2Finite.h
     LadrunoJ2Kernel.h
+    LadrunoSANISAND.h
+    LadrunoSANISAND3D.h
+    LadrunoSANISANDPlaneStrain.h
     LadrunoRCConcrete.h
     LadrunoRCFiniteStrain.h
     LadrunoRCKernel.h
