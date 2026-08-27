@@ -69,6 +69,31 @@ them is a general "does it run" smoke.
      bounding-surface identity eta_end == M^b(psi_end) by about +20 %, and a
      p_r = 0 run does not.  Measured here: +18.13 % vs +0.075 %, with the
      invariant `err * p_end == p_r` holding on both legs.  SLOW TIER.
+  6. ``test_planestrain_lane_carries_the_settings`` -- the ONLY test that
+     constructs a `LadrunoSANISANDPlaneStrain` at all.  Tests 1-5 all drive
+     ndm=3 `stdBrick`, so until this one existed the whole plane-strain lane --
+     registered as class tag 33021 in both interpreters and in the broker, i.e.
+     reachable by any user today -- had nothing standing behind it.  It is the
+     fingerprint for TWO silent reverts:
+       * the geotechnical sign flip.  `setTrialStrain` does
+         ``mEpsilon = -1.0 * strain_from_element``; changing that ``-1.0`` to
+         ``+1.0`` (the defect ADR 86 sec.4.2 calls "catastrophic and silent")
+         left the entire battery green.  See the test for the mirrored-deck
+         trick that measures what the mutant would return WITHOUT touching C++.
+       * a ``getCopy(const char*)`` "PlaneStrain" branch that quietly built a
+         vanilla `ManzariDafaliasPlaneStrain`: the same deck is run at
+         ``-Presidual`` 1.01 and 0 and the answers must differ materially
+         (measured 3.18e-2), which they cannot if the Gauss-point copy never
+         received the constants.
+  7. ``test_print_states_what_it_ran`` -- the fingerprint for the ``Print``
+     override, which nothing called before.  Deleting it outright left the
+     battery green: `test_echo_and_defaults` exercises the CONSTRUCTOR echo
+     (``echoLadrunoConstants``), a different function, and since the echo is now
+     class-tag-guarded the Gauss-point copies do not echo at all.  Without
+     ``Print`` a `printModel` record falls back to `ManzariDafalias::Print`,
+     which emits a tag and a type and NOTHING about the two constants -- "a
+     record that cannot state what it ran", which is what the override's own
+     comment says it exists to prevent.
 
 DETERMINISM / ISOLATION.  ``mElastFlag`` is a **static** member of
 ``ManzariDafalias`` (ManzariDafalias.cpp:58) and every Manzari-family
@@ -86,12 +111,16 @@ the three negative faces rollered and every positive-face DOF prescribed by an
 material's own stress response to a prescribed strain history and cannot be
 contaminated by Newton tolerance -- which matters here, because a
 displacement-norm convergence test on this material CAN report success without
-equilibrium (see the note on test 5).
+equilibrium (see the note on test 5).  Test 6 uses the plane-strain TWIN of
+that driver -- the same unit square, the same rollers-plus-``sp`` recipe, again
+with zero free equations -- so the two lanes are compared on the same protocol
+and not on two different analyses.
 
 SLOW TIER: ``test_presidual_is_the_low_p_defect`` is marked
 ``@pytest.mark.slow``; measured wall time 21.4 s on the dev box (Windows,
 2026-08-26) -- two 1200-step drained triaxial legs at p ~ 1 kPa.  Everything
-else in this file runs in about 0.2 s total.  22 s is not minutes-scale, so
+else in this file runs in about 0.25 s total (tests 6 and 7 together cost about
+0.05 s of that, so neither needs the marker).  22 s is not minutes-scale, so
 the marker is NOT primarily about cost: it is there because ADR 86 risk 6 says
 no gate should depend on an extreme-low-p leg completing, and this test does
 (its p_r = 0 leg fails outright at 400 steps, where vanilla survives).  If the
@@ -901,3 +930,277 @@ def test_presidual_is_the_low_p_defect():
     assert abs(inv_pr0) <= 0.10 * _VANILLA_PR, (
         f'err * p_end = {inv_pr0:.4f} on the p_r = 0 leg, which should be 0 '
         'because that is the residual pressure it was given', cohesionless)
+
+
+# ===========================================================================
+#  6. the PLANE-STRAIN lane -- ADR 86 sec.4.2
+# ===========================================================================
+#
+#  ELEMENT CHOICE.  This fork registers both `quad`/`stdQuad` (FourNodeQuad,
+#  OpenSeesElementCommands.cpp:719-720) and `SSPquad`/`SSPQuad` (:839-840), and
+#  BOTH construct the material with `getCopy("PlaneStrain")`, so either reaches
+#  the lane.  Measured on this build, the two agree on the committed stress to
+#  ~1e-13 relative on the deck below, so the choice is cosmetic for the physics.
+#  `quad` is used because of one non-cosmetic difference: `FourNodeQuad::Print`
+#  forwards to `materialPointers[0]->Print` (FourNodeQuad.cpp), whereas
+#  `SSPquad::Print` prints only the element tag and its nodes and never touches
+#  the material -- so on an SSPquad deck there is no route by which a
+#  `printModel` record can state what the plane-strain Gauss point ran.  That
+#  costs nothing here (4 Gauss points instead of 1, all seeing the identical
+#  uniform strain) and keeps the two lanes' diagnostics symmetric.
+#
+#  BOUNDARY CONDITIONS.  The zero-free-DOF idea carries over EXACTLY: the unit
+#  square's x = 0 edge is rollered in x and its y = 0 edge in y (4 DOFs fixed),
+#  and the x = 1 and y = 1 edges have their normal DOF prescribed by `sp`
+#  (4 DOFs).  8 of 8 DOFs are constrained, so there are no free equations, the
+#  Gauss-point strain is exactly the prescribed uniform field, and no Newton
+#  tolerance enters the answer.  No compromise was needed for 2D.
+#
+#  Strain path: the plane-strain analogue of the cube's -- lateral EXTENSION
+#  0.25*a in x, axial COMPRESSION a in y, with eps_zz = 0 by the kinematics.
+#  Same _N_EL elastic steps, same stage flip, same _N_PL elastoplastic steps.
+#
+#  MEASURED (dev box, this build; `eleResponse(1,'material',1,'stress')`,
+#  i.e. sigma_xx, sigma_yy, sigma_xy at the element face):
+#
+#     leg                                sigma_xx    sigma_yy   sigma_yy-sigma_xx
+#     compressive, p_r = 1.01           -10.8022    -41.9341        -31.1318
+#     compressive, p_r = 0               -9.9742    -43.0331        -33.0589
+#     MIRRORED (== the +1.0 mutant)      -0.9172     -0.7306         +0.1866
+#
+#  reldiff(p_r = 1.01, p_r = 0) = 3.178e-2 -- the settings-reach-the-Gauss-point
+#  assertion, 30x the 1e-3 floor and ten orders above the 1e-12 equivalence tol.
+
+_PS_TOL_SIGMA = 1.0e-9      # absolute kPa floor: "distinctly", not "by a hair"
+
+
+def _build_ps(tag, opts=(), mirror=False):
+    """The plane-strain twin of `_build`: same unit square, same
+    rollers-plus-`sp` recipe, zero free equations.
+
+    `mirror=True` negates the whole prescribed strain path.  That is not a
+    second physics case -- it is how this test measures the ADR 86 sec.4.2
+    mutant WITHOUT editing C++.  See `test_planestrain_lane_carries_the_settings`.
+    """
+    sgn = -1.0 if mirror else 1.0
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.node(j + 1, x, y)
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    # thickness 1.0, type string "PlaneStrain" -> getCopy("PlaneStrain")
+    ops.element('quad', 1, 1, 2, 3, 4, 1.0, 'PlaneStrain', tag)
+    for j, (x, y) in enumerate(_XY):         # rollers on the two negative edges
+        ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for j, (x, y) in enumerate(_XY):
+        n = j + 1
+        if x == 1.:
+            ops.sp(n, 1, sgn * _LAT * _E_AX)     # lateral extension
+        if y == 1.:
+            ops.sp(n, 2, sgn * -_E_AX)           # axial compression
+    _analysis()
+
+
+def _drive_ps(tag, opts=(), mirror=False):
+    """wipe -> build 2D -> elastic leg -> stage flip -> plastic leg -> stress."""
+    _build_ps(tag, opts, mirror)
+    _elastic_leg(tag)
+    _plastic_leg(tag)
+    return _stress()
+
+
+def test_planestrain_lane_carries_the_settings():
+    """The plane-strain lane must keep the sign convention AND the constants.
+
+    TWO silent reverts, one deck.
+
+    (A) THE SIGN CONVENTION.  `LadrunoSANISANDPlaneStrain::setTrialStrain` is
+    ported byte-for-byte from `ManzariDafaliasPlaneStrain::setTrialStrain`
+    (UWmaterials/ManzariDafaliasPlaneStrain.cpp): the material is
+    COMPRESSION-POSITIVE internally and TENSION-POSITIVE at the element face, so
+    the wrapper negates on the way in (`mEpsilon(i) = -1.0 * strain(i)`, index
+    map {0,1,3}) and negates again on the way out (`getStress`).  Turning the
+    inbound `-1.0` into `+1.0` -- ADR 86 sec.4.2's "catastrophic and silent"
+    defect -- feeds the model extension where the element applied compression.
+
+    HOW THE MUTANT IS MEASURED WITHOUT TOUCHING C++.  Because the ONLY thing the
+    flip changes is the sign of the strain handed to `integrate()`, driving the
+    UNMUTATED material with the NEGATED strain path produces bit-for-bit the
+    stress the mutant would return on the original path:
+
+        mutant  on path  e :  eps_int = +e  ->  face stress = -sigma_int(+e)
+        correct on path -e :  eps_int = +e  ->  face stress = -sigma_int(+e)
+
+    and with zero free equations the Gauss-point strain IS the prescribed path,
+    so negating the `sp` values negates it exactly, at every step of the
+    history.  `mirror=True` is that run.  It is asserted against, so this test
+    does not merely claim the flip would be caught -- it exhibits the flip's
+    own output and shows the assertion rejecting it.
+
+    WHY A BARE "the stress is negative" ASSERTION IS NOT ENOUGH, measured: the
+    mutant returns sigma = (-0.9172, -0.7306, 0), which is STILL compressive at
+    the face -- fed extension, the sand loses its confinement, `p` pins near
+    `m_Pmin + m_Presidual` and the face sees a small residual compression rather
+    than tension.  So the sign of sigma alone does not separate the two.  What
+    does separate them is the DEVIATOR: under the correct convention the
+    direction that was compressed carries the GREATER compression
+    (sigma_yy - sigma_xx = -31.13), while the mutant reverses that ordering
+    (+0.1866) because internally it compressed x and extended y.  Both
+    statements are asserted; the deviatoric one is the discriminating half.
+
+    (B) THE CONSTANTS REACHING THE GAUSS POINT.  `LadrunoSANISAND::getCopy(const
+    char*)` exists only because the base version hardcodes
+    `new ManzariDafaliasPlaneStrain(...)`; a PlaneStrain branch that reverted to
+    that would build a vanilla wrapper at every Gauss point, and the deck would
+    echo the settings once and then run vanilla everywhere -- which the echo
+    cannot catch, because `echoLadrunoConstants` is class-tag-guarded and
+    Gauss-point copies deliberately stay quiet.  So the same deck is run at
+    `-Presidual` 1.01 and at 0 with `-Pmin` PINNED in both (ADR 86 risk 4, one
+    variable), and the two answers must differ materially: measured 3.18e-2.
+    """
+    # --- (B) the settings reach the plane-strain Gauss points ----------------
+    ps_vanilla = _drive_ps(40, _OPTS_VANILLA)
+    ps_pr0 = _drive_ps(41, _OPTS_PR0)
+
+    rel = _reldiff(ps_vanilla, ps_pr0)
+    assert rel >= _SENSITIVITY_FLOOR, (
+        'on the PLANE-STRAIN lane, switching p_residual from 1.01 kPa to 0 '
+        f'changed the committed stress by only {rel:.3e}. Either this path is '
+        'not sensitive to p_residual (in which case nothing below proves the '
+        'lane carries the settings), or getCopy("PlaneStrain") is handing the '
+        'element a vanilla ManzariDafaliasPlaneStrain that never received them',
+        ps_vanilla, ps_pr0, rel)
+
+    # --- (A) the geotechnical sign convention --------------------------------
+    sxx, syy, sxy = ps_vanilla
+
+    # tension-positive AT THE FACE: a compressive strain path must not come back
+    # as tension.  (True of the mutant too -- see the docstring -- so this is the
+    # convention statement, not yet the fingerprint.)
+    assert sxx < -_PS_TOL_SIGMA and syy < -_PS_TOL_SIGMA, (
+        'the plane-strain lane returned a non-compressive stress for a '
+        'compressive strain path -- the element-face sign convention is not '
+        'tension-positive', ps_vanilla)
+    assert abs(sxy) <= _PS_TOL_SIGMA, (
+        'a shear stress appeared on an axis-aligned biaxial path; the {0,1,3} '
+        'index map is wrong', ps_vanilla)
+
+    # THE FINGERPRINT: the axis we compressed must carry the greater compression.
+    dev = syy - sxx
+    assert dev < -_PS_TOL_SIGMA, (
+        f'sigma_yy - sigma_xx = {dev:+.4f} >= 0: the axis driven in COMPRESSION '
+        '(y, -3e-4) is not the one carrying the greater compression, so the '
+        'strain reached the model with its sign inverted -- ADR 86 sec.4.2',
+        ps_vanilla)
+
+    # ... and prove that assertion had something to catch, by running the deck
+    # whose Gauss-point history is bit-identical to the +1.0 mutant's.
+    mutant = _drive_ps(42, _OPTS_VANILLA, mirror=True)
+    dev_mutant = mutant[1] - mutant[0]
+    assert dev_mutant > _PS_TOL_SIGMA, (
+        'the mirrored deck -- which reproduces exactly what a +1.0 sign flip in '
+        'setTrialStrain would return -- did NOT reverse the deviator '
+        f'(sigma_yy - sigma_xx = {dev_mutant:+.4f}), so the assertion above '
+        'would pass with or without the flip and this test is not a '
+        'fingerprint', mutant)
+    assert dev * dev_mutant < 0.0, (
+        'the correct and mirrored decks agree on the sign of the stress '
+        'deviator, so the sign convention is not observable on this path',
+        ps_vanilla, mutant)
+
+
+# ===========================================================================
+#  7. Print -- a record that can state what it ran
+# ===========================================================================
+#
+#  ROUTE, established by probing rather than assumed.  An `nDMaterial` lives in
+#  the material registry, NOT in the Domain, and no interpreter -- openseespy or
+#  classic Tcl -- has a `print material <tag>` command, so the dimensionless
+#  PROTOTYPE's `Print` is unreachable from a deck.  What IS reachable is the
+#  Gauss-point copy: `printModel` walks the Domain, `Brick::Print`
+#  (brick/Brick.cpp:437) forwards to `materialPointers[0]->Print(s, flag)`, and
+#  that lands in `LadrunoSANISAND::Print` on the LadrunoSANISAND3D copy.  That is
+#  the better target anyway -- it is the object that actually integrated the
+#  soil.  Measured routes on this build:
+#
+#     ops.printModel('-file', path)            -> whole domain, reaches Print
+#     ops.printModel('-file', path, '-ele')    -> elements only, reaches Print
+#     ops.printModel('-ele')                   -> same, to stderr
+#     ops.printModel('-ele', 1)                -> FAILS, "print ele failed to
+#                                                 get integer" (upstream arg
+#                                                 off-by-one, see the test)
+#
+#  The `-file` form is used so the assertion reads a file rather than racing the
+#  C++ `opserr` stream against pytest's capture.
+#
+#  WHY THIS CANNOT PASS ON A VANILLA OBJECT OR ON DEFAULTS.  `ManzariDafalias::
+#  Print` (UWmaterials/ManzariDafalias.cpp:730-734) is two lines -- a tag and a
+#  type -- and mentions neither constant, so deleting the override drops both
+#  asserted strings entirely.  And the two values asserted, 0.5 and 0.25, are
+#  producible by no default: the defaults are p_residual = 0 and
+#  p_min = 1e-3*P_atm = 0.101.
+
+_PRINT_PR = 0.5      # no default produces this
+_PRINT_PMIN = 0.25   # nor this (default is 1e-3*P_atm = 0.101)
+
+
+def test_print_states_what_it_ran(tmp_path):
+    """`printModel` must report the constants this material actually ran.
+
+    This is NOT `test_echo_and_defaults` in another costume.  That test drives
+    `echoLadrunoConstants()`, which fires once per `nDMaterial` command from the
+    CONSTRUCTOR and -- since it became class-tag-guarded, to stop ~400k lines of
+    stderr on a 50k-element model -- fires only on the deck-level prototype.
+    `Print` is a different function, deliberately left UNGUARDED so that any
+    instance, prototype or Gauss-point copy, can still be interrogated.  Nothing
+    called it before this test: deleting the override outright left the whole
+    battery green, which is how "a record that cannot state what it ran" -- the
+    exact failure the override's own comment cites -- would have shipped.
+    """
+    tag = 50
+    _build('LadrunoSANISAND', tag,
+           ('-Presidual', _PRINT_PR, '-Pmin', _PRINT_PMIN))
+
+    out = tmp_path / 'printmodel.out'
+    # '-file <path>' then '-ele': OPS_printModel opens the file, then
+    # printElement() with no tags left dumps every element to it.  A tag list
+    # ('-ele', 1) is NOT usable from openseespy -- printElement() rewinds with
+    # OPS_ResetCurrentInputArg(2), which assumes the Tcl argv where index 0 is
+    # the command name, and in the Python backend that skips past the tag and
+    # aborts with "print ele failed to get integer".  Upstream, and reported
+    # rather than worked around.
+    ops.printModel('-file', str(out), '-ele')
+    txt = out.read_text()
+
+    assert 'LadrunoSANISAND Material, tag: %d' % tag in txt, (
+        'printModel produced no LadrunoSANISAND record at all. If the header '
+        'says "ManzariDafalias Material" instead, the Print override is gone '
+        'and the record cannot state what it ran', txt)
+    assert 'ManzariDafalias Material, tag:' not in txt, (
+        'the base ManzariDafalias::Print ran, so the override is not in effect',
+        txt)
+    # The Gauss-point copy, not the dimensionless prototype -- see the note
+    # above for why the prototype is unreachable from any interpreter.
+    assert 'Type: ThreeDimensional' in txt, txt
+
+    # BOTH constants, at their non-default values.  Regexes, not `in`, so the
+    # resolved value and the echoed user input are asserted TOGETHER: a Print
+    # that reported the input but ran something else, or vice versa, fails here.
+    assert re.search(r'p_residual = %g\s+\(input %g, user\)'
+                     % (_PRINT_PR, _PRINT_PR), txt), (
+        'printModel did not report p_residual = %g as a user value' % _PRINT_PR,
+        txt)
+    assert re.search(r'p_min\s+= %g\s+\(input %g, user\)'
+                     % (_PRINT_PMIN, _PRINT_PMIN), txt), (
+        'printModel did not report p_min = %g as a user value' % _PRINT_PMIN,
+        txt)
+
+    # ... and they are not the defaults wearing the same words.
+    assert 'default: cohesionless' not in txt, (
+        'Print reported the p_residual DEFAULT on a material given '
+        '-Presidual %g' % _PRINT_PR, txt)
+    assert 'default = 1e-3*P_atm' not in txt, (
+        'Print reported the p_min DEFAULT on a material given -Pmin %g'
+        % _PRINT_PMIN, txt)

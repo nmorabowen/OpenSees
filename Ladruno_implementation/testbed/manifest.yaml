@@ -971,7 +971,7 @@ features:
     pr: null
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # NOT COVERED BY A PlaneStrain LEG. The battery is 3D-only (ndm=3 stdBrick); nothing in the repo drives this wrapper, and broker case 33021 is never exercised. Row kept so the G9 gate accounts for the tag, but read this as UNTESTED, not as coverage. Owed: a plane-strain leg asserting the {0,1,3} index map and the geotechnical sign flip. Surfaced by the ADR-86 PR-1 adversarial review, which caught this cell overclaiming; a later mutation campaign PROVED the gap by flipping the geotechnical sign convention in LadrunoSANISANDPlaneStrain::setTrialStrain -- the defect the ADR calls catastrophic-and-silent -- and watching the whole battery stay green.
+    pytest: tests/test_ladruno_sanisand.py   # COVERED as of ADR-86 PR-1 by test_planestrain_lane_carries_the_settings: an ndm=2 quad (FourNodeQuad, PlaneStrain) zero-free-DOF cell -- 8 of 8 DOFs constrained, so the Gauss-point strain IS the prescribed field. Asserts (a) the geotechnical sign convention via the DEVIATOR sign, not the stress sign -- a bare 'stress is compressive' assertion does NOT catch the flip, because the mutant still returns compression (-0.73 kPa); and (b) that -Presidual reaches the Gauss points on this lane (reldiff 3.18e-2), which is what a getCopy("PlaneStrain") branch silently building a vanilla ManzariDafaliasPlaneStrain cannot survive. PROVEN a real fingerprint by mutation: flipping -1.0 -> +1.0 in setTrialStrain, rebuilding, and re-running makes THIS TEST AND ONLY THIS TEST fail (deviator +0.1866 vs the required < 0). Before this test the same mutation left the entire battery green.
     tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
     core_files:
       - SRC/classTags.h
@@ -981,7 +981,7 @@ features:
       - SRC/runtime/runtime/TclPackageClassBroker.cpp
       - SRC/material/nD/CMakeLists.txt
     dispatch: {tcl: true, functionMap: true}
-    status: remediation      # wired and compiling, but NO test drives the PlaneStrain lane -- see the pytest cell
+    status: active
     notes: >
       ADR 86 PR-1. PlaneStrain wrapper for LadrunoSANISAND, mirroring
       ManzariDafaliasPlaneStrain. Numerically equals ELE_TAG_LadrunoCSTPair 33021 in

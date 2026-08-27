@@ -231,6 +231,16 @@ known until the base constructor has run.
 **The echo is per construction, not once per process.** A latched message is observable
 only by whichever test runs first — see the isolation note in §5.
 
+> **Refined during PR-1, by measurement.** "Per construction" taken literally means *per Gauss
+> point*, because `getCopy(const char*)` runs a full constructor for every integration point:
+> measured at 513 echo lines for a 64-element mesh, i.e. ~400k lines (~83 MB of stderr) on a
+> 50k-element model before the first analysis step. The requirement this clause actually encodes
+> is that the message must not be **latched**; echoing once per `nDMaterial` command satisfies it
+> in full. PR-1 therefore guards the echo on `getClassTag() == ND_TAG_LadrunoSANISAND` — the
+> deck-level object the parser builds announces itself every time, in every process, while its
+> Gauss-point copies (which carry the wrapper tags) stay quiet. `Print()` is deliberately
+> **not** guarded, so a per-Gauss-point record is still available on demand.
+
 ### 4.5 Deck syntax
 
 First 18 positional args and the 5 optional ones are **identical to
@@ -499,3 +509,19 @@ same-mind failure.
   and are **correct as written**; the proposed `:132`/`:141` correction was itself wrong.
   Known gap shipped knowingly: the **PlaneStrain lane (33021) is wired and compiling but
   has no test**; the manifest row says so rather than claiming coverage.
+- 2026-08-26 — **PR-1, third pass: two adversarial reviews acted on.** One pass charged to refute
+  every claim of fact in the docs, one running a 17-mutation campaign against the battery. **No
+  defect was found in the shipped C++ behaviour.** What they found was (a) false claims —
+  "MP smoke self-arming" (it skips unconditionally), an incomplete "four sites" fix, an
+  irreproducible convergence anecdote — all corrected; and (b) that **CI ran 5 of the 8 tests, and
+  the 3 that did not run carried the unique coverage**: `dist/bin` never exists on the runner, so
+  the classic-Tcl smoke skipped on every push. Arming it turned Zone-A red on
+  `Can't find a usable init.tcl` — `Ladruno_internal/WORKFLOW_GOTCHAS.md` §7 exactly — and the fix
+  is the same `TCL_LIBRARY` export the two neighbouring Tcl steps already carried, plus a
+  self-discovering retry in the test so the gate is portable. **That gate had never once executed.**
+  Three coverage holes then closed, each proven by mutation rather than argued: the PlaneStrain
+  lane, `Print`, and the per-Gauss-point echo (§4.4's refinement box). Still open and recorded, not
+  hidden: `LadrunoSANISAND3D::getCopy(void)` is uncovered, and `-Pmin` has no *behavioural* gate —
+  a real one needs a deck at `p` near `m_Pmin`, i.e. the extreme-low-p regime §8 risk 6 says no
+  gate should depend on, so it belongs with **PR-2's clamp diagnostic**, which supplies an
+  observable to assert on instead of inferring the clamp from stress output.

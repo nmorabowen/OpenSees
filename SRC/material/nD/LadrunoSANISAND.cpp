@@ -358,16 +358,33 @@ LadrunoSANISAND::applyLadrunoConstants(void)
     m_Pmin      = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
 }
 
-// Ladruno: PER-CONSTRUCTION echo (ADR 86 section 4.4). Deliberately NOT latched
-// behind a `static bool printedOnce` -- a latched message is observable only by
-// whichever test in a session runs first, which is exactly how the p_residual
-// defect stayed invisible. The cost is one line per Gauss-point copy on a large
-// mesh; that is the documented trade and it is the ADR's explicit choice. Called
-// only from the two FULL constructors (the parser's and the wrappers'); the null
-// constructors have P_atm = 0 and nothing true to say.
+// Ladruno: PER-DECK-MATERIAL echo (ADR 86 section 4.4).
+//
+// Deliberately NOT latched behind a `static bool printedOnce` -- a latched
+// message is observable only by whichever test in a session runs first, which is
+// exactly how the p_residual defect stayed invisible. Every `nDMaterial
+// LadrunoSANISAND ...` command echoes, every time, in every process.
+//
+// But NOT once per Gauss point either. `getCopy(const char*)` runs a full
+// constructor for EVERY integration point, so echoing unconditionally put one
+// 207-byte line per Gauss point on stderr: measured at 10 lines for a single
+// stdBrick and 514 for 64 of them, i.e. ~400k lines (~83 MB) before the first
+// analysis step on a 50k-element model. That is not what section 4.4 asks for --
+// its requirement is that the message not be LATCHED, and echoing once per deck
+// command satisfies that in full.
+//
+// The discriminator is the class tag, which needs no signature change: the
+// object the parser builds carries ND_TAG_LadrunoSANISAND, while every
+// Gauss-point copy is a wrapper (ND_TAG_LadrunoSANISAND{3D,PlaneStrain}). So the
+// deck-level material announces itself and its copies stay quiet. `Print()` is
+// unguarded and still reports the constants for ANY instance on demand, so a
+// per-Gauss-point record is still obtainable when someone actually wants one.
 void
 LadrunoSANISAND::echoLadrunoConstants(void)
 {
+    if (this->getClassTag() != ND_TAG_LadrunoSANISAND)   // Ladruno: copies stay quiet
+        return;
+
     opserr << "LadrunoSANISAND tag " << this->getTag()
            << ": p_residual = " << m_Presidual;
     if (mPresidualInput == 0.0)
