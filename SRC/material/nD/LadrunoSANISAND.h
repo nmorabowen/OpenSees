@@ -72,9 +72,14 @@
 #ifndef LadrunoSANISAND_h
 #define LadrunoSANISAND_h
 
-// Quote-include so it resolves against this file's own directory first
-// (SRC/material/nD/UWmaterials/) and against SRC/material/nD/ second -- the
-// same spelling FEM_ObjectBrokerAllClasses.cpp uses.
+// Quote-include so it resolves against THIS file's own directory first --
+// SRC/material/nD/, where fork-authored ND materials live flat (the LadrunoJ2
+// convention, ADR 86 sec.4.2) -- which is why the path carries the
+// `UWmaterials/` segment: the base lives one level down, in
+// SRC/material/nD/UWmaterials/. Same spelling FEM_ObjectBrokerAllClasses.cpp uses.
+// (An earlier version of this comment said THIS file lives in UWmaterials/. It
+// does not; the include resolved correctly anyway, so nothing depended on the
+// error, but on this class the comments have been wrong more often than the code.)
 #include "UWmaterials/ManzariDafalias.h"
 
 class LadrunoSANISAND : public ManzariDafalias
@@ -136,8 +141,16 @@ class LadrunoSANISAND : public ManzariDafalias
     double mPminInput;        // Ladruno: p_min as given; < 0 is the SENTINEL for
                               //          "resolve to 1.0e-3 * P_atm" (P_atm is not
                               //          known until the base ctor has run)
-    int    mHonorTolR;        // Ladruno: PR-2 seam placeholder. Always 0 in PR-1;
-                              //          any other value is rejected at parse time.
+    int    mHonorTolR;        // Ladruno: the DECK-LEVEL request, 0 or 1. Wired in PR-3
+                              //          to the base's `bool mHonorTolRInME` (opened by
+                              //          PR-2), which ModifiedEuler() reads as
+                              //          `TolE = mHonorTolRInME ? mTolR : 1e-4`.
+                              //          0 = vanilla's hardcoded 1e-4 substep error
+                              //          tolerance; 1 = honour the deck's TolR.
+                              //          Two names on purpose: this is the request,
+                              //          mHonorTolRInME is the base-side seam it acts
+                              //          on, and keeping them distinct keeps the two
+                              //          greppable apart.
 
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
@@ -146,11 +159,24 @@ class LadrunoSANISAND : public ManzariDafalias
 
     // The single "win the last write" helper. Called from every constructor
     // (after the base ctor has returned), from revertToStart via initialize(),
-    // and from recvSelf.
+    // and from recvSelf. Sets m_Presidual, m_Pmin AND (PR-3) the base's
+    // mHonorTolRInME seam -- all three are base-side state that something else
+    // may have written first, and all three are re-asserted in exactly one place.
     void applyLadrunoConstants(void);   // Ladruno
 
     // Per-construction echo (NOT latched -- see ADR 86 section 4.4).
     void echoLadrunoConstants(void);    // Ladruno
+
+    // Ladruno (ADR-86 PR-3): the three input checks, in one place rather than
+    // copied into both full constructors. Called before applyLadrunoConstants().
+    void sanitiseLadrunoInputs(int tag);   // Ladruno
+
+    // Ladruno (ADR-86 PR-3): true when this deck's IntScheme actually routes to
+    // ManzariDafalias::ModifiedEuler(), the ONE function that reads the
+    // mHonorTolRInME seam. On every other scheme `-honorTolR 1` is stored, echoed
+    // and wired -- and inert, which is the defect class this ADR exists to fix, so
+    // the echo says so. See the dispatch table at the definition.
+    bool schemeReachesModifiedEuler(void) const;   // Ladruno
 };
 
 #endif

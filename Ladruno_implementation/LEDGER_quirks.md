@@ -4688,3 +4688,240 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **How to exercise it:** raise `-Pmin` above the deck's working pressure. Measured on the same deck with `-Presidual 0`: `-Pmin 1.5` -> **10 events**, `-Pmin 3.0` -> **10 events** (10 is the full throttle budget, after which a suppression notice prints and it goes silent). That is also the honest way to regression-test the diagnostic.
 - **The wider lesson, which cost this session real time twice:** "I verified the warning fires" is only meaningful with the deck AND the leg AND the constants named. Two different agents reported "8 events" in this PR about two DIFFERENT diagnostics (this clamp, and `Elastic2Plastic`'s `M_c`-inflation notice, which really does fire 8x per leg on the 3D ramp deck — once per Gauss point). Number collisions between unrelated diagnostics are how a false claim survives review.
 - **Learned:** 2026-08-27, closing the discrepancy between PR-2 commits 2 and 5.
+
+
+## ManzariDafalias: `m_Pmin` silently REBUILDS the whole stress tensor, at sites PR-2's clamp diagnostic does not cover
+
+**Found 2026-08-27, ADR-86 PR-3, by measurement.** ADR-86 PR-2 made the low-`p` clamp
+observable by adding a throttled warning at two sites — `ModifiedEuler` (`:1378`) and
+`RungeKutta45` (`:1902`). That is not all of them, and the ones it misses are the ones that
+fired.
+
+On a confine-first deck at `p = 0.1145 kPa` (IntScheme 1, `m_Presidual` pinned at vanilla's
+1.01, `-Pmin` at `LadrunoSANISAND`'s default `1e-3*P_atm = 0.101`), traced per committed step:
+
+```
+step 1   p = -0.5647   |dev| = 9.5818     <- mean stress goes NEGATIVE
+step 2   p =  0.1010   |dev| = 2.40e-17   <- stress REPLACED by m_Pmin * mI1
+```
+
+**Zero warnings were printed.** The same deck at `-Pmin = 0.0101` never resets: its minimum
+`|dev|` over the whole 40-step leg is 5.75e-01. End state differs by a factor: `p_end` 4.2254
+vs 10.388 kPa.
+
+The uninstrumented resets, all of which zero the deviator AND `alpha`:
+
+| site | guard | writes | deviator |
+|---|---|---|---|
+| `explicit_integrator` `:1074`/`:1078` | `p_n < m_Presidual` (i.e. true `p` < 0) | `NextStress = m_Pmin * mI1` | **WIPED** |
+| `Stress_Correction` `:2555`/`:2557`/`:2624` | true `p` < `m_Pmin` | `p = m_Pmin + m_Presidual`, then `NextStress = p * mI1` | **WIPED** |
+| `BackwardEuler_CPPM` `:2213`/`:2229` | `p < m_Pmin`, then true `p` < 0 | `NextStress = m_Pmin * mI1` | **WIPED** |
+
+**And the sharper half of this: the two sites that ARE instrumented are the two that
+do the LESS destructive thing.** `ModifiedEuler:1407` and `RungeKutta45:1923` write
+`GetDevPart(NextStress) + m_Pmin * mI1` — the deviator is **preserved**. All three
+uninstrumented sites write a purely isotropic tensor and call `NextAlpha.Zero()` — the
+deviator and the back-stress ratio are **destroyed**. So the warning covers the gentler
+rebuild and is silent on the total one.
+
+> **CORRECTED 2026-08-27 by adversarial review, before this entry ever shipped.** A
+> first draft of this table carried a fourth row, `Stress_Correction:2608` ("Newton hit
+> `maxIter`"), and the summary below said "two of at least **six**". That row is **dead
+> code**: line 2608 sits at brace-depth 6 inside the `if (false)` block that opens at
+> `:2559` and closes at `:2623`, so it can never execute. The only live effect of that
+> whole branch is `p = m_Pmin + m_Presidual` at `:2557` feeding `NextStress = p * mI1`
+> at `:2624`, which is *outside* the dead block and is already the row above. One
+> logical site had been counted as two. Verified by mechanical brace-depth trace, not by
+> eye. The true tally is **five live rebuilds, two of them instrumented**.
+
+Note the second one: PR-2 repaired an analogous `p = m_Pmin` store in `ModifiedEuler` and
+established by inspection that it was **dead** (nothing read `p` before the unconditional
+recompute). The `Stress_Correction` twin is **live** — `p` is written and then used two
+statements later as `NextStress = p * mI1`. Same shape, opposite consequence. Do not
+generalise the PR-2 finding to it.
+
+- **If you A/B anything at `p` below a few tenths of a kPa, pin `-Pmin`.** It is not a floor,
+  it is a switch that can replace the answer.
+- **Do not read "no clamp warning" as "no clamp".** PR-2's diagnostic covers **two of the
+  five** live `m_Pmin`-triggered rebuilds — and the three it misses are the three that zero
+  the deviator.
+- Pinned by `test_pmin_is_behavioural_at_low_confinement`, which asserts the wipe
+  categorically (`|dev| < 1e-10` at `p == m_Pmin`) rather than asserting a number.
+- **Two more notes on the two diagnostics that DO exist** (adversarial review, 2026-08-27):
+  their throttle counters are function-local `static int` incremented non-atomically, so if the
+  element/material-level threading planned in ADR-75b ever lands they become a data race (UB, not
+  just a garbled count). And their guards are deliberately ASYMMETRIC -- `ModifiedEuler` tests
+  `p < m_Pmin + m_Presidual` while `RungeKutta45` tests `p < m_Pmin` -- because the two functions
+  define `p` differently (RK45 never adds `m_Presidual` anywhere in its body). Each guard is
+  correct for its own function. **Do not "fix" the asymmetry** without checking both `p`
+  conventions first.
+- **Owed:** instrument the three uninstrumented sites the way PR-2 instrumented its two
+  (process-wide budget, not per instance — `getCopy` makes every Gauss point an instance).
+  Deliberately out of PR-3's scope, which was three low-risk items.
+
+## ManzariDafalias: a FIFTH `D_factor` sigmoid exists, is dimensionally worse, is coupled to `m_Pmin` — and is dead code
+
+**Found 2026-08-27, ADR-86 PR-3.** ADR 86 §7.2 enumerates four `D_factor` sites and PR-2
+non-dimensionalised all four (`:3147`, `:3976`, `:4455` in the analytical Jacobian; `:4958` in
+`GetStateDependent`). There is a fifth, at `ManzariDafalias.cpp:3556-3563` inside `NewtonSol2`,
+and it is a *different* sigmoid:
+
+```cpp
+if (p < 0.001 * m_P_atm) {
+    double be    = 207232.6584 * 2.0 * m_Pmin;
+    double temp1 = exp(20.72326584 - be*p);
+    double D_factor = MacauleyIndex(D) / (1+temp1);
+```
+
+- `be*p` carries **stress²**, so it is dimensionally worse than the four PR-2 repaired.
+- Its steepness is **proportional to `m_Pmin`**. `207232.6584 = 20.72326584/1e-4` and
+  `20.72326584 = -ln(1e-9)`, so `be` reduces to `2*20.723*P_atm` **only when `m_Pmin` has its
+  vanilla value `1e-4*P_atm`**. `LadrunoSANISAND`'s `-Pmin` default would make it 10x steeper.
+- **It is unreachable.** `NewtonSol2` is called only from `NewtonIter3`, and `NewtonIter3` has
+  **no caller anywhere in `SRC/`** (verified by grep; `SAniSandMS` carries its own unrelated
+  pair). `NewtonIter2_negP` is dead the same way — its only reference is a commented-out line
+  at `:2244`.
+
+So PR-2's "all four sites" is **correct about behaviour and incomplete about source**. Recorded,
+not fixed: fixing dead code changes nothing and risks getting a derivative wrong. If
+`NewtonIter3` is ever wired up, this becomes a live `-Pmin`-coupled shape defect.
+
+## `p_residual` was BOUNDING the `D_factor` sigmoid — the two low-`p` devices are coupled
+
+**Measured 2026-08-27, ADR-86 PR-3.** `GetStateDependent` computes one `p` that
+**includes `m_Presidual`** (`:4914`) and hands it to both `GetPSI` and the `D_factor` sigmoid.
+The sigmoid's half-suppression point is `7.6349/7.2713 = 1.0500 kPa`; vanilla's `m_Presidual` is
+**1.01 kPa**. So in vanilla the sigmoid can never suppress dilatancy below `D_factor = 0.4278`,
+however low the true confinement. With `p_residual = 0` — which is `LadrunoSANISAND`'s default —
+the floor drops to `4.830e-4`, a factor of **886**.
+
+Measured on the confine-first deck, same prescribed strain path both legs: min `D_factor` along
+the path is **0.7227** at `p_r = 1.01` and **0.0016821** at `p_r = 0`.
+
+**Consequence for anyone running `p_r = 0`:** you have not only removed an apparent cohesion,
+you have un-masked a dilatancy suppressor that vanilla kept bounded. See
+[[86_ladruno_sanisand_pr3_tripwire_memo]] §1; the modelling call (ADR 86 D5a) is open and, per
+D8, is Prof. Gorini's.
+
+## Ninja compiles what is on disk WHEN IT REACHES THE TU, so editing source during a build silently mixes trees
+
+**Cost 2026-08-27, ADR-86 PR-3, ~20 minutes.** A full build was launched from committed HEAD to
+establish a baseline, and source edits were made while it ran, on the assumption that the
+material TUs had already compiled (the log tail showed `1964/1968`). They had not — ninja
+interleaves targets, and `LadrunoSANISAND.cpp` compiled *after* the edit. The resulting binary
+was HEAD **plus some** of the edits, and the "baseline" battery run against it reported a
+failure that looked like a real defect on `ladruno` HEAD.
+
+This is the inverse of `86_ladruno_sanisand_handoff` §1's stale-binary trap and it reads exactly
+the same from the outside: a green or red result about a tree that never existed.
+
+- **Never edit `SRC/` while a build is running.** A progress counter is not a per-file cursor.
+- The tell is a warning or behaviour in the run that is **newer than the build you launched**.
+- For iterating on one material, skip `build.bat` entirely:
+  `cmake --build build\build\Release --target OpenSeesPy -j 8` then copy `OpenSeesPy.dll` to
+  `dist\bin\opensees.pyd` — **~30 s** against ~8 minutes, because it skips the CMake configure
+  and the MUMPS step (which re-runs on this box even for a one-line C++ change).
+
+
+## `ManzariDafaliasPlaneStrain`'s null constructor sets the WRONG classTag, and a broker restore never repairs it
+
+**Found 2026-08-27 by adversarial review during ADR-86 PR-3. Vanilla defect, NOT fixed
+by us — surfaced for a decision per `WORKFLOW_GOTCHAS.md` section 6.**
+
+Vanilla is inconsistent between its own two wrappers:
+
+```cpp
+// ManzariDafalias3D.cpp:41-42            -- CORRECT
+ManzariDafalias3D::ManzariDafalias3D()
+  : ManzariDafalias(ND_TAG_ManzariDafalias3D)
+
+// ManzariDafaliasPlaneStrain.cpp:43-44   -- WRONG
+ManzariDafaliasPlaneStrain::ManzariDafaliasPlaneStrain()
+  : ManzariDafalias()                      // -> NDMaterial(0, ND_TAG_ManzariDafalias)
+```
+
+`ManzariDafalias`'s bare null constructor hardcodes `NDMaterial(0, ND_TAG_ManzariDafalias)`
+(`ManzariDafalias.cpp:363-364`), so a null-constructed `ManzariDafaliasPlaneStrain` reports
+`getClassTag() == ND_TAG_ManzariDafalias` — the DIMENSIONLESS BASE tag.
+
+**And nothing repairs it.** `grep -n setClassTag SRC/material/nD/UWmaterials/ManzariDafalias.cpp`
+finds nothing: `recvSelf` restores the 97 data slots and never touches the class tag. So the
+object the broker builds at `FEM_ObjectBrokerAllClasses.cpp:2547-2548` carries the wrong tag for
+the rest of its life.
+
+Why it is usually invisible: the ordinary `getCopy()` path does `*clone = *this`, and the
+compiler-generated member-wise assignment copies `MovableObject::classTag` from a correctly-tagged
+source, overwriting the wrong one. The bug only bites on paths that construct the null form and
+then READ the tag — i.e. database restore and `OpenSeesMP`. There, if the restored material is
+ever re-serialised, `Channel` writes the wrong class tag and the far side brokers a bare
+`ManzariDafalias`, whose `getType()` and `getCopy(void)` are "subclass responsibility" + `exit(-1)`.
+
+**We deliberately did NOT replicate it.** `LadrunoSANISANDPlaneStrain`'s null constructor passes
+`ND_TAG_LadrunoSANISANDPlaneStrain`, matching what `LadrunoSANISAND3D` and `LadrunoSANISAND`'s own
+null constructor already do. For our class the bug would not have been cosmetic: the construction
+echo and `Print`'s type guard are BOTH keyed on `getClassTag() == ND_TAG_LadrunoSANISAND`
+(`LadrunoSANISAND.cpp`, `echoLadrunoConstants` and `Print`). A restored PlaneStrain carrying the
+base tag would therefore have echoed **once per Gauss point** — the exact ~83 MB-of-stderr failure
+mode ADR 86 section 4.4's refinement box was written to prevent, arriving through the back door.
+
+- **Do not "align" our wrapper with vanilla's.** The difference is deliberate and load-bearing.
+- **If you write a new ND wrapper, pass the explicit class tag to the base constructor.** Copying
+  the nearest sibling is how this propagates.
+- **Owed, and needs a decision:** the vanilla fix is one token
+  (`: ManzariDafalias(ND_TAG_ManzariDafaliasPlaneStrain)`), it is additive, and D9 classes it as an
+  ERROR rather than an opinion — but it is out of ADR-86 PR-3's scope and, per
+  `WORKFLOW_GOTCHAS.md` section 6, a vanilla bugfix is only made with the owner's approval.
+  `ManzariDafaliasPlaneStrainRO` should be checked at the same time.
+
+
+## `OPS_ManzariDafaliasMaterial` writes past a 5-element stack array on a deck with >5 trailing optionals
+
+**Found 2026-08-27 by adversarial review during ADR-86 PR-3. Vanilla defect, memory-unsafe,
+NOT fixed by us — surfaced for a decision per `WORKFLOW_GOTCHAS.md` section 6.**
+
+`SRC/material/nD/UWmaterials/ManzariDafalias.cpp:89-114`:
+
+```cpp
+int numArgs = OPS_GetNumRemainingInputArgs();   // :80, counted BEFORE the tag is consumed
+...
+double oData[5];                                 // :90
+...
+numData = numArgs - 19;                          // :110
+if (numData != 0)
+    if (OPS_GetDouble(&numData, oData) != 0) {   // :112  -- writes numData doubles
+```
+
+`numArgs` is `19 + k` for `k` trailing optionals, so `numData == k`, **uncapped**. And
+`OPS_GetDoubleInput` (`SRC/api/elementAPI_TCL.cpp:316-329`) loops `for (i = 0; i < *numData; i++)
+data[i] = ...` with **no bound on the destination array** — it stops only when the input args run
+out or a token fails to parse. So a deck supplying more than five trailing numeric arguments
+writes past `oData[5]` on the stack:
+
+```tcl
+# k = 8 -> writes oData[0..7] into a double[5]: 24 bytes past the array
+nDMaterial ManzariDafalias 1 <18 doubles> 1 0 1 1e-7 1e-7 0 0 0
+```
+
+This is a THIRD defect in this argument-arithmetic family, and the most serious:
+
+| | defect | consequence |
+|---|---|---|
+| `SAniSandMS` (ADR 86 sec.7.1) | `numArgs - 19` should be `- 20`; `numData -= 5` should be `-= 3` | `TolF`/`TolR` silently dropped |
+| `ManzariDafalias` (this entry) | `numArgs - 19` uncapped into `double[5]` | **stack buffer overflow** |
+| `LadrunoSANISAND` | none — see below | hard parse error |
+
+**`LadrunoSANISAND` is immune by construction**, and this is the clearest justification yet for
+the design ADR 86 sec.7.1's note argued for. Its parser never computes a count: it consumes every
+remaining token one at a time, classifies it, and rejects the sixth positional outright
+(`LadrunoSANISAND.cpp`, the `if (nPos >= 5)` guard). `numArgs` is used exactly once, for the
+`< 19` minimum check. A count that is never computed cannot be computed wrongly.
+
+- **Do not copy `OPS_ManzariDafaliasMaterial`'s optional-argument block into a new material.**
+  It is the pattern to avoid, not the template. Several UW-family parsers share its shape;
+  a sweep is owed.
+- **Owed, and needs a decision:** the vanilla fix is one line
+  (`numData = numArgs - 19; if (numData > 5) numData = 5;`, or a hard error, which is better since
+  a deck with 6+ optionals is malformed either way). Additive, and D9 classes it as an ERROR, not
+  an opinion. Out of ADR-86 PR-3's scope; per `WORKFLOW_GOTCHAS.md` section 6 a vanilla bugfix is
+  made only with the owner's approval. Check `ManzariDafaliasRO` and the other UW `OPS_*Material`
+  parsers in the same pass.

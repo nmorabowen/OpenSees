@@ -1,7 +1,7 @@
 ---
 title: LadrunoSANISAND — Manzari-Dafalias with settable, wired and echoed low-stress constants
 project: Ladruno
-status: implemented (PR-1); PR-2 and PR-3 outstanding
+status: implemented (PR-1, PR-2, PR-3); D5a and section 7.3 open -- see 86_ladruno_sanisand_pr3_tripwire_memo
 priority: high
 owner: nmora
 tags:
@@ -141,7 +141,7 @@ rather than about a build hash.
 | **D2** | v1 difference is **only** `m_Presidual`/`m_Pmin` as optional args, wired and echoed. Defaults `0.0` and `1.0e-3*P_atm` | Accepted |
 | **D3** | **Vanilla `ManzariDafalias` is not edited** in PR-1 | Accepted |
 | **D4** | **Subclass**, not a full copy, and **not** `virtual` promotions — see §4.1, the RO hazard | Accepted |
-| **D5a** | The `D_factor` sigmoid's **shape** — whether it should exist once `m_Presidual = 0`, and whether its constants are right — is **deferred**. Family-wide; §7.2 | Accepted |
+| **D5a** | The `D_factor` sigmoid's **shape** — whether it should exist once `m_Presidual = 0`, and whether its constants are right — is **deferred**. Family-wide; §7.2. **Still deferred after PR-3, but no longer on the grounds originally given.** PR-3 measured the two low-`p` devices to be *quantitatively coupled*: `GetStateDependent` hands the sigmoid a `p` that **includes `m_Presidual`** (`:4914`), the sigmoid's half-suppression point is `7.6349/7.2713 = 1.0500` kPa and vanilla's `m_Presidual` is `1.01` kPa, so **vanilla's residual pressure bounds `D_factor` from below at 0.4278** — and `p_r = 0`, this class's default, drops that floor to `4.830e-4`, a factor of **886**. Measured on one deck: min `D_factor` along the path `0.7227` (`p_r = 1.01`) vs `0.0016821` (`p_r = 0`). So "defer, it is family-wide and affects everyone equally" is **false for this class**. See [[86_ladruno_sanisand_pr3_tripwire_memo]] | Accepted; re-scoped 2026-08-27 |
 | **D5b** | The sigmoid's **unit dependence is fixed in vanilla**, at all four sites, in **PR-2** — *not* in the subclass, and not deferred. It is a **no-op** in the calibrated units. §7.2.1 | Accepted, amended 2026-08-26 |
 | **D6** | The `m_e_init` elastic modulus is **not** corrected in v1 — it moves a calibrated quantity (§7.3) | Accepted |
 | **D7** | Behaviour-changing items (`mTolR`, the interpolant) go in PR-2, each with a ledger row and its own commit | Accepted |
@@ -251,12 +251,32 @@ First 18 positional args and the 5 optional ones are **identical to
 ```tcl
 nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm $m \
     $h0 $ch $nb $A0 $nd $z_max $cz $Rho <$IntScheme $TanType $JacoType $TolF $TolR> \
-    <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0>
+    <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0|1>
 ```
 
-> `-honorTolR` accepts **only `0`** in PR-1. The seam it would control is one line in
-> `ManzariDafalias.cpp:1320`, and PR-1 does not edit vanilla (D3/D7) — so `-honorTolR 1`
-> is a **hard parse error**, not a silent no-op. It becomes `0|1` when PR-2 lands the seam.
+> **`-honorTolR` accepts `0|1` as of PR-3.** History, because the three states are easy to
+> confuse: PR-1 accepted **only `0`** and made `-honorTolR 1` a *hard parse error* rather than
+> a silent no-op, because the seam did not exist yet (D3/D7). PR-2 opened the seam in vanilla
+> (`bool mHonorTolRInME`, read once as `TolE = mHonorTolRInME ? mTolR : 1e-4` in
+> `ManzariDafalias::ModifiedEuler`, now at `:1358`) and deliberately left it unwired. **PR-3
+> wires it**, from `LadrunoSANISAND::applyLadrunoConstants()` — the same "win the last write"
+> helper that carries `m_Presidual`/`m_Pmin`, so the seam survives `initialize()`,
+> `revertToStart` and `recvSelf` for the same reason they do. Values other than 0 and 1 are
+> still refused: the base member is a `bool`, so 2 and −1 would silently mean 1.
+>
+> **The seam's scope, measured, and it is narrower than the flag's name suggests.**
+> `mHonorTolRInME` is read at exactly one site, inside `ModifiedEuler`. On the confine-first
+> deck, IntScheme 1: `reldiff(flag 0, flag 1)` is **0.0 bit-identical at `TolR = 1e-4`**
+> (structural — both operands are then the same double) and **2.641e-04 at `TolR = 1e-6`**.
+> On **IntScheme 3 and IntScheme 45 the flag is inert, measured reldiff exactly 0.0**, because
+> neither routes to `ModifiedEuler` — and IntScheme 45 already honours `mTolR`
+> unconditionally, which is *why* the seam was needed for `ModifiedEuler` and not for it.
+> Reading the dispatch rather than the names matters here: IntScheme **7** is
+> `INT_MAXSTR_MFE`, "Modified Euler constraining maximum strain increment", and
+> `MaxStrainInc`'s inner switch selects `ForwardEuler` in **both** its branches — so 7 does
+> not reach `ModifiedEuler` either. Because an accepted-but-inert flag is the exact defect
+> class this ADR exists to fix, the material **warns at construction** on any scheme that
+> cannot honour it.
 
 ### 4.6 Registration — five sites, not one
 
@@ -430,6 +450,19 @@ identical sigmoid with the identical bare constants (one site there, not four), 
 does `NTUASand02`. Fixing all three is one coordinated change or three independent ones;
 either way the argument is the same.
 
+> **A FIFTH site, found in PR-3, which "all four" does not cover.**
+> `ManzariDafalias.cpp:3556-3563`, inside `NewtonSol2`, carries a *different* sigmoid:
+> trigger `p < 0.001*m_P_atm`, and
+> `be = 207232.6584 * 2.0 * m_Pmin; temp1 = exp(20.72326584 - be*p)`. It is dimensionally
+> **worse** than the four repaired here — `be*p` carries stress² — and its steepness is
+> **proportional to `m_Pmin`**: `207232.6584 = 20.72326584/1e-4` and `20.72326584 = -ln(1e-9)`,
+> so `be` reduces to `2*20.723*P_atm` *only* when `m_Pmin` holds its vanilla `1e-4*P_atm`,
+> and this class's `-Pmin` default would make it 10× steeper.
+> **It is unreachable**: `NewtonSol2` is called only from `NewtonIter3`, which has no caller
+> anywhere in `SRC/`. PR-2's "all four sites" is therefore **correct about behaviour and
+> incomplete about source**. Recorded in [[LEDGER_quirks]], not fixed — fixing dead code
+> changes nothing and risks getting a derivative wrong.
+
 **The shape question stays open (D5a).** With `m_Presidual = 0`, is this sigmoid still
 needed at all? The two look like overlapping patches for the same problem applied at
 different times, and removing one may make the other unnecessary — or may reveal it as
@@ -527,3 +560,31 @@ same-mind failure.
   a real one needs a deck at `p` near `m_Pmin`, i.e. the extreme-low-p regime §8 risk 6 says no
   gate should depend on, so it belongs with **PR-2's clamp diagnostic**, which supplies an
   observable to assert on instead of inferring the clamp from stress output.
+- 2026-08-27 — **PR-3 implemented: the three low-risk owed items, and no vanilla file touched.**
+  Scope was chosen explicitly by the owner; the two fork-tripwire items were investigated and
+  **not taken** — see the new [[86_ladruno_sanisand_pr3_tripwire_memo]].
+  1. **`-honorTolR` wired** to PR-2's `mHonorTolRInME` seam, from `applyLadrunoConstants()` —
+     the same "win the last write" helper that carries `m_Presidual`/`m_Pmin`, so the seam
+     survives `initialize()`, `revertToStart` and `recvSelf` for the same reason they do.
+     Bit-identical at `TolR = 1e-4` (structural), `2.641e-04` at `TolR = 1e-6`, and measured
+     **inert on IntScheme 3 and 45**, so the material now warns at construction on any scheme
+     that does not route to `ModifiedEuler`. §4.5 carries the detail.
+  2. **A behavioural `-Pmin` gate.** Bit-identical at ordinary confinement, a factor apart at
+     `p = 0.115 kPa`, every step converging on both legs. **The predicted mechanism was wrong**:
+     the handoff expected this gate to assert on PR-2's clamp diagnostic, and **zero clamp
+     warnings fire** — what actually happens is a silent whole-tensor reset to `m_Pmin*mI1`
+     (deviator wiped to `2.4e-17`, `p` exactly `m_Pmin`) at one of four sites PR-2 did not
+     instrument. Recorded in [[LEDGER_quirks]] as owed work; not fixed in PR-3.
+  3. **`LadrunoSANISAND3D::getCopy(void)` covered**, via an `eps0 = 0` `nDMaterial InitStrain`
+     wrapper — the only reachable path that calls the no-argument form on an already-3D
+     instance. (`nDMaterial InitStress` cannot: it calls `getCopy()` on the *prototype*, whose
+     base implementation is "subclass responsibility" + `exit(-1)`.)
+
+  **Mutation campaign, three mutations, all killed**, two of them by exactly one test each.
+  Two **stale claims** were corrected in passing: the construction echo and `Print` both still
+  asserted the `D_factor` sigmoid "ships UNCHANGED and is still kPa-dimensional", which PR-2
+  made false — and `Print` then contradicted itself two lines later by reporting the PR-2
+  repair. Also corrected: §7.2's "four sites" (there is a fifth, in dead code, whose steepness
+  is coupled to `m_Pmin`), and the new `-Pmin` test's own first draft, which claimed no
+  existing test could see `-Pmin` — its own mutation refuted that within the hour, and two
+  incidental catches are now named. Battery **18 passed / 2 skipped**, 38-51 s across runs on the dev box.

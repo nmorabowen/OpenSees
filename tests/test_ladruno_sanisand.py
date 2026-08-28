@@ -981,24 +981,73 @@ def test_echo_and_defaults(capfd):
     assert 'p_min = %g' % (1.0e-3 * _P_ATM) in err, (
         'the default p_min is not 1e-3*P_atm, or is not echoed', err)
     assert 'default = 1e-3*P_atm' in err, err
-    # PR-1 ships the D_factor sigmoid unchanged and kPa-dimensional (D5a/D5b).
-    assert 'D5a/D5b' in err, (
-        'the echo no longer declares the deferred D_factor decision', err)
+    # The echo must still declare where the two D_factor decisions stand.
+    # PR-1's wording ("ships UNCHANGED and is still kPa-dimensional in this PR")
+    # became FALSE the moment PR-2 non-dimensionalised the sigmoid in vanilla,
+    # and sat in the echo unchallenged because this assertion only looked for
+    # the substring 'D5a/D5b'.  PR-3 asserts the two claims separately and, for
+    # D5b, asserts the CURRENT state rather than a label -- so the next time one
+    # of them moves, this test moves with it instead of blessing a stale string.
+    assert 'D5b' in err and 'D5a' in err, (
+        'the echo no longer declares the D_factor decisions', err)
+    assert 'non-dimensionalised in vanilla (PR-2)' in err, (
+        'the echo does not state that D5b is DONE. If it still says the sigmoid '
+        '"ships UNCHANGED and is still kPa-dimensional", that claim has been '
+        'false since PR-2 merged', err)
+    assert 'still OPEN' in err, (
+        'the echo no longer says D5a is open', err)
 
     # --- not latched: a second construction must echo again ------------------
     ops.nDMaterial('LadrunoSANISAND', 2, *_PARAMS)
     ops.nDMaterial('LadrunoSANISAND', 3, *_PARAMS)
     err2 = capfd.readouterr().err
-    assert err2.count('p_residual = 0') == 2, (
+    # Count the echo's own LINE SIGNATURE, not a value substring.  This assertion
+    # used to count 'p_residual = 0', which is a fragment of free text as well as
+    # of the echo: when PR-3 corrected the stale D5b claim, the replacement
+    # sentence contained the words "once p_residual = 0" and the count silently
+    # went from 2 to 4.  A non-latching check must count MESSAGES, and
+    # 'LadrunoSANISAND tag N: p_residual = ' occurs exactly once per echo.
+    assert len(re.findall(r'LadrunoSANISAND tag \d+: p_residual = ', err2)) == 2, (
         'the echo is latched (once per process).  A latched message is '
         'observable only by whichever test in a session runs first, which is '
         'exactly how the p_residual defect stayed invisible', err2)
 
-    # --- -honorTolR is a PR-1 refusal, not a no-op ---------------------------
-    # A flag that claims to have done something it did not do is the class of
-    # defect this ADR exists to fix, so PR-1 rejects any value but 0.
+    # --- -honorTolR: 0 and 1 accepted, everything else refused (PR-3) --------
+    # PR-1 refused every value but 0, because the base seam did not exist and a
+    # flag that claims to have done something it did not do is the class of
+    # defect this ADR exists to fix.  PR-2 opened the seam in vanilla
+    # (`mHonorTolRInME`, read once in ModifiedEuler); PR-3 wires it, so 1 is now
+    # a real request and the refusal moves to values that are neither.
+    #
+    # The base member the flag drives is a `bool`, so 2 and -1 would both mean
+    # "1" silently.  Refusing them is not pedantry: it is the same rule the
+    # PR-1 refusal encoded, applied to what is still unrepresentable.
+    ops.nDMaterial('LadrunoSANISAND', 4, *_PARAMS, '-honorTolR', 1)
+    err3 = capfd.readouterr().err
+    assert 'LadrunoSANISAND tag 4' in err3, (
+        '-honorTolR 1 was refused. PR-2 landed the seam and PR-3 wires it, so 1 '
+        'is a supported value', err3)
+    # The echo must name the tolerance the integrator will actually run with --
+    # the deck default TolR is 1e-7, so honouring it is a 1000x change from
+    # vanilla's hardcoded 1e-4 and must not be reported as merely "flag on".
+    assert 'honorTolR = 1' in err3, err3
+    assert "this deck's TolR" in err3, (
+        'the echo does not say which tolerance ModifiedEuler will honour', err3)
+    assert 'TolE = 1e-07' in err3 or 'TolE = 1e-007' in err3, (
+        'the echo does not report the honoured TolE as a NUMBER; a flag state '
+        'alone does not tell the reader what ran', err3)
+
+    ops.nDMaterial('LadrunoSANISAND', 5, *_PARAMS, '-honorTolR', 0)
+    err4 = capfd.readouterr().err
+    assert 'honorTolR = 0' in err4 and '0.0001' in err4, (
+        'with the flag off the echo must still name vanilla 1e-4 explicitly',
+        err4)
+
     with pytest.raises(Exception):
-        ops.nDMaterial('LadrunoSANISAND', 4, *_PARAMS, '-honorTolR', 1)
+        ops.nDMaterial('LadrunoSANISAND', 6, *_PARAMS, '-honorTolR', 2)
+    capfd.readouterr()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 7, *_PARAMS, '-honorTolR', -1)
     capfd.readouterr()
 
 
@@ -1012,10 +1061,19 @@ def test_echo_and_defaults(capfd):
 # under openseespy does not imply it works here.)
 _TCL_PRESIDUAL = 0.5
 _TCL_PMIN = 0.0101
+# TWO materials, because the two -honorTolR values take different parser
+# branches and `OPS_GetString` behaves differently in the classic-Tcl backend
+# than in openseespy (LadrunoSANISAND.cpp:150-159).  Tag 2 also passes
+# TolR = 1e-06 POSITIONALLY, a value no default produces, so the echoed
+# "TolE = 1e-06" proves the backend carried BOTH the positional optional and
+# the flag -- which is exactly the pair `OPS_SAniSandMSMaterial` silently
+# drops (ADR 86 sec.7.1).
 _TCL_DECK = """\
 model basic -ndm 3 -ndf 3
 nDMaterial LadrunoSANISAND 1 {params} 1 0 1 1e-07 1e-07 \\
     -Presidual {pr} -Pmin {pmin} -honorTolR 0
+nDMaterial LadrunoSANISAND 2 {params} 1 0 1 1e-07 1e-06 \\
+    -Presidual {pr} -Pmin {pmin} -honorTolR 1
 puts "LADRUNO-SANISAND-TCL-OK"
 """
 
@@ -1124,6 +1182,29 @@ def test_tcl_subprocess_smoke(tmp_path):
         'ADR 86 sec.7.1 all over again', out)
     assert 'p_min = %g (user)' % _TCL_PMIN in out, (
         'the classic-Tcl backend did not carry -Pmin through', out)
+
+    # ADR-86 PR-3: `-honorTolR 1` through the CLASSIC-TCL parser specifically.
+    # Every other assertion on the wired seam drives the openseespy backend, and
+    # the two take different paths through the flag loop -- so without this the
+    # newly-accepted value is untested on the lane where this fork's
+    # registration failures actually happen (ADR 86 sec.4.6).
+    assert 'LadrunoSANISAND tag 2' in out, (
+        'the second material (-honorTolR 1) did not construct under classic '
+        'Tcl', out)
+    assert 'honorTolR = 1' in out, (
+        'the classic-Tcl backend did not carry -honorTolR 1 through', out)
+    # Both exponent spellings accepted, exactly as the openseespy sibling above
+    # does: this reads the SAME `opserr << double` path, and MSVC has historically
+    # emitted 3-digit exponents (1e-006).  Without the fallback a printf cosmetic
+    # would fail this test with a message accusing the parser of the ADR sec.7.1
+    # dropped-TolR defect -- a misdiagnosis worse than the cosmetic.
+    assert 'TolE = 1e-06' in out or 'TolE = 1e-006' in out, (
+        'the honoured ModifiedEuler tolerance is not the deck TolR of 1e-06. '
+        'Either the flag or the positional TolR was dropped on the classic-Tcl '
+        'lane -- and a dropped TolR is ADR 86 sec.7.1 exactly', out)
+    assert 'NO EFFECT' not in out, (
+        'IntScheme 1 does reach ModifiedEuler, so the inert-scheme warning must '
+        'not fire here', out)
     for bad in ('unknown nDMaterial', 'WARNING invalid', 'Want: nDMaterial'):
         assert bad not in out, (f'classic-Tcl parser rejected the deck ({bad})', out)
 
@@ -2004,3 +2085,531 @@ def test_print_states_what_it_ran(tmp_path):
     assert 'default = 1e-3*P_atm' not in txt, (
         'Print reported the p_min DEFAULT on a material given -Pmin %g'
         % _PRINT_PMIN, txt)
+
+
+# ===========================================================================
+#  8. -honorTolR -- the PR-2 seam, wired (ADR 86 PR-3)
+# ===========================================================================
+#
+#  WHAT THE SEAM IS.  `ManzariDafalias::ModifiedEuler()` opened with a bare
+#  `double TolE = 1e-4` and ignored `mTolR` outright, so a deck passing a tight
+#  TolR on IntScheme 1 silently ran substep error control at 1e-4.  RungeKutta45
+#  and SAniSandMS both honour mTolR; ModifiedEuler was the outlier.  PR-2 made
+#  the literal a seam -- `TolE = mHonorTolRInME ? mTolR : 1e-4` -- with
+#  `mHonorTolRInME` a protected base member set false in all four
+#  ManzariDafalias constructors and written NOWHERE in that class, so vanilla is
+#  bit-identical.  PR-3 makes `LadrunoSANISAND::applyLadrunoConstants()` the one
+#  writer, driven by the deck's `-honorTolR`.
+#
+#  TWO CLAIMS, AND ONLY ONE OF THEM IS A MEASUREMENT.
+#
+#  (a) STRUCTURAL, not measured: at TolR == 1e-4 the flag is a no-op on ANY deck
+#      and ANY strain path, because both operands of the conditional are then the
+#      same double and TolE is bit-identical.  `test_honor_tolr_is_inert_at_1e_4`
+#      exhibits it on one deck; the generality comes from the source, and what
+#      would falsify it is a SECOND read site for the flag appearing.  That is a
+#      one-line check:
+#          grep -n mHonorTolRInME SRC/material/nD/UWmaterials/ManzariDafalias.cpp
+#      must show the flag DECLARED, set false in the four constructors, and READ
+#      in ModifiedEuler -- nowhere else.
+#
+#  (b) MEASURED, and deck-specific: at TolR < 1e-4 the flag moves the answer.
+#      On the confine-first deck, IntScheme 1:
+#          TolR 1e-4  reldiff(flag 0, flag 1) = 0.000000e+00   (structural)
+#          TolR 1e-5                            2.783e-04
+#          TolR 1e-6                            2.641e-04
+#          TolR 1e-7                            2.580e-04
+#      Wall cost of turning it on: 1.9-2.3 s/leg against 1.8-2.8 s/leg off, i.e.
+#      inside the run-to-run noise on this deck.  It is NOT free in general --
+#      TolE is a substep tolerance and dT_min is 1e-6, so a tight TolR on a
+#      harder path buys accuracy with substeps.
+#
+#  (c) MEASURED ONCE, and only HALF of it is gated -- read this before quoting it.
+#          IntScheme  3 (RungeKutta4)   reldiff(flag 0, flag 1) = 0.000000e+00
+#          IntScheme 45 (RungeKutta45)  reldiff(flag 0, flag 1) = 0.000000e+00
+#      That is not a defect -- it is the seam's scope -- but a flag that is
+#      accepted, stored, echoed and inert is the exact defect class this ADR
+#      exists to fix, so the material WARNS at construction.  IntScheme 45
+#      already honours TolR unconditionally, which is why the seam was needed for
+#      ModifiedEuler and not for it.
+#
+#      THE GAP, named rather than papered over (found by adversarial review):
+#      `test_honor_tolr_warns_when_the_scheme_cannot_honour_it` below constructs
+#      IntScheme 1 and IntScheme 45 ONLY.  The IntScheme 3 half of the line above
+#      is a one-off measurement plus a source argument (RungeKutta4 never calls
+#      ModifiedEuler -- traced through `explicit_integrator`'s switch), NOT a
+#      standing gate.  It is deliberately not gated here: `ManzariDafalias`'s
+#      scheme-3/5 "no error control" warning is behind a C++ static latch that
+#      fires once per PROCESS, and `test_manzari_safety_pack.py::
+#      test_scheme3_warns_no_error_control` depends on being the first test in the
+#      session to construct such a material -- its own comment says so.  Adding an
+#      IntScheme 3 construction to this file would break that test in one file
+#      order and not the other, which is a worse defect than the one it would
+#      close.  A gate for it belongs in a SUBPROCESS, like the classic-Tcl smoke.
+
+_HONOR_TOLR_TIGHT = 1.0e-6      # measured 2.641e-04 against flag 0
+_HONOR_TOLR_FLOOR = 1.0e-5      # 26x under the measured 2.641e-04. NOT "two orders":
+                                # an earlier comment said so and was wrong by a decade.
+_HONOR_TOLR_VANILLA_TOLE = 1.0e-4
+
+
+def _opts_tolr(tolr, honor):
+    """Positional optionals + flags, with ONLY the honorTolR flag free.
+
+    IntScheme 1 (ModifiedEuler -- the one function that reads the seam),
+    TanType 0, JacoType 1, TolF 1e-7.  p_residual and p_min pinned to vanilla's
+    so the honorTolR A/B moves exactly one variable (ADR 86 risk 4, applied to
+    the third constant).
+    """
+    return [1, 0, 1, 1.0e-7, tolr,
+            '-Presidual', _VANILLA_PR, '-Pmin', _VANILLA_PMIN,
+            '-honorTolR', honor]
+
+
+def test_honor_tolr_is_inert_at_1e_4():
+    """TolR == 1e-4 => the flag selects the same double either way.
+
+    This is the seam's INERTNESS half and it is structural: PR-2 wrote the
+    conditional so that a false flag selects the literal `1e-4` verbatim, with
+    no arithmetic.  Asking for TolR = 1e-4 makes the TRUE branch select the same
+    value, so TolE -- and therefore all of ModifiedEuler -- is bit-identical.
+
+    Bit-identical is asserted, not 'small': anything above 0.0 here means the
+    flag is doing something other than choosing between mTolR and 1e-4.
+    """
+    a = _drive_confined('LadrunoSANISAND', 1, _opts_tolr(_HONOR_TOLR_VANILLA_TOLE, 0))
+    b = _drive_confined('LadrunoSANISAND', 1, _opts_tolr(_HONOR_TOLR_VANILLA_TOLE, 1))
+    assert _reldiff(a, b) == 0.0, (
+        'at TolR = 1e-4 the two operands of `mHonorTolRInME ? mTolR : 1e-4` are '
+        'the same double, so the flag cannot change anything. A nonzero '
+        'difference means the seam is reading or scaling something else',
+        a, b, _reldiff(a, b))
+
+
+def test_honor_tolr_changes_the_answer_when_tolr_is_tight():
+    """The load-bearing gate: `-honorTolR 1` is not a decoration.
+
+    Same deck, same TolR, ONLY the flag moves.  If the wiring line in
+    `applyLadrunoConstants()` is deleted, `mHonorTolRInME` stays false in every
+    constructor, TolE stays 1e-4 on both legs and this reldiff collapses to
+    exactly 0.0 -- which is what `test_honor_tolr_is_inert_at_1e_4` above
+    asserts for the case where 0.0 is CORRECT.  The two tests are a pair: one
+    pins where the flag must do nothing, the other where it must do something,
+    and no single mutation satisfies both.
+    """
+    off = _drive_confined('LadrunoSANISAND', 1, _opts_tolr(_HONOR_TOLR_TIGHT, 0))
+    on = _drive_confined('LadrunoSANISAND', 1, _opts_tolr(_HONOR_TOLR_TIGHT, 1))
+    rd = _reldiff(off, on)
+    assert rd > _HONOR_TOLR_FLOOR, (
+        '-honorTolR 1 did not change the answer at TolR = %g. Either the seam '
+        'is not wired (applyLadrunoConstants no longer sets mHonorTolRInME) or '
+        'ModifiedEuler no longer reads it. Measured on this deck: 2.641e-04'
+        % _HONOR_TOLR_TIGHT, rd, off, on)
+
+
+def test_honor_tolr_warns_when_the_scheme_cannot_honour_it(capfd):
+    """A flag that is accepted, stored and inert must SAY so.
+
+    `mHonorTolRInME` is read at exactly one site, inside ModifiedEuler.  On
+    IntScheme 45 the flag is therefore inert -- measured, reldiff exactly 0.0 --
+    and RungeKutta45 already honours TolR unconditionally, so there is nothing
+    for the flag to add there.  Accepting it silently would be a flag claiming
+    to have done something it did not do: the defect ADR 86 was written about.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    capfd.readouterr()
+    # IntScheme 45 (RungeKutta45), honorTolR 1.
+    ops.nDMaterial('LadrunoSANISAND', 1, *_PARAMS, 45, 0, 1, 1.0e-7, 1.0e-6,
+                   '-honorTolR', 1)
+    err = capfd.readouterr().err
+    assert 'NO EFFECT with IntScheme 45' in err, (
+        '-honorTolR 1 on IntScheme 45 was accepted without warning. It is '
+        'inert there (measured reldiff 0.0), so silence overstates what ran',
+        err)
+    assert 'RungeKutta45' in err, (
+        'the warning does not name what the scheme does instead', err)
+
+    # ... and it must NOT warn on the scheme that does honour it.
+    ops.nDMaterial('LadrunoSANISAND', 2, *_PARAMS, 1, 0, 1, 1.0e-7, 1.0e-6,
+                   '-honorTolR', 1)
+    err2 = capfd.readouterr().err
+    assert 'NO EFFECT' not in err2, (
+        'the material warned that -honorTolR 1 is inert on IntScheme 1, which '
+        'is the one scheme that DOES read the seam. A warning that fires '
+        'everywhere is a warning nobody reads', err2)
+
+
+# ===========================================================================
+#  9. -Pmin is BEHAVIOURAL at low confinement (ADR 86 PR-3)
+# ===========================================================================
+#
+#  THE OWED GATE.  Every test above this one pins `-Pmin` to vanilla's
+#  1e-4*P_atm, deliberately, so that the p_residual A/B moves one variable
+#  (ADR 86 risk 4).  That left the class's OWN default -- 1e-3*P_atm, TEN TIMES
+#  vanilla's, inherited from NTUASand02 -- with no gate that TARGETS it.
+#
+#  AND THE OBVIOUS WAY TO SAY THAT IS WRONG, measured.  An earlier draft of this
+#  comment claimed "no test could tell a build that honours -Pmin from one that
+#  ignores it".  The PR-3 mutation campaign refuted it: with
+#  `applyLadrunoConstants` mutated to ignore `mPminInput` and always resolve to
+#  1e-3*P_atm, THREE tests fail -- this one,
+#  `test_radial_ramp_with_pr0_never_yields` (which pins -Pmin only as a control
+#  and is incidentally sensitive to it), and `test_print_states_what_it_ran`
+#  (which catches the input/resolved-value mismatch in the record, not in the
+#  behaviour).  So -Pmin was not invisible; what it lacked was a test that
+#  measures it ON PURPOSE and identifies the MECHANISM, which is what the
+#  deviator-wipe assertion below adds.  The incidental catches are fragile in a
+#  way this one is not: change the ramp deck's constants and one of them stops
+#  catching anything, silently.
+#
+#  WHAT IT DOES, MEASURED.  Confine-first deck, `-Presidual` PINNED at vanilla's
+#  1.01 so only `-Pmin` moves, isochoric deviatoric leg, 10 + 40 steps:
+#
+#    e_conf    p at stage flip   -Pmin 0.0101      -Pmin 0.101       reldiff
+#    3.0e-6    1.7175 kPa        p_end  9.4589     p_end  9.4589     0.0 exact
+#    5.0e-7    0.2863 kPa        p_end  5.9791     p_end  5.9791     0.0 exact
+#    4.0e-7    0.2290 kPa        p_end  5.5955     p_end 25.853      differs
+#    2.0e-7    0.1145 kPa        p_end  4.2254     p_end 10.388      1.26
+#
+#  So it is a LOW-STRESS effect with a sharp boundary, and above it the two
+#  values are bit-identical -- which is also why pinning `-Pmin` in the other
+#  tests costs them nothing.
+#
+#  THE MECHANISM, and it is not the one this gate was expected to use.  The
+#  handoff predicted the gate would assert on PR-2's throttled clamp diagnostic.
+#  It cannot: on this deck ZERO clamp warnings are emitted on either leg.  What
+#  actually happens is a WHOLE-TENSOR RESET at a site PR-2 did not instrument.
+#  Traced per step at e_conf = 2e-7 (p at the flip 0.1145 kPa):
+#
+#    -Pmin 0.0101   step 1  p = 0.02389   |dev| = 0.5750   ... p rises, no reset
+#                   min |dev| over the whole 40-step leg = 5.750e-01
+#    -Pmin 0.101    step 1  p = -0.5647   |dev| = 9.5818   <- p goes NEGATIVE
+#                   step 2  p =  0.1010   |dev| = 2.40e-17 <- RESET to m_Pmin*I
+#
+#  At step 2 the committed stress is exactly `m_Pmin * mI1`: p equals m_Pmin to
+#  the last digit and the deviator is zero.  That is
+#  `ManzariDafalias::explicit_integrator` (:1074/:1078) and/or `Stress_Correction`
+#  (:2555/:2557/:2624), neither of which carries a warning -- PR-2's diagnostic
+#  covers `ModifiedEuler` (:1378) and `RungeKutta45` (:1902) only, and BOTH of
+#  those preserve the deviator (`GetDevPart(NextStress) + m_Pmin*mI1`) while the
+#  uninstrumented ones zero it.  Recorded as owed work rather than fixed here;
+#  see LEDGER_quirks.md.  (A draft of this note also cited `Stress_Correction`
+#  :2608; that line is dead code, inside the `if (false)` opening at :2559.)
+#
+#  WHY THE DECK IS SOUND DESPITE THE REGIME.  ADR 86 risk 6 says no gate should
+#  depend on an extreme-low-p leg COMPLETING.  This one does not depend on it --
+#  it asserts it, and it holds: every one of the 50 steps converges on BOTH legs
+#  (measured, 0 failed steps), with zero "Outside Bounding" events.  The
+#  quantity asserted is a floor and a categorical wipe, never a calibrated
+#  number: reldiff is 9.22 / 1.26 / 0.748 at n_dev 20 / 40 / 80, so the step
+#  count moves it by an order of magnitude and the floor is set two orders below
+#  the smallest.
+#
+#  COST: 3.2-3.5 s for the pair (measured), on a file that already costs ~10 s.
+#  Deliberately NOT marked slow -- see the module docstring: no workflow passes
+#  --runslow, so a slow marker deletes a test from CI.
+
+_PMIN_VANILLA = _VANILLA_PMIN          # 1e-4 * P_atm = 0.0101 kPa
+_PMIN_LADRUNO = 1.0e-3 * _P_ATM        # 1e-3 * P_atm = 0.101  kPa, the class default
+_PMIN_E_CONF_LOW = 2.0e-7              # -> p = 0.1145 kPa at the stage flip
+_PMIN_E_CONF_ORDINARY = _C_E_CONF      # -> p = 1.7175 kPa, the battery's own deck
+_PMIN_N_DEV = 40
+_PMIN_RELDIFF_FLOOR = 1.0e-2           # measured 0.748 at the LEAST sensitive n_dev
+_PMIN_WIPE_TOL = 1.0e-10               # measured 2.4e-17 wiped vs 5.75e-01 not
+_PMIN_NO_WIPE_FLOOR = 1.0e-2           # the vanilla leg's minimum is 5.75e-01
+
+
+def _c_series_at(e_conf, n_dev, n_conf=_C_N_CONF, e_ax=_C_E_AX, lat=_C_LAT):
+    """`_c_series` with the deck constants passed IN.
+
+    `_c_series` binds n_conf/n_dev/e_conf/e_ax/lat as DEFAULT ARGUMENTS at def
+    time, and its own docstring warns that monkeypatching the module constants
+    desynchronises the Path series from the loop count -- the analysis then walks
+    off the end of the series and unloads the model to a meaningless near-zero
+    stress.  This is the local copy that docstring prescribes.
+    """
+    s_lat = [i / n_conf for i in range(n_conf + 1)]
+    s_ax = list(s_lat)
+    r_lat = lat * e_ax / e_conf
+    r_ax = e_ax / e_conf
+    for i in range(1, n_dev + 1):
+        s_lat.append(1.0 - r_lat * i / n_dev)
+        s_ax.append(1.0 + r_ax * i / n_dev)
+    s_lat.append(s_lat[-1])            # the PathSeries hold point -- see _c_series
+    s_ax.append(s_ax[-1])
+    return s_lat, s_ax
+
+
+def _drive_confined_at(e_conf, opts, n_dev=_PMIN_N_DEV, tag=1):
+    """`_drive_confined` with the confinement magnitude and step count passed in.
+
+    Returns (committed stress, [(p, |dev|) per deviatoric step]).  Every step is
+    asserted to converge, on both legs -- this deck runs at p ~ 0.1 kPa and a
+    silent non-convergence would look exactly like the effect being measured.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    s_lat, s_ax = _c_series_at(e_conf, n_dev)
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -e_conf)
+            if y == 1.:
+                ops.sp(n, 2, -e_conf)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -e_conf)
+    _analysis_confined()
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)   # static mElastFlag
+    for step in range(_C_N_CONF):
+        assert ops.analyze(1) == 0, 'confinement step %d failed' % (step + 1)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+    trace = []
+    for step in range(n_dev):
+        assert ops.analyze(1) == 0, 'deviatoric step %d failed' % (step + 1)
+        sig = _stress()
+        p = -(sig[0] + sig[1] + sig[2]) / 3.0
+        dev = [-sig[0] - p, -sig[1] - p, -sig[2] - p, -sig[3], -sig[4], -sig[5]]
+        trace.append((p, math.sqrt(sum(v * v for v in dev))))
+    return _stress(), trace
+
+
+def _opts_pmin(pmin):
+    """ONLY -Pmin free: p_residual pinned to vanilla's, the seam flag off."""
+    return ('-Presidual', _VANILLA_PR, '-Pmin', pmin, '-honorTolR', 0)
+
+
+def test_pmin_is_inert_at_ordinary_confinement():
+    """Above the floor, the class default and vanilla's are BIT-IDENTICAL.
+
+    This is the half that licenses every other test in this file pinning
+    `-Pmin`: on the battery's own confine-first deck (p = 1.7175 kPa at the
+    stage flip, p_end 9.46) a tenfold change in `-Pmin` moves nothing at all.
+
+    It is a property of THIS DECK'S STRAIN PATH, not a general claim -- what
+    falsifies it is a path whose p dips below 0.101 kPa, which is exactly what
+    the companion test below constructs.  Stated as a pair on purpose: an
+    inertness measurement is only as general as the deck it was taken on.
+    """
+    a, _ = _drive_confined_at(_PMIN_E_CONF_ORDINARY, _opts_pmin(_PMIN_VANILLA))
+    b, _ = _drive_confined_at(_PMIN_E_CONF_ORDINARY, _opts_pmin(_PMIN_LADRUNO))
+    assert _reldiff(a, b) == 0.0, (
+        'a 10x change in -Pmin moved the answer on a deck that never goes near '
+        'the floor (p >= 1.72 kPa). Either the floor is being read somewhere it '
+        'should not be, or this deck no longer stays above it', a, b)
+
+
+def test_pmin_is_behavioural_at_low_confinement():
+    """The owed gate: `-Pmin` is not inert, and the class default is not free.
+
+    Only `-Pmin` moves -- p_residual is pinned at vanilla's 1.01 and the
+    honorTolR seam is off.  Two independent assertions, because a difference
+    alone does not identify a cause:
+
+      1. the committed answer differs by a factor, not a rounding;
+      2. the LadrunoSANISAND-default leg has its DEVIATOR WIPED -- one committed
+         step at exactly `p = m_Pmin`, |dev| = 0 -- and the vanilla-default leg
+         never comes within two orders of that.
+
+    Assertion 2 is what makes this mutation-proof.  A build that ignores
+    `mPminInput` and always resolves to 1e-3*P_atm runs BOTH legs at 0.101, so
+    both wipe and the 'vanilla leg never wipes' assertion fails; a build that
+    always resolves to 1e-4*P_atm wipes NEITHER and assertion 1 collapses to 0.
+    """
+    a, tr_a = _drive_confined_at(_PMIN_E_CONF_LOW, _opts_pmin(_PMIN_VANILLA))
+    b, tr_b = _drive_confined_at(_PMIN_E_CONF_LOW, _opts_pmin(_PMIN_LADRUNO))
+
+    rd = _reldiff(a, b)
+    assert rd > _PMIN_RELDIFF_FLOOR, (
+        '-Pmin moved from %g to %g and the answer did not change. Every other '
+        'test in this file pins -Pmin, so this is the only one that varies it '
+        'on purpose. Measured: 1.26 at n_dev=40'
+        % (_PMIN_VANILLA, _PMIN_LADRUNO), rd, a, b)
+
+    min_dev_a = min(d for _, d in tr_a)
+    wiped_b = [(i + 1, p, d) for i, (p, d) in enumerate(tr_b)
+               if d < _PMIN_WIPE_TOL]
+
+    assert min_dev_a > _PMIN_NO_WIPE_FLOOR, (
+        'the -Pmin = %g leg had its deviator wiped too, so the two legs are not '
+        'being told apart by the floor. Measured minimum |dev| on this leg: '
+        '5.75e-01' % _PMIN_VANILLA, min_dev_a)
+
+    assert wiped_b, (
+        'the -Pmin = %g leg never reset. The mechanism this gate identifies is a '
+        'whole-tensor reset to m_Pmin*I at deviatoric step 2 (measured |dev| = '
+        '2.4e-17); without it the reldiff above could be any low-p wobble'
+        % _PMIN_LADRUNO, [d for _, d in tr_b])
+
+    # ... and the reset lands exactly ON the floor, which is what identifies it
+    # as `NextStress = m_Pmin * mI1` rather than as ordinary softening.
+    for step, p, _d in wiped_b:
+        assert abs(p - _PMIN_LADRUNO) < 1.0e-9 * _PMIN_LADRUNO, (
+            'deviator wiped at step %d but p = %g is not m_Pmin = %g, so this is '
+            'not the m_Pmin*I reset this gate claims to have found'
+            % (step, p, _PMIN_LADRUNO))
+
+
+# ===========================================================================
+#  10. LadrunoSANISAND3D::getCopy(void) -- the last uncovered override
+# ===========================================================================
+#
+#  WHY IT WAS UNCOVERED, AND WHY THAT IS NOT OBVIOUS.  A brick asks its material
+#  for `getCopy("ThreeDimensional")`, never `getCopy()`.  So the no-argument
+#  form -- `LadrunoSANISAND3D::getCopy()`, which clones via
+#  `new LadrunoSANISAND3D(); *clone = *this;` -- has no caller on any ordinary
+#  deck, and PR-1's mutation campaign proved it: the whole battery stayed green
+#  with that function sabotaged.  The ADR log records it as knowingly open.
+#
+#  THE ROUTE, established by reading the callers rather than assumed.  Only one
+#  reachable path calls `getCopy()` on an object that is ALREADY a
+#  dimension-specific SANISAND:
+#
+#    nDMaterial LadrunoSANISAND 1 ...      -> the dimensionless PROTOTYPE
+#                                             (classTag ND_TAG_LadrunoSANISAND)
+#    nDMaterial InitStrain 2 1 0.0         -> InitStrainNDMaterial(2, *proto, 0.0)
+#                                             ctor does proto.getCopy("ThreeDimensional")
+#                                             (InitStrainNDMaterial.cpp:153)
+#                                             => it now HOLDS a LadrunoSANISAND3D
+#    element stdBrick ... 2                -> Brick asks the WRAPPER for
+#                                             getCopy("ThreeDimensional")
+#                                             -> InitStrainNDMaterial::getCopy(const char*)
+#                                                returns getCopy()          (:293)
+#                                             -> InitStrainNDMaterial::getCopy(void)
+#                                                calls theMaterial->getCopy() (:285)
+#                                             => LadrunoSANISAND3D::getCopy(void),
+#                                                once per Gauss point, 8 times.
+#
+#  `nDMaterial InitStress` does NOT work for this: its 3-argument constructor
+#  calls `material.getCopy()` on the PROTOTYPE, and the prototype's
+#  `getCopy(void)` is the base's "subclass responsibility" + `exit(-1)` -- it
+#  kills the process. That is upstream behaviour and true of vanilla
+#  ManzariDafalias too; it is recorded here so the next person does not spend the
+#  same hour on it.
+#
+#  eps0 = 0.0 makes the wrapper a pure pass-through, which is asserted rather
+#  than assumed: measured BIT-IDENTICAL (reldiff exactly 0.0) at both p_r values.
+#
+#  MEASURED on the confine-first deck:
+#      unwrapped p_r=0     vs wrapped p_r=0      reldiff 0.0000e+00
+#      unwrapped p_r=1.01  vs wrapped p_r=1.01   reldiff 0.0000e+00
+#      wrapped   p_r=0     vs wrapped p_r=1.01   reldiff 8.6042e-02
+
+_GETCOPY_NONVACUITY_FLOOR = 1.0e-3     # measured 8.6042e-02
+
+
+def _drive_confined_wrapped(opts, tag=1, wrap_tag=2):
+    """The confine-first deck with an eps0 = 0 InitStrain wrapper in between.
+
+    The wrapper is what forces the element through
+    `LadrunoSANISAND3D::getCopy(void)` -- see the route note above.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.nDMaterial('InitStrain', wrap_tag, tag, 0.0)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, wrap_tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    s_lat, s_ax = _c_series()
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -_C_E_CONF)
+            if y == 1.:
+                ops.sp(n, 2, -_C_E_CONF)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -_C_E_CONF)
+    _analysis_confined()
+    # The stage parameter is keyed on the INNER material's tag: the copies the
+    # wrapper holds carry `tag`, not `wrap_tag`, because
+    # LadrunoSANISAND::getCopy(const char*) passes `this->getTag()` through.
+    # InitStrainNDMaterial::setParameter forwards anything it does not recognise
+    # to the wrapped material, and "updateMaterialStage" is not one of its own
+    # (its parameters are all eps0*), so the request reaches the SANISAND.
+    _confine_leg(tag)
+    _deviator_leg(tag)
+    return _stress()
+
+
+def test_getcopy_void_carries_the_settings():
+    """`LadrunoSANISAND3D::getCopy(void)` must clone the Ladruno constants.
+
+    Two assertions, and the second is the one that cannot be faked:
+
+      1. PASS-THROUGH. An eps0 = 0 InitStrain wrapper must not change the
+         answer, at either p_residual. Asserted BIT-IDENTICAL, so a
+         `getCopy(void)` that dropped or reset any part of the state -- not just
+         the two constants -- shows up here.
+      2. NON-VACUITY THROUGH THE WRAPPER. With the wrapper in place, the p_r = 0
+         and p_r = 1.01 decks must still differ. Every Gauss-point material on
+         this deck was built by `LadrunoSANISAND3D::getCopy(void)`, so a version
+         of it that returned a vanilla ManzariDafalias3D, or that let
+         p_residual fall back to 1.0e-2*P_atm, would make BOTH legs run the same
+         soil and collapse this to ~0.
+
+    The UNWRAPPED decks are the control: they never call `getCopy(void)` at all,
+    so any wrapped-vs-unwrapped difference is attributable to that one function.
+    Assertion 1 is therefore the primary kill, and the p_r = 0 leg is the sharp
+    one -- a clone that let p_residual fall back to vanilla's 1.0e-2*P_atm would
+    make the wrapped p_r = 0 deck run 1.01 while its unwrapped control runs 0,
+    a measured 8.6e-2 apart.
+
+    Assertion 2 is the non-vacuity companion, in the same spirit as G1's: it
+    proves the wrapped deck is still a live experiment that RESPONDS to
+    p_residual, so assertion 1's 'equal' is equality between two things that
+    could have differed. G1 taught this the hard way -- under one mutation it
+    passed by comparing vanilla with vanilla.
+    """
+    opts_pr0 = _OPTS_PR0
+    opts_van = _OPTS_VANILLA
+
+    plain_pr0 = _drive_confined('LadrunoSANISAND', 1, opts_pr0)
+    plain_van = _drive_confined('LadrunoSANISAND', 1, opts_van)
+    wrap_pr0 = _drive_confined_wrapped(opts_pr0)
+    wrap_van = _drive_confined_wrapped(opts_van)
+
+    assert _reldiff(plain_pr0, wrap_pr0) == 0.0, (
+        'an eps0 = 0 InitStrain wrapper changed the p_r = 0 answer. The wrapper '
+        'is a pass-through by construction, so this is the clone made by '
+        'LadrunoSANISAND3D::getCopy(void) differing from the one made directly '
+        'by getCopy("ThreeDimensional")', plain_pr0, wrap_pr0)
+    assert _reldiff(plain_van, wrap_van) == 0.0, (
+        'an eps0 = 0 InitStrain wrapper changed the p_r = 1.01 answer',
+        plain_van, wrap_van)
+
+    rd = _reldiff(wrap_pr0, wrap_van)
+    assert rd > _GETCOPY_NONVACUITY_FLOOR, (
+        'with every Gauss point built by LadrunoSANISAND3D::getCopy(void), the '
+        'p_r = 0 and p_r = 1.01 decks became indistinguishable. That function '
+        'is not carrying p_residual. Measured on this deck: 8.6042e-02', rd,
+        wrap_pr0, wrap_van)

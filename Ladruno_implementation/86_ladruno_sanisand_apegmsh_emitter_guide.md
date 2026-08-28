@@ -78,8 +78,22 @@ Two reasons, and the second is the one that bites:
 
 ### `-honorTolR`
 
-Accepted, but **only the value `0`**. The base flag seam exists (PR-2) but nothing wires it yet, so
-`-honorTolR 1` is a hard parse error rather than a silent no-op. Emit `0` or omit it entirely.
+Accepts **`0` or `1`** as of ADR-86 PR-3, which wires the base flag seam PR-2 opened.
+(Until PR-3 it accepted only `0`, and `-honorTolR 1` was a hard parse error rather than a silent
+no-op. If you are reading an older copy of this guide, that is why.)
+
+`0` keeps vanilla behaviour: `ModifiedEuler` runs its hardcoded substep tolerance `TolE = 1e-4`
+and ignores the deck TolR. `1` makes it honour the deck TolR instead.
+
+**Emit `0` unless you have a reason.** Two cautions if you emit `1`:
+
+- It is read at **exactly one site**, inside `ModifiedEuler`, so it does nothing on any IntScheme
+  that does not route there -- 2, 3, 4, 5, 6, 7, 8, 9 and 45 (45 already honours TolR anyway).
+  The material warns at construction when you ask for it on one of those.
+- The parser default is `TolR = 1e-7`, so `-honorTolR 1` on a default deck tightens the substep
+  tolerance by 1000x. Measured on our confine-first deck: the answer moves 2.641e-04 at
+  `TolR = 1e-6`, and is bit-identical at `TolR = 1e-4` (both operands of the seam are then the
+  same double). Emit an explicit TolR if you emit the flag.
 
 ---
 
