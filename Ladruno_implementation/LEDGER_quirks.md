@@ -4867,11 +4867,41 @@ mode ADR 86 section 4.4's refinement box was written to prevent, arriving throug
 - **Do not "align" our wrapper with vanilla's.** The difference is deliberate and load-bearing.
 - **If you write a new ND wrapper, pass the explicit class tag to the base constructor.** Copying
   the nearest sibling is how this propagates.
-- **Owed, and needs a decision:** the vanilla fix is one token
-  (`: ManzariDafalias(ND_TAG_ManzariDafaliasPlaneStrain)`), it is additive, and D9 classes it as an
-  ERROR rather than an opinion — but it is out of ADR-86 PR-3's scope and, per
-  `WORKFLOW_GOTCHAS.md` section 6, a vanilla bugfix is only made with the owner's approval.
-  `ManzariDafaliasPlaneStrainRO` should be checked at the same time.
+> **CORRECTED 2026-08-28. An earlier version of this entry said the vanilla fix is "one token"
+> and "additive". BOTH ARE FALSE, and finding out cost a branch.** The correction is worth more
+> than the original entry, so it is kept in full.
+>
+> **1. The tag cannot be set after construction.** `MovableObject::classTag` is **private**
+> (`SRC/actor/actor/MovableObject.h:75`) and there is **no `setClassTag` anywhere in `SRC/`**
+> (verified by grep across the tree). So the only route is a base constructor that takes the tag.
+>
+> **2. The only such base constructor has a SIDE EFFECT.** Diffing
+> `ManzariDafalias(int classTag)` (`:302-361`) against `ManzariDafalias()` (`:363-422`) with the
+> tag normalised away leaves exactly one substantive difference: the classTag-taking form also
+> does **`mElastFlag = 0;`** (`:348`) and the bare form does not. `mElastFlag` is a
+> **`static char unsigned`** (`ManzariDafalias.h:202`, defined `= 1` at `ManzariDafalias.cpp:58`)
+> — the process-wide stage flag of ADR-86 risk 3, whose whole hazard is that constructing ANY
+> Manzari-family material resets the stage for EVERY instance in the process. So repairing the
+> tag would newly reset the elastic stage on every broker / database-restore construction of a
+> `ManzariDafaliasPlaneStrain`. That is a live behaviour change on the MP path, not a no-op.
+>
+> **3. It is three wrappers, not one.** `ManzariDafalias3DRO` and `ManzariDafaliasPlaneStrainRO`
+> both delegate to `ManzariDafaliasRO()`, which itself delegates to the bare `ManzariDafalias()` —
+> and `ManzariDafaliasRO` has **no tag-taking constructor at all** (`ManzariDafaliasRO.h:54-59`).
+> Fixing those two additionally requires ADDING a constructor overload to a vanilla class.
+> Only `ManzariDafalias3D` is correct today, and it is correct *because* it routes through the
+> tag-taking form — which means 3D restores already reset `mElastFlag` and PlaneStrain restores do
+> not. That asymmetry exists in vanilla right now.
+>
+> **DECISION (owner, 2026-08-28): NOT FIXED.** Every available route either carries the
+> `mElastFlag` side effect or grows the vanilla API, and the defect is narrow — it bites only when
+> an already-broker-restored object is RE-serialised. Recorded here instead. Per D8 the upstream
+> call is not ours to force.
+>
+> **If anyone revisits this:** the thing to look for is a route that sets the tag and nothing else.
+> A new base constructor taking only the tag would do it, at the cost of a near-duplicate of a
+> 55-line constructor body. Do not simply add `mElastFlag = 0` to the bare form to "make them
+> consistent" — that changes every null-constructed Manzari material in the process.
 
 
 ## `OPS_ManzariDafaliasMaterial` writes past a 5-element stack array on a deck with >5 trailing optionals
@@ -4919,9 +4949,39 @@ remaining token one at a time, classifies it, and rejects the sixth positional o
 - **Do not copy `OPS_ManzariDafaliasMaterial`'s optional-argument block into a new material.**
   It is the pattern to avoid, not the template. Several UW-family parsers share its shape;
   a sweep is owed.
-- **Owed, and needs a decision:** the vanilla fix is one line
-  (`numData = numArgs - 19; if (numData > 5) numData = 5;`, or a hard error, which is better since
-  a deck with 6+ optionals is malformed either way). Additive, and D9 classes it as an ERROR, not
-  an opinion. Out of ADR-86 PR-3's scope; per `WORKFLOW_GOTCHAS.md` section 6 a vanilla bugfix is
-  made only with the owner's approval. Check `ManzariDafaliasRO` and the other UW `OPS_*Material`
-  parsers in the same pass.
+- **FIXED** in the ADR-86 follow-up, with the owner's approval: a `numData > 5` guard that
+  **refuses** the deck rather than truncating it (a silent truncation would run the deck with
+  arguments the user did not get — the §7.1 defect class again). Gated by
+  `tests/test_manzari_safety_pack.py::test_optional_arg_count_is_bounded`, proven by mutation.
+- **STILL OWED — the same uncapped pattern is in three more UW parsers**, surveyed in the same
+  pass and deliberately left for their own change:
+  `ManzariDafaliasRO.cpp:82` (`numArgs - 22` into `double oData[6]`),
+  `PM4Sand.cpp:128` (`numArgs - 5` into `oData[24]`),
+  `PM4Silt.cpp:129` (`numArgs - 6` into `oData[24]`).
+  `SAniSandMS.cpp:134` is **safe from this one** — it bounds its reads with `std::min(numData, 3)`
+  and `std::min(numData, 2)` — though it still carries the separate §7.1 silent-drop defect.
+
+
+## `Copy-Item` preserves the source's timestamp, so restoring a mutation backup can leave ninja compiling the MUTANT
+
+**Cost 2026-08-27, ADR-86 follow-up, ~10 minutes of chasing a "failing" test that was correct.**
+
+The mutation-testing loop is: back the file up, apply a mutation, rebuild, run the tests, restore,
+rebuild, re-run. Restoring with PowerShell's `Copy-Item` **preserves the source file's
+`LastWriteTime`**, so the restored source carried the timestamp of when the backup was TAKEN —
+which is *earlier* than the object file built from the mutant. Ninja compares mtimes, saw the
+source as older than its `.obj`, and **skipped the recompile**. The suite then reported the
+post-restore build as still failing, which reads exactly like "the fix does not work".
+
+Measured: restored source at `19:10`, `ManzariDafalias.cpp.obj` at `19:10:44` from the mutant, and
+`fastbuild` printed `FASTBUILD: OK` having compiled nothing. The link step still ran and refreshed
+`OpenSeesPy.dll`'s mtime, so even the artifact timestamp looked current.
+
+- **After restoring any file, `touch` it before rebuilding** — or restore with something that
+  stamps the current time (`cat backup > file`, or the Write/Edit tools).
+- **Confirm the recompile, do not infer it.** Grep the build log for the specific TU:
+  `... | Select-String "ManzariDafalias"` must show a `Building CXX object` line. `FASTBUILD: OK`
+  on its own means the *link* succeeded, not that your file was compiled.
+- This is the same family as `86_ladruno_sanisand_handoff` §1's stale-binary trap and the
+  edit-during-a-build trap above, and it presents identically: a green or red result about a tree
+  that is not the one on disk.

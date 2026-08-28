@@ -228,3 +228,57 @@ def test_update_material_stage_still_reaches_plastic_path():
             f'plastic-stage step {step + 1} failed after updateMaterialStage -- '
             'the staged-gravity idiom must remain reachable'
         )
+
+
+# ---- Test 4: the optional-argument count is BOUNDED --------------------
+#
+# `OPS_ManzariDafaliasMaterial` computed `numData = numArgs - 19` and passed it
+# straight to `OPS_GetDouble` with NO cap.  `OPS_GetDoubleInput`
+# (SRC/api/elementAPI_TCL.cpp:316-329) loops
+# `for (i = 0; i < *numData; i++) data[i] = ...` with no bound on the
+# DESTINATION -- it stops only when the input args run out or a token fails to
+# parse.  The destination is `double oData[5]` (ManzariDafalias.cpp:90).  So a
+# deck with six or more trailing numeric arguments wrote past the end of a stack
+# array: the deck below (eight optionals) wrote `oData[0..7]`, 24 bytes over.
+#
+# Found by adversarial review during ADR-86 PR-3.  Not one of the four original
+# safety-pack items; this is the same argument-arithmetic FAMILY as ADR 86
+# sec.7.1's `OPS_SAniSandMSMaterial` defect, but memory-unsafe rather than
+# silently-wrong.
+#
+# WHY THIS IS A REAL FAIL-BEFORE/PASS-AFTER GATE, not an observation of UB:
+# pre-fix, the eight trailing values are all valid doubles, so `OPS_GetDouble`
+# reads all eight, returns 0 (success), and the material is CONSTRUCTED -- no
+# exception, no warning, and the corruption is invisible from Python.  The
+# assertion below therefore FAILS pre-fix because nothing is raised, and PASSES
+# post-fix because the parser refuses the deck.  Nothing here depends on
+# observing the out-of-bounds write, which is undefined behaviour and must not
+# be relied on.
+#
+# The fix REFUSES rather than truncating.  A silent truncation would run the
+# deck with arguments the user did not get -- which is precisely the ADR 86
+# sec.7.1 defect class this repair exists to avoid repeating.
+#
+# NB the sibling `OPS_LadrunoSANISAND` is immune to this whole family by
+# construction: it never computes a count, it consumes and classifies one token
+# at a time and rejects the sixth positional outright.
+
+_MD_MAX_OPTIONALS = 5   # IntScheme TanType JacoType TolF TolR
+
+
+def test_optional_arg_count_is_bounded():
+    """More than five trailing optionals must be REFUSED, not written past oData[5]."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+
+    # Exactly five optionals: the boundary, and it must still work.  Without
+    # this half the test would pass against a parser that refused everything.
+    ops.nDMaterial('ManzariDafalias', 1, *_md_args(), 1, 0, 1, 1e-7, 1e-7)
+
+    # Six -- one past the array -- and eight, which is what measurably wrote 24
+    # bytes over.  Both must be refused.
+    for extra in (1, 3):
+        tag = 10 + extra
+        with pytest.raises(Exception):
+            ops.nDMaterial('ManzariDafalias', tag, *_md_args(),
+                           1, 0, 1, 1e-7, 1e-7, *([0.0] * extra))
