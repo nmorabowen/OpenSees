@@ -109,6 +109,28 @@ OPS_ManzariDafaliasMaterial(void)
   }
 
   numData = numArgs - 19;
+  // Ladruno: BOUND the optional count before it reaches OPS_GetDouble.
+  // `numArgs` is 19 + k for k trailing optionals, so `numData` is k and was
+  // UNCAPPED -- and OPS_GetDoubleInput (SRC/api/elementAPI_TCL.cpp:316-329) loops
+  // `for (i = 0; i < *numData; i++) data[i] = ...` with NO bound on the
+  // destination, stopping only when the input args run out or a token fails to
+  // parse. `oData` is `double[5]` (:90). So a deck supplying six or more trailing
+  // numeric arguments wrote PAST the end of a stack array, e.g.
+  //     nDMaterial ManzariDafalias 1 <18 doubles> 1 0 1 1e-7 1e-7 0 0 0
+  // wrote oData[0..7] into a double[5] -- 24 bytes over.
+  // A deck with more than five optionals is malformed either way, so this refuses
+  // it rather than silently truncating: a silent truncation would run the deck
+  // with arguments the user did not get, which is the ADR-86 sec.7.1 defect class
+  // (`OPS_SAniSandMSMaterial` silently drops TolF/TolR). The sibling
+  // `OPS_LadrunoSANISAND` is immune to this whole family by construction -- it
+  // never computes a count, it consumes and classifies one token at a time.
+  // Found by adversarial review during ADR-86 PR-3; see LEDGER_quirks.md.
+  if (numData > 5) {                                                          // Ladruno
+    opserr << "WARNING invalid material data for nDMaterial ManzariDafalias material  with tag: "
+           << tag << " -- " << numData << " optional arguments given, at most 5 are accepted"
+           << " (IntScheme TanType JacoType TolF TolR)" << endln;
+    return 0;
+  }
   if (numData != 0)
     if (OPS_GetDouble(&numData, oData) != 0) {
         opserr << "WARNING invalid material data for nDMaterial ManzariDafalias material  with tag: " << tag << endln;
