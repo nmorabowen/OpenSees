@@ -11,10 +11,23 @@ tags:
 
 Hard-won process lessons for working on this fork. None of these are about the
 *code* — they are about the **PR/CI/git workflow**, which behaves differently
-here than on a normal repo because `ladruno` **auto-merges open PRs very fast**
-(an automated babysitter merges `guppi/*` worktree branches within minutes,
-usually squash, several per hour). That single fact causes most of the traps
-below.
+here than on a normal repo because `ladruno` historically **auto-merged open
+PRs very fast** (an automated babysitter merged `guppi/*` worktree branches
+within minutes, usually squash, several per hour). That single fact caused
+most of the traps below.
+
+> **POLICY (in force since 2026-08-30):**
+> [[../Ladruno_implementation/87_ladruno_depth_with_width_adr|ADR-87]] ended
+> the auto-merge era. `ladruno` now has branch protection: **Zone-A (Ubuntu)
+> and classTag+manifest are required checks, `enforce_admins` is on** — no
+> merge lands without them, admin token included. The working shape (D9): one
+> branch per work package (`wp/<n>-<slug>`), a **draft PR opened on day one**
+> so Zone-A runs on every push, exactly one deliberate merge event when the
+> warrant package is complete, **merge commits for WP PRs** (squash only for
+> small fixes — squash is why `git branch --merged` undercounts, see D10),
+> never `gh pr merge --auto`. Merged head branches auto-delete
+> (`delete_branch_on_merge`). The traps below remain real history and still
+> bite on stale clones; read them with the new policy in mind.
 
 > These were previously only in an agent's machine-local memory. Ported here so
 > the knowledge survives a fresh clone on another machine. See also the global

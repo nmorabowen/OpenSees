@@ -42,7 +42,24 @@ line. (Banner art itself comes from `banner_ASCII.txt` → `BANNER-START/END`.)
   stranded commits, stale-PR "no checks", header stamp, vanilla footprint).
 - `Ladruno_scripts/` — build, installer, banner, and test tooling.
 
-## PRs
+## PRs and branches (ADR-87 D9/D10 — in force)
 
 Base fork PRs on `ladruno` (the default branch), not `main`. See the global
 `~/.claude/CLAUDE.md` for the stacked-PR `--base` pitfall.
+
+The micro-PR/auto-merge era is over. The working shape:
+
+- **One branch per work package**, named `wp/<n>-<slug>`, cut from fresh
+  `ladruno`. One worktree per live WP.
+- **Open a draft PR on day one.** Zone-A runs on every push; a draft cannot
+  merge. Commit continuously to the WP branch — no intermediate PRs.
+- **One deliberate merge event**: flip to ready only when the warrant package
+  is complete (verification manifest + mutation gate + guide for family work,
+  Zone-A green). The owner merges; agents do not.
+- **Merge commits for WP PRs; squash only for small fixes.** Never
+  `gh pr merge --auto`.
+- Branch protection is live on `ladruno` (Zone-A + classTag/manifest checks
+  required, `enforce_admins` on) and merged head branches auto-delete. Do not
+  work around a red check — fix it.
+- Don't accumulate long-lived personal branches: rescue or record-and-drop
+  per `Ladruno_internal/branch_graveyard.md` (ADR-87 D10).

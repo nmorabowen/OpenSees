@@ -124,6 +124,7 @@ When starting a new plan, copy [[_template]] and rename.
 > picture use `ls *_adr.md`, and use [[LEDGER_implementations]] — which carries class tags, PR
 > numbers and status — as the authoritative catalogue of what exists.
 
+- [[87_ladruno_depth_with_width_adr]] — **ADR 87 — Depth with width**: standing governance. Warrant-first (no freeze): every new family ships with a verification manifest, a mutation gate, and a guide; Zone-A + classTag gates are required checks on `ladruno`; merges are WP-sized via day-one draft PRs (merge commits, no `--auto`); banner is shipped-only ≤70 cols; branch hygiene per D10. (ADR, accepted)
 - [[03_ladruno_recorder]] — **Ladruno**: modular recorder fork (sibling of the frozen MPCORecorder), apeGmsh-native `.ladruno` schema, global + envelope results. (ADR, draft)
   - [[ladruno_schema_v1]] — the on-disk HDF5 schema spec (self-describing BASIS/QUADRATURE for Bézier + Belytschko). (draft)
   - [[ladruno_element_contract]] — the element-side `setResponse` contract elements implement to be recorded. (draft)
