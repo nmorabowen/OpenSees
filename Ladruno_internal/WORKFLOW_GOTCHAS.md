@@ -22,8 +22,10 @@ most of the traps below.
 > and classTag+manifest are required checks, `enforce_admins` is on** — no
 > merge lands without them, admin token included. The working shape (D9): one
 > branch per work package (`wp/<n>-<slug>`), a **draft PR opened on day one**
-> so Zone-A runs on every push, exactly one deliberate merge event when the
-> warrant package is complete, **merge commits for WP PRs** (squash only for
+> (drafts run the static gates per push; the full Zone-A build fires on
+> ready_for_review or `workflow_dispatch`), exactly one deliberate merge
+> event when the warrant package is complete, **merge commits for WP PRs**
+> (squash only for
 > small fixes — squash is why `git branch --merged` undercounts, see D10),
 > never `gh pr merge --auto`. Merged head branches auto-delete
 > (`delete_branch_on_merge`). The traps below remain real history and still

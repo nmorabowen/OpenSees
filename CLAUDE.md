@@ -51,8 +51,10 @@ The micro-PR/auto-merge era is over. The working shape:
 
 - **One branch per work package**, named `wp/<n>-<slug>`, cut from fresh
   `ladruno`. One worktree per live WP.
-- **Open a draft PR on day one.** Zone-A runs on every push; a draft cannot
-  merge. Commit continuously to the WP branch — no intermediate PRs.
+- **Open a draft PR on day one.** Drafts run the fast static gates on every
+  push (the full Zone-A build intentionally skips drafts; trigger it on
+  demand with `workflow_dispatch`); a draft cannot merge. Commit
+  continuously to the WP branch — no intermediate PRs.
 - **One deliberate merge event**: flip to ready only when the warrant package
   is complete (verification manifest + mutation gate + guide for family work,
   Zone-A green). The owner merges; agents do not.

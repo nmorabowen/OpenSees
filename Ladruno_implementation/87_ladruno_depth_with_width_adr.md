@@ -207,11 +207,15 @@ larger than the 2026-campaign micro-PR (758 merged PRs no human read),
 smaller than a mega-branch that drifts for months:
 
 - One branch per WP from fresh `ladruno`, named `wp/<n>-<slug>`.
-- A **draft PR opens on day one**: Zone-A runs on every push
-  (continuous verification), and D3's drafts-don't-merge rule leaves
-  exactly one deliberate merge event — flipping it to ready. Agents
-  commit continuously to the WP branch in a dedicated worktree; no
-  intermediate PRs, no `--auto`.
+- A **draft PR opens on day one**: the fast static gates (classTag +
+  manifest + recorder oracle) run on every push; the full Zone-A build
+  deliberately skips drafts (a ~40-min build per push would be waste)
+  and fires when the PR is flipped to ready (`ready_for_review` is
+  wired in the workflow trigger) — or on demand mid-campaign via
+  `workflow_dispatch`. Drafts cannot merge, so the one deliberate
+  merge event always carries a real Zone-A run on its head commit.
+  Agents commit continuously to the WP branch in a dedicated worktree;
+  no intermediate PRs, no `--auto`.
 - Ready = the warrant package is complete: manifest + mutation gate +
   guide (D0), Zone-A green, and (family-level) the committed
   out-of-family verdict (D4). The PR description is the acceptance
