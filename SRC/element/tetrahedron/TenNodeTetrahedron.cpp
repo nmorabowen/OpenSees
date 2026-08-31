@@ -49,6 +49,35 @@
 #include <LadrunoResponseTokens.h>   // Ladruno: canonical recorder-token aliases
 #include <map>
 
+// Ladruno (ADR-88): H5DRM free-field interpolation -- local nodes 0-3 are the
+// 4 corners (PRIMARY, no interpolation); local nodes 4-9 are the 6 mid-edge
+// nodes (SECONDARY). Table read directly off this class's OWN shp[3][4..9]
+// definition further down in this file (the historical N8<->N9 swap, marked
+// there with "// *", is already baked into this table -- do not "fix" it to
+// look like a naive sequential 0-1/1-2/2-0/... pattern, that would silently
+// break this class's actual node order).
+bool TenNodeTetrahedron::getDRMInterpolation(int localNode,
+                                              std::vector<int>& primaryLocalNodes,
+                                              std::vector<double>& weights) const
+{
+    static const int edgeV[6][2] = {
+        {0, 1},   // local 4 : shp[3][4] = 4*zeta0*zeta1
+        {1, 2},   // local 5 : shp[3][5] = 4*zeta1*zeta2
+        {0, 2},   // local 6 : shp[3][6] = 4*zeta2*zeta0
+        {0, 3},   // local 7 : shp[3][7] = 4*zeta0*zeta4
+        {2, 3},   // local 8 : shp[3][8] = 4*zeta2*zeta4  (post-swap, see "// *")
+        {1, 3}    // local 9 : shp[3][9] = 4*zeta1*zeta4  (post-swap, see "// *")
+    };
+
+    if (localNode < 4 || localNode > 9)
+        return false; // corner node -- must match a real H5DRM station directly
+
+    const int edgeIdx = localNode - 4;
+    primaryLocalNodes.assign({edgeV[edgeIdx][0], edgeV[edgeIdx][1]});
+    weights.assign({0.5, 0.5});
+    return true;
+}
+
 void* OPS_TenNodeTetrahedron()
 {
     if (OPS_GetNumRemainingInputArgs() < 12)
@@ -610,7 +639,11 @@ const Matrix&  TenNodeTetrahedron::getInitialStiff( )
                     for ( q = 0; q < numberNodes; q++ )
                     {
                         Shape[p][q][count] = shp[p][q] ;
-                        std::cout << shp[p][q] << std::endl;
+                        // Ladruno: removed a stray unconditional debug print (upstream commit
+                        // 887ea413ef) -- with ~565K elements x 4 Gauss points x 4x10 shape-table
+                        // entries this floods stdout with ~90M lines per MPI rank, which killed
+                        // real ADR-88 SLURM jobs (SIGKILL, huge .out files) well before any
+                        // memory limit was the actual cause. See LEDGER_quirks.md.
                     }
                 } // end for p
 

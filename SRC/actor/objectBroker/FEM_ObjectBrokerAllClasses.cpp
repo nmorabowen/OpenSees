@@ -477,6 +477,7 @@
 #include "shell/ASDShellT3.h" // Massimo Petracca
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
+#include "brick/Twenty_Node_Brick.h"	// Ladruno (ADR-88: broker reconstruction, was missing -- see LEDGER_quirks)
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoSolidShell/LadrunoSolidShell.h"	// N. Mora-Bowen (Ladruno)
 #include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
@@ -503,6 +504,7 @@
 #include "twoNodeLink/LinearElasticSpring.h"
 #include "twoNodeLink/Inerter.h"
 #include "tetrahedron/FourNodeTetrahedron.h"
+#include "tetrahedron/TenNodeTetrahedron.h"	// Ladruno (ADR-88: broker reconstruction, was missing -- see LEDGER_quirks)
 
 #include "mvlem/MVLEM.h"		// Kristijan Kolozvari
 #include "mvlem/SFI_MVLEM.h"	// Kristijan Kolozvari
@@ -1077,6 +1079,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_Brick:
       return new Brick();
 
+    case ELE_TAG_Twenty_Node_Brick:	// Ladruno (ADR-88: broker reconstruction, was missing -- see LEDGER_quirks)
+      return new Twenty_Node_Brick();
+
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
 
@@ -1162,6 +1167,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_FourNodeTetrahedron:
       return new FourNodeTetrahedron();
+
+    case ELE_TAG_TenNodeTetrahedron:	// Ladruno (ADR-88: broker reconstruction, was missing -- see LEDGER_quirks)
+      return new TenNodeTetrahedron();
 	
 	case ELE_TAG_PML2D:
 	  return new PML2D();
