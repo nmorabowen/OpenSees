@@ -230,6 +230,48 @@ set_property(CACHE OPS_FINAL_TARGET PROPERTY STRINGS
 option(LADRUNO_CMS "Build the independent two-level LadrunoCMS eigensolver" OFF)
 option(LADRUNO_CMS_BUILD_TESTS "Build standalone LadrunoCMS C++ numerical checks" OFF)
 
+# Ladruno ADR-87 D2: mutation gates. A mutation build SABOTAGES one physics
+# family so CI can prove that family's tests actually test the physics (they
+# must turn RED). NEVER ship or benchmark a binary built this way -- ask it
+# what it is with the `ladrunoMutation` verb, which reports "none" for a
+# normal build. Driver: Ladruno_scripts/mutation_gate.py.
+#
+#   cmake -DLADRUNO_MUTATE_FAMILY=CONTINUUM -DLADRUNO_MUTATE_MODE=ZERO ...
+#
+# Empty family (the default) adds no definition at all, so a normal build is
+# untouched -- the header then defaults every family to LADRUNO_MUT_NONE.
+set(LADRUNO_MUTATE_FAMILY "" CACHE STRING
+    "ADR-87 D2 mutation gate: physics family to sabotage (CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND). Empty = normal build.")
+set(LADRUNO_MUTATE_MODE "ZERO" CACHE STRING
+    "ADR-87 D2 mutation mode: ZERO (force->0), SCALE (force*1.5), IDENT (tangent->I).")
+set_property(CACHE LADRUNO_MUTATE_FAMILY PROPERTY STRINGS "" CONTINUUM UP CONTACT EXPLICIT SANISAND)
+set_property(CACHE LADRUNO_MUTATE_MODE PROPERTY STRINGS ZERO SCALE IDENT)
+
+if(NOT LADRUNO_MUTATE_FAMILY STREQUAL "")
+  set(_ladruno_valid_families CONTINUUM UP CONTACT EXPLICIT SANISAND)
+  if(NOT LADRUNO_MUTATE_FAMILY IN_LIST _ladruno_valid_families)
+    message(FATAL_ERROR
+      "LADRUNO_MUTATE_FAMILY='${LADRUNO_MUTATE_FAMILY}' is not a known family. "
+      "Known: ${_ladruno_valid_families}. A typo must not silently produce an "
+      "UNMUTATED binary -- that would make the gate report 'tests cannot detect "
+      "deleted physics' when nothing was ever deleted.")
+  endif()
+  if(LADRUNO_MUTATE_MODE STREQUAL "ZERO")
+    set(_ladruno_mut_code 1)
+  elseif(LADRUNO_MUTATE_MODE STREQUAL "SCALE")
+    set(_ladruno_mut_code 2)
+  elseif(LADRUNO_MUTATE_MODE STREQUAL "IDENT")
+    set(_ladruno_mut_code 3)
+  else()
+    message(FATAL_ERROR "LADRUNO_MUTATE_MODE='${LADRUNO_MUTATE_MODE}' unknown; use ZERO, SCALE or IDENT.")
+  endif()
+  add_compile_definitions(LADRUNO_MUTATE_${LADRUNO_MUTATE_FAMILY}=${_ladruno_mut_code})
+  message(WARNING
+    "ADR-87 D2 MUTATION BUILD: ${LADRUNO_MUTATE_FAMILY}=${LADRUNO_MUTATE_MODE}. "
+    "This binary computes DELIBERATELY WRONG physics. Do not ship, install or "
+    "benchmark it. `ladrunoMutation` will report it.")
+endif()
+
 #
 # OS Configuration:
 #  defines: compile flags & user supplied paths and includes if not using conan

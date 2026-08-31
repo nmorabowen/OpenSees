@@ -39,6 +39,8 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // Description: commands to output
 
 #include <elementAPI.h>
+#include <Ladruno_mutation.h>                  // Ladruno: ADR-87 D2 mutation gates
+#include <cstring>                             // Ladruno: ADR-87 D2 (strncat/strncpy)
 #include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
 #include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
 extern ConstraintHandler **OPS_GetHandler(void);   // Ladruno: defined in OpenSeesCommands.cpp
@@ -1582,6 +1584,55 @@ int OPS_LadrunoBuild()   // Ladruno
 #endif
     if (OPS_SetString(build) < 0) {
         opserr << "WARNING ladrunoBuild: failed to set build string\n";
+        return -1;
+    }
+    return 0;
+}
+
+
+// Ladruno (ADR-87 D2): report which physics families this binary was
+// SABOTAGED for. Returns "none" for a normal build, else a comma-separated
+// list like "CONTINUUM=ZERO".
+//
+// This is the mutation gate's wrong-build detector, and it is load-bearing:
+// the gate's whole claim is "the tests went red BECAUSE the physics was
+// deleted". If a mutant build silently failed and the harness re-ran the old
+// binary, the tests would stay green and the gate would report the exact
+// opposite of the truth -- "your tests cannot detect deleted physics" -- with
+// no error anywhere. So mutation_gate.py asks the binary what it is before it
+// believes any result, the same fail-loud idiom as `ladrunoBuild`.
+int OPS_LadrunoMutation()   // Ladruno
+{
+    char buf[256];
+    buf[0] = '\0';
+
+    struct { const char *name; int mode; } fams[] = {
+        {"CONTINUUM", LADRUNO_MUTATE_CONTINUUM},
+        {"UP",        LADRUNO_MUTATE_UP},
+        {"CONTACT",   LADRUNO_MUTATE_CONTACT},
+        {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
+        {"SANISAND",  LADRUNO_MUTATE_SANISAND},
+    };
+    const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
+
+    for (int i = 0; i < 5; i++) {
+        if (fams[i].mode == LADRUNO_MUT_NONE)
+            continue;
+        if (buf[0] != '\0')
+            strncat(buf, ",", sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, fams[i].name, sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, "=", sizeof(buf) - strlen(buf) - 1);
+        const int m = fams[i].mode;
+        strncat(buf, (m >= 0 && m <= 3) ? modeName[m] : "?",
+                sizeof(buf) - strlen(buf) - 1);
+    }
+
+    if (buf[0] == '\0')
+        strncpy(buf, "none", sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    if (OPS_SetString(buf) < 0) {
+        opserr << "WARNING ladrunoMutation: failed to set mutation string\n";
         return -1;
     }
     return 0;

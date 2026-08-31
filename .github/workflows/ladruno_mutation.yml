@@ -1,0 +1,139 @@
+# Ladruno ADR-87 D2 — mutation gates.
+#
+# Builds the SAME tree three ways (normal, ZERO, SCALE) and measures what
+# fraction of a family's suite NOTICES that the physics was deleted. A suite
+# that stays green while the internal force is zeroed is not testing the
+# physics; the survivors list in the summary is the actionable output.
+#
+# NOT a per-PR merge gate, deliberately: three ~16-min builds is too slow for
+# the dev loop, and the score moves only when tests or physics change. It runs
+# nightly and on demand; D2 requires a NEW family to attach one passing run to
+# its PR, which is what workflow_dispatch is for.
+#
+# The mutant binaries are build artifacts of a sabotage build and are never
+# uploaded, installed, or reused -- see the ladrunoMutation guard in
+# tests/test_mutation_framework.py.
+name: Ladruno mutation gate
+
+on:
+  schedule:
+    - cron: "0 5 * * 0"        # weekly, Sunday 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      family:
+        description: "Family to gate (must have LADRUNO_MUTATE_* call sites)"
+        required: true
+        default: CONTINUUM
+        type: choice
+        options: [CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND]
+
+jobs:
+  mutation-gate:
+    name: Mutation gate (${{ github.event.inputs.family || 'CONTINUUM' }})
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FAMILY: ${{ github.event.inputs.family || 'CONTINUUM' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-${{ runner.os }}-
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: mutation-${{ runner.os }}
+          max-size: 3G
+      - name: Install deps
+        run: |
+          pip install conan pytest pyyaml numpy sympy scipy
+          conan profile detect --force
+          conan install . --build=missing
+
+      # ---- baseline: a NORMAL build ------------------------------------
+      - name: Build baseline
+        run: |
+          cmake -S . -B build/base \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/build/Release/generators/conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build/base --target OpenSeesPy -j8
+          mv build/base/OpenSeesPy.so build/base/opensees.so
+      - name: Baseline run
+        run: |
+          cp build/base/opensees.so tests/
+          python Ladruno_scripts/mutation_gate.py run --family "$FAMILY" \
+            --out artifacts/baseline.json
+
+      # ---- mutants ------------------------------------------------------
+      # Each mode is a separate configure+build of the same sources. ccache
+      # keeps the unaffected TUs warm, so only the gated files recompile.
+      - name: Build + run ZERO mutant
+        run: |
+          cmake -S . -B build/zero \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/build/Release/generators/conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DLADRUNO_MUTATE_FAMILY="$FAMILY" -DLADRUNO_MUTATE_MODE=ZERO
+          cmake --build build/zero --target OpenSeesPy -j8
+          cp build/zero/OpenSeesPy.so tests/opensees.so
+          python Ladruno_scripts/mutation_gate.py run --family "$FAMILY" \
+            --expect "$FAMILY=ZERO" --out artifacts/zero.json
+
+      - name: Build + run SCALE mutant
+        run: |
+          cmake -S . -B build/scale \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/build/Release/generators/conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DLADRUNO_MUTATE_FAMILY="$FAMILY" -DLADRUNO_MUTATE_MODE=SCALE
+          cmake --build build/scale --target OpenSeesPy -j8
+          cp build/scale/OpenSeesPy.so tests/opensees.so
+          python Ladruno_scripts/mutation_gate.py run --family "$FAMILY" \
+            --expect "$FAMILY=SCALE" --out artifacts/scale.json
+
+      # ---- score --------------------------------------------------------
+      # ZERO is the gating mode. SCALE is reported but not gated yet: it is the
+      # harder bar (a plausible-but-wrong answer), and a floor should be set
+      # from a measured baseline rather than guessed, so WP-3 sets it.
+      - name: Score ZERO (gating)
+        run: |
+          python Ladruno_scripts/mutation_gate.py score \
+            --baseline artifacts/baseline.json --mutant artifacts/zero.json \
+            --out artifacts/score_zero.json | tee zero.log
+          {
+            echo "## Mutation gate - $FAMILY / ZERO"
+            echo '```'
+            cat zero.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Score SCALE (reported, not gating)
+        if: always()
+        run: |
+          python Ladruno_scripts/mutation_gate.py score \
+            --baseline artifacts/baseline.json --mutant artifacts/scale.json \
+            --min-score 0.0 --out artifacts/score_scale.json | tee scale.log
+          {
+            echo "## Mutation gate - $FAMILY / SCALE (informational)"
+            echo '```'
+            cat scale.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scores
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-scores-${{ env.FAMILY }}
+          path: artifacts/*.json

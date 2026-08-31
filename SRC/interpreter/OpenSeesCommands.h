@@ -288,6 +288,7 @@ int OPS_LadrunoContactForce();         // Ladruno: ADR-39 B3 query (NTS nodal co
 int OPS_LadrunoBeginAugment();         // Ladruno: ADR-41 D1 (open held-load augmentation sweep)
 int OPS_LadrunoEndAugment();           // Ladruno: ADR-41 D1 (close held-load augmentation sweep)
 int OPS_LadrunoBuild();                // Ladruno: build-stamp query (git hash the binary was compiled from)
+int OPS_LadrunoMutation();             // Ladruno: ADR-87 D2 mutation-gate query ("none" or e.g. "CONTINUUM=ZERO")
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();

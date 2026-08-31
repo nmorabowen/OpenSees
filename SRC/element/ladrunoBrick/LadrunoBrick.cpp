@@ -46,6 +46,7 @@
 #include <Domain.h>
 #include <ErrorHandler.h>
 #include <LadrunoBrick.h>
+#include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gate
 #include <SolidTransformation.h>          // Ladruno — geometry-method seam (2/3)
 #include <SolidTransformationLinear.h>    // Ladruno — v1 identity method
 #include <FiniteStrainNDMaterial.h>       // Ladruno — v3 finite: setTrialF(F) seam
@@ -486,6 +487,7 @@ void  LadrunoBrick::Print(OPS_Stream &s, int flag)
 const Matrix &  LadrunoBrick::getTangentStiff(void)
 {
   formResidAndTangent(1);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, stiff);   // ADR-87 D2 gate
   return stiff;
 }
 
@@ -584,18 +586,21 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     else
       formUri(1, true);
     Ki = new Matrix(stiff);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::SSP) {
     formSSP(1, true);
     Ki = new Matrix(stiff);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::EAS) {
     formEAStrue(1, true);   // condensed elastic K* at alpha=0 (no inner Newton)
     Ki = new Matrix(stiff);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
@@ -703,6 +708,7 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
   theGeom->globalizeStiff(stiff, zeroF, stiff);
 
   Ki = new Matrix(stiff);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
   return stiff;
 }
 
@@ -772,6 +778,10 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
 const Vector &  LadrunoBrick::getResistingForce(void)
 {
   formResidAndTangent(0);
+  // ADR-87 D2 gate. Placed on the INTERNAL force only -- element loads are
+  // folded in just below -- so a purely load-driven test that survives the
+  // mutation is reporting its coverage honestly rather than being fooled.
+  LADRUNO_MUTATE_FORCE(CONTINUUM, resid);
   if (load != 0) resid -= *load;
   return resid;
 }
@@ -781,6 +791,9 @@ const Vector &  LadrunoBrick::getResistingForceIncInertia(void)
   static Vector res(24);
 
   formResidAndTangent(0);
+  // ADR-87 D2 gate -- before inertia and Rayleigh damping are added, so the
+  // gate probes the constitutive path rather than the mass matrix.
+  LADRUNO_MUTATE_FORCE(CONTINUUM, resid);
   formInertiaTerms(0);
 
   res = resid;
