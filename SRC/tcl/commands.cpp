@@ -31,6 +31,7 @@
 // see tkAppInit.C for command names.
 
 #include <classTags.h>
+#include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gates
 
 #include <DOF_Group.h>
 
@@ -731,6 +732,9 @@ version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int
 ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
+
+int
+ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno ADR-87 D2 mutation-gate query
 
 int
 getPID(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -1577,6 +1581,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "version", &version,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "ladrunoBuild", &ladrunoBuild,   // Ladruno build-stamp query
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "ladrunoMutation", &ladrunoMutation,   // Ladruno ADR-87 D2 mutation-gate query
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
@@ -11525,6 +11531,44 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 #else
   snprintf(buffer, sizeof(buffer), "unknown");
 #endif
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+
+  return TCL_OK;
+}
+
+// Ladruno (ADR-87 D2): classic-Tcl twin of `ladrunoMutation`. See
+// OPS_LadrunoMutation in OpenSeesOutputCommands.cpp for why the gate must be
+// able to ask a binary whether it is a mutant before trusting any result.
+int
+ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  char buffer[256];
+  buffer[0] = '\0';
+
+  struct { const char *name; int mode; } fams[] = {
+    {"CONTINUUM", LADRUNO_MUTATE_CONTINUUM},
+    {"UP",        LADRUNO_MUTATE_UP},
+    {"CONTACT",   LADRUNO_MUTATE_CONTACT},
+    {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
+    {"SANISAND",  LADRUNO_MUTATE_SANISAND},
+  };
+  const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
+
+  for (int i = 0; i < 5; i++) {
+    if (fams[i].mode == LADRUNO_MUT_NONE)
+      continue;
+    if (buffer[0] != '\0')
+      strncat(buffer, ",", sizeof(buffer) - strlen(buffer) - 1);
+    strncat(buffer, fams[i].name, sizeof(buffer) - strlen(buffer) - 1);
+    strncat(buffer, "=", sizeof(buffer) - strlen(buffer) - 1);
+    const int m = fams[i].mode;
+    strncat(buffer, (m >= 0 && m <= 3) ? modeName[m] : "?",
+            sizeof(buffer) - strlen(buffer) - 1);
+  }
+
+  if (buffer[0] == '\0')
+    snprintf(buffer, sizeof(buffer), "none");
+  buffer[sizeof(buffer) - 1] = '\0';
   Tcl_SetResult(interp, buffer, TCL_VOLATILE);
 
   return TCL_OK;

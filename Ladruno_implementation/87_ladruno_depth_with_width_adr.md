@@ -376,3 +376,56 @@ done in the same PR (or an immediately following one referenced here):
   (`StiffSoil*.h`). Verify subagent verdicts before acting on them.
   Also fixed: the main checkout's local `ladruno` ref was 3 commits
   stale, which silently under-detects merged branches.
+- 2026-08-31 — **WP-0 close-out**: the 8 `drop`-verdict stragglers were
+  deleted after owner sign-off (SHAs recorded in
+  `[[../Ladruno_internal/branch_graveyard]]` first, and re-verified
+  against the remote immediately before deletion). `origin/*` is now 18
+  real branches: `ladruno`, the 5 `up/*` campaign branches, and 12 held
+  by live worktrees.
+- 2026-08-31 — **WP-2: mutation-gate framework SHIPPED + first
+  (CONTINUUM) gate live.** Four design decisions, each made against a
+  specific failure mode:
+  (a) **Call sites in the Element API accessors**, not the internals —
+  `getTangentStiff` / `getInitialStiff` / `getResistingForce` /
+  `getResistingForceIncInertia` are the whole of what an analysis can
+  observe about an element, so 11 call sites cover LadrunoBrick's SIX
+  assembly paths (std/bbar, URI, physical-hourglass, SSP, EAS, finite,
+  hypo) plus LadrunoBrick20, and a future formulation is covered the
+  day it is written.
+  (b) **Always compiled, never `#ifdef`-ed out** — mode NONE folds every
+  branch to `if (0)`, so the default build is unaffected while the
+  mutation code stays type-checked. Scaffolding that can rot into a
+  no-op is worse than none: it reports a safety it is not delivering.
+  (c) **A fail-loud identity verb.** `ladrunoMutation` (Python + Tcl +
+  classic Tcl) reports "none" or e.g. `CONTINUUM=ZERO`, and the driver
+  REFUSES to score a binary that disagrees with `--expect`. Without it
+  a silently-failed mutant build would re-run the previous binary, every
+  test would pass, and the gate would report the exact OPPOSITE of the
+  truth — "this suite cannot detect deleted physics" — with no error
+  anywhere. Same idiom as `ladrunoBuild` for stale-`.pyd`.
+  (d) **The survivor list is the deliverable**, not the score: the tests
+  that pass with the physics deleted are the actionable output. Modes:
+  `ZERO` (the canonical return-0), `SCALE` x1.5 (the diagnostic one — a
+  plausible-but-wrong answer, so a suite green under SCALE is a smoke
+  test), `IDENT` (tangent only; most tests correctly survive, so read a
+  low score as "no tangent coverage", not as a bug).
+  Verified offline (no build needed): header compiles and its logic is
+  right (ZERO nulls, IDENT builds a true identity, NONE is inert); the
+  mutation-string builder emits exactly `none` / `CONTINUUM=ZERO` /
+  `CONTINUUM=SCALE,UP=IDENT`; scoring excludes baseline-failures and
+  both gate directions exit correctly; all four CMake paths behave,
+  including **a typo'd family being FATAL rather than a silently
+  unmutated build**; both patched elements pass `g++ -fsyntax-only`;
+  static CI gates green.
+  **Caught during WP-2 and worth keeping:** a family's test glob must
+  select exactly the code that carries its call sites — the first
+  CONTINUUM glob pulled in LadrunoBrick20 tests before that element was
+  gated, which would have reported unmutated-element tests as "tests
+  that ignore the physics". Fixed by gating Brick20 too; the driver now
+  also refuses to run an ungated family so a meaningless 0.0 can never
+  be read as a damning result.
+  **NOT yet measured:** the score itself needs the three-build CI lane,
+  and `workflow_dispatch` only offers workflows that already live on the
+  default branch — so the first real number arrives after this merges.
+  The SCALE floor is deliberately left ungated until it can be set from
+  a measured baseline instead of a guess.

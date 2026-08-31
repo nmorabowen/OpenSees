@@ -51,6 +51,7 @@
 #include <Node.h>
 #include <Domain.h>
 #include <LadrunoBrick20.h>
+#include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gate
 #include <LadrunoHex20Shape.h>            // Ladruno — P0 pure H20 kernel (shape/GP/B/mass)
 #include <LadrunoMassLumping.h>           // Ladruno — shared HRZ lumper (ADR 35, -lumped path)
 #include <Renderer.h>
@@ -504,6 +505,7 @@ LadrunoBrick20::gatherCoords(double X[NEN][3])
 const Matrix &  LadrunoBrick20::getTangentStiff(void)
 {
   formStiffness(0);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, stiff);   // ADR-87 D2 gate
   return stiff;
 }
 
@@ -515,6 +517,7 @@ const Matrix &  LadrunoBrick20::getInitialStiff(void)
 
   formStiffness(1);
   Ki = new Matrix(stiff);
+  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
   return *Ki;
 }
 
@@ -595,6 +598,7 @@ LadrunoBrick20::addInertiaLoadToUnbalance(const Vector &accel)
 const Vector &  LadrunoBrick20::getResistingForce(void)
 {
   formResidual();
+  LADRUNO_MUTATE_FORCE(CONTINUUM, resid);   // ADR-87 D2 gate (internal force only)
   if (load != 0) resid -= *load;
   return resid;
 }
@@ -604,6 +608,7 @@ const Vector &  LadrunoBrick20::getResistingForceIncInertia(void)
   static Vector res(NDOF);
 
   formResidual();
+  LADRUNO_MUTATE_FORCE(CONTINUUM, resid);   // ADR-87 D2 gate (pre-inertia)
   formInertiaResidual();
 
   res = resid;
