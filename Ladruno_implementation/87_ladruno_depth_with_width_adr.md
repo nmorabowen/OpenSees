@@ -355,3 +355,24 @@ done in the same PR (or an immediately following one referenced here):
   project `CLAUDE.md` (PRs and branches) + `WORKFLOW_GOTCHAS` policy
   header. Status flipped to `accepted`; the WP-1 PR is the accepting
   PR, run under D9 itself (`wp/1-accept-adr87`, day-one draft).
+  **WP-1 MERGED as [#773](https://github.com/nmorabowen/OpenSees/pull/773)**
+  — Zone-A green (16m18s), landed as a true merge commit
+  (`68ab8baab`, two parents), head branch auto-deleted. D9's first
+  live exercise behaved as designed.
+- 2026-08-30 — **WP-0 COMPLETE** (D10 sweep). 769 refs deleted:
+  132 local + 337 remote ancestry-merged, then 293 remote + 37 local
+  **squash-zombies** (proof = a merged PR used the branch as head —
+  the necessary phase, since squash merges make `git branch --merged`
+  under-report). `origin/*` 656 → 26, local 193 → 24; `jaabell` (29)
+  untouched; every exclusion verified intact afterwards. 13 stragglers
+  triaged in `[[../Ladruno_internal/branch_graveyard]]`, **none
+  deleted** (D10 reserves that for owner sign-off): 5 `up/*` upstream-
+  campaign branches keep, 8 drop. Both subagent "rescue"
+  recommendations were **overturned on verification** — the SOE branch
+  is the losing lane of the #753/#754 duplicate race (the landed test
+  is +437 lines richer), and RebarBuckling shipped and has since
+  gained v2; the 46-commit stiff-soil branch is safe to drop only
+  because those commits live on `jaabell` AND the model already ships
+  (`StiffSoil*.h`). Verify subagent verdicts before acting on them.
+  Also fixed: the main checkout's local `ladruno` ref was 3 commits
+  stale, which silently under-detects merged branches.
