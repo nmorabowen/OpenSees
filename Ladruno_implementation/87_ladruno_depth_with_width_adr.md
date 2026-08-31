@@ -429,3 +429,27 @@ done in the same PR (or an immediately following one referenced here):
   default branch — so the first real number arrives after this merges.
   The SCALE floor is deliberately left ungated until it can be set from
   a measured baseline instead of a guess.
+- 2026-08-31 — **WP-2b: the first mutation-lane run FAILED, and it earned
+  its keep.** Run 33365505674 died in the baseline step and exposed two
+  defects, the second serious:
+  (i) the driver probed and ran pytest from the repo ROOT while CI copies
+  `opensees.so` into `tests/` — `ModuleNotFoundError` on a perfectly good
+  build. Zone-A works only because it does `cd tests` first. Fixed with a
+  `--module-dir` (default `tests/`) used as the cwd for BOTH the probe and
+  pytest; test files now resolve as names relative to it.
+  (ii) **the gate could not fail.** GitHub's default shell is `bash -e` —
+  errexit but NOT pipefail — so `python ... | tee` returned tee's exit
+  code and a FAILED gate would have reported success. The tell was inside
+  the failed run itself: the SCALE score step reported `success` while its
+  input file did not exist. Fixed with `set -o pipefail` and explicit
+  `${PIPESTATUS[0]}` propagation; the SCALE step now separates "the mutant
+  never ran" (skip) from "scoring itself broke" (fail).
+  Defect (ii) is this ADR's own thesis reproduced INSIDE the gate meant to
+  enforce it: a check that runs, reports green, and cannot say no. It
+  survived review because the step *looked* like it gated. In Actions, a
+  pipe into `tee` is a gate-killer unless pipefail is set — worth carrying
+  into every future CI lane.
+  Verified locally before re-running: the probe now finds a module in
+  `--module-dir` and the identity-mismatch guard fires (synthetic module);
+  `false | tee` measured to exit 0 under `bash -e` while `${PIPESTATUS[0]}`
+  correctly captures 3.
