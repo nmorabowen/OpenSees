@@ -4985,3 +4985,43 @@ Measured: restored source at `19:10`, `ManzariDafalias.cpp.obj` at `19:10:44` fr
 - This is the same family as `86_ladruno_sanisand_handoff` §1's stale-binary trap and the
   edit-during-a-build trap above, and it presents identically: a green or red result about a tree
   that is not the one on disk.
+### Two vanilla quadratic solids (`TenNodeTetrahedron`, `Twenty_Node_Brick`) had `sendSelf`/`recvSelf` implemented but no broker `case` -- silently unusable in a partitioned domain
+- **Bites:** anyone using `element TenNodeTetrahedron` or `element Twenty_Node_Brick` under `OpenSeesMP`/`OpenSeesSP` (or any partitioned/parallel `Domain`). Serial use is unaffected.
+- **Why:** `FEM_ObjectBrokerAllClasses.cpp`'s `Element*` factory dispatch had zero `case` entries for either `ELE_TAG_TenNodeTetrahedron` (256) or `ELE_TAG_Twenty_Node_Brick` (49) -- confirmed by `grep`, not by a failing test, since nothing in the existing test suite exercised either element in a partitioned domain. Both classes correctly implement `sendSelf`/`recvSelf` (the serialization logic works), but `recvSelf` on a remote rank is reached only through this factory -- without a `case`, the broker cannot construct the placeholder object to receive into. The failure mode is whatever the broker's default/unhandled-tag path does (not characterized here since no reproducer existed before the fix), not a documented error message naming the missing element.
+- **Workaround/status (2026-08-29, ADR-88 pre-implementation audit -- FIXED same PR):** added both `#include`s and both `case`s to `FEM_ObjectBrokerAllClasses.cpp`, mirroring the exact pattern already used for `BezierTet10`/`LadrunoBrick20` (the fork-authored siblings sharing the same node/edge convention, already correctly registered). Purely additive. **General lesson:** a new `Element` subclass shipping `sendSelf`/`recvSelf` is necessary but not sufficient for parallel correctness -- the broker factory registration is a separate, easily-forgotten step, and nothing short of an actual partitioned-domain test catches its absence. | ADR-88 (h5drm higher-order elements)
+
+### `H5DRMLoadPattern::CalculateBoundaryForces` had a fixed 8-node buffer (`BoundaryNodes`/`ExteriorNodes`) that silently overflows for any element with more than 8 nodes on one side of the DRM boundary
+- **Bites:** any element with >8 total nodes used on an H5DRM boundary (`BezierTet10`=10, `LadrunoBrick20`/`Twenty_Node_Brick`=20, `TenNodeTetrahedron`=10). Undefined behavior, not a controlled error -- discovered by code audit, not by a crash report.
+- **Why:** `constexpr int MaxNodes = 8` sized `BoundaryNodes`/`ExteriorNodes` once, OUTSIDE the per-element loop (`BoundaryNodes.resize(MaxNodes)`), then the loop wrote via `BoundaryNodes(boundaryCount++) = nodeIndex` with no bounds check. Every OTHER per-element buffer in the same function (`M_be`, `K_be`, `Peff_b`, `Peff_e`, `u_b`, `a_b`, `u_e`, `a_e`) was already correctly resized per-element based on `boundaryCount`/`exteriorCount` -- only these two were missed.
+- **Workaround/status (2026-08-29, ADR-88 pre-implementation audit -- FIXED same PR):** moved the resize inside the per-element loop, sized to the element's own `numElementNodes` (not a fixed constant) -- `ID::resize()` reallocates safely when growing (`ID.cpp:394-422`), confirmed by reading the implementation before relying on it. | ADR-88 (h5drm higher-order elements)
+
+### `TenNodeTetrahedron` (vainilla) floods stdout with one line per shape-function entry -- silently kills large-mesh MPI jobs on a shared cluster long before any real memory limit is hit
+- **Bites:** any MPI run of `TenNodeTetrahedron` past a few hundred thousand elements. Discovered
+  during ADR-88's T3 cross-element H5DRM validation (`drm_load_pattern/86_drm_free_field_all_elements.ipynb`):
+  the `TenNodeTetrahedron_h2.5` run (565,248 elements, 4 Gauss points, 4x10 shape-function table)
+  was assumed to be dying from Mumps OOM (the same SIGKILL/exit-137 signature as three sibling
+  runs in the same batch) -- root-caused instead by inspecting the raw SLURM `.out` file: **86.6
+  million lines, 761 MB**, all bare floating-point numbers, one per shape-function entry per Gauss
+  point per element (565,248 x 4 x 4 x 10 ~= 90.4M, matching the observed count almost exactly).
+- **Why:** `TenNodeTetrahedron.cpp` (`computeBasis`/shape-function precompute loop, upstream
+  commit `887ea413ef`, Jose A. Abell, 2024-03-25) has an unconditional `std::cout << shp[p][q] <<
+  std::endl;` right next to the intended `Shape[p][q][count] = shp[p][q];` assignment -- almost
+  certainly a leftover interactive debug line that was never gated behind a verbosity flag or
+  removed. Harmless on the small decks this element was previously exercised with (a few thousand
+  elements); catastrophic at the mesh sizes a real DRM free-field model needs -- the sheer I/O
+  volume (and/or whatever buffering/flush behavior it triggers under MPI on a shared filesystem)
+  is enough by itself to get the job SIGKILLed well before Mumps ever gets a chance to run out of
+  memory, masquerading as the OOM failures already documented for tet10-scale meshes elsewhere in
+  this fork's history (see `06_drm_free_field_bezier_tet.ipynb` in `soil_model_01_ATLAS/history/`).
+- **Workaround/status (2026-08-30, ADR-88 -- FIXED):** the stray `std::cout` line removed and
+  marked `// Ladruno` (vanilla file, per the fork's edit-marking discipline) — see
+  `SRC/element/tetrahedron/TenNodeTetrahedron.cpp`. `Shape[p][q][count] = shp[p][q]` (the real
+  computation the loop exists for) is untouched. Rebuilt `OpenSeesMP` incrementally (single
+  `.cpp` recompile + relink, confirmed via the build log) on the ADR-88 isolated build
+  (`/mnt/deadmanschest/pxpalacios/opensees_tmp/`, branch `adr88-h5drm-higher-order-elements`)
+  and redeployed to `bin/OpenSeesMP`; `TenNodeTetrahedron_h2.5` resubmitted (job 145758) to
+  confirm the fix under real MPI load. **General lesson**: when several sibling jobs in the same
+  batch die with an identical SIGKILL signature, do not assume they share one root cause — check
+  each one's own raw output before applying the same fix (more nodes, more memory) to all of them;
+  here 3 of 4 were genuine OOM candidates and 1 was an unrelated, much cheaper bug hiding behind
+  the same exit code.

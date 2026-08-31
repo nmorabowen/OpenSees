@@ -132,6 +132,25 @@ const int BezierTet10::edgeV[6][2] = {
     {1, 3}    // node 10 : edge (2-4)
 };
 
+// Ladruno (ADR-88): H5DRM free-field interpolation -- localNode 0..3 are the 4
+// corners (PRIMARY, no interpolation); localNode 4..9 are the 6 mid-edge nodes
+// (SECONDARY), reusing the SAME edgeV table above verbatim -- no separate
+// topology data to keep in sync. Weight 0.5/0.5 is exact under the element's
+// own v1 straight-sided assumption (see the ADR-88 design doc, 10ter, on why
+// this does not conflict with the Bernstein/blossom non-interpolatory basis).
+bool BezierTet10::getDRMInterpolation(int localNode,
+                                       std::vector<int>& primaryLocalNodes,
+                                       std::vector<double>& weights) const
+{
+    if (localNode < 4 || localNode > 9)
+        return false; // corner node -- must match a real H5DRM station directly
+
+    const int edgeIdx = localNode - 4;
+    primaryLocalNodes.assign({edgeV[edgeIdx][0], edgeV[edgeIdx][1]});
+    weights.assign({0.5, 0.5});
+    return true;
+}
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  CONSTRUCTORS AND DESTRUCTOR
