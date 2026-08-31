@@ -456,3 +456,57 @@ done in the same PR (or an immediately following one referenced here):
   `--module-dir` and the identity-mismatch guard fires (synthetic module);
   `false | tee` measured to exit 0 under `bash -e` while `${PIPESTATUS[0]}`
   correctly captures 3.
+- 2026-08-31 — **FIRST MEASURED MUTATION SCORES** (run 33368686085,
+  CONTINUUM, 210 baseline-passing tests):
+
+  | mode | killed | survived | score | floor |
+  |---|---|---|---|---|
+  | ZERO (force -> 0) | 137 | 73 | **0.652** | 0.60 — PASS |
+  | SCALE (force x1.5) | 51 | 159 | **0.243** | informational |
+
+  **Read the score as a FLOOR on suite quality, not a verdict.** The
+  denominator is every baseline-passing test, and a large part of the
+  continuum suite cannot detect a force mutation *by design*. The 73
+  ZERO survivors split three ways, and only the second is a test defect:
+
+  1. **Legitimately out of scope (~34).** Parser/guard tests
+     (`test_factory_rejects_non_3d_material`,
+     `test_hourglass_hard_error_by_design`), mass-matrix tests
+     (`test_hrz_vector_matches_p0_cube_fractions`), geometry
+     (`test_char_length_is_cbrt_volume`). The mutation sabotages the
+     internal force, not the parser, the mass matrix or the Jacobian, so
+     these SHOULD survive. Counting them as failures would be the metric
+     lying, not the tests.
+  2. **Null-hypothesis tests — a real, nameable defect.** Tests whose
+     assertions are all one-sided "approximately zero" pass *trivially*
+     on a dead element. Verified by reading:
+     `test_corot_rigid_rotation_is_stress_free` asserts both
+     `stresses <= 1e-7*E` AND `|force| <= 1e-7*E` — deleting the force
+     satisfies both. Same shape in `test_axial_no_growth[CDL]` ("no
+     growth" is trivially true with no stiffness),
+     `test_rigid_velocity_no_dissipation`, `test_*_reduces_to_linear_*`.
+     **Remedy: every assert-zero test needs a positive control** — a
+     companion case where a NON-rigid motion must produce a non-zero
+     force. That is a test-suite work item, not a floor adjustment.
+  3. **Beyond this gate's reach (~35) — a GATE limitation, not a test
+     one.** The corot / finite / hypo / viscous-dissipation lanes assert
+     on `ops.eleResponse(tag, "stresses")`, and `getResponse` reads
+     `materialPointers[i]->getStress()` **directly — it never touches
+     `resid` or `stiff`** (verified in source). So the gate covers the
+     element->SOLVER contract but not the element->RECORDER contract, and
+     a stress-path test cannot be killed by it however good it is.
+     **Remedy (WP-3): a stress-path mutation point**, most cleanly at the
+     material rather than the element.
+
+  **The SCALE reading is the more interesting one.** 159 of 210 tests
+  pass while every internal force is 50% wrong. Some of that is the same
+  three categories, but SCALE also survives wherever a test checks a
+  *trend, sign, or bound* rather than a value — precisely the
+  plausible-but-wrong regime ADR-87 was written about. No floor is set
+  for SCALE until WP-3 has separated categories 1 and 3 out of the
+  denominator; setting one now would be guessing.
+
+  **Method note for future gates:** the score's denominator must be
+  tests that COULD detect the mutation. Until the gate can reach the
+  stress path, per-family floors are calibrated against the ZERO mode
+  only, and the survivor LIST — not the ratio — is the deliverable.
