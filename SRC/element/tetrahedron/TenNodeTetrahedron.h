@@ -44,10 +44,22 @@
 #include <Element.h>
 #include <Node.h>
 #include <NDMaterial.h>
+#include <DRMHigherOrderNode.h>   // Ladruno (ADR-88)
 
-class TenNodeTetrahedron : public Element {
+class TenNodeTetrahedron : public Element, public DRMHigherOrderNode {
 
 public :
+
+    // Ladruno (ADR-88): H5DRM free-field interpolation at the 6 mid-edge
+    // nodes (local idx 4-9) -- weight 0.5/0.5 on the edge's own 2 corner
+    // nodes. Edge table read directly off this class's own shape-function
+    // definition (shp[3][4..9] in the .cpp, including the historical N8<->N9
+    // index swap already marked there with "// *") -- NOT copied from
+    // BezierTet10, though the two happen to agree (BezierTet10 was built to
+    // match this class's node order in the first place).
+    bool getDRMInterpolation(int localNode,
+                              std::vector<int>& primaryLocalNodes,
+                              std::vector<double>& weights) const override;
 
     //null constructor
     TenNodeTetrahedron();

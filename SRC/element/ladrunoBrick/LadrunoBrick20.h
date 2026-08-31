@@ -70,12 +70,22 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Damping.h>
+#include <DRMHigherOrderNode.h>   // Ladruno (ADR-88)
 
 class Response;   // Ladruno — fwd-decl for setResponse / the U1 advisory probe
 
-class LadrunoBrick20 : public Element {
+class LadrunoBrick20 : public Element, public DRMHigherOrderNode {
 
  public:
+
+  // Ladruno (ADR-88): H5DRM free-field interpolation at the 12 mid-edge nodes
+  // (local idx 8-19) -- weight 0.5/0.5 on the edge's own 2 corner nodes,
+  // reusing the SAME local-node/edge convention documented in
+  // LadrunoHex20Shape.h (k8-11 lower ring, k12-15 upper ring, k16-19
+  // vertical) -- no separate topology data to keep in sync with that file.
+  bool getDRMInterpolation(int localNode,
+                            std::vector<int>& primaryLocalNodes,
+                            std::vector<double>& weights) const override;
 
   // Formulation selector. Ordinals are SERIALIZED (packed into idData by
   // sendSelf) — append-only forever: STD keeps ordinal 0, URI keeps ordinal 1.

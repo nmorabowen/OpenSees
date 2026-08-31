@@ -40,6 +40,8 @@
 
 #include <OPS_Globals.h>
 #include <map>
+#include <set>
+#include <algorithm>
 #include <vector>
 #include <Message.h>
 
@@ -54,6 +56,7 @@
 
 #include <Element.h>
 #include <ElementIter.h>
+#include <DRMHigherOrderNode.h>   // Ladruno (ADR-88)
 
 
 #define numNodeDOF 3  // Only nodes with 3-dofs per node can be used in DRM... :/
@@ -562,7 +565,55 @@ void H5DRMLoadPattern::do_intitialization()
     }
 
 
-    // Identify Elements on DRM boundary
+    // Identify Elements on DRM boundary. Ladruno (ADR-88): an element may
+    // additionally report SECONDARY (non-corner) local nodes via the
+    // DRMHigherOrderNode interface -- e.g. the 6 mid-edge nodes of a
+    // BezierTet10 -- whose free-field motion is reconstructed from a linear
+    // combination of the element's own PRIMARY (corner) nodes instead of
+    // matched directly to an H5DRM station (the ShakerMaker grid never
+    // provides one at a mid-edge point). This is exact, not an approximation,
+    // whenever the free field varies linearly across the element -- see
+    // ADR-88 (10ter) for why this does not conflict with BezierTet10's
+    // non-interpolatory Bernstein basis. Elements that do not implement the
+    // interface behave exactly as before this ADR.
+    //
+    // Ladruno (ADR-88, primary-node fallback): a uniform mesh (any `elem`, including one that
+    // does not equal the .h5drm's own native station spacing) can legitimately place a
+    // DRM-boundary element's PRIMARY (corner) nodes past the real box's fixed physical extent --
+    // the box's own two shells (internal/external) are exactly `elem_base` apart, fixed at
+    // ShakerMaker generation time, independent of whatever `elem` this model chooses. When that
+    // happens the corner simply has no real station within `distance_tolerance` at all (not a
+    // near-miss -- there is nothing there), and pre-ADR-88 behaviour just drops the whole
+    // element from DRM_Elements. `kPrimaryNodeFallbackTolerance` below is a SECOND, more
+    // generous distance threshold that only ever applies to a node this loop has independently
+    // classified as PRIMARY (via getDRMInterpolation()==false, or an element with no
+    // DRMHigherOrderNode support at all) -- SECONDARY (mid-edge) nodes NEVER reach this branch
+    // regardless of distance, so this cannot reintroduce the original bug (a mid-edge node
+    // spuriously direct-matching a nearby-but-wrong real station instead of going through the
+    // exact parent interpolation above). 10 m comfortably covers the largest overshoot measured
+    // so far (2.5 m, elem=5.0 m vs elem_base=2.5 m) while staying much smaller than any real
+    // domain zone thickness (o_thick>=20 m by the existing floor), so it cannot make the whole
+    // domain look like a DRM boundary.
+    const double kPrimaryNodeFallbackTolerance = 10.0;
+    // Ladruno (ADR-88): cheap bounding-box pre-filter, expanded by the fallback tolerance --
+    // measured necessary, not a guess: without it every primary node in the WHOLE domain (most
+    // of which are nowhere near the real box, e.g. deep in drm_inner or out in drm_outer) still
+    // ran the full O(Nstations) nearest-station search below before being rejected by distance,
+    // and every element sharing an already-rejected node repeated that same expensive search
+    // again (no negative-result cache) -- a real BezierTet10_h5 rerun (115K nodes, 16 ranks)
+    // still had not finished this loop after 5 minutes. `primaryFallbackFailed` below is the
+    // negative-result cache; this bbox check is the O(1) rejection that makes the cache actually
+    // matter (most rejections now never touch the O(Nstations) loop at all).
+    const double bx_lo = std::min(drmbox_xmin, drmbox_xmax) - kPrimaryNodeFallbackTolerance;
+    const double bx_hi = std::max(drmbox_xmin, drmbox_xmax) + kPrimaryNodeFallbackTolerance;
+    const double by_lo = std::min(drmbox_ymin, drmbox_ymax) - kPrimaryNodeFallbackTolerance;
+    const double by_hi = std::max(drmbox_ymin, drmbox_ymax) + kPrimaryNodeFallbackTolerance;
+    const double bz_lo = std::min(drmbox_zmin, drmbox_zmax) - kPrimaryNodeFallbackTolerance;
+    const double bz_hi = std::max(drmbox_zmin, drmbox_zmax) + kPrimaryNodeFallbackTolerance;
+    std::set<int> primaryFallbackFailed;
+    int next_local_pos = n_nodes_found;
+    int n_interpolated_secondary = 0;
+    int n_fallback_primary = 0;
     Element * element_ptr = 0;
     ElementIter& element_iter = theDomain->getElements();
     while ((element_ptr = element_iter()) != 0)
@@ -570,15 +621,158 @@ void H5DRMLoadPattern::do_intitialization()
         int element_tag = element_ptr->getTag();
         const ID& element_nodelist = element_ptr->getExternalNodes();
         int nnodes = element_nodelist.Size();
+        DRMHigherOrderNode* higherOrder = dynamic_cast<DRMHigherOrderNode*>(element_ptr);
         int count = 0;
         for (int nodenum = 0; nodenum < nnodes; ++nodenum)
         {
             int node_tag = element_nodelist(nodenum);
             if (DRM_Nodes.getLocation(node_tag) >= 0)
+            {
                 count++;
+                continue;
+            }
+
+            std::vector<int> primaryLocal;
+            std::vector<double> weights;
+            bool isSecondary = (higherOrder != 0) &&
+                                higherOrder->getDRMInterpolation(nodenum, primaryLocal, weights);
+
+            if (!isSecondary)
+            {
+                // PRIMARY node (or an element with no DRMHigherOrderNode support at all, e.g.
+                // stdBrick/FourNodeTetrahedron, where every node is primary by definition).
+                if (nodetag2station_id.find(node_tag) != nodetag2station_id.end())
+                {
+                    // Already resolved via the fallback while visiting a different element
+                    // sharing this node.
+                    count++;
+                    continue;
+                }
+                if (primaryFallbackFailed.find(node_tag) != primaryFallbackFailed.end())
+                    continue; // already tried and rejected via a different element -- do not retry
+
+                Node* nodePtr = theDomain->getNode(node_tag);
+                const Vector& nodeXyz = nodePtr->getCrds();
+
+                if (nodeXyz(0) < bx_lo || nodeXyz(0) > bx_hi ||
+                    nodeXyz(1) < by_lo || nodeXyz(1) > by_hi ||
+                    nodeXyz(2) < bz_lo || nodeXyz(2) > bz_hi)
+                {
+                    primaryFallbackFailed.insert(node_tag);
+                    continue; // outside the box's own extent, even generously expanded -- O(1) reject
+                }
+
+                double nearestDist = std::numeric_limits<double>::infinity();
+                int nearestStationId = -1;
+                for (int ii = 0; ii < xyz.noRows(); ++ii)
+                {
+                    double dx = nodeXyz(0) - xyz(ii, 0);
+                    double dy = nodeXyz(1) - xyz(ii, 1);
+                    double dz = nodeXyz(2) - xyz(ii, 2);
+                    double d = dx * dx + dy * dy + dz * dz;
+                    if (d < nearestDist) { nearestDist = d; nearestStationId = ii; }
+                }
+                if (nearestStationId < 0 || sqrt(nearestDist) > kPrimaryNodeFallbackTolerance)
+                {
+                    primaryFallbackFailed.insert(node_tag);
+                    continue; // still no usable real station within the generous fallback radius
+                }
+
+                int local_pos = next_local_pos++;
+                DRM_Nodes[local_pos] = node_tag;
+                DRM_Boundary_Flag[local_pos] = internal(nearestStationId);
+                nodetag2station_id[node_tag] = nearestStationId;
+                nodetag2local_pos[node_tag] = local_pos;
+                count++;
+                ++n_fallback_primary;
+                continue;
+            }
+
+            if (interpNodeParents.find(node_tag) != interpNodeParents.end())
+            {
+                // Already resolved while visiting a different element that shares
+                // this node (a conforming mesh always gives the same parents/
+                // weights regardless of which element reports them first).
+                count++;
+                continue;
+            }
+
+            // v1: every parent must already be a DIRECTLY-matched real station --
+            // no chaining an interpolated node off another interpolated node.
+            bool allParentsMatched = true;
+            std::vector<std::pair<int, double> > parents;
+            for (size_t p = 0; p < primaryLocal.size(); ++p)
+            {
+                int parentTag = element_nodelist(primaryLocal[p]);
+                int parentPos = DRM_Nodes.getLocation(parentTag);
+                if (parentPos < 0) { allParentsMatched = false; break; }
+                parents.push_back(std::make_pair(parentTag, weights[p]));
+            }
+            if (!allParentsMatched)
+                continue;
+
+            // Ladruno (ADR-88): the boundary/interior classification of an
+            // interpolated node is NOT derived by voting between its parents.
+            // Empirically (job 145715, BezierTet10 on the real 00_-scale
+            // domain), parent disagreement is COMMON, not an edge case: a
+            // straight mid-edge node sitting exactly halfway through the
+            // 1-element-thick drm_transition layer is, by construction,
+            // equidistant between an "internal" ShakerMaker station (the
+            // drm_inner/drm_transition face) and an "external" one (the
+            // drm_transition/drm_outer face) -- DRMBox's own two nested shell
+            // surfaces are exactly one element apart (shakermaker/
+            // sl_extensions/DRMBox.py: inner shell at half-extent
+            // nelems*h/2, outer shell at (nelems+2)*h/2). Voting can never
+            // resolve that tie by construction, so instead: look up the
+            // REAL station nearest to this node's own true coordinates (no
+            // distance_tolerance requirement -- we are not matching it for
+            // u0/u0dotdot, that already comes from the parent interpolation
+            // above; we are only borrowing the nearest real station's
+            // discrete internal/external tag, the exact same physical basis
+            // every directly-matched node already uses).
+            Node* interpNodePtr = theDomain->getNode(node_tag);
+            const Vector& interpXyz = interpNodePtr->getCrds();
+            double nearestDist = std::numeric_limits<double>::infinity();
+            int nearestBoundaryFlag = 0;
+            for (int ii = 0; ii < xyz.noRows(); ++ii)
+            {
+                double dx = interpXyz(0) - xyz(ii, 0);
+                double dy = interpXyz(1) - xyz(ii, 1);
+                double dz = interpXyz(2) - xyz(ii, 2);
+                double d = dx * dx + dy * dy + dz * dz;
+                if (d < nearestDist) { nearestDist = d; nearestBoundaryFlag = internal(ii); }
+            }
+
+            int local_pos = next_local_pos++;
+            DRM_Nodes[local_pos] = node_tag;
+            DRM_Boundary_Flag[local_pos] = nearestBoundaryFlag;
+            nodetag2local_pos[node_tag] = local_pos;
+            interpNodeParents[node_tag] = parents;
+            count++;
+            ++n_interpolated_secondary;
         }
         if (count == nnodes)
             DRM_Elements.insert(element_tag);
+    }
+
+    // DRM_F/DRM_D/DRM_A were sized to n_nodes_found (direct station matches
+    // only) right above -- grow them to also cover the interpolated nodes
+    // just added, if any.
+    if (next_local_pos > n_nodes_found)
+    {
+        DRM_F.resize(3 * next_local_pos);
+        DRM_D.resize(3 * next_local_pos);
+        DRM_A.resize(3 * next_local_pos);
+        if (MPI_local_rank == 0)
+        {
+            H5DRMout << "ADR-88: resolved " << (next_local_pos - n_nodes_found)
+                     << " additional node(s) -- " << n_interpolated_secondary
+                     << " SECONDARY via element-provided interpolation (DRMHigherOrderNode), "
+                     << n_fallback_primary << " PRIMARY via nearest-station fallback "
+                     << "(tol=" << kPrimaryNodeFallbackTolerance << ") -- " << n_nodes_found
+                     << " matched a real H5DRM station directly, "
+                     << next_local_pos << " DRM nodes total.\n";
+        }
     }
 
     N_local_elements = DRM_Elements.Size();
@@ -930,10 +1124,53 @@ bool H5DRMLoadPattern::ComputeDRMMotions(double next_integration_time)
 
     if (have_displacement && have_acceleration)
     {
-        return drm_direct_read(next_integration_time);
+        if (!drm_direct_read(next_integration_time))
+            return false;
+        // Ladruno (ADR-88): fill in the nodes resolved via element-provided
+        // interpolation (BezierTet10 mid-edge nodes, etc.) from the direct-
+        // match nodes drm_direct_read just computed above.
+        resolveInterpolatedNodeMotions();
+        return true;
     }
 
     return false;
+}
+
+void H5DRMLoadPattern::resolveInterpolatedNodeMotions()
+{
+    // Ladruno (ADR-88): for nodes resolved via element-provided interpolation
+    // (see do_intitialization) instead of a direct H5DRM station match,
+    // reconstruct DRM_D/DRM_A as the SAME linear combination of the parents'
+    // already-computed values. This commutes exactly with the time
+    // interpolation drm_direct_read already performed (both operations are
+    // linear in the raw station data), so this is the same number that would
+    // result from interpolating the raw station data first and then in time --
+    // not a second approximation stacked on top of the first -- just computed
+    // in the cheaper order (no extra HDF5 reads).
+    for (std::map<int, std::vector<std::pair<int, double> > >::const_iterator it = interpNodeParents.begin();
+         it != interpNodeParents.end(); ++it)
+    {
+        int nodeTag = it->first;
+        int local_pos = nodetag2local_pos[nodeTag];
+        double d[3] = {0., 0., 0.};
+        double a[3] = {0., 0., 0.};
+        for (size_t p = 0; p < it->second.size(); ++p)
+        {
+            int parentTag = it->second[p].first;
+            double w = it->second[p].second;
+            int parentPos = nodetag2local_pos[parentTag];
+            for (int k = 0; k < 3; ++k)
+            {
+                d[k] += w * DRM_D(3 * parentPos + k);
+                a[k] += w * DRM_A(3 * parentPos + k);
+            }
+        }
+        for (int k = 0; k < 3; ++k)
+        {
+            DRM_D(3 * local_pos + k) = d[k];
+            DRM_A(3 * local_pos + k) = a[k];
+        }
+    }
 }
 
 bool H5DRMLoadPattern::drm_direct_read(double t)
@@ -981,6 +1218,14 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
         for (int n = 0; n < DRM_Nodes.Size(); ++n)
         {
             int nodeTag    = DRM_Nodes(n);
+            // Ladruno (ADR-88): nodes resolved via element-provided interpolation
+            // have no real station of their own -- nodetag2station_id has no entry
+            // for them. resolveInterpolatedNodeMotions() (called right after this
+            // function returns, from ComputeDRMMotions) fills them in from their
+            // parents' values instead, so skip them here rather than reading an
+            // arbitrary station_id2data_pos[0] default.
+            if (interpNodeParents.find(nodeTag) != interpNodeParents.end())
+                continue;
             int station_id = nodetag2station_id[nodeTag];
             int data_pos   = station_id2data_pos[station_id];
             int local_pos  = nodetag2local_pos[nodeTag];
@@ -1038,6 +1283,11 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     for (int n = 0; n < DRM_Nodes.Size(); ++n)
     {
         int nodeTag = DRM_Nodes(n);
+        // Ladruno (ADR-88): skip nodes resolved via interpolation -- they have no
+        // real station, resolveInterpolatedNodeMotions() (called after this
+        // function returns) fills them in from their parents' values instead.
+        if (interpNodeParents.find(nodeTag) != interpNodeParents.end())
+            continue;
         int station_id = nodetag2station_id[nodeTag];
         int data_pos = station_id2data_pos[station_id];
         int local_pos = nodetag2local_pos[nodeTag];
@@ -1224,6 +1474,12 @@ bool H5DRMLoadPattern::drm_differentiate_displacements(double t)
     for (int n = 0; n < DRM_Nodes.Size(); ++n)
     {
         int nodeTag = DRM_Nodes(n);
+        // Ladruno (ADR-88): see the identical guard in drm_direct_read -- this
+        // path is currently unreachable from ComputeDRMMotions (which requires
+        // both displacement AND acceleration datasets and always takes
+        // drm_direct_read instead), but kept consistent in case that changes.
+        if (interpNodeParents.find(nodeTag) != interpNodeParents.end())
+            continue;
         int station_id = nodetag2station_id[nodeTag];
         int data_pos = station_id2data_pos[station_id];
         int local_pos = nodetag2local_pos[nodeTag];
@@ -1410,9 +1666,6 @@ bool H5DRMLoadPattern::CalculateBoundaryForces(double currentTime)
         Domain* theDomain = this->getDomain();
         Element* theElement = theDomain->getElement(DRM_Elements[0]);
         int numElementNodes = 8;
-        
-        BoundaryNodes.resize(MaxNodes);
-        ExteriorNodes.resize(MaxNodes);
 
         for (int elemIndex = 0; elemIndex < DRM_Elements.Size(); ++elemIndex)
         {
@@ -1420,6 +1673,20 @@ bool H5DRMLoadPattern::CalculateBoundaryForces(double currentTime)
             theElement = theDomain->getElement(elementTag);
             const ID& elementNodeIDs = theElement->getExternalNodes();
             numElementNodes = elementNodeIDs.Size();
+
+            // Ladruno (ADR-88): BoundaryNodes/ExteriorNodes used to be resized ONCE
+            // to the fixed MaxNodes=8 outside this loop, then written via
+            // BoundaryNodes(boundaryCount++)/ExteriorNodes(exteriorCount++) with no
+            // bounds check -- silent out-of-bounds write for any element with more
+            // than 8 nodes on one side (BezierTet10=10, LadrunoBrick20/Twenty_Node_
+            // Brick=20). ID::resize() reallocates safely when growing (ID.cpp:394-
+            // 422), so resizing per-element to the element's own node count, every
+            // iteration, is correct and matches how M_be/K_be/Peff_b/etc. below are
+            // already resized per-element in this same loop.
+            BoundaryNodes.resize(numElementNodes);
+            BoundaryNodes.Zero();
+            ExteriorNodes.resize(numElementNodes);
+            ExteriorNodes.Zero();
 
             // Identify boundary and exterior nodes
             int boundaryCount = 0, exteriorCount = 0;

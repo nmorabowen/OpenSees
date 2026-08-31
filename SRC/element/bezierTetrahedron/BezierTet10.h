@@ -99,6 +99,7 @@
 #include <Matrix.h>
 #include <Vector.h>
 #include <ID.h>
+#include <DRMHigherOrderNode.h>   // Ladruno (ADR-88)
 
 class Node;
 class NDMaterial;
@@ -107,11 +108,21 @@ class SolidTransformation;   // Ladruno — geometry-method layer (linear/corot)
 
 // Class tag ELE_TAG_BezierTet10 is defined in classTags.h (= 33001, ladruno band).
 
-class BezierTet10 : public Element
+class BezierTet10 : public Element, public DRMHigherOrderNode
 {
   public:
       // Ladruno (ADR-77 G2 ext): escape = -noMassCache
       void setMassCache(bool s) { massCache.setEnabled(s); }
+
+      // Ladruno (ADR-88): H5DRM free-field interpolation at the 6 mid-edge
+      // nodes (v1 straight-sided geometry -- weight 0.5/0.5 on the edge's own
+      // 2 corner nodes, reusing edgeV, the same table the element already
+      // uses to build its own Bernstein basis). See DRMHigherOrderNode.h and
+      // ADR-88 (10ter) for why this is exact, not an approximation, under the
+      // element's own straight-edge assumption.
+      bool getDRMInterpolation(int localNode,
+                                std::vector<int>& primaryLocalNodes,
+                                std::vector<double>& weights) const override;
 
     // ─── F-bar variant ids (bbar + -geom finite) — public so the OPS factory
     // can map the -fbar option. CENTROID = single centroid dilatation J₀ (dSNPO

@@ -77,6 +77,33 @@ bool LadrunoBrick20::advisedDamage   = false;
 bool LadrunoBrick20::warnedLumped    = false;
 bool LadrunoBrick20::warnedUriCoerce = false;
 
+// Ladruno (ADR-88): H5DRM free-field interpolation -- local nodes 0-7 are the
+// 8 corners (PRIMARY, no interpolation); local nodes 8-19 are the 12 mid-edge
+// nodes (SECONDARY), using the EXACT edge/local-node convention already
+// documented in LadrunoHex20Shape.h (k8-11 lower ring edges 0-1/1-2/2-3/3-0,
+// k12-15 upper ring edges 4-5/5-6/6-7/7-4, k16-19 vertical edges 0-4/1-5/2-6/
+// 3-7) -- no separate topology table to keep in sync with that file. Weight
+// 0.5/0.5 is exact under LadrunoBrick20's straight-sided serendipity
+// geometry, same rationale as BezierTet10 (see ADR-88 design doc, 10ter).
+bool LadrunoBrick20::getDRMInterpolation(int localNode,
+                                          std::vector<int>& primaryLocalNodes,
+                                          std::vector<double>& weights) const
+{
+    static const int edgeV[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},   // 8-11  : lower-ring edges
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},   // 12-15 : upper-ring edges
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}    // 16-19 : vertical edges
+    };
+
+    if (localNode < 8 || localNode > 19)
+        return false; // corner node -- must match a real H5DRM station directly
+
+    const int edgeIdx = localNode - 8;
+    primaryLocalNodes.assign({edgeV[edgeIdx][0], edgeV[edgeIdx][1]});
+    weights.assign({0.5, 0.5});
+    return true;
+}
+
 const char *
 LadrunoBrick20::formulationName(Formulation f)
 {
