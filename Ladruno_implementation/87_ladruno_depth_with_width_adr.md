@@ -13,7 +13,7 @@ aliases:
   - ADR-87
   - depth with width
   - warrant program
-updated: 2026-08-30
+updated: 2026-08-31
 ---
 
 # ADR-87 — Depth with width
@@ -26,9 +26,12 @@ updated: 2026-08-30
 >
 > This is a **governance + verification** ADR. It adds no class tag. It
 > defines a program: how the fork keeps growing (width) while making
-> every claim it ships independently checkable (depth). Status is
-> `proposed` until the owner accepts it in a PR that does the Week-1
-> work, not merely adds this file.
+> every claim it ships independently checkable (depth).
+>
+> **Accepted 2026-08-30** by PR #773, which did the WP-1 work rather than
+> merely adding this file (branch protection live, banner cut to
+> shipped-only ≤70 cols, LadrunoUP collapsed to one truthful row). The
+> acceptance bar it set for itself is in *How* below.
 
 ## What
 
