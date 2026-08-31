@@ -106,30 +106,51 @@ jobs:
       # ZERO is the gating mode. SCALE is reported but not gated yet: it is the
       # harder bar (a plausible-but-wrong answer), and a floor should be set
       # from a measured baseline rather than guessed, so WP-3 sets it.
+      # `set -o pipefail` is LOAD-BEARING, not hygiene. GitHub's default shell is
+      # `bash -e`, which has errexit but NOT pipefail, so `python ... | tee` takes
+      # tee's exit code and a FAILED gate would report success -- a gate that
+      # cannot say no, which is the exact pathology ADR-87 D3 exists to remove.
+      # (Reproduced on run 33365505674, where the SCALE score step reported
+      # success while its input file did not even exist.)
       - name: Score ZERO (gating)
         run: |
+          set -o pipefail
           python Ladruno_scripts/mutation_gate.py score \
             --baseline artifacts/baseline.json --mutant artifacts/zero.json \
-            --out artifacts/score_zero.json | tee zero.log
+            --out artifacts/score_zero.json 2>&1 | tee zero.log
+          rc=${PIPESTATUS[0]}
           {
             echo "## Mutation gate - $FAMILY / ZERO"
             echo '```'
             cat zero.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: Score SCALE (reported, not gating)
+        # Runs even if ZERO failed the gate, so one run yields both readings.
+        # `--min-score 0.0` is what makes this informational; the step still
+        # fails loudly if the SCORING ITSELF could not run (missing input,
+        # unmutated binary), which is a broken lane rather than a low score.
         if: always()
         run: |
+          set -o pipefail
+          if [ ! -f artifacts/scale.json ]; then
+            echo "SKIP: artifacts/scale.json absent - the SCALE mutant never ran." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           python Ladruno_scripts/mutation_gate.py score \
             --baseline artifacts/baseline.json --mutant artifacts/scale.json \
-            --min-score 0.0 --out artifacts/score_scale.json | tee scale.log
+            --min-score 0.0 --out artifacts/score_scale.json 2>&1 | tee scale.log
+          rc=${PIPESTATUS[0]}
           {
             echo "## Mutation gate - $FAMILY / SCALE (informational)"
             echo '```'
             cat scale.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: Upload scores
         if: always()

@@ -98,9 +98,15 @@ PROBE = (
 )
 
 
-def probe_binary(python: str) -> dict:
-    """Ask the binary what it is. Never trust a result set without this."""
-    res = subprocess.run([python, "-c", PROBE], capture_output=True, text=True, cwd=str(REPO))
+def probe_binary(python: str, cwd: Path) -> dict:
+    """Ask the binary what it is. Never trust a result set without this.
+
+    Runs in `cwd` -- the directory the extension module lives in. CI copies
+    opensees.so into tests/ and the suite is run from there (`cd tests` is the
+    Zone-A idiom), so probing from the repo root would raise ModuleNotFoundError
+    even on a perfectly good build. Measured the hard way: run 33365505674.
+    """
+    res = subprocess.run([python, "-c", PROBE], capture_output=True, text=True, cwd=str(cwd))
     for line in res.stdout.splitlines():
         if line.startswith("LADRUNO_PROBE "):
             return json.loads(line[len("LADRUNO_PROBE "):])
@@ -111,10 +117,11 @@ def probe_binary(python: str) -> dict:
 
 
 def resolve_paths(family: str) -> list[str]:
+    """Test files as names RELATIVE to tests/ (pytest is run from there)."""
     spec = FAMILIES[family]
     found: list[str] = []
     for pat in spec["paths"]:
-        found.extend(sorted(str(p) for p in TESTS.glob(pat)))
+        found.extend(sorted(p.name for p in TESTS.glob(pat)))
     if not found:
         raise SystemExit(f"FATAL: family {family} selected no test files ({spec['paths']}).")
     return found
@@ -135,7 +142,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
 
     python = args.python or sys.executable
-    info = probe_binary(python)
+    module_dir = Path(args.module_dir) if args.module_dir else TESTS
+    info = probe_binary(python, module_dir)
     actual = info["mutation"]
 
     if actual == "<verb-missing>":
@@ -163,7 +171,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.marker:
             cmd.extend(["-m", args.marker])
         print("running:", " ".join(cmd[:6]), f"... ({len(paths)} files)", flush=True)
-        subprocess.run(cmd, cwd=str(REPO))   # exit code ignored: red is expected under mutation
+        subprocess.run(cmd, cwd=str(module_dir))   # exit code ignored: red is expected under mutation
 
         if not xml_path.exists():
             raise SystemExit("FATAL: pytest produced no JUnit XML -- the run did not start.")
@@ -284,6 +292,9 @@ def main() -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--python", help="interpreter to use (default: this one)")
     r.add_argument("--marker", help="extra pytest -m expression, e.g. zone_a")
+    r.add_argument("--module-dir",
+                   help="directory holding the built opensees module and the test files "
+                        "(default: tests/). Both the probe and pytest run here.")
     r.set_defaults(func=cmd_run)
 
     s = sub.add_parser("score", help="compare a baseline and a mutant run")
