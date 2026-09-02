@@ -154,6 +154,12 @@ FluidSolidPorousMaterial::FluidSolidPorousMaterial (const FluidSolidPorousMateri
 {
   matN = a.matN;
   theSoilMaterial = a.theSoilMaterial->getCopy();
+  // Ladruno (ADR 86 follow-up, TIMs OQ29): the element makes its Gauss-point
+  // instances through this ctor, and the committed vectors stayed size-0 until
+  // the first commitState() -- so 'stress'/'strain' responses were empty at
+  // build time.  Size them from the fresh soil copy, as the tag ctor does.
+  theSoilCommittedStress = theSoilMaterial->getStress();
+  theSoilCommittedStrain = theSoilMaterial->getStrain();
   trialExcessPressure = a.trialExcessPressure;
   currentExcessPressure = a.currentExcessPressure;
   trialVolumeStrain = a.trialVolumeStrain;
@@ -549,7 +555,7 @@ int FluidSolidPorousMaterial::recvSelf(int commitTag, Channel &theChannel,
 	  return res;
 	}
 	theSoilCommittedStress = theSoilMaterial->getStress();
-	theSoilCommittedStress = theSoilMaterial->getStrain();
+	theSoilCommittedStrain = theSoilMaterial->getStrain(); // Ladruno: was assigning stress twice
 
 	return res;
 }

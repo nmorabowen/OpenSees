@@ -33,6 +33,8 @@ import sys
 
 import pytest
 
+from _testbed import ops
+
 pytestmark = [pytest.mark.zone_a, pytest.mark.t0m]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -65,6 +67,7 @@ else:
 ops.nDMaterial('FluidSolidPorous', 2, 3, 1, {kcomb!r}, 101.0)
 ops.element('stdBrick', 1, 1,2,3,4,5,6,7,8, 2)
 print('BUILT')
+print('NSTRESS', len(ops.eleResponse(1, 'material', 1, 'stress')))
 # isotropic consolidation to 100 kPa (static, load control)
 ops.timeSeries('Linear', 1); ops.pattern('Plain', 1, 1)
 q4 = -100.0/4.0
@@ -141,6 +144,8 @@ def test_fspm_3d_builds_and_carries_the_identity(ladruno):
     assert 'subclass responsibility' not in out, out
     assert rc == 0, out
     assert 'BUILT' in out, out
+    n = [int(l.split()[1]) for l in out.splitlines() if l.startswith('NSTRESS')]
+    assert n and n[0] == 6, out
     assert _identity(out) < 1.0e-6, out
 
 
@@ -154,3 +159,74 @@ def test_fspm_planestrain_builds_with_a_2d_copy():
     assert 'BUILT' in out, out
     n = [int(l.split()[1]) for l in out.splitlines() if l.startswith('NSTRESS')]
     assert n and n[0] == 3, out
+
+
+def test_fspm_recvself_restores_committed_strain_not_stress_twice(tmp_path):
+    """Gate for the `recvSelf` typo: after receiving the soil sub-material,
+    `recvSelf` assigned `theSoilCommittedStress = theSoilMaterial->getStrain()`
+    a second time instead of assigning `theSoilCommittedStrain` -- so a restored
+    wrapper reported the SOIL'S STRAIN through its 'stress' response and an
+    empty (or stale) vector through its 'strain' response. `commitState()` gets
+    both fields right (it is not aliased), so only the save/restore path can
+    catch this; an ordinary in-process re-run of the same steps would not.
+
+    Runs in-process (unlike the two BUILT-gate tests above) because it needs to
+    inspect `eleResponse` state across an `ops.database`/`ops.save`/`ops.restore`
+    round trip -- a subprocess boundary would just re-serialize the same bug."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for n, (x, y, z) in enumerate([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                                    (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)], start=1):
+        ops.node(n, x, y, z)
+    for n in (1, 4, 5, 8): ops.fix(n, 1, 0, 0)
+    for n in (1, 2, 5, 6): ops.fix(n, 0, 1, 0)
+    for n in (1, 2, 3, 4): ops.fix(n, 0, 0, 1)
+    ops.nDMaterial('ManzariDafalias', 1, *_PARAMS, *_TAIL)
+    ops.nDMaterial('FluidSolidPorous', 2, 3, 1, _KCOMB, 101.0)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, 2)
+
+    ops.timeSeries('Linear', 1); ops.pattern('Plain', 1, 1)
+    q4 = -100.0 / 4.0
+    for n in (2, 3, 6, 7): ops.load(n, q4, 0, 0)
+    for n in (3, 4, 7, 8): ops.load(n, 0, q4, 0)
+    for n in (5, 6, 7, 8): ops.load(n, 0, 0, q4)
+    ops.constraints('Transformation'); ops.numberer('RCM'); ops.system('UmfPack')
+    ops.test('NormUnbalance', 1e-6, 100, 0); ops.algorithm('Newton')
+    ops.integrator('LoadControl', 0.1); ops.analysis('Static')
+    assert ops.analyze(3) == 0, 'pre-save consolidation steps failed'
+
+    stress_saved = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    strain_saved = list(ops.eleResponse(1, 'material', 1, 'strain'))
+    assert any(abs(v) > 1e-9 for v in strain_saved), 'strain ~ zero; test would be vacuous'
+    assert any(abs(s - e) > 1e-6 for s, e in zip(stress_saved, strain_saved)), (
+        'stress and strain already coincide before save/restore; test would be vacuous')
+
+    dbpath = str(tmp_path / 'fspm_recvself_rt')
+    try:
+        ops.database('File', dbpath)
+    except Exception as exc:  # noqa: BLE001 - build without FE_Datastore
+        pytest.skip(f'database() unsupported in this build: {exc}')
+    saved = ops.save(1)
+    if saved is not None and saved < 0:
+        pytest.skip('database save returned failure on this build')
+
+    assert ops.analyze(2) == 0, 'post-save steps failed'
+
+    ops.wipe()
+    ops.database('File', dbpath)
+    ops.restore(1)
+
+    stress_restored = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    strain_restored = list(ops.eleResponse(1, 'material', 1, 'strain'))
+    ops.wipe()  # release FE_Datastore handles (Windows) before tmp cleanup
+
+    assert len(stress_restored) == len(stress_saved) and len(strain_restored) == len(strain_saved), (
+        stress_restored, strain_restored, stress_saved, strain_saved)
+    for a, b in zip(stress_restored, stress_saved):
+        assert abs(a - b) <= 1e-12 * (abs(b) + 1.0), (
+            f'restored stress {stress_restored} != saved stress {stress_saved}')
+    for a, b in zip(strain_restored, strain_saved):
+        assert abs(a - b) <= 1e-12 * (abs(b) + 1.0), (
+            f'restored strain {strain_restored} != saved strain {strain_saved}')
+    assert any(abs(s - e) > 1e-6 for s, e in zip(stress_restored, strain_restored)), (
+        'restored stress and strain coincide -- recvSelf served strain through both slots')
