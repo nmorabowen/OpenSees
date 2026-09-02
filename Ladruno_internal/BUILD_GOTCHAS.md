@@ -170,6 +170,32 @@ import opensees as ops      # set LADRUNO_OPENSEES_QUIET=1 to mute the banner
   opensees (mesh, `gmsh.finalize()`, then build the ops model). This is the RAW
   gmsh SDK, not the `apeGmsh` wrapper.
 
+### 4b. A stale `tests/opensees.pyd` silently shadows EVERY fresh build
+
+`.gitignore` sanctions copying the module into `tests/` for a local pytest run
+(CI does the same: `cp build/Release/opensees.so tests/`). The trap is what that
+copy does once it is stale. pytest's default `prepend` import mode inserts the
+test file's directory — `tests/` — at **`sys.path[0]`**, ahead of everything:
+`PYTHONPATH`, the worktree's `dist\bin`, any `sys.path.insert(0, ...)` in a
+conftest or `_testbed`, and the installer's `.pth` alias (which is exactly why
+the `LADRUNO_OPENSEES_BIN` override "does nothing" — the `.pth` never gets a
+turn). So a `tests/opensees.pyd` left over from a July build is what pytest
+imports in September, whatever you just compiled, and every green run is
+testing the old binary. Seen 2026-09-02 on PR #779: an Aug-4 copy shadowed a
+just-built `dist\bin\opensees.pyd` and the new gates "passed" against code that
+did not contain the fix; the CI failure was the only true signal.
+
+- **Detect** from *inside* the pytest process, not a bare interpreter — the two
+  resolve differently: `python -m pytest --co -q` then a one-line test (or
+  `-s` print) of `ops.ladrunoBuild()`; it must equal `git rev-parse HEAD` of the
+  tree you built. A bare `python -c "import opensees"` from the repo root does
+  **not** have `tests/` on its path and will happily report the right hash.
+- **Fix**: delete `tests/opensees.pyd` (and `tests/opensees.so`), then either
+  re-copy the fresh module there or run with `PYTHONPATH=<worktree>\dist\bin`.
+  Both are gitignored, so `git status` will never warn you about them.
+- `ladrunoBuild()` is the same check the `ladrunoBuild` build-stamp
+  probe idiom opens every harness with — this is the case it was made for.
+
 ---
 
 ## 5. Installer DLL-lock on upgrade ("DeleteFile failed; code 5")
