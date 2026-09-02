@@ -113,7 +113,22 @@ FluidSolidPorousMaterial::FluidSolidPorousMaterial (int tag, int nd, NDMaterial 
   matCount ++;
   pAtm = atm;
 
-  theSoilMaterial = soilMat.getCopy();
+  // Ladruno (ADR 86 follow-up, TIMs OQ29): ask the soil for the dimension this
+  // wrapper is declared at.  `soilMat` is the BASE object the parser registered,
+  // and for the UW family (ManzariDafalias, LadrunoSANISAND, PM4Sand lineage)
+  // the base `getCopy(void)` is "subclass responsibility" and calls exit(-1) --
+  // so `FluidSolidPorous` over any of them killed the process at model-build
+  // time, with no way to reach the undrained limit at ndf 3.  Every soil
+  // nDMaterial implements `getCopy(const char*)` for "PlaneStrain" and
+  // "ThreeDimensional" (the UCSD family returns the same copy it would for
+  // `getCopy()`), so this is a no-op for every deck that already worked.
+  theSoilMaterial = soilMat.getCopy((nd == 3) ? "ThreeDimensional" : "PlaneStrain");
+  if (theSoilMaterial == 0) {
+    opserr << "FATAL FluidSolidPorousMaterial::FluidSolidPorousMaterial -- soil material "
+           << soilMat.getTag() << " (" << soilMat.getClassType() << ") returned no "
+           << ((nd == 3) ? "ThreeDimensional" : "PlaneStrain") << " copy for nd = " << nd << endln;
+    exit(-1);
+  }
   theSoilCommittedStress = theSoilMaterial->getStress();
   theSoilCommittedStrain = theSoilMaterial->getStrain();
 
