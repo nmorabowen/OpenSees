@@ -763,13 +763,39 @@ endif()
 # build is byte-identical.
 # ---------------------------------------------------------------------------
 option(LADRUNO_MKL_PARDISO_LINUX "Enable MKL PARDISO (sequential layer) on a non-Windows host" OFF)
+# Ladruno (TIMs, 2026-09-03, second opt-in): the THREADED layer. PARDISO's
+# value on a 32-core node is shared-memory threading; the sequential opt-in
+# above was chosen to match the sequential LAPACK/BLAS the Linux targets
+# already link. This option swaps the layer to mkl_gnu_thread + libgomp (the
+# GNU OpenMP runtime, since these targets are built with gcc/gfortran) and
+# REFUSES to configure if -DLAPACK_LIBRARIES / -DBLAS_LIBRARIES still name
+# mkl_sequential, because one process must carry one threading layer: pass
+# the threaded layer there too. Thread count at run time: OMP_NUM_THREADS /
+# MKL_NUM_THREADS. Default OFF; the sequential opt-in is unchanged.
+option(LADRUNO_MKL_PARDISO_LINUX_THREADED "Use the GNU-OpenMP MKL threading layer (mkl_gnu_thread + gomp) for the Linux PARDISO opt-in" OFF)
 if(LADRUNO_MKL_PARDISO_LINUX AND NOT WIN32)
   find_library(LADRUNO_MKL_LP64 NAMES mkl_intel_lp64
     HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
     PATH_SUFFIXES lib lib/intel64)
-  find_library(LADRUNO_MKL_SEQ NAMES mkl_sequential
-    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
-    PATH_SUFFIXES lib lib/intel64)
+  if(LADRUNO_MKL_PARDISO_LINUX_THREADED)
+    if("${LAPACK_LIBRARIES}" MATCHES "mkl_sequential" OR "${BLAS_LIBRARIES}" MATCHES "mkl_sequential")
+      message(FATAL_ERROR "LADRUNO_MKL_PARDISO_LINUX_THREADED=ON but LAPACK_LIBRARIES/BLAS_LIBRARIES "
+        "name mkl_sequential: one process carries one MKL threading layer. Pass "
+        "libmkl_gf_lp64;libmkl_gnu_thread;libmkl_core;-lgomp;-lm;-ldl there as well.")
+    endif()
+    find_library(LADRUNO_MKL_SEQ NAMES mkl_gnu_thread
+      HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+      PATH_SUFFIXES lib lib/intel64)
+    find_library(LADRUNO_GOMP NAMES gomp PATHS /usr/lib/x86_64-linux-gnu /usr/lib/gcc/x86_64-linux-gnu)
+    if(NOT LADRUNO_GOMP)
+      set(LADRUNO_GOMP gomp)
+    endif()
+  else()
+    find_library(LADRUNO_MKL_SEQ NAMES mkl_sequential
+      HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+      PATH_SUFFIXES lib lib/intel64)
+    set(LADRUNO_GOMP "")
+  endif()
   find_library(LADRUNO_MKL_CORE NAMES mkl_core
     HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
     PATH_SUFFIXES lib lib/intel64)
@@ -784,14 +810,18 @@ if(LADRUNO_MKL_PARDISO_LINUX AND NOT WIN32)
     set(PARDISO_FLAG -D_PARDISO)
     set(PARDISO_MKL_LIBRARIES
         -Wl,--start-group ${LADRUNO_MKL_LP64} ${LADRUNO_MKL_SEQ} ${LADRUNO_MKL_CORE} -Wl,--end-group
-        pthread m dl)
+        ${LADRUNO_GOMP} pthread m dl)
     # The PARDISO SOE/solver sources compile in OPS_SysOfEqn (see
     # SRC/system_of_eqn/linearSOE/CMakeLists.txt); they need the MKL headers,
     # and PUBLIC libs on the object library reach every consumer in lockstep,
     # exactly as the FEAST block does.
     target_include_directories(OPS_SysOfEqn PUBLIC ${LADRUNO_MKL_INCLUDE})
     target_link_libraries(OPS_SysOfEqn PUBLIC ${PARDISO_MKL_LIBRARIES})
-    message(STATUS "Ladruno: MKL PARDISO on Linux ENABLED (sequential 3-layer: ${LADRUNO_MKL_LP64}; headers ${LADRUNO_MKL_INCLUDE})")
+    if(LADRUNO_MKL_PARDISO_LINUX_THREADED)
+      message(STATUS "Ladruno: MKL PARDISO on Linux ENABLED (THREADED 3-layer: ${LADRUNO_MKL_SEQ} + ${LADRUNO_GOMP}; headers ${LADRUNO_MKL_INCLUDE})")
+    else()
+      message(STATUS "Ladruno: MKL PARDISO on Linux ENABLED (sequential 3-layer: ${LADRUNO_MKL_LP64}; headers ${LADRUNO_MKL_INCLUDE})")
+    endif()
   else()
     message(FATAL_ERROR "LADRUNO_MKL_PARDISO_LINUX=ON but the MKL 3-layer "
       "(mkl_intel_lp64/mkl_sequential/mkl_core) or mkl_pardiso.h was not found; "
