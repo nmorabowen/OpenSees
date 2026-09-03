@@ -39,7 +39,11 @@ add_subdirectory(itpack)
 # can live in the shared OPS_SysOfEqn because the MKL *link layer* (threaded for
 # serial, sequential for the ScaLAPACK-carrying parallel targets) is selected
 # per target, not here.
-if(MKL_FOUND)
+# Ladruno (TIMs, 2026-09-03): also when the Linux opt-in found the MKL
+# 3-layer + headers explicitly (LADRUNO_MKL_PARDISO_LINUX in the top-level
+# CMakeLists), which is the case on a host where find_package(MKL) either
+# fails or lands on an apt MKL whose kernels do not load.
+if(MKL_FOUND OR LADRUNO_MKL_PARDISO_ON)
     add_subdirectory(pardiso)
 endif()
 
