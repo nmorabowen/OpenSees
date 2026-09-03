@@ -738,6 +738,66 @@ if(LADRUNO_MKL_FEAST_ON)
   target_compile_definitions(OPS_SysOfEqn PRIVATE _LADRUNO_MKL_FEAST)
   target_link_libraries(OPS_SysOfEqn PUBLIC ${LADRUNO_MKL_FEAST_LIBS})
 endif()
+
+# ---------------------------------------------------------------------------
+# Ladruno (TIMs, 2026-09-03): opt-in MKL PARDISO on a non-Windows host.
+#
+# ADR-75 P1b enables `system Pardiso` only where `MKL_LPATH` is set, and
+# `MKL_LPATH` is assigned only inside the Windows branch from `.lib` file
+# names -- so no MKL on Linux could ever turn it on, and the serial Linux
+# build fell back to UmfPack. Measured on esmeralda (build e95a1c74f, TIMs
+# act work/ape/response-curve-matrix): UmfPack's 32-bit index path returns
+# `numeric analysis returns -1` on a 93 246-DOF LadrunoUP model with 28 GB
+# free, its 64-bit path (`useLongIndices`) never runs the symbolic analysis
+# in this build, and SuperLU took >18x UmfPack's whole gravity stage on a
+# 49 626-DOF mesh without finishing one solve. PARDISO handles the same
+# sizes on the Windows desktop. This block mirrors the LADRUNO_MKL_FEAST_LINUX
+# pattern above: explicit LP64/sequential/core 3-layer found through
+# MKL_RT_HINT, never the libmkl_rt dispatcher.
+#
+# SEQUENTIAL layer on purpose: the Linux targets already link the sequential
+# MKL layer for BLAS/LAPACK/ScaLAPACK, and one process must not carry two
+# threading layers (MKL's own rule, restated at ADR-75 P1b above). A threaded
+# Linux PARDISO is a later, separate decision that must move the whole link
+# to mkl_gnu_thread/mkl_intel_thread at once. Default OFF => every existing
+# build is byte-identical.
+# ---------------------------------------------------------------------------
+option(LADRUNO_MKL_PARDISO_LINUX "Enable MKL PARDISO (sequential layer) on a non-Windows host" OFF)
+if(LADRUNO_MKL_PARDISO_LINUX AND NOT WIN32)
+  find_library(LADRUNO_MKL_LP64 NAMES mkl_intel_lp64
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+    PATH_SUFFIXES lib lib/intel64)
+  find_library(LADRUNO_MKL_SEQ NAMES mkl_sequential
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+    PATH_SUFFIXES lib lib/intel64)
+  find_library(LADRUNO_MKL_CORE NAMES mkl_core
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+    PATH_SUFFIXES lib lib/intel64)
+  # mkl_pardiso.h / mkl_types.h: the spack oneAPI layout is <mkl>/lib beside
+  # <mkl>/include; the apt layout is /usr/include/mkl.
+  find_path(LADRUNO_MKL_INCLUDE NAMES mkl_pardiso.h
+    HINTS ${MKL_RT_HINT}/../include ${MKL_RT_HINT}/../../include ENV MKLROOT
+    PATHS /usr/include/mkl /usr/include
+    PATH_SUFFIXES include)
+  if(LADRUNO_MKL_LP64 AND LADRUNO_MKL_SEQ AND LADRUNO_MKL_CORE AND LADRUNO_MKL_INCLUDE)
+    set(LADRUNO_MKL_PARDISO_ON TRUE)
+    set(PARDISO_FLAG -D_PARDISO)
+    set(PARDISO_MKL_LIBRARIES
+        -Wl,--start-group ${LADRUNO_MKL_LP64} ${LADRUNO_MKL_SEQ} ${LADRUNO_MKL_CORE} -Wl,--end-group
+        pthread m dl)
+    # The PARDISO SOE/solver sources compile in OPS_SysOfEqn (see
+    # SRC/system_of_eqn/linearSOE/CMakeLists.txt); they need the MKL headers,
+    # and PUBLIC libs on the object library reach every consumer in lockstep,
+    # exactly as the FEAST block does.
+    target_include_directories(OPS_SysOfEqn PUBLIC ${LADRUNO_MKL_INCLUDE})
+    target_link_libraries(OPS_SysOfEqn PUBLIC ${PARDISO_MKL_LIBRARIES})
+    message(STATUS "Ladruno: MKL PARDISO on Linux ENABLED (sequential 3-layer: ${LADRUNO_MKL_LP64}; headers ${LADRUNO_MKL_INCLUDE})")
+  else()
+    message(FATAL_ERROR "LADRUNO_MKL_PARDISO_LINUX=ON but the MKL 3-layer "
+      "(mkl_intel_lp64/mkl_sequential/mkl_core) or mkl_pardiso.h was not found; "
+      "pass -DMKL_RT_HINT=<MKL lib dir> (headers are looked for beside it)")
+  endif()
+endif()
 #add_library(OPS_SysOfEqnSP        OBJECT)
 add_library(OPS_Analysis           OBJECT)
 add_library(OPS_ConvergenceTest    OBJECT)
@@ -866,8 +926,13 @@ add_library(OPS_InterpPyCmds STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
 # for serial, the existing sequential ScaLAPACK layer for parallel).
 if(PARDISO_FLAG)
     target_compile_definitions(OPS_InterpPyCmds PRIVATE ${PARDISO_FLAG})
+    # Ladruno (TIMs, 2026-09-03): ${LADRUNO_MKL_INCLUDE} is the MKL header dir
+    # found by the Linux opt-in (empty on Windows, where oneAPI puts it on the
+    # global path). OpenSeesCommands.cpp -> ProfilerRunMeta.h includes
+    # <mkl_service.h> under #ifdef _PARDISO, so every target that gets the
+    # flag must also get the headers.
     target_include_directories(OPS_InterpPyCmds PRIVATE
-        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso ${LADRUNO_MKL_INCLUDE})
 endif()
 
 if(MPI_FOUND)
@@ -1062,8 +1127,10 @@ target_link_libraries(OpenSees
 # letting it fall through to a stale global SOE.
 if(PARDISO_FLAG)
     target_compile_definitions(OpenSees PRIVATE ${PARDISO_FLAG})
+    # Ladruno (TIMs, 2026-09-03): same reason as OPS_InterpPyCmds above --
+    # commands.cpp includes the MKL headers under #ifdef _PARDISO.
     target_include_directories(OpenSees PRIVATE
-        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso ${LADRUNO_MKL_INCLUDE})
 endif()
 
 
