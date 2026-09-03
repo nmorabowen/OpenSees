@@ -789,7 +789,7 @@ if(LADRUNO_MKL_PARDISO_LINUX AND NOT WIN32)
     # SRC/system_of_eqn/linearSOE/CMakeLists.txt); they need the MKL headers,
     # and PUBLIC libs on the object library reach every consumer in lockstep,
     # exactly as the FEAST block does.
-    target_include_directories(OPS_SysOfEqn PRIVATE ${LADRUNO_MKL_INCLUDE})
+    target_include_directories(OPS_SysOfEqn PUBLIC ${LADRUNO_MKL_INCLUDE})
     target_link_libraries(OPS_SysOfEqn PUBLIC ${PARDISO_MKL_LIBRARIES})
     message(STATUS "Ladruno: MKL PARDISO on Linux ENABLED (sequential 3-layer: ${LADRUNO_MKL_LP64}; headers ${LADRUNO_MKL_INCLUDE})")
   else()
@@ -926,8 +926,13 @@ add_library(OPS_InterpPyCmds STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
 # for serial, the existing sequential ScaLAPACK layer for parallel).
 if(PARDISO_FLAG)
     target_compile_definitions(OPS_InterpPyCmds PRIVATE ${PARDISO_FLAG})
+    # Ladruno (TIMs, 2026-09-03): ${LADRUNO_MKL_INCLUDE} is the MKL header dir
+    # found by the Linux opt-in (empty on Windows, where oneAPI puts it on the
+    # global path). OpenSeesCommands.cpp -> ProfilerRunMeta.h includes
+    # <mkl_service.h> under #ifdef _PARDISO, so every target that gets the
+    # flag must also get the headers.
     target_include_directories(OPS_InterpPyCmds PRIVATE
-        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso ${LADRUNO_MKL_INCLUDE})
 endif()
 
 if(MPI_FOUND)
@@ -1122,8 +1127,10 @@ target_link_libraries(OpenSees
 # letting it fall through to a stale global SOE.
 if(PARDISO_FLAG)
     target_compile_definitions(OpenSees PRIVATE ${PARDISO_FLAG})
+    # Ladruno (TIMs, 2026-09-03): same reason as OPS_InterpPyCmds above --
+    # commands.cpp includes the MKL headers under #ifdef _PARDISO.
     target_include_directories(OpenSees PRIVATE
-        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso ${LADRUNO_MKL_INCLUDE})
 endif()
 
 
