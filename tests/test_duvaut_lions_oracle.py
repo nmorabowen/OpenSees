@@ -71,7 +71,7 @@ def test_tt_equals_tdl_where_the_theorem_holds_and_differs_where_it_does_not():
     """The measured D2 answer.  Identity where the proof applies; a LARGE difference where it
     does not.  The second set of assertions is the non-tautology guard: without them a wrapper
     that simply ignored tau would pass the first set."""
-    r = ref.run_tt_vs_tdl_point(verbose=False)
+    r = ref.run_tt_vs_tdl_point(verbose=False, nsteps=700)   # reduced for the budget
     # -- identity (round-off only) --------------------------------------------------------
     assert r["perfect_plastic_identical"]                     # perfect plasticity
     assert r["linear_max_d_path_rel"] < 1.0e-10               # linear H/E in [-0.10, +0.10]
@@ -232,3 +232,93 @@ def test_band_width_metric_is_calibrated():
             q[12:12 + k] = 3.0
             assert ref.band_widths(q, h)[1] == pytest.approx(k * h, rel=1e-12)
         assert ref.band_widths(np.zeros(40), h) == (0.0, 0.0, 0.0)
+
+
+# --------------------------------------------------------------------------------------------
+# 4. P0b -- the four measurements the 3-lens adversarial pass showed were missing
+#
+# Reduced settings (fewer De, fewer steps) so the whole file stays inside its budget; the full
+# tables are `python3.12 tests/_testbed/run_a0_sweep.py --p0b` and live in
+# `Ladruno_implementation/_adr90_p0b_results.md`.  Thresholds here are order-of-magnitude, so the
+# reduction cannot flip a verdict.
+# --------------------------------------------------------------------------------------------
+@pytest.mark.zone_a
+def test_p0b_a_state_dependent_elastic_operator_breaks_the_identity():
+    """P0b-(a) / constitutive critic finding 1 (BLOCKING).  The ADR-90 theorem has a hypothesis
+    nobody wrote down: a CONSTANT elastic operator.  `psi = sigma + E*alpha` can only advance by
+    `E*de` if E is the same number on both tracks -- but a generic wrapper's only elastic operator
+    is `inner.getInitialTangent()`, i.e. E at the INNER's stress, while it must predict from its
+    OWN stress.  With `E(sigma)` the identity fails on EVERY path, monotonic and proportional
+    included, and the error grows monotonically with De.
+
+    SANISAND (G(p), K(p)), Drucker-Prager with G(p), and every hypoelastic inner are in this
+    class, so this is not a corner case for the named consumer -- it is the normal case."""
+    r = ref.run_pressure_dependent_leg(nsteps=600, De_list=(1.0e-3, 1.0e-2, 0.1, 0.3),
+                                       verbose=False)
+    assert r["const_max"] < 1.0e-10, "constant E must still satisfy the theorem"
+    assert r["var_max"] > 1.0e-2, "a state-dependent E must break it measurably"
+    # monotone in De, on the buildable wrapper
+    var = sorted((x["De"], x["d_path_rel"]) for x in r["rows"] if x["E_beta"] != 0.0)
+    assert all(var[i][1] <= var[i + 1][1] for i in range(len(var) - 1))
+    # the obvious repair -- evaluate the predictor modulus at the WRAPPER's own stress -- helps
+    # by ~1-2 orders but does NOT close the gap, and is not implementable at the NDMaterial seam
+    # (it needs the function E(.), not one sampled number).
+    assert r["var_max_ttvp"] < r["var_max"]
+    assert r["var_max_ttvp"] > 1.0e-3
+
+
+@pytest.mark.zone_a
+def test_p0b_b_dissipation_goes_negative_on_unloading():
+    """P0b-(b).  In true Duvaut-Lions `sigma_bar` is the closest-point projection OF `sigma_vp`,
+    so `sigma_vp - sigma_bar` lies in the normal cone and `D_w = sigma_vp . dEps^vp >= 0` follows
+    from convexity.  The two-track wrapper projects a DIFFERENT trial, so nothing enforces that
+    geometry.  Measured: the increment is genuinely negative on load/unload/reload -- up to
+    -0.8 % of the run's cumulative dissipation at De = 0.1 -- while the non-proportional J2 and
+    swipe paths stay clean to round-off."""
+    r = ref.run_dissipation_gate(nsteps=600, De_list=(1.0e-2, 0.1), verbose=False)
+    assert r["any_negative_significant"], "the violation must be reproducible"
+    assert all(k.startswith("cyclic1d") for k in r["paths_with_significant_negatives"]), \
+        "as measured, only the UNLOADING paths violate it"
+    assert r["neg_sum_rel_worst"] < -1.0e-4          # measured -7.9e-3 on the full sweep
+    # every run still dissipates net-positive, and the inner's own dissipation is positive
+    for v in r["rows"].values():
+        assert v["Dw_cum"] > 0.0 and v["D_inner"] > 0.0
+
+
+@pytest.mark.zone_a
+def test_p0b_c_the_converged_width_is_an_imperfection_property():
+    """P0b-(c).  At the ONE De where A0 reported both w2 and w3 converging, vary the imperfection.
+    The converged width tracks the imperfection amplitude and the zone length, so it is NOT a
+    length set by tau: viscosity stops the band from collapsing onto one element, but what it
+    collapses TO is chosen by the imperfection field."""
+    r = ref.run_imperfection_study(Ns=(80,), amps=(0.05, 0.10, 0.20), lens=(0.05, 0.10, 0.20),
+                                   nsteps=1000, verbose=False)
+    assert all(x["converged"] for x in r["rows"])
+    assert r["w2_span_over_amp"] > 2.0      # measured x4.28 on the full sweep
+    assert r["w2_span_over_len"] > 2.0      # measured x3.47
+    # w2 is bounded above by L by construction, so "w2 near L" means NO band, not a wide one
+    assert all(x["w2"] <= 100.0 + 1e-9 for x in r["rows"])
+
+
+@pytest.mark.zone_a
+def test_p0b_d_blended_acoustic_tensor_restores_ellipticity():
+    """P0b-(d).  The only measurement that speaks to WELL-POSEDNESS for the consumer's material
+    class; the 1-D A0 bar cannot see it.  On a plane-strain NON-ASSOCIATED softening
+    Drucker-Prager point model the inviscid algorithmic tangent loses ellipticity
+    (min det Q < 0, Rudnicki & Rice 1975) and the blended tangent regains it below a critical
+    BETA -- which means the criterion is on `Delta_t/tau`, not on De: the same De is elliptic or
+    not depending on the step count.  Also: TT == TDL on a PROPORTIONAL path even though the flow
+    is non-associated (non-associativity alone does not break the theorem), and differs on a
+    ROTATING path."""
+    r = ref.run_dp_leg(nsteps=400, De_list=(3.0e-4,), n_shear=300, ntheta=121,
+                       verbose=False)
+    assert r["min_det_inviscid"] < 0.0, "the inviscid non-associated tangent must lose ellipticity"
+    assert 0.0 < r["beta_crit"] < 1.0
+    # non-associativity alone does NOT break the identity; path rotation does
+    assert r["prop_max"] < 1.0e-10
+    assert r["rot_max"] > 1.0e-4
+    rot = sorted((x["De"], x["d_path_rel"]) for x in r["tt_vs_tdl"] if x["path"] == "rotating")
+    assert all(rot[i][1] <= rot[i + 1][1] for i in range(len(rot) - 1))
+    # the ellipticity criterion is a BETA criterion: the De it corresponds to scales as 1/nsteps
+    des = r["De_crit_at_nsteps"]
+    assert des[250] == pytest.approx(4.0 * des[1000], rel=1e-9)

@@ -2,6 +2,7 @@
 
 Run:  python3.12 tests/_testbed/run_a0_sweep.py            (full sweep, ~2 min)
       python3.12 tests/_testbed/run_a0_sweep.py --quick    (the Zone-A subset, seconds)
+      python3.12 tests/_testbed/run_a0_sweep.py --p0b      (only the P0b legs, ~1 min)
 
 Numpy only -- no OpenSees, no build.  Everything printed here names the script, the git hash and
 the date, per the fork's provenance rule.
@@ -210,9 +211,51 @@ def table_point():
     return r
 
 
+def table_p0b():
+    """P0b -- the four measurements the 3-lens adversarial pass showed were missing."""
+    print("\n\n########## P0b (a) -- STATE-DEPENDENT elastic operator ##########")
+    a = {}
+    for be in (0.3, 0.6, 1.2):
+        print(f"\n--- E(sigma) = E0 (1 + {be} |sigma|/sigY) ---")
+        a[be] = ref.run_pressure_dependent_leg(E_beta=be, verbose=True)
+    print("\n  E_beta sensitivity (max relative TT-vs-TDL over the whole De ladder / over the "
+          "working window 1e-4..1e-2):")
+    print(f"  {'E_beta':>8}{'all De':>12}{'window':>12}{'window, non-buildable repair':>32}")
+    for be, r in a.items():
+        print(f"  {be:>8.1f}{r['var_max']:>12.2e}{r['window_max']:>12.2e}"
+              f"{r['window_max_ttvp']:>32.2e}")
+
+    print("\n\n########## P0b (b) -- DISSIPATION gate ##########")
+    b = ref.run_dissipation_gate(verbose=True)
+
+    print("\n\n########## P0b (c) -- is the width TAU-set or IMPERFECTION-set? ##########")
+    c = ref.run_imperfection_study(verbose=True)
+
+    print("\n\n########## P0b (d) -- non-associated DP + the BLENDED ACOUSTIC TENSOR ##########")
+    d = ref.run_dp_leg(verbose=True)
+
+    print("\n\n########## P0b VERDICTS ##########")
+    print(f"  V1 generic TT over a pressure-dependent inner: max rel error "
+          f"{a[0.6]['window_max']:.1e} over the working window De 1e-4..1e-2 "
+          f"(E_beta=0.6), rising to {a[0.6]['var_max']:.1e} at De=0.3; the identity is EXACT "
+          f"({a[0.6]['const_max']:.1e}) only for a constant elastic operator.")
+    print(f"  V2 dissipation: significant negatives on {b['paths_with_significant_negatives']}; "
+          f"worst step {b['worst_step']:.2e} ({b['worst_step_rel']:.1e} of that run's "
+          f"cumulative); worst cumulative-negative fraction {b['neg_sum_rel_worst']:.2e}.")
+    print(f"  V3 width: at FIXED De=3e-4 the converged w2 moves x{c['w2_span_over_amp']:.2f} with "
+          f"imperfection AMPLITUDE and x{c['w2_span_over_len']:.2f} with ZONE LENGTH.")
+    print(f"  V4 blended acoustic tensor: inviscid min det = {d['min_det_inviscid']:.4f} "
+          f"(LOST); elliptic for beta < {d['beta_crit']:.4f}, i.e. "
+          f"De > {(1.0/d['beta_crit']-1.0):.3e}/nsteps.")
+    return a, b, c, d
+
+
 def main():
     quick = "--quick" in sys.argv
     stamp()
+    if "--p0b" in sys.argv:
+        table_p0b()
+        return
     print("\n\n########## PV1-PV6 falsification battery ##########")
     ref.run_pv_gate(verbose=True)
     print("\n\n########## Point models: TT vs TDL ##########")
@@ -226,6 +269,7 @@ def main():
         table_dt()
         table_brief_de()
         table_steps()
+        table_p0b()
 
 
 if __name__ == "__main__":
