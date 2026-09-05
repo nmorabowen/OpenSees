@@ -341,12 +341,25 @@ comparison is **interpolation-free, at exactly matched settlement**:
 | 0.005060 | 115.6139 | 114.7235 | **0.77 %** |
 | 0.010180 | 225.5879 | 222.4336 | **1.42 %** |
 
-An independent confirmation across a *complete* change of solver configuration
+There is also a reading across a *complete* change of solver configuration
 (TanType 0 + `NormDispIncr 1e-8` → TanType 2 + `NormUnbalance 1e-5·γV`): `q` at
-the matched `s/B = 0.002` checkpoint, h0 = 1.0, reads **56.045** vs **55.756**
+the matched `s/B = 0.002` checkpoint, h0 = 1.0, read **56.045** vs **55.756**
 kPa — **0.52 %**.
 
-**So the solver-configuration floor on any band quoted here is ~0.5–1.4 %.**
+> [!warning] Provenance caveat on that one number
+> The `56.045` comes from the **pre-fix campaign attempt**, whose output
+> directory was **deleted** when the settings were re-pinned and the campaign
+> relaunched. It is a measurement that was made and logged, but it is **not
+> reproducible from the data committed with this report**, and by this fork's
+> own rule (ADR 90 S4, *provenance is output*) it must not carry the same weight
+> as the rest. **The reproducible tolerance evidence is the three rows above**,
+> which live in `adr90_a2_tolref/` and can be re-derived from the committed
+> checkpoint CSVs. Deleting a superseded output directory instead of renaming it
+> was the mistake; `adr90_a2_run1/` is kept for exactly this reason.
+
+**So the solver-configuration floor on any band quoted here is ~0.8–1.4 %**
+(from the on-disk tolerance control), and no band below 1.4 % should be read as
+a physical difference.
 
 ### 5.4 Reproducibility, and where it fails
 
@@ -494,6 +507,10 @@ develops — which is the rate-independent ill-posedness making itself felt as
   unsupplied**; there is no tolerance to be inside of.
 * That the 5.42 % non-monotone `e0.60` band at `s/B = 0.002` means anything —
   it is inside the 5.93 % relaxed-step scatter. *(§5.4)*
+* That the contraction 7.80 → 5.28 → 2.86 % is a *rate* of convergence. Each
+  band sits on a different number of meshes (3, 3, 2) and the last is only ~2×
+  the 1.4 % solver-configuration floor of §5.3. The **direction** is evidence;
+  the **exponent** is not.
 * Anything comparing these numbers to R3's. Different problem (weighted vs
   weightless), different footing (rough vs smooth), different material.
 
