@@ -1972,6 +1972,20 @@ def test_planestrain_lane_carries_the_settings(capfd):
 
     Measured wall time under pytest: 3.05 s in a full-file run, 4.10 s alone.
     """
+    # HAZARD: the M_c-inflation guard below reads capfd, which only sees C++
+    # stderr from a solve that actually happens INSIDE this test's own capfd
+    # window. `_drive_ps_confined_cached` is a MODULE-LEVEL cache shared with
+    # test_getcopy_void_carries_the_settings_planestrain -- in plain
+    # top-to-bottom file order this test runs first and always populates it,
+    # but under --lf/--ff, an explicit reversed selection, or an
+    # alphabetising runner (that test's name starts with "g", this one's
+    # with "p"), the cache could already be warm, no solve would run here at
+    # all, and the guard would silently pass on EMPTY stderr rather than on
+    # verified-clean stderr. Clearing it here forces this test to always do
+    # the real solve in its own window; the other test then gets a cache hit
+    # regardless of which order the two ran in.
+    _drive_ps_confined_cached.cache_clear()
+
     # --- (B) the settings reach the plane-strain Gauss points ----------------
     # Shared with test_getcopy_void_carries_the_settings_planestrain, which
     # solves the identical unwrapped deck at the identical opts as its
