@@ -2001,7 +2001,7 @@ features:
       - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
       - SRC/runtime/runtime/TclPackageClassBroker.cpp
     dispatch: {tcl: true, functionMap: true}
-    status: planned
+    status: active
     notes: >
       ETABS-style shell section stiffness modifiers (ADR 91). A
       SectionForceDeformation DECORATOR over any order-8 plate section, applying
@@ -2022,8 +2022,11 @@ features:
       NO weight modifier, deliberately: ShellMITC4.cpp:1725-1755 derives the
       self-weight body force from the same getRho() that builds the mass matrix,
       so a weightMod could only have aliased massMod (ADR 91 §5).
-      status=planned pending the G1-G8 gate suite (ADR 91 §9) landing as
-      tests/test_ladrunoShellModifier_section.py; row owner flips to active once
-      those pass against a build of this branch. Zero vanilla behavior change —
+      G1-G8 (ADR 91 §9) all green: 15/15 against a fresh build of this branch —
+      identity (bare vs wrapped-at-1.0, ShellMITC4 + ASDShellQ4, 1e-13),
+      congruence against an independent numpy S.D.S oracle with all nine
+      modifiers distinct, analytic exact-doubling, SPD under f11=f22=0.01,
+      Ep_mod parity, mass sqrt(2), the four refusals, and LayeredShell
+      nonlinear passthrough. Zero vanilla behavior change —
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.

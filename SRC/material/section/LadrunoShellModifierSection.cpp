@@ -166,6 +166,25 @@ void* OPS_LadrunoShellModifierSection()
         mods[idx] = val;
     }
 
+    // A modifier of exactly 0.0 is ETABS-legal, so it is accepted -- but it makes
+    // the section singular in that response mode, which is worth saying out loud.
+    // Warn HERE, in the factory, not in buildScales(): the section is deep-copied
+    // once per integration point (getCopy), so warning at construction would emit
+    // one line per Gauss point per element -- tens of thousands of lines on a real
+    // cracked-wall model. Once per `section` command is the right granularity.
+    {
+        static const char* zeroNames[9] = {
+            "f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23", "mass"
+        };
+        for (int i = 0; i < 9; i++) {
+            if (mods[i] == 0.0) {
+                opserr << "WARNING LadrunoShellModifierSection " << tag
+                       << ": modifier '" << zeroNames[i] << "' is 0.0 -- the section "
+                       << "is SINGULAR in that response mode\n";
+            }
+        }
+    }
+
     return new LadrunoShellModifierSection(tag, theInner, mods);
 }
 
@@ -212,18 +231,10 @@ LadrunoShellModifierSection::~LadrunoShellModifierSection()
 void
 LadrunoShellModifierSection::buildScales(void)
 {
-    static const char* names[9] = {
-        "f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23", "mass"
-    };
-
-    for (int i = 0; i < 9; i++) {
-        if (mods[i] == 0.0) {
-            opserr << "WARNING LadrunoShellModifierSection " << this->getTag()
-                   << ": modifier '" << names[i] << "' is 0.0 -- the section "
-                   << "is SINGULAR in that response mode\n";
-        }
-    }
-
+    // NB: the zero-modifier warning deliberately lives in the OPS_ factory, not
+    // here. buildScales() runs from every constructor, and the section is
+    // deep-copied once per integration point, so warning here would emit one
+    // line per Gauss point per element. See OPS_LadrunoShellModifierSection.
     for (int i = 0; i < 8; i++)
         scale[i] = sqrt(mods[i]);
 }
