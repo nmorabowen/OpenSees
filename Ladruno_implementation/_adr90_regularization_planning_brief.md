@@ -277,10 +277,13 @@ rate, the De they will run at, and the ultimate criterion (inherited OQ1, Prof. 
 > campaign's own material, element (`LadrunoBrick -formulation bbar`) and lane, 3 meshes × 2
 > densities. Three corrections to the table above:
 > 1. **`q_u` is not a measurable quantity on this deck.** All six legs **seized** at ≤ 9 % of
->    target settlement — inside SANISAND's uncapped `ModifiedEuler` substepping (`dT_min = 1e-6`,
->    11–28 min per `analyze(1)`), **not** in the stepping controller (0/80 subdivisions used,
->    steps 800–12800× above the floor). Any leg of this ladder that asks for a collapse load is
->    unreachable until that is fixed.
+>    target settlement (deepest `s/B = 0.0228` of 0.25, last four increments still rising
+>    54.3 / 53.8 / 53.5 kPa per 5 mm — linear at 10.7 kPa/mm) — inside SANISAND's uncapped
+>    `ModifiedEuler` substepping (`dT_min = 1e-6`; longest gap between consecutive converged steps
+>    **2056 s = 34.3 min**, 59 % of that leg's whole budget), **not** in the stepping controller
+>    (0/80 subdivisions used, steps **6400× / 12800× / 25000×** above the floor at
+>    `h0 = 0.25 / 0.5 / 1.0`). Any leg of this ladder that asks for a collapse load is unreachable
+>    until that is fixed.
 > 2. **The ultimate criterion is settlement-based (vault 65 D6), so the deliverable is `q` at
 >    fixed `s/B` — and its τ = 0 three-mesh band already CONTRACTS under refinement**:
 >    7.80 → 5.28 → 2.86 %, monotone from above (`e_init = 0.6944`). The gate wording "the
