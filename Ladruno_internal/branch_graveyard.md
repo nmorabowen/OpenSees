@@ -98,8 +98,8 @@ class and is rescued first.
 | `a71cdb197` build(cmake): threaded-layer opt-in for the Linux PARDISO | pushed to `claude/pardiso-linux` **after** #781 had merged it (WORKFLOW_GOTCHAS §1) | `wp/rescue-pardiso-linux-threaded` = `e5593cdfc`, **draft PR #782** | `cherry-pick -x` onto fresh `ladruno`, clean |
 | ADR-80 P3 tangent-predictor WIP: `TransformationFE`/`DOF_Group` getTangForce, `LadrunoLoadControl`, gates, `80d` verdict doc, test (20 files, +504) | uncommitted in `.claude/worktrees/sp-strengthening-9c0ddc` on a merged branch, 229 behind | `origin/rescue/adr80-p3-tangent-predictor-wip` = `5b2debaac` | **consumed**: rebased as `wp/80-p3-tangent-predictor`, gate reproduced byte-identical, merged as [#786](https://github.com/nmorabowen/OpenSees/pull/786) (`516241324`) on 2026-09-05; rescue branch deleted |
 | LadrunoBrick/LadrunoQuad k-stab damage-scaling plasticity + `tests/test_ladrunoBrick_kstab_plasticity.py` (+304) | uncommitted in `pardisio-profiling-0a03b1`, 268 behind | `origin/rescue/brick-kstab-plasticity-wip` = `76594384d` | **consumed**: rebased as `wp/11-brick-kstab-damage-scaling` (comment-only source change + §3.1 study + 2 quirks + Zone-A test, 11/11 + 179 brick/quad regression), merged as [#787](https://github.com/nmorabowen/OpenSees/pull/787) (`6792ecc58`) on 2026-09-05; rescue branch deleted |
-| ADR-79 tet10 bearing backbone outputs + `build_mesh_tet10.py` | uncommitted in `cool-haibt-781905`, 265 behind | `origin/rescue/adr79-bearing-tet10-backbone` = `530adc838` | data + one script |
-| ADR-75b lane-B thread-count profile results + build logs | uncommitted in `mumps-opensees-study-f833bf`, 444 behind | `origin/rescue/adr75b-laneB-thread-results` = `d2d7d24d7` | data |
+| ADR-79 tet10 bearing backbone outputs + `build_mesh_tet10.py` | uncommitted in `cool-haibt-781905`, 265 behind | `origin/rescue/adr79-bearing-tet10-backbone` = `530adc838` | **consumed**: merged as [#788](https://github.com/nmorabowen/OpenSees/pull/788) (`c2c247e79`) on 2026-09-05 minus the two `__killed` partial-run files; rescue branch deleted |
+| ADR-75b lane-B thread-count profile results + build logs | uncommitted in `mumps-opensees-study-f833bf`, 444 behind | `origin/rescue/adr75b-laneB-thread-results` = `d2d7d24d7` | **consumed**: merged as [#789](https://github.com/nmorabowen/OpenSees/pull/789) (`11a9c8c0e`) on 2026-09-05 as sibling `laneB_p1_threads{4,8}_rerun7.json` (the cited baselines kept byte-identical; root `build_p2*.log` not landed); rescue branch deleted |
 
 **`rescue/*` branch rule:** a rescue branch is a snapshot, never a PR head. It
 therefore never auto-deletes — list them with
@@ -142,5 +142,5 @@ held open by another process — `rmdir` it when free).
 **2026-09-05 follow-up.** Two of the four rescues were consumed the same day
 (#786 ADR-80 P3, #787 brick k-stab — rows above); their WP worktrees
 (`wp-80-p3-tangent-predictor`, `wp-11-brick-kstab`) and local branches were
-removed after the merges. Remaining `rescue/*` branches are data only:
-`adr79-bearing-tet10-backbone`, `adr75b-laneB-thread-results`.
+removed after the merges. All four rescues were consumed the same day (#786, #787, #788, #789); no
+`rescue/*` branches remain and the four WP worktrees are removed.
