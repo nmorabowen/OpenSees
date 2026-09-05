@@ -244,6 +244,36 @@ M_C = _SANISAND_PARAMS[3]         # 1.3309
 OPT_PRESIDUAL = 0.0
 OPT_PMIN = 1.0e-3 * P_ATM
 
+# THE POSITIONAL OPTIONALS -- and why this deck must not leave them defaulted.
+#
+#   <IntScheme TanType JacoType TolF TolR>
+#
+# `TanType` selects what `getTangent()` returns (`ManzariDafalias3D.cpp:134-142`):
+# 0 = `mCe`, the ELASTIC tangent; 1 = `mCep`, the continuum elastoplastic; 2 =
+# `mCep_Consistent`.  **The parser default is 0**
+# (`LadrunoSANISAND.cpp:117`, matching `OPS_ManzariDafaliasMaterial`), while the
+# null / parallel constructors default to 2 (`ManzariDafalias.cpp:365`, `:426`).
+# So a deck that emits only the 18 positional parameters -- which is what every
+# existing fork SANISAND deck does, `tests/test_ladruno_sanisand.py` included --
+# runs `algorithm Newton` against an ELASTIC tangent, i.e. de-facto modified
+# Newton, with linear convergence.
+#
+# On a zero-free-DOF material-point deck that costs nothing.  On this
+# boundary-value problem it was the difference between a measurement and a
+# non-measurement: MEASURED at TanType 0, the h0 = 0.25 leg spent 350 s to
+# advance 11 steps to s/B = 1.6e-4, ~40-65 state-determination passes per step.
+# The tangent changes the ITERATION PATH, not the converged answer -- the stress
+# update is untouched -- so this is a deck defect being fixed, not a knob being
+# turned to make a result appear.  The A/B is reported in
+# `_adr90_tau0_qu_band.md`.
+#
+# `mCep_Consistent` is UNSYMMETRIC for a non-associated flow rule, which is why
+# the solver is `Pardiso -matrixType 0`.
+INT_SCHEME = 1                    # ModifiedEuler with substepping (the default)
+TAN_TYPE = 2                      # consistent elastoplastic -- NOT the default 0
+JACO_TYPE = 1
+TOL_F, TOL_R = 1.0e-7, 1.0e-7     # the parser defaults, emitted explicitly
+
 N_GRAV = 10                       # gravity ramp steps (stage 0)
 GRAV_TOL = 1.0e-9                 # NormDispIncr, metres
 GRAV_ITER = 40
@@ -263,16 +293,60 @@ DS_MAX = 5.0e-3
 
 SFRAC = 0.25                      # push target s/B
 
-# `test NormDispIncr` per the WP brief.  The tolerance is PINNED here with its
-# calibration, not inherited: it is an ABSOLUTE displacement-increment norm in
-# metres, so at the DS_BASE step (0.02 mm) it is 250x tighter in relative terms
-# than at DS_MAX (5 mm) -- i.e. tightest exactly where the steps are cheap and
-# loosest where they are expensive.  MEASURED at h0 = 1.0 (see the A/B in
-# `_adr90_tau0_qu_band.md`): at 1e-9 the controller stalls out at ds ~ 0.3 mm
-# and burns the pinned subdivision budget on Newton stagnation rather than on
-# mechanics, which is the note-71 failure mode ("a study whose termination
-# criterion binds before the mechanics do measures the criterion").
-PUSH_TOL = 1.0e-8
+# THE CONVERGENCE TEST -- and a correction to the WP brief.
+#
+# The brief says "`test NormDispIncr` per the R3 gate".  The R3 gate does not
+# use `NormDispIncr`: it uses **`NormUnbalance` at `1e-5 x the applied load`**
+# (`test_r3_prandtl_collapse_gate.py`, `tol = 1.0e-5 * want`).  Both forms were
+# MEASURED here and the force form is the one this deck must use, for a reason
+# that is specific to this material:
+#
+#   * `NormDispIncr` with an ABSOLUTE tolerance in metres is tightest where the
+#     steps are smallest -- i.e. tightest exactly where they are cheap and
+#     loosest where they are expensive -- which is backwards for an adaptive
+#     controller.
+#   * SANISAND's stress update is a SUBSTEPPED `ModifiedEuler` return with a
+#     hardcoded substep tolerance `TolE = 1e-4`, so the discrete stress-strain
+#     map is only piecewise smooth and Newton STALLS rather than converging
+#     quadratically.  MEASURED on the h0 = 0.5 leg: over 47 failed attempts the
+#     residual displacement norm stalls at a median of 6.6e-7 m (min 3.4e-8,
+#     max 1.3e-4).  A 1e-8 m target is therefore UNREACHABLE, and the run that
+#     nominally used it was in fact carried by the relaxed third ladder rung on
+#     18 of its 26 steps -- 65 of every 125 state-determination passes spent
+#     failing two rungs that could not succeed.  That is the note-71 failure
+#     mode in its purest form: the study was measuring its own convergence
+#     test.
+#   * A FORCE tolerance scaled to a deck-intrinsic force -- the model's own
+#     weight -- is the same number on all three meshes by construction, which
+#     is what a mesh-convergence study needs.  A displacement-norm tolerance is
+#     not: the norm is taken over the free DOFs, and there are 3.6x more of
+#     them at h0 = 0.25 than at h0 = 1.0, so the same nominal tolerance is a
+#     different physical requirement on each mesh.
+#
+# PUSH_TOL is therefore RELATIVE TO THE MODEL WEIGHT `gamma*V`, and the
+# `--test` switch keeps the displacement form available for the A/B that
+# justified this choice.
+# MEASURED, h0 = 0.5, 400 s of wall each, same box, same DS_MAX (the A/B table
+# in `_adr90_tau0_qu_band.md`):
+#
+#   test / tol                reach (s/B)   steps   subdivisions   relaxed
+#   NormDispIncr  1e-8 m        0.00106       26         1          18/26
+#   NormUnbalance 1e-6 gamma*V  0.00218       31         0          11/31
+#   NormUnbalance 1e-5 gamma*V  0.00442       37         0           -
+#
+# and the ANSWER moves by a MEDIAN of 0.3-0.75 % between all three at matched
+# settlement (max excursions of 2.5-8 % are interpolation artefacts of
+# comparing two adaptive step sequences on a curve whose slope is still ~25 kPa
+# per 0.001 of s/B -- an s/B mismatch of 4e-5 is worth 3 % there.  That artefact
+# VANISHES at the peak, where dq/ds -> 0, so q_u is far less tolerance-sensitive
+# than these pre-peak numbers look).
+#
+# 1e-5 is pinned because it is the only setting that lets the step reach
+# DS_MAX at all, and reach is the binding constraint on whether this study can
+# answer its own question.  One leg is re-run at 1e-6 as the tolerance control.
+PUSH_TEST = "NormUnbalance"
+PUSH_TOL = 1.0e-5                 # x gamma*V; see the A/B table above
+PUSH_TOL_DISP = 1.0e-8            # the metres form, for the A/B only
                                   # The ladder's third rung runs at 10x this and
                                   # every step that needed it is FLAGGED in the
                                   # `relaxed` column of the curve CSV and
@@ -379,7 +453,8 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 # one leg
 # --------------------------------------------------------------------------
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
-            ds_max=DS_MAX, tol=PUSH_TOL, verbose=True):
+            ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
+            test_type=PUSH_TEST, verbose=True):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
     log_path = os.path.join(out_dir, f"a2_{tag}_engine.log")
@@ -405,8 +480,12 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
 
     par = list(_SANISAND_PARAMS)
     par[2] = e_init
+    # Positional block first, THEN the flags -- the ADR-86 parser rejects a
+    # positional after a flag by design.
     ops.nDMaterial("LadrunoSANISAND", 1, *par,
-                   "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN)
+                   INT_SCHEME, tan_type, JACO_TYPE, TOL_F, TOL_R,
+                   "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN,
+                   "-honorTolR", 0)
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -505,9 +584,12 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     _pick_system()
     ops.analysis("Static")
 
-    ladder = [("Newton", tol, 25, 0),
-              ("NewtonLineSearch", tol, 40, 0),
-              ("KrylovNewton", 10.0 * tol, 60, 1)]
+    # NormUnbalance takes an absolute FORCE; scale the relative tolerance by
+    # the model's own weight so the number is identical on all three meshes.
+    tol_abs = tol * want if test_type == "NormUnbalance" else tol
+    ladder = [("Newton", tol_abs, 25, 0),
+              ("NewtonLineSearch", tol_abs, 40, 0),
+              ("KrylovNewton", 10.0 * tol_abs, 60, 1)]
 
     csv_path = os.path.join(out_dir, f"a2_{tag}_curve.csv")
     fh = open(csv_path, "w", newline="")
@@ -533,7 +615,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         ops.integrator("LoadControl", -ds)
         ok, relaxed = False, 0
         for algo, tl, it, rl in ladder:
-            ops.test("NormDispIncr", tl, it, 0)
+            ops.test(test_type, tl, it, 0)
             ops.algorithm(algo)
             if ops.analyze(1) == 0:
                 ok, relaxed = True, rl
@@ -667,6 +749,9 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
         gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
+        push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
+        int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
+        tol_f=TOL_F, tol_r=TOL_R,
         subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
         wall_budget_s=wall_budget,
         # controls
@@ -717,9 +802,17 @@ def main(argv=None):
     ap.add_argument("--wall", type=float, default=WALL_BUDGET_S)
     ap.add_argument("--sfrac", type=float, default=SFRAC)
     ap.add_argument("--dsmax", type=float, default=DS_MAX)
-    ap.add_argument("--tol", type=float, default=PUSH_TOL,
-                    help="NormDispIncr tolerance (m) for the push ladder")
+    ap.add_argument("--tol", type=float, default=None,
+                    help="push ladder tolerance: relative to gamma*V for NormUnbalance, absolute metres for NormDispIncr")
+    ap.add_argument("--test", default=PUSH_TEST,
+                    choices=("NormUnbalance", "NormDispIncr"),
+                    help="convergence test for the push ladder")
+    ap.add_argument("--tantype", type=int, default=TAN_TYPE,
+                    choices=(0, 1, 2),
+                    help="ManzariDafalias TanType: 0 elastic (the PARSER DEFAULT, and a trap), 1 continuum ep, 2 consistent ep")
     args = ap.parse_args(argv)
+    tol = args.tol if args.tol is not None else (
+        PUSH_TOL if args.test == "NormUnbalance" else PUSH_TOL_DISP)
     os.makedirs(args.out, exist_ok=True)
 
     build = assert_engine()
@@ -733,7 +826,9 @@ def main(argv=None):
           f"-Presidual {OPT_PRESIDUAL}, -Pmin {OPT_PMIN}")
     print(f"    SUBDIV_BUDGET (pinned, R3)  : {SUBDIV_BUDGET}")
     print(f"    DS_MAX (pinned here)        : {args.dsmax} m")
-    print(f"    NormDispIncr tol (pinned)   : {args.tol} m")
+    print(f"    convergence test (pinned)   : {args.test} @ {tol}"
+          + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
+    print(f"    TanType (0=elastic default) : {args.tantype}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
 
     want = [(h0, en, ei) for h0 in RESOLUTIONS for en, ei in DENSITIES]
@@ -745,7 +840,8 @@ def main(argv=None):
         print(f"\n--- leg {leg_tag(h0, en)} (e_init = {ei}) ---", flush=True)
         try:
             r = run_leg(h0, en, ei, args.out, wall_budget=args.wall,
-                        sfrac=args.sfrac, ds_max=args.dsmax, tol=args.tol)
+                        sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
+                        tan_type=args.tantype, test_type=args.test)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,
