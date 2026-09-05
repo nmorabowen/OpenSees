@@ -41,15 +41,21 @@ updated: 2026-09-05
 
 > **τ = 0 `q_u` does not converge — because on this deck it cannot be MEASURED
 > AT ALL. Every leg SEIZES, on every mesh, at both densities, far short of its
-> peak.** The deepest leg reached `s/B = 0.0203` of a `0.25` target, still
-> hardening at ~10 kPa/mm. **No leg is a capacity**; nothing below may be quoted
-> as a collapse load.
+> peak.** The deepest leg reached `s/B = 0.0228` of a `0.25` target — **9 % of
+> the way** — and its last four increments rose 54.3, 53.8 and 53.5 kPa per
+> 5 mm, i.e. the response there is still **essentially LINEAR in settlement at
+> 10.7 kPa/mm** with no sign of turning over. (That is the last-increment slope,
+> not a fitted tail tangent: the final tenth of the run contains one point, so
+> the `tail %` column in §6.1 is `nan` on every leg by construction.) **No leg
+> is a capacity**; nothing below may be quoted as a collapse load.
 
 The seizure is **not** the stepping controller. Every leg used **0 of its 80
-pinned subdivisions** and ended with its step still 800–12800× above the floor;
-the one leg that reached its own wall budget cleanly did so with `free-advance =
-yes`. The binding resource is the **constitutive integrator**: single
-`analyze(1)` calls cost **11–28 minutes**, because SANISAND's substepped
+pinned subdivisions** and ended with its step still **6400–25000×** above the
+floor; the one leg that reached its own wall budget cleanly did so with
+`free-advance = yes`. The binding resource is the **constitutive integrator**:
+the longest gap between two consecutive *converged* steps is **2056 s (34 min)**
+— on the leg that terminated cleanly, that one step ate **59 % of its entire
+3300 s budget** — because SANISAND's substepped
 `ModifiedEuler` return collapses to its `dT_min = 1e-6` floor
 (`ManzariDafalias.cpp:1380`, `while (T < 1.0)`) at Gauss points inside the
 developing plastic zone, and the Newton ladder then repeats that up to 125
@@ -391,14 +397,31 @@ shared checkpoints reproduce to 0.000–1.18 %, **are** resolved.
 
 ### 6.1 The 3 × 2 table — every leg, and why none is a capacity
 
-| leg | DOF | q_max (kPa) | s_end/B | of target | mode | plateau | peak | ds/floor | subdiv | steps | wall (s) | CAPACITY |
+| leg | DOF | q_max (kPa) | s_end/B | mode | plateau | peak | ds/floor | subdiv | steps | wall (s) | worst step (s) | CAPACITY |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| h1.0_e0.6944 | 1386 | 503.90 | 0.0228 | 0.25 | KILLED | NO | NO | — | **0**/80 | 50 | 2401 | **NO** |
-| h1.0_e0.60 | 1386 | 621.91 | 0.0153 | 0.25 | KILLED | NO | NO | — | **0**/80 | 44 | 951 | **NO** |
-| h0.5_e0.6944 | 2592 | 198.88 | 0.0089 | 0.25 | **WALL** | NO | NO | **12800** | **0**/80 | 43 | 3503 | **NO** |
-| h0.5_e0.60 | 2592 | 286.43 | 0.0076 | 0.25 | KILLED | NO | NO | — | **0**/80 | 38 | 1414 | **NO** |
-| h0.25_e0.6944 | 5040 | 114.40 | 0.0051 | 0.25 | KILLED | NO | NO | — | **0**/80 | 38 | 2240 | **NO** |
-| h0.25_e0.60 | 5040 | 138.03 | 0.0038 | 0.25 | KILLED | NO | NO | — | **0**/80 | 31 | 2295 | **NO** |
+| h1.0_e0.6944 | 1386 | 503.90 | **0.0228** | KILLED | NO | NO | 25000 | **0**/80 | 51 | 2401 | 759 | **NO** |
+| h1.0_e0.60 | 1386 | 621.91 | 0.0153 | KILLED | NO | NO | 25000 | **0**/80 | 48 | 951 | 168 | **NO** |
+| h0.5_e0.6944 | 2592 | 198.88 | 0.0089 | **WALL** | NO | NO | 12800 | **0**/80 | 43 | 3503 | **2056** | **NO** |
+| h0.5_e0.60 | 2592 | 286.43 | 0.0076 | KILLED | NO | NO | 12800 | **0**/80 | 42 | 1414 | 375 | **NO** |
+| h0.25_e0.6944 | 5040 | 114.40 | 0.0051 | KILLED | NO | NO | 6400 | **0**/80 | 38 | 2240 | 450 | **NO** |
+| h0.25_e0.60 | 5040 | 138.03 | 0.0038 | KILLED | NO | NO | 6400 | **0**/80 | 36 | 2295 | 496 | **NO** |
+
+Target `s/B` was **0.25** on every leg; the deepest got **9 %** of the way.
+`worst step` is the longest wall time between two consecutive **converged**
+steps — the seizure, measured.
+
+> [!warning] These end-of-leg fields come from the CURVE CSV, not the leg JSON
+> A killed leg's JSON was last written **at a checkpoint**, so its
+> `s_end_over_B` / `q_u` / `steps` / `wall_s` stop there and **understate** the
+> leg — it kept running afterwards, and every one of those steps is in the curve
+> CSV, which is flushed every step. Measured on the deepest leg:
+> `a2_h1.0_e0.6944.json` reads `s_end_over_B = 0.02030`, `q_u = 450.39`, 50
+> steps, while its own `a2_h1.0_e0.6944_curve.csv` ends at `s/B = 0.02280`,
+> `q = 503.90`, 51 steps — a 12 % understatement of the deepest number in the
+> campaign. **An earlier revision of this report quoted the JSON's 0.0203 in §1
+> and the curve's 0.0228 in the tables, and they disagreed.** The summariser now
+> re-derives these four fields from the curve for any partial leg and prints its
+> source per leg; the curve is authoritative.
 
 `q_max` is **where the run stopped, not a capacity** — every leg is still
 hardening steeply. `KILLED` = the harness reaped the background process at
@@ -467,12 +490,16 @@ yields* is nearly mesh-objective already; *how thick the mechanism is* is not.
 
 | observation | measurement |
 |---|---|
-| longest single `analyze(1)` call | **~11 min** (h1.0_e0.6944, 83 s → 765 s of leg wall for one step at ds = 0.64 mm) and **20–28 min** on several legs late in the run |
+| longest gap between two consecutive **converged** steps | **2056 s = 34.3 min** (h0.5_e0.6944) — **59 % of that leg's entire 3300 s budget in one step** |
+| the same, per leg | 759 / 168 / **2056** / 375 / 450 / 496 s (h1.0_e0.6944, h1.0_e0.60, h0.5_e0.6944, h0.5_e0.60, h0.25_e0.6944, h0.25_e0.60) |
 | state-determination passes per step near the stall | up to **125** (25 Newton + 40 line-search + 60 Krylov) |
 | substep floor the material collapses to | `dT_min = 1e-6` (`ManzariDafalias.cpp:1380`), i.e. up to **10⁶ return maps per Gauss point per pass** |
 | subdivisions used, every leg | **0 / 80** |
-| terminal step above the floor, cleanest leg | **12800×** |
+| terminal step above the `DS_MIN` floor | **6400× / 12800× / 25000×** (finest → coarsest) |
 | deepest settlement reached, any leg | **s/B = 0.0228** of a 0.25 target (**9 %**) |
+
+Every one of these is re-derivable from the committed curve CSVs; the summariser
+prints the `worst step s` column and its per-leg source.
 
 **The two facts together are the finding**: the controller had every resource it
 was given and never used any of it, and the run still could not advance. The

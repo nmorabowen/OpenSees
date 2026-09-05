@@ -125,6 +125,18 @@ def read_field(path):
     return {k: np.array(v) for k, v in cols.items()}
 
 
+def read_curve(path):
+    """Read a driver curve CSV (one `#` provenance line, then a header).
+
+    The curve is flushed EVERY converged step, so it is the complete record of
+    a leg -- including a leg whose JSON was last written at a checkpoint.
+    """
+    with open(path) as f:
+        f.readline()                                   # provenance comment
+        return [{k: float(v) for k, v in row.items() if v not in (None, "")}
+                for row in csv.DictReader(f)]
+
+
 def widths_from_csv(path, z_probes=Z_PROBES):
     c = read_field(path)
     return widths_from_field(c["eps_q_p"], c["xc"], c["zc"], c["hx"], c["hz"],
@@ -175,9 +187,42 @@ def load(out_dir):
             r["_width_at_sB"] = last["cp_target"]
         else:
             r["_width_source"] = "NONE (no field CSV and no checkpoint)"
-        # A PARTIAL leg (written at a checkpoint by a process that was later
-        # killed) has no termination classification at all.  Fill the fields
-        # the tables read, marked so no reader can mistake it for a result.
+        # A PARTIAL leg's record was last written AT A CHECKPOINT, so its
+        # `s_end_over_B` / `q_u` / `steps` / `wall_s` stop there and UNDERSTATE
+        # the leg -- it kept running afterwards, and every one of those steps is
+        # in the curve CSV, which is flushed every step.  Re-derive them from
+        # the curve.  (Measured cost of not doing this: the h1.0_e0.6944 leg
+        # read s/B = 0.0203 from its JSON against 0.0228 in its own curve, and
+        # q_u 450.39 against 503.90 -- a 12 % understatement of the deepest
+        # number in the campaign, in two places that then disagreed.)
+        cur = r.get("csv", "")
+        if cur and not os.path.isabs(cur):
+            cur = os.path.join(out_dir, cur)
+        if not (cur and os.path.exists(cur)):
+            cur = os.path.join(out_dir, f"a2_{r['tag']}_curve.csv")
+        if r.get("partial") and os.path.exists(cur):
+            rows = read_curve(cur)
+            if rows:
+                r["s_end_over_B"] = rows[-1]["s_over_B"]
+                r["q_u"] = max(d["q_foot_kPa"] for d in rows)
+                r["steps"] = len(rows)
+                r["wall_s"] = rows[-1]["wall_s"]
+                r["ds_end_mm"] = rows[-1]["ds_mm"]
+                r["headroom"] = rows[-1]["ds_mm"] / (r.get("ds_min", 2.0e-7) * 1000.0)
+                r["max_step_gap_s"] = max(
+                    (rows[i]["wall_s"] - rows[i - 1]["wall_s"]
+                     for i in range(1, len(rows))), default=0.0)
+                r["_end_source"] = "curve CSV (JSON stops at the last checkpoint)"
+        elif os.path.exists(cur):
+            rows = read_curve(cur)
+            r["max_step_gap_s"] = max(
+                (rows[i]["wall_s"] - rows[i - 1]["wall_s"]
+                 for i in range(1, len(rows))), default=0.0)
+            r["_end_source"] = "leg JSON (leg terminated normally)"
+
+        # A PARTIAL leg has no termination classification at all.  Fill the
+        # fields the tables read, marked so no reader can mistake it for a
+        # result.
         if r.get("partial"):
             r.setdefault("mode", "KILLED")
             if r.get("mode") == "RUNNING":
@@ -269,7 +314,7 @@ def main(argv=None):
     hdr = (f"{'leg':>16} {'DOF':>7} {'q_u kPa':>10} {'s_pk/B':>8} "
            f"{'tail %':>10} {'plat':>5} {'peak':>5} {'mode':>7} "
            f"{'ds/floor':>9} {'CAP':>4} {'s_end/B':>8} {'steps':>6} "
-           f"{'sub/80':>7} {'wall s':>8}")
+           f"{'sub/80':>7} {'wall s':>8} {'worst step s':>12}")
     print(hdr)
     print("-" * len(hdr))
     for r in legs:
@@ -277,9 +322,15 @@ def main(argv=None):
               f"{r['s_peak_over_B']:8.4f} {r['tail_pct']:10.3f} "
               f"{'yes' if r['plateau'] else 'NO':>5} "
               f"{'yes' if r['peaked'] else 'NO':>5} {r['mode']:>7} "
-              f"{r['headroom']:9.1f} {'yes' if r['capacity'] else 'NO':>4} "
+              f"{r['headroom']:9.0f} {'yes' if r['capacity'] else 'NO':>4} "
               f"{r['s_end_over_B']:8.4f} {r['steps']:6d} "
-              f"{r['nsub']:3d}/{r['subdiv_budget']:<3d} {r['wall_s']:8.0f}")
+              f"{r['nsub']:3d}/{r['subdiv_budget']:<3d} {r['wall_s']:8.0f} "
+              f"{r.get('max_step_gap_s', float('nan')):12.0f}")
+    print("  `worst step s` = the longest wall time between two consecutive "
+          "CONVERGED steps: the seizure, measured.")
+    print("  `q_u`/`s_end/B`/`steps`/`wall s` sources, per leg:")
+    for r in legs:
+        print(f"    [{r['tag']}] {r.get('_end_source', 'leg JSON')}")
 
     print("\n--- TERMINATION STORIES ---")
     for r in legs:
