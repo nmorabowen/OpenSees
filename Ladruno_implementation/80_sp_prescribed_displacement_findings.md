@@ -268,9 +268,25 @@ the style of `tests/test_sp_subtract_init.py`. Worth offering upstream.
 Enables the Kratos-style `b −= K·Δu_D` route: form the element tangent at the
 **committed** state and multiply by the local prescribed increment, so the
 prescribed motion reaches the RHS **without** a constitutive evaluation in the
-lagging state. Principled and exact. **But** it changes behaviour for every model
+lagging state. Principled and exact. ~~**But** it changes behaviour for every model
 with a non-homogeneous `sp` — high blast radius for the same benefit A gets
-cheaply. Only worth it if A proves insufficient.
+cheaply.~~ Only worth it if A proves insufficient.
+
+> ⚠ **CORRECTED 2026-08-04 after building it** — A *did* prove insufficient
+> (80c) and C is now shipped as `LadrunoLoadControl -tangentPredictor`
+> ([[80d_p3_tangent_predictor_verdict_2026-08-04]]). **Two claims in the
+> paragraph above were wrong.**
+> 1. *"the same benefit A gets cheaply"* — A got **−10 % iterations and zero
+>    cutbacks removed**; C gets **cutbacks 23 → 0 and iterations 224 → 12, equal
+>    to the elastic control**. They are not the same benefit.
+> 2. *"high blast radius"* — C is an **opt-in flag on a fork integrator**; its
+>    four vanilla touch-points are additive virtuals with **no stock caller**,
+>    so an unflagged model cannot reach a line of it. The blast-radius
+>    description fitted a handler-level change, which this is not.
+>
+> Also: **`getTangForce()` is not the hook this note assumed.** It indexes a
+> global vector by `myID`, and an eliminated dof has `myID == -1` — the
+> prescribed increment is not representable in its argument. See 80d.
 
 ### Candidate D (cheap, diagnostic) — make this class of problem visible
 

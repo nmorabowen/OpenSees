@@ -123,6 +123,17 @@ buys a genuine 50 % on fixed marches — but do **not** present it as the fix fo
 the ADR-80 mechanism, and open D6/Candidate C as the next step rather than
 tuning `frac`.
 
+> ✅ **FOLLOWED, AND IT WORKED** — [[80d_p3_tangent_predictor_verdict_2026-08-04]].
+> Candidate C shipped as `-tangentPredictor` on this same class: cutbacks
+> **23 → 0**, iterations **224 → 12 = the elastic control exactly**. This
+> section's diagnosis is confirmed in full: a *linear* predictor reduces the
+> overstrain, a *tangent* predictor eliminates it, and only the second one
+> reaches the ceiling §3 described.
+>
+> Two numbers in the table above are also re-measured there and reproduce
+> exactly, including `-extrapolate 1.0` being **completely inert (60, not 35)**
+> under the re-issue idiom.
+
 ## 6. What NOT to do
 
 - **Do not tune `frac` upward** hunting for the gate. `frac` = 0.5 gave 56

@@ -3580,8 +3580,13 @@ int OPS_LadrunoLoadControlCmd()
     if (strcmp(sub, "deltaLambda") == 0)      out = lc->getDeltaLambda();
     else if (strcmp(sub, "extrapolate") == 0) out = lc->getExtrapolate();
     else if (strcmp(sub, "armed") == 0)       out = lc->predictorArmed() ? 1.0 : 0.0;
+    // Ladruno (ADR-80 P3): the tangent route is STATELESS, so `armed` is
+    // meaningless for it. `tangentPredicts` is the honest analogue -- how many
+    // increments actually took the b -= K*du_D path.
+    else if (strcmp(sub, "tangentPredictor") == 0) out = lc->getTangentPredictor() ? 1.0 : 0.0;
+    else if (strcmp(sub, "tangentPredicts") == 0)  out = (double)lc->getTangentPredictCount();
     else {
-        opserr << "WARNING ladrunoLoadControl - unknown subcommand (want setDeltaLambda|deltaLambda|extrapolate|armed)\n";
+        opserr << "WARNING ladrunoLoadControl - unknown subcommand (want setDeltaLambda|deltaLambda|extrapolate|armed|tangentPredictor|tangentPredicts)\n";
         return -1;
     }
     if (OPS_SetDoubleOutput(&numData, &out, true) < 0) return -1;

@@ -444,6 +444,100 @@ TransformationFE::getResidual(Integrator *theNewIntegrator)
 
 
 
+// Ladruno (ADR-80 P3) -- the Kratos-style `b -= K * du_D` term.
+//
+// WHY THIS AND NOT getTangForce(). The stub below has to stay a stub: its only
+// input is a GLOBAL vector indexed by myID, and a Transformation-eliminated dof
+// has myID == -1, so the prescribed increment it would need is not expressible
+// in its argument. The increment lives on the SP_Constraint, reachable only
+// through the constrained node's TransformationDOF_Group.
+//
+// WHAT IT COMPUTES. du in the element's ORIGINAL dof space, zero everywhere
+// except the sp'd dofs where it holds (prescribed total - committed nodal
+// value); then f = K du with K the element tangent AT THE CURRENT (committed)
+// state; then T^t f, so the caller can assemble it with the element's ordinary
+// ID -- whose -1 entries drop the eliminated rows for free, leaving exactly the
+// free-row coupling force.
+//
+// Returns 0 (and assembles nothing) when the element touches no sp'd dof, so
+// the caller's loop over every FE_Element costs one virtual call per node on
+// the overwhelming majority of elements.
+const Vector *
+TransformationFE::getSPTangentForce(Integrator *theNewIntegrator)
+{
+    if (modResidual == 0 || numOriginalDOF <= 0)
+        return 0;
+
+    // ---- 1. du in ORIGINAL element dof space -----------------------------
+    Vector du(numOriginalDOF);
+    du.Zero();
+
+    int numSPdof = 0;
+    int startOriginal = 0;
+    for (int i = 0; i < numGroups; i++) {
+        const Matrix *Ti = theDOFs[i]->getT();
+        int noCols = (Ti != 0) ? Ti->noRows() : theDOFs[i]->getNumDOF();
+        numSPdof += theDOFs[i]->getSPDispIncr(du, startOriginal);
+        startOriginal += noCols;
+    }
+
+    if (numSPdof == 0)
+        return 0;
+
+    // A HOMOGENEOUS sp (plain `fix`) has du == 0 and contributes nothing but a
+    // wasted element-tangent formation -- and most boundary elements in any
+    // model are of exactly that kind. Reporting "no contribution" for them also
+    // lets the caller's fallback recognise a model that has no non-homogeneous
+    // sp at all, which is the case the whole route is inert for.
+    bool nonzero = false;
+    for (int i = 0; i < numOriginalDOF && !nonzero; i++)
+        if (du(i) != 0.0)
+            nonzero = true;
+
+    if (!nonzero)
+        return 0;
+
+    // ---- 2. f = K du, K at the element's current (committed) state --------
+    const Matrix &theTangent = this->FE_Element::getTangent(theNewIntegrator);
+
+    Vector f(numOriginalDOF);
+    if (f.addMatrixVector(0.0, theTangent, du, 1.0) < 0) {
+        opserr << "WARNING TransformationFE::getSPTangentForce() - "
+               << "addMatrixVector failed\n";
+        return 0;
+    }
+
+    // ---- 3. modResidual = T^t f  (block loop mirrors getResidual) ---------
+    modResidual->Zero();
+
+    int startRowTransformed = 0;
+    int startRowOriginal = 0;
+    for (int i = 0; i < numGroups; i++) {
+        int noRows = 0;
+        int noCols = 0;
+        const Matrix *Ti = theDOFs[i]->getT();
+        if (Ti != 0) {
+            noRows = Ti->noCols(); // T^
+            noCols = Ti->noRows();
+            for (int j = 0; j < noRows; j++) {
+                double sum = 0.0;
+                for (int k = 0; k < noCols; k++)
+                    sum += (*Ti)(k, j) * f(startRowOriginal + k);
+                (*modResidual)(startRowTransformed + j) = sum;
+            }
+        } else {
+            noCols = theDOFs[i]->getNumDOF();
+            noRows = noCols;
+            for (int j = 0; j < noRows; j++)
+                (*modResidual)(startRowTransformed + j) = f(startRowOriginal + j);
+        }
+        startRowTransformed += noRows;
+        startRowOriginal += noCols;
+    }
+
+    return modResidual;
+}
+
 const Vector &
 TransformationFE::getTangForce(const Vector &disp, double fact)
 {

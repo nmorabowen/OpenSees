@@ -1043,7 +1043,48 @@ TransformationDOF_Group::addSP_Constraint(SP_Constraint &theSP)
     return 0;
 }
 
-int 
+// Ladruno (ADR-80 P3) -- ADDITIVE, no stock caller. The sp'd increment that
+// enforceSPs() below is about to write into the node, expressed relative to the
+// COMMITTED nodal value. Mirrors enforceSPs' own value convention exactly
+// (including the TRANSF_INCREMENTAL_SP initial-value term) so that the two can
+// never disagree about what "the prescribed increment" means.
+int
+TransformationDOF_Group::getSPDispIncr(Vector &du, int start)
+{
+  if (myNode == 0 || theSPs == 0)
+    return 0;
+
+  int numDof = myNode->getNumberDOF();
+  if (start < 0 || start + numDof > du.Size())
+    return 0;
+
+  const Vector &uCommitted = myNode->getDisp();
+
+  int n = 0;
+  for (int i = 0; i < numDof; i++) {
+    if (theSPs[i] != 0) {
+      double value = theSPs[i]->getValue();
+#ifdef TRANSF_INCREMENTAL_SP
+      value += theSPs[i]->getInitialValue();
+#endif // TRANSF_INCREMENTAL_SP
+      du(start + i) = value - uCommitted(i);
+      n++;
+    }
+  }
+
+  // An sp sitting on an MP-constrained node is overwritten by enforceSPs(0)
+  // from the retained node, so the increment computed here is not what the
+  // node will actually receive. Report it rather than assemble a wrong term.
+  if (n > 0 && theMP != 0) {
+    opserr << "WARNING TransformationDOF_Group::getSPDispIncr() - node "
+           << myNode->getTag() << " carries BOTH an sp and an mp; the "
+           << "-tangentPredictor term for it is not trustworthy\n";
+  }
+
+  return n;
+}
+
+int
 TransformationDOF_Group::enforceSPs(int doMP)
 {
 #ifdef TRANSF_INCREMENTAL_MP

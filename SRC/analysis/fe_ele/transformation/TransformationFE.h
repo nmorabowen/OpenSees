@@ -57,6 +57,9 @@ class TransformationFE: public FE_Element
     virtual const Matrix &getTangent(Integrator *theIntegrator);
     virtual const Vector &getResidual(Integrator *theIntegrator);
     
+    // Ladruno (ADR-80 P3): K * du_prescribed, transformed. See FE_Element.
+    virtual const Vector *getSPTangentForce(Integrator *theIntegrator);
+
     // methods for ele-by-ele strategies
     virtual const Vector &getTangForce(const Vector &x, double fact = 1.0);
     virtual const Vector &getK_Force(const Vector &accel, double fcat = 1.0);

@@ -539,6 +539,15 @@ FE_Element::addRIncInertiaToResidual(double fact)
 }
 
 
+// Ladruno (ADR-80 P3): base implementation -- SP_Constraints are handled by the
+// TransformationConstraintHandler, so only TransformationFE can have a term.
+const Vector *
+FE_Element::getSPTangentForce(Integrator *theIntegrator)
+{
+    return 0;
+}
+
+
 const Vector &
 FE_Element::getTangForce(const Vector &disp, double fact)
 {
