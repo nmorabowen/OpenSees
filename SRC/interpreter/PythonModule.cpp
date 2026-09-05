@@ -646,6 +646,7 @@ initopensees(void)
 "        • system Mumps — distributed MUMPS (-BLR, -stats, half-storage)\n"
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
 "        • LadrunoSANISAND — settable low-stress constants, wired + echoed\n"
+"        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);

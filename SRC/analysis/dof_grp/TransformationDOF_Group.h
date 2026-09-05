@@ -104,6 +104,10 @@ class TransformationDOF_Group: public DOF_Group
     int addSP_Constraint(SP_Constraint &theSP);
     int enforceSPs(int doMP);
 
+    // Ladruno (ADR-80 P3): the only class that actually owns SP_Constraints
+    // under `constraints Transformation`. See DOF_Group::getSPDispIncr.
+    virtual int getSPDispIncr(Vector &du, int start);
+
 // AddingSensitivity:BEGIN ////////////////////////////////////
     void addM_ForceSensitivity(const Vector &Udotdot, double fact = 1.0);        
     void addD_ForceSensitivity(const Vector &vel, double fact = 1.0);

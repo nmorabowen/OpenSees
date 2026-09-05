@@ -1,0 +1,3 @@
+{
+  "gate": "ADR-80 P3 — LadrunoLoadControl -tangentPredictor (candidate C, b -= K*du_D)",
+  "N": 20, "delta": 0.15, "fy": 379.5, "converged_sigma": 300.0,
