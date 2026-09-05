@@ -272,6 +272,26 @@ load–displacement curves converge; De × {½, 1, 2} → width scales monotonic
 **Parameters TIMs must supply (OQ2):** target band width relative to B, ramp duration / strain
 rate, the De they will run at, and the ultimate criterion (inherited OQ1, Prof. Gorini).
 
+> [!warning] CORRECTION 2026-09-05 — GATE U ran the τ = 0 leg of this ladder, and it changes §5
+> `Ladruno_implementation/_adr90_tau0_qu_band.md` (WP-A2) ran the unregularized control on the
+> campaign's own material, element (`LadrunoBrick -formulation bbar`) and lane, 3 meshes × 2
+> densities. Three corrections to the table above:
+> 1. **`q_u` is not a measurable quantity on this deck.** All six legs **seized** at ≤ 9 % of
+>    target settlement — inside SANISAND's uncapped `ModifiedEuler` substepping (`dT_min = 1e-6`,
+>    11–28 min per `analyze(1)`), **not** in the stepping controller (0/80 subdivisions used,
+>    steps 800–12800× above the floor). Any leg of this ladder that asks for a collapse load is
+>    unreachable until that is fixed.
+> 2. **The ultimate criterion is settlement-based (vault 65 D6), so the deliverable is `q` at
+>    fixed `s/B` — and its τ = 0 three-mesh band already CONTRACTS under refinement**:
+>    7.80 → 5.28 → 2.86 %, monotone from above (`e_init = 0.6944`). The gate wording "the
+>    negative control must fail objectivity" holds for the **width** (measured 0.675–0.824) and
+>    **not** for the load.
+> 3. **"Within a band TIMs declares" is still unavailable — OQ2 was never supplied**, so no
+>    "inside tolerance" verdict exists on either side, and the fork does not substitute one.
+>    Resolution floors that any future band must clear: 0.8–1.4 % (solver configuration) and
+>    5.93 % run-to-run on relaxed ladder rungs (the `s/B = 0.002` row is unresolved; 0.005 and
+>    0.010 are).
+
 ---
 
 ## 6. Phases and exit gates (ADR-31 P3 template: oracle → port → tier)
@@ -400,3 +420,22 @@ P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 3. **Write ADR 90** against the A0 result and §3's alternatives table; open the `wp/90c-duvaut-lions-wrapper` draft PR with the ADR + oracle only.
 4. Fix OQ7 prerequisites on `LadrunoSANISANDPlaneStrain` as a small separate PR.
 5. P1 only after the ADR passes an out-of-family read against §9.
+
+> [!warning] CORRECTION 2026-09-05 — the action list is superseded; items 2–5 are done or void
+> Items 2 and 3 are **done** (`cc7c7f7a5`, `8863a468c`, `819b69022`), item 4 is **done** by WP-B
+> (PR #785), and **item 5 is void as written**: the out-of-family read happened (three lenses),
+> D2 was **REOPENED**, and P0b + GATE U then measured what the read exposed. The current
+> next-actions list is `[[90_ladruno_viscoplastic_regularization_adr]]` **§8.1**, a **PROPOSED
+> close-out** the owner decides at CP2:
+> 1. **P0 closes**; regularization for localization **width** becomes **disclosure-only** (the
+>    width does not converge at τ = 0 — 0.675–0.824 — and what does converge is set by the
+>    imperfection field, not by τ).
+> 2. The **actionable engine work is an ADR-86 follow-up WP**, not this ADR: a **substep-count
+>    cap** on `ManzariDafalias`'s `ModifiedEuler`, the **`TanType` parser default** (elastic
+>    today — every existing fork SANISAND deck runs `Newton` as modified Newton), **tolerance
+>    guidance** (`NormUnbalance` on weight; `NormDispIncr` is unmeetable and not mesh-neutral),
+>    and a decision on **`-Presidual`**.
+> 3. **Re-run GATE U** after that work; **WP-F is judged only if a peak becomes reachable AND the
+>    matched-settlement band is outside OQ2** — which still requires TIMs to supply OQ2.
+> Item 1 (hand §5 to TIMs, ask for OQ2) is the one action that remains live and now blocks
+> everything downstream.

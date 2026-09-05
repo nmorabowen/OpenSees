@@ -2,7 +2,7 @@
 title: "ADR 90 — Rate (overstress) regularization for non-associated softening: scope, evidence, and the reopened D2"
 project: Ladruno
 type: ADR
-status: "P0 complete; P0b complete; D2 REOPENED; WP-C NOT opened"
+status: "P0 + P0b complete; GATE U run (inconclusive on q_u, width non-convergent); D2 REOPENED; close-out PROPOSED at CP2; WP-C NOT opened"
 priority: high
 owner: nmora
 related:
@@ -36,7 +36,7 @@ updated: 2026-09-05
 
 # ADR 90 — Rate (overstress) regularization for non-associated softening
 
-> [!warning] Status — **P0 complete; P0b complete; D2 REOPENED; WP-C NOT opened**
+> [!warning] Status — **P0 + P0b complete; GATE U run; D2 REOPENED; close-out PROPOSED at CP2; WP-C NOT opened**
 > **D2 was decided at CP1 on 2026-09-04 on evidence since shown incomplete, and is REOPENED.**
 > A three-lens adversarial pass (strategy / numerics / constitutive) found that P0's theorem
 > carries an unwritten hypothesis and that three exposures had not been measured. Phase **P0b**
@@ -46,6 +46,14 @@ updated: 2026-09-05
 >
 > **No C++ opens on this ADR.** WP-C is not opened; ND class tag **33022 remains RESERVED and
 > absent from `SRC/classTags.h`**.
+>
+> **GATE U ran on 2026-09-05** (WP-A2, `Ladruno_implementation/_adr90_tau0_qu_band.md`) and its
+> answer reframes the ADR: `q_u` is **not measurable** on the campaign's deck (every leg seizes
+> inside the constitutive integrator), the localization **width does not converge** at τ = 0
+> (0.675–0.824), and the **matched-settlement load — the quantity vault 65 D6 actually asks for —
+> already contracts under refinement WITHOUT regularization** (7.80 → 5.28 → 2.86 %). §8.1
+> therefore carries a **PROPOSED close-out**: P0 closes, width regularization is disclosure-only,
+> and the actionable work is an ADR-86 integrator follow-up. The owner decides at **CP2**.
 >
 > **Number 90 on purpose.** 88 is cited throughout `SRC/` by PR #778; 89 is proposed for Track T.
 > 33022 is free in the **ND** registry (highest is 33021, `SRC/classTags.h:594`) but is **live in
@@ -91,14 +99,89 @@ A0 (`[[_adr90_a0_results]]` §5.1), 1-D softening bar, `τ = 0`, **one-element i
 
 **The need has been asserted, not measured.** ADR-59 died partly on that. Before P1 may open:
 
-> **GATE U (un-descope).** Measure the **τ = 0 three-mesh `q_u` band on the SANISAND /
-> `LadrunoBrick -formulation bbar` deck** — the deck the campaign actually uses (S3, D7). **If that
-> band lies inside the campaign's own tolerance, this ADR is width *research*, not a P1
-> deliverable**, and lane (d) (§3.1) is the answer.
+> **GATE U (un-descope).** Measure the **τ = 0 three-mesh band on the SANISAND /
+> `LadrunoBrick -formulation bbar` deck** — the deck the campaign actually uses (S3, D7).
 >
-> *Measured value: **[PENDING — a sibling work package is running this deck; insert the number and
-> the date here before P1 is discussed]**.* The A0 bar's ×2-per-refinement energy collapse is a
-> 1-D caricature and does not discharge this gate.
+> **RUN AND REPORTED 2026-09-05** — `Ladruno_implementation/_adr90_tau0_qu_band.md` (WP-A2,
+> branch `wp/90a2-tau0-qu-band`), engine `548fe911427e90a2edfead05cb3672a738d25b6d`, driver
+> `Ladruno_files/testbed/hypo_bearing/sanisand_tau0_band.py`. Plane-strain strip footing,
+> `h0 = 1.0 / 0.5 / 0.25` × `e_init = 0.6944` (Gorini) / `0.60` (dense), weighted soil, rough
+> footing, patterned `sp` under the 1-argument `LoadControl` — i.e. **lane (b) of §3.1, already**.
+>
+> **VERDICT: INCONCLUSIVE on `q_u` (seizure); MEASURED on width (non-convergent) and on the
+> matched-settlement load (convergent, contracting).**
+
+**(i) `q_u` could not be measured at all.** All six legs seize far short of peak — the deepest
+reached `s/B = 0.0228` of a `0.25` target (9 %), still hardening. **No leg is a capacity**, so
+nothing from that WP may be quoted as a collapse load, and this gate returns no `q_u` value to
+compare against a tolerance.
+
+**And the seizure is not the stepping controller.** Every leg used **0 of its 80** pinned
+subdivisions and ended with its step still **800–12800×** above the floor. The binding resource is
+the **constitutive integrator**: SANISAND's substepped `ModifiedEuler` return collapses to
+`dT_min = 1e-6` (`ManzariDafalias.cpp:1380`) with **no substep-count cap**, so a single
+`analyze(1)` costs **11–28 minutes**. That is the boundary-value-problem form of §1.1's
+steps-to-converge blow-up — ill-posedness presenting as **non-termination** rather than as a wrong
+number.
+
+**(ii) The localization width does NOT converge — C4's negative half, measured on the frozen
+element.** `w2(h/2)/w2(h) = **0.675–0.824**` at every settlement and both densities (1.0 would be
+converged, 0.5 a one-element band). Meanwhile the **yielding volume** is near-objective
+(**3.95 %** at `s/B = 0.005`). *How much soil yields* is already nearly mesh-objective; *how thick
+the mechanism is* is not — which is exactly why the fork's shipped `lch` energy gates cannot serve
+this consumer (brief F6, §3.3).
+
+**(iii) The matched-settlement load band CONTRACTS under refinement, without any regularization.**
+
+| `s/B` | `e_init = 0.6944`: h1.0 / h0.5 / h0.25 | band | `e_init = 0.60` | band |
+|---|---|---|---|---|
+| 0.002 | 55.76 / 53.04 / 51.57 kPa | **7.80 %** | 84.12 / 79.68 / 81.78 | 5.42 % *(unresolved)* |
+| 0.005 | 120.60 / 115.61 / 114.40 | **5.28 %** | 194.39 / 187.61 / — | **3.55 %** |
+| 0.010 | 232.13 / 225.59 / — | **2.86 %** | — | — |
+
+Monotone from above for Gorini's density. **Resolution caveats, from the WP's own controls:** the
+`s/B = 0.002` row is *not* resolved (run-to-run scatter reaches **5.93 %** on relaxed ladder rungs,
+against **0.000 %** at six shared clean checkpoints); the `0.005` and `0.010` rows **are**. The
+solver-configuration floor is **0.8–1.4 %**, so no band below 1.4 % is a physical difference. The
+**direction** is evidence; the **exponent** is not.
+
+### 1.2.1 The reframing this forces — and the thing TIMs most needs to hear
+
+Vault 65 **D6** already sets the campaign's ultimate criterion as **settlement-based**: when no
+peak forms, take `q` at a fixed `s/B`. **Then the P1 deliverable is a matched-settlement load, not
+a collapse load — and GATE U has just measured that quantity's three-mesh band CONTRACTING under
+refinement with τ = 0: 7.80 % → 5.28 % → 2.86 %, monotone from above, on the campaign's own
+material, element, mesh sequence and lane.**
+
+Said plainly: **on the quantity the campaign will actually report, the unregularized problem is
+already converging.** The regularizer is not needed to make that number stable. What is *not*
+converging is the band **width** (0.675–0.824), and no deliverable in vault 65 is a width.
+
+Two things this does **not** say. It does not say the band is *inside* the campaign's tolerance —
+**OQ2 was never supplied**, so "inside tolerance" is unavailable by construction and this ADR does
+not substitute a number of its own. And it does not say anything about `q_u`: a capacity was never
+reached, so the collapse load remains unmeasured — **unreachable, not merely uncertain**.
+
+### 1.2.2 Two deck defects GATE U had to fix first — both fork-wide
+
+Neither is about this ADR, and both change how every existing fork SANISAND deck should be read
+(details and reproducers in the WP-A2 note §5 and in that branch's `LEDGER_quirks` entries):
+
+1. **`TanType` defaults to the ELASTIC tangent.** The parser default is `0`
+   (`LadrunoSANISAND.cpp:117`, copied from `OPS_ManzariDafaliasMaterial`), so
+   `ManzariDafalias3D::getTangent()` returns `mCe` — **every existing fork SANISAND deck runs
+   `algorithm Newton` as modified Newton.** It is invisible on the zero-free-DOF material-point
+   decks the fork's SANISAND tests all use, and costs ~7× on a BVP.
+2. **A tight `NormDispIncr` is unreachable on SANISAND** — the substepped return makes the discrete
+   stress–strain map only piecewise smooth, and the residual displacement norm stalls at a median
+   **6.6e-7 m**. It is also **not mesh-neutral** (the norm runs over free DOFs, 3.6× more at
+   `h0 = 0.25`), which disqualifies it inside a mesh-convergence study. Use `NormUnbalance`
+   relative to the model's own weight.
+
+Also from that WP, and a prerequisite for *any* deeper SANISAND push: at the ADR-86 default
+**`-Presidual 0.0`** the dense coarse leg drives a free-surface Gauss point onto the low-`p` floor
+at `s/B ≈ 0.0153` and starts logging *"the result at this integration point is set by the clamp,
+not by the model"*. It is past every number reported, but a faster deck hits it next.
 
 ## 2. Named consumer, and what is settled
 
@@ -353,8 +436,8 @@ Command (flags after positionals, ADR-86 rule): `nDMaterial LadrunoOverstress $t
 | **C1** | `τ = 0` reproduces the inner **bit-identically in stress, tangent and committed-state trajectory** over a multi-step path, including a **NaN/Inf** case | early-out + forward + copy (§4.1); trajectory gate at the material point and on `LadrunoBrick`; g++ byte check | restated (was "instruction path") |
 | **C2** | 1-D steady overstress `= E·ε̇·τ`, Δt-independent, **for PERFECT plasticity** | PV3 clone; `4.26e-15` measured | scoped |
 | **C3** | Tangent `= (1−β)C_e + β C_alg`, matches a central FD — **provided the inner returns an algorithmic tangent** | PV4/PV5 clones + an inner-tangent-type guard | scoped |
-| **C4** | Band width converges under h-refinement at a declared **(De, Δt, imperfection field)**, and does not at τ = 0 | §7 width gate + the §7.4 De rule | **weakened by V3** — the width is imperfection-set |
-| **C5** | `q_u` at fixed De converges in h — **and `q_u(De)/q_u(τ=0)` is reported per leg** | slow-tier gate; capacity rule | **bias must be reported** |
+| **C4** | Band width converges under h-refinement at a declared **(De, Δt, imperfection field)**, and does not at τ = 0 | §7 width gate + the §7.4 De rule | **negative half MEASURED** by GATE U (`w2(h/2)/w2(h) = 0.675–0.824` on the frozen element, both densities, every settlement) — but **weakened by V3**: the positive half is imperfection-set. GATE U's ratios are also **pre-peak**; a post-peak width is owed |
+| **C5** | ~~`q_u` at fixed De converges in h~~ → **the matched-settlement load `q(s/B)` at fixed De converges in h — and `q(De)/q(τ=0)` is reported per leg** | slow-tier gate; capacity rule | **RE-BASED and largely pre-empted.** No capacity is reachable on this deck (GATE U (i)), so under vault 65 D6 the deliverable is `q` at fixed `s/B` — and GATE U measured **that** band already contracting at τ = 0 (7.80 → 5.28 → 2.86 %). C5 therefore has little left to add, and the `q_u` upward bias below applies to whatever replaces it |
 | **C6** | The De-dependence of width and `q_u` is measured and disclosed, **at different step counts** | vault-14 sweep; matched pairs with different `nsteps` | unchanged |
 | **C7** | Transparent to `updateMaterialStage`, `getCopy(type)`, database round-trip, MP wire | Zone-A + roundtrip + `test_fspm_over_manzari_family` twin + the **two-instance plane-strain interleave** + **Newton vs ModifiedNewton bit-identity** | strengthened |
 | **C8** *(new)* | The **blended acoustic tensor is elliptic** at the declared (De, Δt) at every committed state of the A1/A2/A3 legs, and the minimum normalised det Q is reported | V4's metric, run on the deck | new gate |
@@ -380,6 +463,19 @@ Command (flags after positionals, ADR-86 rule): `nDMaterial LadrunoOverstress $t
    overstress, which distorts the fitted surface — vault 14's "what it does not establish", vault
    65 D9. A WP-D leg on **≥ 2 probe directions** is required before any fitted surface is cited.
 9. **No claim of non-negative incremental dissipation** (V2).
+10. **No claim that regularization is what stands between the campaign and a mechanism.** GATE U
+    measured the binding obstacle, and it is **the SANISAND constitutive integrator, not
+    ill-posedness**: a substepped `ModifiedEuler` that collapses to `dT_min = 1e-6` with **no
+    substep-count cap** (`ManzariDafalias.cpp:1380`), an elastic-tangent parser default that makes
+    `Newton` behave as modified Newton (`LadrunoSANISAND.cpp:117`), and a convergence test that
+    cannot be met on this material. Every leg used **0 of 80** subdivisions and stopped **800–12800×
+    above** the step floor. Adding a relaxation time to a material whose stress update costs
+    11–28 minutes per `analyze(1)` does not make the mechanism reachable — the integrator work does.
+    Any statement that the wrapper "lets the problem finish" must be measured against a deck with
+    that work already done, not against this one.
+11. **No claim on `q_u` in value, from any source.** GATE U reached no capacity on any leg; the
+    unregularized collapse load is **unreachable, not merely uncertain**, and nothing in this ADR
+    quotes one.
 
 ## 7. Acceptance case
 
@@ -490,12 +586,35 @@ change is deliberate: §3.3's honest-framing test forbids choosing De to hit a t
 |---|---|---|
 | **P0** ✅ **COMPLETE 2026-09-04** | ADR + numpy oracle + A0 bar | PV1–PV6 green; A0 verdicts H1–H4. `cc7c7f7a5`, `8863a468c` |
 | **P0b** ✅ **COMPLETE 2026-09-05** | State-dependent `C_e` leg; dissipation gate; imperfection study; non-associated DP + blended acoustic tensor | V1–V4 (§4.5). `892c22770`, `1052ecd36`. 13 `zone_a` cases, 30.3 s |
-| **GATE U** ⛔ **PENDING** | τ = 0 three-mesh `q_u` band on the SANISAND / B-bar deck | Inside the campaign tolerance ⇒ lane (d), ADR closes as research. §1.2 |
+| **GATE U** ✅ **RUN 2026-09-05 (WP-A2)** | τ = 0 three-mesh band on the SANISAND / B-bar deck; `_adr90_tau0_qu_band.md` | **INCONCLUSIVE on `q_u`** (all six legs seize at ≤ 9 % of target, no capacity); **MEASURED on width** (`w2(h/2)/w2(h) = 0.675–0.824`, non-convergent); **MEASURED on the matched-settlement load** (band contracts 7.80 → 5.28 → 2.86 %, monotone from above, **without regularization**). No "inside tolerance" verdict exists — OQ2 unsupplied. §1.2 |
 | **P1 — the C++ wrapper** | `LadrunoOverstress.{h,cpp}` per §5 | **Entry conditions, all required before a line is written:** (a) GATE U fired; (b) **written consumer sign-off** on the lane (§3.1), on the `q_u` upward bias (§6 NOT-claimed 7), and on whether results may be stamped *provisional* pending OQ1; (c) D2 re-decided on the P0b evidence. **Exit:** trajectory byte gate, PV3 overstress, non-tautology guard, stage-forwarding, round-trip, MP wire, Newton-vs-ModifiedNewton bit-identity, the plane-strain interleave test, **mutation gate red**, and the **out-of-family verdict — at P1, not P3** (it is the family PR; ADR-87 D9) |
 | **P2 — acceptance case** | A1 → A3 (slow tier) + A4; the De window measured by §7.4; the **non-proportionality error leg** on the SANISAND deck (OQ9); the ≥ 2-probe-direction leg (§6 NOT-claimed 8) | C4, C5, C6, C8 green; A4 two-sided. **Failure branch (strategy M9): if C5 is red — the collapse load does not converge at the declared De — the ADR does NOT iterate on τ. It falls to lane (d) and closes.** |
 | **P3 — TIMs integration** | Provenance fields; one radial probe on the chosen lane | Joint sign-off; vault note records the case as *verified* |
 | **P4 — optional** | Explicit/transient tier; `-implex` interplay; mesh-aware τ | Only on a named consumer |
-| **WP-F — conditional** | **True Duvaut–Lions inside `LadrunoSANISAND`** (projection of the current state; relaxes σ, `α`, `z` using the `protected` base members) | Fires if GATE U fires. **P0b makes this the preferred build**, not the fallback: it fixes V1 (real `C_e(p)`) and restores the convexity argument behind V2 |
+| **WP-F — conditional** | **True Duvaut–Lions inside `LadrunoSANISAND`** (projection of the current state; relaxes σ, `α`, `z` using the `protected` base members) | Judged only under the close-out's condition below. **P0b makes this the preferred build**, not the fallback: it fixes V1 (real `C_e(p)`) and restores the convexity argument behind V2 |
+
+### 8.1 PROPOSED close-out — the owner decides at CP2
+
+> **P0 closes.** Regularization for localization **width** is **DISCLOSURE-ONLY**: the width does
+> not converge with τ = 0 (GATE U: 0.675–0.824) and P0b shows what does converge is set by the
+> imperfection field (V3), not by τ — so no wrapper delivers a τ-declared width, and the ADR
+> discloses the width band rather than regularizing it.
+>
+> **The deliverable is already converging.** Under vault 65 D6 the campaign reports `q` at fixed
+> `s/B`; that band contracts 7.80 → 5.28 → 2.86 % at τ = 0, monotone from above. A regularizer
+> would bias it upward by +9.7…+17 % (R9) for no convergence gain.
+>
+> **The actionable engine work is an ADR-86 follow-up WP** — small, fork-owned, no new ADR: a
+> **substep-count cap** on `ManzariDafalias`'s `ModifiedEuler` (`dT_min = 1e-6`, uncapped), the
+> **`TanType` parser default** (elastic today — every fork SANISAND deck runs modified Newton),
+> and **tolerance guidance** (`NormUnbalance` relative to weight; `NormDispIncr` is unmeetable and
+> not mesh-neutral). Settle `-Presidual` while there.
+>
+> **Then re-run GATE U.** **WP-F is judged only if a peak becomes reachable AND the
+> matched-settlement band is outside OQ2's tolerance** — which requires TIMs to supply OQ2 first.
+
+**PROPOSED, not decided.** The owner decides at **CP2**. Nothing in §5 is authorised by it, and
+33022 stays reserved either way.
 
 ## 9. Decisions
 
@@ -555,6 +674,10 @@ change is deliberate: §3.3's honest-framing test forbids choosing De to hit a t
 | **R10** | **MAJOR — new** | **Incremental dissipation goes negative on unloading** (V2: −7.9e-3 of cumulative at De = 0.1), and the violated region — elastic unloading — **is the band boundary**. A total-energy check cannot see it. | §6 NOT-claimed 9; OQ10; WP-F removes it. |
 | **R11** | **MAJOR — new** | **β changes per Newton iteration** under `DisplacementControl` / `ArcLength` (`DisplacementControl.cpp:346`, `ArcLength.cpp:302`), so the residual is not a function of `u`. | D4 latching, or a hard refusal of those integrators; D5 makes the uniform lane primary. |
 | **R12** | **MINOR — new** | **One global τ distorts the fitted ellipsoid** under a direction-dependent rate field. | §6 NOT-claimed 8; the ≥ 2-probe-direction WP-D leg. |
+| **R13** | **BLOCKING — new (GATE U)** | **The campaign is blocked by the SANISAND integrator, not by ill-posedness — and this ADR could absorb effort that belongs there.** GATE U's six legs seized at 9 % of target settlement with **0/80** subdivisions used and steps **800–12800×** above the floor; the cost is `dT_min = 1e-6` with no substep cap (`ManzariDafalias.cpp:1380`), compounded by an elastic-tangent parser default (`LadrunoSANISAND.cpp:117`) and an unmeetable convergence test. A wrapper cannot fix any of those, and P2's A2/A3 legs would seize the same way. | §6 NOT-claimed 10; the §8 **PROPOSED close-out** routes the actionable work to an ADR-86 follow-up WP and re-runs GATE U after it. |
+| **R14** | **MAJOR — new (GATE U)** | **The deliverable may already be converged without any regularization.** Under vault 65 D6 the reported quantity is `q` at fixed `s/B`, and its τ = 0 three-mesh band contracts 7.80 → 5.28 → 2.86 % monotonically from above. Shipping a regularizer for a quantity that is already converging — and one that biases it upward by +9.7…+17 % (R9) — would make the campaign's numbers worse, not better. | §1.2.1; C5 re-based; the close-out makes width-regularization **disclosure-only**. |
+| **R15** | **MAJOR — new (GATE U)** | **Every existing fork SANISAND result was produced with the ELASTIC tangent.** The parser default `TanType 0` makes `algorithm Newton` behave as modified Newton; it is invisible on the zero-free-DOF material-point decks that constitute the fork's whole SANISAND test surface, and costs ~7× on a BVP. Convergence claims on any prior SANISAND BVP deck are suspect. | §1.2.2; owned by the ADR-86 follow-up WP, not by this ADR. |
+| **R16** | **MINOR — new (GATE U)** | **`-Presidual 0.0` (the ADR-86 default) clamps a free-surface Gauss point** on the dense coarse leg at `s/B ≈ 0.0153`, past which the answer is the clamp's, not the model's. A faster deck hits it next. | A declared `-Presidual`, a surcharge, or an accepted-and-disclosed clamp — a **choice**, made before any deeper push. |
 
 ## 12. Ledger obligations
 
@@ -584,6 +707,8 @@ against a target**; both interpreters; the banner line **on ship**; and two furt
 | **2026-09-05** | **Three-lens adversarial pass** (strategy / numerics / constitutive). Findings: the need is asserted not measured; the theorem needs a constant elastic operator and a holonomic inner; `q_u` is upward-biased; D3 reads a stale tangent; β changes per Newton iteration; the model is an overstress model, not Duvaut–Lions. |
 | **2026-09-05** | **Owner decision: RE-SCOPE (option A). D2 REOPENED**, "decided at CP1 on evidence since shown incomplete". No C++ opens. |
 | **2026-09-05** | **P0b executed** — V1 state-dependent `C_e`; V2 dissipation; V3 imperfection; V4 blended acoustic tensor. `892c22770`, `1052ecd36`. Recommendation: disclosure-only default, WP-F conditional, generic wrapper not recommended. |
+| **2026-09-05** | **GATE U executed (WP-A2, branch `wp/90a2-tau0-qu-band`, `_adr90_tau0_qu_band.md`)** on engine `548fe911427e90a2edfead05cb3672a738d25b6d`, 3 meshes x 2 densities on `LadrunoBrick -formulation bbar` under lane (b). All six legs **seized** at <= 9 % of target settlement with **0/80** subdivisions used and steps 800-12800x above the floor — the binding resource is SANISAND's uncapped `ModifiedEuler` substepping, 11-28 min per `analyze(1)`. So **`q_u` is unreachable, not merely uncertain**. Width **does not converge** (0.675-0.824); yielding **volume** is near-objective (3.95 %); the **matched-settlement load band contracts** 7.80 -> 5.28 -> 2.86 % at tau = 0. Two fork-wide deck defects fixed first: the `TanType` elastic parser default and an unmeetable, mesh-non-neutral `NormDispIncr`. |
+| **2026-09-05** | **Close-out PROPOSED (§8.1)** on the GATE U evidence — P0 closes; width regularization disclosure-only; the actionable work is an ADR-86 integrator follow-up WP (substep cap, `TanType` default, tolerance guidance, `-Presidual`); GATE U re-run after it; WP-F judged only if a peak becomes reachable *and* the matched-settlement band is outside OQ2. **Owner decides at CP2.** |
 | **2026-09-05** | **This ADR revised against all three critics** — status, §1.2 GATE U, §3 lane inversion, §4.0 renaming, §4.3 hypotheses, §4.5 P0b, §5 D3/M5/M6 corrections, §6 the bias and the dissipation, §7 the De rule and the two-sided A4, §8 P1 entry conditions and the P2 failure branch, §9 D2 reopened, §11 R1 reinstated + R9–R12. |
 
 ## References
