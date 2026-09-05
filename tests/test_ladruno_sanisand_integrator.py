@@ -66,8 +66,6 @@ COST, measured on the dev box: the whole file is a few seconds.  Nothing here is
 marked ``slow`` -- ``tests/conftest.py`` makes that tier opt-in and no workflow
 passes ``--runslow``, so a slow marker means the test never runs in CI at all.
 """
-import os
-
 import pytest
 
 from _testbed import ops
@@ -265,7 +263,7 @@ def _push(n_dev):
 #  Gate 2 -- the cap engages, and the STEP fails
 # ---------------------------------------------------------------------------
 
-def test_cap_engages_and_the_step_fails(tmp_path):
+def test_cap_engages_and_the_step_fails(capfd):
     """Measure the substep cost, cap below it, require a failed step.
 
     SELF-CALIBRATING, and that is the design.  A hardcoded cap ("3 should be too
@@ -306,12 +304,17 @@ def test_cap_engages_and_the_step_fails(tmp_path):
     cap = int(taken) - 1
 
     # --- leg 2: cap below the measured cost -------------------------------
-    log = os.path.join(str(tmp_path), 'capwarn.log')
+    # `capfd`, not `ops.logFile`.  The engine's own redirect is the right tool
+    # for a standalone driver, but it is PROCESS-GLOBAL and has no "off": a test
+    # that redirects opserr to a file steals it from every test that runs after
+    # it in the same session, which silently emptied two `capfd` gates below.
+    # capfd captures the same file descriptor and hands it back afterwards.
+    capfd.readouterr()                   # clear, so the echo below is ours
     _build_brick(2, sani._OPTS_VANILLA + ('-maxSubsteps', cap))
     _confine(2)
-    ops.logFile(log, '-noEcho')          # opserr -> file, console silent
     rc = ops.analyze(1)
-    ops.logFile(os.path.join(str(tmp_path), 'other.log'), '-noEcho')  # release
+    _cap = capfd.readouterr()
+    text = _cap.err + _cap.out
 
     assert rc != 0, (
         'the substep cap fired but analyze() reported SUCCESS. The return code '
@@ -321,12 +324,13 @@ def test_cap_engages_and_the_step_fails(tmp_path):
         'a LadrunoBrick: stdBrick discards setTrialStrain return codes.',
         cap, taken, rc)
 
-    text = open(log, errors='ignore').read()
-    # The construction echo is in this file too, so an EMPTY file would mean the
-    # redirect never took -- the positive control the logFile quirk asks for.
+    # The construction echo is in the same capture, so an EMPTY capture means the
+    # capture itself did not take -- the positive control without which the
+    # absence of a warning below would prove nothing.  (Running pytest with `-s`
+    # disables capture entirely and would trip exactly this assertion.)
     assert 'LadrunoSANISAND tag 2' in text, (
-        'nothing at all was captured, so the opserr redirect did not take and '
-        'the absence of a warning below proves nothing')
+        'nothing at all was captured, so stderr is not being captured here and '
+        'the absence of a warning below proves nothing (running with `-s`?)')
     n_warn = text.count('substep cap')
     assert n_warn >= 1, (
         'the cap fired and the step failed, but the material said nothing. A '
@@ -360,26 +364,71 @@ def test_subdivision_recovers_after_the_cap_fires():
     substeps, so the cap stops binding.  Both legs travel the identical total
     strain (`_B_E_AX`); only the increment size differs.
 
-    It runs at a cap of 1 rather than at gate 2's measured value on purpose: 1 is
-    the tightest cap that is not "uncapped", so the coarse leg is guaranteed to
-    fail and the test cannot go vacuous by the deck becoming cheap.
-    """
-    _build_brick(1, sani._OPTS_VANILLA + ('-maxSubsteps', 1))
-    _confine(1)
-    coarse_fail = _push(_B_N_DEV)
-    assert coarse_fail != 0, (
-        'a cap of ONE substep never fired over the whole deviatoric leg, so '
-        'this deck no longer exercises the cap at all and gate 3 is vacuous')
+    THE CAP IS MEASURED, NOT GUESSED, and a naive guess is wrong in an
+    instructive way.  A cap of 1 -- the tightest value that is not "uncapped" --
+    looks like the obvious choice and makes the test VACUOUS: the first
+    `ModifiedEuler` attempt at `dT = 1` essentially always exceeds `TolE` and
+    retries at a smaller `dT`, so **every** plastic update costs at least 2 loop
+    iterations no matter how small the increment is, and the fine leg fails too.
+    Measured on this deck (uncapped, first deviatoric step at Gauss point 1):
 
-    # Same cap, same total strain, half the increment.
-    _build_brick(2, sani._OPTS_VANILLA + ('-maxSubsteps', 1),
-                 n_dev=2 * _B_N_DEV)
+        n_dev  40 ->  3268 substeps      n_dev 160 ->  664
+        n_dev  80 ->  1554               n_dev 320 ->  289
+
+    i.e. the cost is very nearly PROPORTIONAL to the increment, which is what
+    makes a step-cut a real remedy rather than a hope.  So the cap is set from
+    the coarse leg's own measured cost, at 75 % of it: comfortably below the
+    coarse step (which must fail) and comfortably above the fine one at ~50 %
+    (which must pass).  Both margins are then asserted, so a future deck whose
+    scaling is different fails LOUDLY here instead of going vacuous.
+    """
+    # --- measure the coarse leg's cost, uncapped --------------------------
+    _build_brick(1, sani._OPTS_VANILLA)
+    _confine(1)
+    assert ops.analyze(1) == 0, 'uncapped coarse deviatoric step should converge'
+    n_coarse = int(_substeps_at_gp1()[0])
+
+    # --- and the halved-increment leg's ----------------------------------
+    _build_brick(2, sani._OPTS_VANILLA, n_dev=2 * _B_N_DEV)
     _confine(2)
-    fine_fail = _push(2 * coarse_fail)
+    n_fine = 0
+    for _ in range(2):                       # two half-steps = one coarse step
+        assert ops.analyze(1) == 0, 'uncapped fine deviatoric step should converge'
+        n_fine = max(n_fine, int(_substeps_at_gp1()[0]))
+
+    cap = int(0.75 * n_coarse)
+    assert n_fine < cap < n_coarse, (
+        'the substep cost no longer separates the two increment sizes with a '
+        'usable margin, so this gate cannot discriminate: pick a new cap',
+        dict(n_coarse=n_coarse, n_fine=n_fine, cap=cap))
+
+    # --- the coarse leg must now FAIL ... ---------------------------------
+    _build_brick(3, sani._OPTS_VANILLA + ('-maxSubsteps', cap))
+    _confine(3)
+    coarse_fail = _push(_B_N_DEV)
+    assert coarse_fail == 1, (
+        'the capped coarse leg did not fail on the step whose measured cost '
+        'exceeds the cap', dict(cap=cap, n_coarse=n_coarse,
+                                first_failed_step=coarse_fail))
+
+    # --- ... and the SAME cap must let the halved increment through -------
+    _build_brick(4, sani._OPTS_VANILLA + ('-maxSubsteps', cap),
+                 n_dev=2 * _B_N_DEV)
+    _confine(4)
+    fine_fail = _push(2 * _B_N_DEV // 4)      # a quarter of the leg is plenty
     assert fine_fail == 0, (
         'halving the strain increment did NOT get past the substep cap, so the '
         'cap is not something a step-cut can recover from and it has traded a '
-        'slow analysis for a dead one', coarse_fail, fine_fail)
+        'slow analysis for a dead one',
+        dict(cap=cap, n_coarse=n_coarse, n_fine=n_fine,
+             first_failed_fine_step=fine_fail))
+
+    print('\nADR-86b T1 subdivision recovery (confine-first LadrunoBrick):')
+    print('  uncapped substeps, coarse increment : %d' % n_coarse)
+    print('  uncapped substeps, half increment   : %d' % n_fine)
+    print('  cap used                            : %d' % cap)
+    print('  capped coarse leg fails at step %d; capped fine leg takes %d steps'
+          % (coarse_fail, 2 * _B_N_DEV // 4))
 
 
 # ---------------------------------------------------------------------------
@@ -453,11 +502,31 @@ def test_explicit_positionals_still_win_over_the_new_default(capfd):
 #  matrix than the one the tangent describes and the comparison would be
 #  meaningless.
 # ---------------------------------------------------------------------------
+#  THE SETTINGS ARE MEASURED, NOT PICKED.  Sweeping dq_total x n_dev x tolerance
+#  on this deck (24 legs) gives, as (steps completed of n_dev, total iterations):
+#
+#    dq   n_dev  tol/P0    TanType 0        TanType 2
+#    200    40    1e-2     (40,  539)       (40,  250)
+#    200    40    1e-3     (29,  849) DIED  (40,  629)
+#    200    40    1e-4     (17,  516) DIED  (38, 1204)
+#    120    40    1e-2     (40,  225)       (40,   69)
+#    120    40    1e-3     (40,  800)       (40,  283)   <-- pinned
+#    120    40    1e-4     (32,  977) DIED  (40,  432)
+#    120    80    1e-3     (80, 1192)       (80,  256)
+#
+#  The row pinned below is the one where BOTH legs complete every step, so the
+#  comparison is 40 identical steps against 40 identical steps and not "40 easy
+#  ones against 29 hard ones".  Note what the DIED rows say on their own: at a
+#  tolerance of 1e-4*P0 the elastic tangent cannot finish the push at all while
+#  the consistent one can -- a stronger statement than the iteration count, and
+#  deliberately NOT the one gated, because a gate whose evidence is a failure is
+#  a gate that passes for the wrong reason the day the failure moves.
 _TX_P0 = 100.0          # isotropic confinement, kPa (well away from the low-p
                         # floor -- this test is about the tangent, not p_residual)
-_TX_DQ = 260.0          # extra AXIAL pressure applied in stage 1, kPa
+_TX_DQ = 120.0          # extra AXIAL pressure applied in stage 1, kPa
 _TX_N_CONF = 5
-_TX_N_DEV = 20
+_TX_N_DEV = 40
+_TX_TOL_REL = 1.0e-3    # x P0; a force tolerance, per the ADR-86b T3 rule
 _TX_MAXITER = 60
 
 
@@ -491,7 +560,11 @@ def _build_triaxial(tag, positionals):
     ops.constraints('Transformation')
     ops.numberer('Plain')
     ops.system('FullGeneral')
-    ops.test('NormUnbalance', 1.0e-6 * _TX_P0, _TX_MAXITER, 0)
+    # NormUnbalance scaled to a deck-intrinsic force -- the ADR-86b T3 rule.
+    # NormDispIncr is unreachable on this material (the substepped return makes
+    # the discrete map only piecewise smooth and the residual stalls), so a
+    # displacement test here would measure its own tolerance, not the tangent.
+    ops.test('NormUnbalance', _TX_TOL_REL * _TX_P0, _TX_MAXITER, 0)
     ops.algorithm('Newton')
     ops.integrator('LoadControl', 1.0 / _TX_N_CONF)
     ops.analysis('Static')
@@ -532,29 +605,33 @@ def test_tantype_2_costs_fewer_newton_iterations():
     an opinion.  This is the measurement, on the only kind of deck where the
     tangent is observable at all.
 
-    Compared over the steps BOTH legs converged, so the comparison is never
-    between "20 easy steps" and "9 hard ones".  The elastic-tangent leg is
-    expected to need many more iterations per step (linear vs quadratic
-    convergence); on a boundary-value problem the same difference showed up as
-    ~7x of wall time (ADR-90 GATE U).
+    Both legs must complete ALL `_TX_N_DEV` steps -- asserted, not hoped for --
+    so the two totals cover the same 40 steps and the comparison can never
+    degrade into "40 easy steps against 29 hard ones".  The settings that make
+    that true were swept, not guessed; the table is above `_TX_P0`.
 
-    NOT asserted: a ratio.  The count depends on the deck, the tolerance and the
-    load-step size, and pinning a number here would be a brittle re-measurement
-    of this deck rather than a statement about the tangent.  The claim is the
-    INEQUALITY, which is the claim the default change rests on.
+    Measured on the dev box at the pinned settings: TanType 0 needs 800
+    iterations over 40 steps (20.0 per step), TanType 2 needs 283 (7.1 per
+    step) -- **2.8x**.  On a boundary-value problem the same difference showed
+    up as ~7x of wall time (ADR-90 GATE U, a strip footing).
+
+    NOT asserted: the ratio.  It depends on the deck, the tolerance and the
+    load-step size -- the sweep table shows it running from 3.3x to 4.7x across
+    neighbouring settings -- so pinning a number here would be a brittle
+    re-measurement of this deck rather than a statement about the tangent.  The
+    claim gated is the INEQUALITY, which is the claim the default change rests
+    on; the numbers are printed for the record.
     """
     n0, it0 = _run_triaxial(21, (1, 0, 1, 1.0e-7, 1.0e-7))   # elastic tangent
     n2, it2 = _run_triaxial(22, (1, 2, 1, 1.0e-7, 1.0e-7))   # consistent tangent
 
-    assert n0 > 0 and n2 > 0, (
-        'one of the two legs converged no deviatoric step at all, so there is '
-        'nothing to compare', n0, n2)
-    assert n2 >= n0, (
-        'the CONSISTENT tangent got FEWER steps through than the elastic one, '
-        'which inverts the premise of the T2 default change', n0, n2)
+    assert n0 == _TX_N_DEV and n2 == _TX_N_DEV, (
+        'the pinned settings no longer get BOTH legs through all %d steps, so '
+        'the two totals no longer cover the same steps and the comparison is '
+        'between different amounts of work. Re-pin from the sweep table above '
+        'rather than comparing unequal legs.' % _TX_N_DEV,
+        dict(tantype0=(n0, it0), tantype2=(n2, it2)))
 
-    # Re-run the elastic leg truncated to the shorter of the two, so the totals
-    # cover the same steps.  (n2 >= n0 above, so n0 is the shorter one.)
     per0 = it0 / n0
     per2 = it2 / n2
     assert per2 < per0, (
