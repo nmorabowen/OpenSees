@@ -96,6 +96,12 @@
 #ifndef LADRUNO_MUTATE_SANISAND
 #  define LADRUNO_MUTATE_SANISAND LADRUNO_MUT_NONE
 #endif
+// ADR 91: the shell section stiffness-modifier decorator. Gated at the SECTION
+// resultant/tangent, not at an element -- the whole feature IS a constitutive
+// transform, so the section accessors are its only physics surface.
+#ifndef LADRUNO_MUTATE_SHELLMOD
+#  define LADRUNO_MUTATE_SHELLMOD LADRUNO_MUT_NONE
+#endif
 
 namespace LadrunoMutation {
 
@@ -112,7 +118,8 @@ inline bool anyActive(void)
          (LADRUNO_MUTATE_UP        != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_CONTACT   != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_EXPLICIT  != LADRUNO_MUT_NONE) ||
-         (LADRUNO_MUTATE_SANISAND  != LADRUNO_MUT_NONE);
+         (LADRUNO_MUTATE_SANISAND  != LADRUNO_MUT_NONE) ||
+         (LADRUNO_MUTATE_SHELLMOD  != LADRUNO_MUT_NONE);
 }
 
 // Sabotage an internal-force vector. Placed AFTER the force is formed and

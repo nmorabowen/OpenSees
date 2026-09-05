@@ -63,6 +63,17 @@ FAMILIES = {
         # equilibrium, reactions or displacements must overwhelmingly notice.
         "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
     },
+    # ADR 91 shell stiffness-modifier decorator. Gated at the SECTION accessors
+    # (getStressResultant / getSectionTangent / getInitialTangent), not at an
+    # element: the whole feature is a constitutive transform, so that is its
+    # only physics surface. NOTE the expected survivors under ZERO are the three
+    # pure PARSE-TIME refusal tests (R1/R3/R4) -- they never run an analysis, so
+    # they cannot notice deleted physics, and that is the correct answer rather
+    # than a gap. Gated.
+    "SHELLMOD": {
+        "paths": ["test_ladrunoShellModifier*.py"],
+        "min_score": {"ZERO": 0.60, "SCALE": 0.30, "IDENT": 0.0},
+    },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
     # evidence suite), but running a gate before the call sites exist would
@@ -77,7 +88,7 @@ FAMILIES = {
 # Families whose C++ call sites are live. WP-3 moves the rest across as it
 # inserts their gates; `run` refuses an ungated family so a 0.0 score can never
 # be mistaken for "this suite is worthless".
-GATED_FAMILIES = {"CONTINUUM"}
+GATED_FAMILIES = {"CONTINUUM", "SHELLMOD"}
 
 PROBE = (
     "import json,sys\n"

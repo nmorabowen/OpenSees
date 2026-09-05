@@ -52,6 +52,7 @@
 #include <elementAPI.h>
 #include <Parameter.h>
 #include <ID.h>
+#include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gate (ADR 91 family SHELLMOD)
 
 // static work storage (order 8, fixed)
 Vector LadrunoShellModifierSection::sigma(8);
@@ -265,6 +266,8 @@ LadrunoShellModifierSection::getStressResultant(void)
     for (int i = 0; i < 8; i++)
         sigma(i) = scale[i] * sIn(i);
 
+    LADRUNO_MUTATE_FORCE(SHELLMOD, sigma);   // ADR-87 D2 gate
+
     return sigma;
 }
 
@@ -277,6 +280,8 @@ LadrunoShellModifierSection::getSectionTangent(void)
         for (int j = 0; j < 8; j++)
             D(i, j) = scale[i] * scale[j] * Din(i, j);
 
+    LADRUNO_MUTATE_TANGENT(SHELLMOD, D);   // ADR-87 D2 gate
+
     return D;
 }
 
@@ -288,6 +293,8 @@ LadrunoShellModifierSection::getInitialTangent(void)
     for (int i = 0; i < 8; i++)
         for (int j = 0; j < 8; j++)
             D(i, j) = scale[i] * scale[j] * Din(i, j);
+
+    LADRUNO_MUTATE_TANGENT(SHELLMOD, D);   // ADR-87 D2 gate
 
     return D;
 }
