@@ -1,0 +1,27 @@
+[10:56:29] footing B=2.0 m, q_Vesic=637.5 kPa (q0*Nq*sq=430.4 + gamma term=207.1), push to s/B=0.15 (300 mm), adaptive increment base=0.050 mm in [0.0063, 0.400] mm
+[10:56:29] === leg: t10_std
+LadrunoUP: unsymmetric tangent — use a general solver (UmfPack/SuperLU/FullGeneral/BandGeneral; MUMPS SYM=0 in MPI); the ProfileSPD default silently drops a coupling block
+LadrunoUP: BTET10 element(s) supplied in the conventionally right-handed winding evaluate detJ < 0 under the pinned node\u2194barycentric map — folding the integration measure to |detJ| (gradients are orientation-correct; printed once)
+[10:56:29] t10_std model built: 5415 nodes, 3402 tet10 [-geom corot, -formulation std, k=1.0e-04]
+[10:56:29] t10_std drainage: c_v=2.28 m2/s, t_push=2.4e+05 s => T_v=1.37e+05 (DRAINED)
+[10:57:06] t10_std gravity done [Pardiso, 37s]
+[10:57:06] t10_std pore-pressure probe: node 4052 at (0.33, 0.33, -0.75), datum p0=7.357 kPa (hydrostatic would be 7.357)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 8.42607e-07 (max: 1e-07, Norm deltaR: 0.000866927)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 40
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.20311e-06 (max: 1e-07, Norm deltaR: 0.000290106)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 20
+OpenSees > analyze failed, returned: -3 error flag
+[10:59:57] t10_std hit MAXSTEP=10 — backbone TRUNCATED
+[10:59:57] t10_std leg done: 10 steps to s/B=0.0001, 2 retries, 208s -> backbone_t10_std__smoke.csv
+[10:59:57] === summary (q/q_Vesic at s/B checkpoints; '--' = not reached)
+[10:59:57] s/B=0.010: t10_std=--  
+[10:59:57] s/B=0.025: t10_std=--  
+[10:59:57] s/B=0.050: t10_std=--  
+[10:59:57] s/B=0.100: t10_std=--  
+[10:59:57] s/B=0.150: t10_std=--  
+[10:59:57] t10_std: TRUNCATED at s/B=0.0001 (q=23.1 kPa) — no softening verdict

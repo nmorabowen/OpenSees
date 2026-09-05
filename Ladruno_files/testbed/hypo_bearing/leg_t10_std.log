@@ -1,0 +1,23 @@
+[11:00:39] footing B=2.0 m, q_Vesic=637.5 kPa (q0*Nq*sq=430.4 + gamma term=207.1), push to s/B=0.15 (300 mm), adaptive increment base=0.050 mm in [0.0063, 0.400] mm
+[11:00:39] === leg: t10_std
+[11:00:40] t10_std model built: 5415 nodes, 3402 tet10 [-geom corot, -formulation std, k=1.0e-04]
+[11:00:40] t10_std drainage: c_v=2.28 m2/s, t_push=2.4e+05 s => T_v=1.37e+05 (DRAINED)
+[11:00:59] t10_std gravity done [Pardiso, 20s]
+[11:00:59] t10_std pore-pressure probe: node 4052 at (0.33, 0.33, -0.75), datum p0=7.357 kPa (hydrostatic would be 7.357)
+[11:38:24] t10_std s/B=0.0092 q=482.0 kPa q/qV=0.76 dp=0.0 kPa ds=0.100mm [100 steps, 12 retries, 2245s]
+[12:23:58] t10_std s/B=0.0130 q=592.4 kPa q/qV=0.93 dp=0.0 kPa ds=0.025mm [200 steps, 29 retries, 4979s]
+[13:07:54] t10_std s/B=0.0155 q=653.1 kPa q/qV=1.02 dp=0.0 kPa ds=0.050mm [300 steps, 46 retries, 7615s]
+[14:00:26] t10_std s/B=0.0168 q=680.6 kPa q/qV=1.07 dp=0.0 kPa ds=0.025mm [400 steps, 66 retries, 10767s]
+[14:50:42] t10_std s/B=0.0180 q=705.6 kPa q/qV=1.11 dp=0.0 kPa ds=0.025mm [500 steps, 86 retries, 13783s]
+[15:33:23] t10_std s/B=0.0193 q=729.0 kPa q/qV=1.14 dp=0.0 kPa ds=0.025mm [600 steps, 106 retries, 16344s]
+[16:09:02] t10_std s/B=0.0212 q=761.9 kPa q/qV=1.20 dp=0.0 kPa ds=0.100mm [700 steps, 123 retries, 18483s]
+[16:44:17] t10_std s/B=0.0231 q=791.5 kPa q/qV=1.24 dp=0.0 kPa ds=0.100mm [800 steps, 140 retries, 20598s]
+[16:57:29] t10_std NO CONVERGENCE at s/B=0.0238 even at ds=0.0031 mm < DS_MIN — backbone TRUNCATED
+[16:57:29] t10_std leg done: 829 steps to s/B=0.0238, 150 retries, 21410s -> backbone_t10_std.csv
+[16:57:29] === summary (q/q_Vesic at s/B checkpoints; '--' = not reached)
+[16:57:29] s/B=0.010: t10_std=0.79  
+[16:57:29] s/B=0.025: t10_std=--  
+[16:57:29] s/B=0.050: t10_std=--  
+[16:57:29] s/B=0.100: t10_std=--  
+[16:57:29] s/B=0.150: t10_std=--  
+[16:57:29] t10_std: TRUNCATED at s/B=0.0238 (q=801.3 kPa) — no softening verdict
