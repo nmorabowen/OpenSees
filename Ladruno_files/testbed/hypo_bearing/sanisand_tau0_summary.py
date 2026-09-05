@@ -134,6 +134,8 @@ def widths_from_csv(path, z_probes=Z_PROBES):
 R3_BAND_HALFWIDTH_PCT = 3.0
 R3_SEQUENCE = {1.0: 1.0849, 0.5: 0.9977, 0.25: 0.9514}   # measured, DruckerPrager
 _ADMISSIBLE = ("TARGET", "PEAK", "BUDGET")
+# `KILLED` joins FLOOR/WALL as a non-result: the process died before the leg
+# terminated, so its q_max is where a machine stopped, not where the soil did.
 
 
 def load(out_dir):
@@ -161,6 +163,22 @@ def load(out_dir):
                               f"a2_{r['tag']}_field_sB{c['cp_target']:g}.csv")
             if os.path.exists(cp):
                 c.update(widths_from_csv(cp))
+        # A PARTIAL leg (written at a checkpoint by a process that was later
+        # killed) has no termination classification at all.  Fill the fields
+        # the tables read, marked so no reader can mistake it for a result.
+        if r.get("partial"):
+            r.setdefault("mode", "KILLED")
+            if r.get("mode") == "RUNNING":
+                r["mode"] = "KILLED"
+            r["verdict"] = ("process killed mid-leg; this is a checkpoint "
+                            "snapshot, NOT a termination")
+            for k, v in (("plateau", False), ("peaked", False),
+                         ("free", False), ("capacity", False),
+                         ("tail_pct", float("nan")), ("headroom", 0.0),
+                         ("s_peak_over_B", float("nan")),
+                         ("base_foot_mismatch", float("nan")),
+                         ("n_outside_bounding", -1), ("n_clamping", -1)):
+                r.setdefault(k, v)
         legs.append(r)
     return legs
 

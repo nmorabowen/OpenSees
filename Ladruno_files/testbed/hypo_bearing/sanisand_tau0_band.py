@@ -438,6 +438,20 @@ def _plastic_field(n_hex):
     return epsq
 
 
+def _write_leg_json(out_dir, tag, payload):
+    """Write `a2_<tag>.json` atomically (tmp + replace).
+
+    Called at every checkpoint with `partial=True` and once more at the end
+    with the full record, so a killed process still leaves a leg record the
+    summariser can assemble.  Atomic because a half-written JSON read by the
+    summariser is worse than no JSON at all."""
+    final = os.path.join(out_dir, f"a2_{tag}.json")
+    tmp = final + ".tmp"
+    with open(tmp, "w") as jf:
+        json.dump(payload, jf, indent=2, sort_keys=True, default=float)
+    os.replace(tmp, final)
+
+
 def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
     with open(path, "w", newline="") as ffh:
         ffh.write(f"# {header}\n")
@@ -665,6 +679,31 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                         q_base=qb, wall_s=time.time() - t0, step=len(rows))
             snap.update(widths_from_field(fld, xc, zc, hx, hz, vol))
             checkpoints.append(snap)
+            # Write the leg record NOW, marked partial.  A leg's JSON is
+            # otherwise only written when `run_leg` returns, so a process that
+            # is killed mid-leg -- which HAPPENED to this campaign's first
+            # attempt, four processes at once, none of them past its first
+            # leg -- leaves hours of curve and field CSVs that the summariser
+            # cannot assemble.  The cost is one small file write per
+            # checkpoint; the benefit is that the study survives its own
+            # infrastructure.
+            _write_leg_json(out_dir, tag, dict(
+                tag=tag, h0=h0, e_name=ename, e_init=e_init,
+                build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
+                date=datetime.datetime.now().isoformat(timespec="seconds"),
+                partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
+                dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, push_tol=tol,
+                push_test=test_type, tan_type=tan_type, ds_max=ds_max,
+                subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
+                wall_budget_s=wall_budget, resultant_err=resultant_err,
+                patch_err=patch_err, eta_max_grav=eta_max,
+                eta_over_Mc=eta_max / M_C, p_min_grav=p_min,
+                mode="RUNNING", verdict="leg still running at this snapshot",
+                q_u=float(max(r[2] for r in rows)),
+                s_end_over_B=s / r3.B_FOOT, steps=len(rows), nsub=nsub,
+                nfail=nfail, nrelax=nrelax, wall_s=time.time() - t0,
+                csv=csv_path, log=log_path, checkpoints=list(checkpoints)))
             _dump_field(
                 os.path.join(out_dir, f"a2_{tag}_field_sB{cp:g}.csv"),
                 f"ADR90 WP-A2 plastic field at CHECKPOINT s/B={cp:g} "
@@ -777,8 +816,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         log=log_path, checkpoints=checkpoints,
     )
     res.update(widths)
-    with open(os.path.join(out_dir, f"a2_{tag}.json"), "w") as jf:
-        json.dump(res, jf, indent=2, sort_keys=True)
+    res["partial"] = False
+    _write_leg_json(out_dir, tag, res)
     return res
 
 
