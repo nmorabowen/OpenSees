@@ -468,6 +468,15 @@ DOF_Group::getTangForce(const Vector &Udotdot, double fact)
 }
 
 
+// Ladruno (ADR-80 P3): base implementation -- a plain DOF_Group carries no
+// SP_Constraint, so there is nothing to report and nothing is written.
+int
+DOF_Group::getSPDispIncr(Vector &du, int start)
+{
+  return 0;
+}
+
+
 const Vector &
 DOF_Group::getM_Force(const Vector &Udotdot, double fact)
 {

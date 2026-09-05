@@ -153,6 +153,14 @@ FluidSolidPorousMaterial::FluidSolidPorousMaterial (const FluidSolidPorousMateri
  : NDMaterial(a.getTag(),ND_TAG_FluidSolidPorousMaterial)
 {
   matN = a.matN;
+  // Ladruno (ADR-90): this VOID, no-argument getCopy() -- not getCopy(a.theSoilMaterial->getType())
+  // -- is load-bearing for tests/test_ladruno_sanisand.py::
+  // test_getcopy_void_carries_the_settings_planestrain, which relies on this call being the
+  // ONLY reachable path to a 2D UW-family subclass's (e.g. LadrunoSANISANDPlaneStrain's)
+  // getCopy(void) override (see LEDGER_quirks.md, the InitStrain/StagedStrain entry). If this
+  // ever changes to forward the wrapped material's own type string instead, that test silently
+  // stops covering what it claims to and starts re-exercising the already-covered
+  // getCopy(const char*) path instead -- no assertion here would go red on its own.
   theSoilMaterial = a.theSoilMaterial->getCopy();
   // Ladruno (ADR 86 follow-up, TIMs OQ29): the element makes its Gauss-point
   // instances through this ctor, and the committed vectors stayed size-0 until

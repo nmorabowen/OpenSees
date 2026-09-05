@@ -33,7 +33,7 @@ def setresponse_smoke(ele_tag, responses):
 
 
 def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-10,
-                       probe_fn=None):
+                       probe_fn=None, rounds=1):
     """Build -> solve -> save to FE_Datastore -> wipe -> rebuild skeleton ->
     restore -> assert committed nodal disp is recovered bit-for-bit.
 
@@ -47,6 +47,22 @@ def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-
     reverted the element — this observes state that DEPENDS on the element being
     reconstructed correctly (formulation / geometry-method / committed F), so it
     is the part that actually proves sendSelf/recvSelf round-tripped the element.
+
+    rounds (default 1, keeping every existing call site byte-identical):
+    the number of save/wipe/restore cycles to run BEFORE the final
+    comparison against the pre-save snapshot. A SINGLE round trip does NOT
+    catch the class of defect where a null/broker-constructed object carries
+    a WRONG classTag but otherwise-correct state (see LEDGER_quirks.md,
+    "`ManzariDafaliasPlaneStrain`'s null constructor sets the WRONG
+    classTag") — recvSelf restores that object's data fine, so round 1's
+    comparison passes either way. The defect only shows up once THAT
+    (mistagged) object is asked to sendSelf its OWN classTag and gets
+    restored AGAIN — i.e. round 2 — at which point the broker may construct
+    an object of the WRONG TYPE entirely from round 2 onward. Passing
+    `rounds=2` (or more) re-saves and re-restores the ALREADY-RESTORED
+    object each subsequent round (never a fresh `build_fn()` output), which
+    is what makes a later round see whatever classTag the previous round's
+    restored object actually carries, not a freshly-correct one.
 
     The FE_Datastore writes <dbname>.IDs.* / <dbname>.VECs.* files next to the
     datastore path, so we point it at a TemporaryDirectory — never the cwd /
@@ -66,14 +82,20 @@ def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-
             ops.database("File", dbpath)
         except Exception as exc:  # noqa: BLE001 - build without FE_Datastore
             pytest.skip(f"database() unsupported in this build: {exc}")
-        saved = ops.save(1)
-        if saved is not None and saved < 0:
-            pytest.skip("database save returned failure on this build")
 
-        ops.wipe()
-        build_fn()                  # same topology, fresh (uncommitted) state
-        ops.database("File", dbpath)
-        ops.restore(1)
+        for commit_tag in range(1, rounds + 1):
+            saved = ops.save(commit_tag)
+            if saved is not None and saved < 0:
+                pytest.skip("database save returned failure on this build")
+
+            ops.wipe()
+            if commit_tag == 1:
+                build_fn()           # first restore needs a skeleton to land on
+            # round 2+ deliberately does NOT call build_fn() again: the whole
+            # point is to re-save/re-restore the object round 1 ALREADY
+            # restored (with whatever classTag IT carries), not a fresh one.
+            ops.database("File", dbpath)
+            ops.restore(commit_tag)
 
         after = {int(n): ops.nodeDisp(int(n)) for n in probe_nodes}
         ele_after = list(probe_fn()) if probe_fn is not None else None

@@ -1,7 +1,7 @@
 ---
 title: Non-homogeneous SP imposition strengthening — a static predictor, not a new handler
 project: Ladruno
-status: S1 BUILT but its acceptance gate FAILED — D6 (getTangForce) triggered
+status: SOLVED — P3 `-tangentPredictor` (candidate C / D6) MEETS the acceptance gate exactly
 priority: medium
 owner: nmora
 tags:
@@ -13,6 +13,7 @@ aliases:
   - ADR-80
   - SP imposition strengthening
   - LadrunoLoadControl
+  - tangentPredictor
 updated: 2026-08-04
 parent: "[[80_sp_prescribed_displacement_findings]]"
 ---
@@ -32,6 +33,10 @@ gates have run**:
 1. **S1 (primary): `LadrunoLoadControl`** — a fork-owned static integrator,
    strict superset of stock `LoadControl`, adding a **`-extrapolate <frac>`
    displacement predictor** (Abaqus `EXTRAPOLATION=LINEAR` analogue).
+   ⚠ **`-extrapolate` FAILED its gate (80c); the same class's
+   `-tangentPredictor` (P3, candidate C / D6) is the remedy that passed.**
+   `-extrapolate` is kept — safe, off by default, worth 50 % on a fixed march
+   under the `persist` idiom — but it is NOT the ADR-80 fix.
    `-extrapolate 0.0` is the default and must be **bit-identical to stock**.
    Integrator classTag **33015** (next free in the ladruno integrator band;
    the ND-registry 33015 = `LadrunoRCConcrete` is a different registry, not a
@@ -51,9 +56,11 @@ gates have run**:
 
 **Explicitly NOT in scope** (findings §4, upheld): a new SP constraint
 handler; `Penalty`/`Lagrange` as workarounds; `updateDomain()` in
-`LoadControl::newStep`; implementing `TransformationFE::getTangForce()`
+`LoadControl::newStep`; ~~implementing `TransformationFE::getTangForce()`
 (Kratos-style `b −= K·Δu_D`) — **demand-driven only, if S1 proves
-insufficient**; any arc-length/relaxation device (the elastic control has 0
+insufficient**~~ → **S1 DID prove insufficient; the `b −= K·Δu_D` route is now
+IN scope and SHIPPED as `-tangentPredictor` (P3). It is not `getTangForce()`
+though — see D6.**; any arc-length/relaxation device (the elastic control has 0
 cutbacks and no limit point — nothing for them to do).
 
 ## Why
@@ -125,12 +132,27 @@ constitutive law should not be evaluated before that distribution happens.*
   `EnergyIncr` is fooled too (anything built on `dU` is), and test-dependence
   turned out to *be* the mechanism — the same deck is right or wrong purely by
   choice of convergence test.**
-- **D6 — measure, then decide on C/D.** `TransformationFE::getTangForce()`
-  (the stub at
-  [TransformationFE.cpp:447-453](../SRC/analysis/fe_ele/transformation/TransformationFE.cpp))
-  is the hook for the principled Kratos-style route, but it changes behaviour
-  for every model with a non-homogeneous `sp` — high blast radius for the
-  same benefit S1 gets cheaply. Deferred unless S1's acceptance gate fails.
+- **D6 — measure, then decide on C/D.** ✅ **TRIGGERED BY P2'S FAILURE, BUILT,
+  AND IT PASSED — see [[80d_p3_tangent_predictor_verdict_2026-08-04]].** Shipped
+  as `LadrunoLoadControl -tangentPredictor` (no new class, no new class tag).
+  Cutbacks **23 → 0**, iterations **224 → 12** — *equal to the elastic control,
+  every digit* — with `u_mid` unmoved at 0.075000.
+  > ⚠ **TWO STATED PREMISES OF THIS DECISION WERE WRONG.**
+  > 1. **`getTangForce()` is NOT the hook.** Its only input is a global vector
+  >    indexed by `myID`, and an eliminated dof has `myID == -1`, so the
+  >    prescribed increment is not representable in its argument. The very
+  >    property that makes the route necessary (no equation ⇒ no column) makes
+  >    that signature unable to carry it. The stub is left untouched; a new
+  >    `FE_Element::getSPTangentForce(Integrator*)` was added instead.
+  > 2. **"High blast radius" was wrong too.** The route is an opt-in flag on a
+  >    fork integrator; the four vanilla touch-points are additive virtuals with
+  >    **no stock caller**, so an unflagged model cannot reach a line of it.
+  >    Nothing about "behaviour changes for every model with a non-homogeneous
+  >    `sp`" survived contact with the implementation — that description fit a
+  >    handler-level change, which this is not.
+  >
+  > What the decision got RIGHT is the sequencing: C was correctly ranked below
+  > A on cost, and correctly gated on A's measurement rather than assumed.
 
 ## S1 design — `LadrunoLoadControl`
 
@@ -291,7 +313,8 @@ Use the synthetic harness `sp_gates/g123_predictor_gates.tcl` as S1's inner loop
 | ~~**P0**~~ **DONE** | G4 → [[80a_sp_gate_g4_auto_handler_2026-08-04]]; G1/G2/G3 → [[80b_sp_gates_g1g2g3_2026-08-04]] (synthetic re-derivation + JSON artifacts) | G1 confirmed (monotone, **saturating**); G2 settled; G3 run **and its stated inference corrected** | done |
 | **P1** | S2: reproducer → fix → regression test (own small PR; **fork-only**) | G4 reproduces | ~5 lines C++ + 1 test |
 | ~~**P2**~~ **DONE — GATE FAILED** | S1 `LadrunoLoadControl` (tag 33015) + `ladrunoLoadControl` runtime cmd shipped; `-extrapolate 0` bit-identical to stock | **Acceptance gate FAILED: cutbacks 23 → 23, iterations −10 %. Predictor demonstrably fired (armed=63) — a capability failure, not a wiring one.** See [[80c_s1_extrapolate_verdict_2026-08-04]] | done |
-| **P3** **← next** | **C (`getTangForce`) — NOW LIVE, D6 triggered by P2's failure**; S3 diagnostics still deferred | P2's gate failed | the principled route: eliminates the overstrain instead of reducing it |
+| ~~**P3**~~ **DONE — GATE PASSED** | S1 candidate **C** shipped as `LadrunoLoadControl -tangentPredictor` (Kratos `b −= K·Δu_D`) + `FE_Element::getSPTangentForce` / `DOF_Group::getSPDispIncr` (additive, no stock caller) + `tests/test_adr80_tangent_predictor.py` (11 cases) | **Acceptance gate MET EXACTLY: cutbacks 23 → 0, iterations 224 → 12 = the elastic control. Answer unmoved at the MIDPOINT (u_mid = 0.075000), not merely at the driven face.** See [[80d_p3_tangent_predictor_verdict_2026-08-04]] | done |
+| **P4** **← next** | Field validation on the Cerro Lindo decks; then S3 diagnostics | P3 passed synthetically; the ×28.6 / 52-cutback field case is still unmeasured | blocked on the decks |
 
 P0 needs the Cerro Lindo fuse decks
 (`C:\nmb\My Libraries\Cerro Lindo\Informe No3\Models\Fuse FEM\04_solid_fuse\`)

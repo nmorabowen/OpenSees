@@ -373,8 +373,12 @@ snap-backy (the σ_zz=0 nested Newton can stall on the limit point) → robust p
 `-implex` engages the **Tier-2 IMPL-EX** robustness mode (P3, #309): it reports an explicit
 extrapolated stress with the degraded-elastic secant `D_dam(ω̃):C0` (symmetric-part SPD on single-sign
 principal states — so a *symmetric* solver works there — but conditional on mixed-sign high-ω; an
-unsymmetric solver stays the safe default) while committing the exact implicit state. `-eta` (Duvaut–
-Lions viscosity) is still deferred.
+unsymmetric solver stays the safe default) while committing the exact implicit state. `-eta`
+(Duvaut–Lions viscosity, oracle PR #316 + kernel/parser PR #318) relaxes the inviscid plastic
+return toward the elastic trial by `beta = dt/(eta+dt)` (`dt` = `ops_Dt`); `eta = 0` or `dt <= 0`
+gives `beta = 1`, i.e. byte-identical to inviscid — NOT the elastic `beta -> 0` limit. It is
+**Tier-1 only**: inert (with a parser warning) under `-implex`, and inert (with a parser warning)
+in the `BeamFiber` (confined-fiber) view; it has no `Parameter` hook.
 
 ## 18. Parameters, defaults & calibration
 
@@ -393,7 +397,7 @@ Lions viscosity) is still deferred.
 | `-lch` | fixed crack-band characteristic length (length units) | 1.0 |
 | `-autoRegularization` | pull `lch` from the parent element each step (mesh-objective) | off |
 | `-implex` | engage **Tier-2 IMPL-EX** (degraded-elastic secant; SPD on single-sign states) | off (Tier-1) — P3 #309 |
-| ~~`-eta`~~ | Duvaut–Lions viscosity | **not yet (P3)** |
+| `-eta` | Duvaut–Lions viscosity, `beta = dt/(eta+dt)` off `ops_Dt`; Tier-1 only (inert under `-implex` / in `BeamFiber`) | 0.0 (inviscid) — shipped #316/#318 |
 
 - **`e` is a validation target, not a fit knob** — leave it derived from `-kupfer` unless you have biaxial
   data; it lands at the canonical `e ≈ 0.52`.
@@ -477,8 +481,9 @@ regularized) with the **analytic damaged tangent** (Tier-1 implicit), in **all d
 3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress (#299) + the `LogStrain` finite view.
 
 **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), multiaxial-damage apportioning,
-the remaining robustness work (`-eta` Duvaut–Lions, explicit Tier-3 — P3; `-implex` Tier-2 shipped #309),
-and the confined-fiber 1D view (§4.6 of the ADR).
+explicit Tier-3, and the `-eta` + `-implex` composition (Duvaut–Lions relaxation stays Tier-1 only,
+inert under `-implex` — see §17/§18). `-eta` Duvaut–Lions itself and `-implex` Tier-2 are both
+SHIPPED (#316/#318 and #309 respectively).
 
 ## 22. Units
 
@@ -590,7 +595,8 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 | **P3 IMPL-EX (oracle)** | **Tier-2 IMPL-EX: extrapolate plastic+damage (ratio-clamped) ⇒ degraded-elastic secant `D_dam(w~):C0`; commit the implicit vars (numpy oracle + falsification gate)** | [#301](https://github.com/nmorabowen/OpenSees/pull/301) |
 | P3 IMPL-EX review | adversarial-review fixes: conditional SPD (single-sign only — NUM-1), `r`-clamp (ALG-2/NUM-2/NUM-3), smooth-region PI3 (ALG-1/GAT-2) | [#304](https://github.com/nmorabowen/OpenSees/pull/304) |
 | **P3 IMPL-EX (C++)** | **`returnMap` Tier-2 branch + `State` IMPL-EX fields + `-implex` wrapper/serialization + g++ B5 byte-check + symmetric-solver element test** | [#309](https://github.com/nmorabowen/OpenSees/pull/309) |
-| P3 Duvaut–Lions | `-eta` plastic-level viscosity (`Δt/(η+Δt)`, η→0 byte-exact) | *deferred* |
+| P3 Duvaut–Lions (oracle) | `-eta` plastic-level viscosity (`beta = Δt/(η+Δt)`, η→0 byte-exact) | [#316](https://github.com/nmorabowen/OpenSees/pull/316) |
+| P3 Duvaut–Lions (C++) | kernel port (`returnMap`'s `!mp.implex && mp.eta > 0.0 && dt > 0.0` blend) + `-eta` parser/wrapper wiring, Tier-1 only | [#318](https://github.com/nmorabowen/OpenSees/pull/318) |
 | P2f | cyclic `β_c` + compression→tension temper + multiaxial apportioning | *deferred* |
 
 **V&V status:** oracle gates **19/19** (Zone-A, incl. the adversarial-review-hardened P3 IMPL-EX gate
