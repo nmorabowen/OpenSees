@@ -142,7 +142,12 @@ NextElasticStrain = CurElasticStrain + dStrain - dPStrain
   `NextStress = tr/3*I1 + (Mc/eta)*dev` — recomputes `NextAlpha` from the capped stress, and
   **advances `T += dT` anyway**. This is #792 T1's target: the update always "succeeds", so
   nothing upstream can react. Reproduce it, and count how often it fires.
-- Accept: `Stress_Correction` (drift, inert unless `mStressCorrectionInUse`), `T += dT`,
+- Accept: `Stress_Correction` (drift correction), `T += dT`,
+  > **[V] CORRECTED 2026-09-05.** A first version of this line said `Stress_Correction` was
+  > "inert unless `mStressCorrectionInUse`". **It is ON by default** — `mStressCorrectionInUse
+  > = true` in all four constructors (`:217`, `:303`, `:368`, `:429`), switchable only via
+  > `setParameter` (`:868`). The P0 oracle found this when its G0 residual would not close
+  > without it. The gate did its job.
   running consistent-tangent recursion `aCep_Consistent = aCep_step*(aD*aCep_Consistent + T*IImix)`.
 - Growth/shrink `q = max(0.8*sqrt(TolE/err), floor)`, floor **0.1 on reject, 0.5 on accept**;
   `dT = max(q*dT, dT_min)`, then `dT = min(dT, 1-T)` on accept.
@@ -164,7 +169,12 @@ NextElasticStrain = CurElasticStrain + dStrain - dPStrain
   (relative **plus** absolute); the line-search block is entirely commented out.
 - Elastic trial moduli come from **`CurStress`** (`:2223-2226`), i.e. the committed stress.
 - Low-p branch at `:2234` tests `tr/3 < m_Pmin` **without** `m_Presidual` — the one place that
-  omits it.
+  omits it. **[V] Inside that branch the Newton is disabled outright**: the call to
+  `NewtonIter2_negP` is commented out and replaced by a literal `errFlag = 0;` (`:2264-2266`,
+  with the author's note *"tension-cutoff surface … not working properly. Using explicit
+  integrator for the time being"*), so **every low-p step under scheme 2 is integrated by
+  `explicit_integrator`, i.e. `ModifiedEuler`**, and flagged as success. Scheme 2 is
+  therefore NOT an implicit return where the campaign's problem lives.
 - **[V] Non-convergence NEVER propagates.** The retry ladder is: (1) a 50-step forward-Euler
   warm start then re-Newton; (2) recursive bisection into two `BackwardEuler_CPPM` calls at
   `implicitLevel+1` (guard `mMaxSubStep = 10`); (3) **`explicit_integrator(...); errFlag = 1;`**
