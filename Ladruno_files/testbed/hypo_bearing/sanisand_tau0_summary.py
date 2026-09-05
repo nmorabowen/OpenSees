@@ -153,16 +153,28 @@ def load(out_dir):
         fld = r.get("field", "")
         if fld and not os.path.isabs(fld):
             fld = os.path.join(out_dir, fld)
-        if fld and os.path.exists(fld):
-            r.update(widths_from_csv(fld))
-            r["_width_source"] = "recomputed from field CSV"
-        else:
-            r["_width_source"] = "JSON (field CSV missing)"
         for c in r.get("checkpoints", []):
             cp = os.path.join(out_dir,
                               f"a2_{r['tag']}_field_sB{c['cp_target']:g}.csv")
             if os.path.exists(cp):
                 c.update(widths_from_csv(cp))
+        if fld and os.path.exists(fld):
+            r.update(widths_from_csv(fld))
+            r["_width_source"] = "end-of-leg field CSV"
+        elif r.get("checkpoints"):
+            # A killed leg has no end-of-leg field dump.  Its LAST checkpoint
+            # is the deepest state it actually reached, so that is what the
+            # "end of leg" row reports -- labelled, never silently.
+            last = r["checkpoints"][-1]
+            r.update({k: v for k, v in last.items()
+                      if k.startswith(("w2_z", "xbar_z", "nrow_z", "epsqmax_z",
+                                       "hx_z"))
+                      or k in ("n_yield_ele", "vol_yield", "epsq_max")})
+            r["_width_source"] = (f"LAST CHECKPOINT (s/B={last['cp_target']:g}) "
+                                  "-- leg killed, no end-of-leg field dump")
+            r["_width_at_sB"] = last["cp_target"]
+        else:
+            r["_width_source"] = "NONE (no field CSV and no checkpoint)"
         # A PARTIAL leg (written at a checkpoint by a process that was later
         # killed) has no termination classification at all.  Fill the fields
         # the tables read, marked so no reader can mistake it for a result.
@@ -275,26 +287,35 @@ def main(argv=None):
 
     print(f"\n--- WIDTH vs h at the END OF EACH LEG (ADR 90 sec.7.3 "
           f"threshold-free w2, probe depths {Z_PROBES} m, x >= 0 half) ---")
-    print(f"  width source: {legs[0]['_width_source']}")
-    hdr = (f"{'leg':>16} {'h0':>6} {'w2(z1)':>11} {'w2/h0':>8} "
+    hdr = (f"{'leg':>16} {'h0':>6} {'at s/B':>8} {'w2(z1)':>11} {'w2/h0':>8} "
            f"{'w2(z2)':>11} {'w2/h0':>8} {'yield ele':>10} "
            f"{'yield vol':>10} {'epsq max':>10}")
     print(hdr)
     print("-" * len(hdr))
+    nan = float("nan")
     for r in legs:
         w05 = r.get(f"w2_z{Z_PROBES[0]}")
         w10 = r.get(f"w2_z{Z_PROBES[1]}")
-        print(f"{r['tag']:>16} {r['h0']:6.2f} "
+        w05 = nan if w05 is None else w05
+        w10 = nan if w10 is None else w10
+        at = r.get("_width_at_sB", r.get("s_end_over_B", nan))
+        print(f"{r['tag']:>16} {r['h0']:6.2f} {at:8.4f} "
               f"{w05 if w05 == w05 else float('nan'):11.4f} "
               f"{(w05 / r['h0']) if w05 == w05 else float('nan'):8.2f} "
               f"{w10 if w10 == w10 else float('nan'):11.4f} "
               f"{(w10 / r['h0']) if w10 == w10 else float('nan'):8.2f} "
               f"{r['n_yield_ele']:10d} {r['vol_yield']:10.3f} "
               f"{r['epsq_max']:10.3e}")
-    print("  w2/h0 constant across the three meshes == the band is ONE ELEMENT "
-          "wide == the classical ill-posedness signature.\n"
-          "  The element COUNT is not a mesh-convergent quantity; the yielding "
-          "VOLUME is.")
+    print("  NOTE the `at s/B` column: these rows are NOT at a common "
+          "settlement, so they are not comparable to each other.\n"
+          "  Use the matched-settlement table below for any h-comparison.  "
+          "Width sources, per leg:")
+    for r in legs:
+        print(f"    [{r['tag']}] {r['_width_source']}")
+    print("  w2 tracking h (w2/h0 roughly constant) == the band is a fixed "
+          "number of ELEMENTS wide == the classical\n"
+          "  ill-posedness signature.  The element COUNT is not a "
+          "mesh-convergent quantity; the yielding VOLUME is.")
 
     print("\n--- MATCHED-SETTLEMENT COMPARISON (the deliverable that survives a "
           "leg being stopped by the clock) ---")
