@@ -241,20 +241,33 @@ confined deck, and now asserted.
   `reset()` path is exercised, though the guard is the reason the override exists (sec.4.4).
 - The **analytical Jacobian** (`JacoType`) branch is never exercised on this class.
 
-**Follow-up owed (found during the ADR-86b review-fix pass, 2026-09-05).** ADR-84's
-`strict_convergence` rejection (`ASDPlasticMaterial3D.h:2333-2341`) returns a **bare `-1`** on Newton
-exhaustion, not `LADRUNO_MATERIAL_REFUSED`. `LadrunoBrick`'s guards are now **sentinel-only**
-(`== LADRUNO_MATERIAL_REFUSED`, by design — see the ASDConcrete IMPL-EX note above), so that bare
-`-1` is **swallowed**: the element assembles the unconverged, exhausted state as if it had committed
-successfully. This is pre-existing (not introduced by ADR-86b) but ADR-86b's sentinel is what made it
-newly invisible on `LadrunoBrick`, where a blanket `< 0` used to catch it. **Producer-side fix:**
-`ASDPlasticMaterial3D::Backward_Euler` should return `LADRUNO_MATERIAL_REFUSED` instead of `-1` at
-that site. More generally, the fork now has **three different negative-return conventions** in play
-with no single reader that understands all of them: `ASDConcrete3DMaterial`'s best-effort
-`EC_IMPLEX_Error_Control = -10` (must NOT fail the step), ADR-84's bare `-1` (SHOULD fail the step but
-isn't a recognized sentinel), and the ADR-86b `LADRUNO_MATERIAL_REFUSED = -33086` sentinel (DOES fail
-the step, and is the only one any element actually checks for). Reconciling these into one convention
-is owed to a future convention work package, not to ADR-86b.
+**Follow-up owed (found during the ADR-86b review-fix pass, 2026-09-05) — F-1, HALF DONE.**
+ADR-84's `strict_convergence` rejection returned a **bare `-1`** on Newton exhaustion (originally
+`ASDPlasticMaterial3D.h:2333-2341`, the exhaustion-accept site) and, it turned out, at a SECOND
+`strict_convergence`-gated site too (the `special_return` `SR_QUALITY_FALLBACK` refusal, ADR-84 P3).
+`LadrunoBrick`'s guards are now **sentinel-only** (`== LADRUNO_MATERIAL_REFUSED`, by design — see the
+ASDConcrete IMPL-EX note above), so a bare `-1` was **swallowed**: the element assembled the
+unconverged/discarded state as if it had committed successfully. This was pre-existing (not
+introduced by ADR-86b) but ADR-86b's sentinel is what made it newly invisible on `LadrunoBrick`, where
+a blanket `< 0` used to catch it.
+
+**Producer aligned (done in this review-fix pass):** both `strict_convergence`-gated `return -1;`
+sites in `ASDPlasticMaterial3D::Backward_Euler` now `return LADRUNO_MATERIAL_REFUSED;` instead. The
+two UNCONDITIONAL (not `strict_convergence`-gated) `return -1;` sites in the same function — the
+singular-local-tangent guard and the NaN guard — were deliberately left alone: they are structural
+numerical failures independent of the opt-in flag, and changing them would be an unconditional
+behaviour change for every `ASDPlasticMaterial3D` caller. See `LEDGER_vanilla_files.md`'s
+`ASDPlasticMaterial3D.h` review-fix row.
+
+**Still owed — the convention WP itself.** The fork still has **three different negative-return
+conventions** in play with no single reader that understands all of them: `ASDConcrete3DMaterial`'s
+best-effort `EC_IMPLEX_Error_Control = -10` (must NOT fail the step), the ADR-84 producer-side fix
+above only aligns ITS OWN two sites — any other bare `-1`/generic-negative convention elsewhere in the
+fork (or in a future ASDP-family addition) is not automatically caught by a sentinel-only guard, and
+`stdBrick`/`BrickUP`/`QuadUP` still discard the return code regardless of its value, so the refusal
+never reaches the analysis on those elements at all. Reconciling all of this into one convention, and
+deciding whether non-`LadrunoBrick` elements should be taught to check it, is owed to a future
+convention work package, not to ADR-86b.
 
 **Also owed, and PR-3 added the first two**
 - **Instrument the other `m_Pmin` resets.** PR-2's throttled clamp diagnostic covers

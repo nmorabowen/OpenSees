@@ -4341,6 +4341,40 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   `strict_convergence 1` before you suspect anything else**; a clean run under
   the flag rules this defect out in one shot.
 
+### `stdBrick`/`BrickUP`/`QuadUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b)
+
+- **Bites:** any material that refuses a trial strain (a strict-mode ASDP
+  rejection, a `ManzariDafalias`/`LadrunoSANISAND` substep-cap refusal, ...)
+  hosted in `stdBrick`, `BrickUP`, or `QuadUP`. `Brick::update()` writes
+  `success = ...->setTrialStrain(strain);` and then **unconditionally**
+  `return 0;` — the code is assigned and never read. `BrickUP`/`QuadUP` call
+  `setTrialStrain` inside a *void* `formResidAndTangent`, so there is no return
+  path for the code at all. So the material refuses, prints its `opserr` line,
+  returns a failure code — and the analysis reports success regardless of what
+  that code was.
+- **Why:** these are vanilla elements, written before any Ladruno material
+  needed a fail-loud contract; nobody expected `setTrialStrain` to return
+  anything worth checking. Found while measuring ADR-84 P2a's
+  `strict_convergence` gate (§6c finding 2) — `TenNodeTetrahedron` already
+  accumulates and returns the sum (a pre-existing fork fix, TIMs report item
+  8), which is why the ADR-84 contract tests use the tet host instead of
+  `stdBrick`.
+- **Deliberately NOT fixed for `stdBrick`:** `return success` is an
+  unconditional behaviour change for every `stdBrick` + every material, which
+  is precisely the blast radius an opt-in refusal contract exists to avoid.
+  Pinned by `tests/test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal`
+  so that fixing `Brick.cpp` shows up as a loud, informative test failure
+  rather than a mystery elsewhere.
+- **Workaround/status (2026-09-05, ADR-86b review-fix):** **`LadrunoBrick` now
+  propagates the sentinel (`LADRUNO_MATERIAL_REFUSED`) on ALL FIVE `update()`
+  paths, including `updateHypo` and `formEAStrue`** (ADR-86b's original repair
+  covered four of five; the review pass confirmed `updateHypo`/`formEAStrue`
+  are also sentinel-aligned, not the blanket `< 0` an earlier ledger row
+  mistakenly claimed — see `LEDGER_implementations.md`'s ADR-86b row). **`stdBrick`,
+  `BrickUP`, and `QuadUP` still swallow the refusal, unchanged** — this defect
+  is not fixed on any vanilla element, only worked around by using
+  `LadrunoBrick` for every gate that needs the return code to mean something.
+
 ### A `special_return` hook that writes the tangent itself SILENTLY OVERRIDES `tangent_type` (FIXED, ADR-84 P3)
 
 - **Bites:** any ASDP yield function opting into `yf_has_special_return`

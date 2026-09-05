@@ -275,11 +275,22 @@ def _push(n_dev):
 # `_confine` / `_substeps_at_gp1`; that is why the module is import-safe (no
 # work at import time beyond constants).
 _CAP_CHILD = r'''
+import os
 import sys
 sys.path.insert(0, sys.argv[1])          # the tests/ directory
 sys.path.insert(0, sys.argv[2])          # the directory holding opensees.pyd
 import test_ladruno_sanisand_integrator as t
 from _testbed import ops
+
+# Ladruno (ADR-86b review-fix): print which binary the CHILD actually loaded,
+# BEFORE doing any work.  `sys.path.insert(0, sys.argv[2])` only makes the
+# right pyd importable first -- a stray tests/opensees.pyd or an installed
+# .pth alias could still shadow it (see BUILD_GOTCHAS.md sec.4's
+# "sys.path[0] wins" trap), and a child that quietly ran a STALE binary would
+# make this whole gate measure yesterday's integrator instead of today's,
+# passing for the wrong reason. The parent checks this marker matches
+# argv[2] before trusting anything else in the output.
+print("ENGINE=%s" % os.path.abspath(ops.__file__))
 
 # leg 1 -- how expensive IS this update, uncapped?
 t._build_brick(1, t.sani._OPTS_VANILLA)
@@ -343,6 +354,25 @@ def test_cap_engages_and_the_step_fails():
 
     assert rc_child == 0, ('the child process itself failed -- this is not the '
                            'gate firing, it is the harness', text[-3000:])
+
+    # Ladruno (ADR-86b review-fix): a child that quietly loaded a DIFFERENT
+    # `opensees.pyd` than the one this test session was invoked with would
+    # measure yesterday's integrator and pass for the wrong reason -- the
+    # classic "stale binary, green run" false pass (same check as
+    # `test_soe_zero_free_equations.py::_run_child`). Fail loud before
+    # trusting anything else the child printed.
+    engine_line = next((l for l in text.splitlines() if l.startswith('ENGINE=')),
+                       None)
+    assert engine_line is not None, (
+        'no ENGINE= marker from the child -- it did not even get past the '
+        'import, so nothing below can be trusted', text[-3000:])
+    child_engine_dir = os.path.dirname(engine_line.split('=', 1)[1])
+    expected_engine_dir = os.path.dirname(os.path.abspath(ops.__file__))
+    assert os.path.normcase(child_engine_dir) == os.path.normcase(expected_engine_dir), (
+        f'the child loaded opensees from {child_engine_dir!r}, but this test '
+        f'session is running against {expected_engine_dir!r} -- the child is '
+        f'measuring a STALE or DIFFERENT binary and every other assertion in '
+        f'this test is meaningless until this is fixed', text[-3000:])
 
     def _marker(name):
         for line in text.splitlines():
