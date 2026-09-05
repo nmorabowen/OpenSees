@@ -135,9 +135,17 @@ just takes an unbounded amount of time, and GATE U measured what that looks like
 80 pinned subdivisions used on every leg, terminal steps 6400–25000x above the `DS_MIN` floor, and
 one `analyze(1)` costing **2056 s** (59 % of that leg's entire budget in a single step). The cap
 therefore does **not** force-accept: past `N` substeps it flags, prints one throttled line naming
-tag/`T`/`dT`, and returns, `setTrialStrain` returns `-1`, and the committed state is untouched. The
-precedent is ADR-84's `strict_convergence`; the alternative (force-accept + warn) reproduces exactly
-the silence being fixed.
+tag/`T`/`dT`, and returns, `setTrialStrain` returns a refusal, and the committed state is untouched.
+The precedent is ADR-84's `strict_convergence`; the alternative (force-accept + warn) reproduces
+exactly the silence being fixed.
+
+> [!danger] The cap's PRECONDITION, and it is not optional
+> **A cap is only safe under an element that PROPAGATES a material refusal.** Today that is **`LadrunoBrick` only**. Under vanilla `Brick` (its `update()` discards the return code), `BrickUP` / `QuadUP` (`setTrialStrain` is called inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and `stdBrick`, a capped update returns early at `T < 1` and the element assembles a **partially-integrated** stress / `alpha` / `fabric` and a partial `aCep_Consistent` as if converged. That is strictly **worse** than the un-capped force-accept it replaces, which at least always drove `T` to 1. **On those elements a capped run is INVALID, not merely un-cut.**
+>
+> This is why the default is `0` and why it must stay `0`: **the default cannot reach that branch at
+> all.** Nothing checks the precondition at run time — a material cannot see its element — so it is
+> stated in three places that a user can actually read (the `opserr` line when the cap fires, the
+> construction `Print()` record, and the emitter guide) and enforced in none.
 
 **T1 needed an element change too, and the obvious version of it was wrong.** `LadrunoBrick::update()`
 **discarded** `setTrialStrain`'s return code on four of its five paths (std/b-bar, SSP, and both URI
@@ -232,6 +240,21 @@ confined deck, and now asserted.
 - `revertToStart`'s **`ops_InitialStateAnalysis` branch** is untested; only the plain mid-life
   `reset()` path is exercised, though the guard is the reason the override exists (sec.4.4).
 - The **analytical Jacobian** (`JacoType`) branch is never exercised on this class.
+
+**Follow-up owed (found during the ADR-86b review-fix pass, 2026-09-05).** ADR-84's
+`strict_convergence` rejection (`ASDPlasticMaterial3D.h:2333-2341`) returns a **bare `-1`** on Newton
+exhaustion, not `LADRUNO_MATERIAL_REFUSED`. `LadrunoBrick`'s guards are now **sentinel-only**
+(`== LADRUNO_MATERIAL_REFUSED`, by design — see the ASDConcrete IMPL-EX note above), so that bare
+`-1` is **swallowed**: the element assembles the unconverged, exhausted state as if it had committed
+successfully. This is pre-existing (not introduced by ADR-86b) but ADR-86b's sentinel is what made it
+newly invisible on `LadrunoBrick`, where a blanket `< 0` used to catch it. **Producer-side fix:**
+`ASDPlasticMaterial3D::Backward_Euler` should return `LADRUNO_MATERIAL_REFUSED` instead of `-1` at
+that site. More generally, the fork now has **three different negative-return conventions** in play
+with no single reader that understands all of them: `ASDConcrete3DMaterial`'s best-effort
+`EC_IMPLEX_Error_Control = -10` (must NOT fail the step), ADR-84's bare `-1` (SHOULD fail the step but
+isn't a recognized sentinel), and the ADR-86b `LADRUNO_MATERIAL_REFUSED = -33086` sentinel (DOES fail
+the step, and is the only one any element actually checks for). Reconciling these into one convention
+is owed to a future convention work package, not to ADR-86b.
 
 **Also owed, and PR-3 added the first two**
 - **Instrument the other `m_Pmin` resets.** PR-2's throttled clamp diagnostic covers

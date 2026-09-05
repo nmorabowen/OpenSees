@@ -56,11 +56,24 @@ different command name plus the flags. Class tags 33019 / 33020 / 33021 (base / 
 >
 > **Emit `TanType` explicitly anyway.** An emitter that names all five positionals is immune to this
 > and to any future default move, and the material echoes the tangent it will run at construction.
-> Two consequences of `TanType 2`: `mCep_Consistent` is **unsymmetric** under a non-associated flow
-> rule, so pair it with `system Pardiso -matrixType 0`, `UmfPack`, or another unsymmetric solver;
-> and it changes the **iteration path only** — the substepped stress update is untouched, so it is
-> free accuracy-wise (measured: the answer moved 0.52 % at a matched-settlement checkpoint on the
-> WP-A2 footing deck, against a ~7x wall-time saving).
+> **`TanType 2` REQUIRES an unsymmetric system.** `mCep_Consistent` is unsymmetric under a
+> non-associated flow rule, so emit `system FullGeneral`, `UmfPack`, or
+> `Pardiso -matrixType 0` — a symmetric solver would be factorising a different matrix than the
+> tangent describes. There is **no runtime guard** for this and there will not be: the material
+> cannot see the SOE. It is an emitter rule.
+>
+> It changes the **iteration path only** — the substepped stress update is untouched — so it is free
+> accuracy-wise. Two measurements, and they are different claims: the answer moved 0.52 % at a
+> matched-settlement checkpoint on the WP-A2 footing deck against a ~7x wall-time saving (a
+> *comparison across a whole configuration change*), and on a single-element free-DOF drained
+> triaxial pushed through 40 accumulated `LoadControl` steps the two tangents converge to the
+> **same** answer to within 4.5e-3 relative in displacement (7.0e-4 in stress) — MEASURED, not the
+> two-orders-tighter-than-tolerance figure an earlier draft of this gate assumed. Over 40 steps of
+> SANISAND's path-dependent fabric/backstress evolution the answer discrepancy tracks the deck's own
+> `1e-3`-relative `NormUnbalance` tolerance (roughly 4-5x it, not a small fraction of it), so the
+> gate's floor is set at `10x` that tolerance rather than as an independent constant
+> (`tests/test_ladruno_sanisand_integrator.py::test_tantype_does_not_change_the_converged_answer`).
+> The second measurement is the one that warrants moving a default.
 
 Registered in **both** interpreters, so both emitters work with no further wiring.
 
@@ -121,16 +134,23 @@ does: ADR-90 GATE U measured single `analyze(1)` calls of **11 to 34 minutes** o
 with the stepping controller using **0 of its 80** subdivisions — the integrator never *failed*, it
 merely did not terminate in useful time, so nothing upstream could react.
 
-With a positive cap, an update that exceeds it **returns failure** rather than force-accepting: the
-committed state is left untouched, `setTrialStrain` returns non-zero, the element fails the step,
-and the analysis' own step-cut / subdivision logic gets its chance. One throttled `opserr` line per
-process (budget 10) names the material tag, `T` and `dT`.
+With a positive cap, an update that exceeds it **returns failure** rather than force-accepting: it
+stops at `T < 1`, leaves the **committed** state untouched, and returns a refusal so the element can
+fail the step and the analysis' own step-cut / subdivision logic gets its chance. One throttled
+`opserr` line per process (budget 10) names the material tag, `T` and `dT`.
+
+> [!warning] PRECONDITION — do not emit a cap without also emitting the right element
+> **A cap is only safe under an element that PROPAGATES a material refusal.** Today that is **`LadrunoBrick` only**. Under vanilla `Brick` (its `update()` discards the return code), `BrickUP` / `QuadUP` (`setTrialStrain` is called inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and `stdBrick`, a capped update returns early at `T < 1` and the element assembles a **partially-integrated** stress / `alpha` / `fabric` and a partial `aCep_Consistent` as if converged. That is strictly **worse** than the un-capped force-accept it replaces, which at least always drove `T` to 1. **On those elements a capped run is INVALID, not merely un-cut.**
+>
+> The material cannot see which element holds it, so **nothing checks this at run time**. It is an
+> emitter rule. The construction `Print()` record states it; the `opserr` line when the cap fires
+> states it; neither can enforce it.
 
 - **Only emit it on IntScheme 0 or 1.** Like `-honorTolR`, the seam is read at exactly one site,
   inside `ModifiedEuler`. The material warns at construction if you ask for it anywhere else.
-- **The element has to propagate the failure.** `LadrunoBrick` does, as of ADR-86b. `stdBrick` does
-  **not** — it discards material return codes — so a capped material inside a `stdBrick` still
-  reports success. Emit `LadrunoBrick` if you emit the cap.
+  (IntScheme 7 is *called* `INT_MAXSTR_MFE` and does **not** route there — `MaxStrainInc` has no
+  case for it and falls through to `ForwardEuler`. Read the switch, not the name.)
+- **Emit `LadrunoBrick`** if you emit the cap — see the precondition above.
 - `eleResponse <ele> material <gp> substeps` returns `[substeps_taken, cap_hit]` for the last update
   at that integration point, so a driver can size the cap from a measurement instead of a guess.
 
