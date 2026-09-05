@@ -76,3 +76,71 @@ table is the record.
   Not acted on.
 - Going forward `delete_branch_on_merge` is on, so merged heads self-delete and
   a sweep this large should never be needed again.
+
+## Sweep 2 — 2026-09-04 (worktree prune, ADR-87 D10)
+
+Before: 20 registered worktrees, of which **17 were dead** (zero commits ahead of
+`origin/ladruno`, 78–885 behind, twelve still carrying a 1–2 GB `build/`+`dist/`),
+plus one unregistered orphan folder and the main checkout parked on a merged
+branch with a stranded commit. After: 4 worktrees — the main checkout and three
+live WP worktrees.
+
+The census that found this (run per worktree): branch, `git rev-list
+--left-right --count origin/ladruno...HEAD`, `git status --porcelain | wc -l`,
+last commit date, `build/` + `dist/bin/opensees.pyd` present. "0 ahead" is the
+safe-to-remove test; a dirty tree on a 0-ahead branch is the **stranded-work**
+class and is rescued first.
+
+### Rescued
+
+| What | Where it sat | Rescued to | Notes |
+|---|---|---|---|
+| `a71cdb197` build(cmake): threaded-layer opt-in for the Linux PARDISO | pushed to `claude/pardiso-linux` **after** #781 had merged it (WORKFLOW_GOTCHAS §1) | `wp/rescue-pardiso-linux-threaded` = `e5593cdfc`, **draft PR #782** | `cherry-pick -x` onto fresh `ladruno`, clean |
+| ADR-80 P3 tangent-predictor WIP: `TransformationFE`/`DOF_Group` getTangForce, `LadrunoLoadControl`, gates, `80d` verdict doc, test (20 files, +504) | uncommitted in `.claude/worktrees/sp-strengthening-9c0ddc` on a merged branch, 229 behind | `origin/rescue/adr80-p3-tangent-predictor-wip` = `5b2debaac` | **consumed**: rebased as `wp/80-p3-tangent-predictor`, gate reproduced byte-identical, merged as [#786](https://github.com/nmorabowen/OpenSees/pull/786) (`516241324`) on 2026-09-05; rescue branch deleted |
+| LadrunoBrick/LadrunoQuad k-stab damage-scaling plasticity + `tests/test_ladrunoBrick_kstab_plasticity.py` (+304) | uncommitted in `pardisio-profiling-0a03b1`, 268 behind | `origin/rescue/brick-kstab-plasticity-wip` = `76594384d` | **consumed**: rebased as `wp/11-brick-kstab-damage-scaling` (comment-only source change + §3.1 study + 2 quirks + Zone-A test, 11/11 + 179 brick/quad regression), merged as [#787](https://github.com/nmorabowen/OpenSees/pull/787) (`6792ecc58`) on 2026-09-05; rescue branch deleted |
+| ADR-79 tet10 bearing backbone outputs + `build_mesh_tet10.py` | uncommitted in `cool-haibt-781905`, 265 behind | `origin/rescue/adr79-bearing-tet10-backbone` = `530adc838` | **consumed**: merged as [#788](https://github.com/nmorabowen/OpenSees/pull/788) (`c2c247e79`) on 2026-09-05 minus the two `__killed` partial-run files; rescue branch deleted |
+| ADR-75b lane-B thread-count profile results + build logs | uncommitted in `mumps-opensees-study-f833bf`, 444 behind | `origin/rescue/adr75b-laneB-thread-results` = `d2d7d24d7` | **consumed**: merged as [#789](https://github.com/nmorabowen/OpenSees/pull/789) (`11a9c8c0e`) on 2026-09-05 as sibling `laneB_p1_threads{4,8}_rerun7.json` (the cited baselines kept byte-identical; root `build_p2*.log` not landed); rescue branch deleted |
+
+**`rescue/*` branch rule:** a rescue branch is a snapshot, never a PR head. It
+therefore never auto-deletes — list them with
+`git branch -r --list 'origin/rescue/*'`. The next agent on that lane
+cherry-picks or rebases the snapshot onto fresh `ladruno`, then deletes the
+rescue branch in the same PR.
+
+### Dropped without rescue (verified)
+
+| Item | Evidence |
+|---|---|
+| `_wt_sp_findings` staged `80_ladruno_sp_imposition_strengthening_adr.md` | **older** than the tree's copy (17+/74− against `ladruno`) |
+| build logs in `compiled-version-install-db4e20`, `OpenSees-eas`, `OpenSees-cmsp4` | logs only |
+| orphan folder `.claude/worktrees/adr78-p4-battery` (8,807 files, unregistered, Aug 12–14) | 4,534 byte-identical to `ladruno`; 2,740 differ by CRLF only; 1,419 untracked = a MUMPS build tree + `contact_p4/_out` logs; of the 114 real diffs, 113 versions exist in `ladruno` history and the last (`PARDISOSymLinSOE.cpp`) is the **pre-#754** `exit(-1)` version. Nothing unique. Deleted. |
+
+### Worktrees removed (17) and local branches deleted
+
+`.claude/worktrees/`: `compiled-version-install-db4e20`, `cool-haibt-781905`,
+`ecstatic-cannon-a822ae`, `mumps-opensees-study-f833bf`,
+`pardisio-profiling-0a03b1`, `sp-strengthening-9c0ddc`.
+Siblings: `_wt_sp_findings`, `OpenSees-adr77review`, `OpenSees-adr78`,
+`OpenSees-cmsp4`, `OpenSees-eas`, `OpenSees-hypo`, `OpenSees-integrators`,
+`OpenSees-p1`, `OpenSees-rigidbody`, `OpenSees-robust`, `OpenSees-ssi-toolchain`.
+
+Local branches deleted (all 0 ahead of `origin/ladruno`, or rescued above):
+`claude/sp-prescribed-displacement-findings`, `claude/compiled-version-install-db4e20`,
+`claude/latest-pr-ci-issue-0ef542`, `claude/cms-p4-verdict`, `claude/adr49a-c06-caveat`,
+`claude/adr78-contact-tcl-registration`, `claude/adr78-handoff`, `claude/up-geom-comment-accuracy`,
+`integ-work`, `feat/adr58-rigidbody-pytest-banner`, `guppi/robust-creduction`,
+`claude/geometric-locking-coupled-816302`, `claude/adr75-p1-pardiso`,
+`claude/tier-a-kstab-damage-scaling-46d9af`, `claude/sp-strengthening-9c0ddc`.
+
+Left as found: the **main checkout** on `claude/pardiso-linux` (another agent
+was drafting ADR-88 there, untracked, during the sweep — do not switch its
+branch under them); `origin/claude/pardiso-linux` (its stranded commit is now
+#782, so the remote branch can go once #782 lands); the empty directory
+`.claude/worktrees/ecstatic-cannon-a822ae` (registration removed, directory
+held open by another process — `rmdir` it when free).
+
+**2026-09-05 follow-up.** Two of the four rescues were consumed the same day
+(#786 ADR-80 P3, #787 brick k-stab — rows above); their WP worktrees
+(`wp-80-p3-tangent-predictor`, `wp-11-brick-kstab`) and local branches were
+removed after the merges. All four rescues were consumed the same day (#786, #787, #788, #789); no
+`rescue/*` branches remain and the four WP worktrees are removed.
