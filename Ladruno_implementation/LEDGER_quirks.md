@@ -4985,3 +4985,135 @@ Measured: restored source at `19:10`, `ManzariDafalias.cpp.obj` at `19:10:44` fr
 - This is the same family as `86_ladruno_sanisand_handoff` §1's stale-binary trap and the
   edit-during-a-build trap above, and it presents identically: a green or red result about a tree
   that is not the one on disk.
+
+
+## `ManzariDafalias` / `LadrunoSANISAND` `TanType` defaults to **0 = the ELASTIC tangent** in the parser — so a deck that emits only the positional parameters runs `algorithm Newton` as de-facto MODIFIED Newton
+
+**Found 2026-09-05, ADR-90 WP-A2. Cost: a whole campaign relaunch, and ~7x of wall time on the
+boundary-value legs.**
+
+`ManzariDafalias3D::getTangent()` returns `mCe` (elastic) for `TanType == 0`, `mCep` for `1`, and
+`mCep_Consistent` otherwise (`ManzariDafalias3D.cpp:134-142`; same shape in
+`ManzariDafaliasPlaneStrain.cpp:137` and `ManzariDafalias3DRO.cpp:119`). The **parser default is
+0** — `oData[1] = 0` at `LadrunoSANISAND.cpp:117`, deliberately copied from
+`OPS_ManzariDafaliasMaterial` so that a renamed deck behaves identically — while the **null and
+parallel constructors default to 2** (`ManzariDafalias.cpp:365`, `:426`). The two disagree, and
+the one a deck actually hits is the parser's.
+
+So `nDMaterial LadrunoSANISAND $tag <18 params>` with no positional optionals hands every
+`algorithm Newton` an ELASTIC tangent: a modified-Newton iteration with linear convergence,
+dressed as full Newton.
+
+- **Where it hides:** on a **zero-free-DOF material-point deck it costs nothing** — there are no
+  equations to iterate. Every existing fork SANISAND deck is of that shape
+  (`tests/test_ladruno_sanisand.py` passes `*_PARAMS` plus flags and no positional optionals), so
+  the defect has never had the chance to show itself. It appears the moment the material is put
+  into a boundary-value problem.
+- **Measured (ADR-90 WP-A2, strip footing on `LadrunoBrick -formulation bbar`):** at the parser
+  default the h0 = 0.25 leg advanced 11 steps to s/B = 1.6e-4 in 350 s, spending ~40-65
+  state-determination passes per step. With `TanType 2` and a reachable convergence test the same
+  deck reaches s/B = 2.0e-3 in 36 s at h0 = 1.0 — about **7x**.
+- **Emit the positional block explicitly:** `... $Rho $IntScheme $TanType $JacoType $TolF $TolR`
+  **before** any `-flag` (the ADR-86 parser rejects a positional after a flag, by design).
+- `mCep_Consistent` is **unsymmetric** under a non-associated flow rule: pair `TanType 2` with
+  `system Pardiso -matrixType 0`, `UmfPack`, or another unsymmetric solver.
+- The tangent changes the ITERATION PATH only — the substepped stress update is untouched — so
+  this is free accuracy-wise. Measured on the WP-A2 deck, `q` at the matched `s/B = 0.002`
+  checkpoint moved **0.52 %** between the two configurations.
+
+## Newton cannot reach a tight `NormDispIncr` on SANISAND — the substepped `ModifiedEuler` return makes the discrete map only piecewise smooth and the residual STALLS around 1e-6 m
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`ManzariDafalias`'s default integration scheme is a **substepped** `ModifiedEuler` return with a
+**hardcoded** substep tolerance `TolE = 1e-4` (exactly what the fork's `-honorTolR` flag exists to
+expose — `86_ladruno_sanisand_apegmsh_emitter_guide` §1). The stress a Gauss point returns is
+therefore a piecewise-smooth function of the strain increment, the assembled residual inherits
+that, and **Newton stops converging quadratically and stalls.**
+
+Measured on a strip-footing leg (h0 = 0.5, 390 hexes): over 47 failed convergence attempts the
+residual displacement norm stalls at a **median of 6.6e-7 m** (min 3.4e-8, max 1.3e-4). A
+`test NormDispIncr 1e-8` target is therefore not merely tight, it is **unreachable** — and the run
+that nominally used it was in fact carried by the relaxed third rung of its algorithm ladder on
+**18 of its 26 steps**, i.e. 65 of every 125 state-determination passes were spent failing two
+rungs that could not succeed. A study in that state is measuring its own convergence test: the
+ADR-63 note-71 failure mode.
+
+- **Use `NormUnbalance`** — which is also what `tests/test_r3_prandtl_collapse_gate.py` actually
+  uses (`tol = 1.0e-5 * want`), despite "NormDispIncr per the R3 gate" appearing in more than one
+  downstream brief.
+- **Scale the force tolerance to a deck-intrinsic force** (the model's own weight `gamma*V`, the
+  applied load, ...). Measured, same deck and wall budget: `NormDispIncr 1e-8 m` reached
+  s/B = 0.00106; `NormUnbalance 1e-6 gamma*V` reached 0.00218; `NormUnbalance 1e-5 gamma*V`
+  reached 0.00442 — with the answer moving by a median of 0.3-0.75 % between all three at matched
+  settlement.
+- **A displacement-norm tolerance is not mesh-neutral, which is disqualifying inside a
+  mesh-convergence study.** The norm runs over the free DOFs, and there are 3.6x more of them at
+  h0 = 0.25 than at h0 = 1.0, so the same nominal number is a different physical requirement on
+  each mesh of the sequence. A force tolerance scaled by `gamma*V` is identical on all three by
+  construction.
+
+## `LadrunoBrick -b` is a body force **per unit VOLUME**, not per unit mass — it is never multiplied by rho
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`LadrunoBrick::addLoad` (`LadrunoBrick.cpp:723-745`) does
+`appliedB[i] += loadFactor * data(i) * b[i]` for `LOAD_TAG_SelfWeight` and
+`appliedB[i] += loadFactor * b[i]` for `LOAD_TAG_BrickSelfWeight`, and the residual then takes
+`-= dvol * appliedB[p] * shp[3][j]`. **`rho` appears nowhere on that path** — it is read only by
+the mass matrix and the inertia terms.
+
+So gravity is
+
+```python
+ops.element('LadrunoBrick', e, *conn, mat, '-b', 0.0, 0.0, -gamma, ...)   # gamma = rho*g
+ops.eleLoad('-ele', *tags, '-type', '-selfWeight', 0.0, 0.0, 1.0)
+```
+
+Passing `-b 0 0 -9.81` (the acceleration, expecting the element to multiply by rho) silently gives
+`1/rho` of the intended weight — on a `rho = 2.0` deck, **half** the soil weight, with every
+analysis converging and reporting success. The cheap catch is the resultant identity
+`sum R_z(base) == gamma * V`, which reads 4.4e-16 when the convention is right.
+
+## Under `-formulation bbar` the geostatic stress is piecewise constant at the ELEMENT CENTROID value — which buys an exact 1-D patch check, and traps anyone comparing Gauss-point stresses to the pointwise solution
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+A laterally-rollered, base-fixed box under self weight has the closed-form geostatic state
+`sigma_zz = gamma*z`, `sigma_xx = sigma_yy = K0 sigma_zz` with `K0 = nu/(1-nu)` — exact even for a
+pressure-dependent material such as SANISAND (whose `G` goes as `sqrt(p)`), because `nu` is
+constant, so `K0` is depth-independent and the field satisfies equilibrium and the roller
+kinematics identically.
+
+Under `-formulation bbar` that field comes back **piecewise constant over each element at the
+centroid value**, not varying between the element's own Gauss points: MEASURED
+`max |sigma_zz(gp) - gamma*z_centroid| / |gamma*z_centroid| = 1.1e-13` over every Gauss point of
+every element, on all three meshes of a refinement sequence.
+
+- **Use it.** It is the *field* check `00_canonical_testbed` §1d demands alongside the resultant
+  identity, and it is exact to round-off, so it has no tolerance to tune. A wrong body-force
+  convention or a wrong lateral boundary moves it O(1) while the resultant identity sits at 1e-16.
+- **The trap:** compare Gauss-point stresses against the POINTWISE `gamma*z_gp` and the same
+  correct model reads an O(h) "error" that is not an error — it is the b-bar volumetric average
+  being visible. Compare against the centroid value.
+
+## `ops.logFile(path, '-noEcho')` is how a Python driver captures `opserr` warnings — but you must redirect it away again before reading the file
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+Material-level warnings that matter for a soil deck — `ManzariDafalias`'s
+`"stage-switch stress ratio ... exceeded the bounding surface M_c ... (Outside Bounding!)"`
+M_c-inflation notice, and the low-p `"mean stress p = ... is below the floor ... CLAMPING"` notice
+— go to `opserr`, not to Python. A driver that wants to ASSERT on them, rather than hope a human
+reads the console, can do:
+
+```python
+ops.logFile(log_path, '-noEcho')      # opserr -> file, console silent
+...  run the analysis ...
+ops.logFile(other_path, '-noEcho')    # release the handle
+n_outside = open(log_path, errors='ignore').read().count('Outside Bounding')
+```
+
+- The positive control that the capture is live: the file also contains the material's own
+  construction echo, so an empty file means the redirect did not take, not that nothing warned.
+- `-noEcho` is what silences the console; without it the file is written *and* echoed.
