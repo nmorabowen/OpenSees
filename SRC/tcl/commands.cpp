@@ -11551,10 +11551,14 @@ ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     {"CONTACT",   LADRUNO_MUTATE_CONTACT},
     {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
     {"SANISAND",  LADRUNO_MUTATE_SANISAND},
+    {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
   };
   const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 
-  for (int i = 0; i < 5; i++) {
+  // Ladruno: count derived from the table -- see the twin in
+  // OpenSeesOutputCommands.cpp for why the hardcoded bound was a live hazard.
+  const int nfams = (int)(sizeof(fams) / sizeof(fams[0]));
+  for (int i = 0; i < nfams; i++) {
     if (fams[i].mode == LADRUNO_MUT_NONE)
       continue;
     if (buffer[0] != '\0')

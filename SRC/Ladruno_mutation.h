@@ -58,11 +58,22 @@
 //     ...
 //   }
 //
-// ADDING A FAMILY: add its LADRUNO_MUTATE_<FAMILY> default below, put the two
-// macros in its Element API accessors, register it in
+// ADDING A FAMILY: add its LADRUNO_MUTATE_<FAMILY> default below, add it to
+// anyActive(), add it to BOTH `ladrunoMutation` reporting tables (the twins in
+// SRC/interpreter/OpenSeesOutputCommands.cpp and SRC/tcl/commands.cpp), add it
+// to _ladruno_valid_families AND the cache STRINGS property in the root
+// CMakeLists.txt, put the two macros in its accessors, register it in
 // Ladruno_scripts/mutation_gate.py, and record the score in the family's
-// verification manifest (ADR-87 D1). All four steps, or the family is not
-// `shipped`.
+// verification manifest (ADR-87 D1). All of it, or the family is not `shipped`.
+//
+// The reporting tables and the CMake allow-list are the two that bite. Omit the
+// CMake entry and the mutant configure dies loudly (fine). Omit the reporting
+// tables and the mutant builds PERFECTLY, sabotages the physics exactly as
+// asked, and then tells you it is `none` -- so mutation_gate refuses to run and,
+// had it not asked, would have scored a mutant as a baseline and reported that
+// the suite cannot detect deleted physics. Measured during ADR 91; the loop
+// bounds in both tables were also hardcoded `i < 5` and are now derived from
+// sizeof, so a table entry can never again be silently ignored.
 //
 // Grep the live gate list with:  grep -rn "LADRUNO_MUTATE_" SRC/
 
