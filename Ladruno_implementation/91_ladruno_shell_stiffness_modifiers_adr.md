@@ -195,3 +195,10 @@ The ETABS OAPI area modifier array carries 10 entries including `weight`; the ca
   off-diagonal membrane term and shows up only when f11 != f22.
 - **OQ-2** Whether the same decorator should be offered for frame sections (ETABS also
   modifies Area/As2/As3/J/I22/I33). Not in WP-91.
+- **OQ-3** The scaled work buffers (`static Vector sigma`, `static Matrix D`, and the
+  function-local `static Vector eIn` in `setTrialSectionDeformation`) follow the upstream
+  section idiom — `ElasticMembranePlateSection` does the same. Deliberate: a per-instance
+  8x8 `D` would cost ~512 B per integration point, i.e. hundreds of MB on a large shell
+  model. It is nevertheless the static-idiom hazard catalogued by ADR-75b Lane 3
+  (threaded assembly). If the element loop is ever threaded, this class must be converted
+  along with the rest of the section library, not before it.
