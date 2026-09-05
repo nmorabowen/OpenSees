@@ -50,7 +50,8 @@ class LadrunoLoadControl : public StaticIntegrator
   public:
     LadrunoLoadControl(double deltaLambda, int numIncr,
                        double minLambda, double maxLambda,
-                       double extrapolateFrac = 0.0);
+                       double extrapolateFrac = 0.0,
+                       bool tangentPredictor = false);
 
     ~LadrunoLoadControl();
 
@@ -58,6 +59,7 @@ class LadrunoLoadControl : public StaticIntegrator
     int update(const Vector &deltaU);
     int commit(void);
     int domainChanged(void);
+    int formUnbalance(void);
     int setDeltaLambda(double newDeltaLambda);
 
     // Ladruno (ADR-80 S1): runtime accessors for `ladrunoLoadControl`. An
@@ -68,6 +70,8 @@ class LadrunoLoadControl : public StaticIntegrator
     double getDeltaLambda(void) const { return deltaLambda; }
     double getExtrapolate(void) const { return extrapolate; }
     bool   predictorArmed(void) const { return havePrev && !justCutBack; }
+    bool   getTangentPredictor(void) const { return tangentPredictReq; }
+    int    getTangentPredictCount(void) const { return numTangentPredicts; }
 
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
@@ -92,6 +96,30 @@ class LadrunoLoadControl : public StaticIntegrator
     bool    havePrev;        // dUprev/dLambdaPrev are meaningful
     bool    stepOpen;        // newStep() ran without an intervening commit()
     bool    justCutBack;     // the previous attempt at this step FAILED
+
+    // ---- Ladruno (ADR-80 P3): the TANGENT predictor -----------------------
+    // The Kratos `b -= K*du_D` route (use_old_stiffness_in_first_iteration),
+    // and the answer to why -extrapolate failed its acceptance gate (80c):
+    // linear extrapolation REDUCES the driven layer's overstrain, it does not
+    // REMOVE it, and what survives still trips the spurious yield.
+    //
+    // newStep() applies the domain loads -- which SETS every sp value -- but
+    // does NOT let the constraint handler enforce them, so the elements stay at
+    // the COMMITTED state. Iteration 1 therefore forms K at the committed state
+    // and gets its prescribed-motion forcing from -K*du_D assembled directly,
+    // with NO constitutive evaluation in the lagging state anywhere. The sps
+    // are enforced in update(), on an interior the predictor solve has already
+    // distributed.
+    //
+    // Unlike -extrapolate this carries NO state across steps: it fires on the
+    // first increment, after a cutback, and when an adaptive caller re-issues
+    // `integrator LadrunoLoadControl` every step -- the three holes in S1.
+    bool    tangentPredictReq;   // what the user asked for (-tangentPredictor)
+    bool    tangentPredict;      // what is ACTIVE (cleared by the fallback below)
+    bool    spNotYetEnforced;    // between newStep() and the step's first update()
+    bool    warnedNoSPTerm;      // the "nothing contributed" note fired once
+    double  stepLambda;          // lambda applied by newStep()
+    int     numTangentPredicts;  // diagnostic: increments that used the route
 
     void invalidatePredictor(void);   // after domainChanged / recvSelf
 };

@@ -378,3 +378,26 @@ result set; "no failures because nothing ran" is the silent-truncation trap.
   cantilever clean, including under the ADR-76 LAPACK singular fix. The gate is
   live; a future `0 checks ran` failure means the Tcl runtime went missing
   again, not that the decks regressed.
+
+---
+
+## 8. Push-then-`gh pr ready` inside one minute SKIPS Zone-A, and the PR still reads mergeable
+
+**The trap.** `ladruno.yml` has `concurrency: {group: <workflow>-<ref>,
+cancel-in-progress: true}`. Pushing to a draft and flipping it to ready within
+the same minute fires two runs on the same ref: `synchronize` (evaluated while
+`draft == true`, so Zone-A is **skipped** by design) and `ready_for_review`
+(which would run Zone-A). Cancel-in-progress keeps only one; measured 2026-09-05
+on #784 it kept the **`synchronize`** run and cancelled the `ready_for_review`
+one. Result: static gates green, `Zone-A (Ubuntu) = skipped`, and GitHub's
+branch protection treats a *skipped* required job as satisfied —
+`mergeStateStatus: CLEAN` with no build ever having run on that head.
+
+**The tell.** `gh pr checks <n>` shows `Zone-A (Ubuntu)  skipping` on a
+non-draft PR, and `gh run list --branch <branch>` shows two runs with the same
+`createdAt` second, one `cancelled`.
+
+**Rule.** After `gh pr ready`, confirm Zone-A is `pending`, not `skipping`. If
+it skipped, push a real commit (any `synchronize` on a non-draft runs Zone-A)
+or `gh workflow run ladruno.yml --ref <branch>`. Never merge on a skipped
+Zone-A — the ADR-87 warrant is a *run*, not a green badge.

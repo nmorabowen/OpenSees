@@ -83,6 +83,17 @@ class DOF_Group: public TaggedObject
     virtual const Vector &getC_Force(const Vector &x, double fact = 1.0);
     virtual const Vector &getM_Force(const Vector &x, double fact = 1.0);
 
+    // Ladruno (ADR-80 P3) -- ADDITIVE, no stock caller.
+    // Writes this group's PRESCRIBED (sp) displacement INCREMENT -- the total
+    // prescribed value at the current domain time minus the COMMITTED nodal
+    // value -- into du(start + i) for each sp'd nodal dof i, in the node's own
+    // dof ordering. Entries that carry no sp are left untouched. Returns the
+    // number of sp'd dofs written; the base class has no sp and returns 0.
+    // Needed because an sp'd dof is genuinely eliminated (setID(dof,-1)), so
+    // its increment appears in NO global vector and cannot be recovered from
+    // one -- see LadrunoLoadControl's -tangentPredictor.
+    virtual int getSPDispIncr(Vector &du, int start);
+
     // methods to obtain committed responses from the nodes
     virtual const Vector & getCommittedDisp(void);
     virtual const Vector & getCommittedVel(void);

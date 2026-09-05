@@ -72,6 +72,7 @@ if os.path.normcase(os.path.dirname(os.path.abspath(ops.__file__))) != \
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MESH = os.path.join(HERE, "bearing_mesh.npz")
+MESH_T10 = os.path.join(HERE, "bearing_mesh_tet10.npz")
 
 G9 = 9.81
 RHO_SAT, RHO_W = 2.0, 1.0        # Mg/m^3
@@ -133,9 +134,10 @@ A_FOOT = B_FOOT * B_FOOT
 PERM_UND, TSCALE_UND = 1.0e-9, 100.0
 
 
-def _leg(geom, kc=False, form="std", perm=PERM, tscale=1.0, grav_dt=500.0):
+def _leg(geom, kc=False, form="std", perm=PERM, tscale=1.0, grav_dt=500.0,
+         mesh="hex"):
     return dict(geom=geom, kc=kc, form=form, perm=perm, tscale=tscale,
-                grav_dt=grav_dt)
+                grav_dt=grav_dt, mesh=mesh)
 
 
 # 20 gravity steps must span T_v >> 1 so the initial state is CONSOLIDATED.
@@ -161,7 +163,21 @@ LEGS = {"linear": _leg("linear"),
         "corot_std_und": _leg("corot", perm=PERM_UND, tscale=TSCALE_UND,
                               grav_dt=GRAV_DT_UND),
         "corot_bbar_und": _leg("corot", form="bbar", perm=PERM_UND,
-                               tscale=TSCALE_UND, grav_dt=GRAV_DT_UND)}
+                               tscale=TSCALE_UND, grav_dt=GRAV_DT_UND),
+        # --- locking-FREE coupled legs: quadratic (Bezier tet10, Taylor-Hood)
+        # x volumetric cure. bbar on a LINEAR element is one of the two
+        # ingredients the vault's element study says the unlocked floor needs;
+        # these add the second. Separate mesh (bearing_mesh_tet10.npz, DOF-
+        # matched, 3 quadratic elements across B against the H8 mesh's 4
+        # linear), so absolute q is NOT comparable with the H8 legs — the
+        # bbar/std ratio within a pair is.
+        "t10_std": _leg("corot", mesh="tet10"),
+        "t10_bbar": _leg("corot", form="bbar", mesh="tet10"),
+        "t10_std_und": _leg("corot", perm=PERM_UND, tscale=TSCALE_UND,
+                            grav_dt=GRAV_DT_UND, mesh="tet10"),
+        "t10_bbar_und": _leg("corot", form="bbar", perm=PERM_UND,
+                             tscale=TSCALE_UND, grav_dt=GRAV_DT_UND,
+                             mesh="tet10")}
 LADDER = ["linear", "corot", "hypo", "hypo_kc"]
 # `corot_std` is `corot` re-run on WHATEVER build is in dist/bin right now, so
 # the locking ratio is engine-matched. It exists because the committed
@@ -171,6 +187,8 @@ LADDER = ["linear", "corot", "hypo", "hypo_kc"]
 # committed §8 evidence — from being overwritten.
 PAIR = ["corot_std", "corot_bbar"]
 PAIR_UND = ["corot_std_und", "corot_bbar_und"]
+PAIR_T10 = ["t10_std", "t10_bbar"]
+PAIR_T10_UND = ["t10_std_und", "t10_bbar_und"]
 # UNDRAINED pair — why these two numbers and not others. bbar's lever is
 # NEAR-INCOMPRESSIBILITY (the repo's own gate: bbar/std = 2.31 at nu=0.499 but
 # 1.008 at nu=0.3), and undrained loading is what makes the pore fluid impose
@@ -194,13 +212,17 @@ def log(*a):
     print(f"[{time.strftime('%H:%M:%S')}]", *a, flush=True)
 
 
-def load_mesh():
-    if not os.path.exists(MESH):
-        raise SystemExit(f"{MESH} missing — run build_mesh.py first "
-                         "(needs the apeGmsh env, see its docstring)")
-    z = np.load(MESH)
-    return (z["nodes"], z["hexes"], z["tributary"],
-            {k[4:]: z[k] for k in z.files if k.startswith("set_")})
+def load_mesh(kind="hex"):
+    path = MESH if kind == "hex" else MESH_T10
+    if not os.path.exists(path):
+        raise SystemExit(f"{path} missing — run "
+                         f"{'build_mesh.py' if kind == 'hex' else 'build_mesh_tet10.py'}"
+                         " first (needs the apeGmsh env, see its docstring)")
+    z = np.load(path)
+    sets = {k[4:]: z[k] for k in z.files if k.startswith("set_")}
+    if kind == "hex":
+        return z["nodes"], z["hexes"], z["tributary"], sets, None
+    return z["nodes"], z["tets"], z["tributary"], sets, z["is_vertex"]
 
 
 def pick_system():
@@ -215,12 +237,25 @@ def pick_system():
         return "UmfPack"
 
 
-def build(cfg, nodes, hexes, trib, sets):
+def build(cfg, nodes, conn_all, trib, sets, is_vertex=None):
     geom, kc, form, perm = cfg["geom"], cfg["kc"], cfg["form"], cfg["perm"]
+    tet10 = cfg["mesh"] == "tet10"
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 4)
-    for i, (x, y, zz) in enumerate(nodes, start=1):
-        ops.node(i, float(x), float(y), float(zz))
+    if tet10:
+        # Taylor-Hood: VERTICES carry u+p (ndf 4), MID-EDGE nodes carry u only
+        # (ndf 3). Two `model` calls, exactly as the fork's own BTET10 tests do
+        # — the second re-sets the default ndf, it does not wipe the domain.
+        for i, (x, y, zz) in enumerate(nodes, start=1):
+            if is_vertex[i - 1]:
+                ops.node(i, float(x), float(y), float(zz))
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        for i, (x, y, zz) in enumerate(nodes, start=1):
+            if not is_vertex[i - 1]:
+                ops.node(i, float(x), float(y), float(zz))
+    else:
+        for i, (x, y, zz) in enumerate(nodes, start=1):
+            ops.node(i, float(x), float(y), float(zz))
     p = PDMY
     ops.nDMaterial("PressureDependMultiYield", 1, 3, p["rho"], p["G"], p["B"],
                    p["phi"], p["gammaPeak"], p["refPress"], p["d"], p["PT"],
@@ -231,10 +266,15 @@ def build(cfg, nodes, hexes, trib, sets):
     # stay byte-identical to the runs behind the committed CSVs.
     if form != "std":
         extra += ["-formulation", form]
-    for e, conn in enumerate(hexes, start=1):
+    # Taylor-Hood is LBB-stable by construction, so it takes NO `-stab`: the
+    # equal-order stabilization exists to cure a checkerboard the TH pair
+    # cannot have, and the parser only defaults it for -pOrder equal anyway.
+    shape = (["-pOrder", "linear"] if tet10
+             else ["-stab", "auto", 0.25])
+    for e, conn in enumerate(conn_all, start=1):
         ops.element("LadrunoUP", e, *[int(c) + 1 for c in conn], 1,
                     "-Kf", KF, "-poro", PORO, "-rhoF", RHO_W,
-                    "-perm", perm, perm, perm, "-stab", "auto", 0.25,
+                    "-perm", perm, perm, perm, *shape,
                     "-body", 0.0, 0.0, -G9, "-geom", geom, *extra)
 
     # roller sides / fixed base / free-draining top (p = 0 at z = 0)
@@ -247,19 +287,28 @@ def build(cfg, nodes, hexes, trib, sets):
         f = fix.setdefault(int(n), [0, 0, 0, 0])
         f[0] = f[1] = f[2] = 1
     for n in sets["top"]:
-        fix.setdefault(int(n), [0, 0, 0, 0])[3] = 1
+        # only VERTEX nodes own a pressure DOF under Taylor-Hood
+        if not tet10 or is_vertex[int(n)]:
+            fix.setdefault(int(n), [0, 0, 0, 0])[3] = 1
     for n, f in fix.items():
-        ops.fix(n + 1, *f)
+        nd = 4 if (not tet10 or is_vertex[n]) else 3
+        ops.fix(n + 1, *f[:nd])
 
     # surcharge over the WHOLE top face (tributary-weighted nodal loads),
     # applied WITH gravity so the stage-1 surface tangent is regular — scoping
     # finding 2, and it must cover the footing patch too (see build_mesh.py).
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
+    # NOTE for tet10: the consistent T6 surface load puts ZERO at vertices and
+    # A/3 at each midside node, so every nonzero entry here lands on an ndf-3
+    # node and must be given three components, not four.
     for n in sets["top"]:
         a = float(trib[n])
         if a > 0.0:
-            ops.load(int(n) + 1, 0.0, 0.0, -Q_SURCH * a, 0.0)
+            if tet10 and not is_vertex[int(n)]:
+                ops.load(int(n) + 1, 0.0, 0.0, -Q_SURCH * a)
+            else:
+                ops.load(int(n) + 1, 0.0, 0.0, -Q_SURCH * a, 0.0)
 
 
 def gravity(tag, grav_dt):
@@ -282,18 +331,38 @@ def gravity(tag, grav_dt):
     for _ in range(10):
         assert ops.analyze(1, grav_dt) == 0, f"{tag} elastic gravity failed"
     ops.updateMaterialStage("-material", 1, "-stage", 1)
-    for _ in range(10):
-        assert ops.analyze(1, grav_dt) == 0, f"{tag} plastic settle failed"
+    # ADAPTIVE plastic settle. Switching PDMY to stage 1 is a single large
+    # stress redistribution, and how big an increment survives it is a property
+    # of the MESH — the same lesson scoping finding 6 records for the push. The
+    # H8 mesh takes it in one 500 s step; the coarser tet10 mesh does not, and
+    # fails with a force residual of order 250 rather than a near-miss. Halving
+    # on failure covers the same pseudo-time either way, and on any leg where
+    # the first attempt succeeds the step sequence is unchanged.
+    target, done, dt, nsub = 10.0 * grav_dt, 0.0, grav_dt, 0
+    while done < target - 1e-9:
+        if ops.analyze(1, min(dt, target - done)) == 0:
+            done += min(dt, target - done)
+            continue
+        dt *= 0.5
+        nsub += 1
+        if nsub > 12:
+            raise SystemExit(f"{tag} plastic settle failed: no convergence "
+                             f"even at dt={dt:.4g} s after {nsub} subdivisions "
+                             f"({done:.4g}/{target:.4g} s covered)")
+    if nsub:
+        log(tag, f"plastic settle needed {nsub} subdivisions "
+            f"(final dt={dt:.4g} s against {grav_dt:.4g})")
     return sysname
 
 
 def run_leg(name):
     cfg = LEGS[name]
     geom, kc, form = cfg["geom"], cfg["kc"], cfg["form"]
-    nodes, hexes, trib, sets = load_mesh()
+    nodes, conn_all, trib, sets, is_vertex = load_mesh(cfg["mesh"])
     t_start = time.time()
-    build(cfg, nodes, hexes, trib, sets)
-    log(name, f"model built: {len(nodes)} nodes, {len(hexes)} hex "
+    build(cfg, nodes, conn_all, trib, sets, is_vertex)
+    log(name, f"model built: {len(nodes)} nodes, {len(conn_all)} "
+        f"{'tet10' if cfg['mesh'] == 'tet10' else 'hex'} "
         f"[-geom {geom}, -formulation {form}{', -kozenyCarman' if kc else ''}, "
         f"k={cfg['perm']:.1e}]")
     # the drainage regime this leg will actually be in, stated up front:
@@ -325,7 +394,12 @@ def run_leg(name):
     z_top = float(nodes[:, 2].max())
     probe_xyz = np.array([fxy[:, 0].mean(), fxy[:, 1].mean(),
                           z_top - 0.5 * B_FOOT])
-    p_node = int(np.argmin(((nodes - probe_xyz) ** 2).sum(axis=1))) + 1
+    d2 = ((nodes - probe_xyz) ** 2).sum(axis=1)
+    if is_vertex is not None:
+        # only vertices own a pressure DOF under Taylor-Hood — a mid-edge probe
+        # would silently read dof 4 of a node that has none.
+        d2 = np.where(is_vertex, d2, np.inf)
+    p_node = int(np.argmin(d2)) + 1
     # Datum matters: the probe is 1 m down, where HYDROSTATIC p is already
     # 9.81 kPa, so absolute p is ~10 kPa before the push even starts and a raw
     # p/q ratio reads as undrained no matter the permeability. Record EXCESS
@@ -462,7 +536,9 @@ def main():
     # "all" = the geometry ladder only; corot_bbar is a paired locking probe and
     # must be asked for by name so `all` keeps reproducing the §8 campaign.
     names = (LADDER if which == "all" else PAIR if which == "pair" else
-             PAIR_UND if which == "pair_und" else [which])
+             PAIR_UND if which == "pair_und" else
+             PAIR_T10 if which == "pair_t10" else
+             PAIR_T10_UND if which == "pair_t10_und" else [which])
     for n in names:
         if n not in LEGS:
             raise SystemExit(f"unknown leg {n!r}; pick from {list(LEGS)} or 'all'")

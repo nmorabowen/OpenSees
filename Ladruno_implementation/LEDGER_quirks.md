@@ -4902,6 +4902,18 @@ mode ADR 86 section 4.4's refinement box was written to prevent, arriving throug
 > A new base constructor taking only the tag would do it, at the cost of a near-duplicate of a
 > 55-line constructor body. Do not simply add `mElastFlag = 0` to the bare form to "make them
 > consistent" — that changes every null-constructed Manzari material in the process.
+>
+> **RECONFIRMED 2026-09-04, ADR-90 WP-B.** The ADR-90 planning brief (F5) listed this as a
+> WP-B prerequisite fix, assuming a fix confined to `ManzariDafaliasPlaneStrain.cpp` alone was
+> available. It is not: `MovableObject::classTag` is private with no setter anywhere in `SRC/`
+> (re-verified), so the only way to change it is a base-constructor call, and every such call
+> either carries the `mElastFlag` side effect or requires adding a new constructor overload to
+> vanilla `ManzariDafalias` — exactly the two options the 2026-08-28 decision already weighed and
+> declined. **Status stays NOT FIXED.** What WP-B added instead is a broker/database round-trip
+> test that reproduces the defect end to end —
+> `tests/test_manzari_planestrain_classtag_quirk.py::test_manzari_planestrain_classtag_survives_one_roundtrip_but_not_two`
+> — so a future change to the null constructor, the broker dispatch table, or the wire format has
+> something concrete to check against instead of this prose alone.
 
 
 ## `OPS_ManzariDafaliasMaterial` writes past a 5-element stack array on a deck with >5 trailing optionals
@@ -4985,3 +4997,363 @@ Measured: restored source at `19:10`, `ManzariDafalias.cpp.obj` at `19:10:44` fr
 - This is the same family as `86_ladruno_sanisand_handoff` §1's stale-binary trap and the
   edit-during-a-build trap above, and it presents identically: a green or red result about a tree
   that is not the one on disk.
+
+### A localization gate can be BIT-IDENTICAL across meshes for a reason that has nothing to do with regularization — two ways a Duvaut–Lions objectivity gate passes tautologically
+- **Bites:** you build the standard viscoplastic-regularization battery — "matched (τ, T) pairs at equal Deborah number give the same answer" and "the band width converges under h-refinement" — watch both come back clean to 12 significant digits, and conclude the regularizer works. Neither result contained any information.
+- **Why (1): the De collapse at a fixed step count cannot fail.** The discrete Duvaut–Lions update depends on τ and T *only* through `β = Δt/(τ+Δt) = 1/(1 + nsteps·De)`, and on the load only through the increment `u_max/nsteps`. So two runs with the same `(De, nsteps)` are **bit-identical whatever (τ, T) produced that De** — `(τ=1e-3, T=1)`, `(1e-2, 10)` and `(1e-4, 0.1)` returned the same `w2 = 41.873586502200`, `P_peak = 20.257474397731`, `W = 35.396701347229`. The gate is an algebraic identity, not a measurement.
+- **Why (2): a FLAT fixed-length imperfection makes every mesh exact.** Give a softening bar a weak zone of fixed *physical* length (10 % of L = 2/4/8/16 elements) with every element in it at exactly the same reduced strength, and the continuum solution is piecewise constant with the zone boundary sitting on a mesh line — **every mesh represents it exactly**. Width, peak load and dissipated work then came out identical across N=20…160 at every De>0 (`w2 = 29.0085`, `P_peak = 20.1908`, `W = 33.9447`). Worse, the same tie makes the τ=0 *negative* control uninterpretable: round-off picks which sub-band localizes and `w2/h` wanders 2.0 → 5.3 → 8.1 → 14.0 with no pattern, so the control neither passes nor cleanly fails.
+- **Workaround:** (a) run matched-De pairs at **different step counts** — the collapse then holds to 0.47 % in width / 0.009 % in peak load, and the residue is the real Δt-transient effect; (b) use a **graded** notch over the fixed physical length (parabolic, with a small tie-breaking centre offset so an even element count does not straddle the minimum symmetrically), which is both a mesh-convergent field and has a unique weakest point. Both tautologies are asserted **as tautologies** in `tests/test_duvaut_lions_oracle.py::test_a0_two_gates_that_pass_tautologically` so the ADR cannot later cite them as evidence. Same family as the shipped `-eta` gate's own tautological-fixture trap (see the `LadrunoConcrete3D -eta` entry above). Learned 2026-09-04, ADR-90 leg A0 (PR #783), [[90_ladruno_viscoplastic_regularization_adr]].
+
+### A non-zero default for the residual-branch hardening turned a "perfectly plastic" oracle bar into a hardening one — and the closed-form overstress gate failed with a clean 200 % error
+- **Bites:** a softening law needs a residual floor so the yield stress cannot go negative, and the floor needs a *slightly positive* slope `H_res` so a perfectly-plastic element does not make the assembled 1-D chain tangent exactly singular. Defaulting `H_res = E/2000` for every caller then silently broke an unrelated gate: PV3's closed-form check `σ* − σ_Y = E·ε̇·τ` came back with a relative error of exactly 2.0.
+- **Why:** the yield stress is the upper envelope `K(α) = max(σ_Y + Hα, σ_res + H_res·α)`. With a caller that wants **perfect plasticity** (`H = 0`) and **no floor** (`σ_res = 0`), the second line is `0 + H_res·α` — which starts below `σ_Y` but **crosses it** at `α = σ_Y/H_res = 2.0`. The PV3 driver runs to `α ≈ 7`, so past `α = 2` the "perfectly plastic" bar was hardening on the residual branch and the steady overstress was measured against a moving backbone. The failure looks like a physics bug in the relaxation; it is a default in a parameter the failing test never mentions.
+- **Workaround:** default `H_res = 0` (a genuinely flat floor) and let the one caller that needs the non-singular tangent — the FE bar — set it explicitly. Generally: **a regularizing default that is harmless for its own caller can be a silent model change for every other caller of the same constitutive routine**; put it at the call site, not in the constructor. Learned 2026-09-04, ADR-90 leg A0 (PR #783).
+
+### Newton on a softening bar diverges at the FIRST post-peak step unless each step is predicted with the LAST CONVERGED tangent — and it only shows up once the mesh is fine enough
+- **Bites:** a displacement-controlled 1-D softening bar with a 10 % imperfection solves fine at N=20 and then, at N≥40, blows up at the exact step where the weak element first yields: the first Newton correction is 42× the applied step increment, every element in the bar is driven plastic in one iteration, and the residual sticks at ~40 (vs a tolerance of 2e-9) for the remaining iterations. The parameters pass the standard snap-back check (`ℓ_b > L|H|/E` by a factor 2.5), so it reads as a bug in the material.
+- **Why:** if a step starts by simply setting the prescribed end displacement and leaving the interior alone, the first iterate carries an artificial residual of order `E·Δu/h` concentrated at the loaded end. In the elastic range that is harmless — one exact linear solve removes it. At the yielding step the tangent contains a band element whose modulus is `E_t = EH/(E+H) ≈ −50` against `E = 20000`, i.e. **400× softer**, so linearizing that same residual puts an enormous displacement into the band and throws the iterate clean out of the quadratic basin. The residual is `O(Δu)` and the refinement makes `h` small, which is why it appears only past a mesh threshold.
+- **Workaround:** start every step with a **predictor** that applies the prescribed increment through the tangent of the **last converged state** (solve `K_ii δu_i = −K_iN ΔU_N` with the stored converged `D`), not the elastic one and not nothing — the initial residual then becomes `O(Δu²)`. Add a backtracking safeguard on the residual norm for the indefinite post-peak tangent. With both, every mesh converges in 1–3 iterations. Related: an *ill-posed* (τ=0) softening problem still needs a step count that grows with refinement — 4000/16000/32000/64000 at N=20/40/80/160 — while the regularized runs all complete at 250 steps on every mesh; that growth is a free regularization signature, not a solver defect. Learned 2026-09-04, ADR-90 leg A0 (PR #783).
+
+### A generic `NDMaterial` wrapper cannot reproduce a rate model over a HYPOELASTIC inner — `getInitialTangent()` gives you one sampled matrix, not the function `C_e(state)`
+- **Bites:** you prove (correctly) that a two-track viscoplastic wrapper reproduces true Duvaut-Lions exactly on monotonic paths, ship the proof as the architecture's justification, and then discover the proof silently assumed a **constant elastic operator**. Over an inner with pressure-dependent moduli — SANISAND's `G(p)`/`K(p)`, Drucker-Prager with `G(p)`, any hypoelastic law — the identity fails on **every** path, monotonic and proportional included, and the error grows monotonically with the Deborah number.
+- **Why:** the proof's conserved quantity is `psi = sigma + E*alpha`, which advances by exactly `E*de` per step only if `E` is the SAME NUMBER on both tracks. The wrapper's only elastic operator is `inner->getInitialTangent()` — `E` evaluated at the **inner's** committed stress — but the stress it must predict from is its **own**, and relaxation is precisely the statement that the two differ. Measured on a 1-D caricature `E(sigma) = E0 (1 + 0.6|sigma|/sigY)`: rel `|sig_TT - sig_TDL|` = 2.4e-3 / 2.0e-2 / 1.8e-1 / 6.0e-1 at De = 0.01 / 0.03 / 0.1 / 0.3, against 3.0e-14 for constant E.
+- **Workaround / status:** there is none at the seam. Evaluating the predictor modulus at the wrapper's own stress buys 1-2 orders but does not close it, and it is **not implementable**: you would have to either call `inner->setTrialStrain()` at a fabricated strain (corrupting the inner's trial state) or know the inner's elastic law, which is what "generic" forbids. **Rule: before claiming a wrapper reproduces a model, write down every hypothesis the proof uses — the elastic operator is the one people forget, because in textbooks it is a constant.** Learned 2026-09-05, ADR-90 P0b leg (a), [[_adr90_p0b_results]] §1, [[90_ladruno_viscoplastic_regularization_adr]] §4.3.
+
+### A second-moment band-width metric SATURATES at the specimen length — `w2` near `L` means "no band", not "a wide band"
+- **Bites:** you adopt a threshold-free band width `w2 = sqrt(12*Var)` over the plastic-strain profile (calibrated so a one-element band reads exactly `h` and a k-element top hat reads exactly `k*h`), sweep the regularization parameter, and read off a beautifully monotone `w2` = 3.5 -> 42 -> 91 mm on a 100 mm bar. The last two are not band widths. A **uniform** profile returns `w2 = L` exactly, so `w2` is bounded in `[h, L]` **by construction**, and the metric reports "the whole specimen is yielding" and "there is a 91 mm band" with the same number.
+- **Why:** the second moment of a distribution supported on `[0, L]` is maximised by the uniform distribution, and the `sqrt(12*Var)` normalisation was chosen precisely so the uniform case maps to `L`. Convergence of `w2` toward `L` under refinement therefore *looks* like convergence of a width when it is convergence to a homogeneous, non-localizing solution.
+- **Workaround:** always report `w2/h` (the band-resolution floor — below ~3 the "band" is two elements and the number is meaningless) **and** `w2/L` (above ~0.5 there is no band); gate the declared operating point on `w2/h >= 3`. Report a threshold metric (FWHM) alongside and expect disagreement — on the same runs the threshold count and the FWHM differed by up to 40x, and the FWHM failed to converge at parameter points where `w2` converged. Learned 2026-09-05, ADR-90 P0b leg (c), [[_adr90_p0b_results]] §3.
+
+### `beta = dt/(tau+dt)` changes per NEWTON ITERATION under `DisplacementControl` / `ArcLength` — `applyLoadDomain` is called inside `update()`, not once per step
+- **Bites:** any rate-dependent material that reads `ops_Dt` sees a pseudo-time increment re-set *during* the equilibrium iteration, so its relaxation factor differs between iteration 1 and iteration 5 of the same step. The residual is then not a function of `u`, Newton's convergence argument is void, and the run either stalls or converges to something that depends on the iteration path.
+- **Why:** `DisplacementControl::update()` (`SRC/analysis/integrator/DisplacementControl.cpp:298`) calls `theModel->applyLoadDomain(currentLambda)` at **`:346`**, and `ArcLength::update()` (`:226`) calls it at **`:302`** — both after recomputing `currentLambda`. `Domain::applyLoad` advances `currentTime`, so `dT = currentTime - committedTime` moves mid-iteration. The **4-argument** `LoadControl(dLambda, numIncr, min, max)` also destroys uniformity, by adapting `dLambda`.
+- **Workaround:** **latch** `dt` and `beta` at `newStep()` / the first trial evaluation of the step and hold them for the whole iteration, rewinding on `revertToLastCommit`; or hard-refuse those integrators. The lane a rate-dependent material *should* be driven on is a patterned `sp` under the **1-argument** `LoadControl`: `SP_Constraint::applyConstraint` sets `valueC = loadFactor*valueR` (`SRC/domain/constraints/SP_Constraint.cpp:331-337`), so that IS displacement control with exactly uniform pseudo-time, and it keeps limit-point capability. Learned 2026-09-05, ADR-90 3-lens review, [[90_ladruno_viscoplastic_regularization_adr]] §3.
+
+### `Domain::revertToLastCommit()` sets `dT = 0` and re-applies the load — so a rate-dependent material runs the FIRST evaluation of every retried step UNREGULARIZED
+- **Bites:** a run with step cutbacks silently mixes regularized and unregularized steps. With the fork's `dt <= 0 => beta = 1` convention (deliberate: a missing time increment must not turn a material elastic) the first evaluation after every cutback takes the **inviscid** branch, which **dumps the entire accumulated overstress in one committed step** — a finite stress drop with no strain increment. Nothing in the output says it happened.
+- **Why:** `Domain::revertToLastCommit()` does `currentTime = committedTime; dT = 0.0; this->applyLoad(currentTime);` (`SRC/domain/domain/Domain.cpp:2334-2339`). The same `dt <= 0` path is reached by `loadConst` (which makes the increment negative). A **held-load** step is the mirror image: there `dt > 0` but the strain rate is zero, so the model relaxes fully toward the inviscid backbone with time constant `tau` — **staged geostatic steps do exactly this**.
+- **Workaround:** count the steps that commit with `tau > 0` but `beta == 1`, expose the count in the provenance block, and **fail acceptance on a non-zero count**. Keep `tau = 0` during staging and gate post-gravity byte-identity against a run with no wrapper at all. "Inert without a positive `ops_Dt`" is the wrong mental model — it is not inert, it discharges. Learned 2026-09-05, ADR-90 3-lens review, [[90_ladruno_viscoplastic_regularization_adr]] §4.2.
+
+### The `ManzariDafalias` PLANE-STRAIN view returns STATIC tangent buffers (the 3-D view does not) — and `getInitialTangent()` writes into the shared one
+- **Bites:** you check `ManzariDafalias3D.h`, see `static Vector mSigma_M, mEpsilon_M`, conclude "the stress/strain buffers are static, the tangents are per-instance", and write a wrapper that holds a reference to `inner->getInitialTangent()`. On 3-D you are right. On **plane strain** the second material instance silently overwrites the first one's tangent.
+- **Why:** `ManzariDafaliasPlaneStrain.h:78-82` declares `static Matrix mTangent;` **and** `static Matrix mTangent_init;` — class-wide, shared by every instance in the process — and `ManzariDafaliasPlaneStrain::getInitialTangent()` (`.cpp:157-171`) *writes* the 3x3 reduction of `mCe` into that shared `mTangent_init` and returns a reference to it. `ManzariDafalias3D.h:74-79` declares only the two static Vectors. The hazard is therefore VIEW-SPECIFIC, and it lands on exactly the plane-strain leg where a wrapper reads the initial tangent for an elastic predictor.
+- **Workaround:** **deep-copy every `Vector`/`Matrix` an inner returns, before any other call on any instance of that class** — and gate it with a *two-instance interleave* test on the plane-strain view (construct two, interleave their `getInitialTangent()` calls, require each to see its own moduli). A single-instance test cannot fail. Related trap: `mCe` itself is rewritten *inside* `integrate()` (the integrator calls at `ManzariDafalias.cpp:979/987/992` pass it by reference), so "read the initial tangent before `setTrialStrain`" returns the **previous Newton iterate's** value — cache it in the wrapper's own `commitState()` instead. Learned 2026-09-05, ADR-90 3-lens review, [[90_ladruno_viscoplastic_regularization_adr]] §5.
+
+## `ManzariDafalias` / `LadrunoSANISAND` `TanType` defaults to **0 = the ELASTIC tangent** in the parser — so a deck that emits only the positional parameters runs `algorithm Newton` as de-facto MODIFIED Newton
+
+**Found 2026-09-05, ADR-90 WP-A2. Cost: a whole campaign relaunch, and ~7x of wall time on the
+boundary-value legs.**
+
+`ManzariDafalias3D::getTangent()` returns `mCe` (elastic) for `TanType == 0`, `mCep` for `1`, and
+`mCep_Consistent` otherwise (`ManzariDafalias3D.cpp:134-142`; same shape in
+`ManzariDafaliasPlaneStrain.cpp:137` and `ManzariDafalias3DRO.cpp:119`). The **parser default is
+0** — `oData[1] = 0` at `LadrunoSANISAND.cpp:117`, deliberately copied from
+`OPS_ManzariDafaliasMaterial` so that a renamed deck behaves identically — while the **null and
+parallel constructors default to 2** (`ManzariDafalias.cpp:365`, `:426`). The two disagree, and
+the one a deck actually hits is the parser's.
+
+So `nDMaterial LadrunoSANISAND $tag <18 params>` with no positional optionals hands every
+`algorithm Newton` an ELASTIC tangent: a modified-Newton iteration with linear convergence,
+dressed as full Newton.
+
+- **Where it hides:** on a **zero-free-DOF material-point deck it costs nothing** — there are no
+  equations to iterate. Every existing fork SANISAND deck is of that shape
+  (`tests/test_ladruno_sanisand.py` passes `*_PARAMS` plus flags and no positional optionals), so
+  the defect has never had the chance to show itself. It appears the moment the material is put
+  into a boundary-value problem.
+- **Measured (ADR-90 WP-A2, strip footing on `LadrunoBrick -formulation bbar`):** at the parser
+  default the h0 = 0.25 leg advanced 11 steps to s/B = 1.6e-4 in 350 s, spending ~40-65
+  state-determination passes per step. With `TanType 2` and a reachable convergence test the same
+  deck reaches s/B = 2.0e-3 in 36 s at h0 = 1.0 — about **7x**.
+- **Emit the positional block explicitly:** `... $Rho $IntScheme $TanType $JacoType $TolF $TolR`
+  **before** any `-flag` (the ADR-86 parser rejects a positional after a flag, by design).
+- `mCep_Consistent` is **unsymmetric** under a non-associated flow rule: pair `TanType 2` with
+  `system Pardiso -matrixType 0`, `UmfPack`, or another unsymmetric solver.
+- The tangent changes the ITERATION PATH only — the substepped stress update is untouched — so
+  this is free accuracy-wise. Measured on the WP-A2 deck, `q` at the matched `s/B = 0.002`
+  checkpoint moved **0.52 %** between the two configurations.
+
+## Newton cannot reach a tight `NormDispIncr` on SANISAND — the substepped `ModifiedEuler` return makes the discrete map only piecewise smooth and the residual STALLS around 1e-6 m
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`ManzariDafalias`'s default integration scheme is a **substepped** `ModifiedEuler` return with a
+**hardcoded** substep tolerance `TolE = 1e-4` (exactly what the fork's `-honorTolR` flag exists to
+expose — `86_ladruno_sanisand_apegmsh_emitter_guide` §1). The stress a Gauss point returns is
+therefore a piecewise-smooth function of the strain increment, the assembled residual inherits
+that, and **Newton stops converging quadratically and stalls.**
+
+Measured on a strip-footing leg (h0 = 0.5, 390 hexes): over 47 failed convergence attempts the
+residual displacement norm stalls at a **median of 6.6e-7 m** (min 3.4e-8, max 1.3e-4). A
+`test NormDispIncr 1e-8` target is therefore not merely tight, it is **unreachable** — and the run
+that nominally used it was in fact carried by the relaxed third rung of its algorithm ladder on
+**18 of its 26 steps**, i.e. 65 of every 125 state-determination passes were spent failing two
+rungs that could not succeed. A study in that state is measuring its own convergence test: the
+ADR-63 note-71 failure mode.
+
+- **Use `NormUnbalance`** — which is also what `tests/test_r3_prandtl_collapse_gate.py` actually
+  uses (`tol = 1.0e-5 * want`), despite "NormDispIncr per the R3 gate" appearing in more than one
+  downstream brief.
+- **Scale the force tolerance to a deck-intrinsic force** (the model's own weight `gamma*V`, the
+  applied load, ...). Measured, same deck and wall budget: `NormDispIncr 1e-8 m` reached
+  s/B = 0.00106; `NormUnbalance 1e-6 gamma*V` reached 0.00218; `NormUnbalance 1e-5 gamma*V`
+  reached 0.00442 — with the answer moving by a median of 0.3-0.75 % between all three at matched
+  settlement.
+- **A displacement-norm tolerance is not mesh-neutral, which is disqualifying inside a
+  mesh-convergence study.** The norm runs over the free DOFs, and there are 3.6x more of them at
+  h0 = 0.25 than at h0 = 1.0, so the same nominal number is a different physical requirement on
+  each mesh of the sequence. A force tolerance scaled by `gamma*V` is identical on all three by
+  construction.
+
+## `LadrunoBrick -b` is a body force **per unit VOLUME**, not per unit mass — it is never multiplied by rho
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`LadrunoBrick::addLoad` (`LadrunoBrick.cpp:723-745`) does
+`appliedB[i] += loadFactor * data(i) * b[i]` for `LOAD_TAG_SelfWeight` and
+`appliedB[i] += loadFactor * b[i]` for `LOAD_TAG_BrickSelfWeight`, and the residual then takes
+`-= dvol * appliedB[p] * shp[3][j]`. **`rho` appears nowhere on that path** — it is read only by
+the mass matrix and the inertia terms.
+
+So gravity is
+
+```python
+ops.element('LadrunoBrick', e, *conn, mat, '-b', 0.0, 0.0, -gamma, ...)   # gamma = rho*g
+ops.eleLoad('-ele', *tags, '-type', '-selfWeight', 0.0, 0.0, 1.0)
+```
+
+Passing `-b 0 0 -9.81` (the acceleration, expecting the element to multiply by rho) silently gives
+`1/rho` of the intended weight — on a `rho = 2.0` deck, **half** the soil weight, with every
+analysis converging and reporting success. The cheap catch is the resultant identity
+`sum R_z(base) == gamma * V`, which reads 4.4e-16 when the convention is right.
+
+## Under `-formulation bbar` the geostatic stress is piecewise constant at the ELEMENT CENTROID value — which buys an exact 1-D patch check, and traps anyone comparing Gauss-point stresses to the pointwise solution
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+A laterally-rollered, base-fixed box under self weight has the closed-form geostatic state
+`sigma_zz = gamma*z`, `sigma_xx = sigma_yy = K0 sigma_zz` with `K0 = nu/(1-nu)` — exact even for a
+pressure-dependent material such as SANISAND (whose `G` goes as `sqrt(p)`), because `nu` is
+constant, so `K0` is depth-independent and the field satisfies equilibrium and the roller
+kinematics identically.
+
+Under `-formulation bbar` that field comes back **piecewise constant over each element at the
+centroid value**, not varying between the element's own Gauss points: MEASURED
+`max |sigma_zz(gp) - gamma*z_centroid| / |gamma*z_centroid| = 1.1e-13` over every Gauss point of
+every element, on all three meshes of a refinement sequence.
+
+- **Use it.** It is the *field* check `00_canonical_testbed` §1d demands alongside the resultant
+  identity, and it is exact to round-off, so it has no tolerance to tune. A wrong body-force
+  convention or a wrong lateral boundary moves it O(1) while the resultant identity sits at 1e-16.
+- **The trap:** compare Gauss-point stresses against the POINTWISE `gamma*z_gp` and the same
+  correct model reads an O(h) "error" that is not an error — it is the b-bar volumetric average
+  being visible. Compare against the centroid value.
+
+## `ops.logFile(path, '-noEcho')` is how a Python driver captures `opserr` warnings — but you must redirect it away again before reading the file
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+Material-level warnings that matter for a soil deck — `ManzariDafalias`'s
+`"stage-switch stress ratio ... exceeded the bounding surface M_c ... (Outside Bounding!)"`
+M_c-inflation notice, and the low-p `"mean stress p = ... is below the floor ... CLAMPING"` notice
+— go to `opserr`, not to Python. A driver that wants to ASSERT on them, rather than hope a human
+reads the console, can do:
+
+```python
+ops.logFile(log_path, '-noEcho')      # opserr -> file, console silent
+...  run the analysis ...
+ops.logFile(other_path, '-noEcho')    # release the handle
+n_outside = open(log_path, errors='ignore').read().count('Outside Bounding')
+```
+
+- The positive control that the capture is live: the file also contains the material's own
+  construction echo, so an empty file means the redirect did not take, not that nothing warned.
+- `-noEcho` is what silences the console; without it the file is written *and* echoed.
+
+
+## `ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap — only a `dT_min` floor — so one `analyze(1)` on a softening BVP can take tens of minutes
+
+**Found 2026-09-05, ADR-90 WP-A2. It is what stopped that study from reaching an answer.**
+
+`ManzariDafalias::ModifiedEuler` integrates the stress update over pseudo-time `T` in
+`while (T < 1.0)` with an adaptive substep `dT` bounded below by
+`dT_min = 1e-6` (`ManzariDafalias.cpp:1380`, `:1543`, `:1663`). There is **no substep COUNT
+cap**. At `dT == dT_min` the loop force-accepts the substep and advances `T`
+(`:1649-1663`), so it does terminate — but the bound is **10^6 return maps per Gauss point per
+state-determination pass**, and a Newton ladder that tries three algorithms will repeat that up
+to 125 times in one load step.
+
+Measured on a strip footing on softening `LadrunoSANISAND` (`LadrunoBrick -formulation bbar`,
+200-782 elements, three meshes, two densities): as the plastic zone develops, single `analyze(1)`
+calls start costing **11 minutes**, then **20-28 minutes**, on every mesh and both densities at
+once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of push.
+
+- **It does not look like a hang from outside.** The process burns 100 % CPU, the engine log stops
+  growing (nothing is failing, so nothing is logged), and the analysis eventually returns a
+  CONVERGED step. Only the curve file's mtime tells you.
+- **It is NOT the stepping controller, and the controller's own diagnostics prove it.** Every leg
+  in that campaign used **0 of its 80** pinned subdivisions and ended with its step **800-12800x
+  above** the `DS_MIN` floor. A wall-clock stop under those conditions is a `WALL` seizure whose
+  cause is the constitutive integrator, not the guard -- report it that way.
+- **A wall-clock budget cannot interrupt it.** A budget checked at the top of a stepping loop only
+  binds once the current `analyze(1)` RETURNS, so a leg can overshoot its budget by the length of
+  one seized step. Size the budget with that in mind, or watch the curve file.
+- This is the boundary-value-problem form of what ADR 90's A0 note measures on a 1-D bar: the
+  rate-independent problem needs 4000 -> 64000 load steps across four meshes to converge at all,
+  while every regularized run finishes at 250 steps on every mesh. The cost explosion IS the
+  ill-posedness.
+
+## `LadrunoSANISAND` at the fork-default `-Presidual 0` clamps a free-surface Gauss point on a DILATING deck, and says so -- but only in `opserr`
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+With `-Presidual 0.0` (the fork default -- a cohesionless sand has no cohesion) the low-p floor is
+`-Pmin` alone, `1e-3 * P_atm = 0.101` kPa. On a strip footing on a DENSE (`e_init = 0.60`,
+`psi = -0.22`) sand, the dilating soil under the footing edge drives a shallow Gauss point onto
+that floor and the material logs
+
+    WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100973 is below
+    the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator
+    preserved). The result at this integration point is set by the clamp, not by the model.
+
+- **Measured onset:** `s/B ~ 0.0153` on the COARSEST mesh (h0 = 1.0) and the DENSE density only.
+  The loose (`e_init = 0.6944`) legs and both finer meshes fired **zero** clamps over the same and
+  deeper settlements -- so it is a dense-dilatant / coarse-element / large-settlement effect, not a
+  property of the deck.
+- **It is silent in Python.** The message goes to `opserr`, so a driver that does not capture it
+  (see the `ops.logFile` quirk) will keep integrating a model whose answer at that point is the
+  clamp's. Count it, do not hope to read it.
+- **Any deep push on dense sand owes a decision here** -- a declared non-zero `-Presidual`, a small
+  surcharge to keep the free surface confined, or an explicitly accepted and disclosed clamp.
+  The gravity state is no warning at all: the shallowest Gauss point sat at 1.56-6.25 kPa, 15-60x
+  the floor, on every mesh, before the push ever started.
+## `InitStrainNDMaterial` special-cases the literal string "ThreeDimensional" when forwarding to `getCopy(void)`; `StagedStrainNDMaterial` has NO such special case at all — a `getCopy(void)` override for a 2D subclass has NO reachable caller through either wrapper
+
+**Found 2026-09-04, ADR-90 WP-B, while covering `LadrunoSANISANDPlaneStrain::getCopy(void)`.
+CORRECTED 2026-09-04 after code review: the original version of this entry claimed both wrappers
+special-case "ThreeDimensional" the same way. Only `InitStrainNDMaterial` does; `StagedStrainNDMaterial`
+does not special-case anything, at all — re-read the two side by side below.**
+
+`InitStrainNDMaterial::getCopy(const char *type)` (`InitStrainNDMaterial.cpp:289-327`) special-cases
+exactly the literal string `"ThreeDimensional"` (`:292-293`, `if (strcmp(type, "ThreeDimensional")
+== 0) return getCopy();`) to forward to its OWN void `getCopy()` — which is what finally calls
+`theMaterial->getCopy()` (void) on the inner. That coincides with the "ThreeDimensional" template
+its constructor always builds (`material.getCopy("ThreeDimensional")`, `:135,153`), which is why the
+3D coverage trick below works. Every OTHER type string (`"PlaneStrain"`, `"AxiSymmetric"`, …)
+instead calls `theMaterial->getCopy(type)` (`:310`) — the inner's TYPE-STRING constructor, never its
+void clone.
+
+`StagedStrainNDMaterial::getCopy(const char *type)` (`StagedStrainNDMaterial.cpp:293-309`) has NO
+such branch: it UNCONDITIONALLY calls `theMaterial->getCopy(type)` (`:303`) for every string,
+including `"ThreeDimensional"` itself — there is no `if` on `type` at all. So there is no type
+string, not even `"ThreeDimensional"`, that routes a `StagedStrainNDMaterial::getCopy(const char*)`
+call to the inner's void `getCopy()`. The ONLY way to reach the inner's void `getCopy()` through
+`StagedStrainNDMaterial` is `StagedStrainNDMaterial::getCopy(void)` itself (`:286-291`,
+`adoptCopy(theMaterial->getCopy())`) — a bare, zero-argument call, which nothing in this fork's
+element/wrapper ecosystem ever issues against an already-live wrapper instance.
+
+**Consequence:** the 3D getCopy(void)-coverage trick (`test_ladruno_sanisand.py`'s
+`test_getcopy_void_carries_the_settings` — wrap the prototype in `InitStrain`, drive it with a
+3D-only element like `stdBrick` so the element's own type request happens to be
+`"ThreeDimensional"`, matching `InitStrain`'s hardcoded template dimension AND its one special
+case) **does not port to any 2D subclass, and does not port to `StagedStrainNDMaterial` at ANY
+dimension** (it has no special case to exploit in the first place). Wrapping a SANISAND/
+ManzariDafalias-family prototype in `InitStrain` or `StagedStrain` and driving it with
+`quad ... PlaneStrain` never reaches the PlaneStrain subclass's `getCopy(void)` override at all —
+it only re-exercises the base class's `getCopy(const char*)` PlaneStrain branch (typically already
+covered directly, unwrapped).
+
+**The route that DOES reach it:** `FluidSolidPorousMaterial` (`SRC/material/nD/soil/
+FluidSolidPorousMaterial.cpp`) asks the soil for a DIMENSION-MATCHED copy at its own construction
+(`soilMat.getCopy(nd == 3 ? "ThreeDimensional" : "PlaneStrain")`, `:125`), so its `theSoilMaterial`
+is already the correctly-dimensioned subclass. Its own `getCopy(const char*)` (`:415-425`) does not
+forward the type string to the soil at all — for EVERY type it accepts, it goes through its own
+COPY CONSTRUCTOR (`:152-162`), which clones the soil with the dimension-free, no-argument
+`theSoilMaterial->getCopy()`. So `nDMaterial FluidSolidPorous $wrap 2 $soilTag $K $atm` +
+`element quad ... PlaneStrain $wrap` calls the 2D subclass's `getCopy(void)` once per Gauss point,
+regardless of what type string the element passes. Leave the wrapper's own `loadStage` at its
+construction default of 0 (never call `updateMaterialStage` on the WRAPPER's tag) and
+`FluidSolidPorousMaterial::getStress()` is then an exact pass-through of the soil's own stress, so a
+wrapped-vs-unwrapped bit-identical comparison isolates `getCopy(void)` alone. Pattern:
+`tests/test_ladruno_sanisand.py::test_getcopy_void_carries_the_settings_planestrain`.
+
+- **If you need to cover a 2D (or AxiSymmetric) subclass's `getCopy(void)`, reach for
+  `FluidSolidPorousMaterial`, not `InitStrain`/`StagedStrain`.** Only the 3D case gets the
+  convenient coincidence.
+- **If you write a new generic ND wrapper and want its `getCopy(const char*)` to reach the inner's
+  `getCopy(void)` for a NON-3D view too**, you would need to special-case that view's OWN string the
+  same way `"ThreeDimensional"` is special-cased today — nothing currently shipped does this.
+
+### A killed leg's JSON record stops at the last CHECKPOINT while its per-step curve CSV is complete — derive every terminal number from the curve
+- **Bites:** a long BVP campaign writes a per-leg JSON at each checkpoint (atomically, marked `partial: true`) and a curve CSV every step. When the harness reaps the process, the JSON's `s_end`, `q_max`, `steps` and `wall_s` are frozen at the **last checkpoint**, not at the last converged step — so every terminal number in the summary **understates** the leg, silently and by an amount nobody can bound in advance. Measured on ADR-90's GATE U campaign: `a2_h1.0_e0.6944.json` read `s_end_over_B = 0.02030`, `q_u = 450.39`, 50 steps, while its own `_curve.csv` ended at `s/B = 0.02280`, `q = 503.90`, 51 steps — a **12 % understatement of the deepest number in the whole campaign**. The report's abstract quoted the JSON and its tables quoted the curve, and the two disagreed in print.
+- **Why:** checkpointing exists so a reaped run keeps *something*; it is not a substitute for a per-step log. The steps between the last checkpoint and the kill are real, converged, and already on disk in the curve — they are simply not in the record the summariser reads.
+- **Workaround:** for any leg whose mode is `KILLED`/`WALL`/`FLOOR`, **re-derive `s_end`, `q_max`, `steps`, `wall` and the terminal step size from the curve CSV**, and have the summariser print its source per leg so the two can never diverge unnoticed. Same family as the fork's other "the artifact is not the run" traps (stale `.pyd`, `FASTBUILD: OK` without a recompile): *the file that is cheap to write is the one that is complete; the file that is convenient to read is the one that is stale.* Learned 2026-09-05, ADR-90 GATE U (WP-A2, `_adr90_tau0_qu_band.md` §6.1); the summariser now re-derives these four fields and prints its per-leg source.
+### `‖D_current‖/‖D_initial‖` is NOT a usable material-degradation proxy — the Frobenius norm is bulk-dominated (so deviatoric plasticity barely moves it) and sign-blind (so a softening tangent makes it GROW)
+- **Bites:** the natural-looking generalization of a damage-scaled stabilization
+  (`LadrunoBrick`/`LadrunoQuad` Tier-A `Kstab`) from "scale on the damage scalar"
+  to "scale on the tangent norm, which covers plasticity models too". It sounds
+  strictly more general. It is strictly worse, in both directions at once.
+- **Why (measured on the consistent J2 tangent at a pure-shear flow state,
+  E=1, flow direction n):** `‖C_ep‖/‖C_e‖` = **0.943** at ν=0.2 with *zero*
+  hardening, 0.967 at ν=0.3, 0.998 at ν=0.45, **1.000** at ν=0.499 — while the
+  shear entry `D(3,3)` that actually carries the hourglass modes has gone to
+  **0.000**. `‖C‖²= 9K² + 20G²` elastic vs `9K² + 16G²` at full plastic flow:
+  the bulk block dominates and plasticity is deviatoric, so the norm is nearly
+  blind to it, and blindest exactly in the near-incompressible regime where
+  plastic flow lives.
+- **Why (the other direction):** a norm has no sign. For a softening tangent with
+  flow-direction slope `−(1+h)·2G`, the ratio goes 0.957 / 1.000 / 1.155 / 1.915 /
+  6.733 at h = 0.5 / 1 / 2 / 5 / 20 — it **exceeds 1** past h≈1, gets clipped, and
+  yields no degradation at all *exactly at localization*. A secant-returning
+  material hides this; a true consistent damaged tangent (e.g. `LadrunoConcrete3D`
+  P3b, with the `−σ⊗dω` rank update) does not.
+- **Also:** a tangent-based scale is non-monotone in load history — it snaps back
+  to 1 on elastic unloading, so any floored stabilization would toggle every load
+  reversal, with `∂s/∂u` missing from the tangent. Damage ratchets; tangents do not.
+- **Rule:** if you need a degradation proxy for a *mode-specific* stabilization,
+  use the mode-specific entry (shear → `D(3,3)`, which `formUri` already does),
+  monotonize it over history, and keep the floor. And degrade where the material
+  **softens**, not merely where it yields — a hardening element has no localization
+  to enable and still needs its hourglass modes controlled.
+- **Status (2026-07-30):** challenge investigated and closed with NO code change;
+  full study in [[11_brick_asdconcrete_integration]] §3.1 (incl. the measurement
+  that the frozen-`Kstab` bias converges away at ≈O(h): `Ehg/W_ext` = 29 / 15.5 /
+  5.7% and load bias 1.77 / 1.45 / 1.15 at 2 / 4 / 8 elements through the bending
+  depth). Regression test `tests/test_ladrunoBrick_kstab_plasticity.py`.
+- *2026-07-30 (Tier-A `Kstab` scope challenge).*
+
+### `-formulation ssp` with ONE element through the bending depth never plastifies — its P–δ curve is identical to the elastic one
+- **Bites:** you mesh a wall/beam one element thick in the bending direction, use
+  `-formulation ssp` with a perfectly good inelastic material, and the model
+  returns an exactly elastic pushover. No warning: the material is present,
+  committed, and reports zero plastic strain because it is never strained.
+  `std`/`bbar` form a hinge on the same mesh, so an A/B against a "reference"
+  formulation is what exposes it.
+- **Why:** the single-point forms evaluate the constitutive model **once, at the
+  element centroid** (`isSinglePoint()`, the PR #94 cost fix). Bending strain is
+  antisymmetric about the centroid, so `ssp`'s mean-dilatation core sees ~zero
+  strain and never yields; the entire bending response is carried by the
+  artificial `Kstab`, which is elastic. Measured: `Ehg/W_ext = 98%`, and the
+  `elastic` and `J2Plasticity` runs agree to every printed digit.
+- **Scope — `uri` is NOT the same:** `uri`+`stiffness` strains its centroid from
+  the plain centroid `B`, picks up transverse shear, and does yield, at an
+  aspect-ratio-dependent point (elastic to `u/L ≈ 4%` on unit cubes; prompt
+  hinging on 1.0 × 0.25 × 2.0 elements). Don't widen the rule to "single-point
+  formulations" — both cases are pinned in the regression test.
+- **No stabilization-degradation scheme can fix this** — a damage model would not
+  damage at that centroid either. It is inherent to one-point integration.
+- **Rule:** `nd ≥ 4` elements through the bending depth is the threshold that
+  avoids the *never-plastifies* pathology — it is **not** a threshold for an
+  accurate hinge load. Measured elastic-calibrated load bias vs `bbar` is
+  **+77 / +45 / +15% at `nd` = 2 / 4 / 8**. Production RC walls meshed 2–3 thick
+  sit squarely in the +45–77% band.
+- **Usually change formulation, not mesh:** on the SAME coarse meshes
+  `-formulation eas` biases **+7.5 / +1.0 / −1.5%**, because true Simo-Rifai
+  re-condenses `K* = Kdd − Kda Kaa⁻¹ Kad` from the CURRENT tangent at 8 live GPs
+  every assembly, where `ssp` freezes one condensation of `C(0)`. `eas` and `ssp`
+  agree elastically to 3–4 digits on that mesh family, so the whole plastic gap is
+  the stabilization treatment. Costs: `eas` is small-strain-only in this fork and
+  pays 8 live GPs + an inner Newton vs `ssp`'s single material evaluation — an
+  implicit-analysis choice, not an explicit one. `std`/`bbar` remain the
+  no-stabilization reference.
+- *2026-07-30 (Tier-A `Kstab` scope challenge).*
