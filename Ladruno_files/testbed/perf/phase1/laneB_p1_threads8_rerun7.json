@@ -1,0 +1,29 @@
+{
+  "model": "laneB 15^3 LadrunoBrick+LadrunoJ2 ~11.5k DOF",
+  "repeats": 5,
+  "nsteps": 15,
+  "mkl_threads": "1",
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\dist\\bin\\opensees.pyd",
+  "results": {
+    "UmfPack": {
+      "median_s": 27.303069999965373,
+      "ratio_vs_umfpack": 1.0,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        23.967590200016275,
+        24.077921300020535,
+        27.303069999965373,
+        29.749718100007158,
+        32.33978360000765
+      ]
+    },
+    "Pardiso": {
+      "unavailable": true,
+      "reason": "See stderr output",
+      "args": [
+        "Pardiso"
+      ]
+    }
+  }
+}

@@ -626,3 +626,57 @@ into the scripts, one is a per-shell env var:
 With `LongPathsEnabled=1` (default on Win11) the deep `.claude\worktrees\...`
 build tree is fine — the `CMAKE_NINJA_FORCE_RESPONSE_FILE=ON` flag in `build.bat`
 already covers the command-line-length side.
+
+## 14. Zone-A's `*_cpp.py` kernel tests need a VALID STDIN — `WinError 6` otherwise
+
+**Symptom.** A full Zone-A run reports ~16 failures, all identical and all in the
+`*_cpp.py` family (`test_ladrunoJ2_kernel_cpp`, `test_hypo_kernel_cpp`,
+`test_hrz_lumped_mass`, `test_ladrunoCMS_core_cpp`, `test_logstrain*_cpp`,
+`test_ladrunoRCConcrete_*_cpp`, `test_ladruno_up_kernel_cpp`,
+`test_ladrunoConcrete3D_material`, `test_finitestrain2d_kernel_cpp`,
+`test_ladrunoJ2_finite_*_cpp`):
+
+```
+OSError: [WinError 6] The handle is invalid
+  .../Lib/subprocess.py:1365   p2cread = self._make_inheritable(p2cread)
+  .../Lib/subprocess.py:1416   _winapi.DuplicateHandle(...)
+```
+
+**Cause.** These tests `subprocess.run(..., capture_output=True)` out to `g++` to
+compile a standalone kernel check. `capture_output` pipes stdout/stderr but
+leaves **stdin INHERITED**. If the parent process has no valid stdin handle,
+`_make_inheritable(p2cread)` fails and the test dies **before `g++` is ever
+invoked** — the C++ under test is never reached.
+
+**Fix — redirect stdin, in any shell:**
+
+```bash
+cd tests && PYTHONPATH=<worktree>/dist/bin LADRUNO_OPENSEES_QUIET=1   python3.12 -m pytest -m zone_a -q < /dev/null
+```
+
+Measured 2026-08-04/05 during ADR-80 P3: 16 failed without the redirect,
+**0 failed with it**, same binary, same tests.
+
+> ⚠ **Two plausible-looking diagnoses that are WRONG**, both of which this note
+> originally recorded before being bisected properly:
+> - *"PowerShell vs Git Bash."* No. It fails in Bash too, and passes in neither
+>   shell reliably without the redirect.
+> - *"Foreground vs background."* No. It fails in a foreground Bash run and
+>   passes in a backgrounded one — whichever happens to hand the process a
+>   usable stdin.
+>
+> The only discriminator is the stdin handle. The symptom is intermittent
+> precisely because whether stdin is valid depends on how the caller launched
+> the shell, which is easy to mistake for flakiness in the tests themselves.
+
+**The tell that it is never a code regression:** every failure is an `OSError`
+from `subprocess.py`, never an assertion about a number. A real kernel
+regression fails an `assert`. It briefly looked as though an ADDITIVE change to
+`FE_Element` / `DOF_Group` had broken sixteen material kernels.
+
+**Adjacent, same run:** `test_ladruno_overlay_{driver,physics}.py` fail at
+COLLECTION with `ModuleNotFoundError: matplotlib` (they import
+`Ladruno_implementation/adr71_meshless_p_spike/staggered_pins_e7.py`, which
+imports matplotlib at module scope). That is a genuinely missing dependency in
+the bare `python3.12`, not a handle artefact — `pip install matplotlib` or
+`--ignore` those two modules.

@@ -319,8 +319,24 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
 //----------------------------------------------------------------------
 // Tier-A damage-scaled hourglass stabilization (softening support). Returns the
 // multiplier s in [floor,1] that degrades the constant elastic Kstab with the
-// material's current damage; 1.0 when the material reports no "damage" channel
-// (so std elastic/J2 behave exactly as before). See the header note + §3 of
+// material's current damage; 1.0 when the material reports no "damage" channel.
+//
+// s == 1 for a non-softening material is DELIBERATE, not an unhandled case:
+// degradation is warranted where the material SOFTENS (the stabilization would
+// otherwise keep carrying force across a localizing band), not merely where it
+// yields. A hardening or perfectly-plastic ASSOCIATED-flow element (J2) has no
+// localization to enable and still needs its hourglass modes controlled. (NB
+// non-associated models — DruckerPrager, PressureDependMultiYield — CAN shear-band
+// at positive hardening; no tangent OR damage rule detects that, and this study
+// did not measure it. ADR §3.1 point 4.) Do NOT "generalize"
+// this to a tangent-norm rule (s = ||D||/||D0||) — §3.1 of the ADR measures why
+// that is strictly worse: the Frobenius norm is bulk-dominated so it barely
+// moves for deviatoric plasticity (0.94 at ZERO hardening, ->1.00 as nu->0.5),
+// and it is sign-blind so it EXCEEDS 1 for a softening tangent and gets clipped
+// exactly at localization. The discriminating measure is the shear entry, which
+// is what the URI+STIFFNESS path already uses (dd(3,3), see formUri).
+//
+// See the header note + §3 / §3.1 of
 // Ladruno_implementation/11_brick_asdconcrete_integration.md.  // Ladruno
 //----------------------------------------------------------------------
 double
@@ -336,7 +352,10 @@ LadrunoBrick::damageScale(void)
     return 1.0;
   double dmax = 0.0;
   for (int i = 0; i < d->Size(); i++)
-    if ((*d)(i) > dmax) dmax = (*d)(i);   // ASDConcrete3D: max(d_tension, d_compression)
+    // generic: the worst of however many damage channels the material reports
+    // (ASDConcrete3D / LadrunoConcrete3D report 2 = tension, compression;
+    // LadrunoJ2 with -damage lemaitre reports 1). Not ASDConcrete3D-specific.
+    if ((*d)(i) > dmax) dmax = (*d)(i);
   double s = 1.0 - dmax;
   if (s < HG_DAMAGE_FLOOR) s = HG_DAMAGE_FLOOR;
   if (s > 1.0) s = 1.0;
@@ -2877,6 +2896,28 @@ LadrunoBrick::formSSP(int tang_flag, bool useInitialTangent)
   // artificial enhanced-strain Kstab is softened so a cracked element can localize.
   // The initial-tangent assembly keeps the full elastic Kstab (s=1) so the
   // predictor stiffness stays well-conditioned.
+  //
+  // NB `ssp` is the ONLY formulation whose Kstab is frozen elastic — it is
+  // condensed once from C(0) in buildSSP. URI+STIFFNESS sizes its kappa from the
+  // CURRENT tangent shear dd(3,3) (see formUri), so it already tracks a
+  // plastifying material without any damage channel. For a non-softening
+  // material the frozen Kstab here does leave `ssp` over-stiff, but the effect
+  // is a DISCRETIZATION quantity that converges away: the elastic-calibrated
+  // load bias vs `bbar` in a fully-plastified J2 hinge is +77% / +45% / +15% at
+  // 2 / 4 / 8 elements through the bending depth. (The Ehg/W_ext share over the
+  // same sweep is 29 / 15.5 / 5.7% — a trend diagnostic only; it is NOT a bound
+  // on the force error, which exceeds it ~2.5-3x.) ADR §3.1 has the full study,
+  // incl. why nd>=4 avoids the never-plastifies trap but is NOT accurate enough
+  // to report a hinge capacity from.
+  //
+  // If that bias matters for your model, the fix is a different FORMULATION, not
+  // a knob here: `-formulation eas` re-condenses K* from the CURRENT tangent at 8
+  // live GPs every assembly (formEAStrue) and biases +7.5 / +1.0 / -1.5% on the
+  // same meshes, versus ssp's +77 / +45 / +15%. A scalar s*Kstab_elastic option
+  // could NOT reproduce that — the plastic tangent is not a scalar multiple of
+  // C(0); its shape changes (deviatoric collapse, bulk retained). Deliberately
+  // no `-hgScale`-style flag: see ADR 20, where exactly that shape of knob was
+  // shipped for `eas` and then removed for degrading convergence.
   const double sHg = useInitialTangent ? 1.0 : this->damageScale();
 
   if (tang_flag == 1) {

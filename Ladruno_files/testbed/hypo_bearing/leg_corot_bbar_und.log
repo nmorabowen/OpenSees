@@ -1,0 +1,196 @@
+[02:20:23] footing B=2.0 m, q_Vesic=637.5 kPa (q0*Nq*sq=430.4 + gamma term=207.1), push to s/B=0.15 (300 mm), adaptive increment base=0.050 mm in [0.0063, 0.400] mm
+[02:20:23] === leg: corot_bbar_und
+LadrunoUP: unsymmetric tangent — use a general solver (UmfPack/SuperLU/FullGeneral/BandGeneral; MUMPS SYM=0 in MPI); the ProfileSPD default silently drops a coupling block
+[02:20:24] corot_bbar_und model built: 3468 nodes, 2816 hex [-geom corot, -formulation bbar, k=1.0e-09]
+[02:20:24] corot_bbar_und drainage: c_v=2.28e-05 m2/s, t_push=2.4e+03 s => T_v=0.0137 (UNDRAINED)
+[02:21:32] corot_bbar_und gravity done [Pardiso, 69s]
+[02:21:32] corot_bbar_und pore-pressure probe: node 2735 at (0.00, 0.00, -1.00), datum p0=9.851 kPa (hydrostatic would be 9.810)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000774814 (max: 1e-07, Norm deltaR: 0.000824758)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 0.4
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.56966e-05 (max: 1e-07, Norm deltaR: 4.97155e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 0.2
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.28963e-05 (max: 1e-07, Norm deltaR: 0.000214951)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 0.3
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.79564e-07 (max: 1e-07, Norm deltaR: 2.61404e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 137.55
+OpenSees > analyze failed, returned: -3 error flag
+[02:42:58] corot_bbar_und s/B=0.0141 q=121.5 kPa q/qV=0.19 dp=65.9 kPa ds=0.400mm [100 steps, 4 retries, 1286s]
+[03:09:30] corot_bbar_und s/B=0.0341 q=127.1 kPa q/qV=0.20 dp=69.4 kPa ds=0.400mm [200 steps, 4 retries, 2877s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 2.43871e-07 (max: 1e-07, Norm deltaR: 7.69274e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 590.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 2.65786e-07 (max: 1e-07, Norm deltaR: 6.40913e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 793.55
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 2.58645e-07 (max: 1e-07, Norm deltaR: 2.15591e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 830.35
+OpenSees > analyze failed, returned: -3 error flag
+[03:39:38] corot_bbar_und s/B=0.0526 q=129.3 kPa q/qV=0.20 dp=68.0 kPa ds=0.400mm [300 steps, 7 retries, 4686s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.75895e-05 (max: 1e-07, Norm deltaR: 4.67122e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 844.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 5.89836e-06 (max: 1e-07, Norm deltaR: 1.53481e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 913.55
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 7.30173e-07 (max: 1e-07, Norm deltaR: 2.50529e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 924.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.2396e-06 (max: 1e-07, Norm deltaR: 1.06261e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 926.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.14958e-06 (max: 1e-07, Norm deltaR: 1.10652e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 936.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000117488 (max: 1e-07, Norm deltaR: 0.000165033)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 950.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 7.99654e-06 (max: 1e-07, Norm deltaR: 6.25302e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 951.95
+OpenSees > analyze failed, returned: -3 error flag
+[04:12:36] corot_bbar_und s/B=0.0675 q=130.8 kPa q/qV=0.21 dp=65.1 kPa ds=0.400mm [400 steps, 14 retries, 6664s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 7.97763e-05 (max: 1e-07, Norm deltaR: 0.000132212)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1103.15
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.86424e-06 (max: 1e-07, Norm deltaR: 4.37813e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1165.55
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.48731e-07 (max: 1e-07, Norm deltaR: 9.6823e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1170.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 6.44063e-05 (max: 1e-07, Norm deltaR: 0.000192595)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1196.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 2.67673e-05 (max: 1e-07, Norm deltaR: 6.31433e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1214.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 8.35691e-05 (max: 1e-07, Norm deltaR: 0.000118101)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1222.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 3.02469e-05 (max: 1e-07, Norm deltaR: 6.26705e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1230.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 6.23395e-05 (max: 1e-07, Norm deltaR: 0.000121478)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1238.35
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00119526 (max: 1e-07, Norm deltaR: 0.000543775)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1316.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000121179 (max: 1e-07, Norm deltaR: 0.000159838)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1316.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 4.52555e-07 (max: 1e-07, Norm deltaR: 9.90369e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1317.55
+OpenSees > analyze failed, returned: -3 error flag
+[04:42:19] corot_bbar_und s/B=0.0823 q=132.4 kPa q/qV=0.21 dp=62.2 kPa ds=0.050mm [500 steps, 25 retries, 8446s]
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.00167319 (max: 1e-07, Norm deltaR: 0.00478656)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1333.95
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 4.04821e-06 (max: 1e-07, Norm deltaR: 0.00274819)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1335.55
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000427021 (max: 1e-07, Norm deltaR: 0.000643707)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1337.15
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000573938 (max: 1e-07, Norm deltaR: 0.00101422)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1337.95
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 1.14118e-05 (max: 1e-07, Norm deltaR: 0.000494442)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1338.95
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 4.24288e-05 (max: 1e-07, Norm deltaR: 8.19388e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1339.95
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 4.78445e-05 (max: 1e-07, Norm deltaR: 0.000370373)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1339.75
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 0.000185792 (max: 1e-07, Norm deltaR: 0.000338596)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1340.25
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 9.96218e-05 (max: 1e-07, Norm deltaR: 0.000128344)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1340.25
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 100 iterations  current Norm: 5.03711e-05 (max: 1e-07, Norm deltaR: 2.11268e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+DirectIntegrationAnalysis::analyze() - the Algorithm failed at time 1340.2
+OpenSees > analyze failed, returned: -3 error flag
+[04:54:06] corot_bbar_und NO CONVERGENCE at s/B=0.0838 even at ds=0.0031 mm < DS_MIN — backbone TRUNCATED
+[04:54:06] corot_bbar_und leg done: 538 steps to s/B=0.0838, 35 retries, 9223s -> backbone_corot_bbar_und.csv
+[04:54:06] === summary (q/q_Vesic at s/B checkpoints; '--' = not reached)
+[04:54:06] s/B=0.010: corot_bbar_und=0.19  
+[04:54:06] s/B=0.025: corot_bbar_und=0.20  
+[04:54:06] s/B=0.050: corot_bbar_und=0.20  
+[04:54:06] s/B=0.100: corot_bbar_und=--  
+[04:54:06] s/B=0.150: corot_bbar_und=--  
+[04:54:06] corot_bbar_und: TRUNCATED at s/B=0.0838 (q=133.0 kPa) — no softening verdict

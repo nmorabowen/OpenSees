@@ -85,7 +85,21 @@ class FE_Element: public TaggedObject
     virtual void  addM_Force(const Vector &accel, double fact = 1.0);    
     virtual void  addD_Force(const Vector &vel, double fact = 1.0);    
     virtual void  addK_Force(const Vector &disp, double fact = 1.0);
-    virtual void  addKg_Force(const Vector &disp, double fact = 1.0);    
+    virtual void  addKg_Force(const Vector &disp, double fact = 1.0);
+
+    // Ladruno (ADR-80 P3) -- ADDITIVE, no stock caller.
+    // Returns K * du_prescribed for this element, mapped into the element's
+    // ASSEMBLED (post-transformation) dof space, or 0 when the element touches
+    // no non-homogeneous sp. This is the term that a Transformation-eliminated
+    // dof can never contribute through getResidual(), because it has no
+    // equation number and therefore no column: the prescribed motion normally
+    // reaches the RHS only by pre-updating the element and reading its internal
+    // force back, which forces a constitutive evaluation in the lagging state.
+    // NOTE the existing getTangForce(const Vector &, double) stub CANNOT serve
+    // this purpose: it indexes a GLOBAL vector by myID, and an eliminated dof
+    // has myID == -1, so the prescribed increment is not representable in its
+    // argument at all. See LadrunoLoadControl's -tangentPredictor.
+    virtual const Vector *getSPTangentForce(Integrator *theIntegrator);
 
     virtual int updateElement(void);
 

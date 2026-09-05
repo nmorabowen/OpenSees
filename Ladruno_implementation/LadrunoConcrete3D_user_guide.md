@@ -23,10 +23,12 @@ updated: 2026-06-19
 > **ALL dimensional views ship** — 3D + the Phase-2 reduced PlaneStrain / AxiSymmetric / PlateFiber /
 > PlaneStress (one `dim`-mode class, reached via the element's `getCopy(type)`; finite-strain via
 > `nDMaterial LogStrain`). The robustness tiers **`-implex`** (Tier-2 IMPL-EX) and **`-eta`** (Duvaut–
-> Lions viscoplastic) both ship; the **cyclic** path ships too — the full CDPM2 `β_c`, monotone (no-heal)
-> damage, and the `-ctTemper` compression→tension temper. **Tier-3 (explicit dynamics)** marches straight
-> through softening with no global tangent (§6b). Still deferred: the `-eta`+`-implex` combination, the
-> confined-fiber 1D view, and the multiaxial-damage apportioning refinement.
+> Lions viscoplastic, **Tier-1 only** — `β=dt/(η+dt)` off `ops_Dt`, `η=0` or `dt≤0` ⇒ inviscid) both
+> ship; the **cyclic** path ships too — the full CDPM2 `β_c`, monotone (no-heal) damage, and the
+> `-ctTemper` compression→tension temper. **Tier-3 (explicit dynamics)** marches straight through
+> softening with no global tangent (§6b). The **confined-fiber view** (`getCopy("BeamFiber")`, consumed
+> by `NDFiberSection3d`, `-hoop`/`-hoopFy`) ships too (#381) — `-eta`/`-implex` are INERT there (Tier-1
+> implicit only in that view). Still deferred: the `-eta`+`-implex` combination.
 
 ## 1. What it is, and when to use it
 
@@ -61,8 +63,10 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
 `E ν fc ft Gf Gc` are **positional and required**; `fc`, `ft` are **positive magnitudes** (the model
 uses **compression-negative** internally). `-autoRegularization` pulls the crack-band length from the
 parent element (mesh-objective); otherwise `-lch` sets it (default 1.0). `-implex` engages the Tier-2
-IMPL-EX algorithm (SPD-secant robustness); `-eta` engages Duvaut–Lions viscoplastic relaxation — both
-read the analysis time increment (`ops_Dt`), so they need a transient or uniform-pseudo-time analysis.
+IMPL-EX algorithm (SPD-secant robustness); `-eta` engages Duvaut–Lions viscoplastic relaxation,
+**Tier-1 only** — both read the analysis time increment (`ops_Dt`), so they need a transient or
+uniform-pseudo-time analysis, and `-eta` is a no-op (`η=0`/`dt≤0` ⇒ inviscid) under `-implex` or in the
+confined-fiber (`BeamFiber`) view; the parser warns in both cases.
 
 ## 3. Parameters & defaults
 
@@ -80,7 +84,7 @@ read the analysis time increment (`ops_Dt`), so they need a transient or uniform
 | `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) — **calibrate from peak strains** | 0.08, 0.003, 2.0, 1e-6 |
 | `-lch` / `-autoRegularization` | crack-band length: fixed / from the element | 1.0 / off |
 | `-implex` | Tier-2 IMPL-EX robustness (degraded-elastic SPD secant; reads `ops_Dt`) | off (Tier-1) |
-| `-eta` | Duvaut–Lions viscoplastic relaxation time `η` (`β=dt/(η+dt)`; reads `ops_Dt`) | 0 (inviscid) |
+| `-eta` | Duvaut–Lions viscoplastic relaxation time `η`, **Tier-1 only** (`β=dt/(η+dt)`; reads `ops_Dt`; inert — with a warning — under `-implex` and in the `BeamFiber` view) | 0 (inviscid) |
 
 **Calibration notes:**
 - `e` is a *validation* target, not a fit knob — leave it derived from `-kupfer` (1.16) unless you have
@@ -119,9 +123,12 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   measured compression softening accordingly).
 - **Robustness tiers (P3, shipped):** **`-implex`** (Tier-2 IMPL-EX — explicit extrapolated stress +
   degraded-elastic SPD secant; for transient / uniform LoadControl, NOT softening + DisplacementControl)
-  and **`-eta`** (Duvaut–Lions viscoplastic relaxation `σ̄=(1−β)σ̄_tr+β σ̄_inv`, `β=dt/(η+dt)`; `η→0` or no
-  time increment ⇒ inviscid). Both read `ops_Dt`. The Tier-3 explicit demo runs the same kernel with no
-  global tangent.
+  and **`-eta`** (Duvaut–Lions viscoplastic relaxation `σ̄=(1−β)σ̄_tr+β σ̄_inv`, `β=dt/(η+dt)`; `η=0` or
+  `dt≤0` ⇒ inviscid, byte-identical to Tier-1 — NOT the elastic `β→0` limit). Both read `ops_Dt`.
+  **`-eta` is Tier-1 only** — inert (with a parser warning) under `-implex` (the IMPL-EX implicit solve
+  stays inviscid; the composition is deferred) and inert (with a parser warning) in the confined-fiber
+  (`BeamFiber`) view, which always runs Tier-1 implicit regardless of `-implex`/`-eta`. `-eta` has no
+  `Parameter` hook. The Tier-3 explicit demo runs the same kernel with no global tangent.
 - **Cyclic (shipped):** the full CDPM2 `β_c` (Eq.50), **monotone no-heal damage** (`ω` driven by the
   running-max history so an elastic unload follows the degraded secant `(1−ω)σ̄` and does NOT heal), and
   **`-ctTemper {none|alphat|proj}`** — the compression→tension damage-coupling temper (`none` = literal
@@ -129,8 +136,10 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
 - **Tier-3 explicit dynamics (shipped — see §6b):** the same kernel runs with no global tangent, so an
   explicit integrator (`CentralDifferenceLadruno` / `ExplicitBathe`) marches through softening with no
   unsymmetric solver and no step-cutting.
-- **Deferred:** the confined-fiber 1D view ("Mander by mechanism"), the `-eta` + `-implex` combined mode,
-  and the multiaxial-damage apportioning refinement (driving `ω` with `E·ε̃`).
+- **Confined-fiber view (shipped, #381):** the P5a "Mander by mechanism" hoop-spring condensation has a
+  C++ view (`getCopy("BeamFiber")`, order-3 `{00,01,02}`), consumed by stock `NDFiberSection3d`, with
+  `-hoop $K <-hoopFy $fy>`. Runs Tier-1 implicit only — `-implex`/`-eta` are inert there (see above).
+- **Deferred:** the `-eta` + `-implex` combined mode.
 
 ## 6. Worked example skeleton
 
