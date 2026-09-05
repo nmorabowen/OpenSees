@@ -234,6 +234,11 @@ double LadrunoQuad::getCharacteristicLength(void)
   return sqrt(A);
 }
 
+// Tier-A damage-scaled stabilization — the 2D mirror of LadrunoBrick::damageScale.
+// s == 1 for a material with no "damage" channel is DELIBERATE (degrade where the
+// material SOFTENS, not merely where it yields); do not replace this with a
+// tangent-norm rule — see the long note on LadrunoBrick::damageScale and §3.1 of
+// Ladruno_implementation/11_brick_asdconcrete_integration.md.
 double LadrunoQuad::damageScale(void)
 {
   if (damageResponse == 0)
