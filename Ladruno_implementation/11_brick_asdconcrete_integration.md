@@ -165,6 +165,190 @@ back to the current constant elastic `Kstab`.
 > integration) still sidesteps the whole `Kstab` question — 8 independent damage
 > points, no hourglass — at 8× material cost.
 
+## 3.1 Why Tier-A is NOT generalized to a tangent-norm rule (2026-07-30 study)
+
+**The challenge.** Tier-A is wired to a damage scalar and the code comment named
+ASDConcrete3D, so it reads as an oversight that any *plasticity* model gets the
+undegraded elastic `Kstab`. Proposed remedy: degrade with the tangent instead,
+e.g. `s = ‖D_current‖/‖D_initial‖`, which would "cover plasticity models too".
+
+**Verdict: the factual half is real but narrow; the remedy is measurably worse.**
+
+### Scope of the actual gap
+
+- `ssp` is the **only** formulation with a frozen elastic `Kstab` (condensed once
+  from `C(0)` in `buildSSP`). `uri`+`stiffness` sizes `κ` from the **current**
+  tangent shear `dd(3,3)` for a non-damage material — it already tangent-tracks.
+  `std`/`bbar` have no `Kstab` at all.
+- The fork's own inelastic models **do** publish `"damage"` and are covered:
+  `LadrunoJ2` (`-damage lemaitre`), `LadrunoConcrete3D`, `LadrunoRCConcrete`,
+  `LadrunoRCFiniteStrain`, `LadrunoCohesiveHingeBiaxial`. The uncovered set is
+  upstream plasticity (`J2Plasticity`, `DruckerPrager`, `PressureDependMultiYield`)
+  — which is also exactly upstream `SSPbrick`'s behaviour, i.e. inherited, not a
+  fork regression.
+
+### Why ‖D‖/‖D₀‖ fails (analytic, consistent J2 tangent at a pure-shear flow state)
+
+| ν | H/G | ‖C_ep‖/‖C_e‖ (tensor) | Voigt 6×6 | D(3,3) |
+|---|---|---|---|---|
+| 0.2 | 0 | 0.943 | 0.981 | **0.000** |
+| 0.3 | 0 | 0.967 | 0.991 | 0.000 |
+| 0.45 | 0 | 0.998 | 0.999 | 0.000 |
+| 0.499 | 0 | 1.000 | 1.000 | 0.000 |
+
+1. **Bulk-dominated ⇒ near no-op.** At *zero* hardening the norm rule shaves 5.7%
+   off `Kstab` at ν=0.2 and 0.0% at ν→0.5. It would "cover plasticity" nominally
+   while doing nothing numerically, in exactly the near-incompressible plastic-flow
+   regime at issue.
+2. **Sign-blind ⇒ inverts under softening.** Replacing the flow-direction term with
+   `−(1+h)·2G·n⊗n` (i.e. a tangent eigenvalue of **−2Gh** in that direction), at
+   **ν = 0.2**: ratio = 0.957 / 1.000 / 1.155 / 1.915 / 6.733 at h = 0.5 / 1 / 2 /
+   5 / 20. Past h≈1 it exceeds 1, gets clipped, and delivers **no degradation
+   exactly at localization** — regressing the case Tier-A exists for.
+   ASDConcrete3D's secant default masks this; `LadrunoConcrete3D` returns the P3b
+   analytic *damaged consistent* tangent (with the `−σ⊗dω` rank update) and is
+   genuinely non-SPD on the loading branch.
+3. **Non-monotone in load history.** Damage ratchets; a tangent ratio snaps back
+   to 1 on elastic unloading, so `Kstab` would toggle between floor and elastic
+   every reversal — under cyclic seismic loading, with `∂s/∂u` absent from the
+   tangent. The floor is only meaningful because the base is the initial operator
+   *and* `s` is monotone.
+4. **Yielding ≠ softening (for associated flow).** Perfect/hardening *associated*
+   plasticity — J2, the material measured here — has no localization to enable, so
+   removing hourglass control from a diffusely-deforming element buys nothing. A
+   tangent rule cannot tell yielding from softening; a damage channel can.
+   **Caveat:** this is a property of the test material, not of the uncovered set.
+   `DruckerPrager` and `PressureDependMultiYield` use **non-associated** flow and
+   can lose ellipticity and shear-band at *positive* hardening (Rudnicki–Rice), so
+   "no localization to enable" does not hold for them. It does not rescue the
+   remedy — a Frobenius-norm rule would not detect non-associated localization
+   either (the tangent is not norm-softening there), and a damage channel would
+   not fire — but coarse `ssp` + a shear-banding soil model is a live production
+   combination and is **not** covered by any measurement in this study.
+
+### What the frozen `Kstab` actually costs (measured)
+
+Cantilever, section depth 1.0 refined `nd` elements, height 6.0 (`L/h = 6`),
+upstream `J2Plasticity` with `H = 0.2% E` (so `damageScale() ≡ 1` throughout),
+pushed to a full plastic hinge. `hg%` = `Σ Ehg / W_ext` from the
+`"hourglassEnergy"` report.
+
+| `nd` | hg% (elastic) | hg% (full hinge) | ssp/bbar, elastic-calibrated |
+|---|---|---|---|
+| 2 | 25.4% | 29.2% | 1.770 |
+| 4 | 6.9% | 15.5% | 1.452 |
+| 8 | 1.9% | 5.7% | 1.146 |
+
+> **`hg%` is a diagnostic, NOT a bound on the fixable force error.** An earlier
+> draft of this section claimed it bounded what a `Kstab` rule could fix; the
+> table above refutes that — the force-level bias (+77 / +45 / +15%) *exceeds*
+> the energy share (29 / 16 / 6%) by ~2.5–3× at every mesh. The two are not
+> commensurable: `Ehg` for `ssp` is the *current recoverable* ½·u·Kstab·u
+> (`hourglassEnergy()`), while `W_ext` is *cumulative* external work including
+> plastic dissipation, so an instantaneous stiffness parasite is diluted in the
+> ratio. **The `ssp/bbar` column is the honest error measure**; use `hg%` only
+> for trend and for the LS-DYNA-style spurious-mode check it was built for.
+
+- **The claimed mechanism is confirmed.** Within any fixed mesh the stabilization's
+  energy share *grows* as the section plastifies (6.9→15.5% at `nd=4`), because the
+  membrane softens while `Kstab` does not.
+- **But it converges away at ≈O(h).** Both the energy share and the elastic-calibrated
+  load bias vs `bbar` fall by ~3× and →1 under refinement. This is a *discretization*
+  quantity, not a persistent bias — a modelling-guidance result, not a code defect.
+  It does **not** license ignoring the coarse-mesh numbers: see the meshing rule
+  below, because production concrete walls are routinely 2–3 elements thick.
+- **Tangent-tracking is not the lever — analytically.** The decisive argument is the
+  table above: in a bending (axial-flow) state neither `dd(3,3)` nor `‖D‖` degrades
+  meaningfully, so no tangent-based rule moves the answer. *Illustrative but NOT
+  probative:* `uri`+`stiffness`, which does track `dd(3,3)`, records a larger share
+  at every mesh (71.9 / 35.8 / 10.5%). That comparison is confounded twice over —
+  `uri` tracks the single shear entry (a rule §3.1 endorses) rather than the
+  challenged Frobenius norm, and its Flanagan–Belytschko `κ = 0.05·G·vol·Σb²` is a
+  different-magnitude operator than `ssp`'s condensed `Kstab`, so most of the gap
+  measures operator size, not the failure of tracking. The clean A/B (`ssp` with a
+  scaled vs frozen `Kstab`) would need the code change this study declined to make.
+- **Control.** A roller-sided uniform bar (homogeneous field) is exact to 0.00% for
+  all four formulations with `Ehg` at machine zero (1e-12), so the harness and the
+  analytic anchor are sound.
+
+### The frozen-vs-recondensed A/B — and why no `ssp` option was added
+
+The clean experiment (frozen `Kstab` vs a stabilization rebuilt from the current
+tangent) does **not** need new code: `-formulation eas` already is it.
+`formEAStrue` assembles `Kaa`/`Kda`/`Kad` from `getTangent()` — the **current**
+tangent — at all 8 live GPs and re-condenses `K* = Kdd − Kda Kaa⁻¹ Kad` on every
+assembly, where `buildSSP` condenses once from `C(0)` and freezes it.
+
+Elastic-calibrated load bias vs `bbar`, same sweep:
+
+| `nd` | `ssp` (frozen) | **`eas` (recondensed)** | `uri` | `std` |
+|---|---|---|---|---|
+| 2 | 1.770 | **1.075** | 2.004 | 1.161 |
+| 4 | 1.452 | **1.010** | 1.817 | 1.222 |
+| 8 | 1.146 | **0.985** | 1.222 | 1.108 |
+
+The isolation is clean: `eas` and `ssp` agree **elastically** to 3–4 digits on this
+mesh family (0.7879 vs 0.7862 at `nd=2`, 0.9372 vs 0.9369 at `nd=4`, identical at
+`nd=8`), so the entire plastic divergence is the stabilization treatment.
+
+**This substantially vindicates the instinct behind the original challenge** — a
+tangent-consistent stabilization is worth a great deal, `+77% → +7.5%` at the
+coarse mesh where the frozen operator hurts most. What it does *not* vindicate is
+the proposed mechanism: the cure is full **re-condensation**, not a scalar scale on
+a frozen operator. A `s·Kstab_elastic` knob cannot reproduce this, because the
+plastic tangent is not a scalar multiple of `C(0)` — its *shape* changes (deviatoric
+collapse in the flow direction, bulk retained), which is precisely what the §3.1
+norm table shows and precisely what re-condensation captures.
+
+**Hence no `-hgScale`-style option on `ssp`.** The formulation selector already
+spans the design space, and adding a scalar fudge would re-run [[20_ladruno_brick_eas_stabilization]]
+(the `-stab β` regularization that was shipped and then removed for degrading
+convergence with no pathology to cure).
+
+| want | use | why |
+|---|---|---|
+| inelastic bending, accuracy | **`eas`** | recondensed stabilization; near-unbiased at every mesh |
+| hinge capacity, reference | `std` / `bbar` | 2×2×2, no `Kstab` at all |
+| cheap explicit, 1 material eval | `ssp` | frozen `Kstab` is the price; keep `nd` ≥ 8 for plastic bending |
+| softening concrete | `ssp` + Tier-A | damage-scaled `Kstab`, the case this ADR was written for |
+
+Caveats on `eas`: **small-strain only** in this fork (`eas`+`corot`/`finite` are
+parser-reserved — see [[19_ladruno_brick_eas_simo_rifai]]), and it costs 8 live GPs
+plus an inner Newton against `ssp`'s single material evaluation, so it is an
+implicit-analysis choice, not an explicit-dynamics one.
+
+### The sharper trap this study surfaced
+
+With **1 element through the bending depth**, an `ssp` element's P–δ curve under
+`J2Plasticity` is **identical to the elastic one** — no plastification at all
+(`Ehg/W_ext = 98%`), while `std`/`bbar` form a hinge on the same mesh. `ssp`
+evaluates the constitutive model only at its mean-dilatation core at the centroid,
+where the bending strain is ~zero, so the response is pure stabilization. No
+`Kstab` degradation rule of any kind fixes this — a damage model would not damage
+at that centroid either.
+
+**Meshing rule, stated against the measured bias (not against the converged one):**
+`nd ≥ 4` is the threshold that avoids the *never-plastifies* pathology — it is
+**not** a threshold for an accurate hinge load. Expect an elastic-calibrated load
+bias of roughly **+77 / +45 / +15% at `nd` = 2 / 4 / 8**. This matters because
+production RC walls are routinely meshed 2–3 elements thick, i.e. squarely in the
++45–77% band — and at `nd` = 1–2 the pathology is the *single integration point*,
+which no stabilization scaling rule can repair.
+
+**The better answer is usually to change formulation, not to refine:** on the same
+coarse meshes `-formulation eas` carries a bias of +7.5 / +1.0 / −1.5%, because it
+re-condenses its stabilization from the current tangent every assembly. See the
+A/B below. Use `std`/`bbar` if you want no stabilization in the answer at all.
+
+Scoped to `ssp`: `uri`+`stiffness` strains its centroid from the plain centroid `B`
+rather than a mean-dilatation core, picks up transverse shear, and **does** yield —
+at an aspect-ratio-dependent point (it stayed elastic to `u/L ≈ 4%` on unit cubes,
+but hinged promptly on 1.0 × 0.25 × 2.0 elements). Both cases are pinned in the
+regression test so the guidance is not widened on a false premise.
+
+**Decision: no code change.** Comments scoped, this section added, quirks row filed,
+regression test `tests/test_ladrunoBrick_kstab_plasticity.py` pins the four facts.
+
 ## 4. Cost gotcha — 8 redundant return-maps per element (eas) — ✅ FIXED
 
 > **FIXED (this branch, 2026-06-02).** `LadrunoBrick::update()` now evaluates the
