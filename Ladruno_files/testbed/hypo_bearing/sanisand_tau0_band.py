@@ -211,7 +211,7 @@ from test_ladruno_sanisand import _PARAMS as _SANISAND_PARAMS   # noqa: E402
 # campaign's field CSVs can be re-reduced on any box.
 sys.path.insert(0, _HERE)
 from sanisand_tau0_summary import (                                 # noqa: E402
-    EPSQ_YIELD, Z_PROBES, widths_from_field, w2_metric)
+    Z_PROBES, widths_from_field)
 
 
 def assert_engine(strict: bool = True) -> str:
@@ -273,7 +273,12 @@ SFRAC = 0.25                      # push target s/B
 # mechanics, which is the note-71 failure mode ("a study whose termination
 # criterion binds before the mechanics do measures the criterion").
 PUSH_TOL = 1.0e-8
-PUSH_TOL_RELAXED = 1.0e-7         # the KrylovNewton rung only, and it is flagged
+                                  # The ladder's third rung runs at 10x this and
+                                  # every step that needed it is FLAGGED in the
+                                  # `relaxed` column of the curve CSV and
+                                  # counted in `nrelax`, so a leg that was
+                                  # carried by the relaxed rung cannot pass
+                                  # unnoticed.
 PLATEAU_FRAC = r3.PLATEAU_FRAC    # 2 % of the initial tangent
 FREE_ADVANCE_FLOOR_FACTOR = r3.FREE_ADVANCE_FLOOR_FACTOR
 
@@ -291,7 +296,7 @@ WALL_BUDGET_S = float(os.environ.get("LADRUNO_A2_WALL_BUDGET", 5400.0))
 _CAPACITY_MODES = ("TARGET", "PEAK", "BUDGET")
 _SEIZURE_MODES = ("FLOOR", "WALL")
 
-# Width instrumentation: `Z_PROBES` / `EPSQ_YIELD` / `widths_from_field` are
+# Width instrumentation: `Z_PROBES` and `widths_from_field` are
 # imported from `sanisand_tau0_summary` (see the import block above).
 #
 # MATCHED-SETTLEMENT CHECKPOINTS.  Legs on different meshes do NOT terminate at
@@ -586,7 +591,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 xc, zc, hx, hz, vol, fld, eta_field)
             if verbose:
                 print(f"    [{tag}] CHECKPOINT s/B={cp:g}: q={qf:.3f} kPa, "
-                      f"w2(-0.5)={snap['w2_z-0.5']:.4f} m, "
+                      f"w2(z={Z_PROBES[0]})="
+                      f"{snap[f'w2_z{Z_PROBES[0]}']:.4f} m, "
                       f"yield {snap['n_yield_ele']} ele / "
                       f"{snap['vol_yield']:.3f} m3, "
                       f"t={time.time() - t0:.0f}s", flush=True)
@@ -753,8 +759,9 @@ def main(argv=None):
               f"OutsideBounding {r['n_outside_bounding']}, "
               f"CLAMPING {r['n_clamping']}, base-foot {r['base_foot_mismatch']:.2e}",
               flush=True)
-        print(f"    width: w2(z=-0.5) = {r['w2_z-0.5']:.4f} m, "
-              f"w2(z=-1.0) = {r['w2_z-1.0']:.4f} m, "
+        print(f"    width: w2(z={Z_PROBES[0]}) = "
+              f"{r[f'w2_z{Z_PROBES[0]}']:.4f} m, "
+              f"w2(z={Z_PROBES[1]}) = {r[f'w2_z{Z_PROBES[1]}']:.4f} m, "
               f"yielding {r['n_yield_ele']} ele / {r['vol_yield']:.3f} m3",
               flush=True)
     print("\ndone; run sanisand_tau0_summary.py on the output directory")
