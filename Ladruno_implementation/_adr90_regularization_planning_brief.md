@@ -314,6 +314,6 @@ P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 
 1. **Hand §5 to TIMs** as the fork's draft of the OQ5 acceptance case, asking for OQ2's numbers. Unblocks vault 65's first work item.
 2. **P0-A0 oracle** (two-track vs true DL, 1-D bar width convergence) — a day, decides D2.
-3. **Write ADR 90** against the A0 result and §3's alternatives table; open the `wp/<n>-adr88-duvaut-lions` draft PR with the ADR + oracle only.
+3. **Write ADR 90** against the A0 result and §3's alternatives table; open the `wp/90c-duvaut-lions-wrapper` draft PR with the ADR + oracle only.
 4. Fix OQ7 prerequisites on `LadrunoSANISANDPlaneStrain` as a small separate PR.
 5. P1 only after the ADR passes an out-of-family read against §9.
