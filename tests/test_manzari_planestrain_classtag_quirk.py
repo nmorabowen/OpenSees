@@ -38,23 +38,47 @@ is wrong. The failure only appears once that mistagged object is asked to
 broker then builds a bare `ManzariDafalias` (not `-PlaneStrain`) on the
 SECOND restore.
 
-WHY THIS RUNS IN A SUBPROCESS.  `ManzariDafalias::getCopy(void)` / `getType()`
-/ `getOrder()` (the base class's own "subclass responsibility" overrides) all
-call `exit(-1)` if actually reached. If some future OpenSees change starts
-calling one of those during element `recvSelf` or `Response` construction (it
-does not today -- see below), an in-process assertion could never observe the
-failure; the interpreter would simply be gone. What IS reached today is
-`NDMaterial`'s own generic `setTrialStrain`/`getStress`/`getTangent`
-defaults, which print the identical "subclass responsibility" phrase and
-return failure codes rather than aborting -- still visible, but only in a
-process we can inspect after the fact regardless of which of the two
-"subclass responsibility" families ends up firing.
+WHY THIS RUNS IN A SUBPROCESS, WITH `-u` AND MERGED STREAMS.
+`ManzariDafalias::getCopy(void)` / `getType()` / `getOrder()` (the base
+class's own "subclass responsibility" overrides) all call `exit(-1)` if
+actually reached; an in-process assertion could never observe that failure,
+so the interpreter must be a child we can inspect after the fact. What is
+actually reached today is `NDMaterial`'s own generic
+`setTrialStrain`/`getStress` defaults, which print the identical "subclass
+responsibility" phrase and return failure codes rather than aborting.  The
+assertions below need to know WHERE in the sequence that phrase appears (it
+must be absent through the first restore, present only after the second), so
+the child is run unbuffered (`-u`) with stderr merged into the SAME stream as
+stdout (`stderr=subprocess.STDOUT`, via `run_python_script(...,
+merge_stderr=True)`) -- MEASURED to matter: without `-u`, Python's stdout is
+fully buffered once redirected to a pipe while C++'s `opserr` is not, so
+"subclass responsibility" lines appear to precede `print()` calls that
+actually executed first (a pure buffering artifact, reproduced and diagnosed
+while writing this test). Without `merge_stderr=True`,
+`subprocess.run(capture_output=True)` hands back stdout and stderr as two
+SEPARATE strings; concatenating them (`stdout + stderr`, the convention this
+file used before) puts EVERY stdout marker before EVERY stderr line
+regardless of when either was actually written, which would make an
+ordering assertion here vacuously true no matter what really happened.
+
+THE LOAD-BEARING SIGNAL IS THE STRESS VECTOR LENGTH, NOT JUST THE WARNING
+TEXT. `ops.eleResponse(1, 'material', 1, 'stress')` on the plane-strain
+element must be a 3-component vector (`{sigma_xx, sigma_yy, sigma_xy}`) as
+long as the Gauss-point material is really a `ManzariDafaliasPlaneStrain`.
+Once the SECOND restore broker-builds a bare `ManzariDafalias` instead, that
+response comes back some OTHER size (measured: length 1, `[0.0]`) because
+`NDMaterial`'s generic default has no notion of the plane-strain order. That
+length mismatch is a structural, message-independent witness of the defect
+-- it does not depend on "subclass responsibility" appearing verbatim (a
+future OpenSees version could reword the message) or on a crash (rc == 0 is
+exactly what was measured; nothing here forces or requires a process exit).
 """
+import ast
 import os
-import subprocess
-import sys
 
 import pytest
+
+from _testbed.subprocess_run import run_python_script
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -65,6 +89,13 @@ _PARAMS = [264.32, 0.3129, 0.6944, 1.33090, 0.71, 0.027, 0.83, 0.45, 101.0,
 _TAIL = [1, 0, 1, 1.0e-10, 1.0e-10]          # ModifiedEuler, elastic tangent, analytic Jacobian
 
 pytestmark = [pytest.mark.zone_a, pytest.mark.t0m]
+
+# Ordered markers the child MUST print, in this order, before the double
+# round trip is considered to have run at all.  `_split_segments` uses these
+# to slice the (chronologically faithful, thanks to `-u` + merge_stderr) child
+# output into the two windows the two halves of the characterization need.
+_MARKERS = ('BUILT', 'SAVE1_OK', 'RESTORE1_OK', 'STRESS_AFTER_RESTORE1',
+            'SAVE2_OK', 'RESTORE2_OK', 'STRESS_AFTER_RESTORE2', 'ALL_DONE')
 
 _SCRIPT = r'''
 import sys
@@ -111,19 +142,30 @@ print('RESTORE2_OK')
 s2 = ops.eleResponse(1, 'material', 1, 'stress')
 print('STRESS_AFTER_RESTORE2', repr(list(s2)))
 ops.wipe()  # release FE_Datastore handles (Windows) before tmp cleanup
+print('ALL_DONE')
 '''
 
 
 def _run(script):
-    p = subprocess.run([sys.executable, '-c', script], cwd=_HERE,
-                       capture_output=True, text=True, timeout=300)
-    return p.returncode, p.stdout + p.stderr
+    return run_python_script(script, cwd=_HERE, timeout=300, merge_stderr=True)
+
+
+def _segment(out, start_marker, end_marker):
+    """The substring of `out` strictly between two markers, in that order.
+
+    Requires BOTH markers to be present, in that order -- callers use this
+    only after already asserting the marker sequence, so a `ValueError` here
+    means the marker check above is out of sync with this helper, not that
+    the child misbehaved.
+    """
+    after_start = out.split(start_marker, 1)[1]
+    return after_start.split(end_marker, 1)[0]
 
 
 def test_manzari_planestrain_classtag_survives_one_roundtrip_but_not_two(tmp_path):
-    """One round trip: invisible (data restores fine). Two round trips: the
-    broker builds a bare `ManzariDafalias` and something downstream notices.
-    """
+    """One round trip: invisible (data restores fine, response shape intact).
+    Two round trips: the broker builds a bare `ManzariDafalias`, and its
+    'stress' response comes back the wrong size."""
     dbpath = str(tmp_path / 'manzari_ps_classtag_rt')
     rc, out = _run(_SCRIPT.format(here=_HERE, params=_PARAMS, tail=_TAIL, dbpath=dbpath))
 
@@ -132,11 +174,26 @@ def test_manzari_planestrain_classtag_survives_one_roundtrip_but_not_two(tmp_pat
     if 'DB_SAVE_FAILED' in out:
         pytest.skip('database save returned failure on this build:\n' + out)
 
-    assert 'BUILT' in out, out
-    assert 'SAVE1_OK' in out, out
-    assert 'RESTORE1_OK' in out, out
+    missing = [m for m in _MARKERS if m not in out]
+    if rc != 0 and missing:
+        pytest.fail(
+            'the double round trip did not complete: child exited with code '
+            f'{rc} before printing {missing}. This is a crash somewhere OTHER '
+            'than where the classTag defect is expected to bite (RESTORE2 '
+            'onward) -- diagnose from the tail of the output below rather '
+            f'than assuming it confirms the defect.\n--- output tail ---\n{out[-4000:]}'
+        )
+    assert not missing, (
+        f'child output is missing marker(s) {missing} with rc={rc} -- the '
+        f'deck itself no longer builds/saves/restores cleanly.\n{out}'
+    )
+    # From here every marker is present, IN ORDER (each `_segment`/`.index`
+    # call below would raise if not, which is itself a hard failure).
+    assert [out.index(m) for m in _MARKERS] == sorted(out.index(m) for m in _MARKERS), (
+        'markers are present but out of order -- the child printed something '
+        'unexpected between them', out)
 
-    before_restore2 = out.split('RESTORE1_OK', 1)[1].split('RESTORE2_OK', 1)[0]
+    before_restore2 = _segment(out, 'RESTORE1_OK', 'SAVE2_OK')
     assert 'subclass responsibility' not in before_restore2, (
         'the FIRST restore already shows "subclass responsibility" -- the '
         'defect this test characterizes is supposed to be invisible after '
@@ -144,15 +201,32 @@ def test_manzari_planestrain_classtag_survives_one_roundtrip_but_not_two(tmp_pat
         'correctly regardless of the internal classTag). Either the wire '
         'format changed or the broker dispatch changed.', out)
 
-    # The load-bearing assertion: the SECOND round trip must show the defect
-    # firing, one way or another -- a process exit (rc != 0) if some future
-    # code path reaches ManzariDafalias::getCopy/getType/getOrder (the
-    # exit(-1) family), or the "subclass responsibility" phrase from
-    # NDMaterial's own generic setTrialStrain/getStress/getTangent defaults
-    # (what actually fires today, via `eleResponse ... stress`).
-    assert rc != 0 or 'subclass responsibility' in out, (
-        'the double round trip produced neither a crash nor a "subclass '
-        'responsibility" warning after RESTORE2. Either the classTag defect '
-        'has been fixed (update LEDGER_quirks.md and this test to say so) or '
-        'the broker/element path changed and no longer reproduces it.',
-        rc, out)
+    stress1_line = [l for l in out.splitlines() if l.startswith('STRESS_AFTER_RESTORE1')][0]
+    stress1 = ast.literal_eval(stress1_line.split(' ', 1)[1])
+    assert len(stress1) == 3, (
+        'STRESS_AFTER_RESTORE1 is not a 3-component plane-strain vector -- '
+        'the FIRST restore already produced the wrong material shape, which '
+        'is not the defect this test characterizes (see module docstring)',
+        stress1, out)
+
+    after_restore2 = _segment(out, 'RESTORE2_OK', 'ALL_DONE')
+    stress2_line = [l for l in out.splitlines() if l.startswith('STRESS_AFTER_RESTORE2')][0]
+    stress2 = ast.literal_eval(stress2_line.split(' ', 1)[1])
+
+    shape_broke = len(stress2) != 3
+    warned = 'subclass responsibility' in after_restore2
+
+    # The load-bearing assertion. Either discriminator alone is sufficient
+    # evidence (see the module docstring for why the shape check is the one
+    # that cannot be talked out of by a future reworded message); if NEITHER
+    # fires, and every marker above was present with rc == 0, the defect has
+    # plausibly been fixed (or the broker/element path changed) -- fail
+    # loudly with the tail rather than passing silently on a stale claim.
+    assert shape_broke or warned, (
+        'after the SECOND restore, the "stress" response is still a 3-vector '
+        'and no "subclass responsibility" warning appeared anywhere after '
+        'RESTORE2_OK. Either the classTag defect has been fixed (update '
+        'LEDGER_quirks.md and this test to say so) or the broker/element '
+        f'path changed and no longer reproduces it.\nrc={rc}\n'
+        f'STRESS_AFTER_RESTORE1={stress1} STRESS_AFTER_RESTORE2={stress2}\n'
+        f'--- output tail ---\n{out[-4000:]}')
