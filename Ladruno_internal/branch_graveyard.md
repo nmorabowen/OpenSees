@@ -138,3 +138,9 @@ branch under them); `origin/claude/pardiso-linux` (its stranded commit is now
 #782, so the remote branch can go once #782 lands); the empty directory
 `.claude/worktrees/ecstatic-cannon-a822ae` (registration removed, directory
 held open by another process — `rmdir` it when free).
+
+**2026-09-05 follow-up.** Two of the four rescues were consumed the same day
+(#786 ADR-80 P3, #787 brick k-stab — rows above); their WP worktrees
+(`wp-80-p3-tangent-predictor`, `wp-11-brick-kstab`) and local branches were
+removed after the merges. Remaining `rescue/*` branches are data only:
+`adr79-bearing-tet10-backbone`, `adr75b-laneB-thread-results`.
