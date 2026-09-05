@@ -20,9 +20,10 @@ WHAT THE BAND MAY AND MAY NOT BE COMPARED TO
 --------------------------------------------
 The R3 gate's +/- 3 % is a per-resolution TOLERANCE ON A KNOWN CENTRE, not a
 convergence criterion: R3's own three-mesh spread is 1.0849 -> 0.9514, i.e.
-**14.0 %**, and that sequence is nonetheless accepted as converged-from-above
-because it is monotone and every leg is a genuine plateau.  So the number this
-script prints as "R3 comparison" is context, not a gate.
+**13.1 %** of their mean (14.0 % of the fine leg), and that sequence is
+nonetheless accepted as converged-from-above because it is monotone and every
+leg is a genuine plateau.  So the number this script prints as "R3 comparison"
+is context, not a gate.
 
 **The campaign's own tolerance is OQ2 and has not been supplied** (ADR 90 §7.5:
 TIMs must set the target band width relative to B, the ramp duration, the De,
@@ -254,7 +255,7 @@ def main(argv=None):
     for r in legs:
         print(f"  [{r['tag']}] {r['mode']}: {r['verdict']}")
 
-    print(f"\n--- WIDTH vs h at the END OF EACH LEG (ADR 90 §7.3 "
+    print(f"\n--- WIDTH vs h at the END OF EACH LEG (ADR 90 sec.7.3 "
           f"threshold-free w2, probe depths {Z_PROBES} m, x >= 0 half) ---")
     print(f"  width source: {legs[0]['_width_source']}")
     hdr = (f"{'leg':>16} {'h0':>6} {'w2(z1)':>11} {'w2/h0':>8} "
@@ -356,7 +357,7 @@ def main(argv=None):
           f"per-resolution tolerance on a KNOWN CENTRE, not a convergence "
           f"criterion.")
     print("  THE CAMPAIGN'S OWN TOLERANCE IS OQ2 AND IS NOT YET SUPPLIED "
-          "(ADR 90 §7.5). No 'inside tolerance' verdict is available.")
+          "(ADR 90 sec.7.5). No 'inside tolerance' verdict is available.")
     print("=" * 100)
     return 0
 
