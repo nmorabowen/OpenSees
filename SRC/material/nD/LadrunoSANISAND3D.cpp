@@ -54,9 +54,10 @@ Vector LadrunoSANISAND3D::mSigma_M(6);
 LadrunoSANISAND3D::LadrunoSANISAND3D(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,
 	double P_atm, double m, double h0, double ch, double nb, double A0, double nd, double z_max, double cz, double mDen, int integrationScheme,
 	int tangentType, int JacoType, double TolF, double TolR,
-	double Presidual, double Pmin, int honorTolR) // Ladruno
+	double Presidual, double Pmin, int honorTolR, int maxSubsteps) // Ladruno
 :LadrunoSANISAND(tag, ND_TAG_LadrunoSANISAND3D, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, ch, nb, A0, nd, z_max, cz, mDen,
-				integrationScheme, tangentType, JacoType, TolF, TolR, Presidual, Pmin, honorTolR) // Ladruno
+				integrationScheme, tangentType, JacoType, TolF, TolR, Presidual, Pmin, honorTolR,
+				maxSubsteps) // Ladruno
 {
 }
 
@@ -104,7 +105,13 @@ LadrunoSANISAND3D::setTrialStrain(const Vector &strain_from_element)
 	mEpsilon = -1.0 * strain_from_element; // -1.0 is for geotechnical sign convention
 	this->integrate();
 
-	return 0 ;
+	// Ladruno (ADR-86b): the ONE line that differs from ManzariDafalias3D here.
+	// Vanilla returns a hardcoded 0, so a state determination that did not
+	// actually integrate is indistinguishable from one that did -- which is how
+	// a 34-minute ModifiedEuler seizure reached the analysis as "converged"
+	// (ADR-90 GATE U). ladrunoUpdateStatus() is 0 unless this deck asked for a
+	// substep cap AND that cap fired, so an uncapped deck is byte-identical.
+	return this->ladrunoUpdateStatus();
 }
 
 // unused trial strain functions

@@ -233,6 +233,13 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     // three GetElasticModuli overloads.
     mUseCurrentVoidRatioInG = false;
 
+    // Ladruno (ADR-86b): substep-COUNT cap seam -- 0 = UNCAPPED = vanilla.
+    // See ManzariDafalias.h and ModifiedEuler(). Only a derived constructor
+    // ever sets a non-zero cap, so vanilla is bit-identical.
+    mMaxSubstepsInME   = 0;
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
+
     initialize();
 }
 
@@ -316,6 +323,13 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     // three GetElasticModuli overloads.
     mUseCurrentVoidRatioInG = false;
 
+    // Ladruno (ADR-86b): substep-COUNT cap seam -- 0 = UNCAPPED = vanilla.
+    // See ManzariDafalias.h and ModifiedEuler(). Only a derived constructor
+    // ever sets a non-zero cap, so vanilla is bit-identical.
+    mMaxSubstepsInME   = 0;
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
+
     initialize();
 }
 
@@ -376,6 +390,13 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
     mUseCurrentVoidRatioInG = false;
 
+    // Ladruno (ADR-86b): substep-COUNT cap seam -- 0 = UNCAPPED = vanilla.
+    // See ManzariDafalias.h and ModifiedEuler(). Only a derived constructor
+    // ever sets a non-zero cap, so vanilla is bit-identical.
+    mMaxSubstepsInME   = 0;
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
+
     this->initialize();
 }
 
@@ -434,6 +455,13 @@ ManzariDafalias ::ManzariDafalias()
     // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio seam -- off
     // (vanilla frozen m_e_init). See ManzariDafalias.h and GetElasticModuli.
     mUseCurrentVoidRatioInG = false;
+
+    // Ladruno (ADR-86b): substep-COUNT cap seam -- 0 = UNCAPPED = vanilla.
+    // See ManzariDafalias.h and ModifiedEuler(). Only a derived constructor
+    // ever sets a non-zero cap, so vanilla is bit-identical.
+    mMaxSubstepsInME   = 0;
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
 
     this->initialize();
 }
@@ -956,6 +984,16 @@ ManzariDafalias::getAlpha_in()
 
 void ManzariDafalias::integrate() 
 {
+    // Ladruno (ADR-86b): reset the ModifiedEuler substep accounting for THIS
+    // material update. Both are reset HERE rather than inside ModifiedEuler()
+    // because MaxEnergyInc/MaxStrainInc call ModifiedEuler SEVERAL times inside
+    // one integrate(): the cap must bound the whole state-determination pass at
+    // this Gauss point, not each inner call separately, and the failure flag has
+    // to survive until the caller (a fork wrapper's setTrialStrain) can read it.
+    // Numerically inert -- at the default cap 0 nothing branches on either value.
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
+
     // update alpha_in in case of unloading
 	// I assume full elastic step and check if the new stress direction is "dramatically" 
 	// different from the stress path (in reference to the center of the yield surface). 
@@ -1452,6 +1490,47 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 
     while (T < 1.0)
     {
+        // Ladruno (ADR-86b): the substep-COUNT cap. Vanilla bounds dT only from
+        // BELOW (dT_min = 1e-6 above), so this loop can legally run ~1e6 times per
+        // Gauss point per state-determination pass -- and it does, on a softening
+        // BVP: ADR-90 GATE U measured single analyze(1) calls of 11-34 minutes with
+        // the stepping controller using 0 of its 80 subdivisions, because the
+        // integrator never FAILED, it merely did not terminate in useful time.
+        //
+        // With a cap set we do NOT force-accept (that is what :1649-1663 already
+        // does at dT_min, and force-accepting is precisely what hid the cost).
+        // We flag and return: the trial state is left partially updated, the
+        // COMMITTED state (mSigma_n / mAlpha_n / mFabric_n / mEpsilon_n) is
+        // untouched because integrate() writes only trial members, and the
+        // caller's setTrialStrain returns non-zero so the element fails the step
+        // and the analysis' own step-cut / subdivision logic can act. Precedent:
+        // ADR-84's strict_convergence.
+        //
+        // mMaxSubstepsInME is 0 in every ManzariDafalias constructor, so on vanilla
+        // this is one integer increment and one `0 > 0` compare per substep and the
+        // numerics are bit-identical.
+        ++mSubstepsTakenInME;                                           // Ladruno
+        if (mMaxSubstepsInME > 0 && mSubstepsTakenInME > mMaxSubstepsInME) {
+            mSubstepCapHitInME = true;
+            // PROCESS-WIDE budget, not per instance: every Gauss point is its own
+            // material object (getCopy(const char*) runs a full constructor per
+            // integration point), so a per-instance latch is not a throttle. Same
+            // shape as the low-p clamp notice above.
+            static int ladrunoSubstepCapWarnCount = 0;                  // Ladruno
+            if (ladrunoSubstepCapWarnCount < 10) {
+                opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
+                       << this->getTag() << ": substep cap " << mMaxSubstepsInME
+                       << " reached at T = " << T << ", dT = " << dT
+                       << " (dT_min = " << dT_min << "); the strain increment is NOT"
+                       << " integrated. Returning failure so the step can be cut --"
+                       << " the committed state is unchanged." << endln;
+                if (++ladrunoSubstepCapWarnCount == 10)
+                    opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"
+                           << " warnings suppressed (budget 10 per process)." << endln;
+            }
+            return;
+        }
+
         // Ladruno (ADR-86 PR-2): the substep interpolant started from the WRONG END.
         // T sweeps 0->1 across the increment, so the void ratio at substep pseudo-
         // time T must be evaluated at CurStrain + T*dStrain. Upstream evaluated at

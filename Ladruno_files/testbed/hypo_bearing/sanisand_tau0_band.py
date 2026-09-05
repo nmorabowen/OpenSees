@@ -350,6 +350,15 @@ TAN_TYPE = 2                      # consistent elastoplastic -- NOT the default 
 JACO_TYPE = 1
 TOL_F, TOL_R = 1.0e-7, 1.0e-7     # the parser defaults, emitted explicitly
 
+# ADR-86b: the ModifiedEuler substep-COUNT cap.  0 = UNCAPPED = the behaviour
+# every number in `_adr90_tau0_qu_band.md` sections 1-6 was measured under, so
+# the DEFAULT here reproduces that campaign exactly.  A positive value makes the
+# material FAIL an update it cannot integrate inside the cap, which is what lets
+# the `ds *= 0.5` subdivision controller below react -- the original campaign
+# used 0 of its 80 subdivisions precisely because the integrator never failed,
+# it merely took 34 minutes.  Set with `--maxsubsteps`.
+MAX_SUBSTEPS = int(os.environ.get("LADRUNO_A2_MAX_SUBSTEPS", "0"))
+
 N_GRAV = 10                       # gravity ramp steps (stage 0)
 GRAV_TOL = 1.0e-9                 # NormDispIncr, metres
 GRAV_ITER = 40
@@ -551,6 +560,7 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 # --------------------------------------------------------------------------
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
+            max_substeps=MAX_SUBSTEPS,
             test_type=PUSH_TEST, verbose=True):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
@@ -582,7 +592,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     ops.nDMaterial("LadrunoSANISAND", 1, *par,
                    INT_SCHEME, tan_type, JACO_TYPE, TOL_F, TOL_R,
                    "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN,
-                   "-honorTolR", 0)
+                   "-honorTolR", 0, "-maxSubsteps", int(max_substeps))
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -778,6 +788,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
                 presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
+                max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
                 wall_budget_s=wall_budget, resultant_err=resultant_err,
                 patch_err=patch_err, eta_max_grav=eta_max,
@@ -880,6 +891,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
+        max_substeps=int(max_substeps),
         tol_f=TOL_F, tol_r=TOL_R,
         subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
         wall_budget_s=wall_budget,
@@ -937,6 +949,9 @@ def main(argv=None):
     ap.add_argument("--test", default=PUSH_TEST,
                     choices=("NormUnbalance", "NormDispIncr"),
                     help="convergence test for the push ladder")
+    ap.add_argument("--maxsubsteps", type=int, default=MAX_SUBSTEPS,
+                    help="ADR-86b ModifiedEuler substep-count cap; 0 = uncapped "
+                         "(the original GATE U configuration)")
     ap.add_argument("--tantype", type=int, default=TAN_TYPE,
                     choices=(0, 1, 2),
                     help="ManzariDafalias TanType: 0 elastic (the PARSER DEFAULT, and a trap), 1 continuum ep, 2 consistent ep")
@@ -971,7 +986,8 @@ def main(argv=None):
         try:
             r = run_leg(h0, en, ei, args.out, wall_budget=args.wall,
                         sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
-                        tan_type=args.tantype, test_type=args.test)
+                        tan_type=args.tantype, test_type=args.test,
+                        max_substeps=args.maxsubsteps)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,

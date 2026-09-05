@@ -948,6 +948,32 @@ LadrunoBrick::isSinglePoint(void) const
   return false;
 }
 
+// Ladruno (ADR-86b): THROTTLED reporter for a material that refused the trial
+// strain. A failed state determination happens at every Gauss point of every
+// element the analysis is currently probing, inside a Newton iteration, inside a
+// load step -- and the whole POINT of returning failure is that the analysis then
+// retries with a smaller step, so the same failure recurs by design. An
+// unthrottled line here would bury the material's own (already throttled)
+// diagnostic under its own noise. Same PROCESS-budget shape as the
+// ManzariDafalias clamp notices: first 10 events print, then one suppression
+// notice, then silence -- 11 lines for a mesh of any size.
+static void
+ladrunoBrickReportTrialStrainFailure(int eleTag, const char *where, int gp)
+{
+  static int budget = 0;                                            // Ladruno
+  if (budget >= 10)
+    return;
+  opserr << "WARNING LadrunoBrick::update - element " << eleTag
+         << ": the material REFUSED the trial strain at " << where;
+  if (gp >= 0)
+    opserr << " (Gauss point " << gp << ")";
+  opserr << ". Failing the step so the analysis can cut it; the committed state"
+            " is unchanged." << endln;
+  if (++budget == 10)
+    opserr << "WARNING LadrunoBrick: further trial-strain refusal reports"
+              " suppressed (budget 10 per process)." << endln;
+}
+
 //update — seam 1 (kinematics ledger): set the material trial strain
 int
 LadrunoBrick::update(void)
@@ -983,7 +1009,18 @@ LadrunoBrick::update(void)
     // setResponse map per-GP queries to slot 0 via isSinglePoint()) so we avoid
     // 7 redundant return maps per element — material cost matters for e.g.
     // ASDConcrete3D. See LEDGER/11_brick_asdconcrete_integration §4.  // Ladruno
-    materialPointers[0]->setTrialStrain(strainE);
+    // Ladruno (ADR-86b): PROPAGATE the material's own return code. It used to be
+    // discarded here and at the four sites below, so a material that refused the
+    // strain increment -- LadrunoSANISAND past its -maxSubsteps cap, and any
+    // future material with a real failure mode -- reached the analysis as a
+    // SUCCESSFUL state determination. That is the mechanism ADR-90 GATE U ran
+    // into from the other end (the integrator never failed, so 0 of 80 pinned
+    // subdivisions were ever used). `< 0` is the OpenSees convention and matches
+    // what updateHypo() (:1720) and updateFinite() already do in this file.
+    if (materialPointers[0]->setTrialStrain(strainE) < 0) {
+      ladrunoBrickReportTrialStrainFailure(this->getTag(), "the SSP centroid", -1);
+      return -1;
+    }
     return 0;
   }
 
@@ -1018,7 +1055,12 @@ LadrunoBrick::update(void)
                 for (int c = 0; c < 3; c++)
                   strainG(r) += Bbar[J][r][c] * uCore(3 * J + c);
             }
-            materialPointers[gpIdx++]->setTrialStrain(strainG);
+            if (materialPointers[gpIdx]->setTrialStrain(strainG) < 0) {   // Ladruno (ADR-86b)
+              ladrunoBrickReportTrialStrainFailure(this->getTag(),
+                                                   "the URI/physical rule", gpIdx);
+              return -1;
+            }
+            gpIdx++;
           }
       return 0;
     }
@@ -1040,7 +1082,10 @@ LadrunoBrick::update(void)
       ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
       strainC.addMatrixVector(1.0, Bc, ulj, 1.0);
     }
-    materialPointers[0]->setTrialStrain(strainC);
+    if (materialPointers[0]->setTrialStrain(strainC) < 0) {   // Ladruno (ADR-86b)
+      ladrunoBrickReportTrialStrainFailure(this->getTag(), "the URI centroid", -1);
+      return -1;
+    }
     return 0;
   }
 
@@ -1102,7 +1147,11 @@ LadrunoBrick::update(void)
       strain.addMatrixVector(1.0, BJ, ulj, 1.0);
     }
 
-    materialPointers[i]->setTrialStrain(strain);
+    if (materialPointers[i]->setTrialStrain(strain) < 0) {   // Ladruno (ADR-86b)
+      ladrunoBrickReportTrialStrainFailure(this->getTag(),
+                                           "the std/b-bar 2x2x2 rule", i);
+      return -1;
+    }
   }
 
   return 0;
