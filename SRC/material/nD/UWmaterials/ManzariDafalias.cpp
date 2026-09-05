@@ -29,6 +29,7 @@
 #include <MaterialResponse.h>
 
 #include <string.h>
+#include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <algorithm>
@@ -1499,31 +1500,65 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         //
         // With a cap set we do NOT force-accept (that is what :1649-1663 already
         // does at dT_min, and force-accepting is precisely what hid the cost).
-        // We flag and return: the trial state is left partially updated, the
-        // COMMITTED state (mSigma_n / mAlpha_n / mFabric_n / mEpsilon_n) is
-        // untouched because integrate() writes only trial members, and the
-        // caller's setTrialStrain returns non-zero so the element fails the step
-        // and the analysis' own step-cut / subdivision logic can act. Precedent:
-        // ADR-84's strict_convergence.
+        // We flag and return early, at T < 1.
+        //
+        // ****  READ THIS BEFORE SETTING A CAP ON ANY OTHER ELEMENT  ****
+        // Returning early leaves the TRIAL state partially integrated -- a
+        // stress/alpha/fabric advanced only to T, and an aCep_Consistent
+        // accumulated over only the substeps taken. That is SAFE only if the
+        // caller treats the update as FAILED. The committed state
+        // (mSigma_n / mAlpha_n / mFabric_n / mEpsilon_n) is untouched either way,
+        // because integrate() writes only trial members, so a step that is cut
+        // loses nothing.
+        //
+        // But an element that DISCARDS the return code will assemble that partial
+        // state and report convergence -- which is strictly WORSE than the
+        // pre-cap behaviour, where force-accepting at least always drove T to 1.
+        // TODAY ONLY `LadrunoBrick` propagates the refusal. Under vanilla `Brick`
+        // (Brick.cpp update() discards it), `BrickUP` / `QuadUP` (setTrialStrain
+        // is called inside a void formResidAndTangent, BrickUP.cpp:1069) and
+        // `stdBrick`, a capped run is INVALID, not merely un-cut. The cap is
+        // opt-in for exactly this reason: the default 0 cannot reach this branch.
+        // Precedent for failing rather than force-accepting: ADR-84's
+        // strict_convergence.
         //
         // mMaxSubstepsInME is 0 in every ManzariDafalias constructor, so on vanilla
         // this is one integer increment and one `0 > 0` compare per substep and the
         // numerics are bit-identical.
-        ++mSubstepsTakenInME;                                           // Ladruno
+        // Ladruno (ADR-86b, M-1): SATURATE rather than widen. Uncapped, this loop
+        // is bounded only by dT_min = 1e-6 per substep, so ~1e6 iterations is
+        // reachable and a pathological future dT_min is not -- but signed
+        // overflow is UB, and a wrapped counter would silently re-arm a cap that
+        // had already fired. `int` is kept (the seam, the wire slot and the
+        // response all carry an int); only the increment is guarded.
+        if (mSubstepsTakenInME < INT_MAX)                               // Ladruno
+            ++mSubstepsTakenInME;
         if (mMaxSubstepsInME > 0 && mSubstepsTakenInME > mMaxSubstepsInME) {
             mSubstepCapHitInME = true;
             // PROCESS-WIDE budget, not per instance: every Gauss point is its own
             // material object (getCopy(const char*) runs a full constructor per
             // integration point), so a per-instance latch is not a throttle. Same
             // shape as the low-p clamp notice above.
+            // THREAD SAFETY: this counter is a plain `static int` and this loop is
+            // exactly what ADR-75b Lane 3 (threaded element assembly) targets. Under
+            // a threaded state-determination the increment races, so the budget is
+            // approximate -- it may print a few more or fewer than 10 lines. That is
+            // acceptable for a throttle and for nothing else; it must not be given a
+            // job that affects the answer. Promote to std::atomic<int> if Lane 3
+            // lands. Same note on the three sibling budgets (the two low-p clamps
+            // here and LadrunoBrick's refusal reporter).
             static int ladrunoSubstepCapWarnCount = 0;                  // Ladruno
             if (ladrunoSubstepCapWarnCount < 10) {
                 opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                        << this->getTag() << ": substep cap " << mMaxSubstepsInME
                        << " reached at T = " << T << ", dT = " << dT
                        << " (dT_min = " << dT_min << "); the strain increment is NOT"
-                       << " integrated. Returning failure so the step can be cut --"
-                       << " the committed state is unchanged." << endln;
+                       << " integrated and the trial state is left PARTIAL at T < 1."
+                       << " The committed state is unchanged, so a cut step loses"
+                       << " nothing -- but only an element that PROPAGATES a material"
+                       << " failure cuts the step. Today that is LadrunoBrick; under"
+                       << " Brick / BrickUP / QuadUP / stdBrick the return code is"
+                       << " discarded and THIS RUN IS INVALID." << endln;
                 if (++ladrunoSubstepCapWarnCount == 10)
                     opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"
                            << " warnings suppressed (budget 10 per process)." << endln;

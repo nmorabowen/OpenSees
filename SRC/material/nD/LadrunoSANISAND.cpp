@@ -812,9 +812,10 @@ LadrunoSANISAND::ladrunoUpdateStatus(void) const
 // LadrunoSANISANDPlaneStrain (neither of which overrides setResponse) inherit
 // it, and anything else falls through to ManzariDafalias::setResponse unchanged.
 //
-// ID 33086 is in the fork's 3308x diagnostic band and cannot collide with the
-// base's 1..8.
-#define LSANISAND_RESP_SUBSTEPS 33086       // Ladruno (ADR-86b)
+// The id only has to miss the base's 1..8; it is not a class tag and nothing may
+// derive one from it. Named for what it reports rather than for its digits, and
+// `constexpr` rather than a macro for the same reasons as the refusal code.
+constexpr int LadrunoSanisandSubstepResponseID = 33086;   // Ladruno (ADR-86b)
 
 Response *
 LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
@@ -823,7 +824,7 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
                      strcmp(argv[0], "substepsME") == 0 ||
                      strcmp(argv[0], "ladrunoSubsteps") == 0)) {
         static Vector probe(2);
-        return new MaterialResponse(this, LSANISAND_RESP_SUBSTEPS, probe);
+        return new MaterialResponse(this, LadrunoSanisandSubstepResponseID, probe);
     }
     return ManzariDafalias::setResponse(argv, argc, output);
 }
@@ -831,7 +832,7 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
 int
 LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
 {
-    if (responseID == LSANISAND_RESP_SUBSTEPS) {
+    if (responseID == LadrunoSanisandSubstepResponseID) {
         static Vector out(2);
         out(0) = (double)mSubstepsTakenInME;   // substeps spent in the LAST update
         out(1) = mSubstepCapHitInME ? 1.0 : 0.0;
@@ -878,6 +879,24 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
                               " force-accepting; the committed state is left untouched)") << endln;
     s << "             last update: " << mSubstepsTakenInME << " ModifiedEuler substep(s)"
       << (mSubstepCapHitInME ? ", CAP HIT (that update did not integrate)" : "") << endln;
+    // Ladruno (ADR-86b): the same inertness note the -honorTolR block below carries.
+    // Both flags drive seams read at EXACTLY ONE site, inside ModifiedEuler(), so on
+    // a scheme that never routes there the cap is stored, echoed, wired -- and does
+    // nothing. NB IntScheme 7 is called INT_MAXSTR_MFE and does NOT reach
+    // ModifiedEuler: MaxStrainInc has no case for it and falls through to
+    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name;
+    // schemeReachesModifiedEuler() encodes the switch and is correct as written.
+    if (mMaxSubsteps != 0 && !this->schemeReachesModifiedEuler())
+        s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
+             " ModifiedEuler(), so -maxSubsteps is INERT on this deck." << endln;
+    // A record that also states what the cap would COST if it fired: the element
+    // must propagate the refusal. LadrunoBrick does; Brick / BrickUP / QuadUP /
+    // stdBrick discard it, and under those a capped run is invalid, not merely
+    // un-cut. The material cannot see its element, so this is a statement, not a
+    // check.
+    if (mMaxSubsteps != 0)
+        s << "             NOTE: a cap is only safe under an element that PROPAGATES"
+             " a material refusal (today: LadrunoBrick)." << endln;
     // Ladruno (ADR-86 PR-3): the seam is wired now (it was "inactive in PR-1").
     // Report the tolerance the integrator ACTUALLY ran with, and whether this
     // deck's scheme even reaches the site that reads it -- a record that says

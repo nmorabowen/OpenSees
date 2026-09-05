@@ -211,6 +211,10 @@ class ManzariDafalias : public NDMaterial
 	//                       inner call, and makes the update FAIL when it is hit
 	//                       rather than silently force-accepting.
 	//   mSubstepsTakenInME  diagnostic counter, reset at the top of integrate().
+	//                       Its increment SATURATES at INT_MAX (signed overflow is
+	//                       UB, and a wrapped counter would silently re-arm a cap
+	//                       that had already fired). Kept `int`, not widened: the
+	//                       seam, the wire slot and the response all carry an int.
 	//   mSubstepCapHitInME  set when the cap fires; reset at the top of
 	//                       integrate(), so it is sticky across the several
 	//                       ModifiedEuler calls MaxEnergyInc/MaxStrainInc make

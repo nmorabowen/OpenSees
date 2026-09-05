@@ -65,6 +65,12 @@
 
 // Returned by a Ladruno material whose update did not integrate the increment.
 // The committed state is guaranteed untouched; the caller must fail the step.
-#define LADRUNO_MATERIAL_REFUSED (-33086)
+//
+// `constexpr`, not a macro: typed, scoped, and it cannot collide with anything a
+// later header spells the same way. The VALUE is arbitrary -- it only has to be
+// negative (so pre-existing `< 0` tests still see a failure) and far from the
+// small integers materials return by hand. It is NOT a class tag, is not
+// registered in classTags.h, and nothing may derive one from it.
+constexpr int LADRUNO_MATERIAL_REFUSED = -33086;
 
 #endif

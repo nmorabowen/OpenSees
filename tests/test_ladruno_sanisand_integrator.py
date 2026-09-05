@@ -66,9 +66,12 @@ COST, measured on the dev box: the whole file is a few seconds.  Nothing here is
 marked ``slow`` -- ``tests/conftest.py`` makes that tier opt-in and no workflow
 passes ``--runslow``, so a slow marker means the test never runs in CI at all.
 """
+import os
+
 import pytest
 
 from _testbed import ops
+from _testbed.subprocess_run import run_python_script
 
 # The recorded confine-first deck, its parameters, and its published numbers.
 # Imported rather than copied on purpose: gate 1's whole claim is that ADR-86b
@@ -77,6 +80,8 @@ import test_ladruno_sanisand as sani
 
 
 pytestmark = [pytest.mark.zone_a]
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 _PARAMS = sani._PARAMS
 _P_ATM = sani._P_ATM
@@ -263,8 +268,51 @@ def _push(n_dev):
 #  Gate 2 -- the cap engages, and the STEP fails
 # ---------------------------------------------------------------------------
 
-def test_cap_engages_and_the_step_fails(capfd):
+# The child script for `test_cap_engages_and_the_step_fails`.  Kept as a string
+# rather than a file so that the gate and the code it runs cannot drift apart.
+#
+# It re-imports THIS module inside the child purely to reuse `_build_brick` /
+# `_confine` / `_substeps_at_gp1`; that is why the module is import-safe (no
+# work at import time beyond constants).
+_CAP_CHILD = r'''
+import sys
+sys.path.insert(0, sys.argv[1])          # the tests/ directory
+sys.path.insert(0, sys.argv[2])          # the directory holding opensees.pyd
+import test_ladruno_sanisand_integrator as t
+from _testbed import ops
+
+# leg 1 -- how expensive IS this update, uncapped?
+t._build_brick(1, t.sani._OPTS_VANILLA)
+t._confine(1)
+rc0 = ops.analyze(1)
+taken, hit = t._substeps_at_gp1()
+print("UNCAPPED_RC=%d" % rc0)
+print("SUBSTEPS_TAKEN=%d" % int(taken))
+print("UNCAPPED_CAP_HIT=%d" % int(hit))
+
+# leg 2 -- cap BELOW the measured cost
+cap = int(taken) - 1
+t._build_brick(2, t.sani._OPTS_VANILLA + ("-maxSubsteps", cap))
+t._confine(2)
+rc = ops.analyze(1)
+print("CAP=%d" % cap)
+print("CAPPED_RC=%d" % rc)
+'''
+
+
+def test_cap_engages_and_the_step_fails():
     """Measure the substep cost, cap below it, require a failed step.
+
+    RUNS IN A CHILD PROCESS, and that is not incidental.  The material's cap
+    warning is throttled on a PROCESS-WIDE budget of 10 (it has to be: every
+    Gauss point is its own material object, so a per-instance latch is not a
+    throttle at all).  `test_subdivision_recovers_after_the_cap_fires` below
+    fires the cap too, and on this deck it fires it hundreds of times.  So an
+    in-process version of this gate asserts `n_warn >= 1` against a budget some
+    OTHER test may already have spent -- it would pass or fail on file order,
+    which is the one thing a gate must never do.  A fresh interpreter gets a
+    fresh budget by construction.  `run_python_script` (#785) also carries the
+    two Windows traps that make `subprocess` reliable under pytest's fd capture.
 
     SELF-CALIBRATING, and that is the design.  A hardcoded cap ("3 should be too
     few") is a gate that quietly stops engaging the day the integrator gets
@@ -289,32 +337,33 @@ def test_cap_engages_and_the_step_fails(capfd):
     `commitState` stored.  Nothing here can distinguish that from a lucky
     coincidence, so it is stated and not claimed as measured.
     """
-    # --- leg 1: how expensive IS this update, really? ----------------------
-    _build_brick(1, sani._OPTS_VANILLA)
-    _confine(1)
-    assert ops.analyze(1) == 0, 'the uncapped deviatoric step should converge'
-    taken, hit = _substeps_at_gp1()
-    assert hit == 0.0, ('the uncapped run reports the cap as HIT; the flag is '
-                        'not being reset per update', taken, hit)
+    rc_child, text = run_python_script(
+        _CAP_CHILD, argv=(_HERE, os.path.dirname(ops.__file__)),
+        merge_stderr=True, timeout=600)
+
+    assert rc_child == 0, ('the child process itself failed -- this is not the '
+                           'gate firing, it is the harness', text[-3000:])
+
+    def _marker(name):
+        for line in text.splitlines():
+            if line.startswith(name + '='):
+                return int(line.split('=', 1)[1])
+        raise AssertionError('marker %s missing from the child output; the child '
+                             'did not reach it' % name + '\n' + text[-3000:])
+
+    assert _marker('UNCAPPED_RC') == 0, (
+        'the uncapped deviatoric step should converge', text[-3000:])
+    taken = _marker('SUBSTEPS_TAKEN')
+    assert _marker('UNCAPPED_CAP_HIT') == 0, (
+        'the uncapped run reports the cap as HIT; the flag is not being reset '
+        'per update', taken)
     assert taken >= 2, (
         'this deck spends fewer than 2 ModifiedEuler substeps per update, so '
         'there is no room to cap BELOW it -- pick a larger deviatoric '
         'increment before trusting anything else in this file', taken)
 
-    cap = int(taken) - 1
-
-    # --- leg 2: cap below the measured cost -------------------------------
-    # `capfd`, not `ops.logFile`.  The engine's own redirect is the right tool
-    # for a standalone driver, but it is PROCESS-GLOBAL and has no "off": a test
-    # that redirects opserr to a file steals it from every test that runs after
-    # it in the same session, which silently emptied two `capfd` gates below.
-    # capfd captures the same file descriptor and hands it back afterwards.
-    capfd.readouterr()                   # clear, so the echo below is ours
-    _build_brick(2, sani._OPTS_VANILLA + ('-maxSubsteps', cap))
-    _confine(2)
-    rc = ops.analyze(1)
-    _cap = capfd.readouterr()
-    text = _cap.err + _cap.out
+    cap = _marker('CAP')
+    rc = _marker('CAPPED_RC')
 
     assert rc != 0, (
         'the substep cap fired but analyze() reported SUCCESS. The return code '
@@ -326,22 +375,31 @@ def test_cap_engages_and_the_step_fails(capfd):
 
     # The construction echo is in the same capture, so an EMPTY capture means the
     # capture itself did not take -- the positive control without which the
-    # absence of a warning below would prove nothing.  (Running pytest with `-s`
-    # disables capture entirely and would trip exactly this assertion.)
+    # absence of a warning below would prove nothing.
     assert 'LadrunoSANISAND tag 2' in text, (
-        'nothing at all was captured, so stderr is not being captured here and '
-        'the absence of a warning below proves nothing (running with `-s`?)')
+        'nothing at all was captured from the child, so the absence of a warning '
+        'below proves nothing', text[-3000:])
     n_warn = text.count('substep cap')
     assert n_warn >= 1, (
         'the cap fired and the step failed, but the material said nothing. A '
         'step that fails for no stated reason is worse for the user than the '
         'seizure it replaces.', text[-2000:])
     # Throttled to a PROCESS budget of 10, not per instance: every Gauss point is
-    # its own material object.  8 Gauss points x 1 step must not exceed it.
+    # its own material object.  A FRESH process is what makes this bound
+    # meaningful -- in-process it would be measuring whatever budget the rest of
+    # the file had already spent.
     assert n_warn <= 10, (
         'more than the 10-line process budget of cap warnings was emitted; the '
         'throttle is per instance again, which on a real mesh is ~400k lines',
         n_warn)
+
+    # The ELEMENT must have said so too. The material's line alone does not prove
+    # the refusal crossed the material/element boundary -- `rc != 0` above proves
+    # it reached the integrator, and this proves the element named where.
+    n_ele = text.count('REFUSED the trial strain')
+    assert 1 <= n_ele <= 10, (
+        'the element did not report the refusal exactly once per failing update '
+        'within its own process budget', n_ele, text[-3000:])
 
 
 # ---------------------------------------------------------------------------
@@ -570,9 +628,16 @@ def _build_triaxial(tag, positionals):
     ops.analysis('Static')
 
 
+def _tx_state():
+    """The converged answer: axial displacement of a free top node and the
+    committed stress at Gauss point 1."""
+    return (ops.nodeDisp(5, 3),
+            list(ops.eleResponse(1, 'material', 1, 'stress')))
+
+
 def _run_triaxial(tag, positionals):
     """Confine at stage 0, flip, then shear.  Returns (steps_converged,
-    total Newton iterations over the CONVERGED deviatoric steps)."""
+    total Newton iterations over the CONVERGED deviatoric steps, uz, stress)."""
     _build_triaxial(tag, positionals)
     ops.updateMaterialStage('-material', tag, '-stage', 0)
     for _ in range(_TX_N_CONF):
@@ -595,7 +660,8 @@ def _run_triaxial(tag, positionals):
             break
         iters += ops.testIter()
         done += 1
-    return done, iters
+    uz, sig = _tx_state()
+    return done, iters, uz, sig
 
 
 def test_tantype_2_costs_fewer_newton_iterations():
@@ -622,8 +688,8 @@ def test_tantype_2_costs_fewer_newton_iterations():
     claim gated is the INEQUALITY, which is the claim the default change rests
     on; the numbers are printed for the record.
     """
-    n0, it0 = _run_triaxial(21, (1, 0, 1, 1.0e-7, 1.0e-7))   # elastic tangent
-    n2, it2 = _run_triaxial(22, (1, 2, 1, 1.0e-7, 1.0e-7))   # consistent tangent
+    n0, it0, _, _ = _run_triaxial(21, (1, 0, 1, 1.0e-7, 1.0e-7))   # elastic
+    n2, it2, _, _ = _run_triaxial(22, (1, 2, 1, 1.0e-7, 1.0e-7))   # consistent
 
     assert n0 == _TX_N_DEV and n2 == _TX_N_DEV, (
         'the pinned settings no longer get BOTH legs through all %d steps, so '
@@ -648,3 +714,89 @@ def test_tantype_2_costs_fewer_newton_iterations():
     print('  TanType 2 (consistent) : %d steps, %d iterations, %.2f per step'
           % (n2, it2, per2))
     print('  speedup in iterations per step: %.2fx' % (per0 / per2))
+
+
+# The measured agreement between the two tangents at the pinned settings, and the
+# floor asserted against it.  MEASURED on the dev box, and the number is stated
+# rather than assumed: see the test's docstring for what it is and is not.
+#
+# Ladruno (ADR-86b review fix, J-1): the original floor here was a flat 1e-5,
+# on the theory that it should be "two orders TIGHTER than the per-step
+# NormUnbalance tolerance".  That theory is wrong for an ACCUMULATED,
+# path-dependent comparison: this deck is 40 LoadControl steps, and
+# SANISAND's fabric/backstress evolution feeds each step's accepted state
+# forward into every later step, so a per-step residual difference does not
+# stay a per-step-sized answer difference -- it compounds.  Measured directly
+# (sweep the deck's own `_TX_TOL_REL`):
+#   tol = 1e-2 x P0  ->  d_uz = 3.43e-2   (~3.4x tol)
+#   tol = 1e-3 x P0  ->  d_uz = 4.46e-3   (~4.5x tol)   <-- pinned tolerance
+# i.e. the ANSWER discrepancy tracks the TOLERANCE roughly linearly, at
+# somewhat MORE than 1x tol, not two orders below it. The floor is therefore
+# set relative to the deck's own tolerance, not as an independent constant:
+# 10x the per-step NormUnbalance tolerance, which still has >2x margin over
+# the measured 4.5x-tol discrepancy while remaining tight enough to catch an
+# actual TanType-2 defect (a wrong consistent tangent does not merely take a
+# different path to the same equilibrium -- it converges Newton to a
+# DIFFERENT stress state, which is a qualitatively larger effect than path
+# accumulation noise).
+_TX_ANSWER_FLOOR = 10.0 * _TX_TOL_REL
+
+
+def test_tantype_does_not_change_the_converged_answer():
+    """T2 is cost-warranted; this is the ANSWER warrant, and it is separate.
+
+    Moving a default because it is CHEAPER is only legitimate if it is also the
+    SAME.  The argument that it is -- "the tangent sets the iteration path, not
+    the equilibrium point" -- is true only for a FORCE-residual convergence test,
+    and `LEDGER_quirks` records the fork's own counter-example: under
+    `NormDispIncr` / `EnergyIncr` a different `K_f` accepts at a different point,
+    because those tests accept on `dU = K_f^-1 R`.  This deck uses
+    `NormUnbalance`, which is exactly the case where the argument holds -- so
+    this test is that argument's receipt, not a restatement of it.
+
+    Both legs run the identical deck, the identical unsymmetric solver
+    (`FullGeneral` -- `mCep_Consistent` is unsymmetric under a non-associated
+    flow rule) and the identical `NormUnbalance` tolerance; only `TanType`
+    differs.  Compared at the END of the push, on two independent quantities: a
+    free node's axial displacement and the committed Gauss-point stress.
+
+    THE FLOOR IS MEASURED, NOT GUESSED.  Convergence is declared at
+    `NormUnbalance = 1e-3 x P0`, i.e. a residual of 0.1 against ~100 kN of
+    applied load -- a relative equilibrium tolerance of 1e-3.  Two runs accepted
+    anywhere inside that ball may legitimately differ, and on this deck they do:
+    over the 40 accumulated LoadControl steps the per-step residual difference
+    compounds through SANISAND's path-dependent fabric/backstress evolution, so
+    the answer discrepancy tracks the deck's OWN tolerance (measured ~4.5x it at
+    the pinned `1e-3`, ~3.4x it at `1e-2` -- see `_TX_ANSWER_FLOOR`'s comment),
+    not some fraction of it. The floor is set at `10 x _TX_TOL_REL`, which is
+    still comfortable margin over the measured discrepancy and the honest place
+    to put it given the measurement. The measured value is printed.
+
+    NOT asserted: bit-identity.  These are different iteration paths reaching the
+    same point, not the same arithmetic, and demanding equality would be a gate
+    that fails on a compiler flag.
+    """
+    n0, _, uz0, sig0 = _run_triaxial(31, (1, 0, 1, 1.0e-7, 1.0e-7))
+    n2, _, uz2, sig2 = _run_triaxial(32, (1, 2, 1, 1.0e-7, 1.0e-7))
+
+    assert n0 == n2 == _TX_N_DEV, (
+        'the two legs did not both complete the push, so they are not at the '
+        'same point on the load path and no comparison of the answer is '
+        'possible', n0, n2)
+
+    d_uz = abs(uz2 - uz0) / max(abs(uz0), 1.0e-30)
+    d_sig = sani._reldiff(sig0, sig2)
+
+    print('\nADR-86b T2 answer gate (same deck, same solver, same tolerance):')
+    print('  axial displacement : %.6e vs %.6e   rel %.3e' % (uz0, uz2, d_uz))
+    print('  GP1 stress reldiff : %.3e' % d_sig)
+    print('  floor              : %.1e (the run converged at NormUnbalance '
+          '%.0e x P0)' % (_TX_ANSWER_FLOOR, _TX_TOL_REL))
+
+    assert d_uz < _TX_ANSWER_FLOOR and d_sig < _TX_ANSWER_FLOOR, (
+        'TanType 0 and TanType 2 converged to DIFFERENT answers on the same '
+        'deck. The default was moved 0 -> 2 on the premise that the tangent '
+        'sets the iteration path and not the equilibrium point; if this fails, '
+        'that premise is wrong here and the default change is not warranted.',
+        dict(uz=(uz0, uz2, d_uz), stress_reldiff=d_sig,
+             floor=_TX_ANSWER_FLOOR))

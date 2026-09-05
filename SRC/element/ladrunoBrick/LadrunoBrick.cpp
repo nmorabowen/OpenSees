@@ -958,6 +958,11 @@ LadrunoBrick::isSinglePoint(void) const
 // diagnostic under its own noise. Same PROCESS-budget shape as the
 // ManzariDafalias clamp notices: first 10 events print, then one suppression
 // notice, then silence -- 11 lines for a mesh of any size.
+// THREAD SAFETY: plain `static int`, and the element loop is exactly what
+// ADR-75b Lane 3 (threaded assembly) targets. Under threading the increment
+// races and the budget becomes approximate -- fine for a throttle, and it must
+// never be given a job that affects the answer. Promote to std::atomic<int> if
+// Lane 3 lands. Same note on ManzariDafalias's three sibling budgets.
 static void
 ladrunoBrickReportTrialStrainFailure(int eleTag, const char *where, int gp)
 {
@@ -1053,6 +1058,13 @@ LadrunoBrick::update(void)
       static double Bbar[8][6][3];
       static Vector strainG(6);
       int gpIdx = 0;
+      // Ladruno (ADR-86b): DO NOT return from inside this loop. Bailing out early
+      // leaves the remaining Gauss points holding the PREVIOUS iteration's trial
+      // strain, so a later getStress()/getTangent() -- and, on any path that does
+      // not honour the failure, the assembled residual -- mixes two configurations.
+      // Set every point's trial strain, remember the refusal, report it ONCE, and
+      // fail after the loop.
+      bool refused = false;
       for (int gi = 0; gi < 2; gi++)
         for (int gj = 0; gj < 2; gj++)
           for (int gk = 0; gk < 2; gk++) {
@@ -1066,12 +1078,15 @@ LadrunoBrick::update(void)
             }
             if (materialPointers[gpIdx]->setTrialStrain(strainG)
                   == LADRUNO_MATERIAL_REFUSED) {                          // Ladruno (ADR-86b)
-              ladrunoBrickReportTrialStrainFailure(this->getTag(),
-                                                   "the URI/physical rule", gpIdx);
-              return -1;
+              if (!refused)
+                ladrunoBrickReportTrialStrainFailure(this->getTag(),
+                                                     "the URI/physical rule", gpIdx);
+              refused = true;
             }
             gpIdx++;
           }
+      if (refused)                                                  // Ladruno (ADR-86b)
+        return -1;
       return 0;
     }
 
@@ -1145,6 +1160,11 @@ LadrunoBrick::update(void)
   const Vector &uCore = this->computeLocalDisp();   // seam 0+2 (identity for linear)
   static Vector ulj(3);
 
+  // Ladruno (ADR-86b): see the note in the URI branch above -- every Gauss point
+  // gets its trial strain set before the element reports failure, so no point is
+  // ever left holding the previous iteration's state.
+  bool refused = false;
+
   for (int i = 0; i < numberGauss; i++) {
     for (int p = 0; p < nShape; p++)
       for (int q = 0; q < numberNodes; q++)
@@ -1160,11 +1180,15 @@ LadrunoBrick::update(void)
 
     if (materialPointers[i]->setTrialStrain(strain)
           == LADRUNO_MATERIAL_REFUSED) {                                  // Ladruno (ADR-86b)
-      ladrunoBrickReportTrialStrainFailure(this->getTag(),
-                                           "the std/b-bar 2x2x2 rule", i);
-      return -1;
+      if (!refused)
+        ladrunoBrickReportTrialStrainFailure(this->getTag(),
+                                             "the std/b-bar 2x2x2 rule", i);
+      refused = true;
     }
   }
+
+  if (refused)                                                            // Ladruno (ADR-86b)
+    return -1;
 
   return 0;
 }
@@ -1548,6 +1572,11 @@ LadrunoBrick::updateFinite(void)
                  << ")\n";
           return -1;
         }
+        // Ladruno (ADR-86b): deliberately still a blanket `< 0`, unlike the
+        // setTrialStrain paths above. `setTrialF` is a DIFFERENT interface
+        // (FiniteStrainNDMaterial), no material on it returns an advisory negative,
+        // and LADRUNO_MATERIAL_REFUSED is defined for the setTrialStrain contract.
+        // Narrowing this one would be a change with no defect behind it.
         if (fsm->setTrialF(Fm) < 0) {
           opserr << "LadrunoBrick::updateFinite - setTrialF failed at GP " << gp
                  << " (element " << this->getTag() << ", det F<=0?)\n";
@@ -1757,6 +1786,12 @@ LadrunoBrick::updateHypo(void)
   }
 
   int gp = 0;
+  // Ladruno (ADR-86b): a material REFUSAL must not exit this loop early -- the
+  // remaining Gauss points would keep the previous iteration's trial strain.
+  // (A collapsed/inverted configuration below still returns immediately: that is
+  // a KINEMATIC failure, the increment itself is undefined, and there is nothing
+  // meaningful to feed the remaining points.)
+  bool refusedHypo = false;
   for (int i = 0; i < 2; i++)
     for (int j = 0; j < 2; j++)
       for (int k = 0; k < 2; k++) {
@@ -1778,13 +1813,27 @@ LadrunoBrick::updateHypo(void)
           hypoFeed[gp][c] = hypoFeedCommit[gp][c] + deps[c];
           strain(c) = hypoFeed[gp][c];
         }
-        if (materialPointers[gp]->setTrialStrain(strain) < 0) {
-          opserr << "LadrunoBrick::updateHypo - setTrialStrain failed at GP "
-                 << gp << " (element " << this->getTag() << ")\n";
-          return -1;
+        // Ladruno (ADR-86b): was a blanket `< 0`, which carries the regression
+        // class the sentinel exists for. `ASDConcrete3DMaterial` returns
+        // EC_IMPLEX_Error_Control = -10 (ASDConcrete3DMaterial.cpp:61, :1681) as a
+        // BENIGN IMPL-EX advisory -- "the extrapolation error is large, here is my
+        // best state" -- and ADR-33/34's rule is that such a code must not fail the
+        // step, because doing so makes softening analyses fragile. Measured on the
+        // std/b-bar path: honouring any `< 0` killed two long-green ASDConcrete
+        // mesh-objectivity gates at load factor 605. Only the explicit refusal --
+        // "the increment was NOT integrated" -- fails the step here too.
+        // See SRC/material/LadrunoMaterialStatus.h.
+        if (materialPointers[gp]->setTrialStrain(strain)
+              == LADRUNO_MATERIAL_REFUSED) {                        // Ladruno (ADR-86b)
+          if (!refusedHypo)
+            ladrunoBrickReportTrialStrainFailure(this->getTag(),
+                                                 "the -geom hypo rate-form rule", gp);
+          refusedHypo = true;
         }
         gp++;
       }
+  if (refusedHypo)                                                  // Ladruno (ADR-86b)
+    return -1;
   return 0;
 }
 
@@ -3259,9 +3308,18 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       computeMenh(gpNat[g], jdetGP[g], M);
       strain.addMatrixVector(0.0, B, uCore, 1.0);     // eps = B*u
       strain.addMatrixVector(1.0, M, alpha, 1.0);     //     + M*alpha
-      if (materialPointers[g]->setTrialStrain(strain) != 0) {
+      // Ladruno (ADR-86b): was a blanket `!= 0`, which carries the regression class
+      // the sentinel exists for -- `ASDConcrete3DMaterial` returns
+      // EC_IMPLEX_Error_Control = -10 (ASDConcrete3DMaterial.cpp:61, :1681) as a
+      // BENIGN IMPL-EX advisory, and ADR-33/34's rule is that such a code must not
+      // fail the step. Only the explicit refusal does. This loop already completes
+      // (it sets `status` rather than returning), which is the shape the four
+      // update() paths were changed to match.
+      if (materialPointers[g]->setTrialStrain(strain)
+            == LADRUNO_MATERIAL_REFUSED) {                    // Ladruno (ADR-86b)
         opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
-               << ": material " << g << " rejected trial strain\n";
+               << ": material " << g << " REFUSED the trial strain (increment not"
+                  " integrated); failing the step so it can be cut\n";
         status = -1;
       }
       stress = materialPointers[g]->getStress();
