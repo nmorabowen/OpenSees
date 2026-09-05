@@ -1980,3 +1980,50 @@ features:
       LadrunoDynamicRelaxation rows. See
       Ladruno_implementation/80_ladruno_sp_imposition_strengthening_adr.md and
       80c_s1_extrapolate_verdict_2026-08-04.md.
+
+  - feature: LadrunoShellModifierSection
+    classtag: 33000          # SEC_TAG family; per-registry band (33000 is independently reused as NUMBERER_TAG_LadrunoParallelNumberer / RECORDER_TAGS_EnergyBalanceRecorder / INTEGRATOR_TAGS_ExplicitBathe — no collision, bands are per-registry)
+    tag_symbol: SEC_TAG_LadrunoShellModifier
+    pr: 793
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoShellModifier_section.py
+    tcl: ""
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/section/CMakeLists.txt
+      - SRC/material/section/Makefile
+      - SRC/Makefile
+      - SRC/interpreter/OpenSeesSectionCommands.cpp
+      - SRC/material/section/TclModelBuilderSectionCommand.cpp
+      - SRC/runtime/commands/modeling/section.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: planned
+    notes: >
+      ETABS-style shell section stiffness modifiers (ADR 91). A
+      SectionForceDeformation DECORATOR over any order-8 plate section, applying
+      the eight ETABS area modifiers (f11 f22 f12 m11 m22 m12 v13 v23) plus a
+      mass modifier, for cracked-section elastic wall models (ACI 318-25
+      6.6.3.1.1 / ASCE 41). Verb: `section LadrunoShellModifier tag innerSecTag
+      [-f11 v] ... [-mass v]`, all nine optional and defaulting to 1.0, so an
+      unflagged wrap is byte-identical to the inner section.
+      Contract is a CONGRUENCE transform: with s[i]=sqrt(m[i]) and S=diag(s),
+      D' = S.D.S, sigma = S.sigma_inner(S.eps), rho' = massMod*rho. That form is
+      SPD-preserving (Schur product theorem), energy-consistent, and is the exact
+      consistent tangent for an arbitrary nonlinear inner section — so the
+      decorator is transparent to LayeredShell/PlateFiber as well as
+      ElasticMembranePlateSection. Naive diagonal-only scaling was REJECTED: it
+      leaves the Poisson coupling at full value and drives the membrane block
+      indefinite at exactly the cracked-wall modifiers this feature exists for
+      (ADR 91 §4).
+      NO weight modifier, deliberately: ShellMITC4.cpp:1725-1755 derives the
+      self-weight body force from the same getRho() that builds the mass matrix,
+      so a weightMod could only have aliased massMod (ADR 91 §5).
+      status=planned pending the G1-G8 gate suite (ADR 91 §9) landing as
+      tests/test_ladrunoShellModifier_section.py; row owner flips to active once
+      those pass against a build of this branch. Zero vanilla behavior change —
+      every touched upstream file is registration-only.
+      See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
