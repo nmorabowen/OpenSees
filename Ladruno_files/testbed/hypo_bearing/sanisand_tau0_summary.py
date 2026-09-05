@@ -40,10 +40,95 @@ capacity, whatever its q_max says.
 
 from __future__ import annotations
 
+import csv
 import glob
 import json
+import math
 import os
 import sys
+
+import numpy as np
+
+# --------------------------------------------------------------------------
+# The width metric lives HERE, not in the driver, for two reasons: this module
+# imports no engine (so the metric can be re-run on an old campaign's CSVs on
+# any box), and there is then exactly ONE implementation -- the driver imports
+# these names.  Widths are ALWAYS recomputed from the field CSVs rather than
+# read out of the leg JSON, so a campaign run before a probe-depth fix is
+# re-reduced correctly instead of quoting a stale number.
+# --------------------------------------------------------------------------
+
+# Odd multiples of 0.125 m: strictly INTERIOR to one element layer on all three
+# meshes (whose z-lines in the fine block sit at multiples of h0 = 1.0 / 0.5 /
+# 0.25).  A round -0.5 or -1.0 lands ON a mesh line at h0 = 0.5 and 0.25, and a
+# nearest-layer rule then ties between two layers -- i.e. the coarse mesh gets
+# measured on one layer and the fine meshes on two, which is a mesh-dependent
+# measuring rule inside a mesh-dependence study.
+Z_PROBES = (-0.625, -1.375)
+EPSQ_YIELD = 1.0e-5      # only for the yielding COUNT and VOLUME, never for w2
+
+
+def w2_metric(x, hx, p):
+    """ADR 90 §7.3 threshold-free width `sqrt(12*Var)`.
+
+    `Var = sum p_e[(x_e - xbar)^2 + hx_e^2/12] / sum p_e`.  The `hx^2/12` term
+    is the within-element variance of a piecewise-constant profile: it makes a
+    one-element band read exactly `hx` and a k-element top hat read exactly
+    `k*hx`, so the number is comparable across meshes.  Without it a
+    one-element band reads 0.  Returns (nan, nan) on an all-zero profile.
+    """
+    x, hx, p = np.asarray(x), np.asarray(hx), np.asarray(p)
+    tot = float(np.sum(p))
+    if tot <= 0.0:
+        return float("nan"), float("nan")
+    xbar = float(np.sum(p * x) / tot)
+    var = float(np.sum(p * ((x - xbar) ** 2 + hx ** 2 / 12.0)) / tot)
+    return math.sqrt(12.0 * var), xbar
+
+
+def widths_from_field(epsq, xc, zc, hx, hz, vol, z_probes=Z_PROBES):
+    """w2 at each fixed physical depth, plus the yield extent.
+
+    Row selection is SPAN CONTAINMENT -- the one element layer whose z-extent
+    strictly contains the probe depth -- and the profile is restricted to
+    x >= 0, because the mesh is symmetric and a two-sided profile would measure
+    the footing width rather than the band width.
+    """
+    epsq, xc, zc = np.asarray(epsq), np.asarray(xc), np.asarray(zc)
+    hx, hz, vol = np.asarray(hx), np.asarray(hz), np.asarray(vol)
+    out = {}
+    for zp in z_probes:
+        row = (zc - 0.5 * hz < zp) & (zp < zc + 0.5 * hz) & (xc >= 0.0)
+        ww, xb = w2_metric(xc[row], hx[row], epsq[row])
+        out[f"w2_z{zp}"] = ww
+        out[f"xbar_z{zp}"] = xb
+        out[f"nrow_z{zp}"] = int(row.sum())
+        out[f"epsqmax_z{zp}"] = float(epsq[row].max()) if row.sum() else 0.0
+        out[f"hx_z{zp}"] = float(hx[row].min()) if row.sum() else float("nan")
+    y = epsq > EPSQ_YIELD
+    out["n_yield_ele"] = int(y.sum())
+    out["vol_yield"] = float(vol[y].sum())
+    out["epsq_max"] = float(epsq.max())
+    return out
+
+
+def read_field(path):
+    """Read a driver field CSV (one `#` provenance line, then a header)."""
+    with open(path) as f:
+        f.readline()                                   # provenance comment
+        rd = csv.DictReader(f)
+        cols = {k: [] for k in ("xc", "zc", "hx", "hz", "vol", "eps_q_p")}
+        for row in rd:
+            for k in cols:
+                cols[k].append(float(row[k]))
+    return {k: np.array(v) for k, v in cols.items()}
+
+
+def widths_from_csv(path, z_probes=Z_PROBES):
+    c = read_field(path)
+    return widths_from_field(c["eps_q_p"], c["xc"], c["zc"], c["hx"], c["hz"],
+                             c["vol"], z_probes)
+
 
 R3_BAND_HALFWIDTH_PCT = 3.0
 R3_SEQUENCE = {1.0: 1.0849, 0.5: 0.9977, 0.25: 0.9514}   # measured, DruckerPrager
@@ -51,11 +136,50 @@ _ADMISSIBLE = ("TARGET", "PEAK", "BUDGET")
 
 
 def load(out_dir):
+    """Load the leg JSONs and RE-REDUCE every width from its field CSV.
+
+    The driver writes widths into the JSON too, but this module recomputes them
+    so that a campaign run before a probe-depth or metric change is reported
+    correctly rather than quoting a stale number.  A leg whose field CSV is
+    missing keeps its JSON value and is marked.
+    """
     legs = []
     for p in sorted(glob.glob(os.path.join(out_dir, "a2_*.json"))):
         with open(p) as f:
-            legs.append(json.load(f))
+            r = json.load(f)
+        fld = r.get("field", "")
+        if fld and not os.path.isabs(fld):
+            fld = os.path.join(out_dir, fld)
+        if fld and os.path.exists(fld):
+            r.update(widths_from_csv(fld))
+            r["_width_source"] = "recomputed from field CSV"
+        else:
+            r["_width_source"] = "JSON (field CSV missing)"
+        for c in r.get("checkpoints", []):
+            cp = os.path.join(out_dir,
+                              f"a2_{r['tag']}_field_sB{c['cp_target']:g}.csv")
+            if os.path.exists(cp):
+                c.update(widths_from_csv(cp))
+        legs.append(r)
     return legs
+
+
+def selfcheck():
+    """The width metric is CALIBRATED, not fitted: a k-element top hat must
+    read exactly k*hx.  Run it before quoting any width."""
+    ok = True
+    for hx0 in (0.25, 1.0):
+        for k in (1, 2, 3, 5, 8):
+            x = np.arange(20) * hx0
+            p = np.zeros(20)
+            p[5:5 + k] = 1.0
+            w, _ = w2_metric(x, np.full(20, hx0), p)
+            good = abs(w - k * hx0) < 1e-12
+            ok &= good
+            print(f"  hx={hx0}  k={k}: w2={w:.12g}  expect {k * hx0:.12g}  "
+                  f"{'OK' if good else 'FAIL'}")
+    print("width metric calibration:", "OK" if ok else "FAILED")
+    return 0 if ok else 1
 
 
 def main(argv=None):
@@ -63,6 +187,8 @@ def main(argv=None):
     if not argv:
         print(__doc__)
         return 2
+    if argv[0] == "--selfcheck":
+        return selfcheck()
     out_dir = argv[0]
     legs = load(out_dir)
     if not legs:
@@ -128,15 +254,17 @@ def main(argv=None):
     for r in legs:
         print(f"  [{r['tag']}] {r['mode']}: {r['verdict']}")
 
-    print("\n--- WIDTH vs h (ADR 90 §7.3 threshold-free w2, "
-          "fixed physical depth, x >= 0 half) ---")
-    hdr = (f"{'leg':>16} {'h0':>6} {'w2(z=-0.5)':>11} {'w2/h0':>8} "
-           f"{'w2(z=-1.0)':>11} {'w2/h0':>8} {'yield ele':>10} "
+    print(f"\n--- WIDTH vs h at the END OF EACH LEG (ADR 90 §7.3 "
+          f"threshold-free w2, probe depths {Z_PROBES} m, x >= 0 half) ---")
+    print(f"  width source: {legs[0]['_width_source']}")
+    hdr = (f"{'leg':>16} {'h0':>6} {'w2(z1)':>11} {'w2/h0':>8} "
+           f"{'w2(z2)':>11} {'w2/h0':>8} {'yield ele':>10} "
            f"{'yield vol':>10} {'epsq max':>10}")
     print(hdr)
     print("-" * len(hdr))
     for r in legs:
-        w05, w10 = r.get("w2_z-0.5"), r.get("w2_z-1.0")
+        w05 = r.get(f"w2_z{Z_PROBES[0]}")
+        w10 = r.get(f"w2_z{Z_PROBES[1]}")
         print(f"{r['tag']:>16} {r['h0']:6.2f} "
               f"{w05 if w05 == w05 else float('nan'):11.4f} "
               f"{(w05 / r['h0']) if w05 == w05 else float('nan'):8.2f} "
@@ -175,7 +303,7 @@ def main(argv=None):
             for r in grp:
                 m = [c for c in r.get("checkpoints", []) if c["cp_target"] == cp]
                 qs.append(m[0]["q_foot"] if m else None)
-                ws.append(m[0].get("w2_z-0.5") if m else None)
+                ws.append(m[0].get(f"w2_z{Z_PROBES[0]}") if m else None)
             got = [q for q in qs if q is not None]
             band = (100.0 * (max(got) - min(got)) / (0.5 * (max(got) + min(got)))
                     if len(got) >= 2 else float("nan"))

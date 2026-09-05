@@ -206,6 +206,13 @@ sys.path.append(os.path.join(_REPO, "tests"))
 import test_r3_prandtl_collapse_gate as r3                      # noqa: E402
 from test_ladruno_sanisand import _PARAMS as _SANISAND_PARAMS   # noqa: E402
 
+# The localization-width metric and its probe depths live in the SUMMARY module
+# (which imports no engine), so there is exactly one implementation and an old
+# campaign's field CSVs can be re-reduced on any box.
+sys.path.insert(0, _HERE)
+from sanisand_tau0_summary import (                                 # noqa: E402
+    EPSQ_YIELD, Z_PROBES, widths_from_field, w2_metric)
+
 
 def assert_engine(strict: bool = True) -> str:
     """Fail loud on the wrong binary.  Printed at the top of every driver."""
@@ -284,12 +291,9 @@ WALL_BUDGET_S = float(os.environ.get("LADRUNO_A2_WALL_BUDGET", 5400.0))
 _CAPACITY_MODES = ("TARGET", "PEAK", "BUDGET")
 _SEIZURE_MODES = ("FLOOR", "WALL")
 
-# Width instrumentation.
-Z_PROBES = (-0.5, -1.0)           # fixed PHYSICAL depths, so refinement does
-                                  # not move the measuring line
-EPSQ_YIELD = 1.0e-5               # "this element yielded" threshold; used only
-                                  # for the COUNT and VOLUME, never for w2
-
+# Width instrumentation: `Z_PROBES` / `EPSQ_YIELD` / `widths_from_field` are
+# imported from `sanisand_tau0_summary` (see the import block above).
+#
 # MATCHED-SETTLEMENT CHECKPOINTS.  Legs on different meshes do NOT terminate at
 # the same s/B -- the fine ones are slower and stop earlier -- so a width or a
 # load compared only at each leg's own end point compares three different
@@ -340,16 +344,6 @@ def _eps_q_p(ep):
     return math.sqrt(2.0 / 3.0 * ee)
 
 
-def _w2(x, hx, p):
-    """ADR 90 §7.3 threshold-free width.  Returns nan on an all-zero profile."""
-    tot = float(np.sum(p))
-    if tot <= 0.0:
-        return float("nan"), float("nan")
-    xbar = float(np.sum(p * x) / tot)
-    var = float(np.sum(p * ((x - xbar) ** 2 + hx ** 2 / 12.0)) / tot)
-    return math.sqrt(12.0 * var), xbar
-
-
 def _plastic_field(n_hex):
     """Element-mean eps_q^p over the 8 Gauss points, for every element."""
     epsq = np.zeros(n_hex)
@@ -363,28 +357,6 @@ def _plastic_field(n_hex):
             ngp += 1
         epsq[e - 1] = acc / ngp if ngp else 0.0
     return epsq
-
-
-def _widths(epsq, xc, zc, hx, vol):
-    """ADR 90 §7.3 w2 at each fixed physical depth, plus the yield extent."""
-    out = {}
-    hz_row = None
-    for zp in Z_PROBES:
-        # the element ROW containing the probe depth: nearest centroid layer
-        d = np.abs(zc - zp)
-        row = (d <= d.min() + 1.0e-9) & (xc >= 0.0)
-        ww, xb = _w2(xc[row], hx[row], epsq[row])
-        out[f"w2_z{zp}"] = ww
-        out[f"xbar_z{zp}"] = xb
-        out[f"nrow_z{zp}"] = int(row.sum())
-        out[f"epsqmax_z{zp}"] = float(epsq[row].max()) if row.sum() else 0.0
-        hz_row = row
-    y = epsq > EPSQ_YIELD
-    out["n_yield_ele"] = int(y.sum())
-    out["vol_yield"] = float(vol[y].sum())
-    out["epsq_max"] = float(epsq.max())
-    del hz_row
-    return out
 
 
 def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
@@ -604,7 +576,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             fld = _plastic_field(n_hex)
             snap = dict(cp_target=cp, s_over_B=s / r3.B_FOOT, q_foot=qf,
                         q_base=qb, wall_s=time.time() - t0, step=len(rows))
-            snap.update(_widths(fld, xc, zc, hx, vol))
+            snap.update(widths_from_field(fld, xc, zc, hx, hz, vol))
             checkpoints.append(snap)
             _dump_field(
                 os.path.join(out_dir, f"a2_{tag}_field_sB{cp:g}.csv"),
@@ -668,7 +640,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 f"{EXPECTED_BUILD}, leg {tag}, s/B={s[-1] / r3.B_FOOT:.6f}, "
                 f"mode {mode}",
                 xc, zc, hx, hz, vol, epsq, eta_field)
-    widths = _widths(epsq, xc, zc, hx, vol)
+    widths = widths_from_field(epsq, xc, zc, hx, hz, vol)
     n_yield = widths.pop("n_yield_ele")
     v_yield = widths.pop("vol_yield")
     epsq_max = widths.pop("epsq_max")
