@@ -74,10 +74,18 @@ Let `n` be the last committed step. Committed and available on the base class:
 
 ```
 f          = (dt_{n+1} / dt_n) * implexAlpha                     # 1.0 at a fixed increment
-eps_p~     = eps_p(n) + f * d_eps_p(n)                           # d_eps_p(n) = eps_p(n) - eps_p(n-1)
-sigma~     = Ce(p_n) : ( eps_{n+1} - eps_p~ )
+d_eps_p~   = f * d_eps_p(n)                                      # d_eps_p(n) = eps_p(n) - eps_p(n-1)
+sigma~     = sigma_n + Ce(p_n) : ( (eps_{n+1} - eps_n) - d_eps_p~ )
 d sigma~ / d eps_{n+1} = Ce(p_n)                                  # constant in the step
 ```
+
+**Incremental, not total.** SANISAND's elasticity is hypoelastic — the code integrates
+`dsigma = Ce(p) : deps_e` with the moduli at the committed stress (`elastic_integrator`
+`:1008-1011`, `BackwardEuler_CPPM` `:2223-2226`) — so the stress must be advanced from
+`sigma_n`, never rebuilt from a total elastic strain. *(A first draft of this section wrote
+the total form `Ce(p_n):(eps_{n+1} - eps_p~)`; the Fable review of 2026-09-05 caught it.
+That form discards the accumulated pressure-dependent history and its error does not
+vanish as `dt -> 0`.)*
 
 `Ce(p_n)` is SANISAND's pressure-dependent elastic operator **frozen at the committed mean
 stress**. It is symmetric and positive definite wherever `p_n >= p_min`, which is
@@ -113,7 +121,9 @@ vanilla**, and inherits the guards for free.
 3. **A symmetric global matrix** — the non-associated consistent tangent disappears. This
    unlocks `system Pardiso -matrixType sym` (ADR-75 P1d: 1.94-1.96x vs UmfPack, -42 % peak
    memory, exact) on the 21 058-DOF coarse and 175 290-DOF fine cells. **Unclaimed by the
-   request; measured at P3.**
+   request; measured at P3 — on the drained `LadrunoBrick` legs only.** `LadrunoUP`'s u-p
+   tangent is unsymmetric regardless of the material (ADR 71), so the `U-L` row keeps its
+   general solver.
 4. **The corner stops being a solver event.** At Gauss points pinned at `p_min` the operator
    is the floor's operator — small, positive definite — and the extrapolated correction is
    bounded by what the committed return already bounded. The ring still flows; what
@@ -220,6 +230,16 @@ tests 4, 5 -> P3. Added by this ADR:
 
 ## 8. Risks
 
+- **The companion sees a different strain path.** Under `-implex` the global step is solved
+  on the elastic operator, so the strain increments handed to the commit-time return can be
+  larger and differently directed than the ones implicit Newton would have found. The
+  companion may therefore be *harder* per step even though it runs far less often; P0
+  cannot see this (single Gauss point, prescribed strain) — it is a P3 measurement.
+- **`-implexControl` needs an in-step implicit or a one-step lag.** ASD computes the implicit
+  solution on every `setTrialStrain` when control is on (`:1665-1684`), which is the cost
+  IMPL-EX was meant to remove. The P2 design must choose: pay it on the (now 1-2)
+  iterations, or check the error at commit and shrink the *next* step (a-posteriori,
+  one-step lag, cannot refuse the step it measured).
 - **First-order lag.** The extrapolated path lags by `O(dt)`. P0 prices it at the campaign's
   own increment; if the corner's flow dominates, `-implexControl` halves the step exactly
   where the wall was. That is correct behaviour, bounded by the reduction limit — and it

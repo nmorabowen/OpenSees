@@ -24,6 +24,13 @@ Manzari 2004), carrying three integrators:
 
 For both IMPL-EX forms the delivered tangent is `Ce(p_n)` — the elastic operator frozen at
 the **committed** mean stress — and the companion return runs once per committed step.
+**The stress update is INCREMENTAL**, `sigma~ = sigma_n + Ce(p_n):(d_eps - d_eps_p~)`, because
+the code's elasticity is hypoelastic (`elastic_integrator` `:1008-1011`); a total-strain form
+`Ce(p_n):(eps - eps_p~)` is wrong for this law and its error does not vanish as `dt -> 0`.
+
+**G2's strain increment is a lower bound.** `1e-4 m / h` is the nominal element strain; the
+Gauss point at the footing corner sees a strain concentration of one to two orders more.
+Sweep the increment; do not report a single number as "the campaign's".
 
 ## 2. The material — the D-L cell's own constants
 

@@ -107,7 +107,10 @@ changed by orders of magnitude — exactly what happens at the corner — extrap
 `eps_p = mEpsilon − mEpsilonE` is committed and available; store one extra committed
 vector `d_eps_p_commit` and use
 
-    eps_p~(n+1) = eps_p(n) + f · d_eps_p(n),      sigma~ = Ce(p_n) : (eps(n+1) − eps_p~(n+1))
+    d_eps_p~ = f · d_eps_p(n),      sigma~ = sigma_n + Ce(p_n) : ((eps(n+1) − eps(n)) − d_eps_p~)
+
+*(Incremental, because the code's elasticity is hypoelastic with moduli at the committed
+stress — corrected from a total-strain form by the Fable review, 2026-09-05.)*
 
 This is integrator-agnostic — it works with the companion being scheme 1, 2 or 45 — needs
 no access to the flow direction, no new virtual hook into vanilla, and carries the fabric
