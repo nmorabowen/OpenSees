@@ -1,0 +1,18 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 548fe911427e90a2edfead05cb3672a738d25b6d
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-a7bbf0403baab7ffe\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-a7bbf0403baab7ffe\Ladruno_files\testbed\hypo_bearing\adr90_a2_tolref
+    date                        : 2026-09-05T03:12:29
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-06 x gamma*V
+    TanType (0=elastic default) : 2
+    wall budget per leg         : 5400 s
+
+--- leg h0.5_e0.6944 (e_init = 0.6944) ---
+    [h0.5_e0.6944]    25 s/B=0.00106 q=   27.314 ds=0.3200mm t=  213.6s
+    [h0.5_e0.6944] CHECKPOINT s/B=0.002: q=52.606 kPa, w2(z=-0.625)=4.3718 m, yield 214 ele / 111.725 m3, t=485s
+    [h0.5_e0.6944] CHECKPOINT s/B=0.005: q=114.724 kPa, w2(z=-0.625)=5.6872 m, yield 337 ele / 301.108 m3, t=1124s
+    [h0.5_e0.6944] CHECKPOINT s/B=0.01: q=222.434 kPa, w2(z=-0.625)=6.9499 m, yield 380 ele / 482.630 m3, t=2860s

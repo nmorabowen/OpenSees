@@ -5039,6 +5039,194 @@ Measured: restored source at `19:10`, `ManzariDafalias.cpp.obj` at `19:10:44` fr
 - **Why:** `ManzariDafaliasPlaneStrain.h:78-82` declares `static Matrix mTangent;` **and** `static Matrix mTangent_init;` — class-wide, shared by every instance in the process — and `ManzariDafaliasPlaneStrain::getInitialTangent()` (`.cpp:157-171`) *writes* the 3x3 reduction of `mCe` into that shared `mTangent_init` and returns a reference to it. `ManzariDafalias3D.h:74-79` declares only the two static Vectors. The hazard is therefore VIEW-SPECIFIC, and it lands on exactly the plane-strain leg where a wrapper reads the initial tangent for an elastic predictor.
 - **Workaround:** **deep-copy every `Vector`/`Matrix` an inner returns, before any other call on any instance of that class** — and gate it with a *two-instance interleave* test on the plane-strain view (construct two, interleave their `getInitialTangent()` calls, require each to see its own moduli). A single-instance test cannot fail. Related trap: `mCe` itself is rewritten *inside* `integrate()` (the integrator calls at `ManzariDafalias.cpp:979/987/992` pass it by reference), so "read the initial tangent before `setTrialStrain`" returns the **previous Newton iterate's** value — cache it in the wrapper's own `commitState()` instead. Learned 2026-09-05, ADR-90 3-lens review, [[90_ladruno_viscoplastic_regularization_adr]] §5.
 
+## `ManzariDafalias` / `LadrunoSANISAND` `TanType` defaults to **0 = the ELASTIC tangent** in the parser — so a deck that emits only the positional parameters runs `algorithm Newton` as de-facto MODIFIED Newton
+
+**Found 2026-09-05, ADR-90 WP-A2. Cost: a whole campaign relaunch, and ~7x of wall time on the
+boundary-value legs.**
+
+`ManzariDafalias3D::getTangent()` returns `mCe` (elastic) for `TanType == 0`, `mCep` for `1`, and
+`mCep_Consistent` otherwise (`ManzariDafalias3D.cpp:134-142`; same shape in
+`ManzariDafaliasPlaneStrain.cpp:137` and `ManzariDafalias3DRO.cpp:119`). The **parser default is
+0** — `oData[1] = 0` at `LadrunoSANISAND.cpp:117`, deliberately copied from
+`OPS_ManzariDafaliasMaterial` so that a renamed deck behaves identically — while the **null and
+parallel constructors default to 2** (`ManzariDafalias.cpp:365`, `:426`). The two disagree, and
+the one a deck actually hits is the parser's.
+
+So `nDMaterial LadrunoSANISAND $tag <18 params>` with no positional optionals hands every
+`algorithm Newton` an ELASTIC tangent: a modified-Newton iteration with linear convergence,
+dressed as full Newton.
+
+- **Where it hides:** on a **zero-free-DOF material-point deck it costs nothing** — there are no
+  equations to iterate. Every existing fork SANISAND deck is of that shape
+  (`tests/test_ladruno_sanisand.py` passes `*_PARAMS` plus flags and no positional optionals), so
+  the defect has never had the chance to show itself. It appears the moment the material is put
+  into a boundary-value problem.
+- **Measured (ADR-90 WP-A2, strip footing on `LadrunoBrick -formulation bbar`):** at the parser
+  default the h0 = 0.25 leg advanced 11 steps to s/B = 1.6e-4 in 350 s, spending ~40-65
+  state-determination passes per step. With `TanType 2` and a reachable convergence test the same
+  deck reaches s/B = 2.0e-3 in 36 s at h0 = 1.0 — about **7x**.
+- **Emit the positional block explicitly:** `... $Rho $IntScheme $TanType $JacoType $TolF $TolR`
+  **before** any `-flag` (the ADR-86 parser rejects a positional after a flag, by design).
+- `mCep_Consistent` is **unsymmetric** under a non-associated flow rule: pair `TanType 2` with
+  `system Pardiso -matrixType 0`, `UmfPack`, or another unsymmetric solver.
+- The tangent changes the ITERATION PATH only — the substepped stress update is untouched — so
+  this is free accuracy-wise. Measured on the WP-A2 deck, `q` at the matched `s/B = 0.002`
+  checkpoint moved **0.52 %** between the two configurations.
+
+## Newton cannot reach a tight `NormDispIncr` on SANISAND — the substepped `ModifiedEuler` return makes the discrete map only piecewise smooth and the residual STALLS around 1e-6 m
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`ManzariDafalias`'s default integration scheme is a **substepped** `ModifiedEuler` return with a
+**hardcoded** substep tolerance `TolE = 1e-4` (exactly what the fork's `-honorTolR` flag exists to
+expose — `86_ladruno_sanisand_apegmsh_emitter_guide` §1). The stress a Gauss point returns is
+therefore a piecewise-smooth function of the strain increment, the assembled residual inherits
+that, and **Newton stops converging quadratically and stalls.**
+
+Measured on a strip-footing leg (h0 = 0.5, 390 hexes): over 47 failed convergence attempts the
+residual displacement norm stalls at a **median of 6.6e-7 m** (min 3.4e-8, max 1.3e-4). A
+`test NormDispIncr 1e-8` target is therefore not merely tight, it is **unreachable** — and the run
+that nominally used it was in fact carried by the relaxed third rung of its algorithm ladder on
+**18 of its 26 steps**, i.e. 65 of every 125 state-determination passes were spent failing two
+rungs that could not succeed. A study in that state is measuring its own convergence test: the
+ADR-63 note-71 failure mode.
+
+- **Use `NormUnbalance`** — which is also what `tests/test_r3_prandtl_collapse_gate.py` actually
+  uses (`tol = 1.0e-5 * want`), despite "NormDispIncr per the R3 gate" appearing in more than one
+  downstream brief.
+- **Scale the force tolerance to a deck-intrinsic force** (the model's own weight `gamma*V`, the
+  applied load, ...). Measured, same deck and wall budget: `NormDispIncr 1e-8 m` reached
+  s/B = 0.00106; `NormUnbalance 1e-6 gamma*V` reached 0.00218; `NormUnbalance 1e-5 gamma*V`
+  reached 0.00442 — with the answer moving by a median of 0.3-0.75 % between all three at matched
+  settlement.
+- **A displacement-norm tolerance is not mesh-neutral, which is disqualifying inside a
+  mesh-convergence study.** The norm runs over the free DOFs, and there are 3.6x more of them at
+  h0 = 0.25 than at h0 = 1.0, so the same nominal number is a different physical requirement on
+  each mesh of the sequence. A force tolerance scaled by `gamma*V` is identical on all three by
+  construction.
+
+## `LadrunoBrick -b` is a body force **per unit VOLUME**, not per unit mass — it is never multiplied by rho
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+`LadrunoBrick::addLoad` (`LadrunoBrick.cpp:723-745`) does
+`appliedB[i] += loadFactor * data(i) * b[i]` for `LOAD_TAG_SelfWeight` and
+`appliedB[i] += loadFactor * b[i]` for `LOAD_TAG_BrickSelfWeight`, and the residual then takes
+`-= dvol * appliedB[p] * shp[3][j]`. **`rho` appears nowhere on that path** — it is read only by
+the mass matrix and the inertia terms.
+
+So gravity is
+
+```python
+ops.element('LadrunoBrick', e, *conn, mat, '-b', 0.0, 0.0, -gamma, ...)   # gamma = rho*g
+ops.eleLoad('-ele', *tags, '-type', '-selfWeight', 0.0, 0.0, 1.0)
+```
+
+Passing `-b 0 0 -9.81` (the acceleration, expecting the element to multiply by rho) silently gives
+`1/rho` of the intended weight — on a `rho = 2.0` deck, **half** the soil weight, with every
+analysis converging and reporting success. The cheap catch is the resultant identity
+`sum R_z(base) == gamma * V`, which reads 4.4e-16 when the convention is right.
+
+## Under `-formulation bbar` the geostatic stress is piecewise constant at the ELEMENT CENTROID value — which buys an exact 1-D patch check, and traps anyone comparing Gauss-point stresses to the pointwise solution
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+A laterally-rollered, base-fixed box under self weight has the closed-form geostatic state
+`sigma_zz = gamma*z`, `sigma_xx = sigma_yy = K0 sigma_zz` with `K0 = nu/(1-nu)` — exact even for a
+pressure-dependent material such as SANISAND (whose `G` goes as `sqrt(p)`), because `nu` is
+constant, so `K0` is depth-independent and the field satisfies equilibrium and the roller
+kinematics identically.
+
+Under `-formulation bbar` that field comes back **piecewise constant over each element at the
+centroid value**, not varying between the element's own Gauss points: MEASURED
+`max |sigma_zz(gp) - gamma*z_centroid| / |gamma*z_centroid| = 1.1e-13` over every Gauss point of
+every element, on all three meshes of a refinement sequence.
+
+- **Use it.** It is the *field* check `00_canonical_testbed` §1d demands alongside the resultant
+  identity, and it is exact to round-off, so it has no tolerance to tune. A wrong body-force
+  convention or a wrong lateral boundary moves it O(1) while the resultant identity sits at 1e-16.
+- **The trap:** compare Gauss-point stresses against the POINTWISE `gamma*z_gp` and the same
+  correct model reads an O(h) "error" that is not an error — it is the b-bar volumetric average
+  being visible. Compare against the centroid value.
+
+## `ops.logFile(path, '-noEcho')` is how a Python driver captures `opserr` warnings — but you must redirect it away again before reading the file
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+Material-level warnings that matter for a soil deck — `ManzariDafalias`'s
+`"stage-switch stress ratio ... exceeded the bounding surface M_c ... (Outside Bounding!)"`
+M_c-inflation notice, and the low-p `"mean stress p = ... is below the floor ... CLAMPING"` notice
+— go to `opserr`, not to Python. A driver that wants to ASSERT on them, rather than hope a human
+reads the console, can do:
+
+```python
+ops.logFile(log_path, '-noEcho')      # opserr -> file, console silent
+...  run the analysis ...
+ops.logFile(other_path, '-noEcho')    # release the handle
+n_outside = open(log_path, errors='ignore').read().count('Outside Bounding')
+```
+
+- The positive control that the capture is live: the file also contains the material's own
+  construction echo, so an empty file means the redirect did not take, not that nothing warned.
+- `-noEcho` is what silences the console; without it the file is written *and* echoed.
+
+
+## `ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap — only a `dT_min` floor — so one `analyze(1)` on a softening BVP can take tens of minutes
+
+**Found 2026-09-05, ADR-90 WP-A2. It is what stopped that study from reaching an answer.**
+
+`ManzariDafalias::ModifiedEuler` integrates the stress update over pseudo-time `T` in
+`while (T < 1.0)` with an adaptive substep `dT` bounded below by
+`dT_min = 1e-6` (`ManzariDafalias.cpp:1380`, `:1543`, `:1663`). There is **no substep COUNT
+cap**. At `dT == dT_min` the loop force-accepts the substep and advances `T`
+(`:1649-1663`), so it does terminate — but the bound is **10^6 return maps per Gauss point per
+state-determination pass**, and a Newton ladder that tries three algorithms will repeat that up
+to 125 times in one load step.
+
+Measured on a strip footing on softening `LadrunoSANISAND` (`LadrunoBrick -formulation bbar`,
+200-782 elements, three meshes, two densities): as the plastic zone develops, single `analyze(1)`
+calls start costing **11 minutes**, then **20-28 minutes**, on every mesh and both densities at
+once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of push.
+
+- **It does not look like a hang from outside.** The process burns 100 % CPU, the engine log stops
+  growing (nothing is failing, so nothing is logged), and the analysis eventually returns a
+  CONVERGED step. Only the curve file's mtime tells you.
+- **It is NOT the stepping controller, and the controller's own diagnostics prove it.** Every leg
+  in that campaign used **0 of its 80** pinned subdivisions and ended with its step **800-12800x
+  above** the `DS_MIN` floor. A wall-clock stop under those conditions is a `WALL` seizure whose
+  cause is the constitutive integrator, not the guard -- report it that way.
+- **A wall-clock budget cannot interrupt it.** A budget checked at the top of a stepping loop only
+  binds once the current `analyze(1)` RETURNS, so a leg can overshoot its budget by the length of
+  one seized step. Size the budget with that in mind, or watch the curve file.
+- This is the boundary-value-problem form of what ADR 90's A0 note measures on a 1-D bar: the
+  rate-independent problem needs 4000 -> 64000 load steps across four meshes to converge at all,
+  while every regularized run finishes at 250 steps on every mesh. The cost explosion IS the
+  ill-posedness.
+
+## `LadrunoSANISAND` at the fork-default `-Presidual 0` clamps a free-surface Gauss point on a DILATING deck, and says so -- but only in `opserr`
+
+**Found 2026-09-05, ADR-90 WP-A2.**
+
+With `-Presidual 0.0` (the fork default -- a cohesionless sand has no cohesion) the low-p floor is
+`-Pmin` alone, `1e-3 * P_atm = 0.101` kPa. On a strip footing on a DENSE (`e_init = 0.60`,
+`psi = -0.22`) sand, the dilating soil under the footing edge drives a shallow Gauss point onto
+that floor and the material logs
+
+    WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100973 is below
+    the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator
+    preserved). The result at this integration point is set by the clamp, not by the model.
+
+- **Measured onset:** `s/B ~ 0.0153` on the COARSEST mesh (h0 = 1.0) and the DENSE density only.
+  The loose (`e_init = 0.6944`) legs and both finer meshes fired **zero** clamps over the same and
+  deeper settlements -- so it is a dense-dilatant / coarse-element / large-settlement effect, not a
+  property of the deck.
+- **It is silent in Python.** The message goes to `opserr`, so a driver that does not capture it
+  (see the `ops.logFile` quirk) will keep integrating a model whose answer at that point is the
+  clamp's. Count it, do not hope to read it.
+- **Any deep push on dense sand owes a decision here** -- a declared non-zero `-Presidual`, a small
+  surcharge to keep the free surface confined, or an explicitly accepted and disclosed clamp.
+  The gravity state is no warning at all: the shallowest Gauss point sat at 1.56-6.25 kPa, 15-60x
+  the floor, on every mesh, before the push ever started.
 ## `InitStrainNDMaterial` special-cases the literal string "ThreeDimensional" when forwarding to `getCopy(void)`; `StagedStrainNDMaterial` has NO such special case at all — a `getCopy(void)` override for a 2D subclass has NO reachable caller through either wrapper
 
 **Found 2026-09-04, ADR-90 WP-B, while covering `LadrunoSANISANDPlaneStrain::getCopy(void)`.
