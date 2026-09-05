@@ -5073,6 +5073,19 @@ dressed as full Newton.
   this is free accuracy-wise. Measured on the WP-A2 deck, `q` at the matched `s/B = 0.002`
   checkpoint moved **0.52 %** between the two configurations.
 
+> **FIXED for `LadrunoSANISAND` in WP-86b (ADR-86b, PR pending); NOT fixed in vanilla, on purpose.**
+> `OPS_LadrunoSANISAND`'s `oData[1]` now defaults to **2** (the consistent tangent), and the
+> construction echo NAMES the tangent it will run (`TanType = 2 (consistent mCep_Consistent
+> (unsymmetric))`), so the change cannot be silent either.
+> **`OPS_ManzariDafaliasMaterial` keeps its own default of `0`** (`ManzariDafalias.cpp:93`,
+> re-verified at source during WP-86b) — every existing vanilla deck and every golden file produced
+> by one depends on it, and moving it would be a silent answer-change in exactly the way this entry
+> complains about. So **the two parsers now disagree on this one positional slot, deliberately.**
+> An emitter or a deck that names all five positionals is immune to both defaults and to any future
+> move; do that rather than relying on either.
+> Note the null and parallel constructors already defaulted to 2 (`:365`, `:426`), so the fork
+> parser is now the one that AGREES with them and vanilla's parser is the outlier.
+
 ## Newton cannot reach a tight `NormDispIncr` on SANISAND — the substepped `ModifiedEuler` return makes the discrete map only piecewise smooth and the residual STALLS around 1e-6 m
 
 **Found 2026-09-05, ADR-90 WP-A2.**
@@ -5104,6 +5117,13 @@ ADR-63 note-71 failure mode.
   h0 = 0.25 than at h0 = 1.0, so the same nominal number is a different physical requirement on
   each mesh of the sequence. A force tolerance scaled by `gamma*V` is identical on all three by
   construction.
+
+> **DOCUMENTED, NOT CHANGED, in WP-86b (ADR-86b T3, PR pending).** Written up as a deck rule in
+> `86_ladruno_sanisand_apegmsh_emitter_guide.md` §6 with the measured table. **Deliberately NO
+> runtime warning:** a material cannot see which convergence test the deck installed, so any check
+> would have to live in the analysis layer and would fire on every non-SANISAND deck that ever uses
+> a displacement norm. The stall is a property of the substepped return, not of the deck, so the
+> guidance is the fix.
 
 ## `LadrunoBrick -b` is a body force **per unit VOLUME**, not per unit mass — it is never multiplied by rho
 
@@ -5203,6 +5223,26 @@ once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of
   while every regularized run finishes at 250 steps on every mesh. The cost explosion IS the
   ill-posedness.
 
+> **ADDRESSED in WP-86b (ADR-86b, PR pending) — opt-in, default unchanged.** `nDMaterial
+> LadrunoSANISAND` gains **`-maxSubsteps N`**, wired to a new vanilla flag seam
+> `ManzariDafalias::mMaxSubstepsInME` read at the top of `ModifiedEuler`'s `while (T < 1.0)`.
+> **Default `0` = UNCAPPED = exactly the behaviour described above**, so nothing changes for a deck
+> that does not ask, and vanilla `ManzariDafalias` stays bit-identical.
+> Past the cap the integrator does **NOT** force-accept — force-accepting is what hid the cost in
+> the first place. It flags, prints one throttled `opserr` line naming tag/`T`/`dT` (PROCESS budget
+> of 10), and returns; the committed state is untouched (`integrate()` writes only trial members),
+> `setTrialStrain` returns `-1`, and the step FAILS so a subdivision controller finally has
+> something to react to. Precedent: ADR-84's `strict_convergence`.
+> **Size the cap from a measurement, not a guess:** `eleResponse <ele> material <gp> substeps`
+> returns `[substeps_taken, cap_hit]` for the last update at that point.
+> **Two things that will bite whoever uses it.** (a) The cap bounds one whole `integrate()`, not one
+> `ModifiedEuler` call — `MaxEnergyInc`/`MaxStrainInc` (IntScheme 0/4/6/7/8/9) call `ModifiedEuler`
+> several times inside one material update, which is why the counter is reset in `integrate()` and
+> not at the top of `ModifiedEuler`. (b) **The element has to propagate the failure.** `stdBrick`
+> discards `setTrialStrain`'s return code (see the sibling entry), and so did FOUR of
+> `LadrunoBrick::update()`'s five paths — std/b-bar, SSP and both URI branches — until WP-86b
+> repaired them. A capped material inside a `stdBrick` still reports success.
+
 ## `LadrunoSANISAND` at the fork-default `-Presidual 0` clamps a free-surface Gauss point on a DILATING deck, and says so -- but only in `opserr`
 
 **Found 2026-09-05, ADR-90 WP-A2.**
@@ -5227,6 +5267,20 @@ that floor and the material logs
   surcharge to keep the free surface confined, or an explicitly accepted and disclosed clamp.
   The gravity state is no warning at all: the shallowest Gauss point sat at 1.56-6.25 kPa, 15-60x
   the floor, on every mesh, before the push ever started.
+
+> **DOCUMENTED, NOT CHANGED, in WP-86b (ADR-86b T4, PR pending). The default STAYS `-Presidual 0`.**
+> The three options — a declared non-zero `-Presidual`, a small surcharge, an explicitly accepted
+> clamp — with what each buys and costs, and a fork-side (non-binding) recommendation, are written
+> up in `86_ladruno_sanisand_handoff.md` §5b and, in consumer language, in
+> `86_ladruno_sanisand_apegmsh_emitter_guide.md` §7.
+> **It is a modelling decision on a CALIBRATED soil, not a numerical tidy-up, and it is not one
+> parameter:** per the ADR-86 PR-3 tripwire memo, `p_residual` ALSO bounds the `D_factor` dilatancy
+> sigmoid from below — vanilla's 1.01 kPa held `D_factor >= 0.4278` while `p_r = 0` drops that floor
+> to 4.83e-4, a factor of **886** — so restoring a non-zero `p_r` re-engages ADR-86 **D5a**, which
+> is still open. Whichever option is taken, COUNT the clamp events and report the number.
+> **It gets closer, not further, after WP-86b:** the substep cap and the `TanType` default exist to
+> let a leg reach deeper settlements, and this clamp is the next thing waiting there.
+
 ## `InitStrainNDMaterial` special-cases the literal string "ThreeDimensional" when forwarding to `getCopy(void)`; `StagedStrainNDMaterial` has NO such special case at all — a `getCopy(void)` override for a 2D subclass has NO reachable caller through either wrapper
 
 **Found 2026-09-04, ADR-90 WP-B, while covering `LadrunoSANISANDPlaneStrain::getCopy(void)`.
@@ -5357,3 +5411,36 @@ wrapped-vs-unwrapped bit-identical comparison isolates `getCopy(void)` alone. Pa
   implicit-analysis choice, not an explicit one. `std`/`bbar` remain the
   no-stabilization reference.
 - *2026-07-30 (Tier-A `Kstab` scope challenge).*
+
+## `LadrunoBrick::update()` DISCARDED `setTrialStrain`'s return code on four of its five formulation paths — so no material could ever fail a step through it
+
+**Found 2026-09-05, WP-86b (ADR-86b), while wiring the SANISAND substep cap. Fixed in the same PR.**
+
+The `stdBrick`-swallows-return-codes trap is already on this ledger. What was not known is that the
+fork's own brick had the same hole on most of its paths, and that the two paths which DID propagate
+are the newest ones — so it reads, from the code, as if the element already had the contract.
+
+`LadrunoBrick::update()` dispatches by formulation. Before WP-86b:
+
+| path | propagated a material failure? |
+|---|---|
+| `-geom finite` -> `updateFinite()` | yes |
+| `-geom hypo` -> `updateHypo()` (`:1720`, `< 0`) | yes |
+| `Formulation::EAS` -> `formEAStrue()` | yes |
+| `Formulation::SSP` (centroid slot 0) | **no** — bare call, `return 0` |
+| `Formulation::URI` + `Hourglass::PHYSICAL` (8 GPs) | **no** |
+| `Formulation::URI` (perturbation, centroid) | **no** |
+| std / **b-bar** (the 8-GP default loop) | **no** |
+
+So on `-formulation bbar` — the formulation ADR-90 S3 freezes for the whole SANISAND campaign — a
+material that returned `-1` was indistinguishable from one that returned `0`. All five now test
+`< 0`, print which element and Gauss point failed, and return `-1`, matching `updateHypo`.
+
+- **Why it stayed invisible:** essentially no OpenSees `NDMaterial` returns non-zero from
+  `setTrialStrain` — the whole UW family hardcodes `return 0`, and so did both `LadrunoSANISAND`
+  wrappers until ADR-86b. A contract nothing exercises is a contract nobody notices is missing.
+- **The tell, if you are looking for it:** an element `update()` that ends in a bare
+  `materialPointers[i]->setTrialStrain(strain);` with no `if`. Grep for that shape before assuming
+  any element propagates material failure.
+- **Upstream `stdBrick` still does not propagate.** Any gate on a material's failure return must use
+  `LadrunoBrick` (or another element you have checked), or it silently tests nothing.
