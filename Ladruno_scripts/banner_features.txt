@@ -69,3 +69,4 @@ system Mumps — distributed MUMPS (-BLR, -stats, half-storage)
 MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)
 LadrunoSANISAND — settable low-stress constants, wired + echoed
 LadrunoLoadControl — -tangentPredictor for prescribed-disp paths
+LadrunoShellModifier — ETABS-style shell stiffness modifiers
