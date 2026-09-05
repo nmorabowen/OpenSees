@@ -54,6 +54,7 @@
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) — LADRUNO_MATERIAL_REFUSED
 #include <Parameter.h>
 #include <ElementalLoad.h>
 
@@ -948,8 +949,8 @@ LadrunoBrick::isSinglePoint(void) const
   return false;
 }
 
-// Ladruno (ADR-86b): THROTTLED reporter for a material that refused the trial
-// strain. A failed state determination happens at every Gauss point of every
+// Ladruno (ADR-86b): THROTTLED reporter for a material that REFUSED the trial
+// strain -- i.e. returned LADRUNO_MATERIAL_REFUSED, and only that. A failed state determination happens at every Gauss point of every
 // element the analysis is currently probing, inside a Newton iteration, inside a
 // load step -- and the whole POINT of returning failure is that the analysis then
 // retries with a smaller step, so the same failure recurs by design. An
@@ -1009,15 +1010,23 @@ LadrunoBrick::update(void)
     // setResponse map per-GP queries to slot 0 via isSinglePoint()) so we avoid
     // 7 redundant return maps per element — material cost matters for e.g.
     // ASDConcrete3D. See LEDGER/11_brick_asdconcrete_integration §4.  // Ladruno
-    // Ladruno (ADR-86b): PROPAGATE the material's own return code. It used to be
-    // discarded here and at the four sites below, so a material that refused the
-    // strain increment -- LadrunoSANISAND past its -maxSubsteps cap, and any
-    // future material with a real failure mode -- reached the analysis as a
-    // SUCCESSFUL state determination. That is the mechanism ADR-90 GATE U ran
-    // into from the other end (the integrator never failed, so 0 of 80 pinned
-    // subdivisions were ever used). `< 0` is the OpenSees convention and matches
-    // what updateHypo() (:1720) and updateFinite() already do in this file.
-    if (materialPointers[0]->setTrialStrain(strainE) < 0) {
+    // Ladruno (ADR-86b): PROPAGATE a material's REFUSAL. This return code used to
+    // be discarded here and at the three sites below, so a material that did not
+    // integrate the increment -- LadrunoSANISAND past its -maxSubsteps cap --
+    // reached the analysis as a SUCCESSFUL state determination. That is the
+    // mechanism ADR-90 GATE U ran into from the other end: the integrator never
+    // failed, so 0 of 80 pinned subdivisions were ever used while single steps
+    // ran for 34 minutes.
+    //
+    // ONLY the exact sentinel, NOT any `< 0`. `ASDConcrete3DMaterial` returns a
+    // negative code to mean "an inner iteration missed, here is my best state",
+    // and the fork's own rule (ADR-33/34, LEDGER_quirks) is that such a code must
+    // not fail the step. MEASURED: a blanket `< 0` here killed
+    // test_ladrunoBrick_asdconcrete_bend.py's two mesh-objectivity gates at load
+    // factor 605, on a run green for months. See SRC/material/LadrunoMaterialStatus.h.
+    // (updateHypo()/updateFinite() keep their pre-existing `< 0` tests -- those
+    // are not changed by ADR-86b.)
+    if (materialPointers[0]->setTrialStrain(strainE) == LADRUNO_MATERIAL_REFUSED) {
       ladrunoBrickReportTrialStrainFailure(this->getTag(), "the SSP centroid", -1);
       return -1;
     }
@@ -1055,7 +1064,8 @@ LadrunoBrick::update(void)
                 for (int c = 0; c < 3; c++)
                   strainG(r) += Bbar[J][r][c] * uCore(3 * J + c);
             }
-            if (materialPointers[gpIdx]->setTrialStrain(strainG) < 0) {   // Ladruno (ADR-86b)
+            if (materialPointers[gpIdx]->setTrialStrain(strainG)
+                  == LADRUNO_MATERIAL_REFUSED) {                          // Ladruno (ADR-86b)
               ladrunoBrickReportTrialStrainFailure(this->getTag(),
                                                    "the URI/physical rule", gpIdx);
               return -1;
@@ -1082,7 +1092,8 @@ LadrunoBrick::update(void)
       ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
       strainC.addMatrixVector(1.0, Bc, ulj, 1.0);
     }
-    if (materialPointers[0]->setTrialStrain(strainC) < 0) {   // Ladruno (ADR-86b)
+    if (materialPointers[0]->setTrialStrain(strainC)
+          == LADRUNO_MATERIAL_REFUSED) {                                  // Ladruno (ADR-86b)
       ladrunoBrickReportTrialStrainFailure(this->getTag(), "the URI centroid", -1);
       return -1;
     }
@@ -1147,7 +1158,8 @@ LadrunoBrick::update(void)
       strain.addMatrixVector(1.0, BJ, ulj, 1.0);
     }
 
-    if (materialPointers[i]->setTrialStrain(strain) < 0) {   // Ladruno (ADR-86b)
+    if (materialPointers[i]->setTrialStrain(strain)
+          == LADRUNO_MATERIAL_REFUSED) {                                  // Ladruno (ADR-86b)
       ladrunoBrickReportTrialStrainFailure(this->getTag(),
                                            "the std/b-bar 2x2x2 rule", i);
       return -1;

@@ -139,12 +139,24 @@ tag/`T`/`dT`, and returns, `setTrialStrain` returns `-1`, and the committed stat
 precedent is ADR-84's `strict_convergence`; the alternative (force-accept + warn) reproduces exactly
 the silence being fixed.
 
-**T1 needed an element change too, and that is worth knowing about.** `LadrunoBrick::update()`
+**T1 needed an element change too, and the obvious version of it was wrong.** `LadrunoBrick::update()`
 **discarded** `setTrialStrain`'s return code on four of its five paths (std/b-bar, SSP, and both URI
-branches) — only `updateHypo`/`updateFinite`/EAS propagated. So a material failure could not reach
-the analysis at all. All five now return `-1` on a material's `< 0`, matching what `updateHypo`
-already did. `stdBrick` still swallows return codes (upstream) — a capped material inside a
-`stdBrick` still reports success, and that is why the ADR-86b tests use `LadrunoBrick`.
+branches) — only `updateHypo`/`updateFinite`/EAS propagated — so a material failure could not reach
+the analysis at all. The first cut made all four honour any `< 0`, and that **broke two long-green
+gates**: `test_ladrunoBrick_asdconcrete_bend.py`'s two mesh-objectivity tests died at
+`Domain::update - domain failed in update`, load factor 605.
+
+`ASDConcrete3DMaterial::setTrialStrain` does return negative, but it means *"an inner iteration
+missed, here is my best state"* — the case ADR-33/34 already settled the other way (return 0 with
+the last iterate and a loud warning; a failure code there makes softening analyses fragile).
+OpenSees has no convention separating that from *"I did not integrate this increment"*, so ADR-86b
+introduced one: **`LADRUNO_MATERIAL_REFUSED`** (`SRC/material/LadrunoMaterialStatus.h`, `-33086`).
+`LadrunoBrick` propagates **only that exact value**, every other non-zero code keeps the treatment
+it had, and adopting it cost zero behaviour change anywhere else. `updateHypo`/`updateFinite` keep
+their pre-existing `< 0` tests, untouched.
+
+`stdBrick` still swallows return codes (upstream) — a capped material inside a `stdBrick` still
+reports success, and that is why the ADR-86b gates use `LadrunoBrick`.
 
 **T2 is a two-parser divergence, on purpose.** Vanilla `OPS_ManzariDafaliasMaterial` also defaults
 `oData[1] = 0` (`ManzariDafalias.cpp:93`) — verified at source, **not** changed, because every

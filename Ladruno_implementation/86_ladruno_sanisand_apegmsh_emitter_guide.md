@@ -128,9 +128,9 @@ process (budget 10) names the material tag, `T` and `dT`.
 
 - **Only emit it on IntScheme 0 or 1.** Like `-honorTolR`, the seam is read at exactly one site,
   inside `ModifiedEuler`. The material warns at construction if you ask for it anywhere else.
-- **The element has to propagate the failure.** `LadrunoBrick` does, as of ADR-86b (all five of its
-  `update()` paths). `stdBrick` does **not** — it discards material return codes — so a capped
-  material inside a `stdBrick` still reports success. Emit `LadrunoBrick` if you emit the cap.
+- **The element has to propagate the failure.** `LadrunoBrick` does, as of ADR-86b. `stdBrick` does
+  **not** — it discards material return codes — so a capped material inside a `stdBrick` still
+  reports success. Emit `LadrunoBrick` if you emit the cap.
 - `eleResponse <ele> material <gp> substeps` returns `[substeps_taken, cap_hit]` for the last update
   at that integration point, so a driver can size the cap from a measurement instead of a guess.
 

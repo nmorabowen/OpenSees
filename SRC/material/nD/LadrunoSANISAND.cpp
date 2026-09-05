@@ -46,6 +46,7 @@
 #include <elementAPI.h>
 #include <MaterialResponse.h>             // Ladruno (ADR-86b): the -maxSubsteps diagnostic response
 #include <Information.h>
+#include <LadrunoMaterialStatus.h>        // Ladruno (ADR-86b): LADRUNO_MATERIAL_REFUSED
 
 #include <string.h>
 #include <math.h>
@@ -785,16 +786,22 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 // failed update) and the COMMITTED state is untouched, because integrate()
 // writes only trial members.
 //
-// -1 rather than +1: OpenSees element code tests `setTrialStrain(...) < 0` (see
-// LadrunoBrick::updateHypo and ::update), and a positive return would be read as
-// success by half the tree.
+// LADRUNO_MATERIAL_REFUSED, not a bare -1, and the distinction is load-bearing:
+// see the long note in SRC/material/LadrunoMaterialStatus.h. In one line --
+// `ASDConcrete3DMaterial` already returns a negative code to mean "an inner
+// iteration missed, here is my best state", and the fork's own rule (ADR-33/34,
+// LEDGER_quirks) is that such a code must NOT fail the step, because doing so
+// makes softening analyses fragile. Measured: propagating any `< 0` in
+// LadrunoBrick killed two long-green ASDConcrete mesh-objectivity gates. This
+// code means something else -- "the increment was not integrated at all" -- so
+// it gets its own value and the element propagates only that.
 //
 // NOT applied to schemes that never call ModifiedEuler: on those the flag can
 // never be set, so this is 0 by construction rather than by a branch.
 int
 LadrunoSANISAND::ladrunoUpdateStatus(void) const
 {
-    return mSubstepCapHitInME ? -1 : 0;
+    return mSubstepCapHitInME ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 // Ladruno (ADR-86b): "substeps" / "substepsME" -- what the last update cost.
