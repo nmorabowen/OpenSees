@@ -52,12 +52,20 @@ blanket `< 0` in `LadrunoBrick::update()`'s four repaired paths measurably broke
 must NOT fail the step (ADR-33/34). The sentinel avoids that regression at zero behaviour change
 elsewhere.
 
-But the fork now carries THREE different negative-return readings with no single consumer that
-understands all of them: `ASDConcrete3DMaterial`'s best-effort `-10` (must not fail the step), ADR-84
-`strict_convergence`'s bare `-1` (SHOULD fail the step, ASDPlasticMaterial3D.h:2333-2341, but is not a
-recognized sentinel and is swallowed by `LadrunoBrick`'s now sentinel-only guards), and this PR's
-`-33086` sentinel (the only one anything actually checks for). Recommendation: one producer-side
-convention, resolved by a future convention work package (F-1, below).
+**UPDATE (re-review, second fix pass):** the first review flagged that the fork carried THREE
+different negative-return readings with no single consumer that understands all of them:
+`ASDConcrete3DMaterial`'s best-effort `-10` (must not fail the step), ADR-84 `strict_convergence`'s
+bare `-1` (SHOULD fail the step but was not a recognized sentinel), and this PR's `-33086` sentinel
+(the only one anything actually checked for). Narrowing `updateHypo`/`formEAStrue` to sentinel-only
+made this concrete and REGRESSIVE, not merely theoretical: ADR-84's `strict_convergence` rejection
+went SILENT under `-geom hypo`/EAS, because its bare `-1` is neither the sentinel nor caught by a
+blanket `< 0` any more. **Fixed at the producer** — both `strict_convergence`-gated `return -1;` sites
+in `Backward_Euler` (`ASDPlasticMaterial3D.h`, the `special_return` `SR_QUALITY_FALLBACK` refusal and
+the scalar-Newton exhaustion-accept) now `return LADRUNO_MATERIAL_REFUSED;` (see
+`LEDGER_vanilla_files.md`'s new row). This is F-1 HALF DONE: the producer is aligned, but
+`ASDConcrete3D`'s `-10` convention and the general "who else returns a bare negative and expects it to
+fail the step" question remain, and `stdBrick`/`BrickUP`/`QuadUP` still discard the return code
+regardless of its value — a real convention work package is still owed.
 
 ## §4 Warrant
 
@@ -127,31 +135,68 @@ kind of scoping cleanup and carry no risk.
 - **N-4 — `constexpr` + rename off the bare `33086`.** DONE. `LADRUNO_MATERIAL_REFUSED` is now
   `constexpr int` (`LadrunoMaterialStatus.h`), and `LadrunoSANISAND.cpp`'s response-id macro
   `LSANISAND_RESP_SUBSTEPS` is now `constexpr int LadrunoSanisandSubstepResponseID`.
-- **F-1 — follow-up convention work package.** RECORDED, not resolved here. See
-  `Ladruno_implementation/86_ladruno_sanisand_handoff.md` §5 "Follow-up owed": ADR-84's
-  `strict_convergence` bare `-1` (`ASDPlasticMaterial3D.h:2333-2341`) is swallowed by `LadrunoBrick`'s
-  now sentinel-only guards; producer-side fix is to return `LADRUNO_MATERIAL_REFUSED` there instead;
-  the three-convention state (`ASDConcrete3D` best-effort `-10`, ADR-84 bare `-1`, the `-33086`
-  sentinel) is the item a future convention WP should resolve.
+- **F-1 (this closes the regression the re-review found) — producer-side ADR-84 fix.** DONE
+  (second fix pass). Both `strict_convergence`-gated `return -1;` sites in
+  `ASDPlasticMaterial3D::Backward_Euler` (the `special_return` `SR_QUALITY_FALLBACK` refusal, ADR-84
+  P3, and the scalar-Newton exhaustion-accept, ADR-84 P2a) now `return LADRUNO_MATERIAL_REFUSED;`
+  (`+#include <LadrunoMaterialStatus.h>`). The two UNCONDITIONAL `return -1;` sites in the same
+  function (singular-local-tangent guard, NaN guard) are deliberately untouched — not
+  `strict_convergence`-gated, structural failures independent of the flag. `Backward_Euler_LineSearch`
+  has no `strict_convergence` gating and is unaffected. Value propagates unmodified through
+  `setTrialStrainIncr`/`setTrialStrain`. No test asserted a literal `-1` (both ADR-84 battery files
+  gate on `!= 0`), so no test assertion changed. **F-1 is now HALF DONE**: the producer is aligned, but
+  the convention work package itself (reconciling `ASDConcrete3D`'s `-10`, and teaching
+  `stdBrick`/`BrickUP`/`QuadUP` to check ANY refusal convention) remains owed — see
+  `Ladruno_implementation/86_ladruno_sanisand_handoff.md` §5 "Follow-up owed".
 
-## Test results (this review-fix pass, 2026-09-05)
+## Test results
 
-`tests/test_manzari_safety_pack.py`, `test_ladruno_sanisand.py`, `test_fspm_over_manzari_family.py`,
-`test_manzari_planestrain_classtag_quirk.py`, `test_ladruno_sanisand_integrator.py`, and all 14
+**First fix pass (2026-09-05, commit `f9a6f2b85`):** `tests/test_manzari_safety_pack.py`,
+`test_ladruno_sanisand.py`, `test_fspm_over_manzari_family.py`,
+`test_manzari_planestrain_classtag_quirk.py`, `test_ladruno_sanisand_integrator.py`, and all 15
 `test_ladrunoBrick_*.py` files: **182 passed, 1 failed, 3 skipped.** The one failure,
-`test_ladruno_sanisand.py::test_tcl_subprocess_smoke`, is an `OSError: [WinError 6] The handle is
-invalid` inside Python's own `subprocess.Popen._make_inheritable` — reproduced identically under both
-Git-Bash and PowerShell in this sandboxed harness, on a test file this PR does not touch. It is an
-environmental artifact of this execution sandbox's stdio handle inheritance, not a code regression;
-unresolved and out of this PR's scope. `ci/check_manifest.py`, `ci/check_classtags.py`, and
-`Ladruno_scripts/stamp_headers.py --check` all pass clean (warns present are pre-existing and
-unrelated to this diff).
+`test_ladruno_sanisand.py::test_tcl_subprocess_smoke`, was an `OSError: [WinError 6] The handle is
+invalid` inside Python's own `subprocess.Popen._make_inheritable`, reproduced identically under both
+Git-Bash and PowerShell — at the time believed to be a sandbox-only artifact and out of scope; see the
+second pass below, where it turned out to be a real, fixable test bug. `ci/check_manifest.py`,
+`ci/check_classtags.py`, and `Ladruno_scripts/stamp_headers.py --check` all passed clean.
 
-Fix pass applied in `f9a6f2b85`: B-1, M-1, N-3, N-4 confirmed already applied by
-the prior (rate-limited) pass and re-verified; J-1 added and, on first run, its floor corrected from a
-theoretical `1e-5` to a measured `10x`-tolerance value after the original assumption was shown wrong
-by direct measurement; N-1 confirmed WITHDRAWN (no change needed); F-1 recorded in the handoff doc;
-N-2 left OWED.
+**Second fix pass / re-review (2026-09-05, commit `12409e922`):** after an incremental rebuild
+(`OpenSees`/`OpenSeesPy`, header-only change to `ASDPlasticMaterial3D.h` correctly triggered a
+recompile of `OPS_AllASDPlasticMaterial3Ds.cpp` and its dependents), the same battery PLUS
+`test_adr84_p2a_strict_convergence.py`, `test_adr84_p3_confined_corner.py`, `test_asdplastic_mctc.py`,
+and `test_asdplastic_response_tags.py`: **203 passed, 5 skipped, 0 failed.** The `test_tcl_subprocess_
+smoke` failure was root-caused, not merely re-tolerated: its own `subprocess.run` call was missing
+`stdin=subprocess.DEVNULL`, the exact trap `tests/_testbed/subprocess_run.py` documents and
+`test_soe_zero_free_equations.py::_run_child` already works around (same failure family, `WinError 50`
+there vs `WinError 6` here — both "the inherited stdin handle is unusable under pytest's fd capture,
+intermittently, only once some other module in the suite has run first"). Fixed the same way; it now
+passes. `test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal` also passed,
+confirming `stdBrick` is unaffected by the sentinel value change (it discards the return code
+regardless of what it is, as intended — this defect is unrelated to and unresolved by either fix
+pass). `ci/check_manifest.py`, `ci/check_classtags.py`, and `stamp_headers.py --check` all passed clean
+again after the second pass (same pre-existing warns, no new ones).
 
-**Verdict: MERGE-OK-WITH-FIXES.** All BLOCKING and MAJOR items (B-1, J-1, M-1) are addressed and
-verified by a passing test battery. N-2 remains owed as a minor coverage gap, not a merge blocker.
+`ops.ladrunoBuild()` after the second pass's rebuild: `c4d08f1874060812ef25cfddf49724e7175f2978`
+(the last COMMITTED hash at build time — expected, since the review-fix commits land after the build).
+`dist/bin/opensees.pyd` / `OpenSees.exe` mtime 2026-09-05 17:46.
+
+Fix pass 1 (`f9a6f2b85`): B-1, M-1, N-3, N-4 confirmed already applied by the prior (rate-limited) pass
+and re-verified; J-1 added and, on first run, its floor corrected from a theoretical `1e-5` to a
+measured `10x`-tolerance value after the original assumption was shown wrong by direct measurement;
+N-1 confirmed WITHDRAWN (no change needed); F-1 recorded (not yet fixed) in the handoff doc; N-2 left
+OWED.
+
+Fix pass 2 (`12409e922`): F-1's producer-side half FIXED (both `strict_convergence`-gated `-1` sites in
+`ASDPlasticMaterial3D::Backward_Euler` now return the sentinel); `LEDGER_implementations.md`'s
+`updateHypo`/`updateFinite` claim corrected; `LEDGER_vanilla_files.md` rows added for
+`LoadPath.cpp`/`ArcLength.cpp` and for this `ASDPlasticMaterial3D.h` fix; a new `LEDGER_quirks.md`
+entry for the `stdBrick`/`BrickUP`/`QuadUP` swallow defect, with status updated; the handoff's F-1 note
+updated to "half done"; the `test_tcl_subprocess_smoke` environmental failure from pass 1 root-caused
+and fixed; `_CAP_CHILD` now asserts the child loaded the expected `dist/bin` engine before trusting any
+other marker. N-2 remains OWED (unchanged).
+
+**Verdict: MERGE-OK-WITH-FIXES.** All BLOCKING and MAJOR items from the first pass (B-1, J-1, M-1) and
+the regression the re-review found (F-1's producer half) are addressed and verified by a passing,
+zero-failure test battery. N-2 (a `-maxSubsteps` Tcl echo test) and F-1's remaining half (the
+convention work package itself) remain owed as follow-up work, not merge blockers.
