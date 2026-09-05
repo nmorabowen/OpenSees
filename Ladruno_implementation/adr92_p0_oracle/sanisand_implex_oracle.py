@@ -304,8 +304,15 @@ class Sanisand:
         psi = self.get_psi(e, p)
         cos3t = self.lode(n)
         gc = self.g(cos3t)
-        aB = gc * self.m_Mc * math.exp(-self.m_nb * psi) - self.m_m
-        aD = gc * self.m_Mc * math.exp(self.m_nd * psi) - self.m_m
+        try:
+            aB = gc * self.m_Mc * math.exp(-self.m_nb * psi) - self.m_m
+            aD = gc * self.m_Mc * math.exp(self.m_nd * psi) - self.m_m
+        except OverflowError:
+            # psi has run away (the step is far past what the substepper can hold,
+            # e.g. d(eps_z) = 2e-3 at p0 = 100, where the BINARY's own global solve
+            # stalls too -- probe tx_p100 n100 ez0.20). Report it as an abandoned
+            # step, which is what the C++ would print as garbage, not crash on.
+            raise Abandoned(f"exp overflow in GetStateDependent: psi = {psi:.3e}")
         b0 = self.m_G0 * self.m_h0 * (1.0 - self.m_ch * e) / math.sqrt(p / self.m_P_atm)
         d = ROOT23 * aD * n - alpha
         b = ROOT23 * aB * n - alpha

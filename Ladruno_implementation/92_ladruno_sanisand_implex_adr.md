@@ -2,7 +2,7 @@
 title: "ADR 92 — IMPL-EX integration for LadrunoSANISAND: a stress update that cannot seize, and a tangent that cannot lose ellipticity"
 project: Ladruno
 type: ADR
-status: "PROPOSED — scoping complete, decisions D0-D7 taken; P0 (oracle) OPEN, C++ GATED on #792 T8"
+status: "PROPOSED — P0 COMPLETE (D1 = A confirmed, D3 REVERSED, floor-clamp item added); C++ GATED on #792 T8 (CP1)"
 priority: high
 owner: nmora
 orchestrator: "Opus 5 session `wp/92-sanisand-implex` (owns the context end to end)"
@@ -10,6 +10,7 @@ requested_by: "TIMs Workbench, act `work/ape/response-curve-matrix` (gupi claude
 related:
   - "[[_adr92_tims_request_2026-09-05]]"
   - "[[_adr92_sanisand_implex_scoping]]"
+  - "[[_adr92_p0_oracle_results]]"
   - "[[86_ladruno_sanisand_adr]]"
   - "[[_adr90_tau0_qu_band]]"
   - "[[90_ladruno_viscoplastic_regularization_adr]]"
@@ -32,8 +33,15 @@ updated: 2026-09-05
 > **D0 gates the C++ on PR #792's T8.** WP-86b is attacking the same seizure from the cheap
 > end (a substep-count cap that lets `ModifiedEuler` fail instead of force-accepting at
 > `dT_min`, plus the consistent-tangent default). Until its GATE U re-run reports, the size
-> of the problem IMPL-EX is being asked to solve is unmeasured. **P0 (the oracle) is not
-> gated and is open now.**
+> of the problem IMPL-EX is being asked to solve is unmeasured.
+>
+> **P0 is COMPLETE** (`[[_adr92_p0_oracle_results]]`, 2026-09-05): G0 reproduces the binary
+> to round-off on the deck-default paths; **D1 = A by 18–22x**; **D3 is reversed** — scheme
+> 2's low-p Newton is disabled at `:2264` and 58–74 % of its calls at the corner are
+> `ModifiedEuler` in disguise; and **the extrapolated stress crosses the `p_min` floor into
+> tension** (`min p = −1.37 kPa` on a `+0.0101` state), so P1 gains a clamp. The seizure
+> itself was **not** reproducible at one Gauss point (force-accept fired 0 times), so the
+> cost claim in §2 stays unmeasured until #792 T8 / P3. **CP1 is next.**
 
 ---
 
@@ -114,7 +122,9 @@ vanilla**, and inherits the guards for free.
 1. **Bounded work per step.** The expensive return runs **once per committed step** instead
    of once per state-determination pass — up to 125 of them at the seizure. That is a ~100x
    cut in constitutive work before any change to the cost of a single return, and it is the
-   same lever #792's cap pulls from the other end.
+   same lever #792's cap pulls from the other end. **Unmeasured** — P0 could not reproduce
+   the seizure at a prescribed-strain Gauss point (0 force-accepts in ~7 000 substeps per
+   path); it is a P3 / T8 number.
 2. **A global step that is linear.** Newton converges in one iteration on a frozen operator;
    the ladder never fires, and the "rung 3 commits states nothing afterwards converges from"
    pathology (ESMERALDA §30-31) cannot arise.
@@ -124,10 +134,14 @@ vanilla**, and inherits the guards for free.
    request; measured at P3 — on the drained `LadrunoBrick` legs only.** `LadrunoUP`'s u-p
    tangent is unsymmetric regardless of the material (ADR 71), so the `U-L` row keeps its
    general solver.
-4. **The corner stops being a solver event.** At Gauss points pinned at `p_min` the operator
-   is the floor's operator — small, positive definite — and the extrapolated correction is
-   bounded by what the committed return already bounded. The ring still flows; what
-   disappears is Newton's missing descent direction, not the mechanics.
+4. **The corner stops being a solver event — with one guard P0 found.** At Gauss points
+   pinned at `p_min` the operator is the floor's operator — small, positive definite. But the
+   extrapolated correction is **not** bounded by the floor: nothing clamps `sigma~`, and P0
+   measured it crossing into tension (`min p = −1.37 / −0.16 / −0.09 kPa` at 40 / 80 / 160
+   steps on a `+0.0101 kPa` state — first order, O(1)–O(10) relative). **P1 applies the
+   code's own device to the extrapolated stress: `sigma~ = dev(sigma~) + p_min*I1` whenever
+   `tr(sigma~)/3 < p_min`.** The ring still flows; what disappears is Newton's missing
+   descent direction, not the mechanics.
 
 **And the cost, stated first because the campaign must print it (scoping §C5):**
 IMPL-EX is a first-order-in-`dt` perturbation of the constitutive response with the
@@ -188,7 +202,7 @@ join the material responses on the `ASDConcrete3DMaterial.cpp:2073-2077` templat
 | **D0** | Sequence against WP-86b (#792) | **P0 opens now; C++ (P1+) is GATED on #792 T8**, the GATE U re-run with the substep cap and the consistent-tangent default. Owner checkpoint **CP1**. |
 | **D1** | Extrapolated history variable | **Plastic strain** (§2). `dGamma` + frozen flow direction stays on the table as the textbook alternative and is measured against it at P0; it would require the companion to be scheme 2 and a vanilla hook. |
 | **D2** | Time source | `-implexDt {pseudo\|strain\|user}`, default `pseudo` = `ops_Dt` (ASD behaviour). Correct for the TIMs deck **including under subdivision**, because it drives settlement by `LoadControl` on a prescribed-settlement SP pattern so pseudo-time is proportional to settlement. Guarded at `dt = 0` (holds, stage switch); **refused** on integrators that solve for the load factor (`DisplacementControl`, arc length), where `dt = d(lambda)` is not proportional to the increment and changes sign past a limit point. |
-| **D3** | Companion integrator | Default **scheme 2** (`BackwardEuler_CPPM`). Scheme 1 permitted **only with `-maxSubsteps` set** (#792 T1), so the companion cannot itself seize. Schemes 3 / 5 / 7 / 8 / 9 refused with a sentence. |
+| **D3** | Companion integrator | **REVERSED by P0.** Default **scheme 1 (`ModifiedEuler`) with `-maxSubsteps` required** (#792 T1) so the companion cannot seize. Scheme 2 is *permitted* but its low-p Newton is disabled (`:2264`, literal `errFlag = 0`) and on the corner path 58–74 % of its calls integrate by `explicit_integrator` — it is not an implicit return where the campaign's problem lives, and it costs a 19-unknown Newton everywhere else. Schemes 3 / 5 / 7 / 8 / 9 refused with a sentence (5 additionally carries the zero-`r` defect). |
 | **D4** | Class tags | **None new.** Flags on 33019 / 33020 / 33021. The wire format grows: `sendSelf` / `recvSelf` / both `getCopy` forms carry the flags and `d_eps_p`, per the ADR-86 six-override rule and the FSPM `getCopy` lesson. |
 | **D5** | Vanilla footprint | **Zero** under D1. If P0 overturns D1, one flag seam in `ManzariDafalias.h` on the `mHonorTolRInME` / `mMaxSubstepsInME` pattern plus a `LEDGER_vanilla_files` row. |
 | **D6** | Relationship to ADR 90 | Cross-reference, not firewall. §2's disclosure is a **P0 deliverable**, not a P3 one, because the act will need it the first time it quotes an IMPL-EX curve. |
@@ -202,9 +216,9 @@ given the campaign to re-derive.
 
 | phase | deliverable | gate to leave it |
 |---|---|---|
-| **P0** *(open)* | Single-Gauss-point IMPL-EX oracle in numpy on the D-L cell's 23 constants, driven by the act's Level-0 drained triaxial path. Measures: first-order convergence of the IMPL-EX/implicit difference under increment halving; the error at the act's `1e-4 m` increment; behaviour as `p' -> p_min`; **D1 vs the `dGamma` form, head to head**. Plus the §2 disclosure text. | The convergence exponent is measured (not asserted), D1 is decided on numbers, and the error at the campaign's increment is known. Artefact `_adr92_p0_oracle_results.md`. |
+| **P0** *(COMPLETE)* | Single-Gauss-point IMPL-EX oracle in numpy on the D-L cell's 23 constants, driven by the act's Level-0 drained triaxial path. Measures: first-order convergence of the IMPL-EX/implicit difference under increment halving; the error at the act's `1e-4 m` increment; behaviour as `p' -> p_min`; **D1 vs the `dGamma` form, head to head**. Plus the §2 disclosure text. | The convergence exponent is measured (not asserted), D1 is decided on numbers, and the error at the campaign's increment is known. Artefact `_adr92_p0_oracle_results.md`. |
 | **CP1** | Owner checkpoint. Reads P0 **and** #792 T8 together. | Is IMPL-EX unblocking, or an optimisation? Phasing and risk budget are set here. |
-| **P1** | `-implex` on `LadrunoSANISAND3D`: extrapolated stress, frozen `Ce(p_n)`, companion at `commitState`, `implexError` / `avgImplexError`, `getCopy` / `sendSelf` / `recvSelf`, stage-0 inertness. | `-implex` unset is **byte-identical** on every existing SANISAND deck; tangent identity to machine precision; Zone-A green. |
+| **P1** | `-implex` on `LadrunoSANISAND3D`: extrapolated stress **(incremental, clamped at `p_min`)**, frozen `Ce(p_n)`, companion at `commitState` **(scheme 1 + `-maxSubsteps`)**, `implexError` / `avgImplexError`, `getCopy` / `sendSelf` / `recvSelf`, stage-0 inertness. **The P0 oracle is the reference: `implex_A` on the binary's own paths to 1e-8.** | `-implex` unset is **byte-identical** on every existing SANISAND deck; tangent identity to machine precision; Zone-A green. |
 | **P2** | `-implexControl` through `LADRUNO_MATERIAL_REFUSED`; `LadrunoSANISANDPlaneStrain` (the 2D act needs it on the strip); the cyclic/reversal test. | Error-driven refusal provably triggers subdivision and the committed state is intact across it. |
 | **P3** | Esmeralda: the corner patch; the coarse bare `D-L` leg against job 146299's wall at `s/B = 0.0206`; the `U-L` coupled row inside `LadrunoUP`; **the symmetric-solver measurement of §2.3**. | A WP1 plateau, or a named reason there is none — plus `implexError` reported beside every verdict. |
 | **CP2** | Close-out. | Ledgers, banner row if shipped, ADR status. |
@@ -217,7 +231,12 @@ rate regularization, which addresses localization width and is a different instr
 The request's §5 list survives, remapped: its tests 1, 3, 6, 7 -> P0/P1; test 2 -> P2;
 tests 4, 5 -> P3. Added by this ADR:
 
-1. **Tangent identity.** Returned tangent == numerical `d sigma~ / d eps`, machine precision.
+1. **Tangent identity.** Returned tangent == numerical `d sigma~ / d eps`, machine precision
+   (P0 measured `3.5e-11` on the oracle; the C++ must match).
+1b. **Floor clamp.** On the P0 G3 path, `tr(sigma~)/3 >= p_min` at every iteration of every
+   step; the oracle without the clamp reaches `−1.37 kPa` and is the negative control.
+1c. **Oracle parity.** `implex_A` in the C++ reproduces the P0 oracle's `implex_A` on the
+   recorded binary paths to `1e-8` — the same G0 discipline, one level up.
 2. **Stage-0 inertness.** Gravity and the `LoadControl 0.0` re-equilibration are bit-identical
    with `-implex` on and off.
 3. **`dt` guards.** A `dt = 0` step and a halved step both extrapolate by the right factor;
@@ -240,16 +259,21 @@ tests 4, 5 -> P3. Added by this ADR:
   IMPL-EX was meant to remove. The P2 design must choose: pay it on the (now 1-2)
   iterations, or check the error at commit and shrink the *next* step (a-posteriori,
   one-step lag, cannot refuse the step it measured).
-- **First-order lag.** The extrapolated path lags by `O(dt)`. P0 prices it at the campaign's
-  own increment; if the corner's flow dominates, `-implexControl` halves the step exactly
-  where the wall was. That is correct behaviour, bounded by the reduction limit — and it
-  means IMPL-EX can trade the wall for a cost, not remove it. P0 must be able to say which.
+- **First-order lag — priced.** At the nominal campaign increment (`1e-4`) the extrapolation
+  costs `5e-5` in stress and `1e-3` in `eta`, below the substepper's own error; at `5e-4` it is
+  `4e-3 / 3e-2`, at `1e-3` `3e-2 / 0.13` (P0 §4). The corner Gauss point sees 10–100x the
+  nominal, so `-implexControl` at `0.05` will halve the step exactly where the wall was.
+  Correct behaviour, bounded by the reduction limit — IMPL-EX trades the wall for a cost
+  there rather than removing it.
 - **Cyclic response lags by one step.** `alpha`, `z` and `alpha_in` advance only on the
   committed path. Monotonic pushover is the target; cyclic use needs the P2 reversal test
   before it is claimed.
 - **Two tangents in one mesh.** A Drucker-Prager crust beside `-implex` sand: the global
   matrix is positive definite only if every material's is, and the crust's consistent tangent
   is not always so. Run the crust elastic-tangent, or the crust implicit with rungs 0-1 kept.
+- **The floor overshoot** (P0 §5): without the P1 clamp, the free-surface ring receives
+  tensile mean stress every iteration. With it, the ring is still the least accurate part of
+  an IMPL-EX field (first order, O(1)–O(10) relative at the floor) and the disclosure says so.
 - **A reading hazard, and it is the serious one.** An IMPL-EX curve satisfies equilibrium
   with the *extrapolated* stress. A limit point called on an IMPL-EX leg must be confirmed by
   the implicit material up to the last settlement the implicit solver reaches, and
@@ -289,6 +313,12 @@ decision.
 
 ## Log
 
+- **2026-09-05 (later)** — P0 complete (`[[_adr92_p0_oracle_results]]`): G0 PASS to
+  round-off, G1 order 1.7–2.1, G5 `5.7e-11`; **D1 = A** (18–22x over `dGamma` on scheme 1);
+  **D3 reversed** (scheme 2 is explicit at low `p`, `:2264`); **floor clamp added to P1**;
+  seizure not reproducible at one Gauss point, cost claim stays for T8/P3. The Fable review
+  caught the total-vs-incremental stress form before the oracle measured it (78 % at
+  `p0 = 5`). Builder terminated by its session limit at G0; Fable carried the gates.
 - **2026-09-05** — Requested by the TIMs act after the strict-ladder diagnostic (ESMERALDA
   §31) located the wall at the footing's corner and the relaxation route was found to load
   SANISAND's memory (§33). Fork-side scoping found six corrections, a live overlapping work
