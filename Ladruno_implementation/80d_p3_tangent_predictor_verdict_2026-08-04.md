@@ -166,3 +166,21 @@ is a loud warning that disables `-extrapolate`.
   element-tangent formation per sp-touching element per increment. No extra
   solve — the predictor IS iteration 1, which the algorithm was going to run
   anyway. On these decks it is a net saving of 212 of 224 iterations.
+
+## Re-verification on landing — 2026-09-05
+
+The 2026-08-04 snapshot sat uncommitted in a dead worktree for a month and was
+rescued in the ADR-87 D10 sweep 2 (`branch_graveyard.md`). Landed on
+`wp/80-p3-tangent-predictor` (PR #786) as one commit on top of `ladruno`
+`f71b9196b`, 229 commits past the snapshot's base, and re-verified there:
+
+- Build `4410bd6a0` (`ladrunoBuild` == HEAD on both `OpenSees.exe` and
+  `opensees.pyd`).
+- `sp_gates/p3_tangent_predictor_acceptance.tcl` re-run →
+  `p3_tangent_predictor_acceptance_2026-09-05.json`, **byte-identical** to the
+  2026-08-04 JSON: adaptive `maxIter` 5, J2, stock 43 inc / 23 cutbacks / 224
+  iters; `-tangentPredictor` 6 / 0 / 12; `u_mid` = 0.075000 on every row.
+- `tests/test_adr80_tangent_predictor.py`: 11 passed.
+
+So the verdict above survives ADR-76 (tangent reuse) and ADR-77 (implicit
+transient) having moved the analysis subsystem underneath it in the meantime.
