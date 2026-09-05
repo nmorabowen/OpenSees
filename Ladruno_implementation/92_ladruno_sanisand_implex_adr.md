@@ -40,8 +40,10 @@ updated: 2026-09-05
 > 2's low-p Newton is disabled at `:2264` and 58–74 % of its calls at the corner are
 > `ModifiedEuler` in disguise; and **the extrapolated stress crosses the `p_min` floor into
 > tension** (`min p = −1.37 kPa` on a `+0.0101` state), so P1 gains a clamp. The seizure
-> itself was **not** reproducible at one Gauss point (force-accept fired 0 times), so the
-> cost claim in §2 stays unmeasured until #792 T8 / P3. **CP1 is next.**
+> mechanism reproduces at one Gauss point only at low confinement x 10x the nominal
+> increment (`p0 = 5`, `1e-3`: 163 force-accepts, implicit `q/p -> 0`) — and IMPL-EX-A is
+> already broken one row earlier there (`5e-4`), so **`-implexControl` is not optional at the
+> corner** and the cost claim in §2 stays unmeasured until #792 T8 / P3. **CP1 is next.**
 
 ---
 
@@ -122,9 +124,9 @@ vanilla**, and inherits the guards for free.
 1. **Bounded work per step.** The expensive return runs **once per committed step** instead
    of once per state-determination pass — up to 125 of them at the seizure. That is a ~100x
    cut in constitutive work before any change to the cost of a single return, and it is the
-   same lever #792's cap pulls from the other end. **Unmeasured** — P0 could not reproduce
-   the seizure at a prescribed-strain Gauss point (0 force-accepts in ~7 000 substeps per
-   path); it is a P3 / T8 number.
+   same lever #792's cap pulls from the other end. **Unmeasured.** P0 shows the mechanism
+   (163 force-accepts at `p0 = 5`, `d eps = 1e-3`) but not IMPL-EX surviving it — A breaks
+   at `5e-4` at that confinement while the implicit is still 7 % off; it is a P3 / T8 number.
 2. **A global step that is linear.** Newton converges in one iteration on a frozen operator;
    the ladder never fires, and the "rung 3 commits states nothing afterwards converges from"
    pathology (ESMERALDA §30-31) cannot arise.
@@ -264,7 +266,8 @@ tests 4, 5 -> P3. Added by this ADR:
   `4e-3 / 3e-2`, at `1e-3` `3e-2 / 0.13` (P0 §4). The corner Gauss point sees 10–100x the
   nominal, so `-implexControl` at `0.05` will halve the step exactly where the wall was.
   Correct behaviour, bounded by the reduction limit — IMPL-EX trades the wall for a cost
-  there rather than removing it.
+  there rather than removing it. **At `p0 = 5 kPa` A is unusable from `5e-4` up** (P0 §4,
+  `q/p` 0.09 vs 2.07), so at the corner `-implexControl` is a requirement, not an option.
 - **Cyclic response lags by one step.** `alpha`, `z` and `alpha_in` advance only on the
   committed path. Monotonic pushover is the target; cyclic use needs the P2 reversal test
   before it is claimed.

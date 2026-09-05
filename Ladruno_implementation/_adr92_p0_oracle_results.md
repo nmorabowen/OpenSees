@@ -33,10 +33,14 @@ updated: 2026-09-05
 > **P1 must clamp `sigma~` with the code's own device** (`dev + p_min*I1`) or the element at
 > the free surface receives tensile mean stress every iteration.
 >
-> **What P0 cannot say:** the seizure. `ModifiedEuler`'s force-accept at `dT_min` fired
-> **zero** times on every prescribed path here (≤ 12 002 substeps / 200 steps). The
-> `dT -> 1e-6` collapse GATE U measured needs the boundary-value problem's strain path at the
-> corner; the "~100x" cost claim of ADR §2 stays **unmeasured until P3 / #792 T8**.
+> **The seizure reproduces — at low confinement and 10x the nominal increment, and not
+> before.** At `p0 = 5 kPa`, `d eps_z = 1e-3`, `ModifiedEuler`'s force-accept at `dT_min`
+> fired **163 times in 20 steps** and the implicit answer collapsed to `q/p = 0.000`; at the
+> nominal `1e-4` and on every `p0 = 100` path it fired **zero** times. So GATE U's collapse
+> is a property of *increment x confinement*, which the corner supplies. **IMPL-EX does not
+> survive that row either** (`EXTRAP A = 752`), and at `p0 = 5` it already breaks at `5e-4`
+> (`q/p` 0.09 vs 2.07) where the implicit is 7 % off — the usable increment shrinks with
+> confinement. The "~100x" cost claim of ADR §2 stays **unmeasured until P3 / #792 T8**.
 
 **Build:** every binary number is from `e95a1c74f7e15d7de8655eeeb004d7f34d81d512` read out of
 `C:\Program Files\Ladruno\OpenSees\bin\opensees.pyd` by `ops.ladrunoBuild()`; interpreter
@@ -129,11 +133,28 @@ own reference and the **binary's** single-element push at the same increment fai
 stalls at `5e-4` and completes at `5e-5` — the campaign's low-confinement wall, at one Gauss
 point. *(T2, `p0 = 5`, rows: `data/g2_rerun.log`, appended below when the rerun lands.)*
 
+**T2, `p0 = 5 kPa`, to `eps_z = 0.02`, reference terminal `q/p = 2.0154`:**
+
+| `d eps_z` | N | EXTRAP A | EXTRAP B | `d eta/eta` A | `implexError` A | `q/p` A | `q/p` impl | **FA** | note |
+|---|---|---|---|---|---|---|---|---|---|
+| **1.0e-4** | 200 | **2.3e-4** | 1.1 | **1.0e-3** | 2.7e-3 | 2.0175 | 2.0173 | 0 | nominal |
+| 2.0e-4 | 100 | 3.8e-3 | 2.9 | 5.6e-3 | 1.1e-2 | 2.0267 | 2.0236 | 0 | |
+| **5.0e-4** | 40 | **8.7e-1** | 29 | **0.95** | 1.26 | **0.092** | 2.0679 | 0 | **A breaks; implicit 7 % off** |
+| **1.0e-3** | 20 | 7.5e+2 | 5.0e+4 | 0.57 | 19.9 | 0.87 | **0.000** | **163** | **force-accept fires; implicit collapses** |
+| >= 2.0e-3 | | garbage | | | | | | 0 | not read |
+
+**U, dense `e = 0.60`, `p0 = 100`:** EXTRAP A `4.6e-5, 7.9e-5, 4.7e-3, 4.9e-2` at
+`1e-4 … 1e-3` — the T1 pattern within a factor 1.5.
+
 **Reading.** At the **nominal** campaign increment the extrapolation costs `5e-5` in stress
-and `1e-3` in mobilised stress ratio — invisible against the substepper's own `1.5e-3`. The
-README's caveat stands: the corner sees 10–100x the nominal strain increment, and at `1e-3`
-the cost is 3 % in stress and 13 % in `eta`. `-implexControl` at `0.05` would refuse the
-`5e-4` row and above.
+and `1e-3` in mobilised stress ratio at both confinements — invisible against the
+substepper's own. **The cliff moves with confinement:** at `p0 = 100` IMPL-EX-A degrades
+gracefully to `1e-3` (3 % / 13 %); at `p0 = 5` it **breaks at `5e-4`** (`q/p` 0.09 against
+2.07) one row before the implicit itself seizes (`1e-3`, 163 force-accepts, `q/p = 0`). The
+corner sees 10–100x the nominal increment *and* low confinement, so it sits on that cliff.
+`-implexControl` at `0.05` refuses the `5e-4` row at both confinements (`implexError` 1.5e-2
+and 1.26 against 0.05 — the second by a wide margin); the control is not optional at the
+corner.
 
 ## 5. G3 — the corner (the finding)
 
@@ -157,9 +178,10 @@ Three things, in order of consequence:
 2. **Scheme 2 is `ModifiedEuler` at the corner.** 67 %, 62 %, 74 % of the companion's calls
    took the low-p branch, and every one of them integrated by `explicit_integrator`. The
    "only implicit return" argument for D3 does not survive contact with the place D3 was for.
-3. **The force-accept never fired.** 0 of ~7 000 substeps on each path. The seizure GATE U
-   measured is not a property of the material at a prescribed strain path; it is a property
-   of the corner's strain path in the BVP. P0 cannot price it.
+3. **The force-accept never fired here** — 0 of ~7 000 substeps on each corner path, whose
+   increments are small. It **does** fire on the G2 `p0 = 5, 1e-3` row (163 times, implicit
+   collapses). The seizure is increment x confinement; the corner in the BVP supplies both.
+   P0 can show the mechanism, not price it.
 
 ## 6. G4 — D1, head to head (`d eps_z = 1e-4`, 40 steps)
 
@@ -207,8 +229,9 @@ differences at `1e-9`. **PASS.** The C++ keeps this only if `G`, `K` are read of
 - The total-strain form is wrong by 78 % at `p0 = 5` (§8) — the negative control for P1.
 
 **MUST NOT say:**
-- Anything about the seizure, the "~100x", or wall-clock. Not measured; the force-accept
-  never fired here.
+- The "~100x", or wall-clock. Not measured. (The seizure *mechanism* is shown — 163
+  force-accepts at `p0 = 5, 1e-3` — but IMPL-EX-A is already broken one row earlier there,
+  so P0 does not show IMPL-EX *surviving* the row that seizes.)
 - That the corner error is "small". It is first order and O(1)–O(10).
 - That IMPL-EX reaches a plateau, a capacity, or a wall. Single Gauss point, prescribed
   strain, no BVP feedback.
@@ -219,7 +242,8 @@ differences at `1e-9`. **PASS.** The C++ keeps this only if `G`, `K` are read of
 > is extrapolated from the last committed step, not the converged state. At the nominal
 > increment (`d eps ≈ 1e-4`) the extrapolation error is `5e-5` in stress and `1e-3` in
 > mobilised stress ratio at `p0 = 100 kPa`; it grows to `4e-3 / 3e-2` at `5e-4` and
-> `3e-2 / 0.13` at `1e-3`, and halves or better when the increment halves. At Gauss points on
+> `3e-2 / 0.13` at `1e-3`, and halves or better when the increment halves; at `p0 = 5 kPa`
+> it is unusable from `5e-4` up, which is why `-implexControl` is on. At Gauss points on
 > the `p_min` floor — the ring beside the footing — the extrapolated stress can leave the floor
 > by O(1) kPa; that ring is the least trustworthy part of this field. Every equilibrium here
 > is an equilibrium of the extrapolated stress; any limit point read off it must be confirmed
