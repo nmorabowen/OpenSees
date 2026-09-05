@@ -66,10 +66,14 @@ FAMILIES = {
     # ADR 91 shell stiffness-modifier decorator. Gated at the SECTION accessors
     # (getStressResultant / getSectionTangent / getInitialTangent), not at an
     # element: the whole feature is a constitutive transform, so that is its
-    # only physics surface. NOTE the expected survivors under ZERO are the three
-    # pure PARSE-TIME refusal tests (R1/R3/R4) -- they never run an analysis, so
-    # they cannot notice deleted physics, and that is the correct answer rather
-    # than a gap. Gated.
+    # only physics surface. MEASURED ZERO score 0.733 (11/15 killed), floor 0.60.
+    # The four survivors are all legitimately physics-free and were checked one
+    # by one: three PARSE-TIME refusal tests (R1/R3/R4), which never run an
+    # analysis and so cannot notice deleted physics, plus
+    # g4_companion_naive_diagonal_scaling_would_be_indefinite, a pure-numpy
+    # assertion that never calls OpenSees at all (it documents WHY the congruence
+    # form was chosen over diagonal-only scaling). The actual G4 SPD test, which
+    # does assemble a patch, IS killed. Gated.
     "SHELLMOD": {
         "paths": ["test_ladrunoShellModifier*.py"],
         "min_score": {"ZERO": 0.60, "SCALE": 0.30, "IDENT": 0.0},

@@ -2027,6 +2027,17 @@ features:
       congruence against an independent numpy S.D.S oracle with all nine
       modifiers distinct, analytic exact-doubling, SPD under f11=f22=0.01,
       Ep_mod parity, mass sqrt(2), the four refusals, and LayeredShell
-      nonlinear passthrough. Zero vanilla behavior change —
+      nonlinear passthrough.
+      ADR-87 D2 MUTATION GATE: family SHELLMOD, gated at the section accessors
+      (getStressResultant / getSectionTangent / getInitialTangent) since the
+      feature has no element of its own. ZERO score 0.733 (11/15 killed, floor
+      0.60) — GATE PASSED. The four survivors are all legitimately physics-free:
+      the three parse-time refusals (R1/R3/R4), which never run an analysis, and
+      the pure-numpy companion assertion documenting why the congruence beats
+      diagonal-only scaling. SCALE mode NOT run (ADR-87 D2 requires one passing
+      run to attach a new family; ZERO is it) — an honest gap, not a claim.
+      Windows mutant builds via the new Ladruno_scripts/mutation_build.bat; the
+      CI recipe is Ubuntu-only and does not port (preset pins binaryDir).
+      Zero vanilla behavior change —
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
