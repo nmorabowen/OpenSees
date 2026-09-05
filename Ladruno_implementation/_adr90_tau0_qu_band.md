@@ -26,7 +26,7 @@ updated: 2026-09-05
 > **unregularized** collapse load of the campaign's own problem is *not*
 > already mesh-converged inside the campaign's own tolerance. The fork has that
 > measurement for `DruckerPrager` — `tests/test_r3_prandtl_collapse_gate.py`
-> reads 1.0849 / 0.9977 / 0.9514 of exact Prandtl–Reissner at
+> reads 1.0842 / 0.9938 / 0.9513 of exact Prandtl–Reissner at
 > h0 = 1.0 / 0.5 / 0.25, every leg a genuine plateau — and did **not** have it
 > for `LadrunoSANISAND`, whose non-associated **softening** is the reason
 > ADR 90 exists.
@@ -91,9 +91,13 @@ here, but it means a faster deck would hit it next.
 
 **Against the R3 comparison basis, stated exactly.** R3's per-resolution band is
 **± 3 %**, but that is a *tolerance on a known centre*, not a convergence
-criterion: R3's own three-mesh spread is 1.0849 → 0.9514, i.e. **13.1 % of their
+criterion: R3's own three-mesh spread is 1.0842 → 0.9513, i.e. **13.1 % of their
 mean**, and is accepted because it is monotone and every leg is a genuine
-plateau. The bands above (2.9–7.8 %) sit inside that spread — **but they are
+plateau. (Those are the gate's `_MEASURED` band **centres**, read live from its
+source by the summariser rather than copied. Its own docstring table logs
+1.0849 / 0.9977 / 0.9514 for the fork's run of it — a 0.06 / 0.39 / 0.01 %
+difference, which is exactly the independent-driver spread the ± 3 % band is
+sized to absorb.) The bands above (2.9–7.8 %) sit inside that spread — **but they are
 pre-peak load values, not collapse loads, so the comparison is context and not a
 verdict.** **The campaign's own tolerance is OQ2 and has NOT been supplied on
 either side** (ADR 90 §7.5: TIMs must set the target band width relative to B,
@@ -409,6 +413,15 @@ shared checkpoints reproduce to 0.000–1.18 %, **are** resolved.
 Target `s/B` was **0.25** on every leg; the deepest got **9 %** of the way.
 `worst step` is the longest wall time between two consecutive **converged**
 steps — the seizure, measured.
+
+**All six legs terminate in a SEIZURE mode** (`WALL` or `KILLED`), so all six
+are **INADMISSIBLE** by `00_canonical_testbed` §1b — *"a leg that ends on that
+stop is reported inadmissible, never as a result"*. Both the driver and the
+summariser now print that word explicitly per leg rather than leaving it to be
+inferred from the `CAPACITY = NO` column, because a leg can also carry
+`CAPACITY = NO` for the ordinary reason that it simply has not peaked yet, and
+the two must not read the same: one is a measurement that ran out of road, the
+other is a run that stopped for a reason outside the mechanics.
 
 > [!warning] These end-of-leg fields come from the CURVE CSV, not the leg JSON
 > A killed leg's JSON was last written **at a checkpoint**, so its

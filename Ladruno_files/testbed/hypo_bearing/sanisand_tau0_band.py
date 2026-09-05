@@ -13,8 +13,12 @@ campaign's own tolerance.
 
 The fork has that measurement for `DruckerPrager`, and there the answer is
 "converges, from above": `tests/test_r3_prandtl_collapse_gate.py` reads
-1.0849 / 0.9977 / 0.9514 of the exact Prandtl-Reissner answer at
-h0 = 1.0 / 0.5 / 0.25, every leg a genuine plateau.  Perfect plasticity is
+1.0842 / 0.9938 / 0.9513 of the exact Prandtl-Reissner answer at
+h0 = 1.0 / 0.5 / 0.25, every leg a genuine plateau.  (Those are that gate's
+`_MEASURED` band CENTRES -- the TIMs/APE reference sequence it asserts against.
+Its own docstring table logs 1.0849 / 0.9977 / 0.9514 for the fork's own run of
+it; the 0.06 / 0.39 / 0.01 % difference is the independent-driver spread its
++/- 3 % band exists to absorb.)  Perfect plasticity is
 elliptic; there is nothing to regularize.  **SANISAND is not perfectly plastic.**
 It softens from `M^b` back to `M_c` as the fabric evolves, and a NON-ASSOCIATED
 softening continuum is where the rate-independent boundary-value problem loses
@@ -166,6 +170,27 @@ USAGE
 
 Then `sanisand_tau0_summary.py <dir>` for the table.
 
+TWO ENVIRONMENT VARIABLES, and you will meet them the first time you run this
+on a box other than the one that produced the report:
+
+    LADRUNO_DIST_BIN          Directory holding the `opensees.pyd` to test.
+                              DEFAULT: this repo's own `dist/bin`.  The reported
+                              campaign set it to a sibling worktree that held the
+                              pinned build; that path was ephemeral and is
+                              deliberately not baked in.
+
+    LADRUNO_A2_EXPECT_BUILD   The 40-char git hash the engine must report.
+                              DEFAULT: the hash the reported campaign ran on
+                              (`548fe911...`).  Point it at YOUR build's hash to
+                              re-run this deck elsewhere -- deliberately, with
+                              the new hash named, so the numbers stay
+                              attributable.  Set it to `any` to skip the check;
+                              the run then says so loudly and its numbers must
+                              not be quoted alongside the report's.
+
+Both assertions name these variables in their failure text, so a cold
+reproduction gets an instruction rather than a bare `AssertionError`.
+
 PROVENANCE: every leg writes `<tag>.json` carrying the engine hash, this
 driver's path, the deck constants, the controls and the measurements; the CSVs
 carry the same hash in a header comment.
@@ -186,14 +211,48 @@ import time
 # Engine binding.  ADR-90 WP-A2 runs against a PINNED build; a collapse load
 # with no engine hash attached cannot be re-attributed later (ADR 90 S4).
 # --------------------------------------------------------------------------
-DEFAULT_BIN = (r"C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees"
-               r"\agent-aeef311decf9449d1\dist\bin")
-EXPECTED_BUILD = "548fe911427e90a2edfead05cb3672a738d25b6d"
+#
+#   LADRUNO_DIST_BIN    where to find `opensees.pyd`.  Defaults to this repo's
+#                       own `dist/bin`, which is the conventional location and
+#                       the one a cold clone will have.  The campaign reported
+#                       in `_adr90_tau0_qu_band.md` set it to a sibling
+#                       worktree's `dist/bin` that held the pinned build; that
+#                       path was ephemeral and is deliberately NOT baked in here.
+#   LADRUNO_A2_EXPECT_BUILD
+#                       the 40-char git hash the engine must report.  Defaults
+#                       to the hash the reported campaign ran on.  Override it
+#                       to re-run this deck on a DIFFERENT build -- deliberately,
+#                       with the new hash named, so the numbers stay attributable
+#                       (ADR 90 S4: provenance is output).  Set to `any` to skip
+#                       the check entirely; the run then prints whatever hash it
+#                       found and its numbers must not be compared to the ones in
+#                       the report.
+#
+_HERE_BOOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_BIN = os.path.abspath(
+    os.path.join(_HERE_BOOT, "..", "..", "..", "dist", "bin"))
+EXPECTED_BUILD = os.environ.get(
+    "LADRUNO_A2_EXPECT_BUILD", "548fe911427e90a2edfead05cb3672a738d25b6d")
 
 _BIN = os.environ.get("LADRUNO_DIST_BIN", DEFAULT_BIN)
 if os.path.isdir(_BIN):
     os.add_dll_directory(_BIN)
     sys.path.insert(0, _BIN)
+else:
+    # Say it HERE.  Falling through to `import opensees` gives a bare
+    # `ModuleNotFoundError: No module named 'opensees'`, which tells a cold
+    # reproduction nothing about the variable it needed to set -- and that is
+    # the same defect as an unexplained assertion, just moved earlier.
+    raise SystemExit(
+        f"\nADR-90 WP-A2 driver: no OpenSees build directory at\n"
+        f"    {_BIN}\n"
+        f"({'from LADRUNO_DIST_BIN' if 'LADRUNO_DIST_BIN' in os.environ else
+            'the default, this repo/worktree' + chr(39) + 's own dist/bin'})\n\n"
+        f"Set LADRUNO_DIST_BIN to the directory holding the `opensees.pyd` you\n"
+        f"mean to test, e.g.\n"
+        f"    LADRUNO_DIST_BIN=/path/to/worktree/dist/bin python3.12 {__file__}\n\n"
+        f"See this file's USAGE docstring for that variable and for\n"
+        f"LADRUNO_A2_EXPECT_BUILD, which pins the engine hash.\n")
 os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
 
 import numpy as np                                              # noqa: E402
@@ -215,15 +274,32 @@ from sanisand_tau0_summary import (                                 # noqa: E402
 
 
 def assert_engine(strict: bool = True) -> str:
-    """Fail loud on the wrong binary.  Printed at the top of every driver."""
+    """Fail loud on the wrong binary.  Printed at the top of every driver.
+
+    The failure messages name the two environment variables, because the whole
+    point of a fail-loud pin is defeated if a cold reproduction hits an
+    assertion it cannot interpret.
+    """
     path = os.path.abspath(ops.__file__)
     build = ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "unknown"
     if strict:
         assert path.lower().startswith(os.path.abspath(_BIN).lower()), (
-            f"opensees resolved to {path}, not the pinned build dir {_BIN}")
-        assert build == EXPECTED_BUILD, (
-            f"ladrunoBuild() = {build}, expected {EXPECTED_BUILD}: this run has "
-            "no provenance and its numbers must not be quoted")
+            f"opensees resolved to {path}, not the expected build dir {_BIN}.\n"
+            f"    Set LADRUNO_DIST_BIN to the directory holding the "
+            f"opensees.pyd you mean to test.")
+        if EXPECTED_BUILD.lower() != "any":
+            assert build == EXPECTED_BUILD, (
+                f"ladrunoBuild() = {build}, expected {EXPECTED_BUILD}.\n"
+                f"    This run has no provenance and its numbers must not be "
+                f"quoted alongside the reported campaign's.\n"
+                f"    To re-run this deck on a different build, set "
+                f"LADRUNO_A2_EXPECT_BUILD to that build's hash (deliberately, "
+                f"so the numbers stay attributable), or to 'any' to skip the "
+                f"check and forgo comparability.")
+        else:
+            print(f"    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned "
+                  f"(running {build}); these numbers are not comparable to the "
+                  f"reported campaign's ***")
     return build
 
 
@@ -368,7 +444,14 @@ PEAK_MIN_SFRAC = 0.002            # ignore blips inside the first 0.2 % of s/B
 WALL_BUDGET_S = float(os.environ.get("LADRUNO_A2_WALL_BUDGET", 5400.0))
 
 _CAPACITY_MODES = ("TARGET", "PEAK", "BUDGET")
-_SEIZURE_MODES = ("FLOOR", "WALL")
+# SEIZURE modes.  `00_canonical_testbed` §1b: "a leg that ends on that stop is
+# reported INADMISSIBLE, never as a result".  These are checked explicitly and
+# the word is printed, rather than being left to the reader to infer from a
+# `CAPACITY = NO` column -- a leg can also fail to be a capacity for an ordinary
+# reason (it simply has not peaked yet), and the two must not read the same.
+# `KILLED` is here because the summariser assigns it to a leg whose process died
+# mid-run: also a machine stopping, not the soil.
+_SEIZURE_MODES = ("FLOOR", "WALL", "TRUNCATED", "KILLED")
 
 # Width instrumentation: `Z_PROBES` and `widths_from_field` are
 # imported from `sanisand_tau0_summary` (see the import block above).
@@ -758,6 +841,13 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     headroom = ds_tail_min_mm / floor_mm
     free = bool(headroom >= FREE_ADVANCE_FLOOR_FACTOR)
     capacity = bool((plateau or peaked) and free and mode in _CAPACITY_MODES)
+    # Clause 2, stated positively AND negatively.  `seized` is not the negation
+    # of `capacity`: a leg can fail to be a capacity for the ordinary reason
+    # that it has not peaked yet, which is a MEASUREMENT that ran out of road,
+    # while a seizure is a RUN that stopped for a reason outside the mechanics.
+    # Both are inadmissible as a collapse load; only one of them says the number
+    # is where a machine stopped.
+    seized = mode in _SEIZURE_MODES
 
     # ---- end-of-run plastic strain field --------------------------------
     epsq = _plastic_field(n_hex)
@@ -805,6 +895,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         t_init=t_init, t_last=t_last,
         tail_pct=100.0 * t_last / t_init if t_init else float("nan"),
         plateau=plateau, peaked=peaked, free=free, capacity=capacity,
+        seized=seized, admissible_as_capacity=bool(capacity),
         mode=mode, verdict=verdict,
         s_end_over_B=float(s[-1]) / r3.B_FOOT,
         ds_end_mm=float(dsm[-1]), ds_tail_min_mm=ds_tail_min_mm,
@@ -887,8 +978,19 @@ def main(argv=None):
                                    f"a2_{leg_tag(h0, en)}.FAILED.txt"), "w") as f:
                 f.write(str(exc))
             continue
-        print(f"    q_u = {r['q_u']:.3f} kPa at s/B = {r['s_peak_over_B']:.5f}; "
-              f"{_why(r)}", flush=True)
+        if r["seized"]:
+            verdict = (f"*** INADMISSIBLE: terminated in SEIZURE mode "
+                       f"{r['mode']} -- q_max = {r['q_u']:.3f} kPa is where the "
+                       f"RUN stopped, not where the soil failed, and must not "
+                       f"be quoted as a capacity ***")
+        elif r["capacity"]:
+            verdict = f"CAPACITY: q_u = {r['q_u']:.3f} kPa"
+        else:
+            verdict = (f"not a capacity (no plateau and no passed peak) -- "
+                       f"q_max = {r['q_u']:.3f} kPa is a lower bound the leg "
+                       f"reached, not a collapse load")
+        print(f"    {verdict}", flush=True)
+        print(f"    at s/B = {r['s_peak_over_B']:.5f}; {_why(r)}", flush=True)
         print(f"    controls: resultant {r['resultant_err']:.2e}, patch "
               f"{r['patch_err']:.2e}, eta/M_c {r['eta_over_Mc']:.4f}, "
               f"OutsideBounding {r['n_outside_bounding']}, "

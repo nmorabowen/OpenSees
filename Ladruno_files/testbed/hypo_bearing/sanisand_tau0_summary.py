@@ -19,11 +19,15 @@ prints:
 WHAT THE BAND MAY AND MAY NOT BE COMPARED TO
 --------------------------------------------
 The R3 gate's +/- 3 % is a per-resolution TOLERANCE ON A KNOWN CENTRE, not a
-convergence criterion: R3's own three-mesh spread is 1.0849 -> 0.9514, i.e.
-**13.1 %** of their mean (14.0 % of the fine leg), and that sequence is
-nonetheless accepted as converged-from-above because it is monotone and every
-leg is a genuine plateau.  So the number this script prints as "R3 comparison"
-is context, not a gate.
+convergence criterion: R3's own three-mesh spread is 1.0842 -> 0.9513, i.e.
+**13.1 %** of their mean, and that sequence is nonetheless accepted as
+converged-from-above because it is monotone and every leg is a genuine plateau.
+So the number this script prints as "R3 comparison" is context, not a gate.
+
+Those three centres are READ FROM the R3 gate's source at import
+(`_r3_constants`), not copied, so this note cannot drift from the gate.  They
+are the gate's `_MEASURED` band centres -- NOT the numbers in its own docstring
+table (1.0849 / 0.9977 / 0.9514), which are the fork's own logged run of it.
 
 **The campaign's own tolerance is OQ2 and has not been supplied** (ADR 90 §7.5:
 TIMs must set the target band width relative to B, the ramp duration, the De,
@@ -41,6 +45,7 @@ capacity, whatever its q_max says.
 
 from __future__ import annotations
 
+import ast
 import csv
 import glob
 import json
@@ -143,11 +148,51 @@ def widths_from_csv(path, z_probes=Z_PROBES):
                              c["vol"], z_probes)
 
 
-R3_BAND_HALFWIDTH_PCT = 3.0
-R3_SEQUENCE = {1.0: 1.0849, 0.5: 0.9977, 0.25: 0.9514}   # measured, DruckerPrager
+def _r3_constants():
+    """Read `_MEASURED` and `_BAND_HALFWIDTH` out of the R3 gate's SOURCE.
+
+    Read, not imported, on purpose: `tests/test_r3_prandtl_collapse_gate.py`
+    does `from _testbed import ops`, so importing it would pull the engine into
+    this module -- and this module is deliberately engine-free, so an old
+    campaign's CSVs can be re-reduced on any box (and so the DRIVER can import
+    the width metric from here without a cycle).  `ast.literal_eval` on the
+    assignment gives the same single source of truth with none of that.
+
+    These are the band CENTRES the gate actually asserts against, which are the
+    TIMs/APE reference hex-bbar sequence.  They are NOT the same as the numbers
+    in that file's own docstring table (1.0849 / 0.9977 / 0.9514), which are the
+    fork's own logged run of the gate.  The two differ by 0.06 / 0.39 / 0.01 %,
+    and that difference is precisely the independent-driver spread the gate's
+    +/- 3 % band is sized to absorb -- so quoting the docstring numbers as "the
+    R3 sequence" cites a run, where quoting these cites the standard.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    gate = os.path.abspath(os.path.join(
+        here, "..", "..", "..", "tests", "test_r3_prandtl_collapse_gate.py"))
+    out = {}
+    with open(gate, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            name = getattr(node.targets[0], "id", None)
+            if name in ("_MEASURED", "_BAND_HALFWIDTH"):
+                out[name] = ast.literal_eval(node.value)
+    missing = {"_MEASURED", "_BAND_HALFWIDTH"} - set(out)
+    if missing:
+        raise RuntimeError(
+            f"could not read {sorted(missing)} from {gate} -- the R3 gate's "
+            "constants moved or were renamed; fix this reader rather than "
+            "re-hard-coding the numbers here")
+    return out["_MEASURED"], out["_BAND_HALFWIDTH"]
+
+
+R3_SEQUENCE, _R3_HALFWIDTH = _r3_constants()
+R3_BAND_HALFWIDTH_PCT = 100.0 * _R3_HALFWIDTH
 _ADMISSIBLE = ("TARGET", "PEAK", "BUDGET")
-# `KILLED` joins FLOOR/WALL as a non-result: the process died before the leg
-# terminated, so its q_max is where a machine stopped, not where the soil did.
+# `KILLED` joins FLOOR/WALL/TRUNCATED as a non-result: the process died before
+# the leg terminated, so its q_max is where a machine stopped, not where the
+# soil did.  Kept in step with the driver's `_SEIZURE_MODES`.
+_SEIZURE = ("FLOOR", "WALL", "TRUNCATED", "KILLED")
 
 
 def load(out_dir):
@@ -328,6 +373,21 @@ def main(argv=None):
               f"{r.get('max_step_gap_s', float('nan')):12.0f}")
     print("  `worst step s` = the longest wall time between two consecutive "
           "CONVERGED steps: the seizure, measured.")
+    # `00_canonical_testbed` sec.1b: a leg that ends on a hard stop is reported
+    # INADMISSIBLE, never as a result.  Say the word; do not leave it to be
+    # inferred from a `CAP = NO` column, which a merely-unfinished leg also has.
+    seized = [r for r in legs if r["mode"] in _SEIZURE]
+    if seized:
+        print("\n  *** INADMISSIBLE (terminated in a SEIZURE mode -- q_max is "
+              "where the RUN stopped, not where the soil failed): ***")
+        for r in seized:
+            print(f"      [{r['tag']}] mode={r['mode']}, q_max="
+                  f"{r['q_u']:.2f} kPa at s/B={r['s_end_over_B']:.4f} -- "
+                  f"must not be quoted as a capacity")
+    other = [r for r in legs if r["mode"] not in _SEIZURE and not r["capacity"]]
+    if other:
+        print("  Not a capacity, but NOT a seizure (simply had not peaked "
+              "yet): " + ", ".join(r["tag"] for r in other))
     print("  `q_u`/`s_end/B`/`steps`/`wall s` sources, per leg:")
     for r in legs:
         print(f"    [{r['tag']}] {r.get('_end_source', 'leg JSON')}")
