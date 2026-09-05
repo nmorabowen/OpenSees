@@ -992,7 +992,7 @@ features:
     pr: 767
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # COVERED as of ADR-86 PR-1 by test_planestrain_lane_carries_the_settings: an ndm=2 quad (FourNodeQuad, PlaneStrain) zero-free-DOF cell -- 8 of 8 DOFs constrained, so the Gauss-point strain IS the prescribed field. Asserts (a) the geotechnical sign convention via the DEVIATOR sign, not the stress sign -- a bare 'stress is compressive' assertion does NOT catch the flip, because the mutant still returns compression (-0.73 kPa); and (b) that -Presidual reaches the Gauss points on this lane (reldiff 3.18e-2), which is what a getCopy("PlaneStrain") branch silently building a vanilla ManzariDafaliasPlaneStrain cannot survive. PROVEN a real fingerprint by mutation: flipping -1.0 -> +1.0 in setTrialStrain, rebuilding, and re-running makes THIS TEST AND ONLY THIS TEST fail (deviator +0.1866 vs the required < 0). Before this test the same mutation left the entire battery green.
+    pytest: tests/test_ladruno_sanisand.py   # COVERED as of ADR-86 PR-1 by test_planestrain_lane_carries_the_settings: an ndm=2 quad (FourNodeQuad, PlaneStrain) zero-free-DOF cell -- 8 of 8 DOFs constrained, so the Gauss-point strain IS the prescribed field. Asserts (a) the geotechnical sign convention via the DEVIATOR sign, not the stress sign -- a bare 'stress is compressive' assertion does NOT catch the flip, because the mutant still returns compression (-0.73 kPa); and (b) that -Presidual reaches the Gauss points on this lane (reldiff 3.18e-2), which is what a getCopy("PlaneStrain") branch silently building a vanilla ManzariDafaliasPlaneStrain cannot survive. PROVEN a real fingerprint by mutation: flipping -1.0 -> +1.0 in setTrialStrain, rebuilding, and re-running makes THIS TEST AND ONLY THIS TEST fail (deviator +0.1866 vs the required < 0). Before this test the same mutation left the entire battery green. getCopy(void) -- the gap this row used to record as "may be unreachable" -- is COVERED as of ADR-90 WP-B by test_getcopy_void_carries_the_settings_planestrain (via FluidSolidPorousMaterial copy ctor): InitStrain/StagedStrain genuinely cannot reach this override in 2D (only InitStrain's "ThreeDimensional" string special-case forwards to a void getCopy, and StagedStrain has no such special case at all), but FluidSolidPorousMaterial's own getCopy(const char*) routes EVERY type through its copy constructor, which clones the wrapped soil with the dimension-free getCopy() unconditionally -- so `nDMaterial FluidSolidPorous $wrap 2 $soilTag ...` + `element quad ... PlaneStrain $wrap` calls this override once per Gauss point regardless of the type string the element passes.
     tcl: WAIVED(same registry/dispatch as ND_TAG_LadrunoSANISAND; classic-Tcl wiring covered by test_echo_and_defaults's subprocess Tcl smoke in the pytest file above)
     core_files:
       - SRC/classTags.h
@@ -1008,15 +1008,22 @@ features:
       ManzariDafaliasPlaneStrain. Numerically equals ELE_TAG_LadrunoCSTPair 33021 in
       the ELE registry -- different registry, deliberately not a collision. Same
       geotechnical sign-flip requirement as the 3D wrapper.
-      KNOWN GAP, recorded rather than claimed closed: getCopy(void) on THIS wrapper is
-      still uncovered. ADR-86 PR-3 covered the 3D twin by interposing an eps0=0
+      GAP CLOSED, ADR-90 WP-B: getCopy(void) on THIS wrapper is now COVERED (see the
+      pytest note above). ADR-86 PR-3 covered the 3D twin by interposing an eps0=0
       `nDMaterial InitStrain` wrapper, but that route does NOT generalise to this lane --
       InitStrainNDMaterial::getCopy(const char*) delegates to getCopy() only for
       "ThreeDimensional" (InitStrainNDMaterial.cpp:292-293); for "PlaneStrain" it takes
-      the native branch and calls theMaterial->getCopy(TYPE) (:310), the STRING form. No
-      other deck-reachable caller of the no-argument form was found on this lane, so the
-      function may be unreachable outside the NDMaterial interface it satisfies. Do not
-      assume symmetry with the 33020 row above.
+      the native branch and calls theMaterial->getCopy(TYPE) (:310), the STRING form.
+      StagedStrainNDMaterial (StagedStrainNDMaterial.cpp:293-309) is not an alternative
+      either -- it has NO special case at all and calls theMaterial->getCopy(TYPE)
+      unconditionally, even for "ThreeDimensional". The route that DOES work is
+      FluidSolidPorousMaterial: its getCopy(const char*) (:415-425) ignores the type
+      string entirely and always runs its own copy constructor (:152-162), which clones
+      the wrapped soil with the dimension-free getCopy(). See LEDGER_quirks.md's
+      InitStrain/StagedStrain entry and LEDGER_vanilla_files.md's ADR-90 row on
+      FluidSolidPorousMaterial.cpp:156 for the full writeup, including the caveat that no
+      Python-observable pins FSPM's copy ctor to the void overload specifically (a code
+      comment stands in for that gap instead of a test).
       Plan/ADR: Ladruno_implementation/86_ladruno_sanisand_adr.md.
 
   - feature: LadrunoConcrete3D

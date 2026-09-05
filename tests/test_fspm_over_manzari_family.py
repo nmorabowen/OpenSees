@@ -28,12 +28,11 @@ what a wrong-dimension copy would produce -- or the cavitation clamp bound.
 Wall time: three subprocesses, a few seconds each (zone_a, not slow).
 """
 import os
-import subprocess
-import sys
 
 import pytest
 
 from _testbed import ops
+from _testbed.subprocess_run import run_python_script
 
 pytestmark = [pytest.mark.zone_a, pytest.mark.t0m]
 
@@ -121,9 +120,7 @@ print('NSTRESS', len(s))
 
 
 def _run(script):
-    p = subprocess.run([sys.executable, '-c', script], cwd=_HERE,
-                       capture_output=True, text=True, timeout=300)
-    return p.returncode, p.stdout + p.stderr
+    return run_python_script(script, cwd=_HERE, timeout=300)
 
 
 def _identity(out):
