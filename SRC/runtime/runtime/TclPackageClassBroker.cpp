@@ -138,6 +138,7 @@ using namespace OpenSees::Hash::literals;
 #include "FiberSection3d.h"
 #include "FiberSectionAsym3d.h" //Xinlong Du
 #include "ElasticMembranePlateSection.h"
+#include "LadrunoShellModifierSection.h" // N. Mora-Bowen (Ladruno) — ADR 91
 #include "MembranePlateFiberSection.h"
 #include "Bidirectional.h"
 #include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu
@@ -1190,6 +1191,9 @@ TclPackageClassBroker::getNewSection(int classTag)
 
   case SEC_TAG_ElasticMembranePlateSection:
     return new ElasticMembranePlateSection();
+
+  case SEC_TAG_LadrunoShellModifier: // N. Mora-Bowen (Ladruno) — ADR 91
+    return new LadrunoShellModifierSection();
 
   case SEC_TAG_MembranePlateFiberSection:
     return new MembranePlateFiberSection();
