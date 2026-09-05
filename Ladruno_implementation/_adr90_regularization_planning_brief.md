@@ -200,6 +200,24 @@ Candidate resolutions the ADR must weigh (an *alternatives table* is mandatory �
 | (c) Strain-driven internal clock in the wrapper | Replace Δt with an accumulated strain measure so the "rate" is path-length based, integrator-independent. | This is a different constitutive model (Perzyna-in-arclength), not Duvaut–Lions; no literature anchor; no closed-form gate. | **Rejected** unless (a)/(b) both fail. Listed for completeness. |
 | (d) Do nothing to the lane; report the band | Run `DisplacementControl` as-is, report the three-mesh band without regularization (vault 10's disclosure stance). | Zero engine work; the residue stays as large as measured. | The **negative control** of the whole ADR, not an option. |
 
+> [!warning] CORRECTION 2026-09-05 — the lane ranking is INVERTED, and (d) is now the default
+> **(b) is PRIMARY, not the fallback.** An `sp` inside a load pattern driven by the
+> **1-argument** `LoadControl(dλ)` *is* displacement control with exactly uniform pseudo-time:
+> `SP_Constraint::applyConstraint` sets `valueC = loadFactor*valueR`
+> (`SRC/domain/constraints/SP_Constraint.cpp:331-337`), so `Δt = dλ` every step and `β` is
+> constant — while keeping limit-point capability, vault 60's D16 guards, and comparability with
+> the vault's existing runs. The **4-argument** `LoadControl(dλ, numIncr, min, max)` adapts `dλ`
+> and destroys the uniformity; it must not be used. **(a) is demoted to secondary**: removing
+> Rayleigh `β_K` removes the only damping on the high-frequency content the softening branch
+> injects, an undamped-ringing cost nobody has priced.
+> **And a new constraint on both:** under `DisplacementControl` and `ArcLength`, `applyLoadDomain`
+> is called *inside* `update()` (`DisplacementControl.cpp:346`, `ArcLength.cpp:302`), so `ops_Dt`
+> — and therefore `β` — changes **per Newton ITERATION**. The wrapper must latch `β`/`Δt` at
+> `newStep`, or refuse those integrators.
+> **(d) is now the recommended DEFAULT** pending the un-descope gate — see the §7 D2 correction.
+
+
+
 The ADR's headline claim therefore becomes: *"the regularized collapse load $q_u(\mathrm{De};h)$
 converges in $h$ at fixed, declared De, and its De-dependence is measured and disclosed"* — not
 "mesh-independent collapse load". This is consistent with D3 and with vault 10, and it is the
@@ -266,6 +284,22 @@ rate, the De they will run at, and the ultimate criterion (inherited OQ1, Prof. 
 | **P3 — TIMs integration** | Provenance block fields (τ, De, rate) in the campaign's output schema; one SFIM/APE radial probe with declared τ on the chosen lane; out-of-family verdict. | Joint sign-off; vault note recording the acceptance case as *verified*, not claimed | `reviews/handoff_adr90.md` → verdict |
 | **P4 — optional** | Explicit/transient tier (`CentralDifferenceLadruno`), `-implex` interplay, mesh-aware τ via the `ops_TheActiveElement->getCharacteristicLength()` latch (`LadrunoConcrete3D.cpp:347-350`). | only on a named consumer | — |
 
+> [!warning] CORRECTION 2026-09-05 — a phase **P0b** exists, and a **GATE U** precedes P1
+> **P0b (complete, `[[_adr90_p0b_results]]`, git `892c22770`)** measured the four things the
+> 3-lens adversarial pass showed P0 had not: (a) a **state-dependent elastic operator** — the
+> hypothesis P0's theorem needed and never stated; (b) the **dissipation** of the wrapper's own
+> increment; (c) whether the converged width is a **τ** property or an **imperfection** property;
+> (d) the **blended acoustic tensor** on a non-associated softening Drucker–Prager point model —
+> the only measurement that speaks to well-posedness for the consumer's material class.
+> Verdicts: **V1** inexact on every path over a pressure-dependent inner (9.2e-4…7.3e-3 at the
+> working De, 0.28…0.94 at De = 0.3; exact only for constant `C_e`); **V2** dissipation **violated**
+> on unloading (−7.9e-3 of cumulative at De = 0.1); **V3** the width is **imperfection-set** (×4.3
+> with amplitude, ×3.5 with zone length at fixed De); **V4** the blend **is** elliptic for
+> β < 0.9857, i.e. De > 1.45e-2/nsteps — a criterion on Δt/τ, not on De.
+> **GATE U (new, blocks P1):** measure the τ = 0 three-mesh `q_u` band on the SANISAND / B-bar
+> deck. If it is inside the campaign's tolerance, this is width *research*, not a P1 deliverable.
+> The phase table above therefore reads P0 → **P0b** → **GATE U** → P1 → P2 → P3.
+
 P0 and P1 are fork-only. P2's numbers and P3 are joint. Effort order-of-magnitude: P0 days,
 P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 
@@ -297,6 +331,20 @@ P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 > (ADR 90 OQ9) and risk (ADR 90 R8). The De window is deck-dependent and must be **measured** on
 > the SANISAND deck, not inherited from A0's bar. See
 > `[[90_ladruno_viscoplastic_regularization_adr]]` §9 D2.
+
+> [!warning] SUPERSEDING CORRECTION 2026-09-05 — **D2 is REOPENED**
+> The CP1 decision above is withdrawn: "decided at CP1 on evidence since shown incomplete —
+> reopened pending P0b." It rested on the A0 theorem, which **P0b showed needs a CONSTANT elastic
+> operator and a HOLONOMIC inner**. SANISAND has neither (`G(p)`, `K(p)`; `mAlpha` rate law,
+> `mFabric`, reversal-defined `mAlpha_in`), so the wrapper is a declared approximation on **every**
+> path over the consumer's material, not only on non-proportional ones. Add that the wrapper's
+> incremental dissipation goes **negative on unloading** — and the band boundary *is* an elastic
+> unloading zone — and that the converged width is **imperfection-set**, and the P0b
+> recommendation is: **disclosure-only (lane d) by default; WP-F (true DL inside
+> `LadrunoSANISAND`) as the conditional upgrade once GATE U fires; the generic two-track wrapper
+> not recommended at all.** The class name also changes — the model is an **overstress model on a
+> rate-independent backbone** (Maxwell/Krempl VBO), not Duvaut–Lions, so `LadrunoOverstress`.
+> See `[[_adr90_p0b_results]]` §6 and `[[90_ladruno_viscoplastic_regularization_adr]]` §4.0, §4.5.
 
 ---
 

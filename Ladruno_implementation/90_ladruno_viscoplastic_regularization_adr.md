@@ -1,18 +1,20 @@
 ---
-title: "ADR 90 — Duvaut–Lions viscoplastic regularization wrapper (LadrunoDuvautLions)"
+title: "ADR 90 — Rate (overstress) regularization for non-associated softening: scope, evidence, and the reopened D2"
 project: Ladruno
 type: ADR
-status: "P0 complete (oracle + A0); P1 wrapper not started"
+status: "P0 complete; P0b complete; D2 REOPENED; WP-C NOT opened"
 priority: high
 owner: nmora
 related:
   - "[[_adr90_regularization_planning_brief]]"
   - "[[_adr90_orchestration_plan]]"
   - "[[_adr90_a0_results]]"
+  - "[[_adr90_p0b_results]]"
   - "[[86_ladruno_sanisand_adr]]"
   - "[[31_ladruno_concrete3d_adr]]"
   - "[[59_ladruno_gradient_concrete_adr]]"
   - "[[32_ladruno_dispbeamcolumn_regularization_adr]]"
+  - "[[73_ladruno_porous_overlay_adr]]"
   - "[[87_ladruno_depth_with_width_adr]]"
   - "[[testbed/00_canonical_testbed]]"
 tags:
@@ -21,63 +23,52 @@ tags:
   - wrapper
   - regularization
   - viscoplastic
-  - duvaut-lions
+  - overstress
   - localization
   - sanisand
   - tims
 aliases:
   - ADR-90
-  - LadrunoDuvautLions
+  - LadrunoOverstress
   - duvaut-lions wrapper
-updated: 2026-09-04
+updated: 2026-09-05
 ---
 
-# ADR 90 — Duvaut–Lions viscoplastic regularization wrapper
+# ADR 90 — Rate (overstress) regularization for non-associated softening
 
-> [!abstract] Status — P0 complete, P1 not started
-> **Number 90 on purpose.** 88 is cited throughout `SRC/` and the ledgers by PR #778 (H5DRM
-> higher-order elements); 89 is proposed for Track T by
-> `86_geomechanics_libraries_and_mpm_scoping_report` §6.4. ND class tag **33022 is RESERVED here
-> and not yet in `SRC/classTags.h`** — the ND registry's highest is 33021
-> (`SRC/classTags.h:594`); the 33022 in the EigenSOE (`:57`) and PATTERN (`:646`) registries are
-> per-registry and deliberately not collisions.
+> [!warning] Status — **P0 complete; P0b complete; D2 REOPENED; WP-C NOT opened**
+> **D2 was decided at CP1 on 2026-09-04 on evidence since shown incomplete, and is REOPENED.**
+> A three-lens adversarial pass (strategy / numerics / constitutive) found that P0's theorem
+> carries an unwritten hypothesis and that three exposures had not been measured. Phase **P0b**
+> measured them (`[[_adr90_p0b_results]]`, commits `892c22770` / `1052ecd36`). The four verdicts
+> are in §4.5; they do not support the generic wrapper, and the P0b recommendation is
+> **disclosure-only by default, WP-F conditionally, generic wrapper not at all** (§9 D2).
 >
-> **P0 is done and is what this ADR is written against.** The numpy oracle and the A0 bar
-> (commits `cc7c7f7a5`, `8863a468c`, PR #783) answered the one question that had to be answered
-> before any C++: *is a generic `NDMaterial` wrapper — which can only see `inner.getStress()`,
-> hence is two-track — an adequate stand-in for true Duvaut–Lions?* The answer turned out to be a
-> **theorem** rather than a tolerance (§4.3), and the owner decided **D2** on it at checkpoint CP1
-> on 2026-09-04: build the generic two-track wrapper.
+> **No C++ opens on this ADR.** WP-C is not opened; ND class tag **33022 remains RESERVED and
+> absent from `SRC/classTags.h`**.
 >
-> **Nothing in `SRC/` has changed.** No build exists for this ADR. Every number below is numpy,
-> regenerable by `python3.12 tests/_testbed/run_a0_sweep.py`.
+> **Number 90 on purpose.** 88 is cited throughout `SRC/` by PR #778; 89 is proposed for Track T.
+> 33022 is free in the **ND** registry (highest is 33021, `SRC/classTags.h:594`) but is **live in
+> code** as `PATTERN_TAG_LadrunoPorousOverlay` — used at `SRC/domain/domain/Domain.cpp:2274` — and
+> as `EigenSOE_TAGS_FeastEigenSOE` (`:57`). Per-registry namespaces; deliberately not collisions.
 
 ---
 
-## 1. Driver and problem — stated as a measurement, not an intuition
+## 1. Driver and problem — and the gate that decides whether there is a problem at all
 
-The TIMs / APE macroelement calibration campaign fits ultimate-surface loci from radial pushovers
-on `LadrunoSANISAND`. Those loci live on the **post-peak / collapse** branch of a **non-associated
-softening** material, which is where the rate-independent boundary-value problem loses ellipticity
-and the answer stops depending on the material and starts depending on the mesh.
-
-The fork has no gate for this. Every objectivity gate it ships regularizes **dissipated energy**
-through a characteristic length `lch` — `test_ladrunoRCConcrete_meshobj.py`,
-`test_ladrunoSolidShell_softening.py` G5, `test_lemaitre_notched_bar.py`,
-`test_ladrunoBrick_asdconcrete*.py` — and one of them says so in its own docstring:
+The TIMs / APE macroelement campaign fits ultimate-surface loci from radial pushovers on
+`LadrunoSANISAND`. Those loci live on the post-peak branch of a **non-associated softening**
+material, where the rate-independent BVP loses ellipticity and the answer starts depending on the
+mesh. The fork has no gate for this: every objectivity gate it ships regularizes **dissipated
+energy** through a characteristic length `lch`, and one of them says so in its own docstring —
 *"lch regularizes the dissipated ENERGY, not the localization WIDTH"*
 (`tests/test_lemaitre_notched_bar.py:21-23`). Greps for `rudnicki|bifurcat|shear band|band width`
-in `tests/` return nothing (brief F6).
+in `tests/` return nothing.
 
-**The collapse load of a non-associated softening strip depends on the thickness of the mechanism,
-not only on the energy it dissipates.** Energy objectivity is therefore not sufficient for the
-named consumer.
+### 1.1 The size of the problem in 1-D — and its two caveats
 
-### 1.1 The size of the problem, measured
-
-A0 (`Ladruno_implementation/_adr90_a0_results.md` §5.1) — 1-D softening bar, `L = 100 mm`,
-`E = 20000 MPa`, `σ_Y = 20 MPa`, `H = −E/400`, 10 % imperfection, `N ∈ {20, 40, 80, 160}`,
-rate-independent (`τ = 0`):
+A0 (`[[_adr90_a0_results]]` §5.1), 1-D softening bar, `τ = 0`, **one-element imperfection**,
+`nsteps = 2000` at every mesh:
 
 | N | h [mm] | w1 | w2 | w3 | w2/h | W₅₀ | W₅₀ ratio |
 |---|---|---|---|---|---|---|---|
@@ -86,449 +77,541 @@ rate-independent (`τ = 0`):
 | 80 | 1.250 | 1.250 | 1.250 | 1.250 | 1.00 | 3.038 | 2.000 |
 | 160 | 0.625 | 0.625 | 0.625 | 0.625 | 1.00 | 1.519 | 2.000 |
 
-The band width **is** the element size, by all three definitions, exactly; the dissipated work
-halves with `h`. And the ill-posedness has a second, free signature: the number of uniform load
-steps the rate-independent problem needs in order to converge at all grows 4000 → 16000 → 32000 →
-64000 across the same four meshes, while **every** regularized run completes at 250 steps on
-**every** mesh (§5.8 of the results note).
+> **Two labels the earlier draft of this section did not carry.**
+> (i) **The `W₅₀` column and the step-count column belong to different runs.** `W₅₀` above is the
+> *one-element* convention at a fixed 2000 steps; the 4000 → 64000 step counts quoted below are the
+> *graded fixed-length* convention. They are different decks and must not be read as one table.
+> (ii) **Steps-to-converge is solver-dependent.** The graded-imperfection `τ = 0` problem needed
+> 4000 / 16000 / 32000 / 64000 uniform steps at N = 20/40/80/160 while every regularized run
+> finished at 250 on every mesh. That is a real and useful signature, but it is a property of *this*
+> Newton implementation with *this* predictor and line search — a different algorithm would give
+> different numbers. It is reported as a **symptom of ill-posedness**, not as a measurement of it.
+
+### 1.2 The un-descope gate — is the wrapper needed at all?
+
+**The need has been asserted, not measured.** ADR-59 died partly on that. Before P1 may open:
+
+> **GATE U (un-descope).** Measure the **τ = 0 three-mesh `q_u` band on the SANISAND /
+> `LadrunoBrick -formulation bbar` deck** — the deck the campaign actually uses (S3, D7). **If that
+> band lies inside the campaign's own tolerance, this ADR is width *research*, not a P1
+> deliverable**, and lane (d) (§3.1) is the answer.
+>
+> *Measured value: **[PENDING — a sibling work package is running this deck; insert the number and
+> the date here before P1 is discussed]**.* The A0 bar's ×2-per-refinement energy collapse is a
+> 1-D caricature and does not discharge this gate.
 
 ## 2. Named consumer, and what is settled
 
-**Named consumer (the ADR-59 un-descope gate (a)):** vault 65 **P1** — the ultimate-surface loci
-fitted from radial pushovers on SANISAND, whose post-peak values are mesh-sensitive by
-ill-posedness. This ADR exists to serve that consumer and no other; if P1 is withdrawn, this ADR
-is withdrawn with it.
+**Named consumer:** vault 65 **P1** — the ultimate-surface loci fitted from radial pushovers on
+SANISAND. This ADR serves that consumer and no other; if P1 is withdrawn, this ADR is withdrawn.
 
-Settled on both sides; **not re-opened here** (brief §1):
-
-| # | Settled | Source |
+| # | Settled (brief §1 — not re-opened) | Source |
 |---|---|---|
-| S1 | The method is a Duvaut–Lions viscoplastic **wrapper at the `NDMaterial` level**, not a modified `ManzariDafalias`. | vault 64 §6; vault 65 **D5** |
-| S2 | **τ is a declared numerical parameter, not a soil property.** The deliverable is *"mesh-independent given a declared τ"*, characterised on a Deborah number. Uniqueness of the non-associated collapse load is **not** restored, and that is disclosed. | vault 10 line 75; vault 65 D3 + D5 |
-| S3 | Element frozen: `LadrunoBrick -formulation bbar`; **tetrahedra prohibited** on failure legs. | vault 65 D4; vault 71; fork gate `tests/test_r3_prandtl_collapse_gate.py` (#722) |
-| S4 | **Provenance is output, not documentation:** every regularized number ships with engine hash, element/formulation, τ, rate, three-mesh band, ultimate criterion. | vault 65 D3; `ops.ladrunoBuild()` (#718) |
-| S5 | The characterisation protocol: vary the relaxation parameter and the ramp duration **independently**; matched pairs must collapse onto the ratio. | vault 14 |
-| S6 | Primary calibration instrument = the displacement-controlled radial monotonic curve; probes radial, swipe as cross-check. | vault 65 D2, D7 |
+| S1 | Method = a rate-regularizing **wrapper at the `NDMaterial` level**, not a modified `ManzariDafalias`. | vault 64 §6; vault 65 D5 |
+| S2 | **τ is a declared numerical parameter, not a soil property**; the deliverable is *"mesh-independent given a declared τ"*, characterised on a Deborah number; uniqueness is **not** restored. | vault 10 line 75; vault 65 D3 + D5 |
+| S3 | Element frozen: `LadrunoBrick -formulation bbar`; tetrahedra prohibited on failure legs. | vault 65 D4; vault 71; `tests/test_r3_prandtl_collapse_gate.py` (#722) |
+| S4 | **Provenance is output, not documentation.** | vault 65 D3; `ops.ladrunoBuild()` (#718) |
+| S5 | Vary the relaxation parameter and the ramp duration **independently**; matched pairs collapse onto the ratio. | vault 14 |
+| S6 | Primary instrument = the displacement-controlled radial monotonic curve; radial probes, **sequential swipe** as cross-check. | vault 65 D2, D7 |
 | S7 | The wrapper is the smaller half; the validation campaign is the larger half. | vault 64 §6 |
-| S8 | The papers are in hand; no acquisition phase. | skill `tim-macroelement/references/library_map.md` |
+| S8 | Papers in hand; no acquisition phase. | skill `tim-macroelement/references/library_map.md` |
+| S9 | The staggered u–p overlay's **amended clause 2** governs how a rate-dependent constitutive law composes with the fixed-stress split — any transient lane here inherits it. | vault 73, amended clause 2; [[73_ladruno_porous_overlay_adr]] |
+
+> **S6 is in tension with this ADR's own model.** A *sequential swipe* is by construction a
+> reversal path, and §4.3/§4.5 show the wrapper's declared domain excludes reversals. The swipe
+> cross-check therefore lands exactly where the formulation is weakest. Recorded here rather than
+> buried in a risk row.
 
 ## 3. The quasi-static contradiction, and the lane decision
 
-Vault 65 makes the **displacement-controlled** radial probe the primary instrument (D2, D7) and
-Duvaut–Lions the regularizer (D5). On this engine those are in tension three ways:
+Vault 65 makes the displacement-controlled radial probe the primary instrument (D2, D7) and rate
+regularization the mechanism (D5). Four measured tensions:
 
-1. **The regularizing effect decays toward the rate-independent limit** and a slow static push
-   *is* that limit (de Borst et al. 1993; brief F4). Their internal length `ℓ = 2mc_e/E` is a
-   **wave-speed** quantity — under quasi-statics there is no intrinsic length at all. A0 §5.2
-   makes this quantitative: the converged band width is a function of `De = τ/T` alone, and it
-   moves a **factor 12 for a factor 3 in De** (3.53 mm at De = 3e‑4 → 42.0 mm at De = 1e‑3).
-2. **Under `DisplacementControl` the pseudo-time increment is erratic.** `ops_Dt` is
-   `Domain::dT` = current − committed pseudo-time (`Domain.cpp:2080-2082`, `:2125`, `:2392`);
-   under `LoadControl(dλ)` it is uniform and positive, under `DisplacementControl` the λ-increment
-   swings by ~1e5 and goes negative after `loadConst` (`LEDGER_quirks.md:1440-1443`, `:1612`).
-   `β = Δt/(τ+Δt)` is then not even well defined step to step, so **De is set by the integrator,
-   not by the deck**.
-3. A0 §5.5 shows the transient is Δt-dependent even though PV3's steady overstress is not: `w2`
-   moves 2.06 % over a 32× step refinement at fixed De, converging at first order.
+1. **There is no intrinsic length in quasi-statics** (de Borst et al. 1993). A0 quantifies it: the
+   converged band width moves a **factor 12 for a factor 3 in De**. P0b-(c) adds that it also moves
+   **×4.3 with the imperfection amplitude and ×3.5 with the zone length at fixed De** — so the
+   width is not a τ property at all (§4.5 V3).
+2. **`ops_Dt` is not uniform under the campaign's own integrator.** It is `Domain::dT` = current −
+   committed pseudo-time (`Domain.cpp:2080-2082`, `:2125`, `:2392`); under `DisplacementControl`
+   the λ-increment swings by ~1e5 and goes negative after `loadConst`.
+3. **β changes per Newton ITERATION under `DisplacementControl` and `ArcLength`.**
+   `DisplacementControl::update()` (`SRC/analysis/integrator/DisplacementControl.cpp:298`) calls
+   `applyLoadDomain(currentLambda)` at **`:346`**, and `ArcLength::update()` (`:226`) calls it at
+   **`:302`** — i.e. the pseudo-time (and therefore `ops_Dt`, and therefore
+   `β = Δt/(τ+Δt)`) is re-set *inside* the iteration, not once per step. A residual that depends on
+   the iteration number is not a function of `u`, and Newton's convergence argument is void.
+4. **The transient is Δt-dependent even at fixed De** (A0 §5.5: `w2` moves 2.06 % over a 32× step
+   refinement), and **ellipticity is a β criterion, not a De criterion** (§4.5 V4).
 
-### 3.1 Alternatives table (mandatory, ADR-59 kill-list item)
+### 3.1 Alternatives table
 
 | Option | What it means | Cost | Verdict |
 |---|---|---|---|
-| **(a) Transient lane, τ replaces β_K** | Run the radial probes as slow damped transients — the reference model's *native* lane — with Rayleigh **β_K = 0** and the wrapper's τ as the one declared relaxation time. Δt is physical, `De = τ/T` is a deck quantity, and vault 14's machinery applies unchanged. Vault 14's β_K artifact was *already* a Kelvin–Voigt relaxation of 23 ms; this replaces an accidental regularizer with a declared one. | Wall clock (vault 14: ~17 min/run on the twin); the coupled lane is still blocked by the contact `ndf` guard. | **RECOMMENDED PRIMARY** |
-| (b) Static lane under uniform `LoadControl` pseudo-time | Keep statics but drive the push with uniform pseudo-time so `Δt = 1/nsteps` exactly and `De = τ` at `T = 1`. Displacement targets via a displacement-controlled *load* series, not the `DisplacementControl` integrator. | Loses arc-length path-following past a limit point; vault 60 D16 stepping guards need re-verification. | **ACCEPTABLE FALLBACK** — must be gated identical to (a) at matched De on the P2 deck |
-| (c) Strain-driven internal clock | Replace Δt with an accumulated strain measure so the "rate" is path-length based and integrator-independent. | A different constitutive model (Perzyna-in-arclength), no literature anchor, no closed-form gate. | **REJECTED** unless (a) and (b) both fail |
-| (d) Do nothing to the lane; report the three-mesh band | Run `DisplacementControl` as-is and disclose the spread (vault 10's stance). | Zero engine work; the residue stays as large as §1.1 measures. | **This is the NEGATIVE CONTROL of the ADR, not an option** |
+| (a) Transient lane, τ replaces β_K | Slow damped transients with Rayleigh **β_K = 0** and τ as the one declared relaxation time. Δt physical, De a deck quantity. | Wall clock (vault 14: ~17 min/run). **And an unpriced one:** removing β_K removes the only damping on the high-frequency content the softening branch injects — vault 14's β_K was doing stabilization work that τ does not replace, so undamped ringing at β_K = 0 is a cost nobody has costed. | **SECONDARY** (demoted 2026-09-05) |
+| **(b) Uniform-pseudo-time static lane** | Prescribe the pushover displacement as an **`sp` inside a load pattern** and drive it with the **1-argument `LoadControl(dλ)`**. `SP_Constraint::applyConstraint` sets `valueC = loadFactor * valueR` when the constraint is not constant (`SRC/domain/constraints/SP_Constraint.cpp:331-337`), so a patterned `sp` under a uniform λ-increment **is displacement control with exactly uniform pseudo-time**: `Δt = dλ` every step, `β` constant, `De` a deck quantity. It keeps limit-point capability, keeps vault 60's D16 stepping guards, and keeps comparability with the vault's existing runs. **The 4-argument `LoadControl(dλ, numIncr, min, max)` adapts `dλ` and destroys the uniformity — it must not be used.** | Re-verify D16's guards; the D16 adaptive subdivision still varies Δt (see m11 below). | **PRIMARY** (promoted 2026-09-05) |
+| (c) Strain-driven internal clock | Replace Δt by an accumulated strain measure. | A different constitutive model (Perzyna-in-arclength); no literature anchor, no closed-form gate. | **REJECTED** |
+| (d) Do nothing to the lane; report the three-mesh band | Run as-is and disclose the spread (vault 10's stance). | Zero engine work. | **The NEGATIVE CONTROL — and, after P0b, the recommended default (§9 D2).** |
+
+**Consequence for the wrapper (numerics B3):** the wrapper must **latch β and Δt at `newStep()` /
+the first trial evaluation of a step and hold them for the whole iteration**, rewinding on
+`revertToLastCommit`; or it must **hard-refuse** `DisplacementControl` and `ArcLength`. Only the
+1-argument `LoadControl` is uniform without a latch.
 
 ### 3.2 The headline claim, worded to survive review
 
-> *The regularized quantity `q(De; h)` converges in `h` at fixed, declared De, and its
-> De-dependence is measured and disclosed.*
+> *The regularized quantity `q(De, Δt; h)` converges in `h` at a **declared (De, Δt, imperfection
+> field)**, and its dependence on each of those three is measured and disclosed.*
 
-Not "mesh-independent collapse load". A0 §5.2 shows why the weaker wording is the only honest one:
-at De = 1e‑4 the load–displacement **curve** converges (`curveL2` 0.217 → 0.040) while the
-**width** does not (ratios still tracking 0.5–0.86). *Width convergence and curve convergence are
-different gates and must be reported separately.*
+Not "mesh-independent collapse load"; not even "converges at fixed De". A0 §5.2 shows curve
+convergence and width convergence are different gates (at De = 1e-4 the curve converges and the
+width does not), and P0b-(c) shows the converged width is a function of the imperfection field as
+well as of De.
 
-### 3.3 Reconciliation with the fork's own shipped alternatives (ADR-59 kill-list item)
+### 3.3 Reconciliation with the fork's shipped alternatives, and the honest-framing test on τ
 
 | Shipped alternative | What it regularizes | Why it does not serve this consumer |
 |---|---|---|
-| **Crack-band `lch`** (`LadrunoConcrete3D`, `LadrunoRCConcrete`, `ASDConcrete3D`, Lemaitre) | The **dissipated energy** per unit area of band, by scaling the softening branch with the element's characteristic length. | It leaves the band exactly one element wide. Its own gate says so (`tests/test_lemaitre_notched_bar.py:21-23`), and A0 §1.1 is that statement in numbers. A collapse load that depends on mechanism *thickness* is not fixed by fixing the energy. |
-| **`LadrunoConcrete3D -eta`** (the fork's *shipped* Duvaut–Lions, `SRC/material/nD/LadrunoConcrete3DKernel.h:1492-1503`) | The same blend as this ADR, but applied **inside** the CDPM2 kernel on the *effective* stress and on `κ_p`, before damage is chained. | It is twelve lines that need the committed internal effective stress and `κ_p` — quantities no generic `NDMaterial` seam exposes. It cannot be lifted; it can only be re-written (brief F1). It is also **Tier-1 only** (`!mp.implex`) and inert in the BeamFiber view. And it is a *damage* model: ADR-31 §4.4 refused the nominal-stress blend for exactly the reason this ADR inherits as **D1** — relaxing a nominal stress relaxes damage as well as plasticity. |
-| **ADR-32 embedded discontinuity** (`LadrunoDispBeamColumn*`) | Localization in a **frame element**, by a kinematic enhancement (an embedded softening hinge) with per-IP `lch`. | It is a 1-D element-kinematics fix. There is no 3-D continuum version, and building one is ADR-59's descoped territory. |
-| **ADR-59 gradient/non-local concrete** | Localization width, correctly, by a true internal length. | **Descoped.** Its kill list (unverified seam claim, non-byte-identical off switch, wrong regularized variable, "free" infrastructure reuse, no named consumer, no reconciliation) is the standard this ADR is written against; §12 lists the artifacts that discharge each item. |
+| **Crack-band `lch`** | Dissipated **energy** per unit band area. | Leaves the band one element wide; its own gate says so (`tests/test_lemaitre_notched_bar.py:21-23`) and §1.1 is that statement in numbers. |
+| **`LadrunoConcrete3D -eta`** (the fork's shipped rate regularization, `SRC/material/nD/LadrunoConcrete3DKernel.h:1492-1503`) | The same blend, but **inside** the CDPM2 kernel on the effective stress and `κ_p`. | Needs the committed internal effective stress and `κ_p` — nothing a generic seam exposes. Tier-1 only (`!mp.implex`). And it is a *damage* model: ADR-31 §4.4 refused a nominal-stress blend because it relaxes damage as well as plasticity (inherited here as **D1**). |
+| **ADR-32 embedded discontinuity** | Localization in a **frame element**, by a kinematic enhancement. | 1-D element kinematics; no 3-D continuum version exists. |
+| **ADR-59 gradient / non-local** | Width, correctly, by a true internal length. | **Descoped.** Its kill list is the standard this ADR is written against. |
 
-**Conclusion:** nothing shipped in the fork regularizes localization *width* for a plasticity-type
-3-D continuum material. This ADR is not "mostly re-wiring" of anything.
+**Conclusion:** nothing shipped regularizes localization *width* for a 3-D plasticity-type
+continuum material. This ADR is not "mostly re-wiring".
+
+> **The honest-framing test, applied to τ itself (ADR-59's own instrument, turned inward).**
+> ADR-59 was descoped partly because its internal length `ℓ` was a free parameter that would be
+> tuned to the answer. **τ is in exactly that position, and worse:** it is unbounded above, it moves
+> the band width ×12 for ×3, and §7.5 asks TIMs to *supply* the De they will run at. A collapse load
+> obtained that way is **calibrated, not predicted**. Therefore:
+> - **The guide must forbid tuning τ (or De) against a target `q_u` or a target band width.** τ is
+>   declared *a priori* from the loading rate and the intended Deborah number, and then reported.
+> - **The honest deliverable is `q_u(De)` as a curve with a declared floor** (§7.4's De rule), not
+>   a single regularized number.
+> - Failing that, this ADR repeats ADR-59's failure with a different Greek letter.
 
 ## 4. Formulation
 
-### 4.1 The two-track (TT) update
+### 4.0 What this model actually is — and what it must therefore be called
 
-Per material point, per step, with `Δε` the total strain increment and `C_e` the inner material's
-**initial** tangent read *before* `setTrialStrain` (decision **D3**):
+The update in §4.1 relaxes the stress toward `σ̄(ε)`, a **function of the strain history evaluated
+by a separate, rate-independent material**. That is an **overstress model on a rate-independent
+backbone** — the Maxwell / Krempl viscoplasticity-based-on-overstress (VBO) family,
 
 ```
-    inner.setTrialStrain(eps_{n+1})                       # the inner runs INVISCIDLY on the
-    sigma_bar = inner.getStress()                         # total strain path — it never sees tau
-    C_bar     = inner.getTangent()
+    sigma_dot = C_e : eps_dot - (sigma - sigma_bar(eps)) / tau
+```
 
-    sigma_tr  = sigma_vp,n + C_e : delta_eps               # viscoplastic elastic predictor
-    beta      = dt / (tau + dt)
+— and it is **not** Duvaut–Lions. In Duvaut–Lions the relaxation target is the **projection of the
+current state** `(σ, q)` onto the elastic domain, which is why the model retains an elastic domain
+and a normal-cone structure. The two-track wrapper's target is a strain-history function, so:
+
+- it has **no elastic domain after first yield** — every step relaxes, including "elastic" ones;
+- its `σ − σ̄` is **not** a normal-cone direction, which is exactly why the dissipation gate fails
+  (§4.5 V2);
+- the two coincide **only** under the hypotheses in §4.3, all of which SANISAND violates.
+
+**Therefore the class must not be called `LadrunoDuvautLions`.** If anything is built, it is
+`LadrunoOverstress` (D10). Reserving the Duvaut–Lions name for an implementation that actually
+performs the projection keeps WP-F's name free and stops the ADR's own title from making a
+correctness claim.
+
+### 4.1 The two-track update, with the off-switch as an early-out
+
+```
+    if (tau <= 0.0 || dt <= 0.0) {                 # the fork convention -- an EARLY-OUT, not beta=1
+        inner->setTrialStrain(eps_{n+1});          # forward, then COPY the inner's own answer
+        sigma_vp = copy(inner->getStress());       # byte-identical by CONSTRUCTION, not by algebra
+        D_vp     = copy(inner->getTangent());
+        return;
+    }
+    C_e       = <the elastic operator, see D3>     # deep-copied at the WRAPPER's commitState
+    sigma_bar = copy(inner->getStress());          # inner runs INVISCIDLY on the total strain path
+    C_bar     = copy(inner->getTangent());
+    sigma_tr  = sigma_vp,n + C_e : delta_eps
+    beta      = dt / (tau + dt)                    # LATCHED at newStep -- see 3.(3)
     sigma_vp  = (1 - beta) * sigma_tr + beta * sigma_bar
     D_vp      = (1 - beta) * C_e      + beta * C_bar
 ```
 
-`β ∈ [0,1]`. `β → 1` (τ → 0) is the inviscid return; `β → 0` (τ → ∞ at finite Δt) is the frozen
-elastic trial. The tangent blend is the *exact* algorithmic derivative of the stress blend, not an
-approximation: `∂σ_vp/∂ε = (1−β)C_e + β ∂σ_bar/∂ε`, verified against a central finite difference
-to `3.31e-10` on both the 1-D and the 6×6 J2 model (oracle PV5).
+**The early-out is required, not stylistic** (numerics B2). The shipped `-eta` obtains its byte
+identity by *skipping the block entirely* — `if (!mp.implex && mp.eta > 0.0 && dt > 0.0) { … }`,
+`SRC/material/nD/LadrunoConcrete3DKernel.h:1492`. The earlier draft of this ADR wrote the blend
+unconditionally and relied on `(1−1.0)·σ_tr + 1.0·σ̄` being exact. It is exact for finite values —
+but **`0.0 * NaN = NaN` and `0.0 * Inf = NaN`**, so an inner that returns a non-finite trial (a
+diverging Newton iterate, an unconverged substep) would have that poison multiplied by zero and
+*survive* as NaN in the wrapper where the inner alone would have been recoverable. The gate is
+therefore restated (C1/D9) as **bit-identical stress, tangent AND committed-state trajectory over a
+multi-step path**, with an explicit NaN-propagation case, not as an "instruction path" claim that
+no test can express.
 
-### 4.2 The `τ == 0 or Δt <= 0 ⇒ β = 1` fork convention
+### 4.2 `τ ≤ 0` or `Δt ≤ 0` ⇒ inviscid — and why "inert" was the wrong word
 
-Mathematically `Δt → 0` is the *elastic* limit (`β → 0`, frozen trial). Operationally a missing or
-zero pseudo-time increment must **never** silently turn a material elastic. The fork therefore
-gates to `β = 1`, i.e. **inviscid**, whenever `τ ≤ 0` or `Δt ≤ 0` — the same convention the shipped
-`-eta` already uses (`LEDGER_quirks.md:1612`, `SRC/material/nD/LadrunoConcrete3DKernel.h:1486-1488`).
-The elastic limit is reached only through a large τ at finite Δt, which is the correct knob.
+The fork gates to the **inviscid** branch, never to elastic, whenever `τ ≤ 0` or `Δt ≤ 0`
+(`LEDGER_quirks.md:1612`; `LadrunoConcrete3DKernel.h:1486-1488`).
 
-Consequence, inherited and disclosed: like `-implex`, the wrapper is **inert without a positive
-`ops_Dt`**. That is precisely why §3's lane decision exists.
+**This is not "inert" (constitutive 9).** Taking the inviscid branch for one committed step **dumps
+the entire accumulated overstress in that step**: `σ_vp` jumps from `σ̄ + Δσ_over` to `σ̄`, a finite
+stress drop with no strain increment. Three routes hit it in normal use:
 
-### 4.3 The A0 theorem — TT **is** true Duvaut–Lions on proportional monotonic paths
+- `loadConst` makes the pseudo-time increment negative;
+- a **held-load** step (`analyze` with no load increment) has `Δt` positive but no strain rate, so
+  the model relaxes fully toward the inviscid backbone with time constant τ — **staged geostatic
+  steps do exactly this**;
+- **`Domain::revertToLastCommit()` sets `dT = 0.0` and re-applies the load**
+  (`SRC/domain/domain/Domain.cpp:2334-2339`), so **the first evaluation of every retried step after
+  a step cutback runs with `β = 1`.**
 
-True Duvaut–Lions (Simo & Hughes §2.7; Simo, Kennedy & Govindjee 1988) projects the
-*viscoplastic* trial state `(σ_vp,n + C_e Δε, q_vp,n)` onto the yield surface and relaxes **both**
-the stress and the internal variables toward that projection:
+The wrapper must therefore **count the steps that committed with `τ > 0` but `β = 1`, and report
+that count in the provenance block. A non-zero count fails acceptance** — it means the run silently
+mixed regularized and unregularized steps.
 
-```
-    (sigma_bar, q_bar) = P( sigma_vp,n + C_e : delta_eps , q_vp,n )
-    sigma_vp = (sigma_tr + (dt/tau) sigma_bar) / (1 + dt/tau) = (1-beta) sigma_tr + beta sigma_bar
-    q_vp     = (q_n      + (dt/tau) q_bar    ) / (1 + dt/tau) = (1-beta) q_n      + beta q_bar
-```
+### 4.3 The identity, and the three hypotheses it needs
 
-A generic wrapper cannot re-seed `q`, so it cannot do this — or so the planning brief assumed
-(F2). It is wrong.
-
-> **Theorem (1-D, from rest, monotonic loading).** For the 1-D associated model with **any**
-> hardening function `K(α)` — linear, softening, or nonlinear — the two-track wrapper and true
-> Duvaut–Lions produce the **identical** stress path.
+> **Theorem (1-D, from rest, monotonic loading, CONSTANT elastic operator).** For the 1-D
+> associated model with any hardening function `K(α)`, the two-track update and true Duvaut–Lions
+> produce the identical stress path.
 >
-> *Proof.* The TDL update gives `σ_{n+1} = σ_tr − βE(ᾱ − α_n)` and `α_{n+1} = α_n + β(ᾱ − α_n)`,
-> hence `σ_{n+1} + Eα_{n+1} = σ_tr + Eα_n`. So `ψ_n = σ_n + Eα_n` advances by exactly `EΔε` every
-> step — elastic steps included, where `ᾱ = α_n`. From rest `ψ_0 = 0`, therefore
-> **`α_n = ε_n − σ_n/E`**: the relaxed internal variable is exactly the plastic strain of the
-> viscoplastic stress itself. Substituting into the projection equation
-> `σ_tr − E(ᾱ − α_n) = K(ᾱ)` gives `Eε_{n+1} − Eᾱ = K(ᾱ)`, i.e. `σ̄ = K(ᾱ)` with
-> `ᾱ = ε_{n+1} − σ̄/E` — which is the definition of the **inviscid** stress at the total strain
-> `ε_{n+1}`. TDL's projection target therefore *is* `inner.getStress()` on the total strain path,
-> which is exactly what the two-track wrapper blends toward. Both return
-> `(1−β)σ_tr + β σ_inviscid(ε_{n+1})`. ∎
+> *Proof.* The TDL update gives `σ_{n+1} + Eα_{n+1} = σ_tr + Eα_n`, so `ψ = σ + Eα` advances by
+> exactly `EΔε` every step. From rest `ψ_0 = 0`, hence **`α_n = ε_n − σ_n/E`**. Substituting into
+> the projection equation yields `σ̄ = K(ᾱ)` with `ᾱ = ε_{n+1} − σ̄/E` — the definition of the
+> inviscid stress at `ε_{n+1}`. So TDL's projection target *is* `inner.getStress()` on the total
+> strain path. ∎
 
-**Where it holds, measured** (oracle `run_tt_vs_tdl_point`, max relative `|σ_TT − σ_TDL|`):
+**The hypotheses, all three of which must be stated wherever the theorem is:**
 
-| case | measured |
-|---|---|
-| perfect plasticity | `3.20e-14` |
-| 1-D **linear**, `H/E ∈ {+0.10, +0.02, 0, −0.02, −0.10}` × `De ∈ {0 … 0.3}` | `9.23e-14` |
-| 1-D **exponential** (nonlinear) hardening AND softening, `α_end/α_f ≈ 4.75` | `2.80e-13` |
-| J2 (Voigt-6), **proportional** path, `H/E = ±0.05` | `4.72e-15` |
-| **the whole A0 bar**, `De ∈ {0, 3e-4, 1e-3, 3e-3}` × `N ∈ {40, 80, 160}` × 2 imperfection conventions — w2 / peak load / work / curve L2 | `1.31e-5` / `1.8e-16` / `1.25e-6` / `4.82e-6` |
+1. **A constant elastic operator.** `ψ = σ + Eα` cannot advance by `EΔε` unless E is the same number
+   on both tracks. Added 2026-09-05 after P0b-(a). **SANISAND's `G(p)`, `K(p)` violate it by
+   construction**, as does Drucker–Prager with `G(p)` and every hypoelastic inner.
+2. **Holonomicity of the inner** — no memory beyond `(ε, σ)`. This is the sharp form of what the
+   earlier draft called "proportional and monotonic": what the proof actually needs is that the
+   inner's internal state be *recoverable* from the current strain and stress. Linear **kinematic**
+   hardening is holonomic even on non-proportional paths; **isotropic** hardening is holonomic only
+   on proportional monotonic ones. **SANISAND is holonomic nowhere**: `mAlpha` follows a rate law,
+   `mFabric` accumulates, `mAlpha_in` is defined by the last reversal; only the void ratio is
+   recoverable.
+3. **No unloading.** The relation `α = ε − σ/E` survives elastic steps in 1-D, but the *inner*'s
+   response after a reversal is not a function of the current `(ε, σ)`.
 
-**Where it fails, measured** — the wrapper's declared approximation:
+**Hypothesis 3 is fatal for the deliverable, not merely limiting.** The boundary of a localization
+band is an **elastic unloading zone** (Rice) — that is the mechanism that selects the band's width.
+So the wrapper's declared validity domain **never holds where the answer is set**.
 
-| case | De = 0.01 | De = 0.10 |
+### 4.4 The closed-form 1-D anchor — and its scope
+
+The steady overstress of the discrete backward-Euler fixed point is `σ* − σ_Y = E·ε̇·τ`, exactly and
+independently of Δt, measured to `4.26e-15` over `Δt ∈ {1, 0.25, 0.05}`. **This closed form is
+derived for PERFECT plasticity** (the backbone is a constant `σ_Y`); for a hardening or softening
+backbone the same algebra gives the overstress *above the current backbone*, which is not a
+closed-form function of time. Cite it as the perfect-plasticity anchor only. It is the ADR's
+non-self-referential oracle for the ADR-87 verification manifest.
+
+### 4.5 P0b — the four measurements, and what they did to §4.3
+
+`[[_adr90_p0b_results]]`, git `892c22770`, 2026-09-05.
+
+| # | Measurement | Result |
 |---|---|---|
-| J2, **non-proportional** (axial 120 steps, then shear 80), `H/E = +0.05` | `4.02e-3` | **`4.42e-2`** |
-| J2, **non-proportional**, `H/E = −0.05` | `8.99e-4` | **`2.62e-2`** |
-| 1-D linear, load / **unload** / reload, `H/E = +0.10` | `4.63e-2` | `3.14e-1` |
-| 1-D linear, load / **unload** / reload, `H/E = −0.02` | `9.23e-2` | **`3.33e-1`** |
+| **V1** | Generic two-track over a **pressure-dependent inner**, `E(σ) = E₀(1 + β_E|σ|/σ_Y)`, monotonic proportional isotropic hardening | rel `|σ_TT − σ_TDL|` = **9.2e-4 … 7.3e-3** at the working De (β_E = 0.3…1.2), rising to **0.28…0.94** at De = 0.3. Constant E: **3.0e-14**. The obvious repair — the predictor modulus at the wrapper's own stress — buys 1–2 orders and **is not implementable at the seam** (`getInitialTangent()` returns one sampled matrix, not the function `E(·)`). **⇒ the identity is exact only for a constant elastic operator; on the named consumer's material class the wrapper is inexact on EVERY path.** |
+| **V2** | **Dissipation** `D_w = σ_vp · C_e⁻¹(σ_vp − σ̄)Δt/τ` on non-proportional J2, 1-D cyclic, and a swipe surrogate | **VIOLATED on load/unload/reload**: worst step **−2.26e-5**, worst cumulative-negative fraction **−7.9e-3** at De = 0.1, growing monotonically with De (round-off at 1e-3, −1.4e-5 at 1e-2). Non-proportional J2 and the swipe surrogate are clean. Every run is net-positive overall and the inner's own dissipation is positive, so **an energy-balance check cannot see this**. |
+| **V3** | **Is the width τ-set or imperfection-set?** At De = 3e-4, amplitude and zone length varied | The converged `w2` moves **×4.28 with amplitude** and **×3.47 with zone length** at fixed De; `w2` is mesh-converged in every case. **⇒ imperfection-set.** Also: `w3` (FWHM) does **not** converge outside A0's original parameter point (2.500 → 1.875, tracking `h`, in 3 of 9 configurations) — A0's "both w2 and w3 converged at De = 3e-4" was parameter-lucky. And **`w2 ∈ [h, L]` by construction**, so a `w2` near L means *no band*, not *a wide band*. |
+| **V4** | **Blended acoustic tensor** `det[n·((1−β)C_e + βC^ep)·n]` on a plane-strain **non-associated softening Drucker–Prager** point model | The inviscid tangent **does** lose ellipticity (min normalised det Q = **−0.0145** at **51.5°**, from step 75/800). The blend regains it for **β < 0.9857**, i.e. **De > 1.45e-2 / nsteps**. Every De in the working window clears it with margin. **But the criterion is on β = Δt/(τ+Δt) — the same De is elliptic or not depending on the step count.** Also: TT ≡ TDL to 2e-14 on a **proportional** path over a non-associated model (non-associativity alone does not break the theorem); **path rotation** does (1.1e-4 at De 1e-4 → 7.5e-2 at De 0.1). |
 
-The error grows monotonically with De, which is the signature of a genuine constitutive difference
-rather than round-off.
+**V4 is the one positive result**: the mechanism does restore well-posedness at the material point
+for the consumer's material class, which is the thing A0's 1-D bar could not see. **V1, V2 and V3
+are why D2 is reopened.**
 
-**The boundary is over PATHS, not over material classes.** Brief F2 framed the split as
-*perfect plasticity vs hardening*; that framing is refuted — hardening, softening and strongly
-nonlinear hardening are all in the *exact* regime. The real boundary is
-**proportional-and-monotonic** vs **non-proportional-or-unloading**. SANISAND sits on the wrong
-side of it (α-tensor, fabric `z`, ψ-driven `M^b`), so the wrapper over SANISAND is an
-approximation whose size on the real material is **not yet measured** — the J2 surrogate above is
-the only quantification we have. That is a WP-D measurement, not a WP-C blocker (§10 OQ9, §11 R8).
+## 5. Architecture — *if* anything is built
 
-### 4.4 The closed-form 1-D anchor
+Retained because it is the reviewed record of what a correct implementation must do; **it is not an
+instruction to build.** ND tag **33022**, modelled on `StagedStrainNDMaterial` (33014).
+Command (flags after positionals, ADR-86 rule): `nDMaterial LadrunoOverstress $tag $innerTag -tau $tau`.
 
-The steady overstress of the discrete backward-Euler fixed point is `σ* − σ_Y = E·ε̇·τ`, **exactly
-and independently of Δt** (the Δt cancels: `(1−β)/β = τ/Δt`). Measured to `4.26e-15` relative over
-`Δt ∈ {1, 0.25, 0.05}` for both TT and TDL. This is the ADR's non-self-referential oracle for the
-verification manifest (ADR-87), and it is what the C++ byte check will be pinned against.
-
-## 5. Architecture
-
-`SRC/material/nD/LadrunoDuvautLions.{h,cpp}` — a generic `NDMaterial` wrapper, ND class tag
-**33022**, modelled on `StagedStrainNDMaterial` (33014, `SRC/classTags.h:587`), which is the
-fork's own adopting-wrapper precedent.
-
-**Command (Tcl and Python; flags after positionals, ADR-86 parser rule):**
-
-```
-    nDMaterial LadrunoDuvautLions $tag $innerTag -tau $tau
-```
-
-| Item | Decision | Why, with the source that forces it |
+| Item | Rule | The source that forces it |
 |---|---|---|
-| **Adopting ctor** | Take the inner by tag, `getCopy("ThreeDimensional")` it once at construction, own the copy, delete it in the dtor. | `StagedStrainNDMaterial` pattern. |
-| **`setTrialStrain(v)` / `setTrialStrainIncr(v)`** | Keep an **absolute** committed strain; `setTrialStrainIncr` reconstructs `ε_{n+1} = ε_committed + Δε` and calls the same core. Never forward an *increment* to the inner. | The blend needs the total strain path for the inner AND the increment for the predictor; only an absolute state gives both. The strain-rate overloads discard the rate upstream (`ManzariDafalias3D.cpp:88-91`) so no rate can be recovered from the inner. |
-| **`getCopy(const char *type)`** | Resolve **every supported type explicitly** — `"ThreeDimensional"`, `"3D"`, `"PlaneStrain"`, `"PlaneStrain2D"` — build the inner's view with `inner->getCopy(type)`, wrap it, and **never call the inner's `getCopy(void)`**. Return `0` gracefully on an unsupported type (no `exit(-1)`). | `StagedStrainNDMaterial::getCopy(const char*)` (`SRC/material/nD/StagedStrainNDMaterial.cpp:293-309`) has **no** `"ThreeDimensional"` special case — it always forwards the string; only `InitStrainNDMaterial.cpp:290-292` special-cases it to `getCopy(void)`. `ManzariDafalias::getCopy(void)` is `exit(-1)` (`ManzariDafalias.cpp:447-465`), and only the four strings above exist (`:534-555`). An implicit route is a process abort. |
-| *(do not lean on this)* | `FluidSolidPorousMaterial::getCopy(const char *code)` (`SRC/material/nD/soil/FluidSolidPorousMaterial.cpp:415-425`) **ignores** its `code` argument and routes through the copy ctor, whose `:156` calls the soil's `getCopy(void)`. It is the only plane-strain route in the tree that reaches a wrapped material's void `getCopy` — a **coincidence**, recorded as a quirk (§12), never a dependency of this wrapper or its tests. |
-| **Copy, never alias** | Deep-copy every `Vector`/`Matrix` returned by the inner into the wrapper's own members before using or returning it. | `ManzariDafalias3D::getStress/getStrain/getTangent` return **static class buffers** (`ManzariDafalias3D.h:78-79`). Aliasing them makes a second material instance silently overwrite the first. |
-| **`setParameter`** | Handle `"tau"` locally; on a **tag miss**, forward `(argv, argc, param)` to the inner and return its result. | `updateMaterialStage` resolves by string-tag match *inside* `ManzariDafalias` (`ManzariDafalias.cpp:791-828`); without forwarding, the static `mElastFlag` never flips and a staged geostatic run silently stays elastic. Precedent: `FluidSolidPorousMaterial.cpp:320-333`, `InitStrainNDMaterial.cpp:436-473`, and `StagedStrainNDMaterial.cpp:397-399` (which forwards unconditionally — this wrapper must **not**, because it owns `"tau"`). |
-| **τ as a `Parameter`** | `setParameter("tau")` / `updateParameter`, so a De sweep or a staged activation does not need reconstruction. | Decision **D6**; the shipped `-eta` cannot do this. |
-| **`revertToLastCommit`** | Roll the wrapper's own `(σ_vp, ε)` back to the committed values and forward to the inner — **documenting that the inner's is an empty stub** (`ManzariDafalias.cpp:513-517`). | Pre-existing limitation, not a new one. It must be in the guide, not discovered at a step cutback. |
-| **`getResponse` tokens** | `overstress` (‖σ_vp − σ_bar‖), `beta`, `dt`. | These are what makes De reportable per run (S4). |
-| **Non-uniform-Δt diagnostic** | Track the committed Δt; warn **once** when it varies by more than a declared threshold between commits, naming the integrator. | §3 item 2 / brief F3's converse: a rate artifact when τ is comparable to a static pseudo-step. This is a new quirk the ADR owes (§12). |
-| **`sendSelf` / `recvSelf`** | `ID(4)` = `{tag, inner classTag, inner dbTag, nstate}` → `Vector` of the wrapper state (`τ`, committed `σ_vp`, committed `ε`, last Δt) → **delegate** to `inner->sendSelf`. On receive, `theBroker.getNewNDMaterial(ID(1))` if the inner is null, then `setDbTag(ID(2))`. | Verbatim the `StagedStrainNDMaterial.cpp:316-…` protocol, which is the tested one. |
-| **Registration** | ×3 (Tcl `TclNDMaterialCommands`, `OpenSeesNDMaterialCommands.cpp` functionMap, `FEM_ObjectBroker`) + CMake. | The Tcl/Python double-dispatch trap is the first entry in `LEDGER_quirks.md`. |
-| **Scope guard** | Refuse (graceful, with a message) an inner whose `getCopy("ThreeDimensional")` fails; **do not** attempt to detect damage models — document them as out of scope instead. | Decision **D1**; damage cannot be detected at the seam. |
+| Adopting ctor | Take the inner by tag, `getCopy("ThreeDimensional")` once, own it, delete in the dtor. | `StagedStrainNDMaterial` pattern. |
+| `setTrialStrainIncr` | Keep an **absolute** committed strain; reconstruct `ε_{n+1} = ε_committed + Δε`. Never forward an increment to the inner. | The blend needs the total strain for the inner and the increment for the predictor; the rate overloads discard the rate (`ManzariDafalias3D.cpp:88-91`). |
+| `getCopy(const char*)` | Resolve **every** supported type explicitly (`"ThreeDimensional"`, `"3D"`, `"PlaneStrain"`, `"PlaneStrain2D"`), build the inner's view with `inner->getCopy(type)`, wrap it, return `0` gracefully otherwise. **Never** route through the inner's `getCopy(void)`. | `StagedStrainNDMaterial::getCopy(const char*)` (`SRC/material/nD/StagedStrainNDMaterial.cpp:293-309`) has **no** `"ThreeDimensional"` special case; only `InitStrainNDMaterial.cpp:290-292` has one. **Corrected rationale (numerics m12):** `getCopy(void)` *is* overridden in both concrete views (`ManzariDafalias3D.h:49`, `ManzariDafaliasPlaneStrain.h:52`) — the base-class `exit(-1)` is not the live hazard. The real reason is that `getCopy(const char*)` **constructs from parameters and carries no state**, so routing a *stateful* copy through it silently drops the committed state; and the plane-strain view's null ctor writes the wrong classTag (§10 OQ7). |
+| *(do not lean on this)* | `FluidSolidPorousMaterial::getCopy(const char *code)` (`SRC/material/nD/soil/FluidSolidPorousMaterial.cpp:415-425`) **ignores** `code` and routes through the copy ctor, whose `:156` calls the soil's `getCopy(void)`. The only plane-strain path in the tree that reaches a wrapped material's void `getCopy` — a coincidence, recorded as a quirk, never a dependency of this wrapper or its tests. | |
+| **`C_e` for the predictor (D3 — CORRECTED)** | **Deep-copy `C_e` inside the WRAPPER's `commitState()`, immediately after `inner->commitState()`.** Not "read before `setTrialStrain`". | **The earlier rule was wrong.** `mCe` is rewritten *inside* `ManzariDafalias::integrate()` — the integrator calls at `SRC/material/nD/UWmaterials/ManzariDafalias.cpp:979 / :987 / :992` all pass `mCe` by reference — so it carries the **previous Newton iterate's** value, not the committed one. A predictor built on it makes the residual a function of the iteration history rather than of `u`, which breaks Newton. **Gate: `Newton` and `ModifiedNewton` must produce bit-identical committed states on a fixed path.** |
+| **Copy, never alias — corrected citation (numerics M5)** | Deep-copy every `Vector`/`Matrix` the inner returns, **before any other call on any instance of that class**. | The earlier citation was wrong in the specific. `ManzariDafalias3D.h:74-79` declares only `mSigma_M` and `mEpsilon_M` static — its **tangents are per-instance**. It is the **plane-strain** view that is dangerous: `ManzariDafaliasPlaneStrain.h:78-82` declares `static Matrix mTangent;` and `static Matrix mTangent_init;`, and `getInitialTangent()` **writes into the shared `mTangent_init`** (`ManzariDafaliasPlaneStrain.cpp:157-171`). That is precisely what D3 reads, on precisely leg A2. **Gate: a two-instance interleave test on plane strain** — construct two wrapped plane-strain materials, interleave their `getInitialTangent()` calls, and require both to see their own moduli. |
+| **`setParameter` (M6)** | Match `"tau"` **only** when `argc > 1 && atoi(argv[1]) == this->getTag()`. On a miss, forward to the inner **with `argv[1]` rewritten to the inner's tag** (or accept both tags). | `ManzariDafalias::setParameter` (`:791-799`) reads `theMaterialTag = atoi(argv[1])` and does nothing unless it equals its own tag. Forwarding the wrapper's argv verbatim therefore **cannot reach the inner** and the static `mElastFlag` never flips — a staged geostatic run stays elastic, silently. The design's reliance on that **static, class-wide** flag must be documented: it is shared by every `ManzariDafalias` instance in the process. |
+| τ as a `Parameter` | `setParameter("tau")` / `updateParameter`, so De sweeps need no reconstruction. | D6. |
+| `revertToLastCommit` (M10) | The **inner's** stub is benign — `integrate()` restarts from the `_n` state each call. The real exposures are the **wrapper's own**: it must rewind the cached `C_e`, the committed `σ_vp`, and the latched Δt/β. | `ManzariDafalias.cpp:513-517`; `Domain.cpp:2334-2339`. |
+| Response tokens | `overstress`, `beta`, `dt` — with **`dt` exposing the whole Δt series**, not a single number. | S4; the Δt diagnostic below. |
+| **Δt diagnostic (M8)** | A **file-scope latch keyed on `ops_Dt` transitions**, reset on `revertToStart`. Report **min/max Δt ratio and the D16 subdivision count** in the provenance block. Do **not** try to name the integrator. | A per-instance warn-once fires once per material and floods; the integrator is not identifiable from inside a material. **And m11: D16's adaptive subdivision makes Δt non-uniform on lane (b) too**, so this is a reporting obligation, not an exception. |
+| `sendSelf` / `recvSelf` | `ID(4)` = `{tag, inner classTag, inner dbTag, nstate}` → `Vector` of wrapper state (τ, committed `σ_vp`, committed `ε`, latched Δt, the `β = 1`-with-`τ > 0` counter) → delegate to `inner->sendSelf`. | `StagedStrainNDMaterial.cpp:316-…`. |
+| Registration | ×3 (Tcl, functionMap, `FEM_ObjectBroker`) + CMake. | The Tcl/Python double-dispatch trap is the first entry in `LEDGER_quirks.md`. |
+| **Inner-tangent type (constitutive 11)** | Refuse, or loudly warn, when the inner returns a **continuum** rather than an algorithmic tangent — `ManzariDafalias` with `mTangType = 0` returns `mCe`, so the "blend" degenerates to `C_e` and the wrapper is elastic in the tangent while inelastic in the stress. | C3's claim assumes an algorithmic tangent. |
+| **Scope guard (D1, constitutive 11)** | Damage / plastic-damage inners are out of scope. They cannot be *detected*, but the fork's own can be **refused by a classTag denylist**: `ND_TAG_LadrunoConcrete3D` (33017), `ND_TAG_LadrunoRCConcrete` (33015), and `ASDConcrete3D`. | Cheap, and it removes the three most likely misuses. |
+| Unsymmetric solver | For a non-associated inner the blended tangent is **unsymmetric**; the guide and the decks must require a general solver. | ADR-31 R13 precedent; V4's model is non-associated by construction. |
 
-## 6. Claims, each with its gate
+## 6. Claims, each with its gate — and what is explicitly not claimed
 
-| # | Claim | Gate | Class |
+| # | Claim | Gate | Status after P0b |
 |---|---|---|---|
-| **C1** | τ = 0 is **byte-identical** to the inner material, including the instruction path | PV1 clone at the material point and at the element; g++ byte check vs the oracle fixture. Oracle already at `max|Δσ| = 0.0` **exactly** for both variants, both point models, `H < 0 / = 0 / > 0`, loading and unloading. | correctness |
-| **C2** | 1-D steady overstress `= E·ε̇·τ`, independent of Δt | PV3 clone. Oracle: `4.26e-15` over `Δt ∈ {1, 0.25, 0.05}`. | correctness |
-| **C3** | Tangent `= (1−β)C_e + β C_ep`, matches a central FD | PV4 / PV5 clones. Oracle: blend identity `0.0`; FD `3.31e-10`. | correctness |
-| **C4** | **Band width converges under h-refinement at fixed De** (positive) **and does not at τ = 0** (negative control) | The new width gate, §7. Oracle A0: w2 ratios `0.972 / 1.010 / 1.004 / 1.001` at the finest pair for `De ≥ 3e-4`, against exactly `0.500` at τ = 0. | **the deliverable** |
-| **C5** | Collapse load at fixed De converges in h (the three-mesh band collapses) | Slow-tier gate, capacity three-clause rule. | **the deliverable** |
-| **C6** | De-dependence of width and `q_u` is **measured and disclosed** | vault-14-style τ × T sweep with matched pairs at **different step counts** (§7.4). | disclosure |
-| **C7** | The wrapper is transparent to `updateMaterialStage`, `getCopy(type)`, database round-trip and the MP wire | Zone-A + roundtrip + a `test_fspm_over_manzari_family.py` twin; mutation gate `-DLADRUNO_MUTATE_DUVAUTLIONS` must turn the suite red. | wiring |
+| **C1** | `τ = 0` reproduces the inner **bit-identically in stress, tangent and committed-state trajectory** over a multi-step path, including a **NaN/Inf** case | early-out + forward + copy (§4.1); trajectory gate at the material point and on `LadrunoBrick`; g++ byte check | restated (was "instruction path") |
+| **C2** | 1-D steady overstress `= E·ε̇·τ`, Δt-independent, **for PERFECT plasticity** | PV3 clone; `4.26e-15` measured | scoped |
+| **C3** | Tangent `= (1−β)C_e + β C_alg`, matches a central FD — **provided the inner returns an algorithmic tangent** | PV4/PV5 clones + an inner-tangent-type guard | scoped |
+| **C4** | Band width converges under h-refinement at a declared **(De, Δt, imperfection field)**, and does not at τ = 0 | §7 width gate + the §7.4 De rule | **weakened by V3** — the width is imperfection-set |
+| **C5** | `q_u` at fixed De converges in h — **and `q_u(De)/q_u(τ=0)` is reported per leg** | slow-tier gate; capacity rule | **bias must be reported** |
+| **C6** | The De-dependence of width and `q_u` is measured and disclosed, **at different step counts** | vault-14 sweep; matched pairs with different `nsteps` | unchanged |
+| **C7** | Transparent to `updateMaterialStage`, `getCopy(type)`, database round-trip, MP wire | Zone-A + roundtrip + `test_fspm_over_manzari_family` twin + the **two-instance plane-strain interleave** + **Newton vs ModifiedNewton bit-identity** | strengthened |
+| **C8** *(new)* | The **blended acoustic tensor is elliptic** at the declared (De, Δt) at every committed state of the A1/A2/A3 legs, and the minimum normalised det Q is reported | V4's metric, run on the deck | new gate |
 
-**Claims this ADR explicitly does NOT make.** It does not restore uniqueness or the bound theorems
-(S2). It does not introduce an intrinsic length in statics (§3, brief F4 — corroborated by A0's
-factor-12-per-factor-3 De sensitivity). It does not claim mesh independence without a declared De.
-It does not apply to damage or plastic-damage inner materials (D1). It does not change the
-tetrahedron prohibition (S3). And after §4.3 it does not claim to be true Duvaut–Lions on
-**non-proportional or unloading** local strain paths — there it is a declared approximation of
-measured size on a J2 surrogate and unmeasured size on SANISAND.
+**NOT claimed.**
+
+1. No restoration of uniqueness or the bound theorems (S2).
+2. No intrinsic length in statics — corroborated and quantified by A0 and V3.
+3. No mesh independence without a declared **(De, Δt, imperfection field)**.
+4. No applicability to damage or plastic-damage inners (D1).
+5. No change to the tetrahedron prohibition (S3).
+6. **No correctness claim of any size is established for the named consumer's material.** The
+   identity of §4.3 needs a constant elastic operator and a holonomic inner; SANISAND satisfies
+   neither, and V1 measures the resulting error on a caricature only.
+7. **The regularized `q_u` is UPWARD-BIASED, and the bias is of the same order as the artefact the
+   campaign already removed.** From A0's own peak loads against the rate-independent 18.0 N:
+   **+9.7 % at De = 3e-4, +12.5 % at De = 1e-3, +17.0 % at De = 3e-3.** Vault 14's β_K artefact,
+   which the campaign deliberately eliminated, was **11.75 %**. Substituting a declared overstress
+   for an accidental one does not make the strength gain physical. Every regularized `q_u` must be
+   reported **beside** `q_u(τ = 0)` and as the ratio.
+8. **No claim that one global τ preserves the shape or tilt of the ultimate-surface ellipsoid.**
+   Under a direction-dependent strain-rate field a single τ produces a direction-dependent
+   overstress, which distorts the fitted surface — vault 14's "what it does not establish", vault
+   65 D9. A WP-D leg on **≥ 2 probe directions** is required before any fitted surface is cited.
+9. **No claim of non-negative incremental dissipation** (V2).
 
 ## 7. Acceptance case
 
-The shape is fixed by de Borst 1993 Fig. 18 and vault 65 D5; the *numbers* are TIMs' to set (OQ2).
-
 | Leg | Deck | Material | Element | Status |
 |---|---|---|---|---|
-| **A0** | 1-D softening bar, `N = 20/40/80/160` | numpy oracle, TT vs TDL | — | **DONE** — `_adr90_a0_results.md`, commits `cc7c7f7a5` / `8863a468c` |
-| **A1** | Plane-strain biaxial, symmetric half, smooth ends, imperfection at mid-height; 3 meshes + 2 orientations | `DruckerPragerPlaneStrain` (non-associated, no state dependence — a clean bifurcation) | `quad PlaneStrain` | P2 |
-| **A2** | Same deck | `LadrunoSANISANDPlaneStrain` (33021) | `quad PlaneStrain` | P2, with the OQ7 constraint below |
-| **A3** | Same specimen extruded one element thick | `LadrunoSANISAND` (33019/33020) | **`LadrunoBrick -formulation bbar`** | P2 — **the only admissible leg** (S3, D7) |
-| **A4** | R3 Prandtl–Reissner strip (existing gate) | SANISAND / DP | B-bar hex | P2 regression at the declared De |
+| **A0** | 1-D softening bar, N = 20…160 | numpy oracle | — | **DONE** (`cc7c7f7a5`, `8863a468c`) |
+| **P0b** | point models + DP + acoustic tensor | numpy oracle | — | **DONE** (`892c22770`, `1052ecd36`) |
+| **GATE U** | τ = 0 three-mesh `q_u` band | `LadrunoSANISAND` | B-bar hex | **PENDING — §1.2; blocks P1** |
+| **A1** | Plane-strain biaxial, symmetric half, smooth ends, graded imperfection field; 3 meshes + 2 orientations | `DruckerPragerPlaneStrain` (non-associated) | `quad PlaneStrain` | P2 |
+| **A2** | Same deck | `LadrunoSANISANDPlaneStrain` (33021) | `quad PlaneStrain` | P2, with the OQ7 and M9 constraints |
+| **A3** | Same specimen, one element thick | `LadrunoSANISAND` | **`LadrunoBrick -formulation bbar`** | P2 — the only admissible leg |
+| **A4** | R3 Prandtl–Reissner strip | SANISAND / DP | B-bar hex | P2 regression — **as a two-sided gate, see 7.1(v)** |
 
-### 7.1 A0's four corrections to the acceptance protocol
+### 7.1 Corrections to the acceptance protocol, from A0 and P0b
 
-**(i) The imperfection must be a mesh-convergent FIELD, not de Borst's one element.** A0 §5.2 ran
-both. With a one-element defect (whose physical size shrinks with N) the width **never** converges
-at any De — the peak stays one element wide (`w3 = h` at every mesh) and `w2` drifts toward the
-specimen length — although the load–displacement *curve* does converge for `De ≥ 1e-3`
-(`curveL2` 0.116 → 0.027 → 0.001). With a graded notch over a **fixed physical length** the width
-converges: `w2` ratios 0.972 / 1.010 / 1.004 / 1.001. The reason is structural, not numerical: an
-imperfection field that does not converge under refinement cannot produce a converging width, and
-a quasi-static Duvaut–Lions bar has no intrinsic length of its own to supply one.
+**(i) The imperfection must be a mesh-convergent FIELD — and now also a *declared* one.** A
+one-element defect never converges in width; a *flat* fixed-length zone makes every mesh exact
+(a gate that cannot fail); a **graded** fixed-length notch converges. **P0b-(c) adds the harder
+requirement:** because the converged width moves ×4.3 with amplitude and ×3.5 with zone length, the
+imperfection field is a **first-class declared input of every reported number**, on the same footing
+as τ. It goes in the provenance block.
 
-> **And the notch must be graded, not flat.** A *flat* fixed-length weak zone (the brief's
-> convention (b) read literally: 2/4/8/16 elements all at 0.9 σ_Y) makes the continuum solution
-> piecewise constant with the zone boundary on a mesh line, so **every mesh represents it exactly**
-> and the result is bit-identical in N at every De > 0. That is a gate that cannot fail. Use a
-> parabolic notch with a tie-breaking offset.
+**(ii) The De window.** The brief's `De ∈ {0.01, 0.1, 1}` is unusable on the bar deck (at De = 1 the
+load never peaks; at 0.01 and 0.1 the "band" is the whole specimen). A0 found `3e-4 … 1e-3`
+on that deck — and P0b narrows even that: **only De = 3e-4 converged in both `w2` and `w3`, and
+P0b-(c) shows that reading was parameter-lucky.** The window is deck-dependent; **the SANISAND-deck
+window must be MEASURED in P2** by the rule in §7.4.
+> **And the recipe presupposes material softening (constitutive 11).** "Sweep De down until a
+> post-peak branch appears" works for the softening bar. **Drucker–Prager localizes on a *hardening*
+> branch** (Rudnicki–Rice), so A1 and A2 need a different window criterion: use **C8's acoustic
+> tensor** — the smallest De whose blended tangent stays elliptic along the whole path — not the
+> appearance of a load peak.
 
-**(ii) The De window.** The brief proposed `De ∈ {0.01, 0.1, 1}`. On the A0 bar deck all three are
-far past the point where the specimen still localizes:
+**(iii) The negative control — primary and secondary (numerics M7).** The width-∝-h control needed
+4000 → 64000 uniform steps at τ = 0 and is **probably unrunnable at the slow tier on a 3-D deck**.
+Therefore:
+- **PRIMARY negative control: steps-to-converge.** The τ = 0 deck must fail to complete, or complete
+  only at a step count that grows with refinement, while the regularized deck completes at a
+  mesh-independent step count. Cheap, and it fails loudly.
+- **SECONDARY: width ∝ h**, run at whatever mesh range the budget allows.
 
-| De | N | P_peak | ε_p max | inelastic ratio | w2 | w3 |
-|---|---|---|---|---|---|---|
-| 0.01 | 20 / 160 | 23.79 / 23.80 | 0.0263 / 0.0289 | 31.1 / 31.1 | 97.9 / 98.1 | 100 / 100 |
-| 0.10 | 20 / 160 | 59.25 / 59.26 | 0.0177 / 0.0180 | 11.1 / 11.1 | 99.8 / 99.8 | 100 / 100 |
-| 1.00 | 20 / 160 | 264.8 / 264.8 | 0.0068 / 0.0069 | 0.76 / 0.76 | 0 | 0 |
+**(iv) The De collapse must use DIFFERENT step counts.** `β = 1/(1 + nsteps·De)` and the strain
+increment is `u_max/nsteps`, so equal `(De, nsteps)` runs are **bit-identical** whatever `(τ, T)`
+produced that De — measured to 12 digits. With different step counts the collapse holds to 0.47 %
+in width, 0.009 % in peak load.
 
-At 0.01 and 0.1 the "band" is the **whole 100 mm bar**. At **De = 1 the load never peaks at all** —
-it rises monotonically to 265 N, 14.7× the rate-independent peak of 18 N — so there is no post-peak
-branch and "the width converges" is a statement about an essentially elastic bar. **On the bar deck
-the regularized-and-still-localizing window is `De ≈ 3e-4 … 1e-3`**, two orders of magnitude below
-the brief's guess. The window is deck-dependent (it scales with the softening ductility and the
-loading rate), so **the SANISAND-deck window is to be MEASURED in P2, not inherited from A0.** A0
-fixes the *method* for finding it: sweep De down until the response both localizes (a post-peak
-branch exists, `inelastic ratio > 1`) and converges.
+**(v) A4 must be a two-sided gate (strategy M6).** "Unchanged within the De family" is not a gate.
+A4 passes only if **(a)** at `τ = 0` the result is bit-identical to the pre-wrapper R3 number, **and
+(b)** the shift at the declared De **matches §4.4's closed-form overstress prediction to a stated
+tolerance**. A shift of the right sign but the wrong size is a defect, and the current wording
+cannot see it.
 
-**(iii) The τ = 0 negative control must FAIL, and must use a unique weakest point.** A0 §5.1: with
-either a one-element defect or a graded notch, `w1 = w2 = w3 = h` **exactly** at all four meshes
-and `W₅₀` halves with `h` (ratios 2.000 / 2.000 / 2.000). With a flat weak zone the tie lets
-round-off pick the sub-band and `w2/h` wanders 2.0 → 14.0 with no pattern — the control becomes
-uninterpretable rather than failing cleanly.
+**(vi) Staging (strategy m10).** The wrapper must be **`τ = 0` during the staged geostatic phase**,
+and a **post-gravity byte-identity gate** must show that the staged state with the wrapper present
+equals the staged state without it. Otherwise §4.2's relaxation-under-held-load silently changes
+the initial stress field the whole campaign is fitted to.
 
-**(iv) The De collapse must be run at DIFFERENT step counts or it is tautological.** Because
-`β = Δt/(τ+Δt) = 1/(1 + nsteps·De)` and the strain increment is `u_max/nsteps`, two runs with the
-same `(De, nsteps)` are **bit-identical** whatever `(τ, T)` produced that De — measured to 12
-significant digits. Run the matched pairs with different step counts; the collapse then holds to
-**0.47 % in width, 0.009 % in peak load, 0.025 % in work**, and that residue is the Δt-transient
-effect of §3 item 3, not a De violation.
+**(vii) The imperfection field on the real material (numerics M9).** On SANISAND the physically
+meaningful imperfection knob is the **initial void ratio `e_init`** — a *construction* parameter.
+The `voidRatio` `Parameter` is **tag-addressed**, so a spatially varying field needs **one material
+tag (and one wrapper tag) per element**. Name the perturbed variable and the field form in the
+deck, and either **price the tag explosion** (a 3-mesh × 2-orientation A2/A3 study is thousands of
+tags) or add an **`-ele`-routed field** as a **P2 prerequisite**. This is not a detail: without it
+requirement (i) cannot be met on the consumer's own material.
 
 ### 7.2 Measurements per leg
 
-Band width by the **threshold-free** metric (below), peak load, post-peak curve, dissipated work,
-`De = τ/T`, **the step count**, and `ladrunoBuild()`.
+Band width `w2` (threshold-free), `w3`, **`w2/h`**, peak load, `q_u`, **`q_u(De)/q_u(τ=0)`**,
+post-peak curve, dissipated work, **min normalised det Q (C8)**, `De`, **`Δt` min/max ratio and
+subdivision count**, **the `β = 1`-with-`τ > 0` step count**, the imperfection field, and
+`ladrunoBuild()`.
 
-### 7.3 The width metric (OQ5, settled)
+### 7.3 The width metric
 
-`w2 = √(12·Var)` with `Var = Σ p_e[(x_e − x̄)² + h²/12] / Σ p_e` over the **post-peak plastic-strain
-increment** profile. The `h²/12` term is the within-element variance of the piecewise-constant
-profile; it makes a one-element band read **exactly h** and a k-element top hat read **exactly
-k·h**, so the number is comparable across meshes. Without it a one-element band reads 0. Pinned by
-`tests/test_duvaut_lions_oracle.py::test_band_width_metric_is_calibrated`.
+`w2 = √(12·Var)`, `Var = Σ p_e[(x_e − x̄)² + h²/12] / Σ p_e`, over the post-peak plastic-strain
+increment. A one-element band reads exactly `h`; a k-element top hat reads exactly `k·h`. Unit-pinned.
+**Two limits must always be quoted with it:** `w2 ∈ [h, L]` **by construction** — a `w2` near `L`
+means *no band*, not *a wide band* — and threshold metrics (`w1`, `w3`) disagree by up to 40× on the
+same run, so they are never the headline.
 
-Threshold-based metrics are **not** admissible as the headline: on the same A0 runs the
-threshold-count `w1` and the FWHM `w3` disagree by up to a factor 40 (risk R4 confirmed).
+### 7.4 Gates — including the De RULE
 
-### 7.4 Gates
-
-τ = 0 → width ∝ h (the control must fail objectivity). τ > 0 at fixed De → `w(h/4)/w(h/2)` within
-the band TIMs declares, **and** the load–displacement curves converge, **reported separately**.
-De × {½, 1, 2} at different step counts → width monotone in De and matched pairs collapse (C6).
+- **τ = 0**: primary and secondary negative controls per 7.1(iii) must fail objectivity.
+- **The De rule (strategy M4 / constitutive 6).** The limits `h → 0` and `De → 0` **do not commute**:
+  refining the mesh at fixed De eventually resolves a band that De alone would not have set, and
+  lowering De at fixed mesh eventually returns the one-element band. So De is not a free choice —
+  it is a function of the mesh:
+  > **Declare `De_min(h)` = the smallest De whose converged band spans at least 3–4 elements on the
+  > finest affordable mesh — i.e. `w2/h ≥ 3`.** Run at that De. Report `q_u` at **{½De, De, 2De}**
+  > *beside* the τ = 0 three-mesh band, so the reader sees the regularization's price next to the
+  > disease.
+- **C8**: the blended acoustic tensor must be elliptic at the declared (De, Δt) at every committed
+  state; report the minimum normalised det Q and the step count it was computed at.
+- **Imperfection independence (constitutive 5 / P0b-(c))**: report the converged width for at least
+  two imperfection amplitudes. A width that moves more than the declared band with the imperfection
+  must be disclosed as imperfection-set.
+- **De collapse** at different step counts (7.1(iv)).
 
 ### 7.5 Parameters TIMs must supply (OQ2)
 
-Target band width relative to B; ramp duration / strain rate; the De they will run at (informed by
-the P2 measurement of the SANISAND-deck window, not by A0's bar numbers); tolerance bands; and the
-ultimate criterion (OQ1, Prof. Gorini).
+Target band width relative to B; ramp duration / strain rate; tolerance bands; the ultimate
+criterion (OQ1). **The fork supplies `De_min(h)` from §7.4 — TIMs no longer "sets the De".** That
+change is deliberate: §3.3's honest-framing test forbids choosing De to hit a target.
 
 ## 8. Phases and exit gates
 
-| Phase | Content | Exit gate | Warrant items |
-|---|---|---|---|
-| **P0 — ADR + numpy oracle** ✅ **COMPLETE 2026-09-04** | This ADR; `tests/_testbed/duvaut_lions_ref.py`; `tests/_testbed/run_a0_sweep.py`; `tests/test_duvaut_lions_oracle.py` (9 `zone_a` cases, **22.6 s measured**, numpy only — imports no OpenSees); `_adr90_a0_results.md`. | PV1–PV6 green for **both** architectures over **both** point models; A0 width ∝ h at τ = 0 and convergent at fixed De; TT-vs-TDL quantified. **All met.** Commits `cc7c7f7a5`, `8863a468c` (PR #783). | none (docs + `tests/_testbed`) |
-| **P1 — the C++ wrapper** | `LadrunoDuvautLions.{h,cpp}` per §5; Tcl + Python; `classTags.h` 33022 with the `// N. Mora-Bowen (Ladruno) — …` comment. | g++ byte check against the oracle fixture; Zone-A: byte gate (material point **and** `LadrunoBrick`), PV3 overstress, non-tautology guard (viscous ≠ inviscid by > 1e-3), stage-forwarding over `LadrunoSANISAND`, database round-trip, MP wire, **mutation gate red**. | manifest `ledger/ladruno_duvaut_lions.yml`, `-DLADRUNO_MUTATE_DUVAUTLIONS`, guide stub, ledger rows, the three new quirks entries (§12) |
-| **P2 — acceptance case** | Legs A1 → A3 in `tests/` (slow tier) with the G5-style positive + negative pairing; the De sweep; **the SANISAND-deck De window measured**; the §3 lane decision (a)/(b) made on measurement; **the non-proportionality error leg** (§10 OQ9). | C4, C5, C6 green; A4 regression unchanged within the De family; the non-proportionality error reported against the campaign's own three-mesh band. | slow-tier docstring wall times; capacity three-clause rule |
-| **P3 — TIMs integration** | Provenance fields (τ, De, rate, step count) in the campaign's output schema; one SFIM/APE radial probe with declared τ on the chosen lane; out-of-family verdict. | Joint sign-off; the vault note records the acceptance case as **verified**, not claimed. | `reviews/handoff_adr90.md` → verdict |
-| **P4 — optional** | Explicit/transient tier (`CentralDifferenceLadruno`); `-implex` interplay; mesh-aware τ via the `getCharacteristicLength()` latch (`LadrunoConcrete3D.cpp:347-350`). | Only on a named consumer. | — |
-| **WP-F — PARKED** | Material-specific `-tau` **inside** `LadrunoSANISAND` (true DL on σ, α, z using the `protected` base members). | **Trigger:** fires only if A2/A3 measure the non-proportional wrapper error **above the campaign's own three-mesh band**. A0 gives no reason to fire it now. | same warrant as P1 |
+| Phase | Content | Exit gate |
+|---|---|---|
+| **P0** ✅ **COMPLETE 2026-09-04** | ADR + numpy oracle + A0 bar | PV1–PV6 green; A0 verdicts H1–H4. `cc7c7f7a5`, `8863a468c` |
+| **P0b** ✅ **COMPLETE 2026-09-05** | State-dependent `C_e` leg; dissipation gate; imperfection study; non-associated DP + blended acoustic tensor | V1–V4 (§4.5). `892c22770`, `1052ecd36`. 13 `zone_a` cases, 30.3 s |
+| **GATE U** ⛔ **PENDING** | τ = 0 three-mesh `q_u` band on the SANISAND / B-bar deck | Inside the campaign tolerance ⇒ lane (d), ADR closes as research. §1.2 |
+| **P1 — the C++ wrapper** | `LadrunoOverstress.{h,cpp}` per §5 | **Entry conditions, all required before a line is written:** (a) GATE U fired; (b) **written consumer sign-off** on the lane (§3.1), on the `q_u` upward bias (§6 NOT-claimed 7), and on whether results may be stamped *provisional* pending OQ1; (c) D2 re-decided on the P0b evidence. **Exit:** trajectory byte gate, PV3 overstress, non-tautology guard, stage-forwarding, round-trip, MP wire, Newton-vs-ModifiedNewton bit-identity, the plane-strain interleave test, **mutation gate red**, and the **out-of-family verdict — at P1, not P3** (it is the family PR; ADR-87 D9) |
+| **P2 — acceptance case** | A1 → A3 (slow tier) + A4; the De window measured by §7.4; the **non-proportionality error leg** on the SANISAND deck (OQ9); the ≥ 2-probe-direction leg (§6 NOT-claimed 8) | C4, C5, C6, C8 green; A4 two-sided. **Failure branch (strategy M9): if C5 is red — the collapse load does not converge at the declared De — the ADR does NOT iterate on τ. It falls to lane (d) and closes.** |
+| **P3 — TIMs integration** | Provenance fields; one radial probe on the chosen lane | Joint sign-off; vault note records the case as *verified* |
+| **P4 — optional** | Explicit/transient tier; `-implex` interplay; mesh-aware τ | Only on a named consumer |
+| **WP-F — conditional** | **True Duvaut–Lions inside `LadrunoSANISAND`** (projection of the current state; relaxes σ, `α`, `z` using the `protected` base members) | Fires if GATE U fires. **P0b makes this the preferred build**, not the fallback: it fixes V1 (real `C_e(p)`) and restores the convexity argument behind V2 |
 
 ## 9. Decisions
 
-| # | Decision | Status | Rationale |
-|---|---|---|---|
-| **D1** | **Scope: plasticity-type inner materials only.** Damage / plastic-damage models are documented as out of scope; not guarded, because damage cannot be detected at the seam. | **DECIDED** | Brief F2; ADR-31 §4.4 precedent (a nominal-stress blend relaxes *damage* as well as plasticity). |
-| **D2** | **Relaxation form: the generic two-track blend.** The wrapper's **declared validity domain is proportional-and-monotonic local strain paths**, where §4.3 proves and measures it to be *exactly* true Duvaut–Lions. Outside it — non-proportional or unloading — it is a declared approximation, measured at 9.0e-4 … 4.4e-2 (J2, De 0.01 → 0.10) and 3.3e-1 (1-D unloading). | **DECIDED 2026-09-04 (CP1, owner)** | **Correction to brief F2:** the boundary is *proportional-and-monotonic vs non-proportional-or-unloading*, **not** *perfect-vs-hardening*. Linear, softening and strongly nonlinear hardening are all in the exact regime (`≤ 2.8e-13`). |
-| **D3** | `C_e` for the trial predictor = `inner.getInitialTangent()` read **before** `setTrialStrain`. | **DECIDED** | SANISAND rewrites its initial tangent every step (`ManzariDafalias3D.cpp:146-149`); the predictor must use the committed-state `C_e`. |
-| **D4** | Δt source `ops_Dt`; `Δt ≤ 0 ⇒ β = 1` (inviscid); **plus a non-uniform-Δt diagnostic** that warns once when Δt varies by more than a declared fraction between commits. | **DECIDED** | Brief F3 and its converse; `LEDGER_quirks.md:1612`. A0 §5.5 shows the transient is Δt-sensitive at fixed De (2.06 % in w2 over 32×), so the warning is not cosmetic. |
-| **D5** | Calibration lane: §3 **(a)** transient with β_K = 0 primary; **(b)** uniform-pseudo-time static fallback; the two gated equal at matched De. | **DECIDED (to be confirmed by P2 measurement)** | Brief F3/F4; vault 14. |
-| **D6** | τ is a `Parameter` (`setParameter("tau")`), so De sweeps and staged activation need no reconstruction. | **DECIDED** | S5; the shipped `-eta` cannot do this. |
-| **D7** | The element for the final acceptance leg is the **B-bar hex** (A3). No result on another element is admissible for the campaign. | **DECIDED** | S3. |
-| **D8** | Command shape `nDMaterial LadrunoDuvautLions $tag $innerTag -tau $tau` — flags after positionals. | **DECIDED** | ADR-86 parser rule; apeGmsh emitter guide. |
-| **D9** | Off-switch: τ = 0 byte-identical **including the instruction path** (ADR-31's "same instructions" rule). | **DECIDED** | ADR-59 kill-list item B2. Oracle already at exactly `0.0`. |
-| **D10** | Class/command name `LadrunoDuvautLions` (was OQ8). A Perzyna variant would be a different class, not a flag. | **DECIDED** | Says what it is; leaves the Perzyna name free. |
+| # | Decision | Status |
+|---|---|---|
+| **D1** | Plasticity-type inners only; damage documented out of scope **and refused by classTag denylist** (33017, 33015, ASDConcrete3D) | DECIDED, strengthened |
+| **D2** | **REOPENED 2026-09-05** — "decided at CP1 on evidence since shown incomplete". The CP1 decision (generic two-track, declared domain = proportional-and-monotonic) rested on §4.3's theorem, which P0b showed needs a **constant elastic operator** and a **holonomic** inner. SANISAND has neither. **P0b recommendation: disclosure-only (lane d) by default; WP-F conditionally; the generic wrapper not at all** (`[[_adr90_p0b_results]]` §6) | **REOPENED** |
+| **D3** | **CORRECTED.** `C_e` is **deep-copied in the wrapper's `commitState()` after `inner->commitState()`** — *not* read before `setTrialStrain`. `mCe` is rewritten inside `integrate()` (`ManzariDafalias.cpp:979/987/992`), so the old rule read the previous Newton iterate's tangent and made the residual a non-function of `u`. Gated by a Newton-vs-ModifiedNewton bit-identity test | **CORRECTED** |
+| **D4** | Δt from `ops_Dt`; `Δt ≤ 0 ⇒` inviscid **as an early-out**; **β and Δt LATCHED at `newStep`** and rewound on `revertToLastCommit`; a **file-scope** Δt diagnostic; the `β = 1`-with-`τ > 0` counter reported and **required to be zero** | REVISED |
+| **D5** | **Lane (b) — a patterned `sp` under the 1-argument `LoadControl` — is PRIMARY** (uniform pseudo-time by `SP_Constraint.cpp:331-337`; keeps limit points, D16 guards, vault comparability). Lane (a) demoted to secondary (unpriced undamped-ringing cost at β_K = 0). The **4-argument `LoadControl` is forbidden** | **REVISED** |
+| **D6** | τ as a `Parameter` | DECIDED |
+| **D7** | B-bar hex for the final acceptance leg | DECIDED |
+| **D8** | Flags after positionals | DECIDED |
+| **D9** | Off-switch: `τ = 0` **bit-identical in stress, tangent and committed-state trajectory**, implemented as an **early-out**, with a NaN/Inf case | RESTATED |
+| **D10** | **Name: `LadrunoOverstress`, not `LadrunoDuvautLions`.** The model relaxes toward a *strain-history function*, not toward a projection of the current state — the Maxwell/Krempl VBO family. The Duvaut–Lions name is reserved for WP-F, which would actually perform the projection | **CHANGED** |
+| **D11** *(new)* | For a non-associated inner, an **unsymmetric solver is mandatory** in the guide and every deck | DECIDED |
 
 ## 10. Open questions
 
-- **OQ1** [Prof. Gorini] — the ultimate criterion. The acceptance case can run without it; its `q_u`
-  gate cannot be *cited* until it lands.
-- **OQ2** [TIMs] — the acceptance-case numbers (§7.5). The fork drafts; TIMs sets.
-- **OQ3** [fork] — **CLOSED by A0, 2026-09-04.** Two-track is adequate; §4.3 says exactly where and
-  why, and the answer is a theorem rather than a tolerance.
-- **OQ4** [both, P2] — lane (a) vs (b) on the actual radial probe; and whether vault 14's β_K family
-  and the wrapper's τ family collapse onto one De when both are present. They should (same
-  Kelvin–Voigt structure) — but that is a claim to test, not to assume.
-- **OQ5** [fork] — **CLOSED by A0.** The threshold-free width metric is §7.3, unit-pinned.
-- **OQ6** [fork, P2] — interaction with SANISAND's substepping / `-Pmin` whole-tensor resets. The
-  inner is called once per trial and is unaware of the wrapper, so nominally none — verify on A2.
+- **OQ1** [Prof. Gorini] — the ultimate criterion. Results may be stamped *provisional* pending it,
+  with consumer sign-off (P1 entry condition (b)).
+- **OQ2** [TIMs] — the acceptance-case numbers (§7.5), **minus the De**, which the fork now derives.
+- **OQ3** [fork] — **RE-OPENED by P0b-(a).** Closed on 2026-09-04 as "two-track is adequate"; that
+  answer was conditional on a hypothesis SANISAND violates.
+- **OQ4** [both, P2] — lane (b) vs (a) on the real probe; whether vault 14's β_K family and the τ
+  family collapse onto one De.
+- **OQ5** [fork] — **CLOSED**: the metric is §7.3, with its `[h, L]` bounds now stated.
+- **OQ6** [fork, P2] — interaction with SANISAND's substepping / `-Pmin` resets; verify on A2.
 - **OQ7** [fork] — **REWRITTEN after WP-B (PR #785).** The `ManzariDafaliasPlaneStrain` null-ctor
-  classTag anomaly (`LEDGER_quirks.md:4826`) is a **recorded owner decision NOT to fix**, not an
-  outstanding bug. Consequence for this ADR: **leg A2 must not depend on a broker / database
-  restore of the plane-strain material.** Build A2's plane-strain models directly in the deck; keep
-  the round-trip coverage (C7) on the 3-D view, where the classTag is correct. `getCopy(void)`
-  coverage for `LadrunoSANISANDPlaneStrain` landed in WP-B.
-- **OQ8** — **CLOSED**, see D10.
-- **OQ9** [fork, P2 — NEW] — **how large is the two-track approximation on SANISAND itself?** §4.3
-  measured a J2 surrogate (4.4 % at De = 0.10 on a two-leg non-proportional path). The real
-  material's radial pushover under a footing rotates its stress path continuously. This is the
-  non-proportionality error leg added to WP-D at CP1, and it is WP-F's trigger.
+  classTag anomaly (`LEDGER_quirks.md:4826`) is a **recorded owner decision NOT to fix**. Therefore
+  **leg A2 must not depend on a broker / database restore of the plane-strain material**: build A2's
+  plane-strain models directly in the deck and keep round-trip coverage (C7) on the 3-D view.
+- **OQ8** — **CLOSED**, see D10 (and the answer changed).
+- **OQ9** [fork] — **PROMOTED TO A P1 BLOCKER.** How large is the two-track approximation on
+  SANISAND itself? P0b measured surrogates only: 9.2e-4…7.3e-3 (pressure-dependent 1-D, working
+  De), 1.1e-4…7.5e-2 (rotating non-associated DP), 4.4e-2 (non-proportional J2). SANISAND is
+  holonomic nowhere, so **no correctness statement of any size exists for the consumer's own
+  material**. It is no longer acceptable to measure this after P1.
+- **OQ10** [fork, P2 — new] — does the composite (wrapper + inner) satisfy a Clausius–Duhem
+  inequality under any free-energy split, given V2? If not, what is the admissible envelope in De?
+- **OQ11** [fork, P2 — new] — the imperfection field on SANISAND (§7.1(vii)): `-ele`-routed field,
+  or per-element tags, and at what cost?
 
 ## 11. Risks
 
 | # | Sev | Risk | Mitigation / status |
 |---|---|---|---|
-| **R1** | ~~BLOCKING~~ → **RETIRED 2026-09-04** | *"Two-track ≠ Duvaut–Lions for hardening materials; the oracle passes on perfect plasticity and the claim silently over-reaches."* | **Retired by the §4.3 theorem**, which shows hardening is not the discriminator at all, and by the measurements that bracket it (`≤ 2.8e-13` inside the domain, `4.4e-2 … 3.3e-1` outside). The residual concern is re-issued as **R8**, which is a different risk with a different mitigation. |
-| **R2** | BLOCKING | Regularization inert or erratic on the campaign's static lane (F3/F4); "mesh-converged" claimed from a lane where De is undefined. | §3 lane decision + the D4 Δt-uniformity diagnostic + De **and step count** reported per run. |
-| **R3** | MAJOR | Band width is De-dependent; a reviewer reads "converges in h" as "mesh-independent". | §3.2 claim wording; C6 disclosure is mandatory. A0 quantifies the exposure: **factor 12 in width for factor 3 in De**. |
-| **R4** | MAJOR | Width metric threshold-dependent and reverses across meshes. | **CONFIRMED as real** — `w1` and `w3` disagree by up to 40× on the same A0 run. Mitigated by quoting the threshold-free `w2` (§7.3), unit-pinned. |
-| **R5** | MAJOR | A 2-D result on `quad` does not transfer to the B-bar hex. | A3 is the admissible leg; A1/A2 are ladders, not deliverables (D7). |
-| **R6** | MAJOR | Static-buffer aliasing / implicit `getCopy(void)` / stage-flag forwarding — each a silent wrong answer. | §5 makes each an explicit design rule with the source that forces it; each becomes a Zone-A test in P1, plus the `test_fspm_over_manzari_family` twin. |
-| **R7** | MINOR | Slow-tier cost (the R3 Prandtl gate alone is 61 min; A3 × 3 meshes × {τ=0, τ>0} × 3 De ≈ a day of compute). | Wall times in docstrings; nightly Zone-B for the sweep, Zone-A slow for one leg. |
-| **R8** | **MAJOR — NEW** | **The wrapper's error on rotating stress paths is unmeasured until WP-D.** A footing pushover rotates the principal directions continuously, which is exactly the regime §4.3's theorem excludes. The J2 surrogate says 0.09 % at De = 0.01 and 4.4 % at De = 0.10, growing with De — SANISAND, with an α-tensor and fabric `z` that the wrapper cannot re-seed, could be worse. Shipping the wrapper with a *proved* correctness statement makes it easy to forget that the proof does not cover the consumer's own load path. | The declared validity domain is written into D2, §6's NOT-claimed list and the guide. **OQ9** is a named P2 leg with a number attached. **WP-F is parked with an explicit trigger** rather than cancelled: it fires if A2/A3 measure the error above the campaign's own three-mesh band. |
+| **R1** | **BLOCKING (re-rated 2026-09-05)** | Two-track ≠ true DL **for any inner with a state-dependent elastic operator** — i.e. SANISAND, DP with `G(p)`, every hypoelastic model — on **every** path, monotonic and proportional included. Retired on 2026-09-04 by the theorem; **reinstated** by V1, which shows the theorem's hypothesis fails for the whole consumer class. | D2 reopened; OQ9 is a P1 blocker; §6 NOT-claimed 6. |
+| **R2** | BLOCKING | Regularization inert or erratic on the campaign's lane. | D5 lane (b) primary; D4 latching; the `β = 1`-with-`τ > 0` counter. |
+| **R3** | MAJOR | Band width is De-dependent and a reviewer reads "converges in h" as "mesh-independent". | §3.2 wording; C6; A0's ×12-per-×3. |
+| **R4** | MAJOR | Width metric threshold-dependent / bounded. | §7.3, with the `[h, L]` bound and the `w2/h ≥ 3` floor. |
+| **R5** | MAJOR | A 2-D `quad` result does not transfer to the B-bar hex. | A3 is the admissible leg. |
+| **R6** | MAJOR | Static-buffer aliasing, `getCopy` routing, stage-flag forwarding, stale `C_e` — each a silent wrong answer. | §5, each with the verified source and a named gate. |
+| **R7** | MINOR | Slow-tier cost. | Wall times in docstrings; nightly Zone-B. |
+| **R8** | **MAJOR** | **The error on rotating stress paths is unmeasured on the real material.** A footing pushover rotates principal directions continuously — exactly what §4.3 excludes. | OQ9 is now a P1 blocker; V4's rotating-path numbers (1.1e-4 … 7.5e-2) are the only bracket. |
+| **R9** | **MAJOR — new** | **The regularized `q_u` is upward-biased by +9.7 / +12.5 / +17.0 % at De = 3e-4 / 1e-3 / 3e-3** — the same order as the **11.75 %** β_K artefact the campaign deliberately removed. Trading an accidental artefact for a declared one is not progress unless it is reported. | §6 NOT-claimed 7; C5/C6 report `q_u(De)/q_u(τ=0)` per leg; §7.4 reports `q_u` at {½De, De, 2De}. |
+| **R10** | **MAJOR — new** | **Incremental dissipation goes negative on unloading** (V2: −7.9e-3 of cumulative at De = 0.1), and the violated region — elastic unloading — **is the band boundary**. A total-energy check cannot see it. | §6 NOT-claimed 9; OQ10; WP-F removes it. |
+| **R11** | **MAJOR — new** | **β changes per Newton iteration** under `DisplacementControl` / `ArcLength` (`DisplacementControl.cpp:346`, `ArcLength.cpp:302`), so the residual is not a function of `u`. | D4 latching, or a hard refusal of those integrators; D5 makes the uniform lane primary. |
+| **R12** | **MINOR — new** | **One global τ distorts the fitted ellipsoid** under a direction-dependent rate field. | §6 NOT-claimed 8; the ≥ 2-probe-direction WP-D leg. |
 
 ## 12. Ledger obligations
 
-**Discharged in this PR (#783):**
+**Discharged in PR #783:** the ADR; the `LEDGER_implementations` row (33022 **RESERVED, not yet
+built**); the `README` index line; dated CORRECTION callouts in the planning brief (§2 F2, §3 lane,
+§6 P0b, §7 D2, §8 OQ7); and the `LEDGER_quirks` entries for the two tautological A0 gates, the
+`H_res` default, the post-peak Newton predictor, **the `E(σ)` hypothesis, `w2` saturation at L,
+β-per-Newton-iteration under `DisplacementControl`, `revertToLastCommit` setting `dT = 0` ⇒ β = 1,
+and the plane-strain static `mTangent_init`**.
 
-- `LEDGER_implementations.md` — the ADR 90 row: `ND_TAG_LadrunoDuvautLions` **33022 — RESERVED, not
-  yet built**, status *P0 complete — oracle + A0; P1 not started*.
-- `Ladruno_implementation/README.md` — the index line for 90.
-- `LEDGER_quirks.md` — the three A0 entries: the two tautological gates (fixed-`nsteps` De collapse;
-  a flat fixed-length imperfection); the residual-hardening default that silently made a "perfectly
-  plastic" bar harden; and Newton's need for a consistent-tangent predictor post-peak at N ≥ 40.
-- A dated **CORRECTION** callout in `_adr90_regularization_planning_brief.md` at §2 F2, §7 D2 and
-  §8 OQ7 — appended, not rewritten.
-
-**Owed by P1:**
-
-- `SRC/classTags.h` 33022 with the `// N. Mora-Bowen (Ladruno) — …` comment and the per-registry
-  non-collision note (EigenSOE `:57`, PATTERN `:646`).
-- `Ladruno_implementation/ledger/ladruno_duvaut_lions.yml` (verification manifest, ≥ 1
-  non-self-referential oracle — §4.4's closed form is it).
-- `-DLADRUNO_MUTATE_DUVAUTLIONS` mutation build flag; the family suite must turn red.
-- `LadrunoDuvautLions_guide.md` stub, both interpreters, `banner_features.txt` line **on ship**.
-- Two further quirks entries: (i) the **rate artifact** when τ is comparable to a static pseudo-step
-  (brief F3's converse — the ledger has no entry for it); (ii) **`FluidSolidPorousMaterial::getCopy(const char*)`
-  ignores its `code` argument** and routes through the copy ctor, making it the only plane-strain
-  path in the tree that reaches a wrapped material's `getCopy(void)` — a coincidence, not a
-  contract.
-- The **F8 stale-doc corrections** (`LadrunoConcrete3D_guide.md:396,480,593` still list `-eta` as
-  "not yet (P3)"/"deferred"; `31_ladruno_concrete3d_adr.md:91` claims `-eta` works "under any tier"
-  while the kernel gates it to Tier-1) — landed by WP-B in PR #785; verify on merge.
+**Owed by P1 (not before):** `SRC/classTags.h` 33022 with the Ladruno comment and the per-registry
+non-collision note (**PATTERN 33022 is live at `Domain.cpp:2274`**); the verification manifest
+(`ledger/ladruno_overstress.yml`, ≥ 1 non-self-referential oracle — §4.4 scoped to perfect
+plasticity); `-DLADRUNO_MUTATE_OVERSTRESS`; the guide stub, **including the prohibition on tuning τ
+against a target**; both interpreters; the banner line **on ship**; and two further quirks:
+`FluidSolidPorousMaterial::getCopy(const char*)` ignoring its `code` argument, and
+`ManzariDafalias::setParameter` gating on `atoi(argv[1]) == getTag()`.
 
 ## 13. Implementation log
 
 | Date | Event |
 |---|---|
-| 2026-09-04 | **Planning brief** written (`_adr90_regularization_planning_brief.md`) from three read-only source sweeps: the shipped `-eta` kernel, the SANISAND attachment surface and its five traps, and the fork's ADR acceptance bar. Number 90 allocated (88 taken by PR #778, 89 proposed for Track T); ND tag 33022 reserved. Commit `3feec0fc9`. |
-| 2026-09-04 | **WP-A / A0 executed.** `tests/_testbed/duvaut_lions_ref.py` + `run_a0_sweep.py` + `tests/test_duvaut_lions_oracle.py` (9 `zone_a` cases, 22.6 s). PV1–PV6 green for both architectures over both point models. **The TT ≡ TDL theorem found and proved**, with the boundary measured. A0 bar: H1 confirmed (width ≡ h exactly, work halves), H2 confirmed for `De ≥ 3e-4` with a mesh-convergent imperfection field and **refuted** for a one-element defect, H3 confirmed but tautological in its naive form, H4 → TT adequate. Commits `cc7c7f7a5`, `8863a468c`. |
-| 2026-09-04 | **Checkpoint CP1 — owner decision.** **D2 approved as recommended**: build the generic two-track wrapper; declared validity domain = proportional-and-monotonic local strain paths; a non-proportionality error leg (OQ9) added to WP-D on the SANISAND deck; **WP-F parked** with the trigger *"fires only if A2/A3 measure the non-proportional error above the campaign's own three-mesh band"*. This ADR written against that decision. |
-| 2026-09-04 | WP-B (PR #785) landed the SANISAND plane-strain prerequisites and the `-eta` doc corrections, and established that the plane-strain classTag anomaly is a recorded owner decision **not** to fix — which rewrote **OQ7**. |
+| 2026-09-04 | **Planning brief** from three read-only source sweeps. Number 90 allocated; 33022 reserved. `3feec0fc9`. |
+| 2026-09-04 | **WP-A / A0.** Oracle + bar; PV1–PV6; the TT ≡ TDL theorem found and proved; H1–H4. `cc7c7f7a5`, `8863a468c`. |
+| 2026-09-04 | **CP1 — owner decision.** D2 approved as recommended (generic two-track; declared domain proportional-and-monotonic; OQ9 added to WP-D; WP-F parked with a trigger). ADR written against it. `819b69022`. |
+| 2026-09-04 | WP-B (PR #785) landed the SANISAND plane-strain prerequisites and established that the plane-strain classTag anomaly is a recorded owner decision **not** to fix — rewriting OQ7. |
+| **2026-09-05** | **Three-lens adversarial pass** (strategy / numerics / constitutive). Findings: the need is asserted not measured; the theorem needs a constant elastic operator and a holonomic inner; `q_u` is upward-biased; D3 reads a stale tangent; β changes per Newton iteration; the model is an overstress model, not Duvaut–Lions. |
+| **2026-09-05** | **Owner decision: RE-SCOPE (option A). D2 REOPENED**, "decided at CP1 on evidence since shown incomplete". No C++ opens. |
+| **2026-09-05** | **P0b executed** — V1 state-dependent `C_e`; V2 dissipation; V3 imperfection; V4 blended acoustic tensor. `892c22770`, `1052ecd36`. Recommendation: disclosure-only default, WP-F conditional, generic wrapper not recommended. |
+| **2026-09-05** | **This ADR revised against all three critics** — status, §1.2 GATE U, §3 lane inversion, §4.0 renaming, §4.3 hypotheses, §4.5 P0b, §5 D3/M5/M6 corrections, §6 the bias and the dissipation, §7 the De rule and the two-sided A4, §8 P1 entry conditions and the P2 failure branch, §9 D2 reopened, §11 R1 reinstated + R9–R12. |
 
 ## References
 
 - **de Borst, R., Sluys, L. J., Mühlhaus, H.-B. & Pamin, J. (1993).** "Fundamental issues in finite
   element analyses of localization of deformation." *Engineering Computations* **10**, 99–121.
-  Seafile `05_numerics_localization/deborst1993.pdf`. The comparison of regularization strategies
-  (rate dependence, gradient, Cosserat, non-local), the canonical plane-strain biaxial acceptance
-  deck (smooth ends, symmetric half, an imperfect element near mid-height, non-associated
-  Drucker–Prager — their Fig. 18 with Duvaut–Lions), and the internal length `ℓ = 2 m c_e / E`.
-  **The caveat this ADR is built around**, paraphrased: rate dependence works for both failure
-  mechanisms, but its applicability is limited to transient loading and the regularizing effect
-  falls away rapidly for slow loading or near the rate-independent limit. A0 §5.2 is that sentence
-  in numbers.
+  The comparison of regularization strategies, the canonical plane-strain biaxial acceptance deck,
+  and the internal length `ℓ = 2mc_e/E`. **The caveat this ADR is built around**, paraphrased: rate
+  dependence works for both failure mechanisms, but its applicability is limited to transient
+  loading and the regularizing effect falls away rapidly for slow loading or near the
+  rate-independent limit. A0 §5.2 and P0b-(c) are that sentence in numbers.
 - **Simo, J. C. & Hughes, T. J. R. (1998).** *Computational Inelasticity.* Springer. §2.7 —
-  viscoplastic regularization; the Duvaut–Lions backward-Euler closed form and the relaxation of
-  the internal variables that §4.3 reformulates. Box 3.2 — the J2 algorithmic tangent used by the
-  oracle's 3-D point model.
+  viscoplastic regularization; the Duvaut–Lions backward-Euler closed form and the relaxation of the
+  internal variables. Box 3.2 — the J2 algorithmic tangent used by the oracle.
 - **Simo, J. C., Kennedy, J. G. & Govindjee, S. (1988).** "Non-smooth multisurface plasticity and
-  viscoplasticity. Loading/unloading conditions and numerical algorithms." *IJNME* **26**,
-  2161–2185. The closest-point-projection formulation of Duvaut–Lions this ADR implements.
-- **Perzyna, P. (1966).** "Fundamental problems in viscoplasticity." *Advances in Applied
-  Mechanics* **9**, 243–377. The alternative overstress family; a Perzyna variant would be a
-  different class (D10), not a flag on this one.
+  viscoplasticity." *IJNME* **26**, 2161–2185. The closest-point-projection formulation of
+  Duvaut–Lions — the model this ADR is **not** implementing (§4.0).
+- **Krempl, E. (1987, and the VBO literature).** Viscoplasticity based on overstress — the family
+  the two-track update actually belongs to, and the reason for the rename (D10).
+- **Perzyna, P. (1966).** "Fundamental problems in viscoplasticity." *Advances in Applied Mechanics*
+  **9**, 243–377. The alternative overstress family; a different class, not a flag.
 - **Rudnicki, J. W. & Rice, J. R. (1975).** "Conditions for the localization of deformation in
-  pressure-sensitive dilatant materials." *JMPS* **23**, 371–394. Why a **non-associated**
-  pressure-sensitive material localizes while still on a hardening branch — the reason the named
-  consumer's collapse loads are mesh-sensitive in the first place.
+  pressure-sensitive dilatant materials." *JMPS* **23**, 371–394. The acoustic-tensor criterion
+  P0b-(d) evaluates, and the reason a non-associated material localizes while still hardening.
+- **Rice, J. R. (1976).** "The localization of plastic deformation." *Proc. 14th IUTAM*, 207–220.
+  The band-boundary-as-elastic-unloading picture that makes §4.3 hypothesis 3 fatal rather than
+  limiting.
 - **Needleman, A. (1988).** "Material rate dependence and mesh sensitivity in localization
-  problems." *CMAME* **67**, 69–85. The original demonstration that rate dependence restores
-  well-posedness and sets a length through the wave speed — and, read carefully, the origin of the
-  quasi-static caveat that §3 turns into a lane decision.
+  problems." *CMAME* **67**, 69–85. Rate dependence restores well-posedness and sets a length
+  through the **wave speed** — and, read carefully, the origin of the quasi-static caveat that §3
+  turns into a lane decision.
