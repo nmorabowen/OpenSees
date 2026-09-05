@@ -85,6 +85,20 @@ ADR-31 refused the analogous shortcut for concrete because a nominal-stress blen
 state which model it implements and scope the wrapper to plasticity-type inner materials**, and
 P0 must measure whether two-track is an adequate regularizer for SANISAND (see §6 P0, OQ3).
 
+> [!warning] CORRECTION 2026-09-04 (A0 measured — do not rewrite the paragraph above, it is the
+> hypothesis A0 tested)
+> The sentence *"for hardening / state-dependent models they do not [coincide]"* is **wrong as a
+> criterion**. A0 proved and measured that **the boundary is proportional-and-monotonic vs
+> non-proportional-or-unloading, not perfect-vs-hardening**: in 1-D from rest under monotonic
+> loading the two-track blend **is** true Duvaut–Lions *exactly*, for **any** hardening law
+> (`σ + Eα` is conserved by the DL update ⇒ `α = ε − σ/E` ⇒ the projection target *is*
+> `inner.getStress()` on the total strain path). Measured: linear `9.2e-14`, nonlinear
+> exponential `2.8e-13`, J2 proportional `4.7e-15`, whole A0 bar `1.3e-5`. It breaks where the
+> proof's hypotheses fail: J2 **non-proportional** `4.4e-2`, 1-D **unloading** `3.3e-1`.
+> Also: the **De window on the A0 bar deck is `3e-4 … 1e-3`**, not the `{0.01, 0.1, 1}` §5 guesses
+> — at De = 1 the bar never softens at all. See `[[_adr90_a0_results]]` §4 and §5.7, and
+> `[[90_ladruno_viscoplastic_regularization_adr]]` §4.3.
+
 ### F3 — Δt in statics is controllable only under uniform pseudo-time.
 
 `ops_Dt` = `Domain::dT` = current − committed pseudo-time (`Domain.cpp:2080-2082`, `:2125`,
@@ -271,6 +285,19 @@ P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 | D8 | Command shape | `nDMaterial LadrunoDuvautLions $tag $innerTag -tau $tau` (flags after positionals, ADR-86 parser rule) | 86 emitter guide |
 | D9 | Off-switch | τ = 0 byte-identical **including instruction path** (ADR-31's "same instructions" rule) | ADR-59 B2 |
 
+> [!warning] CORRECTION 2026-09-04 — **D2 is DECIDED** (checkpoint CP1, owner)
+> Build the **generic two-track wrapper**; **WP-F is PARKED**, not cancelled, with the trigger
+> *"fires only if legs A2/A3 measure the non-proportional error above the campaign's own
+> three-mesh band"*. The row above is preserved as written; the correction to its reasoning is
+> that the wrapper's **declared validity domain is proportional-and-monotonic local strain
+> paths** — not "perfect plasticity" — because A0 proved TT ≡ TDL there for *any* hardening law
+> (see the §2 F2 correction). Outside that domain the wrapper is a declared approximation of
+> measured size (J2 non-proportional `9.0e-4` at De = 0.01 → `4.4e-2` at De = 0.10; 1-D
+> unloading `3.3e-1`); its size **on SANISAND itself is unmeasured** and is now a named WP-D leg
+> (ADR 90 OQ9) and risk (ADR 90 R8). The De window is deck-dependent and must be **measured** on
+> the SANISAND deck, not inherited from A0's bar. See
+> `[[90_ladruno_viscoplastic_regularization_adr]]` §9 D2.
+
 ---
 
 ## 8. Open questions (owner in brackets)
@@ -282,6 +309,14 @@ P1 one WP, P2 the larger half (S7) dominated by run time, not code.
 - **OQ5** [fork] — a threshold-free band-width metric usable across DP and SANISAND and across element types.
 - **OQ6** [fork] — interaction with SANISAND's own substepping / `-Pmin` whole-tensor resets: the inner is called once per trial and is unaware of the wrapper, so nominally none — verify on A2.
 - **OQ7** [fork, prerequisite] — cover `LadrunoSANISANDPlaneStrain::getCopy(void)` and fix the null-ctor classTag quirk before A2.
+  > [!warning] CORRECTION 2026-09-04 (WP-B, PR #785)
+  > The `ManzariDafaliasPlaneStrain` null-ctor classTag anomaly (`LEDGER_quirks.md:4826`) is a
+  > **recorded owner decision NOT to fix**, not an outstanding bug — so "fix it before A2" is not
+  > the prerequisite. The prerequisite is a **constraint on the deck**: leg **A2 must not depend
+  > on a broker / database restore of the plane-strain material**. Build A2's plane-strain models
+  > directly in the deck and keep the round-trip coverage (claim C7) on the 3-D view, where the
+  > classTag is correct. `getCopy(void)` coverage for `LadrunoSANISANDPlaneStrain` landed in WP-B.
+  > See `[[90_ladruno_viscoplastic_regularization_adr]]` §10 OQ7.
 - **OQ8** [fork] — class/command name: `LadrunoDuvautLions` (says what it is) vs `LadrunoViscoplastic` (leaves room for Perzyna). Recommendation: the former; a Perzyna variant would be a different class.
 
 ---
