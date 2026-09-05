@@ -778,6 +778,15 @@ if(LADRUNO_MKL_PARDISO_LINUX AND NOT WIN32)
     HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
     PATH_SUFFIXES lib lib/intel64)
   if(LADRUNO_MKL_PARDISO_LINUX_THREADED)
+    # Ladruno (2026-09-05, #782 verification): the FEAST opt-in above resolves
+    # mkl_sequential into the SAME cache variable (LADRUNO_MKL_SEQ). find_library
+    # is cached, so with both opt-ins ON the mkl_gnu_thread lookup below would be
+    # a silent no-op and the sequential layer would link anyway. Refuse the pair.
+    if(LADRUNO_MKL_FEAST_LINUX)
+      message(FATAL_ERROR "LADRUNO_MKL_PARDISO_LINUX_THREADED=ON is incompatible with "
+        "LADRUNO_MKL_FEAST_LINUX=ON: the FEAST opt-in links the sequential MKL layer "
+        "(one process carries one threading layer). Turn one of them off.")
+    endif()
     if("${LAPACK_LIBRARIES}" MATCHES "mkl_sequential" OR "${BLAS_LIBRARIES}" MATCHES "mkl_sequential")
       message(FATAL_ERROR "LADRUNO_MKL_PARDISO_LINUX_THREADED=ON but LAPACK_LIBRARIES/BLAS_LIBRARIES "
         "name mkl_sequential: one process carries one MKL threading layer. Pass "
