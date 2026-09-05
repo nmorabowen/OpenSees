@@ -88,7 +88,10 @@ Build a **header-only, OpenSees-free `LadrunoConcrete3DKernel.h`** (the
   **unilateral** crack-closure recovery.
 - **Robustness (three tiers, one kernel):** Tier-1 implicit-accurate return map (default);
   Tier-2 error-controlled **IMPL-EX** (`-implex`, user-selected); Tier-3 **explicit-dynamic**
-  (no tangent needed). Duvaut–Lions viscous (`-eta`) available under any tier.
+  (no tangent needed). Duvaut–Lions viscous relaxation (`-eta`, shipped #316/#318) is
+  **Tier-1 only** — inert (with a parser warning) under `-implex`
+  (`LadrunoConcrete3DKernel.h` ~1492 gates the blend on `!mp.implex`) and inert in the
+  `BeamFiber` view (`LadrunoConcrete3D.cpp` ~201-204/~223-225 warn on both).
 - **Finite strain:** free via `nDMaterial LogStrain $t $c3d` + `LadrunoBrick -geom finite`,
   with a kernel out-contract fix so IMPL-EX does not corrupt the LogStrain `bᵉ` recovery (§4.4).
 

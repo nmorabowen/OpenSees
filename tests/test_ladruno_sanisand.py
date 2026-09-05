@@ -2613,3 +2613,171 @@ def test_getcopy_void_carries_the_settings():
         'p_r = 0 and p_r = 1.01 decks became indistinguishable. That function '
         'is not carrying p_residual. Measured on this deck: 8.6042e-02', rd,
         wrap_pr0, wrap_van)
+
+
+# ===========================================================================
+#  11. LadrunoSANISANDPlaneStrain::getCopy(void) -- the plane-strain twin
+# ===========================================================================
+#
+#  WHY THE 3D TRICK ABOVE DOES NOT PORT.  Section 10's route works only
+#  because `InitStrainNDMaterial` special-cases the LITERAL STRING
+#  "ThreeDimensional": its constructor always resolves `theMaterial` via
+#  `material.getCopy("ThreeDimensional")` (InitStrainNDMaterial.cpp:135,153),
+#  and `InitStrainNDMaterial::getCopy(const char*)` forwards that SAME string
+#  straight to its own void `getCopy()` (:292-293) -- i.e. to
+#  `theMaterial->getCopy()`.  `quad ... PlaneStrain` never asks a wrapper for
+#  "ThreeDimensional" (FourNodeQuad.cpp:334 passes the literal type string the
+#  element command was given), and InitStrain's OWN "PlaneStrain" branch (the
+#  `ncomp` switch, InitStrainNDMaterial.cpp:302-322) calls
+#  `theMaterial->getCopy("PlaneStrain")` -- the type-string constructor, NOT
+#  the void clone.  So wrapping a SANISAND in InitStrain and driving it with a
+#  `quad` element never reaches `LadrunoSANISANDPlaneStrain::getCopy(void)`;
+#  it only re-exercises `LadrunoSANISAND::getCopy(const char*)`'s PlaneStrain
+#  branch, already covered directly by `_build_ps`/`_build_ps_confined`.
+#  `StagedStrainNDMaterial` (StagedStrainNDMaterial.cpp:293-309, the pattern
+#  WP-C's wrapper is modelled on) has the identical shape: no special case for
+#  any string but its own construction-time template.  Neither wrapper, nor
+#  any nesting of the two, can substitute.
+#
+#  THE ROUTE THAT DOES WORK: `FluidSolidPorousMaterial`
+#  (SRC/material/nD/soil/FluidSolidPorousMaterial.cpp), the pore-pressure
+#  wrapper `test_fspm_over_manzari_family.py` already gates for the "subclass
+#  responsibility" defect (ADR 86 follow-up).  Its constructor asks the soil
+#  for a DIMENSION-MATCHED copy up front
+#  (`soilMat.getCopy(nd == 3 ? "ThreeDimensional" : "PlaneStrain")`, :125), so
+#  `theSoilMaterial` is ALREADY a `LadrunoSANISANDPlaneStrain` once `nd == 2`.
+#  Its OWN `getCopy(const char*)` (:415-425) does NOT forward the type string
+#  to the soil at all -- for both "PlaneStrain" and "ThreeDimensional" it just
+#  runs its own copy constructor (`FluidSolidPorousMaterial(const
+#  FluidSolidPorousMaterial&)`, :152-162), which clones the soil with the
+#  dimension-FREE, no-argument `theSoilMaterial->getCopy()` (:156).  So:
+#
+#    nDMaterial LadrunoSANISAND 1 ...            -> the dimensionless PROTOTYPE
+#    nDMaterial FluidSolidPorous 2 2 1 K atm      -> FSPM ctor asks 1 for
+#                                                     getCopy("PlaneStrain")
+#                                                     (the type-string path,
+#                                                     already covered) ->
+#                                                     theSoilMaterial is now a
+#                                                     LadrunoSANISANDPlaneStrain
+#    element quad 1 ... PlaneStrain 2             -> quad asks the WRAPPER
+#                                                     (tag 2) for
+#                                                     getCopy("PlaneStrain"),
+#                                                     once per Gauss point ->
+#                                                     FSPM's copy ctor ->
+#                                                     theSoilMaterial->getCopy()
+#                                                  => LadrunoSANISANDPlaneStrain
+#                                                     ::getCopy(void), 4 times
+#                                                     (once per Gauss point).
+#
+#  `loadStagex` (the wrapper's OWN undrained switch) is left at its
+#  construction default of 0 for the whole deck below -- `updateMaterialStage`
+#  is only ever aimed at the SOIL's tag, never the wrapper's -- so
+#  `FluidSolidPorousMaterial::getStress()` (:296) takes its `loadStage == 0`
+#  branch and returns `theSoilMaterial->getStress()` completely unmodified: no
+#  pore-pressure term is ever added.  That is what licenses comparing the
+#  wrapped deck against the bare `_drive_ps_confined` deck bit-for-bit below.
+# ---------------------------------------------------------------------------
+
+_FSPM_KCOMB = 1.0e6     # value is irrelevant here: loadStage never leaves 0
+
+
+def _build_ps_fspm(tag, wrap_tag, opts=(), mirror=False):
+    """`_build_ps_confined`'s twin, with the element pointed at a
+    `FluidSolidPorous` wrapper (tag `wrap_tag`) instead of directly at the
+    soil tag."""
+    sgn = -1.0 if mirror else 1.0
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.node(j + 1, x, y)
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.nDMaterial('FluidSolidPorous', wrap_tag, 2, tag, _FSPM_KCOMB, _P_ATM)
+    ops.element('quad', 1, 1, 2, 3, 4, 1.0, 'PlaneStrain', wrap_tag)
+    for j, (x, y) in enumerate(_XY):         # rollers on the two negative edges
+        ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+    s_lat, s_ax = _c_series(lat=_C_LAT_PS)
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for j, (x, y) in enumerate(_XY):
+        if x == 1.:
+            ops.sp(j + 1, 1, sgn * -_C_E_CONF)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        if y == 1.:
+            ops.sp(j + 1, 2, sgn * -_C_E_CONF)
+    _analysis_confined()
+
+
+def _drive_ps_fspm(tag, wrap_tag, opts=(), mirror=False):
+    """wipe -> build (through FluidSolidPorous) -> confine -> shear -> stress.
+
+    `updateMaterialStage` below is aimed at the SOIL's own tag, never the
+    wrapper's -- exactly as the 3D InitStrain route requires.  FSPM forwards
+    any "-material $tag" request whose tag is not its own straight to
+    `theSoilMaterial->setParameter` (FluidSolidPorousMaterial.cpp:318-333),
+    and every clone the wrapper holds carries the SOIL's tag (both
+    `getCopy(type)` and `getCopy(void)` preserve it), so the request reaches
+    the SANISAND clone, not the inert wrapper.
+    """
+    _build_ps_fspm(tag, wrap_tag, opts, mirror)
+    _confine_leg(tag)
+    _deviator_leg(tag)
+    return _stress()
+
+
+def test_getcopy_void_carries_the_settings_planestrain():
+    """`LadrunoSANISANDPlaneStrain::getCopy(void)` must clone the Ladruno
+    constants -- the plane-strain twin of `test_getcopy_void_carries_the_
+    settings` (section 10), routed through `FluidSolidPorous` rather than
+    `InitStrain` because the InitStrain route does not reach this override at
+    all in 2D (see the block comment above).
+
+    Same two assertions as the 3D test, and the second is the one that cannot
+    be faked:
+
+      1. PASS-THROUGH. The `FluidSolidPorous`-wrapped deck must be BIT
+         IDENTICAL to the bare `_drive_ps_confined` deck, at both p_r = 0 and
+         p_r = 1.01 kPa -- the wrapper's own undrained coupling never fires
+         (`loadStage` stays at its construction default of 0 for the whole
+         run), so any difference is attributable to
+         `LadrunoSANISANDPlaneStrain::getCopy(void)` alone.
+      2. NON-VACUITY. Through the wrapper, p_r = 0 and p_r = 1.01 must still
+         differ materially. Every Gauss-point material on the wrapped deck was
+         built by `LadrunoSANISANDPlaneStrain::getCopy(void)`
+         (`FluidSolidPorousMaterial`'s copy constructor clones the wrapped
+         soil with its dimension-free `getCopy()`), so a version of that
+         override that dropped `mPresidualInput`/`mPminInput`/`mHonorTolR` --
+         or let them fall back to compiler-default-initialized garbage, or to
+         the base class's own values -- would make both legs collapse to the
+         same answer, or diverge from the unwrapped control in assertion 1.
+
+    The UNWRAPPED deck (`_drive_ps_confined`) is the control: it goes through
+    `LadrunoSANISAND::getCopy(const char*)` directly (already covered by
+    `test_planestrain_lane_carries_the_settings`) and never calls
+    `getCopy(void)` at all, so a wrapped-vs-unwrapped difference is
+    attributable to that one function.
+    """
+    opts_pr0 = _OPTS_PR0
+    opts_van = _OPTS_VANILLA
+
+    plain_pr0 = _drive_ps_confined(1, opts_pr0)
+    plain_van = _drive_ps_confined(1, opts_van)
+    wrap_pr0 = _drive_ps_fspm(1, 2, opts_pr0)
+    wrap_van = _drive_ps_fspm(1, 2, opts_van)
+
+    assert _reldiff(plain_pr0, wrap_pr0) == 0.0, (
+        'a FluidSolidPorous wrapper with loadStage == 0 changed the p_r = 0 '
+        'answer. The wrapper is a pass-through by construction at that stage, '
+        'so this is the clone made by LadrunoSANISANDPlaneStrain::getCopy(void) '
+        'differing from the one made directly by getCopy("PlaneStrain")',
+        plain_pr0, wrap_pr0)
+    assert _reldiff(plain_van, wrap_van) == 0.0, (
+        'a FluidSolidPorous wrapper with loadStage == 0 changed the p_r = 1.01 '
+        'answer', plain_van, wrap_van)
+
+    rd = _reldiff(wrap_pr0, wrap_van)
+    assert rd > _GETCOPY_NONVACUITY_FLOOR, (
+        'with every Gauss point built by LadrunoSANISANDPlaneStrain::getCopy'
+        '(void), the p_r = 0 and p_r = 1.01 decks became indistinguishable. '
+        'That function is not carrying p_residual.', rd, wrap_pr0, wrap_van)

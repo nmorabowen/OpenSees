@@ -4902,6 +4902,18 @@ mode ADR 86 section 4.4's refinement box was written to prevent, arriving throug
 > A new base constructor taking only the tag would do it, at the cost of a near-duplicate of a
 > 55-line constructor body. Do not simply add `mElastFlag = 0` to the bare form to "make them
 > consistent" — that changes every null-constructed Manzari material in the process.
+>
+> **RECONFIRMED 2026-09-04, ADR-90 WP-B.** The ADR-90 planning brief (F5) listed this as a
+> WP-B prerequisite fix, assuming a fix confined to `ManzariDafaliasPlaneStrain.cpp` alone was
+> available. It is not: `MovableObject::classTag` is private with no setter anywhere in `SRC/`
+> (re-verified), so the only way to change it is a base-constructor call, and every such call
+> either carries the `mElastFlag` side effect or requires adding a new constructor overload to
+> vanilla `ManzariDafalias` — exactly the two options the 2026-08-28 decision already weighed and
+> declined. **Status stays NOT FIXED.** What WP-B added instead is a broker/database round-trip
+> test that reproduces the defect end to end —
+> `tests/test_manzari_planestrain_classtag_quirk.py::test_manzari_planestrain_classtag_survives_one_roundtrip_but_not_two`
+> — so a future change to the null constructor, the broker dispatch table, or the wire format has
+> something concrete to check against instead of this prose alone.
 
 
 ## `OPS_ManzariDafaliasMaterial` writes past a 5-element stack array on a deck with >5 trailing optionals
