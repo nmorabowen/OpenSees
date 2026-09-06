@@ -82,6 +82,44 @@
 // error, but on this class the comments have been wrong more often than the code.)
 #include "UWmaterials/ManzariDafalias.h"
 
+// ===========================================================================
+//  Ladruno (ADR-92 P1): the IMPL-EX option block.
+//
+//  Carried as ONE aggregate rather than seven more trailing constructor
+//  arguments. The four constructors already take up to 28; adding seven more
+//  would have to be repeated in both full constructors, both wrapper
+//  constructors and getCopy(const char*) -- exactly the duplication
+//  sanitiseLadrunoInputs() exists to undo. The parser (and getCopy(const char*))
+//  construct first and then call setLadrunoImplexOptions(); the wrappers'
+//  getCopy(void) is a memberwise `*clone = *this` and carries this struct for
+//  free.
+//
+//  DEFAULTS ARE "OFF" AND THAT IS LOAD-BEARING: with `enabled == false` every
+//  code path added by ADR 92 is skipped by a single branch in
+//  ladrunoTrialUpdate() / commitState() / revertToLastCommit(), so a deck that
+//  does not say -implex is byte-identical to the pre-ADR-92 build.
+// ===========================================================================
+struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
+{
+    // dt source (ADR-92 D2). `pseudo` = ops_Dt, the ASDConcrete3D behaviour and
+    // the default; `strain` = the norm of the strain increment; `user` = a value
+    // the deck supplies with `-implexDt user $dt` (or at run time through
+    // setParameter "implexDt").
+    enum DtSource { DT_PSEUDO = 0, DT_STRAIN = 1, DT_USER = 2 };
+
+    bool   enabled;          // -implex
+    bool   control;          // -implexControl
+    double errorTol;         // -implexControl $tol
+    double reductionLimit;   // -implexControl ... $reductionLimit
+    double alpha;            // -implexAlpha
+    int    dtSource;         // -implexDt {pseudo|strain|user}
+    double dtUser;           // -implexDt user $dt
+
+    LadrunoImplexOptions()
+      : enabled(false), control(false), errorTol(0.05), reductionLimit(0.01),
+        alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0) {}
+};
+
 class LadrunoSANISAND : public ManzariDafalias
 {
   public:
@@ -137,6 +175,36 @@ class LadrunoSANISAND : public ManzariDafalias
 
     void Print(OPS_Stream &s, int flag = 0);
 
+    // --- ADR-92 P1: IMPL-EX --------------------------------------------------
+
+    // The companion return and the extrapolation history live here, so the
+    // commit hook is a seventh override. `ManzariDafalias::commitState()` is
+    // virtual through NDMaterial; when -implex is off this delegates to it
+    // unconditionally and the deck is byte-identical.
+    int commitState(void);              // Ladruno (ADR-92 P1)
+
+    // The base's is an empty `return 0`. Under -implex the trial members hold an
+    // EXTRAPOLATED state that has no companion behind it, so a rejected step
+    // must put them back on the committed ones and re-arm the step. Guarded on
+    // the flag -- with -implex off this is the base's empty body verbatim.
+    int revertToLastCommit(void);       // Ladruno (ADR-92 P1)
+
+    // Set after construction (see the struct's note). Validates the option set
+    // against this deck's IntScheme and -maxSubsteps and refuses what ADR 92 D3
+    // refuses; returns 0 on accept, -1 if the options were rejected (in which
+    // case IMPL-EX is left OFF and the material runs implicit).
+    // `verbose` is false on the getCopy / recvSelf paths: those run once per
+    // Gauss point, and the echo rule for this class (ADR 86 sec.4.4) is
+    // once per DECK command, not once per integration point.
+    int  setLadrunoImplexOptions(const LadrunoImplexOptions &opt,
+                                 bool verbose = true);               // Ladruno (ADR-92 P1)
+    const LadrunoImplexOptions &getLadrunoImplexOptions(void) const { return mImplexOpt; }
+
+    // `implexError` / `avgImplexError`, on the ASDConcrete3DMaterial.cpp
+    // :2073-2077 template, plus this material's own per-point detail response.
+    int setParameter(const char **argv, int argc, Parameter &param);  // Ladruno (ADR-92 P1)
+    int updateParameter(int parameterID, Information &info);          // Ladruno (ADR-92 P1)
+
     // --- ADR-86b: the substep cap's two public seams -------------------------
 
     // Ladruno (ADR-86b): "substeps" / "substepsME" -- the ModifiedEuler substep
@@ -146,6 +214,15 @@ class LadrunoSANISAND : public ManzariDafalias
     // inherit them (neither overrides setResponse).
     Response *setResponse(const char **argv, int argc, OPS_Stream &output);
     int       getResponse(int responseID, Information &matInformation);
+
+    // --- ADR-92 P1: the one entry point both wrappers' setTrialStrain use -----
+    //
+    // Replaces the bare `this->integrate(); return this->ladrunoUpdateStatus();`
+    // pair. With -implex OFF it IS that pair, in that order, so both wrappers
+    // stay byte-identical; with -implex ON it runs the extrapolated update
+    // instead. Public because the wrappers call it from their own
+    // setTrialStrain, which is public, and because a test may want to drive it.
+    int ladrunoTrialUpdate(void);   // Ladruno (ADR-92 P1)
 
   protected:
 
@@ -182,10 +259,111 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          is the request, mMaxSubstepsInME is the
                               //          base-side seam it acts on.
 
+    // =======================================================================
+    //  Ladruno (ADR-92 P1): IMPL-EX state.
+    //
+    //  D1 (measured at P0, 18-22x over the dGamma form on the deck-default
+    //  integrator) extrapolates the PLASTIC STRAIN, and that is why this block
+    //  needs NO hook into vanilla: eps_p(n) = mEpsilon_n - mEpsilonE_n is
+    //  already committed and exact on the base, so the only new committed
+    //  quantity is its increment. ADR 92 D5: vanilla footprint ZERO.
+    // =======================================================================
+
+    LadrunoImplexOptions mImplexOpt;   // Ladruno (ADR-92 P1): the deck's request
+
+    // d_eps_p(n) = eps_p(n) - eps_p(n-1), COMMITTED. The one new history
+    // variable. Zero until the first commit after the elastic-plastic stage
+    // flip, which is what makes the first plastic step a pure elastic
+    // prediction (and what the P0 oracle's `Implex.__init__` does).
+    Vector mImplexDEpsP;               // Ladruno (ADR-92 P1)
+
+    // Per-step bookkeeping.
+    double mImplexDt;         // dt_{n+1}, frozen at the FIRST trial call of the step
+    double mImplexDtCommit;   // dt_n, the frozen value of the last committed step
+    double mImplexDt0;        // Ladruno ADR-92 fix (red/blue B2): the MAGNITUDE |dt|
+                              //          of the first non-zero dt seen -- the
+                              //          -implexControl reduction floor, which the
+                              //          parser documents as a fraction of it. It armed
+                              //          only from a POSITIVE dt, so on a
+                              //          settlement-driven deck it stayed 0.0 and the
+                              //          floor was dead.
+    double mImplexFactor;     // f = (dt_{n+1}/dt_n)*alpha, frozen with mImplexDt.
+                              //          Ladruno ADR-92 fix (red/blue B1): the ratio is
+                              //          formed whenever dt_n != 0, sign-consistently,
+                              //          so a monotonically negative clock gets the
+                              //          positive ratio it is entitled to instead of
+                              //          collapsing to alpha.
+    bool   mImplexStepArmed;  // true until the first trial call after a commit/revert
+    bool   mImplexTrialDone;  // the last trial pass was an EXTRAPOLATED one, so
+                              // commitState() owes a companion return. False on
+                              // stage 0 and with -implex off, which is what keeps
+                              // gravity and the LoadControl 0.0 hold bit-identical.
+
+    // Error accounting, all measured at commit against the companion return.
+    // The deviatoric and volumetric splits exist because ADR-92 P1 section 4
+    // makes the clamp-vs-bound decision on them: the p_min clamp repairs
+    // tr(sigma~) only, so if the deviatoric error is the same order the
+    // pressure error was, the clamp is the wrong fix and a bound on f replaces
+    // it. Measured, reported, not asserted.
+    double mImplexError;      // ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps_n||)
+    double mImplexErrorDev;   // the deviatoric part of the same quotient
+    double mImplexErrorVol;   // the volumetric part (sqrt(3)*|dp|) of the same quotient
+    bool   mImplexClampFired; // the p_min clamp acted on the LAST extrapolation
+    long   mImplexClampCount; // how often it has acted at this integration point
+
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
     // base.
     void initialize();
+
+    // --- ADR-92 P1 internals -------------------------------------------------
+
+    // Sizes mImplexDEpsP and zeroes every IMPL-EX scalar. Called from all four
+    // constructors and from revertToStart via initialize(); it does NOT touch
+    // mImplexOpt, because the option set is the deck's request and survives a
+    // revertToStart exactly as p_residual does.
+    void ladrunoImplexInitState(void);         // Ladruno (ADR-92 P1)
+
+    // true only when an extrapolated update is actually owed: the flag is on AND
+    // the material is past the elastic stage. mElastFlag is a STATIC shared by
+    // every instance and is flipped by `updateMaterialStage`, so this is the
+    // whole of W5's stage-0 inertness.
+    bool ladrunoImplexActive(void) const;      // Ladruno (ADR-92 P1)
+
+    // The extrapolated update: freezes Ce at the committed mean stress, advances
+    // sigma_n incrementally, clamps at p_min, and (with -implexControl) runs the
+    // in-step implicit and refuses past tolerance.
+    int  ladrunoImplexTrial(void);             // Ladruno (ADR-92 P1)
+
+    // The companion return, at commitState only.
+    int  ladrunoImplexCommit(void);            // Ladruno (ADR-92 P1)
+
+    // dt_{n+1} for this step from the configured source, and f from it. Called
+    // ONCE per step (mImplexStepArmed), so f is a constant within the step and
+    // d(sigma~)/d(eps) is exactly Ce -- acceptance 1. Under `-implexDt strain`
+    // that freeze is not a convenience, it is the reason the tangent identity
+    // survives at all.
+    void ladrunoImplexArmStep(void);           // Ladruno (ADR-92 P1)
+
+    // Put every trial member back on its committed twin. Used by
+    // revertToLastCommit and by the -implexControl in-step probe, which has to
+    // undo the implicit return it just ran before handing the element the
+    // extrapolated state.
+    void ladrunoRestoreTrialFromCommitted(void);   // Ladruno (ADR-92 P1)
+
+    // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
+    // definition. `epsRef` is the strain the denominator is scaled by: the P0
+    // oracle uses the NEW committed strain, so the commit path passes
+    // mEpsilon_n and the in-step -implexControl probe passes mEpsilon (the same
+    // vector, one commit earlier).
+    void ladrunoImplexMeasureError(const Vector &sigTilde,
+                                   const Vector &sigImplicit,
+                                   const Vector &epsRef);      // Ladruno (ADR-92 P1)
+
+    // Write Ce(p_n) into all three tangent slots, so getTangent() returns the
+    // operator the extrapolated stress was actually built with whatever TanType
+    // the deck asked for. Returns K and G through the reference arguments.
+    void ladrunoImplexFreezeTangent(double &K, double &G);   // Ladruno (ADR-92 P1)
 
     // The single "win the last write" helper. Called from every constructor
     // (after the base ctor has returned), from revertToStart via initialize(),

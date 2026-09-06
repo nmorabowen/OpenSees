@@ -5335,6 +5335,34 @@ that floor and the material logs
 > is still open. Whichever option is taken, COUNT the clamp events and report the number.
 > **It gets closer, not further, after WP-86b:** the substep cap and the `TanType` default exist to
 > let a leg reach deeper settlements, and this clamp is the next thing waiting there.
+## A running analysis HOLDS `dist/bin/opensees.pyd`, so a rebuild relinks the DLL, SILENTLY fails to copy it, and exits 0 -- you then test the OLD binary
+
+**Measured 2026-09-06, ADR-92 P1.**
+
+`build.bat` ends with `copying OpenSeesPy.dll -> opensees.pyd`. If ANY process has
+that `.pyd` loaded -- a background leg run with `LADRUNO_DIST_BIN` pointing at that
+worktree's `dist/bin`, a stray `python -c "import opensees"` -- Windows refuses the
+overwrite. The build **prints the copying line, exits 0, and leaves the old
+`opensees.pyd` in place**. Measured: `build/build/Release/OpenSeesPy.dll` at
+`01:53:37`, `dist/bin/opensees.pyd` still at `01:13:43`, forty minutes stale, with
+three `python3.12` processes holding it.
+
+- **Why it is dangerous rather than annoying:** every downstream gate then runs the
+  PREVIOUS binary and attributes its behaviour to the change you just made. In this
+  case the next step would have been a BVP gate on a freshly fixed guard, and the
+  answer would have been the unfixed one, reported with a build hash that looked
+  plausible because it *was* a real build of this branch -- just the wrong one.
+- **Detection, and do it every time:** compare `ops.ladrunoBuild()` against
+  `git rev-parse HEAD`, AND compare the mtimes of `build/build/Release/OpenSeesPy.dll`
+  and `dist/bin/opensees.pyd`. The hash alone is not enough -- a stale `.pyd` from an
+  earlier commit on the SAME branch reports a hash that passes a casual glance.
+- **Fix:** finish or kill everything holding the module, then copy the DLL over the
+  `.pyd` by hand (no need to rebuild -- the link already succeeded), or rebuild once
+  the lock is clear.
+- Related: the installer's DLL-lock entry, and `ladruno-build-targets-exe-vs-pyd`
+  (building only `OpenSees` leaves the `.pyd` stale, which fails the same way and is
+  ALSO invisible unless the mtime is checked).
+
 ## `ManzariDafalias` `gp_state[25]` (`mDGamma`) is the LAST SUBSTEP's plastic multiplier, not the step total, under every substepped scheme
 
 **Found 2026-09-05, ADR-92 scoping; measured by the P0 oracle (`_adr92_p0_oracle_results` §6).**
@@ -5652,3 +5680,142 @@ refusal tests and any pure-numpy companion assertions to SURVIVE `ZERO`: they
 never run an analysis, so they cannot notice deleted physics, and that is the
 correct answer rather than a coverage gap. Audit each survivor individually
 before accepting the score.
+
+## An IMPL-EX extrapolation factor recomputed on every `setTrialStrain` destroys the tangent identity — and the `p_min` clamp destroys it again, at the floor
+
+Two traps found while writing ADR-92 P1's `-implex` on `LadrunoSANISAND`. Both
+are general to IMPL-EX in this fork, not to SANISAND.
+
+**1. `f` must be frozen for the whole step.** The extrapolated response is
+
+```
+sigma~ = sigma_n + Ce(p_n) : ( d_eps - f * d_eps_p(n) ),   f = (dt_{n+1}/dt_n)*alpha
+```
+
+and the operator handed to the element is `Ce(p_n)`, on the claim that it *is*
+`d(sigma~)/d(eps)`. That claim holds only while `f` does not depend on the trial
+strain. With a pseudo-time source (`ops_Dt`, which is what `ASDConcrete3DMaterial`
+samples) `f` is constant within a step anyway and the trap never fires — which is
+exactly why it is easy to write a strain-based or increment-based time source
+later and not notice. Under `-implexDt strain`, `dt_{n+1} = ||d_eps||`, so an `f`
+recomputed on every pass carries a `d f/d eps` term and the delivered tangent is
+wrong by it — silently, on a run whose global iteration count *looks* like the
+one-iteration IMPL-EX advertises. `LadrunoSANISAND` therefore computes `f` ONCE,
+at the first trial call after a commit or a `revertToLastCommit`, and freezes it
+for the rest of the step. Anything else that grows an IMPL-EX path must do the
+same, and its tangent-identity test must be run on a NON-pseudo time source or it
+proves nothing.
+
+**2. A floor clamp on the extrapolated stress is a projection, so it breaks the
+identity where it fires.** P0 measured `sigma~` crossing `p_min` into tension
+(`-1.37 kPa` on a committed `+0.0101 kPa` state), and the repair is the code's own
+device: `sigma~ = dev(sigma~) + p_min*I1`. But that is a projection, so wherever
+it acts `d(sigma~)/d(eps)` is the deviatoric projection of `Ce`, not `Ce`. The
+material keeps returning `Ce` (symmetric, positive definite — the reason IMPL-EX
+was asked for), which makes the tangent knowingly inexact at exactly the Gauss
+points sitting on the floor, i.e. the free-surface ring. **A tangent-identity gate
+must therefore be run on a path where the clamp is idle, and a test that reports
+"identity to machine precision" on a clamped path is measuring nothing.** The
+deeper fix — bounding `f` so the whole `sigma~` stays admissible without a
+projection — keeps the identity exact everywhere and is ADR-92 P1 section 4's
+open alternative.
+
+**3. A P0 numpy oracle written before the clamp existed is not a parity reference
+on a clamped path.** `adr92_p0_oracle/sanisand_implex_oracle.py`'s
+`Implex.extrapolate` has no clamp (the clamp is a P1 item the oracle's own G3 gate
+*discovered*). So the 1e-8 parity gate is meaningful only where the C++ clamp
+stays idle — on the G3 corner path the two MUST differ, and a parity run there
+that passes is evidence the C++ clamp is not firing, not evidence of parity.
+
+## `ops.reset()` is `revertToStart`, NOT `revertToLastCommit` — it ZEROES the committed state, and a probe that uses it to "return to the base state" measures a pristine material
+
+Cost half a day on ADR-92 P1's tangent-identity gate, which failed on its own
+precondition with a "before" of `-100.2 kPa` and an "after" of
+`[-0.0101, -0.0101, -0.0101, -0.0, -0.0, -0.0]`.
+
+**The chain, at source.** `ops.reset()` → `OPS_resetModel()`
+(`SRC/interpreter/OpenSeesCommands.cpp:2534`) → `Domain::revertToStart()` →
+every material's `revertToStart()` → `ManzariDafalias::initialize()`, which
+does `mSigma_n.Zero(); mEpsilon_n.Zero(); mAlpha_n.Zero(); mFabric_n.Zero()`.
+The entire committed state is gone. `mElastFlag` is a **static** and is NOT
+touched, so the material is still on the plastic stage and the next state
+determination runs the full plastic path against a zero committed state.
+
+**Then `Domain::revertToStart()` ends `return this->update();`** — like
+`revertToLastCommit()`, it pushes one state determination through every element
+before returning. So the value a probe reads *after* `ops.reset()` is not the
+committed stress; it is whatever the material returns from a zero-strain
+increment against a zeroed committed state. Under `LadrunoSANISAND -implex`
+that is `sigma~ = 0`, which trips the ADR-92 `p_min` floor clamp and comes back
+as `p_min*I1` — `[-0.0101]*3` at the element face, with three IEEE `-0.0`
+shears from `getStress()`'s `-1.0 *` flip. **The `-0.0` triple is the
+fingerprint**: it can only come from a stress tensor whose deviator is exactly
+zero, which no real load path produces.
+
+**What to use instead.** A `StaticAnalysis` step that fails already calls
+`the_Domain->revertToLastCommit()` and `theIntegrator->revertToLastStep()`
+itself (`StaticAnalysis.cpp:185` and four sibling sites). So a probe built on a
+deliberately-failed `analyze(1)` needs **no** reset call at all — the correct
+revert has already happened, and adding `ops.reset()` destroys it. There is no
+Python verb that calls `Domain::revertToLastCommit()` on its own; a failed step
+is the way to reach it.
+
+## An IMPL-EX "freeze the extrapolation factor at the first trial call of the step" rule is consumed by `Domain::revertToLastCommit()`'s own trailing `update()`
+
+Found while diagnosing the above; it is a defect in ADR-92 P1's own code and it
+hit the **default** `-implexDt pseudo` source.
+
+`Domain::revertToLastCommit()` does not stop at reverting. It sets `dT = 0.0`,
+re-applies the committed load, and ends `return this->update();` — one
+zero-strain-increment state determination through every material at
+`ops_Dt == 0`. A material that freezes a per-step quantity "on the first trial
+call after a commit or revert" will therefore freeze it **from that spurious
+call**: `dt = 0`, extrapolation factor `f = 0`, arm consumed. The retried step
+then runs its entire ladder rung with the plastic extrapolation switched off,
+and the reported `implexError` is the error of an operator the deck never asked
+for. Nothing crashes and the committed answer stays correct (the companion
+return at commit is untouched), so this is invisible without looking for it.
+
+**The rule that works:** arm from the first trial call whose strain increment is
+**non-zero**; a zero increment takes `f = 0` for that evaluation only (which is
+what a `LoadControl 0.0` hold requires anyway — no strain advanced, no plastic
+flow predicted) and leaves the step armed. Under a pseudo-time source this
+cannot perturb any step that actually moves, because `ops_Dt` is identical on
+every call of a step, so *which* call arms it is unobservable.
+
+This is the same `dT = 0` trap already recorded for rate-dependent materials
+("`Domain::revertToLastCommit()` sets `dT = 0` and re-applies the load — so a
+rate-dependent material runs the FIRST evaluation of every retried step
+UNREGULARIZED"). **Anything that keys off "the first call of a step" must
+assume that call is a zero-increment ghost.**
+
+## A material cannot refuse at commit: `Domain::commit()` discards `commitState()`'s return and returns 0 unconditionally
+
+Found by the ADR-92 red/blue review (B3), diagnosing why the `-implexControl`
+commit-time companion refusal in `LadrunoSANISAND::commitState()` never
+propagated to the analysis.
+
+`LadrunoSANISAND.cpp:1660` returns `LADRUNO_MATERIAL_REFUSED` from
+`commitState()` when the IMPL-EX companion (`-maxSubsteps` scheme 1) exhausts
+its substep budget. But `Domain.cpp:2244` calls elements at commit as a bare
+`elePtr->commitState();` inside a `while` loop with the return value discarded,
+and `Domain::commit()` itself ends `return 0;` **unconditionally** — there is
+no code path in it that can propagate a non-zero child return. Whatever
+`AnalysisModel::commitDomain()` does with a non-zero `commit()` result, it can
+never see this refusal: the element and material returns are thrown away two
+frames before that check. The step is silently accepted, `committedTime`
+advances, recorders write against the un-refused state, and — because the
+early `return` in `commitState()` sits before the history-variable update at
+`:1673-1682` — `mEpsilon_n`, `mImplexDtCommit`, `mImplexStepArmed` and
+`mImplexDEpsP` are all left stale for every subsequent step.
+
+**The rule that follows:** commit-time is not a refusal site by construction
+in this codebase — the object model has no channel for it. A material (or
+element) that needs to refuse work discovered only at commit must make that
+refusal *observable* some other way: a throttled `opserr`, a running counter
+exposed as an `eleResponse`/`setParameter` value a driver or recorder can poll
+(the model this fork already uses for `n_material_refused`-shaped counts), or
+a material-level flag a recorder reads. Returning a sentinel from
+`commitState()` and trusting it to reach the analysis does nothing — the same
+`Domain::commit()` discard applies to every element, not just
+`LadrunoSANISAND`'s.

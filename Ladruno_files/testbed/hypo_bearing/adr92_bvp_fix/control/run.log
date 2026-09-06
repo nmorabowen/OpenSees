@@ -1,0 +1,32 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 2473ce46c2ae44412246ca305f3843463f389cad
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\Ladruno_files\testbed\hypo_bearing\adr92_bvp_fix\control
+    date                        : 2026-09-06T11:38:56
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2400 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   33.500 ds=0.3200mm t=   16.1s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=62.754 kPa, w2(z=-0.625)=6.0608 m, yield 97 ele / 138.971 m3, t=33s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=133.276 kPa, w2(z=-0.625)=7.8907 m, yield 164 ele / 329.026 m3, t=110s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=253.013 kPa, w2(z=-0.625)=9.5260 m, yield 194 ele / 516.950 m3, t=294s
+    [h1.0_e0.6944]    50 s/B=0.02030 q=  484.692 ds=5.0000mm t=  631.6s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=484.692 kPa, w2(z=-0.625)=11.1716 m, yield 198 ele / 567.544 m3, t=632s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=933.070 kPa, w2(z=-0.625)=12.6083 m, yield 200 ele / 600.000 m3, t=1379s
+    *** INADMISSIBLE: terminated in SEIZURE mode WALL -- q_max = 1529.844 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.06780; [h1.0_e0.6944] mode=WALL (WALL-CLOCK budget spent at s/B = 0.06780); ended s/B=0.06780 of target 0.250; plateau=NO / peaked=NO (tail 63.285 % of initial); free-advance=yes (25000.0x floor); subdivisions 0/80; 69 steps, 57 failed, 21 relaxed, 2468 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 2.54e-04
+    width: w2(z=-0.625) = 13.4408 m, w2(z=-1.375) = 12.6115 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory

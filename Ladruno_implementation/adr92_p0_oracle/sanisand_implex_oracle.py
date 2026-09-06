@@ -813,20 +813,51 @@ class Sanisand:
 
 # ---------------------------------------------------------------- IMPL-EX
 
+def tensor_norm_cov(v):
+    """Tensor norm of a COVARIANT (engineering-shear) 6-vector.
+
+    `norm_contr` is the tensor norm of a CONTRAVARIANT (stress-like) vector; applied to
+    a strain vector it counts the shear four times over. Halve the shear first.
+    Identical to `norm_contr` on any shear-free (triaxial) increment.
+    """
+    return norm_contr(to_contra(v))
+
+
 class Implex:
-    """IMPL-EX wrapper: extrapolated response every pass, true return at commit."""
+    """IMPL-EX wrapper: extrapolated response every pass, true return at commit.
+
+    Four extrapolation operators, all sharing the same incremental stress form
+    `sigma~ = sigma_n + Ce(p_n):(d_eps - d_eps_p~)`; they differ only in `d_eps_p~`:
+
+      "A"  history:          d_eps_p~ = f * d_eps_p(n)                      -- ADR sec.2
+      "B"  dGamma (P0):      d_eps_p~ = f * mDGamma_n * to_cov(R_n)         -- rejected, G4
+      "T"  trial-direction:  d_eps_p~ = f*|d_eps_p(n)| * to_cov(R_tr)/|R_tr|
+      "H"  hybrid:           dev from history as A, volumetric from R_tr
+
+    `R_tr` is the model's own flow direction `B n - C (n^2 - I/3) + D I/3` evaluated at
+    the ELASTIC TRIAL stress `sigma_n + Ce(p_n):d_eps` with the COMMITTED internal state
+    (alpha_n, fabric_n, e_n, alpha_in_n).  "T" and "H" are LANE E (the memo calls them
+    B and C; "B" here is P0's dGamma form and keeps its name so G1/G2/G4 do not move).
+    """
+
+    FORMS = ("A", "B", "T", "H")
 
     def __init__(self, mat: Sanisand, form="A", alpha=1.0):
-        assert form in ("A", "B")
+        assert form in Implex.FORMS
         self.mat = mat
         self.form = form
         self.alpha = alpha
         self.d_eps_p = np.zeros(6)
+        self.g_n = 0.0                 # |d_eps_p(n)| (tensor norm) -- forms T, H
         self.dGamma_n = 0.0
         self.R_n = np.zeros(6)
+        self.D_n = 0.0
         self.sig_tilde = mat.sig_n.copy()
         self.sig_implicit = mat.sig_n.copy()
+        self.dep_tilde = np.zeros(6)   # last extrapolated plastic increment
         self.errors = []
+        self.hist = []                 # per-step diagnostics, LANE E
+        self.trial_overflow = 0        # state_dependent() blew up at the trial stress
         self._refresh_Rn()
 
     def _refresh_Rn(self):
@@ -834,9 +865,17 @@ class Implex:
         sd = m.state_dependent(m.sig_n, m.alpha_n, m.fabric_n,
                                m.void_ratio, m.alpha_in_n)
         self.R_n = sd.R
+        self.D_n = sd.D
 
     def Ce(self):
         return stiffness(self.mat.mK, self.mat.mG)
+
+    def _trial_flow(self, deps):
+        """State-dependent quantities at the ELASTIC TRIAL stress, committed state."""
+        m = self.mat
+        sig_tr = m.sig_n + self.Ce() @ deps
+        return m.state_dependent(sig_tr, m.alpha_n, m.fabric_n,
+                                 m.void_ratio, m.alpha_in_n)
 
     def extrapolate(self, eps_trial, f=None):
         """The response the element sees. Incremental form -- see the memo."""
@@ -845,22 +884,47 @@ class Implex:
         deps = np.array(eps_trial, float) - m.eps_n
         if self.form == "A":
             dep = f * self.d_eps_p
-        else:
+        elif self.form == "B":
             dep = (f * self.dGamma_n) * to_cov(self.R_n)
+        else:
+            try:
+                sd = self._trial_flow(deps)
+                nR = norm_contr(sd.R)
+            except Abandoned:
+                # psi ran away at the trial stress; fall back on A's direction rather
+                # than kill the run, and say so in the count.
+                self.trial_overflow += 1
+                sd, nR = None, 0.0
+            g = f * self.g_n
+            if sd is None or nR < SMALL:
+                dep = f * self.d_eps_p
+            elif self.form == "T":
+                dep = (g / nR) * to_cov(sd.R)
+            else:                                     # "H"
+                dep = dev(f * self.d_eps_p) + (ONE3 * g * sd.D / nR) * I1
+        self.dep_tilde = np.array(dep, float)
         self.sig_tilde = m.sig_n + self.Ce() @ (deps - dep)
         return self.sig_tilde
 
     def commit(self, eps_trial):
         m = self.mat
         epsp_old = m.eps_p_n()
+        D_before = self.D_n
+        dep_t = self.dep_tilde.copy()
         m.integrate(eps_trial)
         self.sig_implicit = m.sig.copy()
         m.commit()
         self.d_eps_p = m.eps_p_n() - epsp_old
+        self.g_n = tensor_norm_cov(self.d_eps_p)
         self.dGamma_n = m.dGamma_n
         self._refresh_Rn()
         den = norm_contr(self.sig_implicit) + m.m_P_atm * norm_contr(m.eps_n)
-        self.errors.append(norm_contr(self.sig_tilde - self.sig_implicit) / den)
+        err = norm_contr(self.sig_tilde - self.sig_implicit) / den
+        self.errors.append(err)
+        self.hist.append(dict(err=err,
+                              D_before=D_before, D_after=self.D_n,
+                              vol_tilde=trace(dep_t),
+                              vol_true=trace(self.d_eps_p)))
 
 
 # ---------------------------------------------------------------- CSV / paths
@@ -1658,10 +1722,144 @@ def control_A_equals_B_under_scheme2():
               f"(||sigma|| ~ {norm_contr(rA.sig[-1]):.1f} kPa)")
 
 
+def _crossing(hist):
+    """First step whose committed dilatancy D changes sign: phase transformation.
+
+    `D_before` is D at the committed state n (what form A extrapolates FROM);
+    `D_after` is D at n+1. The step that straddles the sign change is the one whose
+    extrapolated volumetric plastic increment can carry the wrong sign.
+    Returns the 0-based index into `hist`, or None.
+    """
+    for k in range(1, len(hist)):
+        if hist[k]["D_before"] > 0.0 >= hist[k]["D_after"]:
+            return k
+    return None
+
+
+def _tangent_probe(row, p0, consts, form, de, nwarm, scheme=1):
+    """LANE E: how far is d(sigma~)/d(eps) from the frozen Ce(p_n), how UNSYMMETRIC is
+    it, and how far is the STEP from linear?  Returns (rel deviation of the numerical
+    Jacobian from Ce, its relative asymmetry, chord non-linearity of the actual step)."""
+    mat = make_material(consts, scheme=scheme)
+    seed_from_csv(mat, row)
+    ix = Implex(mat, form=form)
+    for _ in range(nwarm):                      # walk onto the crossing
+        eps_t, _, _ = solve_lateral(ix.extrapolate, p0, de, mat.eps_n)
+        ix.extrapolate(eps_t)
+        try:
+            ix.commit(eps_t)
+        except Abandoned:
+            mat.commit()
+    eps_t, _, _ = solve_lateral(ix.extrapolate, p0, de, mat.eps_n)
+    Ce = ix.Ce()
+    base = ix.extrapolate(eps_t).copy()
+    num = np.empty((6, 6))
+    hh = 1e-9
+    for j in range(6):
+        e2 = eps_t.copy(); e2[j] += hh
+        num[:, j] = (ix.extrapolate(e2) - base) / hh
+    ix.extrapolate(eps_t)
+    rel = float(np.max(np.abs(num - Ce)) / np.max(np.abs(Ce)))
+    asym = float(np.max(np.abs(num - num.T)) / np.max(np.abs(num)))
+    # chord: is sigma~ over the WHOLE step what the frozen operator predicts?
+    s0 = ix.extrapolate(mat.eps_n.copy()).copy()
+    s1 = ix.extrapolate(eps_t).copy()
+    ix.extrapolate(eps_t)
+    chord = norm_contr(s1 - s0 - num @ (eps_t - mat.eps_n)) / max(norm_contr(s1 - s0), SMALL)
+    return rel, asym, chord
+
+
+def gate_GE(ez_max=0.02):
+    """LANE E -- does correcting the FLOW DIRECTION fix the corner error?
+
+    Non-associated flow means A carries the previous step's plastic direction. Across
+    phase transformation the dilatancy D changes sign, so A's extrapolated volumetric
+    plastic strain has the WRONG SIGN there. Variant "T" (the memo's B) keeps A's
+    magnitude |d_eps_p(n)| but takes the direction from the model's own R evaluated at
+    the elastic trial stress; "H" (the memo's C) takes only the volumetric part there.
+    """
+    print("=" * 78)
+    print("GE -- A vs trial-direction (T = memo B) vs hybrid (H = memo C) at the")
+    print("     phase-transformation crossing")
+    print("=" * 78)
+    des = (1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4, 1.0e-3)
+    kinds = (("A", "implex_A"), ("T", "implex_T"), ("H", "implex_H"))
+    summary = {}
+    for label, sub, p0 in (("T1 p0=100", "tx_p100_e0.6944_s1_n40", 100.0),
+                           ("T2 p0=5", "tx_p5_", 5.0)):
+        meta, row = _seed(sub)
+        consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+        print(f"\n  {label}   drained TX compression to eps_z = {ez_max}, companion "
+              f"scheme 1 (deck default)")
+        for de in des:
+            n = int(round(ez_max / de))
+            rI, _, _ = drive_triaxial(row, p0, n, ez_max, "implicit", consts=consts)
+            print(f"\n    d(eps_z) = {de:.1e}  ({n} steps)   implicit terminal "
+                  f"q/p = {rI.eta[-1]:.4f}")
+            print(f"      {'var':>4} | {'kX':>4}{'ez(kX)':>10} | {'ie max':>10}"
+                  f"{'ie[kX-1]':>10}{'ie[kX]':>10}{'ie[kX+1]':>10} | "
+                  f"{'volp~':>11}{'volp true':>11}{'sign':>6} | {'q/p':>8}")
+            for tag, kind in kinds:
+                r, _, ix = drive_triaxial(row, p0, n, ez_max, kind, consts=consts)
+                kX = _crossing(ix.hist)
+                e = ix.errors
+                if kX is None:
+                    print(f"      {tag:>4} |  --  no sign change on this path; "
+                          f"ie max = {max(e):.3e}")
+                    summary[(label, de, tag)] = dict(kX=None, at=float("nan"),
+                                                     mx=max(e), eta=r.eta[-1])
+                    continue
+                h = ix.hist[kX]
+                vt, vv = h["vol_tilde"], h["vol_true"]
+                sgn = "SAME" if vt * vv > 0 else ("WRONG" if vt * vv < 0 else "zero")
+                pre = e[kX - 1] if kX >= 1 else float("nan")
+                post = e[kX + 1] if kX + 1 < len(e) else float("nan")
+                print(f"      {tag:>4} | {kX:>4}{(kX + 1) * de:>10.2e} | "
+                      f"{max(e):>10.3e}{pre:>10.3e}{e[kX]:>10.3e}{post:>10.3e} | "
+                      f"{vt:>11.3e}{vv:>11.3e}{sgn:>6} | {r.eta[-1]:>8.4f}"
+                      + ("   [unresolved: crossing inside step 1-2, no history to "
+                         "extrapolate]" if kX <= 1 else ""))
+                summary[(label, de, tag)] = dict(kX=kX, at=e[kX], mx=max(e),
+                                                 eta=r.eta[-1], sgn=sgn,
+                                                 ovf=ix.trial_overflow)
+    print("\n" + "=" * 78)
+    print("  GE summary -- implexError AT the crossing step, and max over the path")
+    print("=" * 78)
+    print(f"    {'p0':>10}{'d eps_z':>10} | {'A at kX':>11}{'T at kX':>11}"
+          f"{'A/T':>8} | {'A max':>11}{'T max':>11}{'A/T':>8} | {'H at kX':>11}"
+          f"{'H max':>11}")
+    for label in ("T1 p0=100", "T2 p0=5"):
+        for de in des:
+            a = summary.get((label, de, "A")); t = summary.get((label, de, "T"))
+            h = summary.get((label, de, "H"))
+            if not (a and t and h):
+                continue
+            rat = a["at"] / t["at"] if t["at"] else float("nan")
+            ratm = a["mx"] / t["mx"] if t["mx"] else float("nan")
+            print(f"    {label.split()[-1]:>10}{de:>10.1e} | {a['at']:>11.3e}"
+                  f"{t['at']:>11.3e}{rat:>8.2f} | {a['mx']:>11.3e}{t['mx']:>11.3e}"
+                  f"{ratm:>8.2f} | {h['at']:>11.3e}{h['mx']:>11.3e}")
+    print("\n  Tangent of the step: the FROZEN Ce(p_n) the C++ would hand the element,")
+    print("  against the numerical secant d(sigma~)/d(eps) of the same step.")
+    print(f"    {'p0':>7}{'d eps_z':>10}{'form':>6}{'warm':>6} | "
+          f"{'max|J-Ce|/max|Ce|':>19}{'asym(J)':>11}{'chord non-lin':>15}")
+    for label, sub, p0, de, nwarm in (("p100", "tx_p100_e0.6944_s1_n40", 100.0, 1e-4, 20),
+                                      ("p100", "tx_p100_e0.6944_s1_n40", 100.0, 5e-4, 4),
+                                      ("p5", "tx_p5_", 5.0, 1e-4, 2),
+                                      ("p5", "tx_p5_", 5.0, 1e-4, 20)):
+        meta, row = _seed(sub)
+        consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+        for form in ("A", "T", "H"):
+            rel, asym, ch = _tangent_probe(row, p0, consts, form, de, nwarm)
+            print(f"    {label:>7}{de:>10.1e}{form:>6}{nwarm:>6} | {rel:>19.3e}"
+                  f"{asym:>11.3e}{ch:>15.3e}")
+    return summary
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gate", default="all",
-                    choices=["all", "G0", "G1", "G2", "G3", "G4", "G5",
+                    choices=["all", "G0", "G1", "G2", "G3", "G4", "G5", "GE",
                              "controls", "instr"])
     a = ap.parse_args()
     np.set_printoptions(precision=6, suppress=False, linewidth=140)
@@ -1685,6 +1883,8 @@ def main():
         gate_G3()
     if a.gate in ("all", "G4"):
         gate_G4()
+    if a.gate in ("all", "GE"):
+        gate_GE()
     if a.gate in ("all", "instr"):
         gate_instr()
 

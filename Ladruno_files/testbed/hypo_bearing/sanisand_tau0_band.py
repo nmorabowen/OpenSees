@@ -530,6 +530,65 @@ def _plastic_field(n_hex):
     return epsq
 
 
+def _implex_globals(implex):
+    """Read the process-wide IMPL-EX diagnostics (ADR-92 P1 review B4 items 2/4).
+
+    `avgImplexError` and `implexRefusals` are process-wide accumulators
+    (`LadrunoImplexGlobals`, a process `static` per the fix contract item 5),
+    not per-Gauss-point state, so *which* element/Gauss point the response is
+    read from is immaterial to the value returned -- element 1, Gauss point 1
+    (material tag 1, the only material tag this deck ever defines) always
+    sees the same global counters as every other yielding point.  Both reads
+    are non-destructive (contract item 6: `avgImplexError` no longer zeroes
+    its accumulator on read).
+
+    CAVEAT, load-bearing for anyone re-running `--legs a,b,c` in one process:
+    `implexRefusals` is a process-wide counter that is NEVER reset between
+    legs, so a multi-leg invocation reports CUMULATIVE refusals across every
+    leg run so far in that process, not a per-leg count.  Run one leg per
+    process (one `--legs` value) if per-leg isolation matters.
+    """
+    if not implex:
+        return 0.0, 0
+    try:
+        err_avg = float(ops.eleResponse(1, "material", 1, "avgImplexError")[0])
+    except Exception:
+        err_avg = 0.0
+    try:
+        refusals = int(round(
+            float(ops.eleResponse(1, "material", 1, "implexRefusals")[0])))
+    except Exception:
+        refusals = 0
+    return err_avg, refusals
+
+
+def _implex_err_max(fld, n_hex, implex):
+    """Max over YIELDING elements of `implexDetail[0]` (ADR-92 P1 review B4
+    item 3).  `implexDetail` is genuinely per-Gauss-point (each integration
+    point clones its own material instance via `getCopy`, so `mImplexError`
+    is per-instance, unlike the process-wide counters above).  Index 0 is
+    `mImplexError`, the "total" per-Gauss-point extrapolation error slot in
+    `LadrunoSANISAND::getResponse` (`SRC/material/nD/LadrunoSANISAND.cpp`,
+    the `LadrunoSanisandImplexDetailResponseID` branch: out6(0) = total,
+    (1) = deviatoric leg, (2) = volumetric leg, (3) = clamp-fired-last-pass,
+    (4) = clamp count, (5) = the frozen extrapolation factor f).  `fld` is
+    the per-element mean `eps_q_p` array from `_plastic_field`; an element
+    with `fld[e] > 0` has yielded at least one Gauss point."""
+    if not implex:
+        return 0.0
+    err_max = 0.0
+    for e_idx in np.nonzero(fld > 0.0)[0]:
+        ele = int(e_idx) + 1
+        for gp in range(1, 9):
+            try:
+                det = ops.eleResponse(ele, "material", gp, "implexDetail")
+            except Exception:
+                det = None
+            if det is not None and len(det) > 0:
+                err_max = max(err_max, float(det[0]))
+    return err_max
+
+
 def _write_leg_json(out_dir, tag, payload):
     """Write `a2_<tag>.json` atomically (tmp + replace).
 
@@ -561,14 +620,37 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
             max_substeps=MAX_SUBSTEPS,
-            test_type=PUSH_TEST, verbose=True):
+            test_type=PUSH_TEST, verbose=True, surcharge=0.0,
+            predictor=False, implex=False, implex_control=None,
+            xlim=None, zbot=None, build=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
     log_path = os.path.join(out_dir, f"a2_{tag}_engine.log")
     ops.logFile(log_path, "-noEcho")
 
+    # ADR-92 P1 review B5: `build` recorded in every artifact must be the
+    # MEASURED engine hash, never `EXPECTED_BUILD` (which is the env pin and,
+    # under `LADRUNO_A2_EXPECT_BUILD=any`, the literal string "any").  `main`
+    # passes the hash `assert_engine()` already measured; a caller that drives
+    # `run_leg` directly (a test, a REPL) still gets a real, measured value.
+    if build is None:
+        build = ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "unknown"
+
     t_start = time.time()
-    nodes, hexes, trib, sets = r3._strip_mesh(h0)
+    # ADR-92: the purpose-sized-deck study (T8 sec.7b.4's undone half). R3's
+    # domain is 60 x 20 m for a 2 m footing -- sized for a WEIGHTLESS half-space,
+    # whose mechanism is unbounded. A weighted mechanism is far more local, so the
+    # extent is a variable, not a constant. Overridden around the mesh build only;
+    # everything downstream reads the mesh, not these globals.
+    _xlim_save, _zbot_save = r3.XLIM, r3.ZBOT
+    if xlim is not None:
+        r3.XLIM = float(xlim)
+    if zbot is not None:
+        r3.ZBOT = -abs(float(zbot))
+    try:
+        nodes, hexes, trib, sets = r3._strip_mesh(h0)
+    finally:
+        r3.XLIM, r3.ZBOT = _xlim_save, _zbot_save
     n_nodes, n_hex = len(nodes), len(hexes)
 
     # element geometry, once (rectangular tensor grid)
@@ -592,7 +674,10 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     ops.nDMaterial("LadrunoSANISAND", 1, *par,
                    INT_SCHEME, tan_type, JACO_TYPE, TOL_F, TOL_R,
                    "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN,
-                   "-honorTolR", 0, "-maxSubsteps", int(max_substeps))
+                   "-honorTolR", 0, "-maxSubsteps", int(max_substeps),
+                   *(("-implex",) if implex else ()),
+                   *(("-implexControl", float(implex_control[0]), float(implex_control[1]))
+                     if (implex and implex_control) else ()))
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -659,6 +744,36 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 eta_field[e - 1] = max(eta_field[e - 1], eta)
     patch_err = max(err_zz, err_xx)
 
+    # ---- stage 0b: free-surface surcharge (ADR-92 CP1, owner decision B) ----
+    # ADR-86b handoff sec.5b: a small surcharge keeps the shallow ring confined
+    # without touching a calibrated constant. Applied AFTER the geostatic controls
+    # (they assume sigma_zz = gamma*z) and BEFORE the stage flip, on every top node
+    # that is NOT under the footing, as q * tributary area. Pattern 1 (gravity)
+    # is frozen first: its Linear series would otherwise keep scaling gamma past 1.
+    surch_want = 0.0
+    if surcharge > 0.0:
+        ops.loadConst("-time", 0.0)
+        ops.timeSeries("Linear", 3)
+        ops.pattern("Plain", 3, 3)
+        for n in sets["top"]:
+            if n in ft or trib[n] <= 0:
+                continue
+            ops.load(int(n) + 1, 0.0, 0.0, -surcharge * float(trib[n]))
+            surch_want += surcharge * float(trib[n])
+        ops.integrator("LoadControl", 1.0 / N_GRAV)
+        for k in range(N_GRAV):
+            assert ops.analyze(1) == 0, f"{tag}: surcharge step {k + 1} failed"
+        ops.reactions()
+        rz2 = sum(ops.nodeReaction(int(n) + 1, 3) for n in sets["bottom"])
+        surch_err = abs(rz2 / (want + surch_want) - 1.0)
+        assert surch_err < 1.0e-6, (
+            f"{tag}: equilibrium identity with surcharge violated, {rz2} vs "
+            f"{want + surch_want} kN")
+        if verbose:
+            print(f"    surcharge {surcharge} kPa on the free surface outside the "
+                  f"footing: {surch_want:.4f} kN, base reaction identity "
+                  f"{surch_err:.2e}")
+
     # ---- stage flip ------------------------------------------------------
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     assert eta_max < M_C, (
@@ -701,14 +816,16 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     csv_path = os.path.join(out_dir, f"a2_{tag}_curve.csv")
     fh = open(csv_path, "w", newline="")
     w = csv.writer(fh)
-    fh.write(f"# ADR90 WP-A2 tau=0 band, build {EXPECTED_BUILD}, leg {tag}\n")
+    fh.write(f"# ADR90 WP-A2 tau=0 band, build {build} "
+             f"(expected {EXPECTED_BUILD}), leg {tag}\n")
     w.writerow(["s_m", "s_over_B", "q_foot_kPa", "q_base_kPa", "ds_mm",
-                "relaxed", "wall_s"])
+                "relaxed", "wall_s", "implex_err_avg", "implex_refusals"])
 
     rows, ds, good = [], DS_BASE, 0
     nfail = nrelax = nsub = 0
     mode, verdict = "TARGET", "reached the target settlement"
     checkpoints, cp_left = [], [c for c in CHECKPOINTS if c <= sfrac + 1e-12]
+    implex_err_max_cp = {}
     t0 = time.time()
     while True:
         s_now = uz0 - ops.getTime()
@@ -719,7 +836,16 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             verdict = f"WALL-CLOCK budget spent at s/B = {s_now / r3.B_FOOT:.5f}"
             break
         ds = min(ds, smax - s_now)
-        ops.integrator("LoadControl", -ds)
+        if predictor:
+            # ADR-80 P3 (#786): stock LoadControl has NOTHING in front of
+            # applyLoadDomain, so with a non-homogeneous sp the driven layer's first
+            # constitutive evaluation of each increment is overstrained by L/h.
+            # Harmless elastically; on its own adaptive-march gate it cost 23 cutbacks
+            # and x18.7 iterations, which -tangentPredictor took to 0 and x1.00.
+            # This deck's push IS that idiom, and SANISAND is maximally path-dependent.
+            ops.integrator("LadrunoLoadControl", -ds, "-tangentPredictor")
+        else:
+            ops.integrator("LoadControl", -ds)
         ok, relaxed = False, 0
         for algo, tl, it, rl in ladder:
             ops.test(test_type, tl, it, 0)
@@ -752,8 +878,9 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         qf = -(sum(ops.nodeReaction(t, 3) for t in foot) - r0_foot) / area
         qb = -(sum(ops.nodeReaction(t, 3) for t in base) - r0_base) / area
         s = uz0 - ops.getTime()
+        implex_err_avg, implex_refusals_cum = _implex_globals(implex)
         rows.append((s, s / r3.B_FOOT, qf, qb, ds * 1000.0, relaxed,
-                     time.time() - t0))
+                     time.time() - t0, implex_err_avg, float(implex_refusals_cum)))
         w.writerow([f"{v:.9g}" for v in rows[-1]])
         fh.flush()
         if verbose and len(rows) % 25 == 0:
@@ -768,6 +895,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         while cp_left and s / r3.B_FOOT >= cp_left[0]:
             cp = cp_left.pop(0)
             fld = _plastic_field(n_hex)
+            implex_err_max_cp[f"{cp:g}"] = _implex_err_max(fld, n_hex, implex)
             snap = dict(cp_target=cp, s_over_B=s / r3.B_FOOT, q_foot=qf,
                         q_base=qb, wall_s=time.time() - t0, step=len(rows))
             snap.update(widths_from_field(fld, xc, zc, hx, hz, vol))
@@ -780,13 +908,15 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             # cannot assemble.  The cost is one small file write per
             # checkpoint; the benefit is that the study survives its own
             # infrastructure.
+            _, n_material_refused_cp = _implex_globals(implex)
             _write_leg_json(out_dir, tag, dict(
                 tag=tag, h0=h0, e_name=ename, e_init=e_init,
-                build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
+                build=build, expected_build=EXPECTED_BUILD,
+                driver=os.path.abspath(__file__),
                 date=datetime.datetime.now().isoformat(timespec="seconds"),
                 partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
-                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, push_tol=tol,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
                 max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
@@ -797,11 +927,15 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 q_u=float(max(r[2] for r in rows)),
                 s_end_over_B=s / r3.B_FOOT, steps=len(rows), nsub=nsub,
                 nfail=nfail, nrelax=nrelax, wall_s=time.time() - t0,
+                attempts=len(rows) + nsub, wall_overlap_note="",
+                n_material_refused=n_material_refused_cp,
+                implex_err_max_at_checkpoints=dict(implex_err_max_cp),
                 csv=csv_path, log=log_path, checkpoints=list(checkpoints)))
             _dump_field(
                 os.path.join(out_dir, f"a2_{tag}_field_sB{cp:g}.csv"),
                 f"ADR90 WP-A2 plastic field at CHECKPOINT s/B={cp:g} "
-                f"(actual {s / r3.B_FOOT:.6f}), build {EXPECTED_BUILD}, "
+                f"(actual {s / r3.B_FOOT:.6f}), build {build} "
+                f"(expected {EXPECTED_BUILD}), "
                 f"leg {tag}, q_foot={qf:.4f} kPa",
                 xc, zc, hx, hz, vol, fld, eta_field)
             if verbose:
@@ -841,8 +975,30 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     msk = s >= 0.9 * s[-1]
     t_last = (float(np.polyfit(s[msk], qf[msk], 1)[0]) if msk.sum() > 2
               else float("nan"))
+
+    # ADR-92 P1 review B4 / RED-2 F10 / BLUE-2 F10: the old estimator fit a
+    # straight line through the first `n0 = max(4, len//50)` converged steps,
+    # which for every leg measured so far is exactly 4 points spanning
+    # 20-80 um of settlement on a 2 m footing (noise, not an initial tangent
+    # -- it returns a NEGATIVE slope on the -implexControl arm, `tail_pct` <
+    # 0).  Kept only as `t_init_4pt` for continuity with prior reports;
+    # `t_init` / `tail_pct` below no longer use it.
     n0 = max(4, len(s) // 50)
-    t_init = float(np.polyfit(s[:n0], qf[:n0], 1)[0])
+    t_init_4pt = float(np.polyfit(s[:n0], qf[:n0], 1)[0])
+
+    # New estimator: a window MATCHED ACROSS LEGS in physical settlement,
+    # `s <= max(1 mm, 5*ds_base)`, instead of matched in STEP COUNT (which is
+    # what made the old fit's window 16x shorter on the -implexControl arm,
+    # since that arm halves `ds` repeatedly before its first successful
+    # step).  Refitting all legs on this window agrees to ~13 % (review
+    # B4/F10: 16745/17582/18849 kPa/m on the reviewed campaign's three arms).
+    t_init_window_m = max(1.0e-3, 5.0 * DS_BASE)
+    wmsk = s <= t_init_window_m
+    t_init_n_pts = int(wmsk.sum())
+    if t_init_n_pts > 1:
+        t_init = float(np.polyfit(s[wmsk], qf[wmsk], 1)[0])
+    else:
+        t_init = t_init_4pt
     plateau = bool(abs(t_last) < PLATEAU_FRAC * abs(t_init))
     peaked = bool(i_pk < len(qf) - POSTPEAK_STEPS
                   and s[i_pk] / r3.B_FOOT >= PEAK_MIN_SFRAC
@@ -865,8 +1021,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     field_path = os.path.join(out_dir, f"a2_{tag}_field.csv")
     _dump_field(field_path,
                 f"ADR90 WP-A2 END-OF-RUN plastic field, build "
-                f"{EXPECTED_BUILD}, leg {tag}, s/B={s[-1] / r3.B_FOOT:.6f}, "
-                f"mode {mode}",
+                f"{build} (expected {EXPECTED_BUILD}), leg {tag}, "
+                f"s/B={s[-1] / r3.B_FOOT:.6f}, mode {mode}",
                 xc, zc, hx, hz, vol, epsq, eta_field)
     widths = widths_from_field(epsq, xc, zc, hx, hz, vol)
     n_yield = widths.pop("n_yield_ele")
@@ -881,13 +1037,15 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         txt = ""
     n_outside = txt.count("Outside Bounding")
     n_clamp = txt.count("CLAMPING")
+    _, n_material_refused = _implex_globals(implex)
 
     res = dict(
         tag=tag, h0=h0, e_name=ename, e_init=e_init,
-        build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
+        build=build, expected_build=EXPECTED_BUILD,
+        driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -906,6 +1064,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         base_foot_mismatch=float(np.max(np.abs(qf + qb)) / max(qmax, 1e-12)),
         t_init=t_init, t_last=t_last,
         tail_pct=100.0 * t_last / t_init if t_init else float("nan"),
+        t_init_4pt=t_init_4pt, t_init_window_m=t_init_window_m,
+        t_init_n_pts=t_init_n_pts,
         plateau=plateau, peaked=peaked, free=free, capacity=capacity,
         seized=seized, admissible_as_capacity=bool(capacity),
         mode=mode, verdict=verdict,
@@ -913,7 +1073,10 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         ds_end_mm=float(dsm[-1]), ds_tail_min_mm=ds_tail_min_mm,
         ds_floor_mm=floor_mm, headroom=headroom,
         steps=len(rows), nfail=nfail, nrelax=nrelax, nsub=nsub,
+        attempts=len(rows) + nsub, wall_overlap_note="",
         budget_used_frac=nsub / float(SUBDIV_BUDGET),
+        n_material_refused=n_material_refused,
+        implex_err_max_at_checkpoints=dict(implex_err_max_cp),
         n_yield_ele=n_yield, vol_yield=v_yield, epsq_max=epsq_max,
         wall_s=wall, wall_grav_s=t_grav, csv=csv_path, field=field_path,
         log=log_path, checkpoints=checkpoints,
@@ -949,6 +1112,24 @@ def main(argv=None):
     ap.add_argument("--test", default=PUSH_TEST,
                     choices=("NormUnbalance", "NormDispIncr"),
                     help="convergence test for the push ladder")
+    ap.add_argument("--xlim", type=float, default=None,
+                    help="half-width of the domain in m (R3 default 30.0 = 14.5 B). "
+                         "ADR-92: the purpose-sized-deck study")
+    ap.add_argument("--zbot", type=float, default=None,
+                    help="depth of the domain in m, positive (R3 default 20.0 = 10 B)")
+    ap.add_argument("--implex", action="store_true",
+                    help="ADR-92 P1 gate 1: run the material with `-implex` (needs a P1 "
+                         "binary; point LADRUNO_DIST_BIN at it)")
+    ap.add_argument("--implex-control", nargs=2, type=float, default=None,
+                    metavar=("TOL", "REDLIMIT"),
+                    help="`-implexControl TOL REDLIMIT`; P0 made this mandatory at the corner")
+    ap.add_argument("--predictor", action="store_true",
+                    help="drive the push with `LadrunoLoadControl -tangentPredictor` "
+                         "(ADR-80 P3) instead of stock LoadControl; default OFF so the "
+                         "GATE U / T8 / CP1 decks stay byte-identical")
+    ap.add_argument("--surcharge", type=float, default=0.0,
+                    help="free-surface surcharge OUTSIDE the footing, kPa (ADR-92 CP1 "
+                         "decision B; 0 = the GATE U / T8 deck)")
     ap.add_argument("--maxsubsteps", type=int, default=MAX_SUBSTEPS,
                     help="ADR-86b ModifiedEuler substep-count cap; 0 = uncapped "
                          "(the original GATE U configuration)")
@@ -974,6 +1155,14 @@ def main(argv=None):
     print(f"    convergence test (pinned)   : {args.test} @ {tol}"
           + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
     print(f"    TanType (0=elastic default) : {args.tantype}")
+    print(f"    surcharge (kPa, outside foot): {args.surcharge}")
+    print(f"    domain (xlim, zbot)         : "
+          f"{args.xlim if args.xlim is not None else 'R3 30.0'}, "
+          f"{args.zbot if args.zbot is not None else 'R3 20.0'}")
+    print(f"    IMPL-EX                     : "
+          f"{('on, control ' + str(args.implex_control)) if args.implex else 'off'}")
+    print(f"    push integrator             : "
+          f"{'LadrunoLoadControl -tangentPredictor (ADR-80 P3)' if args.predictor else 'LoadControl (stock)'}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
 
     want = [(h0, en, ei) for h0 in RESOLUTIONS for en, ei in DENSITIES]
@@ -987,7 +1176,10 @@ def main(argv=None):
             r = run_leg(h0, en, ei, args.out, wall_budget=args.wall,
                         sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
                         tan_type=args.tantype, test_type=args.test,
-                        max_substeps=args.maxsubsteps)
+                        max_substeps=args.maxsubsteps,
+                        surcharge=args.surcharge, predictor=args.predictor,
+                        implex=args.implex, implex_control=args.implex_control,
+                        xlim=args.xlim, zbot=args.zbot, build=build)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,
