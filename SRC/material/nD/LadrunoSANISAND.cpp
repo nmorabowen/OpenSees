@@ -1760,21 +1760,43 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                 //   (c) the counter, which is the only surviving record once the
                 //       10-line budget is spent.
                 LadrunoImplexGlobals::instance().noteRefusalControl();
+                // Ladruno ADR-92 fix (BVP regression, 2026-09-06): a FLAT
+                // 10-per-process budget is the wrong throttle for THIS site, and it
+                // blinded the first diagnosis of that regression. ONE Newton sweep of
+                // ONE step refuses at many Gauss points at once, so the entire budget
+                // is spent on the FIRST ladder rung; every later rung of the
+                // subdivision ladder -- the only place the error-vs-dt trend is
+                // visible, and the exact thing a seizure at the driver's DS_MIN floor
+                // has to be diagnosed from -- printed nothing at all. Keep the flat
+                // budget AND additionally allow one line at each NEW |dt| (i.e. once
+                // per rung), under a hard overall cap so the 2.58 MB failure mode
+                // RED-1 F7 measured cannot come back.
+                static double ladrunoImplexCtlLastDt    = -1.0;   // Ladruno ADR-92 fix
+                static int    ladrunoImplexCtlRungLines = 0;      // Ladruno ADR-92 fix
+                bool newRung = false;                             // Ladruno ADR-92 fix
+                if (dtAbs != ladrunoImplexCtlLastDt && ladrunoImplexCtlRungLines < 40) {
+                    ladrunoImplexCtlLastDt = dtAbs;
+                    ladrunoImplexCtlRungLines++;
+                    newRung = true;
+                }
                 static int ladrunoImplexCtlWarnCount = 0;   // Ladruno ADR-92 fix
-                if (ladrunoImplexCtlWarnCount < 10) {
+                if (newRung || ladrunoImplexCtlWarnCount < 10) {
                     opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                            << ": -implexControl REFUSES this step -- implexError "
                            << mImplexError << " > tol " << mImplexOpt.errorTol
                            << " at |dt| = " << dtAbs << " (floor "
                            << mImplexOpt.reductionLimit * mImplexDt0
+                           << ", f = " << mImplexFactor
+                           << ", |d_eps_p(n)| = " << this->GetNorm_Cov(mImplexDEpsP)
                            << "). Only an element that PROPAGATES"
                               " LADRUNO_MATERIAL_REFUSED can cut the step; today that is"
                               " LadrunoBrick." << endln;
-                    if (++ladrunoImplexCtlWarnCount == 10)
+                    if (ladrunoImplexCtlWarnCount < 10 && ++ladrunoImplexCtlWarnCount == 10)
                         opserr << "WARNING LadrunoSANISAND: further -implexControl refusal"
-                                  " warnings suppressed (budget 10 per process). The"
-                                  " running count stays readable through the"
-                                  " `implexRefusals` material response." << endln;
+                                  " warnings suppressed (budget 10 per process, plus one"
+                                  " line per new |dt| rung up to 40). The running count"
+                                  " stays readable through the `implexRefusals` material"
+                                  " response." << endln;
                 }
                 mSigma = mSigma_n;
                 return LADRUNO_MATERIAL_REFUSED;
