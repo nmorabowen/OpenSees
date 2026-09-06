@@ -401,3 +401,56 @@ non-draft PR, and `gh run list --branch <branch>` shows two runs with the same
 it skipped, push a real commit (any `synchronize` on a non-draft runs Zone-A)
 or `gh workflow run ladruno.yml --ref <branch>`. Never merge on a skipped
 Zone-A — the ADR-87 warrant is a *run*, not a green badge.
+
+---
+
+## 9. GitHub's server-side merge IGNORES `merge=union`, so a locally-clean branch can read CONFLICTING — and then no workflow runs at all
+
+**The trap.** `.gitattributes:5342-5345` gives the three ledgers and
+`banner_features.txt` the `union` merge driver, precisely so two feature
+branches that each append a row never collide. That driver lives in the
+**working tree's** merge machinery: `git merge` honours it, and so does every
+local rebase. GitHub's server-side mergeability probe does **not** run it —
+it performs a plain three-way merge — so two branches that each appended a
+ledger row are `CONFLICTING` to GitHub while `git merge origin/ladruno` on your
+box completes clean with no conflict markers anywhere.
+
+**What that costs you is not the label, it is the CI.** A pull request GitHub
+believes is conflicting has no merge commit to test, so the `pull_request`
+event's workflow never starts. `gh pr checks <n>` then answers
+
+```
+no checks reported on the '<branch>' branch
+```
+
+which reads exactly like "CI is broken" or "the workflow file is wrong" — and
+both of those are wrong diagnoses. `gh pr view <n> --json mergeable,mergeStateStatus`
+is the discriminator: `CONFLICTING` / `DIRTY`.
+
+**Remedy.** Merge `ladruno` into the branch **locally** (where the union driver
+runs), commit, push:
+
+```
+git fetch origin
+git merge origin/ladruno        # union driver applies; ledgers concatenate
+git push
+```
+
+The branch is then a superset of `ladruno`, GitHub's own merge is trivial, and
+the push's `synchronize` event starts the run.
+
+**Two follow-on rules.**
+
+- **Do not push again while that run is in progress.** §8's
+  `cancel-in-progress: true` means the second push cancels the first run, and a
+  cancelled required check is not a green one.
+- **Expect this on EVERY open PR each time a sibling merges to `ladruno`.** It
+  is not a property of your branch; it is a property of the ledgers being
+  append-only files that every work package touches. On a day with several live
+  work packages, the local-merge-and-push is routine maintenance, not an
+  incident.
+
+Measured on **#783, 2026-09-05**: the branch merged cleanly locally, read
+`CONFLICTING` on GitHub, `gh pr checks` reported no checks at all, and a local
+merge of `origin/ladruno` followed by one push produced both a clean merge state
+and a running workflow.

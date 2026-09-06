@@ -114,6 +114,71 @@ ambiguous, one flag seam, and a confine-first test deck.
 Low-`p` gate: vanilla **+18.1258 %**, `p_r = 0` **+0.0754 %**, invariant `err·p_end ~= p_r` on both.
 `-Presidual` plastic threshold: between **0.0230 and 0.0240 kPa**.
 
+### ADR-86b (WP-86b, 2026-09-05) — the integrator follow-up ADR-90 GATE U asked for
+
+PR-1/2/3 made the material *honest*. **86b makes it usable on a boundary-value problem**, which is
+where every one of these defects had been invisible: the fork's whole SANISAND battery is
+zero-free-DOF material-point decks, so a bad tangent costs nothing and a non-terminating integrator
+never gets the chance to seize. ADR-90's GATE U put the material into a strip-footing BVP and all
+three showed up at once (`_adr90_tau0_qu_band.md`).
+
+| # | what | kind |
+|---|---|---|
+| **T1** | `-maxSubsteps N` — a substep-COUNT cap on `ModifiedEuler`, default **0 = uncapped**, wired through a new base seam `mMaxSubstepsInME` exactly as `-honorTolR` is wired through `mHonorTolRInME` | lane 3 (flag seam in vanilla) + subclass |
+| **T2** | `LadrunoSANISAND`'s parser default for **`TanType` 0 → 2**. Vanilla's parser keeps 0 | subclass only |
+| **T3** | convergence-test guidance (`NormUnbalance`, not `NormDispIncr`) | docs — emitter guide §6 |
+| **T4** | the `-Presidual` decision a deep push owes | docs — emitter guide §7 and §5 below |
+
+**T1's design point, and it is the whole point.** Vanilla, at `dT == dT_min`, **force-accepts** the
+substep and advances `T` (`ManzariDafalias.cpp:1649-1663`). So the integrator never *fails* — it
+just takes an unbounded amount of time, and GATE U measured what that looks like from outside: 0 of
+80 pinned subdivisions used on every leg, terminal steps 6400–25000x above the `DS_MIN` floor, and
+one `analyze(1)` costing **2056 s** (59 % of that leg's entire budget in a single step). The cap
+therefore does **not** force-accept: past `N` substeps it flags, prints one throttled line naming
+tag/`T`/`dT`, and returns, `setTrialStrain` returns a refusal, and the committed state is untouched.
+The precedent is ADR-84's `strict_convergence`; the alternative (force-accept + warn) reproduces
+exactly the silence being fixed.
+
+> [!danger] The cap's PRECONDITION, and it is not optional
+> **A cap is only safe under an element that PROPAGATES a material refusal.** Today that is **`LadrunoBrick` only**. Under vanilla `Brick` (its `update()` discards the return code), `BrickUP` / `QuadUP` (`setTrialStrain` is called inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and `stdBrick`, a capped update returns early at `T < 1` and the element assembles a **partially-integrated** stress / `alpha` / `fabric` and a partial `aCep_Consistent` as if converged. That is strictly **worse** than the un-capped force-accept it replaces, which at least always drove `T` to 1. **On those elements a capped run is INVALID, not merely un-cut.**
+>
+> This is why the default is `0` and why it must stay `0`: **the default cannot reach that branch at
+> all.** Nothing checks the precondition at run time — a material cannot see its element — so it is
+> stated in three places that a user can actually read (the `opserr` line when the cap fires, the
+> construction `Print()` record, and the emitter guide) and enforced in none.
+
+**T1 needed an element change too, and the obvious version of it was wrong.** `LadrunoBrick::update()`
+**discarded** `setTrialStrain`'s return code on four of its five paths (std/b-bar, SSP, and both URI
+branches) — only `updateHypo`/`updateFinite`/EAS propagated — so a material failure could not reach
+the analysis at all. The first cut made all four honour any `< 0`, and that **broke two long-green
+gates**: `test_ladrunoBrick_asdconcrete_bend.py`'s two mesh-objectivity tests died at
+`Domain::update - domain failed in update`, load factor 605.
+
+`ASDConcrete3DMaterial::setTrialStrain` does return negative, but it means *"an inner iteration
+missed, here is my best state"* — the case ADR-33/34 already settled the other way (return 0 with
+the last iterate and a loud warning; a failure code there makes softening analyses fragile).
+OpenSees has no convention separating that from *"I did not integrate this increment"*, so ADR-86b
+introduced one: **`LADRUNO_MATERIAL_REFUSED`** (`SRC/material/LadrunoMaterialStatus.h`, `-33086`).
+`LadrunoBrick` propagates **only that exact value**, every other non-zero code keeps the treatment
+it had, and adopting it cost zero behaviour change anywhere else. `updateHypo`/`updateFinite` keep
+their pre-existing `< 0` tests, untouched.
+
+`stdBrick` still swallows return codes (upstream) — a capped material inside a `stdBrick` still
+reports success, and that is why the ADR-86b gates use `LadrunoBrick`.
+
+**T2 is a two-parser divergence, on purpose.** Vanilla `OPS_ManzariDafaliasMaterial` also defaults
+`oData[1] = 0` (`ManzariDafalias.cpp:93`) — verified at source, **not** changed, because every
+existing vanilla deck and golden file depends on it. The Ladruno parser now defaults 2 and **echoes
+the tangent it will run** at construction, so the divergence cannot be silent. `mCep_Consistent` is
+unsymmetric under non-associated flow: pair it with an unsymmetric solver.
+
+**Wire format widened** `Vector(4)` → `Vector(5)` (`data(4) = mMaxSubsteps`). Fork-internal: both
+ends of any supported channel are the same build. It does break reading a datastore written by a
+pre-86b engine — loudly, as a size mismatch, not silently.
+
+**New diagnostic response:** `eleResponse <ele> material <gp> substeps` → `[substeps_taken,
+cap_hit]` for the last update. Defined on `LadrunoSANISAND`, so both wrappers inherit it.
+
 ---
 
 ## 4. Two mechanisms you must know
@@ -176,6 +241,34 @@ confined deck, and now asserted.
   `reset()` path is exercised, though the guard is the reason the override exists (sec.4.4).
 - The **analytical Jacobian** (`JacoType`) branch is never exercised on this class.
 
+**Follow-up owed (found during the ADR-86b review-fix pass, 2026-09-05) — F-1, HALF DONE.**
+ADR-84's `strict_convergence` rejection returned a **bare `-1`** on Newton exhaustion (originally
+`ASDPlasticMaterial3D.h:2333-2341`, the exhaustion-accept site) and, it turned out, at a SECOND
+`strict_convergence`-gated site too (the `special_return` `SR_QUALITY_FALLBACK` refusal, ADR-84 P3).
+`LadrunoBrick`'s guards are now **sentinel-only** (`== LADRUNO_MATERIAL_REFUSED`, by design — see the
+ASDConcrete IMPL-EX note above), so a bare `-1` was **swallowed**: the element assembled the
+unconverged/discarded state as if it had committed successfully. This was pre-existing (not
+introduced by ADR-86b) but ADR-86b's sentinel is what made it newly invisible on `LadrunoBrick`, where
+a blanket `< 0` used to catch it.
+
+**Producer aligned (done in this review-fix pass):** both `strict_convergence`-gated `return -1;`
+sites in `ASDPlasticMaterial3D::Backward_Euler` now `return LADRUNO_MATERIAL_REFUSED;` instead. The
+two UNCONDITIONAL (not `strict_convergence`-gated) `return -1;` sites in the same function — the
+singular-local-tangent guard and the NaN guard — were deliberately left alone: they are structural
+numerical failures independent of the opt-in flag, and changing them would be an unconditional
+behaviour change for every `ASDPlasticMaterial3D` caller. See `LEDGER_vanilla_files.md`'s
+`ASDPlasticMaterial3D.h` review-fix row.
+
+**Still owed — the convention WP itself.** The fork still has **three different negative-return
+conventions** in play with no single reader that understands all of them: `ASDConcrete3DMaterial`'s
+best-effort `EC_IMPLEX_Error_Control = -10` (must NOT fail the step), the ADR-84 producer-side fix
+above only aligns ITS OWN two sites — any other bare `-1`/generic-negative convention elsewhere in the
+fork (or in a future ASDP-family addition) is not automatically caught by a sentinel-only guard, and
+`stdBrick`/`BrickUP`/`QuadUP` still discard the return code regardless of its value, so the refusal
+never reaches the analysis on those elements at all. Reconciling all of this into one convention, and
+deciding whether non-`LadrunoBrick` elements should be taught to check it, is owed to a future
+convention work package, not to ADR-86b.
+
 **Also owed, and PR-3 added the first two**
 - **Instrument the other `m_Pmin` resets.** PR-2's throttled clamp diagnostic covers
   `ModifiedEuler:1378` and `RungeKutta45:1902`. **Three** more sites rebuild the whole stress
@@ -232,6 +325,50 @@ informed; the upstream-PR call is **his**.
 
 ---
 
+## 5b. `-Presidual` on a deep push — the decision, written up and NOT taken (ADR-86b T4)
+
+ADR-90 GATE U's owed-work list item 2 says: *"Settle the low-p floor before any deeper push."*
+ADR-86b **does not change the default**, and this section is the write-up of what the owner and the
+TIMs consumer have to decide, so that the choice is made rather than inherited.
+
+**What the default is, and what it costs.** `-Presidual 0.0` (a cohesionless sand has no cohesion)
+leaves the low-`p` floor at `-Pmin` alone, `1e-3 * P_atm = 0.101` kPa. Both `ModifiedEuler` and
+`RungeKutta45` **rebuild the stress** at that floor — deviator preserved, pressure pasted in — and
+say so in `opserr`. A clamped integration point is no longer the model's answer.
+
+**Measured (GATE U, strip footing on `LadrunoBrick -formulation bbar`):** the clamp first fires at
+`s/B ≈ 0.0153`, on the **coarsest** mesh (`h0 = 1.0`) and the **dense** density (`e_init = 0.60`,
+`psi = -0.22`) **only**. The loose (`e_init = 0.6944`) legs and both finer meshes fired zero clamps
+over the same and deeper settlements. It is past every number that WP reported — and it will not be
+past the numbers of the next campaign, because ADR-86b's whole purpose is to let a leg get further.
+
+**Why this is a decision and not a bugfix, and why it is not one parameter.** `p_residual` is read
+at ~30 mean-stress sites, including the one that feeds `GetPSI()`, so it displaces `psi` and with it
+`M^b`, `M^d` and the dilatancy. And per the PR-3 tripwire memo it **also bounds the `D_factor`
+dilatancy sigmoid from below**: vanilla's 1.01 kPa held `D_factor ≥ 0.4278`, while `p_r = 0` drops
+that floor to 4.83e-4 — a factor of **886**. Setting `p_r = 0` does not only remove a cohesion; it
+un-masks a dilatancy suppressor (ADR-86 **D5a**, still open). Changing it back is therefore a
+modelling move on a **calibrated** soil, not a numerical tidy-up.
+
+**The three answers, and what each buys:**
+
+| option | buys | costs |
+|---|---|---|
+| **A.** declared non-zero `-Presidual` | a numerical regulariser at low `p` (measured: the `p_r = 0` low-`p` leg fails at 400 steps where vanilla survives) and no clamp | an apparent cohesion `c = p_r·tan(phi)`, a shifted `M^b`, and it re-engages the D5a sigmoid floor — all on Gorini's calibrated set |
+| **B.** a small free-surface surcharge | keeps the shallow points confined; changes the BVP, not the material; auditable in one line of the deck | it is a different boundary-value problem from the one TIMs may have specified |
+| **C.** accept the clamp, disclose the count | no modelling change at all | every reported result carries "N integration points were set by the clamp" |
+
+**Recommendation (fork-side, non-binding on the consumer): B for a footing campaign, C never
+silently.** A surcharge is the cheapest honest fix and does not touch a calibrated constant. A is
+defensible but must not be taken without re-opening D5a, because it moves the dilatancy floor by
+~886x as a side effect.
+
+**Whichever is chosen, the count must be measured, not hoped for.** The message is `opserr`-only:
+capture it (`ops.logFile(path, '-noEcho')` → run → redirect away → count `"CLAMPING"`) and report
+the number alongside the result. Emitter guide §7 carries the same decision in consumer language.
+
+---
+
 ## 6. Method that worked
 
 **Adversarial review by a different model found something real every single time** — a false
@@ -257,3 +394,7 @@ asked only for G1; the companion was added on suspicion and is the half that can
 ## Log
 
 - 2026-08-27 — Written at the end of the PR-2 session.
+- 2026-09-05 — **ADR-86b** (WP-86b, branch `wp/86b-sanisand-integrator`): §3's new subsection
+  records T1 (`-maxSubsteps`) and T2 (`TanType` default 0 → 2); §5b writes up the `-Presidual`
+  decision without taking it. Driven by ADR-90 GATE U (`_adr90_tau0_qu_band.md` §5, §6.3), whose
+  §8.1 close-out named this work as the actionable remainder.

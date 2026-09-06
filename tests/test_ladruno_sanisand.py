@@ -1144,7 +1144,18 @@ def test_tcl_subprocess_smoke(tmp_path):
         pr=_TCL_PRESIDUAL, pmin=_TCL_PMIN))
 
     def _run(env):
+        # Ladruno (ADR-86b review-fix): `stdin=subprocess.DEVNULL` is
+        # load-bearing on Windows -- see `tests/_testbed/subprocess_run.py`'s
+        # module docstring / `test_soe_zero_free_equations.py::_run_child`.
+        # With the inherited stdin, `Popen` tries to `DuplicateHandle`
+        # whatever pytest's fd-level capture left there and raises
+        # `OSError: [WinError 6] The handle is invalid`, but only once some
+        # OTHER module in the full suite has already run stdin-capturing code
+        # -- so this test passes standalone and fails under a full `pytest
+        # tests/` run, indistinguishable here from the classic-Tcl
+        # registration actually being broken.
         p = subprocess.run([exe, str(deck)], cwd=str(tmp_path), env=env,
+                           stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=180)
         return p, p.stdout + p.stderr
 

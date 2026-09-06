@@ -64,6 +64,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoJ2Finite.*",
     "SRC/material/nD/LadrunoRCConcrete.*", "SRC/material/nD/LadrunoRCKernel.h",
     "SRC/material/nD/LadrunoRCFiniteStrain.*",
+    "SRC/material/LadrunoMaterialStatus.h",
     "SRC/material/nD/LadrunoSANISAND.*",
     "SRC/material/nD/LadrunoSANISAND3D.*",
     "SRC/material/nD/LadrunoSANISANDPlaneStrain.*",

@@ -1,0 +1,27 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 5c01bb5f7a580be9f73568a2e8f98b3a2b263c39
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\Ladruno_files\testbed\hypo_bearing\adr86b_t8\h1.0_e0.6944_cap10000
+    date                        : 2026-09-05T13:34:32
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    wall budget per leg         : 2700 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   29.295 ds=0.3200mm t=   42.8s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=55.756 kPa, w2(z=-0.625)=6.3801 m, yield 97 ele / 126.677 m3, t=109s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=120.941 kPa, w2(z=-0.625)=8.1377 m, yield 162 ele / 309.028 m3, t=274s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=233.730 kPa, w2(z=-0.625)=9.8119 m, yield 194 ele / 516.950 m3, t=657s
+    [h1.0_e0.6944]    50 s/B=0.02030 q=  451.570 ds=5.0000mm t= 1339.8s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=451.570 kPa, w2(z=-0.625)=11.4247 m, yield 198 ele / 567.544 m3, t=1340s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=877.464 kPa, w2(z=-0.625)=12.8296 m, yield 200 ele / 600.000 m3, t=2274s
+    *** INADMISSIBLE: terminated in SEIZURE mode WALL -- q_max = 1035.253 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.04780; [h1.0_e0.6944] mode=WALL (WALL-CLOCK budget spent at s/B = 0.04780); ended s/B=0.04780 of target 0.250; plateau=NO / peaked=NO (tail 53.008 % of initial); free-advance=yes (12500.0x floor); subdivisions 2/80; 65 steps, 64 failed, 23 relaxed, 2737 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 5.66e-04
+    width: w2(z=-0.625) = 13.1134 m, w2(z=-1.375) = 11.8819 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory

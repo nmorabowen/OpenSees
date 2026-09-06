@@ -199,7 +199,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov)\n"
 "        • system Mumps — distributed MUMPS (-BLR, -stats, half-storage)\n"
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
-"        • LadrunoSANISAND — settable low-stress constants, wired + echoed\n"
+"        • LadrunoSANISAND — settable p_r/p_min, -maxSubsteps ME cap\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "\n";
     // FEATURES-END
