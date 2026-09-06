@@ -561,7 +561,7 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
             max_substeps=MAX_SUBSTEPS,
-            test_type=PUSH_TEST, verbose=True):
+            test_type=PUSH_TEST, verbose=True, surcharge=0.0):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
     log_path = os.path.join(out_dir, f"a2_{tag}_engine.log")
@@ -658,6 +658,36 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 eta_max = max(eta_max, eta)
                 eta_field[e - 1] = max(eta_field[e - 1], eta)
     patch_err = max(err_zz, err_xx)
+
+    # ---- stage 0b: free-surface surcharge (ADR-92 CP1, owner decision B) ----
+    # ADR-86b handoff sec.5b: a small surcharge keeps the shallow ring confined
+    # without touching a calibrated constant. Applied AFTER the geostatic controls
+    # (they assume sigma_zz = gamma*z) and BEFORE the stage flip, on every top node
+    # that is NOT under the footing, as q * tributary area. Pattern 1 (gravity)
+    # is frozen first: its Linear series would otherwise keep scaling gamma past 1.
+    surch_want = 0.0
+    if surcharge > 0.0:
+        ops.loadConst("-time", 0.0)
+        ops.timeSeries("Linear", 3)
+        ops.pattern("Plain", 3, 3)
+        for n in sets["top"]:
+            if n in ft or trib[n] <= 0:
+                continue
+            ops.load(int(n) + 1, 0.0, 0.0, -surcharge * float(trib[n]))
+            surch_want += surcharge * float(trib[n])
+        ops.integrator("LoadControl", 1.0 / N_GRAV)
+        for k in range(N_GRAV):
+            assert ops.analyze(1) == 0, f"{tag}: surcharge step {k + 1} failed"
+        ops.reactions()
+        rz2 = sum(ops.nodeReaction(int(n) + 1, 3) for n in sets["bottom"])
+        surch_err = abs(rz2 / (want + surch_want) - 1.0)
+        assert surch_err < 1.0e-6, (
+            f"{tag}: equilibrium identity with surcharge violated, {rz2} vs "
+            f"{want + surch_want} kN")
+        if verbose:
+            print(f"    surcharge {surcharge} kPa on the free surface outside the "
+                  f"footing: {surch_want:.4f} kN, base reaction identity "
+                  f"{surch_err:.2e}")
 
     # ---- stage flip ------------------------------------------------------
     ops.updateMaterialStage("-material", 1, "-stage", 1)
@@ -786,7 +816,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 date=datetime.datetime.now().isoformat(timespec="seconds"),
                 partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
-                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, push_tol=tol,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
                 max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
@@ -887,7 +917,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -949,6 +979,9 @@ def main(argv=None):
     ap.add_argument("--test", default=PUSH_TEST,
                     choices=("NormUnbalance", "NormDispIncr"),
                     help="convergence test for the push ladder")
+    ap.add_argument("--surcharge", type=float, default=0.0,
+                    help="free-surface surcharge OUTSIDE the footing, kPa (ADR-92 CP1 "
+                         "decision B; 0 = the GATE U / T8 deck)")
     ap.add_argument("--maxsubsteps", type=int, default=MAX_SUBSTEPS,
                     help="ADR-86b ModifiedEuler substep-count cap; 0 = uncapped "
                          "(the original GATE U configuration)")
@@ -974,6 +1007,7 @@ def main(argv=None):
     print(f"    convergence test (pinned)   : {args.test} @ {tol}"
           + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
     print(f"    TanType (0=elastic default) : {args.tantype}")
+    print(f"    surcharge (kPa, outside foot): {args.surcharge}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
 
     want = [(h0, en, ei) for h0 in RESOLUTIONS for en, ei in DENSITIES]
@@ -987,7 +1021,8 @@ def main(argv=None):
             r = run_leg(h0, en, ei, args.out, wall_budget=args.wall,
                         sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
                         tan_type=args.tantype, test_type=args.test,
-                        max_substeps=args.maxsubsteps)
+                        max_substeps=args.maxsubsteps,
+                        surcharge=args.surcharge)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,
