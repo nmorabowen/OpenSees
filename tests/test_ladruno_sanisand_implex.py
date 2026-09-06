@@ -420,11 +420,26 @@ def test_floor_clamp_fires_and_implexDetail_reports_it():
 #  unreachable tolerance and `analyze()` returns non-zero WITHOUT commit
 #  ("Domain::update() returns the element's code ... IncrementalIntegrator::
 #  update turns it into a failed step -- none of which involves solving
-#  anything", `test_ladruno_sanisand_integrator.py`). `ops.reset()` afterwards
-#  calls `revertToLastCommit()`, which `LadrunoSANISAND` overrides to restore
-#  the trial state AND re-arm the step (`mImplexStepArmed = true`,
-#  `mImplexDt = mImplexDtCommit`) -- so a probe taken after a reset re-freezes
-#  `f` from scratch, from `mImplexDtCommit` (unchanged since the last real
+#  anything", `test_ladruno_sanisand_integrator.py`).
+#
+#  DO NOT call `ops.reset()` here.  MEASURED 2026-09-06: `ops.reset()` is
+#  `Domain::revertToStart()` (`OpenSeesCommands.cpp:2539`), NOT
+#  `revertToLastCommit()` -- it runs `ManzariDafalias::initialize()`, which
+#  ZEROES `mSigma_n`/`mEpsilon_n`/`mAlpha_n`/`mFabric_n`, and then ends
+#  `return this->update()` (`Domain.cpp:2385`), pushing one state determination
+#  through the zeroed state.  With `sigma~ = 0 + Ce:0 = 0` the p_min clamp
+#  fires HONESTLY and `getStress()` returns
+#  `[-0.0101, -0.0101, -0.0101, -0.0, -0.0, -0.0]` -- the three IEEE negative
+#  zeros are the fingerprint, since `-1.0 * (+0.0)` requires `dev(sigma~)` to be
+#  EXACTLY zero, which no real load path produces.  Three tests read that as
+#  "revertToLastCommit is not restoring".  It was the probe, not the material.
+#
+#  Nothing is needed in its place: a failed `StaticAnalysis` step ALREADY calls
+#  `theDomain->revertToLastCommit()` and `theIntegrator->revertToLastStep()`
+#  before `analyze()` returns non-zero (`StaticAnalysis.cpp:185` and four
+#  sibling sites), so the correct revert has happened by the time we look.
+#  There is no Python verb that calls `revertToLastCommit()` on its own; a
+#  deliberately-failed step is the way to reach it.
 #  commit) and the probe's OWN trial-strain norm.
 #
 #  WHY +h AND -h SHARE THE SAME f UNDER `-implexDt strain`.  `f` is frozen at
@@ -547,7 +562,9 @@ def _probe_once(tag, sign, probe_pattern_tag, probe_ts_tag):
     stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
     strain = list(ops.eleResponse(1, 'material', 1, 'strain'))
 
-    ops.reset()
+    # NO ops.reset() -- see the block comment above; the failed step already
+    # reverted, and reset() would zero the committed state and hand back the
+    # clamp fingerprint instead.
     ops.remove('loadPattern', probe_pattern_tag)
     return stress, strain
 
@@ -735,7 +752,7 @@ def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchang
         'reversed load factor makes it a wrong answer that would pass every '
         'other gate', rc)
 
-    ops.reset()
+    # NO ops.reset(): the failed step's own revertToLastCommit already ran.
     after = list(ops.eleResponse(1, 'material', 1, 'stress'))
     assert before == after, (
         'the committed stress moved across a REFUSED step -- the refusal is '
@@ -794,7 +811,7 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
         'this deck, re-derive the deck rather than weakening this assertion',
         rc)
 
-    ops.reset()
+    # NO ops.reset(): the failed step's own revertToLastCommit already ran.
     after = list(ops.eleResponse(1, 'material', 1, 'stress'))
     assert before == after, (
         'the committed stress moved across an -implexControl refusal', before, after)
