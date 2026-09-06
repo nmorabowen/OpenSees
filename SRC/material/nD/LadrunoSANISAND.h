@@ -280,8 +280,19 @@ class LadrunoSANISAND : public ManzariDafalias
     // Per-step bookkeeping.
     double mImplexDt;         // dt_{n+1}, frozen at the FIRST trial call of the step
     double mImplexDtCommit;   // dt_n, the frozen value of the last committed step
-    double mImplexDt0;        // the first non-zero dt seen -- the -implexControl floor
-    double mImplexFactor;     // f = (dt_{n+1}/dt_n)*alpha, frozen with mImplexDt
+    double mImplexDt0;        // Ladruno ADR-92 fix (red/blue B2): the MAGNITUDE |dt|
+                              //          of the first non-zero dt seen -- the
+                              //          -implexControl reduction floor, which the
+                              //          parser documents as a fraction of it. It armed
+                              //          only from a POSITIVE dt, so on a
+                              //          settlement-driven deck it stayed 0.0 and the
+                              //          floor was dead.
+    double mImplexFactor;     // f = (dt_{n+1}/dt_n)*alpha, frozen with mImplexDt.
+                              //          Ladruno ADR-92 fix (red/blue B1): the ratio is
+                              //          formed whenever dt_n != 0, sign-consistently,
+                              //          so a monotonically negative clock gets the
+                              //          positive ratio it is entitled to instead of
+                              //          collapsing to alpha.
     bool   mImplexStepArmed;  // true until the first trial call after a commit/revert
     bool   mImplexTrialDone;  // the last trial pass was an EXTRAPOLATED one, so
                               // commitState() owes a companion return. False on

@@ -311,7 +311,10 @@ OPS_LadrunoSANISAND(void)
                        << ": -implexControl reductionLimit must be in (0, 1] (got "
                        << implexOpt.reductionLimit
                        << "). It is the floor below which the material stops refusing,"
-                          " as a fraction of the FIRST dt seen." << endln;
+                          " as a fraction of the MAGNITUDE of the first non-zero dt seen"
+                          " (Ladruno ADR-92 fix, red/blue B2: it is a magnitude on both"
+                          " sides of the test now, so a settlement-driven deck arms it)."
+                       << endln;
                 return 0;
             }
         }
@@ -1067,26 +1070,79 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
         sumError += e;
         count++;
     }
-    double getMaxError(void) const { return maxError; }
-    // The average SINCE THE LAST QUERY, and it resets the accumulator -- the
-    // same contract ASDConcrete3D's getAverageError() has, spelled out here
-    // because "average" alone would be read as "since the analysis began".
-    double takeAverageError(void)
+
+    // Ladruno ADR-92 fix (red/blue major RED-1 F6, contract item 6): the error
+    // accumulators are reset at each commit ROUND rather than never (maxError)
+    // and rather than on every read (the average). "Since the process started"
+    // made maxError a number that survived ops.reset() and could not be
+    // attributed to any step; a destructive read made the average correct at the
+    // FIRST integration point a recorder touched and exactly 0.0 at every other
+    // one (1599 of 1600 reads on a 200-element x 8-GP mesh).
+    //
+    // The round boundary cannot be read from the domain -- a material has no
+    // handle on one -- so it is detected from the identity of the first Gauss
+    // point that ever committed: Domain::commit() walks the element iterator in
+    // a fixed order, so seeing that same object again means a new round began.
+    // ADDRESS identity, not tag identity: getCopy(const char*) gives every
+    // integration point the SAME tag and a DIFFERENT object.
+    //
+    // Degenerate case (the first committer leaves the model mid-run): the reset
+    // stops firing and the pair degrades to the old since-process-start
+    // behaviour. These are diagnostics; nothing here may be given a job that
+    // affects the answer.
+    void noteCommitRound(const void *who)
     {
-        double a = (count > 0) ? (sumError / (double)count) : 0.0;
-        sumError = 0.0;
-        count    = 0;
-        return a;
+        if (firstCommitter == 0)
+            firstCommitter = who;
+        else if (who == firstCommitter) {
+            maxError = 0.0;
+            sumError = 0.0;
+            count    = 0;
+        }
+    }
+
+    double getMaxError(void) const { return maxError; }
+
+    // Ladruno ADR-92 fix (red/blue major RED-1 F6, contract item 6): the mean
+    // over the current commit round, read NON-DESTRUCTIVELY, so every
+    // integration point a recorder touches reports the same value.
+    double getAverageError(void) const
+    {
+        return (count > 0) ? (sumError / (double)count) : 0.0;
+    }
+
+    // Ladruno ADR-92 fix (red/blue B3 + majors RED-1 F7/F8, contract item 5):
+    // the process-wide refusal ledger. Every site that returns
+    // LADRUNO_MATERIAL_REFUSED bumps exactly one bucket, so a driver can read
+    // what no log can supply -- the warnings are throttled to 10 per process by
+    // design (F7), which is precisely why the COUNT has to live somewhere else.
+    // Read through the `implexRefusals` response, non-destructively, and NOT
+    // cleared by a commit round: a leg's running total is what lane C books.
+    void noteRefusalD2(void)        { nRefusedD2++; }
+    void noteRefusalControl(void)   { nRefusedControl++; }
+    void noteRefusalCompanion(void) { nRefusedCompanion++; }
+    long getRefusalsD2(void) const        { return nRefusedD2; }
+    long getRefusalsControl(void) const   { return nRefusedControl; }
+    long getRefusalsCompanion(void) const { return nRefusedCompanion; }
+    long getRefusalsTotal(void) const
+    {
+        return nRefusedD2 + nRefusedControl + nRefusedCompanion;
     }
 
   private:
-    LadrunoImplexGlobals() : maxError(0.0), sumError(0.0), count(0) {}
+    LadrunoImplexGlobals()
+      : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
+        nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0) {}
     LadrunoImplexGlobals(const LadrunoImplexGlobals &);
     LadrunoImplexGlobals &operator=(const LadrunoImplexGlobals &);
 
-    double maxError;
-    double sumError;
-    long   count;
+    double      maxError;
+    double      sumError;
+    long        count;
+    const void *firstCommitter;   // Ladruno ADR-92 fix: the commit-round marker
+    long        nRefusedD2;
+    long        nRefusedControl;
+    long        nRefusedCompanion;
 };
 
 } // anonymous namespace
@@ -1189,6 +1245,29 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
         return -1;
     }
 
+    // Ladruno ADR-92 fix (red/blue major RED-1 F5, contract item 8): scheme 2
+    // without a cap is REFUSED, exactly as scheme 1 is, and the refusal is NOT
+    // gated on `verbose`. It used to be an advisory nested inside
+    // `if (s == 2 && verbose)`, and `verbose` is false on every getCopy() and
+    // recvSelf() path -- so a per-Gauss-point clone or a restored/parallel rank
+    // got no warning at all while the scheme-1 hard refusal still fired there.
+    // Worse, with mMaxSubsteps == 0 the base's mSubstepCapHitInME is unreachable,
+    // so -implexControl's ONLY companion-failure detector is dead and D3's
+    // requirement ("the companion must be able to fail") is not met on scheme 2
+    // either. Scheme 2's own retry ladder ends in explicit_integrator, so it can
+    // still spend an unbounded number of ModifiedEuler substeps in one commit.
+    if (s == 2 && mMaxSubsteps <= 0) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -implex on IntScheme 2 REQUIRES -maxSubsteps > 0 (got "
+               << mMaxSubsteps << "). Scheme 2's retry ladder ends in"
+                  " explicit_integrator (ModifiedEuler), so an uncapped companion can"
+                  " spend an unbounded number of substeps in one commitState, where no"
+                  " global Newton is left to react -- and with no cap the substep-cap"
+                  " flag never sets, so -implexControl has no companion-failure"
+                  " detector at all. See ADR 92 D3 and ADR-90 GATE U." << endln;
+        return -1;
+    }
+
     if (s == 2 && verbose) {
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                << ": -implex with IntScheme 2 is PERMITTED but is not the ADR-92"
@@ -1198,12 +1277,8 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
                   " by explicit_integrator (ModifiedEuler) -- so scheme 2 is not an"
                   " implicit return where this campaign's problem lives, and it costs a"
                   " 19-unknown Newton everywhere else." << endln;
-        if (mMaxSubsteps <= 0)
-            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-                   << ": -implex with IntScheme 2 and -maxSubsteps 0. Scheme 2's own"
-                      " retry ladder ends in explicit_integrator, so the companion can"
-                      " still spend an unbounded number of ModifiedEuler substeps in one"
-                      " commit. -maxSubsteps is strongly recommended." << endln;
+        // (The uncapped case is REFUSED above, unconditionally -- see the
+        // Ladruno ADR-92 fix note there.)
     }
 
     mImplexOpt = opt;
@@ -1323,10 +1398,29 @@ LadrunoSANISAND::ladrunoImplexArmStep(void)
     }
 
     mImplexDt = dt;
-    if (mImplexDt0 <= 0.0 && dt > 0.0)
-        mImplexDt0 = dt;
 
-    if (mImplexDtCommit > 0.0)
+    // Ladruno ADR-92 fix (red/blue B2, contract item 2): arm the -implexControl
+    // reduction floor from the first NON-ZERO dt and store its MAGNITUDE. The
+    // test was `dt > 0.0`, so on a deck that drives settlement downward --
+    // `ops.integrator("LoadControl", -ds)`, which is this campaign's own deck --
+    // mImplexDt0 stayed 0.0 for the whole analysis and the floor at the W7
+    // refusal short-circuited on `mImplexDt0 <= 0.0`, refusing without limit.
+    // The ctl arm died still being refused at ds = 1.5625e-7 m, BELOW its own
+    // intended floor of 0.01 * 2e-5 = 2e-7 m. The parser documents this quantity
+    // as "a fraction of the FIRST dt seen", i.e. a magnitude; store it as one.
+    if (mImplexDt0 <= 0.0 && dt != 0.0)
+        mImplexDt0 = (dt < 0.0) ? -dt : dt;
+
+    // Ladruno ADR-92 fix (red/blue B1, contract item 1): SIGN-CONSISTENT. The
+    // gate was `mImplexDtCommit > 0.0`, so the ratio was never computed on a
+    // monotonically negative clock and f collapsed to alpha for the life of
+    // every LoadControl(-ds) leg -- the exact deck the D2 guard at
+    // ladrunoImplexTrial() was widened to admit, on the argument that two
+    // negative increments give a positive ratio. That ratio now exists. The two
+    // consumers of mImplexDtCommit agreed on nothing: `!= 0.0` at the D2 guard,
+    // `> 0.0` here. They agree on `!= 0.0` now. A dt that has CHANGED SIGN is
+    // still refused, in ladrunoImplexTrial(), which is where D2 belongs.
+    if (mImplexDtCommit != 0.0)
         mImplexFactor = (dt / mImplexDtCommit) * mImplexOpt.alpha;
     else
         mImplexFactor = mImplexOpt.alpha;
@@ -1509,17 +1603,35 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // load factor TURNING ROUND -- a SIGN CHANGE between consecutive steps --
     // not a clock that runs monotonically downward. Refuse the sign change.
     if (mImplexDtCommit != 0.0 && mImplexDt * mImplexDtCommit < 0.0) {
-        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-               << ": -implex REFUSES this step -- the pseudo-time increment CHANGED"
-                  " SIGN (" << mImplexDtCommit << " -> " << mImplexDt << ")."
-                  " dt_{n+1}/dt_n is the extrapolation factor itself, so a load factor"
-                  " that has TURNED ROUND (DisplacementControl or arc length past a"
-                  " limit point) makes it a wrong answer that would pass every gate."
-                  " A consistently negative clock is NOT refused: a deck that drives"
-                  " settlement downward has dt < 0 on every step and a positive,"
-                  " correct ratio. Use -implexDt user or -implexDt strain on a deck"
-                  " whose clock genuinely reverses."
-               << endln;
+        // Ladruno ADR-92 fix (red/blue major RED-1 F7, contract items 4 + 5):
+        // THROTTLED, and COUNTED. This block emitted one 527-character line per
+        // event with no budget at all; commit 3c788778f recorded 4896 refusals in
+        // a single push step, i.e. 2.58 MB of synchronous console output for one
+        // step. Same process-wide budget as the direct parent's low-p clamp
+        // notice (ManzariDafalias.cpp:1451-1466) and for the same reason: every
+        // Gauss point is its own material object, so neither "once per call" nor
+        // "once per instance" bounds the output. Throttling the message is only
+        // safe because the count is now recoverable from `implexRefusals`.
+        LadrunoImplexGlobals::instance().noteRefusalD2();
+        static int ladrunoImplexD2WarnCount = 0;     // Ladruno ADR-92 fix
+        if (ladrunoImplexD2WarnCount < 10) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": -implex REFUSES this step -- the pseudo-time increment CHANGED"
+                      " SIGN (" << mImplexDtCommit << " -> " << mImplexDt << ")."
+                      " dt_{n+1}/dt_n is the extrapolation factor itself, so a load factor"
+                      " that has TURNED ROUND (DisplacementControl or arc length past a"
+                      " limit point) makes it a wrong answer that would pass every gate."
+                      " A consistently negative clock is NOT refused: a deck that drives"
+                      " settlement downward has dt < 0 on every step and a positive,"
+                      " correct ratio. Use -implexDt user or -implexDt strain on a deck"
+                      " whose clock genuinely reverses."
+                   << endln;
+            if (++ladrunoImplexD2WarnCount == 10)
+                opserr << "WARNING LadrunoSANISAND: further -implex sign-change refusal"
+                          " warnings suppressed (budget 10 per process). The running"
+                          " count stays readable through the `implexRefusals` material"
+                          " response." << endln;
+        }
         this->ladrunoRestoreTrialFromCommitted();
         double Kr = 0.0, Gr = 0.0;
         this->ladrunoImplexFreezeTangent(Kr, Gr);
@@ -1546,6 +1658,11 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         if (mSubstepCapHitInME) {
             // The companion could not integrate this increment. That is the one
             // thing -implexControl exists to catch before the step commits.
+            // Ladruno ADR-92 fix (contract item 5): counted in the COMPANION
+            // bucket -- it is the same failure the commit-time site reports, just
+            // caught one phase earlier, and the base's own substep-cap notice
+            // (ManzariDafalias.cpp:1551) has already printed under its own budget.
+            LadrunoImplexGlobals::instance().noteRefusalCompanion();
             this->ladrunoRestoreTrialFromCommitted();
             double Kf = 0.0, Gf = 0.0;
             this->ladrunoImplexFreezeTangent(Kf, Gf);
@@ -1612,8 +1729,56 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         if (mImplexError > mImplexOpt.errorTol) {
             // Below the reduction limit there is nothing left to cut, so refusing
             // again would only turn a bounded inaccuracy into a dead analysis.
-            if (mImplexDt0 <= 0.0 || mImplexDt >= mImplexOpt.reductionLimit * mImplexDt0)
+            //
+            // Ladruno ADR-92 fix (red/blue B2, contract item 2): compare
+            // MAGNITUDES. mImplexDt is negative on any settlement-driven deck, so
+            // the old signed `>=` made this test false for every negative dt once
+            // mImplexDt0 was armed -- the floor would then never engage at all --
+            // while an unarmed mImplexDt0 made it refuse without limit. Both
+            // halves of that contradiction are gone now that mImplexDt0 stores
+            // |dt| from the first non-zero step.
+            const double dtAbs = (mImplexDt < 0.0) ? -mImplexDt : mImplexDt;
+            if (mImplexDt0 <= 0.0 || dtAbs >= mImplexOpt.reductionLimit * mImplexDt0) {
+                // Ladruno ADR-92 fix (red/blue major RED-1 F4/F8, contract items
+                // 4 + 5 + 7). This was the file's ONE genuinely SILENT wrong
+                // answer: it returned the sentinel while leaving mSigma = sigma~,
+                // which is strain-DEPENDENT, so on an element that discards the
+                // return (SSPbrick, Brick, BbarBrick -- everything but
+                // LadrunoBrick) Newton converged normally and the step committed
+                // an answer the material had refused, with nothing in any log.
+                // Three things now happen, in the contract's order:
+                //   (a) one THROTTLED line, budget 10 per process -- W7 is the
+                //       highest-frequency refusal by construction, which is why
+                //       this is the worst site in the file for an unthrottled
+                //       warning and why it needs the counter more than any other;
+                //   (b) mSigma = mSigma_n, so the returned stress is
+                //       strain-INDEPENDENT and a non-propagating element stalls
+                //       Newton loudly instead of converging on a refused state.
+                //       Only mSigma: mEpsilon is the element's own input and the
+                //       rest of the trial state is restored by
+                //       revertToLastCommit() on the element that does propagate;
+                //   (c) the counter, which is the only surviving record once the
+                //       10-line budget is spent.
+                LadrunoImplexGlobals::instance().noteRefusalControl();
+                static int ladrunoImplexCtlWarnCount = 0;   // Ladruno ADR-92 fix
+                if (ladrunoImplexCtlWarnCount < 10) {
+                    opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                           << ": -implexControl REFUSES this step -- implexError "
+                           << mImplexError << " > tol " << mImplexOpt.errorTol
+                           << " at |dt| = " << dtAbs << " (floor "
+                           << mImplexOpt.reductionLimit * mImplexDt0
+                           << "). Only an element that PROPAGATES"
+                              " LADRUNO_MATERIAL_REFUSED can cut the step; today that is"
+                              " LadrunoBrick." << endln;
+                    if (++ladrunoImplexCtlWarnCount == 10)
+                        opserr << "WARNING LadrunoSANISAND: further -implexControl refusal"
+                                  " warnings suppressed (budget 10 per process). The"
+                                  " running count stays readable through the"
+                                  " `implexRefusals` material response." << endln;
+                }
+                mSigma = mSigma_n;
                 return LADRUNO_MATERIAL_REFUSED;
+            }
         }
     }
 
@@ -1638,26 +1803,49 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // The true return from state n with the actual strain increment.
     this->integrate();
 
-    if (mSubstepCapHitInME) {
-        // Reachable only with -implexControl OFF (with it on, the same failure was
-        // caught in setTrialStrain and the step was refused). There is no good move
-        // here and the message says so rather than picking one quietly: the state
-        // ModifiedEuler left is NOT an answer, committing it would manufacture
-        // history, and committing sigma~ instead would manufacture a different one.
-        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-               << ": the -implex COMPANION hit the -maxSubsteps cap at commitState."
-                  " The committed state is NOT advanced and this commit is refused ("
-               << LADRUNO_MATERIAL_REFUSED << "). This is the ADR-92 section 8 risk"
-                  " measured: under -implex the global step is solved on the elastic"
-                  " operator, so the increment handed to the commit-time return can be"
-                  " larger and differently directed than implicit Newton would have"
-                  " found. Re-run with -implexControl, which refuses such a step BEFORE"
-                  " it converges." << endln;
-        this->ladrunoRestoreTrialFromCommitted();
-        mSigma = sigTilde;          // leave the element holding what it equilibrated with
-        double Kf = 0.0, Gf = 0.0;
-        this->ladrunoImplexFreezeTangent(Kf, Gf);
-        return LADRUNO_MATERIAL_REFUSED;
+    // Ladruno ADR-92 fix (red/blue B3, contract item 3): the commit-time
+    // companion refusal used to EARLY-RETURN here. It was dead code twice over --
+    // Domain::commit() calls `elePtr->commitState();` bare (Domain.cpp:2244) and
+    // then `return 0;` unconditionally (:2309), so AnalysisModel::commitDomain()'s
+    // `< 0` test can never fire on it -- and the early return sat BEFORE every
+    // state update below, so the step was accepted by the domain while
+    // mEpsilon_n, mImplexDEpsP, mImplexDtCommit, mImplexStepArmed and
+    // mImplexTrialDone were all left frozen at n. Every LATER step then ran a
+    // two-step dEps against a one-step-old d_eps_p(n) with a stale f, silently,
+    // in the DEFAULT configuration (control off, cap mandatory).
+    //
+    // Since the return is discarded no matter what, the material now does the
+    // three things it CAN do: commit the companion's best state so the history
+    // stays self-consistent for the steps that follow, say so once (throttled),
+    // and record the event where a driver can read it. The sentinel is still
+    // returned, for the day an element or a handler reads it. The committed state
+    // is the partially-integrated one ModifiedEuler left at T < 1; that is an
+    // admissible constitutive state, and a consistent history built on a short
+    // increment is strictly better than an exact one built on a stale datum.
+    // -implexControl remains the way to refuse such a step BEFORE it converges.
+    const bool companionFailed = mSubstepCapHitInME;   // Ladruno ADR-92 fix
+    if (companionFailed) {
+        LadrunoImplexGlobals::instance().noteRefusalCompanion();
+        static int ladrunoImplexCompanionWarnCount = 0;   // Ladruno ADR-92 fix
+        if (ladrunoImplexCompanionWarnCount < 10) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": the -implex COMPANION hit the -maxSubsteps cap at commitState."
+                      " This commit is refused (" << LADRUNO_MATERIAL_REFUSED
+                   << ") but Domain::commit() DISCARDS the return, so the companion's"
+                      " partially integrated state is committed anyway rather than"
+                      " leaving the extrapolation history stale for every later step."
+                      " This is the ADR-92 section 8 risk measured: under -implex the"
+                      " global step is solved on the elastic operator, so the increment"
+                      " handed to the commit-time return can be larger and differently"
+                      " directed than implicit Newton would have found. Re-run with"
+                      " -implexControl, which refuses such a step BEFORE it converges."
+                   << endln;
+            if (++ladrunoImplexCompanionWarnCount == 10)
+                opserr << "WARNING LadrunoSANISAND: further -implex commit-time companion"
+                          " failure warnings suppressed (budget 10 per process). The"
+                          " running count stays readable through the `implexRefusals`"
+                          " material response." << endln;
+        }
     }
 
     Vector sigImplicit(6);
@@ -1680,6 +1868,11 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
 
     // The denominator uses the NEW committed strain, matching the P0 oracle's
     // `Implex.commit()` (which measures after `m.commit()`), so parity is exact.
+    // Ladruno ADR-92 fix (contract item 6): open the commit ROUND before
+    // accumulating, so maxError and the average describe THIS step rather than
+    // the whole process. The call is keyed on `this`, not on the tag -- every
+    // Gauss point is its own object and they all share a tag.
+    LadrunoImplexGlobals::instance().noteCommitRound((const void *)this);
     this->ladrunoImplexMeasureError(sigTilde, sigImplicit, mEpsilon_n);
     LadrunoImplexGlobals::instance().accumulate(mImplexError);
 
@@ -1687,6 +1880,11 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // the next setTrialStrain -- the frozen operator at the new committed p.
     double K = 0.0, G = 0.0;
     this->ladrunoImplexFreezeTangent(K, G);
+
+    // Ladruno ADR-92 fix (red/blue B3, contract item 3): the sentinel is
+    // returned AFTER the state update, not instead of it.
+    if (companionFailed)
+        return LADRUNO_MATERIAL_REFUSED;
 
     return res;
 }
@@ -1764,7 +1962,8 @@ LadrunoSANISAND::setParameter(const char **argv, int argc, Parameter &param)
             return param.addObject(LadrunoSanisandImplexErrorParamID, this);
         }
         if (strcmp(argv[0], "avgImplexError") == 0 || strcmp(argv[0], "AvgImplexError") == 0) {
-            param.setValue(LadrunoImplexGlobals::instance().takeAverageError());
+            // Ladruno ADR-92 fix (contract item 6): non-destructive read.
+            param.setValue(LadrunoImplexGlobals::instance().getAverageError());
             return param.addObject(LadrunoSanisandAvgImplexErrorParamID, this);
         }
         if (strcmp(argv[0], "implexDt") == 0 || strcmp(argv[0], "implexDT") == 0) {
@@ -1867,6 +2066,10 @@ constexpr int LadrunoSanisandSubstepResponseID = 33086;   // Ladruno (ADR-86b)
 constexpr int LadrunoSanisandImplexErrorResponseID    = 33090;   // Ladruno (ADR-92 P1)
 constexpr int LadrunoSanisandAvgImplexErrorResponseID = 33091;   // Ladruno (ADR-92 P1)
 constexpr int LadrunoSanisandImplexDetailResponseID   = 33092;   // Ladruno (ADR-92 P1)
+// Ladruno ADR-92 fix (red/blue B3, contract item 5): `implexRefusals`, the
+// process-wide refusal ledger. Same band, same rule -- a response id, not a
+// class tag, and nothing may derive one from it.
+constexpr int LadrunoSanisandImplexRefusalsResponseID = 33093;   // Ladruno ADR-92 fix
 
 Response *
 LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
@@ -1893,6 +2096,12 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static Vector probe6(6);
         return new MaterialResponse(this, LadrunoSanisandImplexDetailResponseID, probe6);
     }
+    // Ladruno ADR-92 fix (red/blue B3, contract item 5)
+    if (argc > 0 && (strcmp(argv[0], "implexRefusals") == 0 ||
+                     strcmp(argv[0], "ImplexRefusals") == 0)) {
+        static Vector probe4(4);
+        return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
+    }
     return ManzariDafalias::setResponse(argv, argc, output);
 }
 
@@ -1912,9 +2121,24 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         return matInformation.setVector(out1);
     }
     if (responseID == LadrunoSanisandAvgImplexErrorResponseID) {
+        // Ladruno ADR-92 fix (contract item 6): non-destructive read, so an
+        // `-ele all -material 1 avgImplexError` recorder reports the same mean at
+        // every integration point instead of the mean at one and 0.0 at the rest.
         static Vector out1(1);
-        out1(0) = LadrunoImplexGlobals::instance().takeAverageError();
+        out1(0) = LadrunoImplexGlobals::instance().getAverageError();
         return matInformation.setVector(out1);
+    }
+    // Ladruno ADR-92 fix (red/blue B3 + majors RED-1 F7/F8, contract item 5):
+    // the refusal ledger. The warnings are throttled to 10 per process, so this
+    // is the ONLY way to recover how many steps the material actually refused.
+    if (responseID == LadrunoSanisandImplexRefusalsResponseID) {
+        static Vector out4(4);
+        const LadrunoImplexGlobals &g = LadrunoImplexGlobals::instance();
+        out4(0) = (double)g.getRefusalsTotal();      // every refusal site
+        out4(1) = (double)g.getRefusalsD2();         // pseudo-time sign change
+        out4(2) = (double)g.getRefusalsControl();    // -implexControl past tol
+        out4(3) = (double)g.getRefusalsCompanion();  // companion hit -maxSubsteps
+        return matInformation.setVector(out4);
     }
     if (responseID == LadrunoSanisandImplexDetailResponseID) {
         static Vector out6(6);
