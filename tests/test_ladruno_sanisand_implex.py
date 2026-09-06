@@ -1638,3 +1638,310 @@ def test_plane_strain_implex_smoke():
     assert math.isfinite(detail[5]), (
         "implexDetail's f (index 5) is not finite on the PlaneStrain lane",
         detail)
+
+# ===========================================================================
+#  Mutation gate survivors (Ladruno_implementation/_adr92_p1_mutation_gate.md,
+#  commit b523952fa) -- M4, M5, M10. Score was 0.75 (9/12); these three tests
+#  are the ones the gate's own audit says are owed.
+# ===========================================================================
+
+def test_implexcontrol_floor_accepts_once_reduction_limit_is_reached():
+    """Mutation gate M4 survivor: `mImplexDt0` (the reduction floor's
+    arming value) removed. No test in the baseline battery drives a
+    genuine SUBDIVISION LADDER (halve `ds` after a refusal, retry), so the
+    floor's escape branch (`|mImplexDt| < reductionLimit * mImplexDt0` =>
+    accept, "nothing left to cut") was never exercised -- killing the
+    arming line changed nothing.
+
+    Drives that ladder directly, at an UNREACHABLE -implexControl
+    tolerance (1e-9) so implexError is ALWAYS above tol no matter how
+    small `ds` gets -- the ONLY way any attempt can ever be accepted is
+    the floor, never a genuinely small error. MEASURED on 6f52a30bb at
+    reductionLimit = 0.3: priming ds0 = 0.05 (un-primed exemption, ALSO
+    arms mImplexDt0 = 0.05); the ladder ds = 0.1, 0.05, 0.025 all refuse
+    (ratio >= 0.3); ds = 0.0125 (ratio 0.25 < 0.3) is ACCEPTED, with
+    implexDetail[0] (the error) still reading 4.9e-6 -- far above
+    tol = 1e-9 -- proving the accept came from the floor, not from the
+    error dropping under tol.
+
+    Kills a mutant that never arms `mImplexDt0` (or arms it with the wrong
+    sign/magnitude): with the floor dead, the ladder refuses FOREVER and
+    this test's final `assert rc == 0` fails.
+    """
+    tag = 8320
+    tol = 1.0e-9
+    reduction_limit = 0.3
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', tol, reduction_limit)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -6.0 / 4.0)
+
+    ds0 = 0.05
+    ops.integrator('LoadControl', ds0)
+    rc_prime = ops.analyze(1)
+    assert rc_prime == 0, ('the priming step (un-primed, arms mImplexDt0) '
+                           'failed to converge -- a harness problem', rc_prime)
+    ops.loadConst('-time', 0.0)
+
+    refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    ds = ds0 * 2.0
+    accepted = False
+    last_detail = None
+    for attempt in range(8):
+        ops.integrator('LoadControl', ds)
+        rc = ops.analyze(1)
+        new_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+        last_detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+        if rc == 0:
+            assert new_refusals[2] == refusals[2], (
+                'implexRefusals[2] moved on the step the floor is supposed '
+                'to ACCEPT -- the floor branch must not count as a '
+                'refusal', refusals, new_refusals)
+            accepted = True
+            break
+        assert new_refusals[2] > refusals[2], (
+            'analyze() failed on the ladder but implexRefusals[2] did not '
+            'move -- the refusal was not -implexControl', refusals, new_refusals)
+        refusals = new_refusals
+        ds = ds / 2.0
+
+    assert accepted, (
+        'the subdivision ladder never got accepted -- the reduction floor '
+        '(mImplexDt0/reductionLimit) never engaged, so -implexControl '
+        'refused without limit, exactly the M4/B2 defect', ds, last_detail)
+    assert last_detail[0] > tol, (
+        'the ladder was accepted, but implexDetail[0] (the error) is NOT '
+        'above tol -- this accept could be explained by the error '
+        'genuinely dropping low, which would prove nothing about the '
+        'floor; re-derive ds0/reductionLimit so tol stays unreachable',
+        last_detail[0], tol)
+
+
+def test_implexcontrol_refusal_return_code_is_the_sentinel_not_a_stalled_residual():
+    """Mutation gate M5 survivor: the `-implexControl` refusal path
+    returns `0` instead of `LADRUNO_MATERIAL_REFUSED`. The existing
+    refusal tests stay green under that mutant because the OTHER two
+    thirds of the contract survive it (`mSigma = mSigma_n` still runs, so
+    Newton still stalls and `analyze()` still returns non-zero; the
+    counter still increments) -- so `rc != 0` and `implexRefusals[2]++`
+    are SYMPTOMS the mutant also produces, not proof the SENTINEL itself
+    propagated.
+
+    Distinguishes the two mechanisms by ITERATION COUNT. `ops.test(...)`
+    here is generously loose (`maxIter = 25`, a tolerance any ordinarily-
+    converging step clears easily) -- a genuine residual stall (the M5
+    mutant's failure mode: Newton grinding against a frozen, wrong `sigma`
+    with no early exit) would need many iterations before giving up,
+    while `LadrunoBrick::update()` propagating the sentinel aborts the
+    step on the FIRST iteration, before the residual has a chance to
+    stall (`Domain::update()` returns the element's code and
+    `IncrementalIntegrator::update()` fails the step immediately -- the
+    same mechanism `test_tangent_identity_...`'s block comment documents
+    for `maxIter = 1`, here observed at `maxIter = 25`).
+
+    MEASURED on 6f52a30bb: the SAME nominal-sized load, reapplied once
+    primed with `-implexControl` tol = 1e-9 (unreachable), refuses with
+    `analyze() == -3` after `ops.testIter() == 1`, not 25.
+
+    Kills a mutant that returns `0` (or any non-`LADRUNO_MATERIAL_REFUSED`
+    success code) from the control-refusal branch: `rc` would then only
+    go non-zero (if at all) after Newton genuinely exhausts iterations
+    against the frozen, mismatched stress, so `ops.testIter()` would read
+    close to `maxIter`, not 1.
+    """
+    tag = 8321
+    tol = 1.0e-9
+    maxit = 25
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', tol, 0.01)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    ops.test('NormUnbalance', _PROBE_TOL_REL * 50.0, maxit, 0)
+    _confine_only(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 0.05)
+    rc_prime = ops.analyze(1)
+    assert rc_prime == 0, ('the priming step failed to converge', rc_prime)
+    ops.loadConst('-time', 0.0)
+
+    before = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    before_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 0.05)
+    rc = ops.analyze(1)
+    niter = ops.testIter()
+    after = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    after_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert rc != 0, (
+        'the primed, tolerance-exceeding step converged -- it was supposed '
+        'to be refused by -implexControl', rc)
+    assert after[2] - before[2] >= 1, (
+        'implexRefusals[2] did not increment in the SAME step as the '
+        'return-code failure', before, after)
+    assert niter <= 2, (
+        'analyze() failed and the counter moved, but it took '
+        f'{niter} iterations out of a maxIter = {maxit} budget to do so -- '
+        'that is the signature of an ORDINARY stalled residual (Newton '
+        'grinding against a frozen, mismatched stress), not the material '
+        "propagating LADRUNO_MATERIAL_REFUSED through the element's own "
+        'update() on the first pass. If the sentinel were live this would '
+        'fail in 1 iteration regardless of maxIter', niter, maxit)
+    assert before_stress == after_stress, (
+        'the committed stress moved across the refusal', before_stress, after_stress)
+
+
+def test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio():
+    """Mutation gate M10 survivor: the re-arm (`mImplexStepArmed = true`)
+    at all three refusal sites removed. It survives the rest of this file
+    because every OTHER refusal test here uses `LadrunoBrick`, which
+    PROPAGATES the sentinel -- so `StaticAnalysis`'s own failure path
+    (`StaticAnalysis.cpp:185`) calls `revertToLastCommit()`, which
+    independently re-arms. The removed line is genuinely redundant on
+    every deck elsewhere in this file.
+
+    THE MATERIAL-LEVEL PATH THE FIX IS FOR: a caller that refuses and
+    retries WITHOUT a revert in between. `ops.analyze()` itself always
+    reverts internally on a propagated failure, so the only way to reach
+    this path from Python is an element that does NOT propagate the
+    material's return code -- `stdBrick` ("stdBrick swallows material
+    return codes", documented elsewhere in this file/LEDGER_quirks) --
+    so `analyze()` reports SUCCESS even when the material internally
+    refused, and `StaticAnalysis` never reverts between the two calls.
+
+    MEASURED on 6f52a30bb, zero-free-DOF `stdBrick`, net-dilating deck (the
+    same shape `_build_floor_seeking_deck` uses, so genuine `d_eps_p(n)`
+    exists): 6 nominal history steps at ds = 0.02 all accepted
+    (implexError <= 4.8, tol = 10.0); a jump to ds = 0.4 reads
+    implexError = 26.2 (> tol) and is REFUSED (implexRefusals[2] += 8,
+    f = 20.0 = 0.4 / 0.02); the VERY NEXT `analyze()` call, ds = 0.1, NO
+    revert in between, reads implexError = 5.7 (< tol) and is ACCEPTED
+    (implexRefusals[2] unchanged) with f = 5.0 -- exactly 0.1 / 0.02, the
+    ratio against the LAST TRULY COMMITTED dt (0.02), not 0.1 / 0.4 = 0.25,
+    which is what comparing against the refused attempt's own frozen dt
+    (a re-arm that never happened) would have produced.
+
+    Kills a mutant that removes the re-arm at the refusal sites: without
+    it, the accepted retry's `f` would be computed against the stale
+    refused-attempt dt instead of its own.
+    """
+    tag = 8322
+    e_conf = sani._PMIN_E_CONF_LOW
+    e_ax_total = 5.0e-3
+    lat = 1.5
+    opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', 10.0, 0.01)
+
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    # stdBrick, NOT LadrunoBrick -- see the docstring: this is the ONE
+    # test in the file where swallowing the material's return code is
+    # the point, not a hazard.
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -e_conf)
+            if y == 1.:
+                ops.sp(n, 2, -e_conf)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-11, 40, 0)
+    ops.algorithm('Newton')
+    ops.analysis('Static')
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    ops.integrator('LoadControl', 1.0 / 10)
+    for step in range(10):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+    ops.loadConst('-time', 0.0)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        n = j + 1
+        if x == 1.:
+            ops.sp(n, 1, lat * e_ax_total)
+        if y == 1.:
+            ops.sp(n, 2, lat * e_ax_total)
+    for j, (x, y) in enumerate(_XY):
+        ops.sp(4 + j + 1, 3, -e_ax_total)
+
+    # implexRefusals is a PROCESS-WIDE static counter (see the contract
+    # in the module docstring) -- it is NOT zero here in a full-suite
+    # run (earlier tests, e.g. the M4/M5 survivors above, already
+    # refused many times), so this test tracks DELTAS off its own
+    # baseline throughout, never an absolute value.
+    refusals_before_history = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+
+    ds_nominal = 0.02
+    ops.integrator('LoadControl', ds_nominal)
+    for step in range(6):
+        assert ops.analyze(1) == 0, f'history step {step + 1} failed'
+
+    refusals_0 = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    assert refusals_0[2] == refusals_before_history[2], (
+        'a nominal history step already refused -- the deck, not the '
+        'mechanism under test, needs re-deriving', refusals_before_history, refusals_0)
+
+    ops.integrator('LoadControl', 20.0 * ds_nominal)
+    rc_big = ops.analyze(1)
+    detail_big = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    refusals_big = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    assert rc_big == 0, (
+        'the big step FAILED analyze() -- stdBrick is supposed to swallow '
+        "the material's return code, so analyze() must report success "
+        'even though the material itself refused internally', rc_big)
+    assert refusals_big[2] > refusals_0[2], (
+        'the big (20x) step did not refuse internally (implexRefusals[2] '
+        "did not move) -- the deck isn't aggressive enough to force a "
+        '-implexControl refusal here', refusals_0, refusals_big)
+
+    # NO revertToLastCommit anywhere in between -- analyze() reported
+    # success above, so StaticAnalysis never reverted.
+    ops.integrator('LoadControl', ds_nominal)
+    rc_small = ops.analyze(1)
+    detail_small = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    refusals_small = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+
+    assert rc_small == 0, (
+        'the small step (re-driven with no revert since the big refusal) '
+        'failed to converge -- a harness problem', rc_small)
+    assert refusals_small[2] == refusals_big[2], (
+        'the small step ALSO refused -- pick a tolerance between the big '
+        "and small steps' measured implexError so this one is a clean "
+        'accept', refusals_big, refusals_small)
+    expected_f = ds_nominal / ds_nominal
+    assert detail_small[5] == pytest.approx(expected_f, rel=1.0e-6, abs=1.0e-9), (
+        'implexDetail[5] (f) on the step right after an un-reverted '
+        'refusal does not equal the ratio for ITS OWN dt against the '
+        'last TRULY committed dt -- if the re-arm (mImplexStepArmed) is '
+        'missing, f would instead reflect the REFUSED attempt\'s frozen '
+        'dt', detail_small[5], expected_f, detail_big, detail_small)
