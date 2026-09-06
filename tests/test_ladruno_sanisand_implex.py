@@ -118,6 +118,28 @@ import test_ladruno_sanisand_integrator as sanint
 
 pytestmark = [pytest.mark.zone_a]
 
+# Coordinator fix-verification pass (2026-09-06): fail LOUD, not silently
+# wrong, if this session ever resolves `opensees` to the installed Program
+# Files build (LEDGER_quirks: the .pth hijack) instead of this worktree's
+# dist\bin\opensees.pyd -- every assertion below is only meaningful against
+# lane A's ADR-92 P1 fix, commit 2473ce46c.
+_EXPECTED_BUILD_PREFIX = "2473ce46c"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_ladruno_build():
+    build = ops.ladrunoBuild()
+    assert build.startswith(_EXPECTED_BUILD_PREFIX), (
+        f"wrong opensees module loaded for this battery: ladrunoBuild() = "
+        f"{build!r}, expected a build starting with "
+        f"{_EXPECTED_BUILD_PREFIX!r} (lane A's ADR-92 P1 fix). This usually "
+        "means the installed Program Files opensees.pyd was picked up "
+        "instead of this worktree's dist/bin one -- check PYTHONPATH/"
+        "sys.path order (module file: "
+        + str(getattr(ops, "__file__", "?")) + ")")
+    yield
+
+
 _PARAMS = sani._PARAMS
 _P_ATM = sani._P_ATM
 _XY = sani._XY
@@ -880,23 +902,22 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     material returned -- which is exactly the failure mode the first draft
     of this test hit.
 
-    THE DECK'S EXPECTATION IS QUALITATIVE, sourced from the P0 oracle's own
-    measurement at the SAME calibrated parameters (`_adr92_p0_oracle_results.md`
-    section 4, T2 table, p0 = 5 kPa): `implexError` grows from ~2.7e-3 at the
-    nominal increment to 1.26 at 5x the nominal increment -- both values well
-    on either side of the ADR-92 default tolerance (0.05). This test does not
-    try to reproduce those exact numbers (a different deck, a different
-    control variable -- FORCE, not strain) -- it confines to p0 = 5 kPa (the
-    exact oracle confinement), takes `_PROBE_N_HISTORY` NOMINAL deviatoric
-    steps (expected to pass), then ONE step TEN TIMES that per-step load
-    (expected to fail the same way, on the same physics, at the same low
-    confinement). The tolerance passed to `-implexControl` here (5e-4, down
-    from the earlier draft's 0.05) is deliberately tight -- per B2/LEDGER_
-    implementations, 0.05 is "unusable from 5e-4 at p0 = 5" on this class of
-    deck, so a loose tolerance risked the nominal steps ALSO refusing
-    (destroying the positive control) or the big step NOT refusing on a
-    build where the floor bug (B2) is still live; 5e-4 is chosen to be
-    unambiguous on either side once B2 is fixed.
+    THE DECK'S EXPECTATION WAS ORIGINALLY QUALITATIVE (sourced from the P0
+    oracle's own T2 measurement at p0 = 5 kPa), but p0 = 5 with tol = 0.05 or
+    5e-4 turned out NOT TO WORK on THIS deck: MEASURED against the fixed
+    binary (ladrunoBuild == 2473ce46c), the NOMINAL steps alone already read
+    implexError ~ 0.43 at p0 = 5 (a much larger force-controlled increment
+    relative to that confinement than the oracle's strain-controlled probe),
+    so ANY tolerance under ~0.43 refuses the nominal steps too and
+    `_establish_plastic_history` itself fails before the big step is ever
+    reached -- which is what happened on the first run of this fixed test.
+    A parameter sweep on the real binary (p0 in {5, 10, 20, 30, 50} kPa,
+    the big step at 5x/10x/20x nominal) found a clean, well-separated
+    discriminator at p0 = 50 kPa: nominal-step implexError maxes at 4.8e-3,
+    the 10x-nominal big step reads 0.255 -- a 53x gap. `tol = 0.02` sits
+    comfortably in that gap (4x above the nominal max, 12x below the big-
+    step reading), so it stays unambiguous even if the exact numbers drift
+    a little on a future build.
 
     Kills a mutant that reports SOME refusal on the big step (e.g. a
     companion cap failure masquerading as -implexControl) without the
@@ -905,8 +926,8 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     """
     tag = 8213
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 5.0e-4, 0.01)
-    _build_free_dof_triaxial(tag, opts, p0=5.0)
+            '-implexControl', 0.02, 0.01)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
     _establish_plastic_history(tag)
 
     before = list(ops.eleResponse(1, 'material', 1, 'stress'))
@@ -923,11 +944,11 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     ops.integrator('LoadControl', 1.0)
     rc = ops.analyze(1)
     assert rc != 0, (
-        'a deviatoric load increment 10x the nominal one, at p0 = 5 kPa, was '
-        'NOT refused by -implexControl. P0 measured implexError escalating '
-        'sharply with increment size at this exact confinement (section 4 '
-        'of the oracle results memo); if this genuinely never refuses on '
-        'this deck, re-derive the deck rather than weakening this assertion',
+        'a deviatoric load increment 10x the nominal one, at p0 = 50 kPa, was '
+        'NOT refused by -implexControl. Measured on the fixed binary '
+        '(2473ce46c) this jump reads implexError = 0.255, far past tol = '
+        '0.02; if this genuinely never refuses on this deck, re-derive the '
+        'deck rather than weakening this assertion',
         rc)
 
     refusals_after_big = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
@@ -1143,6 +1164,16 @@ def test_getcopy_after_plastic_history_shares_options_not_history():
 #  deck does not converge on the real binary, adjust the magnitudes -- this
 #  is the same "measure, then adjust" discipline `_build_floor_seeking_deck`
 #  documents for itself.
+#
+#  MEASURED 2026-09-06, against the fixed binary (ladrunoBuild ==
+#  2473ce46c): `NormDispIncr 1e-10, 30 iters` (the tight tolerance every
+#  OTHER zero/near-zero-free-DOF deck in this file uses) does NOT converge
+#  on this deck's SECOND settlement step (stalls at ~3.3e-7, never reaches
+#  1e-10) -- this deck has genuine free DOFs and a real Newton path-
+#  dependence the zero-free-DOF decks never exercise, so it needs a looser
+#  (still tight in absolute terms) criterion: `1e-6, 100 iters` converges
+#  cleanly on all 15 steps (10 confinement + 5 settlement) and reproduces
+#  the exact expected f sequence below.
 # ---------------------------------------------------------------------------
 _SETTLE_E_CONF = 2.0e-4                      # top-layer lateral confinement, stage 0
 _SETTLE_N_CONF = 10
@@ -1182,7 +1213,7 @@ def _build_settlement_column(tag, opts):
     ops.constraints('Transformation')
     ops.numberer('Plain')
     ops.system('FullGeneral')
-    ops.test('NormDispIncr', 1.0e-10, 30, 0)
+    ops.test('NormDispIncr', 1.0e-6, 100, 0)
     ops.algorithm('Newton')
     ops.analysis('Static')
 
@@ -1257,11 +1288,19 @@ def test_implexcontrol_refusal_is_counted_and_reported():
     already checks) without incrementing the counter -- per B2/F8, the
     counter is the ONLY way `n_material_refused`-style accounting can ever
     be recovered from a deck instead of grepped out of an unthrottled log.
+
+    p0/tol REUSE the pair `test_implexcontrol_refuses_past_tolerance...`
+    measured on the fixed binary (2473ce46c): p0 = 5 kPa is NOT usable here
+    either -- an essentially-zero tolerance refuses the NOMINAL steps
+    `_establish_plastic_history` needs to succeed, crashing that helper's
+    own internal assert before this test's body even runs. p0 = 50 kPa,
+    tol = 0.02 leaves the nominal steps comfortably under tol and the big
+    (10x) step comfortably over it.
     """
     tag = 8214
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 1.0e-9, 0.5)
-    _build_free_dof_triaxial(tag, opts, p0=5.0)
+            '-implexControl', 0.02, 0.01)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
     _establish_plastic_history(tag)
 
     before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
@@ -1278,8 +1317,8 @@ def test_implexcontrol_refusal_is_counted_and_reported():
     ops.integrator('LoadControl', 1.0)
     rc = ops.analyze(1)
     assert rc != 0, (
-        'a deviatoric load increment 10x the nominal one, at an essentially '
-        'zero -implexControl tolerance (1e-9), was NOT refused', rc)
+        'a deviatoric load increment 10x the nominal one, at p0 = 50 kPa '
+        'with -implexControl tol = 0.02, was NOT refused', rc)
 
     after_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
     after_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
@@ -1324,17 +1363,25 @@ def test_companion_refusal_at_commit_is_observable():
     counted companion refusal must still read f == 1.0 (the ordinary
     same-ds ratio), not 0.0 or NaN.
 
-    Reuses `sani._build`'s own zero-free-DOF deck: its per-step magnitude is
-    independently documented (block comment above `_CAP_ADEQUATE`) to need
-    1000-5000 ModifiedEuler substeps, so `_CAP_TIGHT` (200) forces the
-    companion to refuse on every plastic-stage commit -- deliberately, this
-    is the one test in the file where that is the point rather than a
-    caveat.
+    Reuses `sani._build_confined`, NOT `sani._build`: MEASURED on the fixed
+    binary (2473ce46c), the plain `sani._build` deck's own plastic
+    increment needs only ~1 ModifiedEuler substep (nowhere near
+    `_CAP_TIGHT`) -- the '1000-5000 substeps' figure the block comment
+    above `_CAP_ADEQUATE` documents was always measured on the CONFINE-
+    FIRST deck's deviatoric leg specifically, not on `sani._build`'s single-
+    ramp deck; this test's first draft conflated the two. On the confine-
+    first deck, `_CAP_TIGHT` (200) reliably forces the companion to refuse
+    every deviatoric-leg commit (measured: 7-8 companion refusals across 3
+    steps) -- deliberately, this is the one test in the file where that is
+    the point rather than a caveat. The confine-first deviatoric leg's own
+    `LoadControl(1.0)` per step (constant, positive, `_analysis_confined`)
+    is also what makes the f == 1.0 check below meaningful: a constant-ds
+    leg, not the ds-doubling one `test_negative_monotone_clock_...` owns.
     """
     tag = 8215
     opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_TIGHT)
-    sani._build('LadrunoSANISAND', tag, opts)
-    sani._elastic_leg(tag)
+    sani._build_confined('LadrunoSANISAND', tag, opts)
+    sani._confine_leg(tag)
     ops.updateMaterialStage('-material', tag, '-stage', 1)
 
     before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
@@ -1351,8 +1398,8 @@ def test_companion_refusal_at_commit_is_observable():
     after_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
     assert after_refusals[0] - before_refusals[0] > 0, (
         'implexRefusals[0] (total) never incremented even though this cap '
-        'is documented (below _CAP_ADEQUATE) to be too tight for this '
-        "deck's own plastic increment", before_refusals, after_refusals)
+        'is measured (this docstring) to be too tight for the confine-first '
+        "deck's own deviatoric increment", before_refusals, after_refusals)
     assert after_refusals[3] - before_refusals[3] > 0, (
         'the companion refusal at commitState (ladrunoImplexCommit hitting '
         'the -maxSubsteps cap) never incremented implexRefusals[3]. Since '
