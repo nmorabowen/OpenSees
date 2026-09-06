@@ -276,3 +276,22 @@ unstated. *(BLUE-2 §13, RED-2 F11, RED-3 F4.)*
   wall-clock caveats in the rerun memo (a control/noctl sequencing overlap and an
   unrelated >11-CPU-hour background process contaminate every `wall_s` column there)
   are not yet resolved by a clean single-tenant re-run.
+- 2026-09-06 (close-out) — §5's six required items, final status. **1–5 done**
+  (unchanged from the entry above). **6, ledgers, now complete**: the mutation gate
+  ran (`_adr92_p1_mutation_gate.md`, PASSED 0.750, 9/12) and the `LEDGER_implementations`
+  ADR-92 P1 row reflects it; `manifest.yaml` is still untouched, correctly, since ADR-92
+  adds no new classTag for `check_manifest.py` to flag. The operating-point decision
+  owed by item 4's sweep is also measured (`_adr92_p1_bvp_gate_rerun.md`'s
+  "Operating-point sweep" section; the ADR now carries a RECOMMENDATION for `tol = 0.1`
+  as the documented deck default, with the C++ default left at `0.05` pending the
+  owner). **Two things remain, and both are owed tests, not blockers to a ready-flip
+  decision:** the mutation gate's three survivors — **M4** (reduction-floor arming
+  untested, no deck in the battery drives a subdivision ladder), **M5** (the
+  `-implexControl` refusal's return-code contract is unpinned — a mutant that returns
+  `0` instead of `LADRUNO_MATERIAL_REFUSED` survives), and **M10** (re-arm-after-refusal
+  is untested for a caller that retries without `revertToLastCommit()`). The wall-clock
+  caveats (sequencing overlap, background-process contention) remain unresolved by a
+  clean re-run and are not expected to move before ready-flip. **The PR is now ready
+  for the owner's ready-flip decision, pending Zone-A on the head.** The operating-point
+  choice (`0.05` vs the recommended `0.1`) and whether to require the three owed
+  mutation tests before merge are both the owner's call, not this review's.

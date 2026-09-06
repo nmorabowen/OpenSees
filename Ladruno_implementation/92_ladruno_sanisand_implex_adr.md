@@ -325,6 +325,47 @@ tests 4, 5 -> P3. Added by this ADR:
    either) but the 13.8 %/99.0 % pair records that the ladder still fires and burns
    through all three rungs before every one of the 81 abandoned attempts is subdivided
    away, exactly the §8 risk below stated it would.
+8. **Mutation gate (ADR-87 D2).** `_adr92_p1_mutation_gate.md`: **PASSED, score 0.750
+   (9 of 12 hand-mutants killed)** against the 0.60 floor, run on
+   `tests/test_ladruno_sanisand_implex.py` (20 baseline-passing detectors). Three
+   mutants survived and are owed tests, not waived: **M4** (the `-implexControl`
+   reduction floor, `mImplexDt0`, is never armed by any deck in the battery — no test
+   drives a subdivision ladder), **M5** (a refused trial returns a bare `0` instead of
+   the `LADRUNO_MATERIAL_REFUSED` sentinel — the battery pins the refusal's symptoms
+   but not its return-code contract), and **M10** (the re-arm-after-refusal line is
+   redundant only because every test's failed step goes through
+   `Domain::revertToLastCommit()`, which re-arms anyway — a caller that retries
+   without reverting is untested). See `_adr92_p1_mutation_gate.md` §4 for the full
+   audit of each.
+
+### `-implexControl` operating point (measured 2026-09-06)
+
+The registered arm's tolerance (`tol = 0.05`, `reductionLimit = 0.01`) was swept
+against three looser tolerances and a 10x-looser floor, same deck and build
+(`afb95c40c9`), reference `control` at `s/B = 0.0678` (WALL) —
+`_adr92_p1_bvp_gate_rerun.md`'s "Operating-point sweep" section:
+
+| tol / rLimit | mode | s/B (depth) | mean overlay dev % (excl. step 1) |
+|---|---|---|---|
+| 0.05 / 0.01 (registered) | BUDGET | 0.028 | 2.10 |
+| 0.05 / 0.1 | BUDGET | 0.028 | 2.10 |
+| **0.1** / 0.01 | BUDGET | **0.076** | 1.87 |
+| 0.2 / 0.01 | BUDGET | 0.150 | 1.91 |
+| 0.5 / 0.01 | TARGET | 0.250 | 2.29 |
+
+**The registered `0.05` fails on reach, not accuracy** — it never gets past
+`s/B = 0.028` (BUDGET, the substep cap, not a bad extrapolation) against `control`'s
+own `0.0678`, while every tolerance in the sweep, `0.05` included, tracks `control`
+to a 1.9–2.3 % mean overlay deviation once the shared step-1 elastic-predictor
+outlier is excluded. **`0.1` is the tightest tolerance tested that beats `control`'s
+depth while staying under a 5 % mean deviation** (`0.076` vs `0.0678`, at `1.87 %`).
+**Recommendation, not a change:** the C++ default stays `0.05` until the owner
+decides at a ready-flip; this ADR recommends `0.1` become the documented deck
+default in the P1/P2 guide and any campaign driver. Separately: `reductionLimit`
+as defined (a floor relative to the **first** increment) is inert at `tol = 0.05` on
+this deck — the floor sits two orders below the working step size at depth and
+never gets a chance to bind before the `tol` criterion already refuses — and should
+be re-based on the **current** step's nominal increment in P2, not the first one.
 
 ## 8. Risks
 
