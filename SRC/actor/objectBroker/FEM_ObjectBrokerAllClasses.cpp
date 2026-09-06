@@ -231,6 +231,7 @@
 #include "FiberSectionWarping3d.h"
 #include "ElasticPlateSection.h"
 #include "ElasticMembranePlateSection.h"
+#include "LadrunoShellModifierSection.h" // N. Mora-Bowen (Ladruno) — ADR 91
 #include "MembranePlateFiberSection.h"
 #include "DoubleMembranePlateFiberSection.h"
 #include "Bidirectional.h"
@@ -2330,6 +2331,9 @@ FEM_ObjectBrokerAllClasses::getNewSection(int classTag)
 
 	case SEC_TAG_ElasticMembranePlateSection:
 		return new ElasticMembranePlateSection();
+
+	case SEC_TAG_LadrunoShellModifier: // N. Mora-Bowen (Ladruno) — ADR 91
+		return new LadrunoShellModifierSection();
 
 	case SEC_TAG_MembranePlateFiberSection:
 		return new MembranePlateFiberSection();

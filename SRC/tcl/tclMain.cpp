@@ -201,6 +201,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
 "        • LadrunoSANISAND — settable p_r/p_min, -maxSubsteps ME cap\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
+"        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
 "\n";
     // FEATURES-END
 

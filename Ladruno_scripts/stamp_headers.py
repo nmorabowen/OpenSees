@@ -119,6 +119,7 @@ GLOBS = [
     "SRC/domain/contact/LadrunoContactNormalField.h",
     "SRC/domain/contact/LadrunoEdgeKernel.h",
     "SRC/domain/pattern/ladrunoPorousOverlay/*.cpp", "SRC/domain/pattern/ladrunoPorousOverlay/*.h",
+    "SRC/material/section/LadrunoShellModifierSection.*",
 ]
 SUFFIXES = {".cpp", ".h", ".hpp", ".cc", ".cxx"}
 
