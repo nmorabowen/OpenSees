@@ -1491,16 +1491,34 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // "refuse DisplacementControl and arc length" is enforced where it actually
     // bites: a pseudo-time increment that has gone NEGATIVE is a load factor that
     // has turned round past a limit point, and dt_{n+1}/dt_n is then not the
-    // extrapolation the operator assumes. NOTE THE GAP, it is real: a
-    // DisplacementControl run BEFORE its limit point has d(lambda) > 0 and is NOT
-    // caught here. Such a deck must pass -implexDt user (or strain).
-    if (mImplexDt < 0.0) {
+    // extrapolation the operator assumes. NOTE THE GAP, it is real and it is now
+    // WIDER than first written: this catches only a REVERSAL, so a
+    // DisplacementControl run before its limit point (d(lambda) > 0) is not
+    // caught, and neither is one whose lambda merely decreases monotonically.
+    // Such a deck must pass -implexDt user (or strain).
+    // MEASURED 2026-09-06 by the ADR-92 BVP gate, and this guard was WRONG as
+    // first written: it refused `mImplexDt < 0.0`. The campaign's OWN deck drives
+    // settlement DOWNWARD -- `ops.integrator("LoadControl", -ds)` on a prescribed-
+    // settlement sp pattern (sanisand_tau0_band.py:779) -- so its pseudo-time
+    // increment is negative on EVERY step, by design. The first push step was
+    // refused 4896 times, cut to the DS_MIN floor, and the leg died at
+    // s/B = 0.00000 without ever starting.
+    //
+    // The extrapolation factor is dt_{n+1}/dt_n, so two consecutive NEGATIVE
+    // increments give a POSITIVE, correct ratio. What D2 means to catch is the
+    // load factor TURNING ROUND -- a SIGN CHANGE between consecutive steps --
+    // not a clock that runs monotonically downward. Refuse the sign change.
+    if (mImplexDtCommit != 0.0 && mImplexDt * mImplexDtCommit < 0.0) {
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-               << ": -implex REFUSES this step -- the pseudo-time increment is negative ("
-               << mImplexDt << "). dt_{n+1}/dt_n is the extrapolation factor itself, so a"
-                  " load factor that has turned round (DisplacementControl or arc length"
-                  " past a limit point) makes it a wrong answer that would pass every"
-                  " gate. Use -implexDt user or -implexDt strain on such a deck."
+               << ": -implex REFUSES this step -- the pseudo-time increment CHANGED"
+                  " SIGN (" << mImplexDtCommit << " -> " << mImplexDt << ")."
+                  " dt_{n+1}/dt_n is the extrapolation factor itself, so a load factor"
+                  " that has TURNED ROUND (DisplacementControl or arc length past a"
+                  " limit point) makes it a wrong answer that would pass every gate."
+                  " A consistently negative clock is NOT refused: a deck that drives"
+                  " settlement downward has dt < 0 on every step and a positive,"
+                  " correct ratio. Use -implexDt user or -implexDt strain on a deck"
+                  " whose clock genuinely reverses."
                << endln;
         this->ladrunoRestoreTrialFromCommitted();
         double Kr = 0.0, Gr = 0.0;
