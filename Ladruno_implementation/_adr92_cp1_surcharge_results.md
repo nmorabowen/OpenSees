@@ -149,21 +149,40 @@ capacity out of these legs.
   one, and the differences sit at the scatter floor.
 - That the dense density behaves like Gorini's. Its tail is still steepening.
 
-## 6. Owed next, in order
+## 6. The ladder decomposition — where the wall clock actually goes
 
-1. **Give the legs the wall clock.** Every leg died on time, none on a solver failure, with
-   the step still 100–3125× above its floor. `s/B = 0.0616` in 2411 s against a `0.25`
-   target means a plateau — if there is one — is hours away, not minutes. **This is the
-   cheapest decisive experiment and it is launched** (§7).
-2. **A cheaper deck**, T8 §7b.4's undone half. The domain is R3's `60 × 20 m` for a 2 m
-   footing — sized for a *weightless* half-space. A weighted mechanism is far more local,
-   and a purpose-sized domain is the difference between hours and minutes per leg. It
-   changes the BVP, so it needs its own extent study; it is the real fix.
-3. **A clamp COUNTER, not a throttled message.** `n_clamping` saturates at 10 and cannot
-   answer the question decision B was taken to settle. A `getResponse`-style integer per
-   material (or a per-process counter that keeps counting after it stops printing) is a
-   small, contained change. Owed a `LEDGER_quirks` row either way — the throttle silently
-   caps a *measurement*, not just a diagnostic.
+Added 2026-09-05 after the owner challenged this memo's framing. §5's "MUST NOT say" list
+was right that no capacity is measurable here; an earlier reading of it went further and
+implied IMPL-EX would not help a soil problem. **That inference was not supported, and this
+section is the measurement that bears on it.**
+
+The push runs a three-rung ladder — `Newton`(25) → `NewtonLineSearch`(40) →
+`KrylovNewton`(60, relaxed tolerance). `nfail` counts failed *rungs*, so the decomposition
+is recoverable: a step converging on rung 1 adds 0, rung 2 adds 1, rung 3 adds 2, and a
+step that fails everything adds 3 and subdivides.
+
+| leg | steps | rung 1 only | rung 2 | rung 3 | past rung 1 | **iterations in FAILED rungs** |
+|---|---|---|---|---|---|---|
+| `e0.6944` `Q`=2 | 91 | 30 | 15 | 46 | 67 % | **91 %** |
+| `e0.6944` `Q`=10 | 85 | 33 | 17 | 35 | 61 % | **89 %** |
+| `e0.60` `Q`=2 | 204 | 35 | 23 | 146 | 83 % | **93 %** |
+| `e0.60` `Q`=10 | 167 | 33 | 18 | 116 | 80 % | **93 %** |
+
+Costing each failed rung at its iteration cap (an **upper bound** — a rung that diverges
+early costs less) and a converged step at 5, **89–93 % of all Newton iterations are spent in
+rungs that fail and are thrown away**. Only ~30–35 steps per leg converge on plain Newton,
+and that number is remarkably stable across legs while the fallback count grows.
+
+**What this licenses.** The CP1 blocker is wall clock; the wall clock is the failed ladder.
+A frozen, symmetric, positive-definite operator makes the step *linear*, so there is no
+ladder to fail — which is IMPL-EX's structural claim and the one thing P0 could not test,
+being a single Gauss point with prescribed strain. **CP1 therefore strengthens the IMPL-EX
+case rather than weakening it**, and is the warrant on which D0 was discharged and P1 opened.
+
+**What it does not license.** That IMPL-EX *will* deliver it — the claim is about the
+assembled system and only the C++ can test it (ADR §7 item 7 states the prediction so it can
+fail). Nor does it retract anything in §5: P0's corner findings stand, `-implexControl` is
+mandatory there, and the extrapolated stress still needs the `p_min` clamp.
 
 ## 7. The tangent predictor — checked, and it is NOT the lever (null result)
 
@@ -216,7 +235,23 @@ Launched with `--predictor` on the same engine and legs, `--wall 9000`
 (2.5 h each, four concurrent), outputs in `adr92_cp1/deep_*`. The driver writes its leg
 record at **every checkpoint**, atomically, marked `partial: true`, so an external kill —
 which took both GATE U launches at ~1 h — loses nothing but the tail. Results append here
-as §9.
+as §10.
+
+## 9. Owed next, in order
+
+1. **Give the legs the wall clock.** Every leg died on time, none on a solver failure, with
+   the step still 100–3125× above its floor. `s/B = 0.0616` in 2411 s against a `0.25`
+   target means a plateau — if there is one — is hours away, not minutes. **This is the
+   cheapest decisive experiment and it is launched** (§7).
+2. **A cheaper deck**, T8 §7b.4's undone half. The domain is R3's `60 × 20 m` for a 2 m
+   footing — sized for a *weightless* half-space. A weighted mechanism is far more local,
+   and a purpose-sized domain is the difference between hours and minutes per leg. It
+   changes the BVP, so it needs its own extent study; it is the real fix.
+3. **A clamp COUNTER, not a throttled message.** `n_clamping` saturates at 10 and cannot
+   answer the question decision B was taken to settle. A `getResponse`-style integer per
+   material (or a per-process counter that keeps counting after it stops printing) is a
+   small, contained change. Owed a `LEDGER_quirks` row either way — the throttle silently
+   caps a *measurement*, not just a diagnostic.
 
 ## Log
 
