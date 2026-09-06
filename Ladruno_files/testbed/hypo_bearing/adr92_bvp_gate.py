@@ -77,16 +77,30 @@ def decompose(d, refused=0):
     fail_it = (ladder_fails * sum(RUNG_CAPS) + refused * RUNG_CAPS[0]
                + rung2 * RUNG_CAPS[0] + rung3 * (RUNG_CAPS[0] + RUNG_CAPS[1]))
     ok_it = st * CONVERGED_ITERS
-    return dict(steps=st, rung1=rung1, rung2=rung2, rung3=rung3, nsub=ns,
-                refused=refused,
+    # ADR-92 P1 review B4 / RED-2 F2 / BLUE-2 F2: `past1` above is a
+    # SURVIVORSHIP figure -- its denominator `st` (`steps`) counts only
+    # CONVERGED steps, so it is structurally blind to an attempt that failed
+    # all three rungs and was abandoned (subdivided).  `attempts = steps +
+    # nsub` (the fix contract's own definition, matching the driver's
+    # `attempts` payload key) is the apples-to-apples denominator: every
+    # subdivided attempt used every rung before it was abandoned, so it
+    # belongs in the "past rung 1" numerator exactly like a converged rung-2
+    # or rung-3 step does.  `past1` (converged-only) still drives the
+    # verdict, unchanged; `past1_attempts` is printed alongside it, not
+    # instead of it.
+    attempts = st + ns
+    return dict(steps=st, attempts=attempts, rung1=rung1, rung2=rung2,
+                rung3=rung3, nsub=ns, refused=refused,
                 past1=(st - rung1) / st * 100.0 if st else float("nan"),
+                past1_attempts=((attempts - rung1) / attempts * 100.0
+                                 if attempts else float("nan")),
                 failshare=fail_it / (fail_it + ok_it) * 100.0 if (fail_it + ok_it) else 0.0)
 
 
 def table(title, legs):
     print(f"\n--- {title} ---")
     hdr = (f"{'leg':>26}{'implex':>8}{'steps':>7}{'rung1':>7}{'rung2':>7}{'rung3':>7}"
-           f"{'nsub':>6}{'past rung1':>12}{'failed-rung iters':>19}")
+           f"{'nsub':>6}{'past rung1':>12}{'past r1(att)':>14}{'failed-rung iters':>19}")
     print(hdr); print("-" * len(hdr))
     rows = []
     for d in legs:
@@ -94,11 +108,14 @@ def table(title, legs):
         rows.append(k)
         flag = "yes" if d.get("implex") else ("?" if "implex" not in d else "no")
         print(f"{d['_dir']:>26}{flag:>8}{k['steps']:>7}{k['rung1']:>7}{k['rung2']:>7}"
-              f"{k['rung3']:>7}{k['nsub']:>6}{k['past1']:>11.1f}%{k['failshare']:>18.1f}%")
+              f"{k['rung3']:>7}{k['nsub']:>6}{k['past1']:>11.1f}%"
+              f"{k['past1_attempts']:>13.1f}%{k['failshare']:>18.1f}%")
     if rows:
         p = sum(r["past1"] for r in rows) / len(rows)
+        pa = sum(r["past1_attempts"] for r in rows) / len(rows)
         f = sum(r["failshare"] for r in rows) / len(rows)
-        print(f"{'MEAN':>26}{'':>8}{'':>7}{'':>7}{'':>7}{'':>7}{'':>6}{p:>11.1f}%{f:>18.1f}%")
+        print(f"{'MEAN':>26}{'':>8}{'':>7}{'':>7}{'':>7}{'':>7}{'':>6}{p:>11.1f}%"
+              f"{pa:>13.1f}%{f:>18.1f}%")
     return rows
 
 
@@ -107,32 +124,85 @@ def main():
     ap.add_argument("--implex", required=True, help="dir of leg records run WITH -implex")
     ap.add_argument("--baseline", action="append", default=[],
                     help="dir(s) of CP1 leg records run WITHOUT it; repeatable")
+    ap.add_argument("--registered-arm", action="store_true",
+                    help="ADR-92 P1 review B4 F3: the pre-registered gate is "
+                         "`-implex -implexControl`. With this flag, restrict the "
+                         "--implex set to legs with implex_control not None "
+                         "(drop any unregistered control-OFF arm) and say so.")
     a = ap.parse_args()
 
     impl = load(a.implex)
     if not impl:
         raise SystemExit(f"no leg records under {a.implex}")
+
+    # ADR-92 P1 fix contract item 10: refuse to run at all if the --implex dir
+    # holds a leg that is not actually an IMPL-EX leg (`implex: false`,
+    # explicitly recorded, as opposed to missing/unknown) -- that leg's
+    # rung/iteration counts belong in --baseline, not in the arm this gate is
+    # about to average into the IMPL-EX verdict.
+    not_implex = [d["tag"] for d in impl if d.get("implex") is False]
+    if not_implex:
+        raise SystemExit(
+            f"refusing: {a.implex} holds {len(not_implex)} leg(s) recorded as "
+            f"implex: false -- {not_implex}. These are baseline legs; pass "
+            f"them with --baseline, not --implex.")
+
+    if a.registered_arm:
+        kept = [d for d in impl if d.get("implex_control") is not None]
+        dropped = [d["tag"] for d in impl if d.get("implex_control") is None]
+        if dropped:
+            print(f"  --registered-arm: dropping {len(dropped)} unregistered "
+                  f"(implex_control=None) leg(s) from --implex: {dropped}")
+        if not kept:
+            raise SystemExit(
+                "--registered-arm: no leg under --implex has implex_control set "
+                "-- nothing left to gate")
+        impl = kept
+
     base = [d for r in a.baseline for d in load(r)]
 
     print("=" * 104)
     print("ADR-92 P1 GATE 1 -- the BVP gate: does a linear step remove the ladder?")
     print("=" * 104)
+    if a.registered_arm:
+        print("  --registered-arm: restricted to legs with implex_control set "
+              "(the pre-registered `-implex -implexControl` arm)")
     print(f"  rung caps {RUNG_CAPS}, converged step costed at {CONVERGED_ITERS} iterations")
-    print(f"  builds: implex {sorted({d.get('build','?')[:9] for d in impl})}"
-          + (f", baseline {sorted({d.get('build','?')[:9] for d in base})}" if base else ""))
+    # ADR-92 P1 review B5: `build` is the MEASURED engine hash (ops.ladrunoBuild()),
+    # never the env pin/`any` -- the driver fix threads it through every artifact.
+    impl_builds = sorted({d.get('build', '?')[:9] for d in impl})
+    base_builds = sorted({d.get('build', '?')[:9] for d in base}) if base else []
+    print(f"  builds: implex {impl_builds}"
+          + (f", baseline {base_builds}" if base else ""))
+    if base and impl_builds != base_builds:
+        print(f"  *** WARN: baseline and implex arms ran on DIFFERENT engine "
+              f"builds ({base_builds} vs {impl_builds}) -- this gate is not a "
+              f"same-binary comparison ***")
 
     brows = table("BASELINE (CP1, no -implex)", base) if base else []
     irows = table("WITH -implex", impl)
 
     ip = sum(r["past1"] for r in irows) / len(irows)
+    ip_att = sum(r["past1_attempts"] for r in irows) / len(irows)
     ifs = sum(r["failshare"] for r in irows) / len(irows)
 
     print("\n" + "=" * 104)
     if brows:
         bp = sum(r["past1"] for r in brows) / len(brows)
+        bp_att = sum(r["past1_attempts"] for r in brows) / len(brows)
         bfs = sum(r["failshare"] for r in brows) / len(brows)
-        print(f"  past rung 1        {bp:6.1f} %  ->  {ip:6.1f} %")
-        print(f"  failed-rung iters  {bfs:6.1f} %  ->  {ifs:6.1f} %")
+        print(f"  past rung 1               {bp:6.1f} %  ->  {ip:6.1f} %   "
+              f"(converged steps only)")
+        print(f"  past rung 1 (attempts)    {bp_att:6.1f} %  ->  {ip_att:6.1f} %   "
+              f"(steps + nsub, apples-to-apples denominator -- review B4/F2)")
+        print(f"  failed-rung iters         {bfs:6.1f} %  ->  {ifs:6.1f} %")
+    else:
+        print(f"  past rung 1               {ip:6.1f} %   (converged steps only)")
+        print(f"  past rung 1 (attempts)    {ip_att:6.1f} %   (steps + nsub)")
+        print(f"  failed-rung iters         {ifs:6.1f} %")
+    # Verdict logic is UNCHANGED (fix contract item 10): the pre-registered
+    # thresholds gate on `ip`/`ifs` (converged-only past1 and failshare), not
+    # on the attempts-based figure printed above for context.
     if ip <= PASS_PAST_RUNG1 and ifs <= PASS_FAILED_SHARE:
         print("\n  VERDICT: PREDICTION MET. The ladder is gone -- the step is effectively")
         print("  linear, which is IMPL-EX's structural claim measured on the real deck.")
