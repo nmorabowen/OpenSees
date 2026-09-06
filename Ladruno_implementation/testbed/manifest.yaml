@@ -2040,12 +2040,20 @@ features:
       "bending" modifiers is a SILENT no-op.
       ADR-87 D2 MUTATION GATE: family SHELLMOD, gated at the section accessors
       (getStressResultant / getSectionTangent / getInitialTangent) since the
-      feature has no element of its own. ZERO score 0.733 (11/15 killed, floor
-      0.60) — GATE PASSED. The four survivors are all legitimately physics-free:
-      the three parse-time refusals (R1/R3/R4), which never run an analysis, and
-      the pure-numpy companion assertion documenting why the congruence beats
-      diagonal-only scaling. SCALE mode NOT run (ADR-87 D2 requires one passing
-      run to attach a new family; ZERO is it) — an honest gap, not a claim.
+      feature has no element of its own. ZERO score 0.762 (16/21 killed, floor
+      0.60) — GATE PASSED. Re-measured after G9/G10 landed; the earlier 0.733
+      was the 15-test suite and no longer described it. All five survivors
+      audited individually and all are legitimately physics-free: the three
+      parse-time refusals (R1/R3/R4), which never run an analysis; the pure-numpy
+      companion assertion documenting why the congruence beats diagonal-only
+      scaling; and g9_shell_is_within_a_few_percent_of_beam_theory, which builds
+      on the BARE ElasticMembranePlateSection with no wrapper in the model at all
+      (it is a mesh/model sanity floor for G9, so SHELLMOD cannot reach it).
+      Binaries for this measurement were the matched pre-ADR-92-merge pair; they
+      differ only in the mutation define and the six new tests touch no ADR-92
+      code, so the number stands for this family. SCALE mode NOT run (ADR-87 D2
+      requires one passing run to attach a new family; ZERO is it) — an honest
+      gap, not a claim.
       Windows mutant builds via the new Ladruno_scripts/mutation_build.bat; the
       CI recipe is Ubuntu-only and does not port (preset pins binaryDir).
       FULL ZONE-A GREEN on this branch: 2143 passed, 34 skipped, 209 deselected,
