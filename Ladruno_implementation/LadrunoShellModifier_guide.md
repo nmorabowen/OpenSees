@@ -65,6 +65,41 @@ They are the ETABS names, and they map one-to-one onto the OpenSees plate result
 `-f12` is the in-plane **shear** modifier. This trips people up: `f12` looks like it should be
 the `1-2` coupling (the Poisson term), and it is not. That matches ETABS.
 
+### The one that will actually bite you: `m` does nothing to a wall
+
+**A wall or deep beam loaded in its own plane is cracked with `f11`, not `m11`.**
+
+In-plane bending of a shell is carried by **membrane** action — `sigma_xx` varying over the
+depth of the member. The `m` modifiers are *out-of-plane plate* bending, and a wall bending in
+its own plane has none. So if you crack a shear wall with `m11 = m22 = m12 = 0.35` because those
+are "the bending ones", **you have applied no cracking at all, and nothing warns you.**
+
+This is measured, not asserted. A flexure-controlled cantilever (L/d = 10) modelled as a frame
+and as a ShellMITC4 mesh of the same member:
+
+| case | tip deflection | ratio vs its own gross |
+|---|---|---|
+| FRAME gross | 0.053333 m | 1.0000 |
+| FRAME `A,I × 0.35` | 0.152381 m | 2.8571 |
+| SHELL gross | 0.051911 m | 1.0000 |
+| SHELL `f11,f22,f12 × 0.35` | 0.148318 m | 2.8571 |
+| SHELL `m11,m22,m12 × 0.35` | 0.051911 m | **1.0000 — no change** |
+
+`1/0.35 = 2.8571`. The frame route (ETABS frame modifiers scale `A` and `I33` directly) and the
+shell membrane route land on the *same* softening to 8+ significant figures, and the `m` route
+does exactly nothing. `v13`/`v23` likewise do nothing in plane.
+
+The residual −2.7% between frame and shell is discretisation, not the modifier: a bilinear
+membrane locks in bending, so a coarse shell mesh reads stiff. It converges away under
+refinement (−12.6% at 20×2 → −0.5% at 120×24) while the softening ratio stays 2.8571 at *every*
+mesh density. The modifier scales straight through the discretisation gap rather than distorting
+it.
+
+Pinned by `tests/test_ladrunoShellModifier_frame_equivalence.py` (G9/G10).
+
+Out-of-plane modifiers are for shells actually loaded out of plane — slabs, and walls carrying
+face loads or spanning between floors. A model with both actions wants both sets.
+
 ## 3. Recipes
 
 **Cracked shear wall, in-plane (the common case).** ACI 318-25 §6.6.3.1.1 gives walls
