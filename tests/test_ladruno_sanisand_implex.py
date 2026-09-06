@@ -596,14 +596,23 @@ def _build_probe_triaxial(tag):
     ops.analysis('Static')
 
 
-def _establish_plastic_history(tag):
-    """Confine, flip, and take a few NORMAL (converged, committed) deviatoric
-    steps so mImplexDEpsP(n) != 0 by the time the probe runs."""
+def _confine_only(tag):
+    """Confine (stage 0) and flip to stage 1 -- WITHOUT any deviatoric
+    history, so the material is left UN-PRIMED (mImplexDEpsP(n) == 0, the
+    exact state the afb95c40c drift-correction exemption keys on). Factored
+    out of `_establish_plastic_history` so the un-primed-step regression
+    test can stop here instead of also taking the nominal steps."""
     ops.updateMaterialStage('-material', tag, '-stage', 0)
     for step in range(_PROBE_N_CONF):
         assert ops.analyze(1) == 0, f'triaxial confinement step {step + 1} failed'
     ops.loadConst('-time', 0.0)
     ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+
+def _establish_plastic_history(tag):
+    """Confine, flip, and take a few NORMAL (converged, committed) deviatoric
+    steps so mImplexDEpsP(n) != 0 by the time the probe runs."""
+    _confine_only(tag)
 
     dq = _PROBE_DQ_NOMINAL / 4.0
     ops.timeSeries('Linear', 2)
@@ -910,18 +919,33 @@ def test_implex_sign_change_in_pseudo_dt_is_refused_and_leaves_committed_state_u
 def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchanged():
     """`-implexControl` refuses a step whose extrapolation error exceeds its
     tolerance, via `LADRUNO_MATERIAL_REFUSED`, and the committed state is
-    unchanged across the refusal.
+    unchanged across the refusal -- EXCEPT on an UN-PRIMED step, where
+    afb95c40c deliberately suppresses the refusal (see the dedicated
+    un-primed assertion below).
 
     FIXED PER THE P1 REVIEW (RED-3 F5/coverage row 11): the old version
     asserted only `rc != 0` on the big step, with "no positive control
     separating refusal from ordinary non-convergence" -- any Newton failure
     for ANY reason would have passed. This version adds the positive
-    control the review asked for, using the new `implexRefusals` response
-    (Vector(4): total, d2, control, companion): the NOMINAL steps
-    (established below) must NOT increment the control slot, and the big
-    step MUST -- so a green run here proves the refusal was specifically
-    `-implexControl`'s tolerance gate, not e.g. a companion cap or an
-    unrelated equilibrium failure.
+    control the review asked for, using the `implexRefusals` response
+    (Vector(4): total, d2, control, companion): the PRIMED big step MUST
+    increment the control slot -- so a green run proves the refusal was
+    specifically `-implexControl`'s tolerance gate, not e.g. a companion
+    cap or an unrelated equilibrium failure.
+
+    UN-PRIMED STEP REGRESSION (afb95c40c): the coordinator reports that
+    `-implexControl` now deliberately does NOT refuse on the FIRST plastic
+    step after a stage flip (`|mImplexDEpsP(n)| == 0`, i.e. un-primed),
+    because `implexError` there measures the companion's drift-correction
+    jump rather than the extrapolation error -- the error is still
+    measured and folded into `avgImplexError`, just not used to refuse.
+    MEASURED on afb95c40c: the SAME big (10x-nominal) load applied on an
+    un-primed first plastic step reads implexError = 0.259 (far past
+    tol = 0.02) yet converges (`rc == 0`) with `implexRefusals` unchanged;
+    applied again on the now-primed SECOND plastic step it refuses
+    (`rc != 0`, `implexRefusals[2]` increments by 8). This test drives
+    exactly that two-step sequence, so it is the regression test for the
+    un-primed exemption as well as the original qualitative gate.
 
     A FREE-DOF deck (`_build_free_dof_triaxial`), for the same measured
     reason as the D2 test above: a zero-free-DOF deck's `analyze()` cannot
@@ -930,68 +954,87 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     material returned -- which is exactly the failure mode the first draft
     of this test hit.
 
-    THE DECK'S EXPECTATION WAS ORIGINALLY QUALITATIVE (sourced from the P0
-    oracle's own T2 measurement at p0 = 5 kPa), but p0 = 5 with tol = 0.05 or
-    5e-4 turned out NOT TO WORK on THIS deck: MEASURED against the fixed
-    binary (ladrunoBuild == 2473ce46c), the NOMINAL steps alone already read
-    implexError ~ 0.43 at p0 = 5 (a much larger force-controlled increment
-    relative to that confinement than the oracle's strain-controlled probe),
-    so ANY tolerance under ~0.43 refuses the nominal steps too and
-    `_establish_plastic_history` itself fails before the big step is ever
-    reached -- which is what happened on the first run of this fixed test.
-    A parameter sweep on the real binary (p0 in {5, 10, 20, 30, 50} kPa,
-    the big step at 5x/10x/20x nominal) found a clean, well-separated
-    discriminator at p0 = 50 kPa: nominal-step implexError maxes at 4.8e-3,
-    the 10x-nominal big step reads 0.255 -- a 53x gap. `tol = 0.02` sits
-    comfortably in that gap (4x above the nominal max, 12x below the big-
-    step reading), so it stays unambiguous even if the exact numbers drift
-    a little on a future build.
+    p0 = 50 kPa, tol = 0.02: MEASURED against the fixed binary
+    (ladrunoBuild == 2473ce46c, unchanged on afb95c40c) -- a parameter
+    sweep (p0 in {5, 10, 20, 30, 50} kPa, the big step at 5x/10x/20x
+    nominal) found a clean, well-separated discriminator here: the PRIMED
+    nominal-step implexError maxes at 4.8e-3, the 10x-nominal big step
+    (primed) reads 0.255-0.259 -- a > 50x gap, with `tol = 0.02` sitting
+    comfortably in between.
 
-    Kills a mutant that reports SOME refusal on the big step (e.g. a
-    companion cap failure masquerading as -implexControl) without the
-    control slot itself moving, or that also refuses the nominal steps
-    (an over-tight/broken floor).
+    Kills a mutant that reports SOME refusal on the (primed) big step
+    (e.g. a companion cap failure masquerading as -implexControl) without
+    the control slot itself moving, that refuses the UN-PRIMED step (the
+    afb95c40c regression), or that never lifts the exemption once the
+    material IS primed (a "-implexControl silently inert forever" mutant).
     """
     tag = 8213
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexControl', 0.02, 0.01)
     _build_free_dof_triaxial(tag, opts, p0=50.0)
-    _establish_plastic_history(tag)
+    _confine_only(tag)   # NOT _establish_plastic_history: this test needs
+                          # the material UN-PRIMED for its first plastic step
 
     before = list(ops.eleResponse(1, 'material', 1, 'stress'))
-    refusals_after_nominal = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    refusals_0 = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
 
-    # The 10x jump: a THIRD pattern, on top of the confinement (pattern 1)
-    # and the nominal deviatoric history (pattern 2), both already frozen by
-    # _establish_plastic_history's own loadConst.
+    # UN-PRIMED first plastic step: the SAME big (10x-nominal) load the
+    # primed case below refuses on. Pattern 2, on top of the confinement
+    # (pattern 1), already loadConst'd by _confine_only.
     big_dq = 10.0 * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -big_dq)
+    ops.integrator('LoadControl', 1.0)
+    rc_unprimed = ops.analyze(1)
+    assert rc_unprimed == 0, (
+        'the SAME big load that the primed step below refuses on FAILED '
+        'to converge on the UN-PRIMED first plastic step -- afb95c40c is '
+        'supposed to suppress the -implexControl refusal there '
+        '(drift-correction jump, not an extrapolation error), so this '
+        'step should behave like -implexControl were off, not like a '
+        'harder refusal', rc_unprimed)
+    refusals_after_unprimed = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    assert refusals_after_unprimed[2] == refusals_0[2], (
+        'implexRefusals[2] (control-specific) moved across the UN-PRIMED '
+        'first plastic step -- the afb95c40c exemption (no refusal while '
+        'mImplexDEpsP(n) == 0) is supposed to make this a no-op for the '
+        'counter, even though implexError itself is large and IS folded '
+        'into avgImplexError', refusals_0, refusals_after_unprimed)
+    ops.loadConst('-time', 0.0)
+
+    # SECOND plastic step, same magnitude load again -- now PRIMED (the
+    # first step committed, so mImplexDEpsP(n) != 0). This is where the
+    # forcing moves per the coordinator's afb95c40c note.
     ops.timeSeries('Linear', 3)
     ops.pattern('Plain', 3, 3)
     for j, (x, y) in enumerate(_XY):
         ops.load(4 + j + 1, 0.0, 0.0, -big_dq)
     ops.integrator('LoadControl', 1.0)
+    before_primed = list(ops.eleResponse(1, 'material', 1, 'stress'))
     rc = ops.analyze(1)
     assert rc != 0, (
-        'a deviatoric load increment 10x the nominal one, at p0 = 50 kPa, was '
-        'NOT refused by -implexControl. Measured on the fixed binary '
-        '(2473ce46c) this jump reads implexError = 0.255, far past tol = '
-        '0.02; if this genuinely never refuses on this deck, re-derive the '
-        'deck rather than weakening this assertion',
-        rc)
+        'a deviatoric load increment 10x the nominal one, at p0 = 50 kPa, '
+        'on a PRIMED second plastic step, was NOT refused by '
+        '-implexControl. Measured on afb95c40c this reads implexError ~ '
+        '0.26, far past tol = 0.02; if this genuinely never refuses on '
+        'this deck, re-derive the deck rather than weakening this '
+        'assertion', rc)
 
     refusals_after_big = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
-    assert refusals_after_big[2] - refusals_after_nominal[2] >= 1, (
-        'analyze() failed on the big step, but implexRefusals[2] (the '
-        '-implexControl-specific counter) did not move -- the positive '
-        'control this test is supposed to provide. Either the refusal was '
-        'NOT -implexControl (a companion cap or an unrelated Newton '
-        'failure), or the counter is not wired to this refusal site',
-        refusals_after_nominal, refusals_after_big)
+    assert refusals_after_big[2] - refusals_after_unprimed[2] >= 1, (
+        'analyze() failed on the PRIMED big step, but implexRefusals[2] '
+        '(the -implexControl-specific counter) did not move -- the '
+        'positive control this test is supposed to provide. Either the '
+        'refusal was NOT -implexControl (a companion cap or an unrelated '
+        'Newton failure), or the counter is not wired to this refusal site',
+        refusals_after_unprimed, refusals_after_big)
 
     # NO ops.reset(): the failed step's own revertToLastCommit already ran.
-    after = list(ops.eleResponse(1, 'material', 1, 'stress'))
-    assert before == after, (
-        'the committed stress moved across an -implexControl refusal', before, after)
+    after_primed = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    assert before_primed == after_primed, (
+        'the committed stress moved across an -implexControl refusal', before_primed, after_primed)
 
 
 # ===========================================================================
