@@ -104,6 +104,30 @@ def _vnorm(v):
 #  source without needing to have run this build at all, while the first is
 #  the traditional "the published number has not moved" regression check.
 
+# ---------------------------------------------------------------------------
+#  THE SUBSTEP CAP IS A CONTROLLED VARIABLE, NOT A CONSTANT.
+#
+#  Measured on this build (2026-09-06), confine-first deck, deviatoric leg: the
+#  SANISAND return needs between 1000 and 5000 ModifiedEuler substeps for that
+#  increment.  Capped below it the update is REFUSED -- correctly, that is what
+#  ADR-86b T1 built the cap for -- and the committed answer changes:
+#
+#      OFF, no cap      [-3.09421, -3.09421, -22.18805]
+#      OFF, cap   200   [-1.26092, -1.26092,  -9.24638]   <- the CAP moved this
+#      ON,  cap   200   [51.47979, 51.47979, -108.11220]
+#      OFF, cap 100000  [-3.09421, -3.09421, -22.18805]
+#      ON,  cap 100000  [-3.09421, -3.09421, -22.18805]   <- BIT-IDENTICAL
+#
+#  So an ON/OFF comparison at a cap the deck cannot meet measures the CAP, not
+#  -implex.  A first draft of this file compared `-implex -maxSubsteps 200`
+#  against a control with NO cap and read the difference as an IMPL-EX defect;
+#  it was not.  Every ON/OFF pair below now carries the SAME cap, and any pair
+#  that means to prove agreement uses one this deck can actually meet.
+# ---------------------------------------------------------------------------
+_CAP_ADEQUATE = 20000   # comfortably above the 1000-5000 this deck needs
+_CAP_TIGHT = 200        # deliberately too tight -- only for refusal tests
+
+
 def test_implex_unset_reproduces_recorded_sensitivity():
     """`LadrunoSANISAND` with no `-implex` token anywhere reproduces the SAME
     published ADR-86b regression number as before this ADR's C++ landed.
@@ -163,7 +187,7 @@ def test_implex_on_matches_off_on_a_zero_free_dof_deck():
     claim available before the build exists.
     """
     opts_off = sani._OPTS_VANILLA
-    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', 200)
+    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
     off = sani._drive_confined('LadrunoSANISAND', 8103, opts_off)
     on = sani._drive_confined('LadrunoSANISAND', 8104, opts_on)
     assert off == on, (
@@ -206,7 +230,7 @@ def test_stage0_inertness_gravity_and_hold_is_bit_identical():
     the ramp alone.
     """
     opts_off = sani._OPTS_VANILLA
-    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', 200)
+    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
 
     def _elastic_only_plus_hold(tag, opts):
         sani._build('LadrunoSANISAND', tag, opts)
@@ -266,7 +290,7 @@ def test_floor_clamp_fires_and_implexDetail_reports_it():
     response itself, independent of whether the clamp fired on THIS run.
     """
     opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
-            '-implex', '-maxSubsteps', 200)
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE)
     _stress, _trace = sani._drive_confined_at(sani._PMIN_E_CONF_LOW, opts,
                                               n_dev=sani._PMIN_N_DEV, tag=8107)
 
@@ -367,7 +391,7 @@ def _build_probe_triaxial(tag):
     ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS,
                    1, 2, 1, 1.0e-7, 1.0e-7,           # IntScheme, TanType, JacoType, TolF, TolR
                    '-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM,
-                   '-implex', '-maxSubsteps', 200, '-implexDt', 'strain')
+                   '-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexDt', 'strain')
     ops.element('LadrunoBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag,
                '-geom', 'linear', '-formulation', 'bbar')
     for k in range(2):
@@ -508,7 +532,7 @@ def test_implex_refuses_unsupported_schemes(scheme):
     with pytest.raises(Exception):
         ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS,
                        scheme, 2, 1, 1.0e-7, 1.0e-7,
-                       '-implex', '-maxSubsteps', 50)
+                       '-implex', '-maxSubsteps', _CAP_TIGHT)
 
 
 def test_implex_scheme1_requires_maxsubsteps():
@@ -551,7 +575,7 @@ def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchang
     """
     tag = 8212
     opts = ('-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM, '-honorTolR', 0,
-            '-implex', '-maxSubsteps', 200)
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE)
     sanint._build_brick(tag, opts)
     sanint._confine(tag)
 
@@ -597,7 +621,7 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     """
     tag = 8213
     opts = ('-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM, '-honorTolR', 0,
-            '-implex', '-maxSubsteps', 200,
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexControl', 0.05, 0.01)
 
     # A low-confinement rig, LadrunoBrick (return-code observability), built
@@ -743,7 +767,7 @@ def test_implex_db_roundtrip_carries_flags_and_history():
     remaining plastic steps, because the extrapolation factor and the history
     it carries feed directly into every subsequent committed stress.
     """
-    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', 200)
+    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
 
     ref = sani._drive('LadrunoSANISAND', 8300, opts_on)
 
@@ -802,7 +826,7 @@ def test_implex_getcopy_does_not_share_history_across_gauss_points():
         for j, (x, y) in enumerate(_XY):
             ops.node(10 + 4 * k + j + 1, x, y, float(k))
 
-    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', 200)
+    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
     ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
     ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
     ops.element('stdBrick', 2, 11, 12, 13, 14, 15, 16, 17, 18, tag)
