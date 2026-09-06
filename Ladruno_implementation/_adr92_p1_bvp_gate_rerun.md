@@ -2,7 +2,7 @@
 title: "ADR 92 / P1 gate 1 rerun — control and uncontrolled arms on the fixed binary"
 project: Ladruno
 type: results
-status: "All three arms COMPLETE. Registered arm (-implex -implexControl 0.05 0.01, build afb95c40c): gate --registered-arm VERDICT = PARTIAL -- 0.0% past rung 1 (converged-only) but 13.8% on attempts (81/585), 99.0% failed-rung iterations; terminated BUDGET at s/B 0.02754. Control-OFF arm (build 2473ce46c): VERDICT = PREDICTION MET (0.0%/0.0%), as before."
+status: "All three arms COMPLETE; operating-point sweep COMPLETE. Registered tolerance (0.05) is too tight: reaches only s/B 0.0275 vs control depth 0.0678, regardless of reductionLimit (0.01 vs 0.1 are byte-identical on this deck). tol=0.1 is the tightest sweep point that clears BOTH bars: depth 0.0764 (> control 0.0678) with mean overlay deviation 1.87% (< 5%); tol=0.2 and 0.5 also clear both, with 0.5 reaching TARGET outright."
 priority: high
 owner: nmora
 related:
@@ -320,3 +320,64 @@ zero-step failure, kept for provenance.
   refuse from; the un-primed-step exemption only changes `-implexControl` behaviour,
   which `noctl` never exercises since its control is off). Gate `--registered-arm`
   verdict: PARTIAL. All three arms now complete.
+
+## Operating-point sweep (`-implexControl` tolerance / reductionLimit)
+
+Snapshot binary: `dist\bin` of this worktree copied to a scratch directory
+**before** another lane began rebuilding it for the mutation gate (`LADRUNO_DIST_BIN`
+override, verified via `ops.ladrunoBuild()` before the sweep and re-confirmed in every
+leg's `run.log`: all four report `afb95c40c9e3da1cc97d6aabe8168644c53d0e82`). Same
+deck as the registered arm (`h1.0_e0.6944`, `--surcharge 10`, `--maxsubsteps 20000`,
+`--wall 2400`), four legs, sequential, into
+`Ladruno_files/testbed/hypo_bearing/adr92_bvp_fix/sweep/<name>/`: `tol0.1`, `tol0.2`,
+`tol0.5` (`reductionLimit` held at the registered `0.01`), and `tol0.05_rl0.1`
+(`tol` held at the registered `0.05`, `reductionLimit` loosened 10x to `0.1`).
+
+| leg | tol / rLimit | mode | s/B (depth) | steps | nsub | n_refused | refused/step | wall_s | dev mean % (excl. step1) | dev max % (excl. step1) | implexErr avg / max |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| control (ref.) | -- | WALL | **0.0678** | 69 | 0 | 0 | -- | 2467.8 | -- | -- | -- |
+| ctl (registered, ref.) | 0.05 / 0.01 | BUDGET | 0.02754 | 504 | 81 | 10270 | 20.38 | 114.8 | 2.10 | 21.53 | 0.00003 / 0.00226 |
+| `tol0.05_rl0.1` | 0.05 / **0.1** | BUDGET | 0.02754 | 504 | 81 | 10270 | 20.38 | 117.1 | 2.10 | 21.53 | 0.00003 / 0.00226 |
+| `tol0.1` | **0.1** / 0.01 | BUDGET | **0.07642** | 514 | 81 | 9299 | 18.09 | 180.0 | 1.87 | 21.53 | 0.00005 / 0.00226 |
+| `tol0.2` | **0.2** / 0.01 | BUDGET | **0.15034** | 515 | 81 | 1494 | 2.90 | 276.2 | 1.91 | 21.53 | 0.00007 / 0.00226 |
+| `tol0.5` | **0.5** / 0.01 | **TARGET** | **0.25000** | 419 | 63 | 750 | 1.79 | 409.4 | 2.29 | 21.53 | 0.00018 / 0.00226 |
+
+Two structural findings before the answer:
+
+1. **`reductionLimit` is inert at `tol = 0.05` on this deck.** `tol0.05_rl0.1` is
+   byte-identical to the registered `ctl` leg in every field above (same `s/B`,
+   `steps`, `nsub`, `n_material_refused`, `q_u`) despite a 10x looser floor -- the
+   `tol` criterion (`implexError > 0.05`) is what refuses every step here; the
+   `reductionLimit` escape at `:1615` never gets a chance to differ because the ladder
+   never subdivides `ds` far enough for the two floors (`0.01 x ds0` vs `0.1 x ds0`) to
+   diverge before the `tol` refusal already fires. Loosening `reductionLimit` alone,
+   without loosening `tol`, buys nothing on this deck.
+2. **`max |dev| = 21.53 %` (excluding step 1) is identical across every `-implex` leg
+   in this campaign** -- `noctl`, the registered `ctl`, and all four sweep legs. It
+   occurs at the same `s/B` in the shared low-settlement overlap and is not moved by
+   loosening the tolerance, which means it is a feature of the early-step trajectory
+   itself (plausibly the same step-2 `q`-drop noted for `noctl` in the earlier
+   section), not something an `-implexControl` operating point can tune away.
+
+**Answer.** `tol = 0.1` (`reductionLimit` at the registered `0.01`) is the tightest
+tolerance tested that satisfies **both** clauses: it reaches `s/B = 0.07642`, past
+`control`'s own depth of `0.0678`, while keeping the mean overlay deviation (excluding
+the shared step-1 elastic-predictor outlier) at `1.87 %`, comfortably under `5 %`.
+`tol = 0.2` and `tol = 0.5` also satisfy both (and `tol = 0.5` reaches `TARGET`
+outright), each with mean deviation still under `2.3 %` -- accuracy does not degrade
+monotonically with a looser tolerance on this deck, at least up to `0.5`. The
+registered operating point (`tol = 0.05`), with **either** `reductionLimit`, fails
+clause (a) outright: it never reaches `control`'s depth (`0.0275` vs `0.0678`)
+regardless of its accuracy where it does reach, because the substep budget (not the
+reduction floor) is what stops it. **If a single answer is wanted: `0.05` is too tight
+for this deck at the registered substep cap; `0.1` is the smallest loosening that
+clears both bars, and there is currently no evidence in this sweep that going further
+(`0.2`, `0.5`) costs anything in accuracy.**
+
+### Log addendum
+
+- 2026-09-06 (later still) -- Operating-point sweep run on a **snapshot** of build
+  `afb95c40c9e3da1cc97d6aabe8168644c53d0e82` (copied to a scratch `dist\bin` before
+  another lane's mutation-gate rebuild could overwrite the worktree's own binary;
+  `ops.ladrunoBuild()` verified against the snapshot before the sweep and re-confirmed
+  in all four `run.log`s). `control`/`noctl`/`ctl` unaffected, not re-run.

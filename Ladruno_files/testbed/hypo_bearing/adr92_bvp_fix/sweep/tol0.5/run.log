@@ -1,0 +1,48 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : afb95c40c9e3da1cc97d6aabe8168644c53d0e82
+    openseespy module           : C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-ladruno-sanisand-implex-adr-31cfcf\63748f38-1de7-4681-9511-093350117c04\scratchpad\dist_afb95c40c\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\Ladruno_files\testbed\hypo_bearing\adr92_bvp_fix\sweep\tol0.5
+    date                        : 2026-09-06T13:49:34
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : on, control [0.5, 0.01]
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2400 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   34.638 ds=0.3200mm t=    4.3s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=64.751 kPa, w2(z=-0.625)=6.0640 m, yield 96 ele / 137.930 m3, t=7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=137.125 kPa, w2(z=-0.625)=7.8630 m, yield 162 ele / 313.443 m3, t=12s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=258.016 kPa, w2(z=-0.625)=9.5023 m, yield 194 ele / 516.950 m3, t=21s
+    [h1.0_e0.6944]    50 s/B=0.01274 q=  317.712 ds=1.2800mm t=   25.7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=495.004 kPa, w2(z=-0.625)=11.2520 m, yield 198 ele / 567.544 m3, t=43s
+    [h1.0_e0.6944]    75 s/B=0.02874 q=  684.795 ds=1.2800mm t=   60.1s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=944.864 kPa, w2(z=-0.625)=12.7265 m, yield 200 ele / 600.000 m3, t=83s
+    [h1.0_e0.6944]   100 s/B=0.04474 q= 1044.887 ds=1.2800mm t=   92.6s
+    [h1.0_e0.6944]   125 s/B=0.06074 q= 1393.871 ds=1.2800mm t=  123.7s
+    [h1.0_e0.6944]   150 s/B=0.07674 q= 1732.516 ds=2.5600mm t=  151.7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.08: q=1811.674 kPa, w2(z=-0.625)=13.7450 m, yield 200 ele / 600.000 m3, t=158s
+    [h1.0_e0.6944]   175 s/B=0.09274 q= 2056.369 ds=1.2800mm t=  181.3s
+    [h1.0_e0.6944]   200 s/B=0.10874 q= 2363.446 ds=1.2800mm t=  208.0s
+    [h1.0_e0.6944]   225 s/B=0.12474 q= 2654.054 ds=1.2800mm t=  234.6s
+    [h1.0_e0.6944]   250 s/B=0.14074 q= 2929.967 ds=1.2800mm t=  255.9s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.15: q=3086.899 kPa, w2(z=-0.625)=13.9667 m, yield 200 ele / 600.000 m3, t=271s
+    [h1.0_e0.6944]   275 s/B=0.15674 q= 3188.089 ds=1.2800mm t=  280.1s
+    [h1.0_e0.6944]   300 s/B=0.17274 q= 3433.442 ds=2.5600mm t=  304.8s
+    [h1.0_e0.6944]   325 s/B=0.18874 q= 3662.569 ds=1.2800mm t=  329.5s
+    [h1.0_e0.6944]   350 s/B=0.20474 q= 3881.757 ds=1.2800mm t=  351.9s
+    [h1.0_e0.6944]   375 s/B=0.22074 q= 4107.840 ds=1.2800mm t=  372.3s
+    [h1.0_e0.6944]   400 s/B=0.23674 q= 4304.488 ds=1.2800mm t=  392.2s
+    not a capacity (no plateau and no passed peak) -- q_max = 4474.644 kPa is a lower bound the leg reached, not a collapse load
+    at s/B = 0.25000; [h1.0_e0.6944] mode=TARGET (reached the target settlement); ended s/B=0.25000 of target 0.250; plateau=NO / peaked=NO (tail 36.220 % of initial); free-advance=yes (4600.0x floor); subdivisions 63/80; 419 steps, 189 failed, 0 relaxed, 409 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 10, base-foot 4.86e-04
+    width: w2(z=-0.625) = 13.8319 m, w2(z=-1.375) = 13.3890 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
