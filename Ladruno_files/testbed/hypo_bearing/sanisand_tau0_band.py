@@ -561,14 +561,29 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
             max_substeps=MAX_SUBSTEPS,
-            test_type=PUSH_TEST, verbose=True):
+            test_type=PUSH_TEST, verbose=True, surcharge=0.0,
+            predictor=False, implex=False, implex_control=None,
+            xlim=None, zbot=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
     log_path = os.path.join(out_dir, f"a2_{tag}_engine.log")
     ops.logFile(log_path, "-noEcho")
 
     t_start = time.time()
-    nodes, hexes, trib, sets = r3._strip_mesh(h0)
+    # ADR-92: the purpose-sized-deck study (T8 sec.7b.4's undone half). R3's
+    # domain is 60 x 20 m for a 2 m footing -- sized for a WEIGHTLESS half-space,
+    # whose mechanism is unbounded. A weighted mechanism is far more local, so the
+    # extent is a variable, not a constant. Overridden around the mesh build only;
+    # everything downstream reads the mesh, not these globals.
+    _xlim_save, _zbot_save = r3.XLIM, r3.ZBOT
+    if xlim is not None:
+        r3.XLIM = float(xlim)
+    if zbot is not None:
+        r3.ZBOT = -abs(float(zbot))
+    try:
+        nodes, hexes, trib, sets = r3._strip_mesh(h0)
+    finally:
+        r3.XLIM, r3.ZBOT = _xlim_save, _zbot_save
     n_nodes, n_hex = len(nodes), len(hexes)
 
     # element geometry, once (rectangular tensor grid)
@@ -592,7 +607,10 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     ops.nDMaterial("LadrunoSANISAND", 1, *par,
                    INT_SCHEME, tan_type, JACO_TYPE, TOL_F, TOL_R,
                    "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN,
-                   "-honorTolR", 0, "-maxSubsteps", int(max_substeps))
+                   "-honorTolR", 0, "-maxSubsteps", int(max_substeps),
+                   *(("-implex",) if implex else ()),
+                   *(("-implexControl", float(implex_control[0]), float(implex_control[1]))
+                     if (implex and implex_control) else ()))
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -659,6 +677,36 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 eta_field[e - 1] = max(eta_field[e - 1], eta)
     patch_err = max(err_zz, err_xx)
 
+    # ---- stage 0b: free-surface surcharge (ADR-92 CP1, owner decision B) ----
+    # ADR-86b handoff sec.5b: a small surcharge keeps the shallow ring confined
+    # without touching a calibrated constant. Applied AFTER the geostatic controls
+    # (they assume sigma_zz = gamma*z) and BEFORE the stage flip, on every top node
+    # that is NOT under the footing, as q * tributary area. Pattern 1 (gravity)
+    # is frozen first: its Linear series would otherwise keep scaling gamma past 1.
+    surch_want = 0.0
+    if surcharge > 0.0:
+        ops.loadConst("-time", 0.0)
+        ops.timeSeries("Linear", 3)
+        ops.pattern("Plain", 3, 3)
+        for n in sets["top"]:
+            if n in ft or trib[n] <= 0:
+                continue
+            ops.load(int(n) + 1, 0.0, 0.0, -surcharge * float(trib[n]))
+            surch_want += surcharge * float(trib[n])
+        ops.integrator("LoadControl", 1.0 / N_GRAV)
+        for k in range(N_GRAV):
+            assert ops.analyze(1) == 0, f"{tag}: surcharge step {k + 1} failed"
+        ops.reactions()
+        rz2 = sum(ops.nodeReaction(int(n) + 1, 3) for n in sets["bottom"])
+        surch_err = abs(rz2 / (want + surch_want) - 1.0)
+        assert surch_err < 1.0e-6, (
+            f"{tag}: equilibrium identity with surcharge violated, {rz2} vs "
+            f"{want + surch_want} kN")
+        if verbose:
+            print(f"    surcharge {surcharge} kPa on the free surface outside the "
+                  f"footing: {surch_want:.4f} kN, base reaction identity "
+                  f"{surch_err:.2e}")
+
     # ---- stage flip ------------------------------------------------------
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     assert eta_max < M_C, (
@@ -719,7 +767,16 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             verdict = f"WALL-CLOCK budget spent at s/B = {s_now / r3.B_FOOT:.5f}"
             break
         ds = min(ds, smax - s_now)
-        ops.integrator("LoadControl", -ds)
+        if predictor:
+            # ADR-80 P3 (#786): stock LoadControl has NOTHING in front of
+            # applyLoadDomain, so with a non-homogeneous sp the driven layer's first
+            # constitutive evaluation of each increment is overstrained by L/h.
+            # Harmless elastically; on its own adaptive-march gate it cost 23 cutbacks
+            # and x18.7 iterations, which -tangentPredictor took to 0 and x1.00.
+            # This deck's push IS that idiom, and SANISAND is maximally path-dependent.
+            ops.integrator("LadrunoLoadControl", -ds, "-tangentPredictor")
+        else:
+            ops.integrator("LoadControl", -ds)
         ok, relaxed = False, 0
         for algo, tl, it, rl in ladder:
             ops.test(test_type, tl, it, 0)
@@ -786,7 +843,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 date=datetime.datetime.now().isoformat(timespec="seconds"),
                 partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
-                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, push_tol=tol,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
                 max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
@@ -887,7 +944,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -949,6 +1006,24 @@ def main(argv=None):
     ap.add_argument("--test", default=PUSH_TEST,
                     choices=("NormUnbalance", "NormDispIncr"),
                     help="convergence test for the push ladder")
+    ap.add_argument("--xlim", type=float, default=None,
+                    help="half-width of the domain in m (R3 default 30.0 = 14.5 B). "
+                         "ADR-92: the purpose-sized-deck study")
+    ap.add_argument("--zbot", type=float, default=None,
+                    help="depth of the domain in m, positive (R3 default 20.0 = 10 B)")
+    ap.add_argument("--implex", action="store_true",
+                    help="ADR-92 P1 gate 1: run the material with `-implex` (needs a P1 "
+                         "binary; point LADRUNO_DIST_BIN at it)")
+    ap.add_argument("--implex-control", nargs=2, type=float, default=None,
+                    metavar=("TOL", "REDLIMIT"),
+                    help="`-implexControl TOL REDLIMIT`; P0 made this mandatory at the corner")
+    ap.add_argument("--predictor", action="store_true",
+                    help="drive the push with `LadrunoLoadControl -tangentPredictor` "
+                         "(ADR-80 P3) instead of stock LoadControl; default OFF so the "
+                         "GATE U / T8 / CP1 decks stay byte-identical")
+    ap.add_argument("--surcharge", type=float, default=0.0,
+                    help="free-surface surcharge OUTSIDE the footing, kPa (ADR-92 CP1 "
+                         "decision B; 0 = the GATE U / T8 deck)")
     ap.add_argument("--maxsubsteps", type=int, default=MAX_SUBSTEPS,
                     help="ADR-86b ModifiedEuler substep-count cap; 0 = uncapped "
                          "(the original GATE U configuration)")
@@ -974,6 +1049,14 @@ def main(argv=None):
     print(f"    convergence test (pinned)   : {args.test} @ {tol}"
           + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
     print(f"    TanType (0=elastic default) : {args.tantype}")
+    print(f"    surcharge (kPa, outside foot): {args.surcharge}")
+    print(f"    domain (xlim, zbot)         : "
+          f"{args.xlim if args.xlim is not None else 'R3 30.0'}, "
+          f"{args.zbot if args.zbot is not None else 'R3 20.0'}")
+    print(f"    IMPL-EX                     : "
+          f"{('on, control ' + str(args.implex_control)) if args.implex else 'off'}")
+    print(f"    push integrator             : "
+          f"{'LadrunoLoadControl -tangentPredictor (ADR-80 P3)' if args.predictor else 'LoadControl (stock)'}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
 
     want = [(h0, en, ei) for h0 in RESOLUTIONS for en, ei in DENSITIES]
@@ -987,7 +1070,10 @@ def main(argv=None):
             r = run_leg(h0, en, ei, args.out, wall_budget=args.wall,
                         sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
                         tan_type=args.tantype, test_type=args.test,
-                        max_substeps=args.maxsubsteps)
+                        max_substeps=args.maxsubsteps,
+                        surcharge=args.surcharge, predictor=args.predictor,
+                        implex=args.implex, implex_control=args.implex_control,
+                        xlim=args.xlim, zbot=args.zbot)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,
