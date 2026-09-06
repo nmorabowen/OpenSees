@@ -2,7 +2,7 @@
 title: "ADR 92 / P1 gate 1 — the BVP gate: the ladder is gone, and the leg reached its target"
 project: Ladruno
 type: results
-status: "PREDICTION MET on the ladder claim; NO PLATEAU; -implexControl UNUSABLE at tol = 0.05 on this deck"
+status: "SUPERSEDED by the red/blue review — headline claims withdrawn pending re-run; see _adr92_p1_redblue_review"
 priority: high
 owner: nmora
 related:
@@ -15,6 +15,16 @@ updated: 2026-09-06
 ---
 
 # ADR 92 / P1 gate 1 — the BVP gate
+
+> [!danger] **Read `_adr92_p1_redblue_review.md` first (2026-09-06).** The adversarial
+> review found that (1) the extrapolation factor ran at `f ≡ 1` on this deck (ratio gated
+> `> 0.0` on a negative clock), (2) the `-implexControl` floor was dead for the same reason,
+> so the ctl seizure is a bug not a tolerance, (3) the committed gate returns PARTIAL on the
+> registered arm, (4) "not one step left rung 1" is false as written (25/25/25 rung entries
+> on the ctl arm, all material refusals), (5) `tail = 95.9 %` is a 4-point-fit artefact
+> (21.8–29.5 % on a matched window), and (6) over the checkable overlap the control-OFF
+> curve is 11.4 % off on average and +38 % at s/B 0.02. The table below is retained as the
+> record of what was claimed; the review's §1 and §4 state what the data licenses.
 
 > [!success] **The ladder claim is CONFIRMED. Nothing else is.**
 > Three legs, identical deck (`h1.0_e0.6944`, `Q = 10 kPa`, `-maxSubsteps 20000`,
