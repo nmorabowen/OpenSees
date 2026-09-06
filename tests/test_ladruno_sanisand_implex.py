@@ -106,7 +106,9 @@ this build does not exist yet.
 """
 import math
 import os
+import subprocess
 import tempfile
+import warnings
 
 import pytest
 
@@ -118,25 +120,51 @@ import test_ladruno_sanisand_integrator as sanint
 
 pytestmark = [pytest.mark.zone_a]
 
-# Coordinator fix-verification pass (2026-09-06): fail LOUD, not silently
-# wrong, if this session ever resolves `opensees` to the installed Program
-# Files build (LEDGER_quirks: the .pth hijack) instead of this worktree's
-# dist\bin\opensees.pyd -- every assertion below is only meaningful against
-# lane A's ADR-92 P1 fix, commit 2473ce46c.
-_EXPECTED_BUILD_PREFIX = "2473ce46c"
+# Fail LOUD, not silently wrong, if this session ever resolves `opensees`
+# to the installed Program Files build (LEDGER_quirks: the .pth hijack)
+# instead of THIS checkout's dist/bin/opensees.pyd. A literal build hash
+# would break on every future rebuild/CI run (a different commit every
+# time), so instead this checks that the LOADED build is an ANCESTOR of
+# (or equal to) this checkout's own HEAD via `git merge-base --is-ancestor`
+# -- true for any commit actually built from this repo's history, false for
+# an unrelated install. Falls back to a warning (not a hard failure) if git
+# itself is unavailable, since that is an environment gap, not a wrong-
+# binary signal.
+def _repo_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _assert_ladruno_build():
     build = ops.ladrunoBuild()
-    assert build.startswith(_EXPECTED_BUILD_PREFIX), (
-        f"wrong opensees module loaded for this battery: ladrunoBuild() = "
-        f"{build!r}, expected a build starting with "
-        f"{_EXPECTED_BUILD_PREFIX!r} (lane A's ADR-92 P1 fix). This usually "
-        "means the installed Program Files opensees.pyd was picked up "
-        "instead of this worktree's dist/bin one -- check PYTHONPATH/"
-        "sys.path order (module file: "
-        + str(getattr(ops, "__file__", "?")) + ")")
+    module_file = str(getattr(ops, "__file__", "?"))
+    repo_root = _repo_root()
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_root,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=10, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        warnings.warn(
+            "could not run `git rev-parse HEAD` to verify the loaded "
+            f"opensees build provenance (ladrunoBuild() = {build!r}, "
+            f"module file = {module_file!r}); skipping the build-"
+            f"provenance check ({exc!r})")
+    else:
+        try:
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", build, head],
+                cwd=repo_root, timeout=10, check=True,
+            )
+        except subprocess.SubprocessError:
+            pytest.fail(
+                f"wrong opensees module loaded for this battery: "
+                f"ladrunoBuild() = {build!r} is not an ancestor of this "
+                f"checkout's HEAD ({head!r}) -- this usually means the "
+                "installed Program Files opensees.pyd was picked up "
+                "instead of this worktree's dist/bin one (module file: "
+                f"{module_file!r})")
     yield
 
 
