@@ -359,9 +359,10 @@ own `0.0678`, while every tolerance in the sweep, `0.05` included, tracks `contr
 to a 1.9–2.3 % mean overlay deviation once the shared step-1 elastic-predictor
 outlier is excluded. **`0.1` is the tightest tolerance tested that beats `control`'s
 depth while staying under a 5 % mean deviation** (`0.076` vs `0.0678`, at `1.87 %`).
-**Recommendation, not a change:** the C++ default stays `0.05` until the owner
-decides at a ready-flip; this ADR recommends `0.1` become the documented deck
-default in the P1/P2 guide and any campaign driver. Separately: `reductionLimit`
+**Decided:** default `0.1` since WP-92d (the owner's ready-flip on this
+recommendation) -- the C++ struct default (`LadrunoImplexOptions::errorTol`)
+and the documented deck default in the P1/P2 guide and any campaign driver now
+both read `0.1`. Separately: `reductionLimit`
 as defined (a floor relative to the **first** increment) is inert at `tol = 0.05` on
 this deck — the floor sits two orders below the working step size at depth and
 never gets a chance to bind before the `tol` criterion already refuses — and should

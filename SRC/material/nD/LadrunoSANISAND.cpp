@@ -302,7 +302,10 @@ OPS_LadrunoSANISAND(void)
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": -implexControl tolerance must be > 0 (got " << implexOpt.errorTol
                        << "). P0 measured the extrapolation error at 5e-4 (nominal increment)"
-                       << " to 1.26 (p0 = 5 kPa at 5e-4); 0.05 is the ADR-92 working value."
+                       << " to 1.26 (p0 = 5 kPa at 5e-4); measured 2026-09-06"
+                       << " (_adr92_p1_bvp_gate_rerun.md sweep) -- 0.05 fails on reach, 0.1 is"
+                       << " the tightest tolerance that beats the implicit control's depth"
+                       << " under 5% mean deviation, and is now the default."
                        << endln;
                 return 0;
             }

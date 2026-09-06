@@ -645,7 +645,7 @@ initopensees(void)
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov)\n"
 "        • system Mumps — distributed MUMPS (-BLR, -stats, half-storage)\n"
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
-"        • LadrunoSANISAND — settable p_r/p_min, -maxSubsteps ME cap\n"
+"        • LadrunoSANISAND — -implex (IMPL-EX), p_r/p_min, -maxSubsteps cap\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
 "\n";

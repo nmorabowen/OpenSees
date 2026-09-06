@@ -69,7 +69,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | flag | meaning | default | notes |
 |---|---|---|---|
 | `-implex` | turn extrapolation on | off | everything below is refused if given without it |
-| `-implexControl $tol $reductionLimit` | refuse a step whose extrapolation error exceeds `$tol` | off; `tol=0.05`, `reductionLimit=0.01` if given bare `-implexControl` values must still be supplied | `$tol > 0`; `$reductionLimit` in `(0, 1]` |
+| `-implexControl $tol $reductionLimit` | refuse a step whose extrapolation error exceeds `$tol` | off; `tol=0.1`, `reductionLimit=0.01` if given bare `-implexControl` values must still be supplied | `$tol > 0`; `$reductionLimit` in `(0, 1]` |
 | `-implexAlpha $a` | scales the extrapolated plastic-strain increment | `1.0` | `1.0` = standard IMPL-EX, `0.0` = purely elastic predictor; must be `>= 0` |
 | `-implexDt pseudo\|strain\|user <$dt>` | source for `dt_{n+1}` in `f` | `pseudo` | see §5 |
 
@@ -225,7 +225,7 @@ against three looser tolerances on the same footing-corner deck (`h1.0_e0.6944`,
 tolerance in the sweep, `0.05` included, tracks `control` to a 1.9–2.3 % mean overlay deviation
 once the shared step-1 elastic-predictor outlier is excluded. **`0.1` is the tightest tolerance
 tested that beats `control`'s own depth while staying under a 5 % mean deviation.**
-**Recommendation, not a shipped change:** the C++ default stays `0.05`; use `0.1` as the deck
+**Decided (WP-92d):** the C++ default is now `0.1`; use it as the deck
 default unless you have a specific reason to run tighter. `reductionLimit` (a floor relative to
 the deck's **first** increment) measured **inert at `tol = 0.05`** on this deck — the floor sits
 two orders below the working step size at depth and never gets a chance to bind before `tol`
