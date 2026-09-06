@@ -561,7 +561,8 @@ def _dump_field(path, header, xc, zc, hx, hz, vol, epsq, eta_field):
 def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             ds_max=DS_MAX, tol=PUSH_TOL, tan_type=TAN_TYPE,
             max_substeps=MAX_SUBSTEPS,
-            test_type=PUSH_TEST, verbose=True, surcharge=0.0):
+            test_type=PUSH_TEST, verbose=True, surcharge=0.0,
+            predictor=False):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
     log_path = os.path.join(out_dir, f"a2_{tag}_engine.log")
@@ -749,7 +750,16 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             verdict = f"WALL-CLOCK budget spent at s/B = {s_now / r3.B_FOOT:.5f}"
             break
         ds = min(ds, smax - s_now)
-        ops.integrator("LoadControl", -ds)
+        if predictor:
+            # ADR-80 P3 (#786): stock LoadControl has NOTHING in front of
+            # applyLoadDomain, so with a non-homogeneous sp the driven layer's first
+            # constitutive evaluation of each increment is overstrained by L/h.
+            # Harmless elastically; on its own adaptive-march gate it cost 23 cutbacks
+            # and x18.7 iterations, which -tangentPredictor took to 0 and x1.00.
+            # This deck's push IS that idiom, and SANISAND is maximally path-dependent.
+            ops.integrator("LadrunoLoadControl", -ds, "-tangentPredictor")
+        else:
+            ops.integrator("LoadControl", -ds)
         ok, relaxed = False, 0
         for algo, tl, it, rl in ladder:
             ops.test(test_type, tl, it, 0)
@@ -816,7 +826,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 date=datetime.datetime.now().isoformat(timespec="seconds"),
                 partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
-                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, push_tol=tol,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
                 max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
@@ -917,7 +927,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         build=EXPECTED_BUILD, driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -979,6 +989,10 @@ def main(argv=None):
     ap.add_argument("--test", default=PUSH_TEST,
                     choices=("NormUnbalance", "NormDispIncr"),
                     help="convergence test for the push ladder")
+    ap.add_argument("--predictor", action="store_true",
+                    help="drive the push with `LadrunoLoadControl -tangentPredictor` "
+                         "(ADR-80 P3) instead of stock LoadControl; default OFF so the "
+                         "GATE U / T8 / CP1 decks stay byte-identical")
     ap.add_argument("--surcharge", type=float, default=0.0,
                     help="free-surface surcharge OUTSIDE the footing, kPa (ADR-92 CP1 "
                          "decision B; 0 = the GATE U / T8 deck)")
@@ -1008,6 +1022,8 @@ def main(argv=None):
           + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
     print(f"    TanType (0=elastic default) : {args.tantype}")
     print(f"    surcharge (kPa, outside foot): {args.surcharge}")
+    print(f"    push integrator             : "
+          f"{'LadrunoLoadControl -tangentPredictor (ADR-80 P3)' if args.predictor else 'LoadControl (stock)'}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
 
     want = [(h0, en, ei) for h0 in RESOLUTIONS for en, ei in DENSITIES]
@@ -1022,7 +1038,7 @@ def main(argv=None):
                         sfrac=args.sfrac, ds_max=args.dsmax, tol=tol,
                         tan_type=args.tantype, test_type=args.test,
                         max_substeps=args.maxsubsteps,
-                        surcharge=args.surcharge)
+                        surcharge=args.surcharge, predictor=args.predictor)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
             with open(os.path.join(args.out,

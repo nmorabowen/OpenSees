@@ -2,7 +2,7 @@
 title: "ADR 92 / CP1 — the surcharge legs (owner decision B): results"
 project: Ladruno
 type: results
-status: "MEASURED — no plateau, no peak; the binding resource is now WALL CLOCK; decision B's own effect on the clamp is UNMEASURABLE with the shipped diagnostic"
+status: "MEASURED — no plateau, no peak; blocker is WALL CLOCK (survives the ADR-80 predictor fix, +7.6 % only); decision B's own effect on the clamp is UNMEASURABLE with the shipped diagnostic"
 priority: high
 owner: nmora
 related:
@@ -165,17 +165,64 @@ capacity out of these legs.
    small, contained change. Owed a `LEDGER_quirks` row either way — the throttle silently
    caps a *measurement*, not just a diagnostic.
 
-## 7. The deep run
+## 7. The tangent predictor — checked, and it is NOT the lever (null result)
 
-Launched at the close of this session on the same engine and legs, `--wall 9000`
+**The check was owed.** The owner asked whether ADR-90's integrator finding should be used
+before the long run, and the driver was indeed carrying the defect: it drives its push with
+**stock `LoadControl`** (`sanisand_tau0_band.py:752`) on a prescribed-settlement `sp`
+pattern — precisely the ADR-80 idiom in which the driven layer's first constitutive
+evaluation of every increment is overstrained by `L/h`. ADR-90's own A0 leg reached the same
+conclusion from the other side (`LEDGER_quirks`: *"start every step with a predictor that
+applies the prescribed increment through the tangent of the last converged state"*), and the
+fork **ships** that remedy as `LadrunoLoadControl -tangentPredictor` (ADR-80 P3, #786), whose
+acceptance gate is this march's exact shape: stock 43 increments / 23 cutbacks / 224
+iterations, predictor **6 / 0 / 12** — equal to the elastic control in every digit.
+
+So the deep run was stopped and an A/B was run instead: same leg (Gorini, `Q` = 10), same
+900 s budget, same cap, two concurrent processes, one flag apart.
+
+| | `s/B` end | steps | ladder fails | subdiv | rate (`s/B` per 1000 s) | `q` at 0.002 / 0.01 / 0.02 |
+|---|---|---|---|---|---|---|
+| stock `LoadControl` | 0.02530 | 56 | 37 | 2/80 | 0.0277 | 62.754 / 253.52 / 484.08 |
+| `-tangentPredictor` | 0.02780 | 58 | **44** | 2/80 | 0.0298 | 62.755 / 252.83 / 484.91 |
+
+Time-matched from the curve files, the predictor is **behind** early and ahead late —
+`0.89, 0.87, 1.00, 1.00, 1.06, 1.10` of the control at 150…900 s.
+
+**Verdict: +7.6 % in rate, and the answer does not move** (`< 0.3 %` at every checkpoint,
+inside §5.3's 0.8–1.4 % floor). **ADR-80's ×18.7 does not transfer to this deck.** It engaged
+— the banner, the leg payload (`predictor: true`) and the engine log all confirm it, and no
+integrator warning was raised — it simply does not pay here.
+
+**Why it does not transfer, as a hypothesis worth one cheap test later.** ADR-80's gate ran a
+`maxIter = 5` march, where the artificial first-iterate residual is enough to *fail* the step
+and force a cutback; the cost was cutbacks, not arithmetic. This deck's ladder opens with
+`Newton` at **25** iterations on a graded mesh whose driven layer is one element deep, so the
+same residual is absorbed in about one extra iteration and never reaches the cutback path —
+both legs spent **2 of 80** subdivisions. The mechanism is real and the remedy is correct;
+its *magnitude is a property of the iteration budget and the driven layer's `L/h`*, not of
+the idiom alone.
+
+**Kept ON for the deep run** — it is free, marginally positive, and it is the fork's own
+remedy for exactly this idiom — with the comparability caveat stated: §2–§4's legs were
+measured with stock `LoadControl`, and the two integrators agree to `< 0.3 %`.
+
+**What this does to §6.** Nothing, except to remove a confound: the wall-clock verdict was
+measured on a deck carrying a known, fixed defect, and it survives the fix.
+
+## 8. The deep run
+
+Launched with `--predictor` on the same engine and legs, `--wall 9000`
 (2.5 h each, four concurrent), outputs in `adr92_cp1/deep_*`. The driver writes its leg
 record at **every checkpoint**, atomically, marked `partial: true`, so an external kill —
 which took both GATE U launches at ~1 h — loses nothing but the tail. Results append here
-as §8.
+as §9.
 
 ## Log
 
 - 2026-09-05 — Owner took decision **B (small surcharge)** at CP1 and asked for the run.
   Driver gained `--surcharge` (`af2d1324d`); four legs measured; no plateau; the clamp
   counter found saturated; the mechanism-formation index introduced and reported with its
-  scatter floor. Deep run launched.
+  scatter floor. The owner then asked whether ADR-90's integrator finding should be applied
+  first: it should have been checked, was, and is a **null result** on this deck (§7) — the
+  deep run was stopped, the A/B measured, and it relaunched with `--predictor`.
