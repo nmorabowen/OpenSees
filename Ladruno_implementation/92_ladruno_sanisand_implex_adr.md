@@ -111,6 +111,19 @@ strain increment, obtain `sigma(n+1)` and the full internal state, set
 implexError = || sigma~ - sigma_implicit || / ( || sigma_implicit || + P_atm * eps_norm )
 ```
 
+**The un-primed step is exempt from `-implexControl` refusal.** The first plastic step
+after a stage flip (`updateMaterialStage 1`) has no committed plastic history yet —
+`d_eps_p(n) = eps_p(n) - eps_p(n-1)` is `0` by construction — so `implexError` measured
+there is not an extrapolation error at all, it is the companion's own drift-correction
+jump from wherever the elastic stage left the stress to the first plastic return. Refusing
+on that number subdivides a step that has nothing wrong with its extrapolation (`f`
+was never even exercised) purely because the *companion* moved. `-implexControl` therefore
+does not enforce its tolerance on this one step; the error is still computed and recorded
+(so it remains visible in `implexError`/`avgImplexError`), only the refusal is suppressed.
+Every later step in the same stage is primed and refused normally. (Fixed by `afb95c40c`
+after the BVP re-run gate showed the registered arm refusing on step 1 of every stage —
+`implexError` 0.13-0.30 against `tol 0.05` — before any real extrapolation had occurred.)
+
 **Why the plastic strain and not `dGamma`** (the request's choice, corrected — scoping §C2):
 `mDGamma` is the step total only under `BackwardEuler_CPPM` (zeroed at `:2220`, solved as
 `Delta(18)` at `:2274`). Under every
@@ -125,12 +138,20 @@ vanilla**, and inherits the guards for free.
 1. **Bounded work per step.** The expensive return runs **once per committed step** instead
    of once per state-determination pass — up to 125 of them at the seizure. That is a ~100x
    cut in constitutive work before any change to the cost of a single return, and it is the
-   same lever #792's cap pulls from the other end. **Unmeasured.** P0 shows the mechanism
-   (163 force-accepts at `p0 = 5`, `d eps = 1e-3`) but not IMPL-EX surviving it — A breaks
-   at `5e-4` at that confinement while the implicit is still 7 % off; it is a P3 / T8 number.
+   same lever #792's cap pulls from the other end. **Still unmeasured.** P0 shows the
+   mechanism (163 force-accepts at `p0 = 5`, `d eps = 1e-3`) but not IMPL-EX surviving it —
+   A breaks at `5e-4` at that confinement while the implicit is still 7 % off; the BVP re-run
+   (`_adr92_p1_bvp_gate_rerun.md`) counts solver-ladder work, not constitutive-integrator
+   work per step, so this claim is not touched by that data either — it is still a P3 / T8
+   number and the campaign must not read the item-2 confirmation below as covering it.
 2. **A global step that is linear.** Newton converges in one iteration on a frozen operator;
    the ladder never fires, and the "rung 3 commits states nothing afterwards converges from"
-   pathology (ESMERALDA §30-31) cannot arise.
+   pathology (ESMERALDA §30-31) cannot arise. **Confirmed at BVP level on the fixed binary,
+   both arms** (`_adr92_p1_bvp_gate_rerun.md`): control-OFF, `-implex` alone, 142/142
+   converged steps on rung 1, 0 subdivisions; the registered `-implex -implexControl 0.05
+   0.01` arm, 504/504 converged steps on rung 1, 0 rung-2/3 — the 81 subdivided-and-abandoned
+   attempts (`nfail = 243 = 3 x 81`) were all material refusals, none a
+   `CTestNormUnbalance` failure, so no converged step ever left rung 1 on either arm.
 3. **A symmetric global matrix** — the non-associated consistent tangent disappears. This
    unlocks `system Pardiso -matrixType sym` (ADR-75 P1d: 1.94-1.96x vs UmfPack, -42 % peak
    memory, exact) on the 21 058-DOF coarse and 175 290-DOF fine cells. **Unclaimed by the
@@ -149,6 +170,34 @@ vanilla**, and inherits the guards for free.
    `sigma~` stays admissible — the second is the deeper fix and acceptance 1b must then
    check the deviator too, not just `tr`.)* The ring still flows; what disappears is
    Newton's missing descent direction, not the mechanics.
+
+### P2 addendum: trial-direction correction (variant B) — REJECTED
+
+P2 asked whether extrapolating the flow **direction** at the elastic-trial stress
+(`R_tr`, variant B), rather than freezing the whole committed `d_eps_p(n)` tensor (A,
+as specified above), fixes the one place A is provably wrong: A's extrapolated
+volumetric increment carries the wrong **sign** at every resolved phase-transformation
+crossing (`_adr92_p2_direction_oracle.md`). The oracle (`--gate GE`, drained TX
+compression, companion scheme 1) measured both variants against the implicit
+companion at the same crossings:
+
+| `p0` | `d eps_z` | A, `implexError` at crossing / path max | B, at crossing / path max | A/B (path max) |
+|---|---|---|---|---|
+| 100 kPa | 1e-5 | 2.80e-6 / 1.39e-3 | 4.00e-5 / 3.09e-2 | **0.045 (B is 22x worse)** |
+| 5 kPa | 1e-5 | 9.22e-5 / 1.18e-2 | 1.04e-4 / 7.06e-2 | **0.17 (B is 6x worse)** |
+
+**Kept A.** The sign error is real (§4 of the oracle memo: A, B and a third variant C
+all get the crossing's volumetric sign wrong) but inconsequential — phase
+transformation is *defined* by `D -> 0`, so the wrong-signed term is `O(1e-10)` against
+a deviator `O(1e-5)`, and the crossing is the **quietest** step on the whole path (500x
+below A's own path-max error). B does not repair the sign either (`alpha` is committed
+in every variant, and the sign lives in `alpha`, not in where `R` is evaluated), misses
+the terminal `q/p` by 9-54 % where A matches the implicit companion to four figures, and
+forfeits ADR §2 benefit #2 above: B's true tangent differs from the frozen `Ce(p_n)` the
+element is actually handed by 44-229 % of `max|Ce|`, so a "linear" B step is 2-78 %
+non-linear in truth. Reopens only on BVP evidence a triaxial-ramp oracle cannot give:
+a Gauss point whose *committed* `D` oscillates in sign step to step, not a single
+monotone crossing.
 
 **And the cost, stated first because the campaign must print it (scoping §C5):**
 IMPL-EX is a first-order-in-`dt` perturbation of the constitutive response with the
@@ -208,7 +257,18 @@ join the material responses on the `ASDConcrete3DMaterial.cpp:2073-2077` templat
 |---|---|---|
 | **D0** | Sequence against WP-86b (#792) | **P0 opens now; C++ (P1+) is GATED on #792 T8**, the GATE U re-run with the substep cap and the consistent-tangent default. Owner checkpoint **CP1**. |
 | **D1** | Extrapolated history variable | **Plastic strain** (§2). `dGamma` + frozen flow direction stays on the table as the textbook alternative and is measured against it at P0; it would require the companion to be scheme 2 and a vanilla hook. |
-| **D2** | Time source | `-implexDt {pseudo\|strain\|user}`, default `pseudo` = `ops_Dt` (ASD behaviour). Correct for the TIMs deck **including under subdivision**, because it drives settlement by `LoadControl` on a prescribed-settlement SP pattern so pseudo-time is proportional to settlement. Guarded at `dt = 0` (holds, stage switch); **refused** on integrators that solve for the load factor (`DisplacementControl`, arc length), where `dt = d(lambda)` is not proportional to the increment and changes sign past a limit point. **Why refuse rather than clamp:** the June `LadrunoRCConcrete` entry in `LEDGER_quirks` (§ "IMPL-EX in a STATIC analysis") proved a clamp-and-degrade fix (`tf` falls back to `alpha`, capped at `2·alpha`) for a *cyclic wall* whose static steps are meant to be uniform. Here the ratio is the extrapolation itself — a wrong `dt` is a wrong answer that passes every gate — so SANISAND refuses where the ratio cannot be trusted and degrades only where it can (`dt = 0` holds). |
+| **D2** | Time source | `-implexDt {pseudo\|strain\|user}`, default `pseudo` = `ops_Dt` (ASD behaviour). Correct for the TIMs deck **including under subdivision**, because it drives settlement by `LoadControl` on a prescribed-settlement SP pattern so pseudo-time is proportional to settlement. Guarded at `dt = 0` (holds, stage switch); **refused** on integrators that solve for the load factor (`DisplacementControl`, arc length), where `dt = d(lambda)` is not proportional to the increment and changes sign past a limit point. **Why refuse rather than clamp:** the June `LadrunoRCConcrete` entry in `LEDGER_quirks` (§ "IMPL-EX in a STATIC analysis") proved a clamp-and-degrade fix (`tf` falls back to `alpha`, capped at `2·alpha`) for a *cyclic wall* whose static steps are meant to be uniform. Here the ratio is the extrapolation itself — a wrong `dt` is a wrong answer that passes every gate — so SANISAND refuses where the ratio cannot be trusted and degrades only where it can (`dt = 0` holds).
+**The guard is on a SIGN CHANGE, not on `dt > 0` — a monotone negative clock is legal.**
+The original C++ (`3c788778f`'s predecessor) gated the extrapolation factor
+`f = dt_{n+1}/dt_n * implexAlpha` on `mImplexDtCommit > 0.0`, so on any `LoadControl(-ds)`
+leg (settlement driven by a negative pseudo-time, which the campaign's decks all use) the
+ratio was never computed and `f` silently froze at `1.0` for the leg's entire life — found
+by the red/blue review (B1) reconstructing 9/142 steps with a true ratio != 1, all run at
+`f = 1`. Fixed by `2473ce46c`: the gate at `LadrunoSANISAND.cpp:1329` is now
+`mImplexDtCommit != 0.0`, and the factor is the **sign-consistent** ratio
+`dt_{n+1}/dt_n` — two increments of the same sign give the same positive ratio a
+monotone-positive clock would, and a sign **change** (a limit point, or a step that
+crosses back through a hold) is what gets refused, not negativity itself. |
 | **D3** | Companion integrator | **REVERSED by P0.** Default **scheme 1 (`ModifiedEuler`) with `-maxSubsteps` required** (#792 T1) so the companion cannot seize. Scheme 2 is *permitted* but its low-p Newton is disabled (`:2264`, literal `errFlag = 0`) and on the corner path 58–74 % of its calls integrate by `explicit_integrator` — it is not an implicit return where the campaign's problem lives, and it costs a 19-unknown Newton everywhere else. Schemes 3 / 5 / 7 / 8 / 9 refused with a sentence (5 additionally carries the zero-`r` defect). |
 | **D4** | Class tags | **None new.** Flags on 33019 / 33020 / 33021. The wire format grows: `sendSelf` / `recvSelf` / both `getCopy` forms carry the flags and `d_eps_p`, per the ADR-86 six-override rule and the FSPM `getCopy` lesson. |
 | **D5** | Vanilla footprint | **Zero** under D1. If P0 overturns D1, one flag seam in `ManzariDafalias.h` on the `mHonorTolRInME` / `mMaxSubstepsInME` pattern plus a `LEDGER_vanilla_files` row. |
@@ -253,6 +313,18 @@ tests 4, 5 -> P3. Added by this ADR:
 5. **Symmetry.** Under `-implex` the assembled tangent is symmetric to round-off, and
    `system Pardiso -matrixType sym` reproduces the general solver's answer.
 6. **Vanilla untouched.** `ManzariDafalias` decks bit-identical (the ADR-86 gate).
+7. **BVP ladder-removal gate, registered arm.** Not in the original list; added once the
+   fixed binary (`2473ce46c` + `afb95c40c`) made a same-binary registered-arm run possible.
+   `_adr92_p1_bvp_gate_rerun.md`'s status line, quoted verbatim: "All three arms COMPLETE.
+   Registered arm (-implex -implexControl 0.05 0.01, build afb95c40c): gate
+   --registered-arm VERDICT = PARTIAL -- 0.0% past rung 1 (converged-only) but 13.8% on
+   attempts (81/585), 99.0% failed-rung iterations; terminated BUDGET at s/B 0.02754.
+   Control-OFF arm (build 2473ce46c): VERDICT = PREDICTION MET (0.0%/0.0%), as before."
+   PARTIAL, not PASS: read alongside item 2 above, not as a substitute for it — the
+   converged-only 0.0 % is real (no converged step left rung 1 on the registered arm
+   either) but the 13.8 %/99.0 % pair records that the ladder still fires and burns
+   through all three rungs before every one of the 81 abandoned attempts is subdivided
+   away, exactly the §8 risk below stated it would.
 
 ## 8. Risks
 
@@ -273,6 +345,13 @@ tests 4, 5 -> P3. Added by this ADR:
   Correct behaviour, bounded by the reduction limit — IMPL-EX trades the wall for a cost
   there rather than removing it. **At `p0 = 5 kPa` A is unusable from `5e-4` up** (P0 §4,
   `q/p` 0.09 vs 2.07), so at the corner `-implexControl` is a requirement, not an option.
+  **Confirmed at BVP level:** the registered arm (`-implexControl 0.05 0.01`) reaches
+  only `s/B = 0.02754` before hitting its subdivision budget (80, one leg over at 81),
+  with `n_material_refused = 10270` over 504 converged steps — against the same deck's
+  unpoliced `-implex` arm, which reaches the full `s/B = 0.25` target on zero refusals.
+  The control does exactly what this paragraph predicted: it does not remove the wall,
+  it relocates it, trading depth for a bounded, counted refusal cost instead of an
+  unbounded ladder (`_adr92_p1_bvp_gate_rerun.md`).
 - **Cyclic response lags by one step.** `alpha`, `z` and `alpha_in` advance only on the
   committed path. Monotonic pushover is the target; cyclic use needs the P2 reversal test
   before it is claimed.

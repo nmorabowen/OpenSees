@@ -252,3 +252,27 @@ unstated. *(BLUE-2 §13, RED-2 F11, RED-3 F4.)*
 - 2026-09-06 — Review run as 3 red + 3 blue agents on `70f6bf0e8`. Five blockers,
   all confirmed by the opposing team. The driver rescue (item 3) was done in this
   session; everything else is owed.
+- 2026-09-06 (later) — Status of §5's required items. **Done:** item 1, the C++
+  (B1 sign-consistent `f` + `mImplexDtCommit != 0.0` gate, B2 `|dt|`-armed floor,
+  B3 observable companion refusal via `implexRefusals`, plus the majors — throttled
+  and counted refusals, non-destructive `avgImplexError`, scheme-2-no-cap refused —
+  `2473ce46c`; re-arm after refusal, `2ceb65fa4`; the un-primed-step exemption,
+  `afb95c40c`). Item 2, tests, **partially**: lane B added a monotone-negative-clock
+  test asserting `implexDetail[5] == dt_{n+1}/dt_n`, a companion-refusal test, a
+  `getCopy`-after-history test, a roundtrip test on an ON != OFF deck, and PlaneStrain
+  coverage, plus `xfail(strict)` markers (`e4a8523e8`; battery 20 passed / 1 strict
+  xfail / 1 skip on `2473ce46c`, `347242f91`) — not yet re-run on `afb95c40c`
+  (owed, separate from this lane). Item 3, the driver, **done**: committed with
+  `ladrunoBuild()` recording and `implexError`/`n_material_refused` in the payload
+  (`b45b338a5` lane C). Item 4, the registered-arm re-run, **done**: ran on the fixed
+  binary and returns `PARTIAL` (`_adr92_p1_bvp_gate_rerun.md`). Item 6, ledgers,
+  **partially**: the `LEDGER_implementations` row and this review's own log are kept
+  current in this pass; **the mutation gate has NOT been run** and `manifest.yaml`
+  was not touched (ADR-92 adds no new classTags, so `check_manifest.py` would not
+  flag its absence regardless). **Remaining, in order:** the mutation gate on the
+  family; a decision on the registered arm's operating point (`reductionLimit 0.01`
+  spends the entire subdivision budget by `s/B = 0.02754` — the owed tolerance sweep
+  from `_adr92_p1_bvp_gate_results.md` §4 item 1 is still not run); and the
+  wall-clock caveats in the rerun memo (a control/noctl sequencing overlap and an
+  unrelated >11-CPU-hour background process contaminate every `wall_s` column there)
+  are not yet resolved by a clean single-tenant re-run.
