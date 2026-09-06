@@ -411,6 +411,46 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno ADR-92 fix (Zone-A red, 2026-09-06): D3's scheme refusal must fire
+    // BEFORE the material is constructed, not only inside
+    // setLadrunoImplexOptions() afterwards.
+    //
+    // ManzariDafalias' constructor carries a once-per-PROCESS latch that prints
+    // the "IntScheme 3 (RungeKutta4) / 5 (ForwardEuler): no error estimate, no
+    // yield-drift correction" warning (ManzariDafalias.cpp:200-214, a Ladruno
+    // ADR-86b addition). Refusing `-implex` on scheme 3/5 only AFTER
+    // construction still runs that constructor, burns the latch, and then throws
+    // the material away -- so a later, unrelated deck (or test) that legitimately
+    // builds a scheme-3 ManzariDafalias gets NO warning at all. Zone-A caught it:
+    // tests/test_ladruno_sanisand_implex.py::test_implex_refuses_unsupported_schemes[3]
+    // sorts before tests/test_manzari_safety_pack.py::test_scheme3_warns_no_error_control
+    // in the same pytest process, and the latter saw an empty stderr.
+    //
+    // IntScheme is oData[0], a positional the parser has already read, so the
+    // refusal costs nothing here. The check inside setLadrunoImplexOptions()
+    // STAYS -- it is the one that guards getCopy(const char*) and recvSelf(),
+    // which the parser never sees. Vanilla footprint remains ZERO.
+    if (implexOpt.enabled) {
+        const int schemeReq = (int)oData[0];
+        if (schemeReq != 1 && schemeReq != 2) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -implex REFUSES IntScheme " << schemeReq << ".";
+            if (schemeReq == 3 || schemeReq == 5 || schemeReq == 7 ||
+                schemeReq == 8 || schemeReq == 9)
+                opserr << " ADR 92 D3: schemes 3/5/7/8/9 carry no error control on"
+                          " the substep, so the IMPL-EX companion could not report a"
+                          " failed return and -implexControl would have nothing to"
+                          " refuse.";
+            else
+                opserr << " ADR 92 qualified only IntScheme 1 (ModifiedEuler, the"
+                          " deck default) and IntScheme 2 (BackwardEuler_CPPM) as"
+                          " IMPL-EX companions; an unqualified companion is a wrong"
+                          " answer that passes every gate.";
+            opserr << " Use IntScheme 1 with -maxSubsteps." << endln;
+            return 0;
+        }
+    }
+
     NDMaterial *theMaterial =
         new LadrunoSANISAND(tag, ND_TAG_LadrunoSANISAND,
                             dData[0],  dData[1],  dData[2],  dData[3],  dData[4],  dData[5],
