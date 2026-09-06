@@ -5231,10 +5231,12 @@ that floor and the material logs
 
 **Found 2026-09-05, ADR-92 scoping; measured by the P0 oracle (`_adr92_p0_oracle_results` §6).**
 
-`BackwardEuler_CPPM` zeroes `NextDGamma` and solves for it (`ManzariDafalias.cpp:1171`), so under
+`BackwardEuler_CPPM` zeroes `NextDGamma` and solves for it (`ManzariDafalias.cpp:2220`, `:2274`), so under
 `IntScheme 2` it is the increment's plastic multiplier. Under `ModifiedEuler` (scheme 1, the
 deck default), `RungeKutta4/45` and the `MaxStrainInc`/`MaxEnergyInc` family, every substep
-**overwrites** it (`:1342`, `:1498`, `:1570`) and nothing sums it — the recorder sees whatever
+**overwrites** it (`ModifiedEuler` `:1498`, `:1570`; `RungeKutta4` `:1744-1807`; `RungeKutta45`
+`:1973-2016`; `ForwardEuler` `:1342`, which the `MaxStrainInc`/`MaxEnergyInc` FE variants call)
+and nothing sums it — the recorder sees whatever
 the last substep computed, which depends on how many substeps the controller chose.
 
 - **Bites:** anything that reads `state[25]` as "how much plastic flow this step" — a recorder,

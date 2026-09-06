@@ -257,6 +257,40 @@ C:/Users/nmb/venv/opensees_env/Scripts/python.exe Ladruno_implementation/adr92_p
 python3.12 Ladruno_implementation/adr92_p0_oracle/sanisand_implex_oracle.py --gate all
 ```
 
+## 12. Review corrections (2026-09-05, `/code-review high`)
+
+Seven confirmed findings on the oracle were fixed after this memo's tables were produced;
+the tables were **re-run** (see the Log) and did not move at the reported precision:
+
+- `commit()` after a caught `Abandoned` advanced `eps_n` while `sig_n` stayed — the trial
+  strain is now restored to the committed one before re-raising, and every driver prints a
+  `!! CONTAMINATED RUN` line if any step was abandoned or the lateral secant failed, so a
+  breakdown row cannot sit silently inside a convergence fit.
+- Fidelity: on the low-`p` branches the C++ leaves the **trial** `mAlpha` / `mFabric` /
+  `mDGamma` untouched (`:1014-1017`, `:1096-1103`); the oracle was resetting them to the
+  committed values. Now reproduced.
+- `solve_lateral` returned an unconverged secant as converged; it now signals `-1` and the
+  drivers count it. **First thing it caught:** G4's 2 000-step `p0 = 100` reference has
+  **one** step (of 2 000) whose lateral secant did not reach `1e-11` — invisible before,
+  printed now, and immaterial to G4's 18–22x verdict (every number in §6 re-ran identical
+  to the printed digits), but it is the kind of thing this memo exists to say out loud.
+- G0, G3 and G4 were re-run after the fidelity change and did not move at the printed
+  precision; the stale-trial branch never fires on these paths, which is consistent with
+  G0 having passed on them — the fix matters for the drivers' multi-call steps at the
+  floor, where it now matches the C++ rather than a tidier version of it.
+- `_mat_from_meta` honours the constants the probe **recorded** (a drift between the two
+  files now fails G0 loudly), and Control A perturbs the whole stress tensor uniformly
+  (`alpha = dev/p` stays consistent) rather than one component.
+- `_seed` refuses an ambiguous label (`_n40` was a substring of `_n400`).
+- A dead line in `_replay` that would have bound the CSV row dict to `scheme` is gone.
+- Citation: `BackwardEuler_CPPM` zeroes `NextDGamma` at `:2220` and solves it at `:2274`;
+  `:1171` (cited in three documents) is inside `MaxStrainInc`.
+
+**Control A is a bound, not a proof.** It says the oracle-vs-binary gap is smaller than the
+oracle's own sensitivity to a `1e-15` seed change; a transcription error of the same order
+as that sensitivity would pass it. The four deck-default rows at `4e-14`–`5e-13` are the
+evidence; the 400-step row is consistent with them, not independent of them.
+
 ## Log
 
 - 2026-09-05 — The P0 builder (Opus) ran G0 to a pass and was terminated by its session

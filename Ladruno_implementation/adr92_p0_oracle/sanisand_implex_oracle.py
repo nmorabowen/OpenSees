@@ -336,17 +336,25 @@ class Sanisand:
         else:
             self.alpha_in = self.alpha_in_n.copy()
         self.cnt.steps += 1
-        if self.mElastFlag == 0:
-            out = self.elastic_integrator()
-        elif self.scheme == 2:
-            out = self.backward_euler(self.sig_n, self.eps_n, self.epsE_n,
-                                      self.alpha_n, self.fabric_n, self.alpha_in,
-                                      self.eps, self.mG, self.mK, 0)
-        else:
-            out = self.explicit_integrator(self.sig_n, self.eps_n, self.epsE_n,
-                                           self.alpha_n, self.fabric_n,
-                                           self.alpha_in, self.eps,
-                                           self.mG, self.mK)
+        try:
+            if self.mElastFlag == 0:
+                out = self.elastic_integrator()
+            elif self.scheme == 2:
+                out = self.backward_euler(self.sig_n, self.eps_n, self.epsE_n,
+                                          self.alpha_n, self.fabric_n, self.alpha_in,
+                                          self.eps, self.mG, self.mK, 0)
+            else:
+                out = self.explicit_integrator(self.sig_n, self.eps_n, self.epsE_n,
+                                               self.alpha_n, self.fabric_n,
+                                               self.alpha_in, self.eps,
+                                               self.mG, self.mK)
+        except Abandoned:
+            # Review finding (2026-09-05): `self.eps` was already advanced above and
+            # the drivers commit() unconditionally after catching this, which left
+            # eps_n one step ahead of a frozen sig_n. Put the trial back on the
+            # committed state so a subsequent commit() is a no-op.
+            self.eps = self.eps_n.copy()
+            raise
         (self.epsE, self.sig, self.alpha, self.fabric, self.dGamma,
          self.void_ratio) = out[:6]
         return self.sig
@@ -358,7 +366,9 @@ class Sanisand:
         K, G = self.elastic_moduli(self.sig_n, vr)
         sig = self.sig_n + stiffness(K, G) @ d
         p = ONE3 * trace(sig) + self.m_Presidual
-        alpha = dev(sig) / p if p > SMALL else self.alpha_n.copy()
+        # C++ :1014-1017 leaves mAlpha (the TRIAL member) untouched when p <= small;
+        # it is NOT reset to mAlpha_n by setTrialStrain/integrate(). Reproduce that.
+        alpha = dev(sig) / p if p > SMALL else getattr(self, "alpha", self.alpha_n).copy()
         return epsE, sig, alpha, self.fabric_n.copy(), 0.0, vr
 
     # ---- explicit_integrator (:1031-1147): elastic / plastic split
@@ -377,7 +387,11 @@ class Sanisand:
         fn = self.get_F(cS, cA)
         pn = ONE3 * trace(cS) + self.m_Presidual
         if pn < self.m_Presidual:
-            return epsE, self.m_Pmin * I1, np.zeros(6), cF.copy(), 0.0, vr
+            # C++ :1096-1103 writes NextStress and NextAlpha only; NextFabric and
+            # NextDGamma keep whatever the previous TRIAL left in mFabric/mDGamma.
+            stale_f = getattr(self, "fabric", cF)
+            stale_dg = getattr(self, "dGamma", 0.0)
+            return epsE, self.m_Pmin * I1, np.zeros(6), np.array(stale_f, float), float(stale_dg), vr
         if fn > self.mTolF:
             return self._exp_scheme(cS, cE, cEE, cA, cF, ain, nE, G, K, vr)
         if fn < -self.mTolF:
@@ -919,7 +933,10 @@ def solve_lateral(step_fn, p0, de_zz, eps_n, tol=1e-11, itmax=80):
         x1 = x2
         s1 = step_fn(make(x1))
         g1 = s1[0] - p0
-    return make(x1), s1, itmax
+    # Review finding (2026-09-05): a degenerate secant (g1 == g0, e.g. the material
+    # pinned at p_min) or an exhausted itmax used to return as if converged. Signal
+    # it with -1 so the drivers can count it; the residual |g1| is NOT within tol.
+    return make(x1), s1, -1
 
 
 @dataclass
@@ -940,6 +957,15 @@ def _invariants(sig):
     s = dev(sig)
     q = math.sqrt(1.5 * dd_contr(s, s))
     return p, q
+
+
+def _warn_contaminated(run, label):
+    ab = getattr(run, "abandoned", 0)
+    lf = getattr(run, "lateral_fail", 0)
+    if ab or lf:
+        print(f"  !! CONTAMINATED RUN {label}: abandoned steps = {ab}, "
+              f"lateral secant failures = {lf} -- rows after the first such step are NOT "
+              f"the material's answer; read them as breakdown, not as data.")
 
 
 def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
@@ -979,14 +1005,18 @@ def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
                 except Abandoned:
                     run.abandoned += 1
                     return mat.sig.copy()
-            eps_t, sig, _ = solve_lateral(step_fn, p0, de, mat.eps_n)
+            eps_t, sig, its = solve_lateral(step_fn, p0, de, mat.eps_n)
+            if its < 0:
+                run.lateral_fail = getattr(run, "lateral_fail", 0) + 1
             try:
                 mat.integrate(eps_t)
             except Abandoned:
                 run.abandoned += 1
             mat.commit()
         else:
-            eps_t, sig, _ = solve_lateral(ix.extrapolate, p0, de, mat.eps_n)
+            eps_t, sig, its = solve_lateral(ix.extrapolate, p0, de, mat.eps_n)
+            if its < 0:
+                run.lateral_fail = getattr(run, "lateral_fail", 0) + 1
             ix.extrapolate(eps_t)
             try:
                 ix.commit(eps_t)
@@ -998,6 +1028,7 @@ def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
     run.cnt = mat.cnt
     if ix is not None:
         run.implex_err = ix.errors
+    _warn_contaminated(run, f"drive_triaxial(p0={p0}, nstep={nstep}, kind={kind})")
     return run, mat, ix
 
 
@@ -1044,6 +1075,7 @@ def drive_prescribed(seed_row, path_fn, nstep, kind="implicit", scheme=1,
     run.cnt = mat.cnt
     if ix is not None:
         run.implex_err = ix.errors
+    _warn_contaminated(run, f"drive_prescribed(nstep={nstep}, kind={kind})")
     return run, mat, ix
 
 
@@ -1056,6 +1088,22 @@ def _fmt(x, w=12, p=4):
 def _mat_from_meta(meta, scheme=None):
     consts = dict(CONSTS)
     consts["e_init"] = float(meta["e_init"])
+    # Review finding (2026-09-05): use the constants the PROBE recorded, not this
+    # module's copy, so a drift between the two files fails G0 loudly instead of
+    # being absorbed by Control A.
+    rec = meta.get("consts")
+    if rec:
+        import ast
+        try:
+            rec = ast.literal_eval(rec) if isinstance(rec, str) else dict(rec)
+        except (ValueError, SyntaxError):
+            rec = None
+        if rec:
+            for k, v in rec.items():
+                if k in consts and abs(float(v) - float(consts[k])) > 1e-12 * max(1.0, abs(float(v))):
+                    print(f"  !! meta consts[{k!r}] = {v} differs from oracle CONSTS = {consts[k]}; "
+                          f"using the probe's value")
+                consts[k] = float(v)
     return make_material(consts,
                          scheme=int(meta["scheme"]) if scheme is None else scheme,
                          Pmin=float(meta["Pmin"]),
@@ -1066,11 +1114,12 @@ def _mat_from_meta(meta, scheme=None):
 
 def _replay(meta, rows, seed_perturb=0.0):
     """Replay the recorded strain sequence; return the per-step committed states."""
-    mat = _mat_from_meta(meta, rows[0])
     mat = _mat_from_meta(meta)
     seed_from_csv(mat, rows[0])
     if seed_perturb:
-        mat.sig_n[2] *= (1.0 + seed_perturb)
+        # uniform scaling of the whole committed stress: alpha = dev/p is invariant,
+        # so the perturbed seed is a CONSISTENT state, not a one-component nudge
+        mat.sig_n *= (1.0 + seed_perturb)
         mat._refresh_moduli()
     out = []
     for r in rows[1:]:
@@ -1224,9 +1273,15 @@ def _paths():
 
 
 def _seed(label_sub):
-    for k, v in _paths().items():
-        if label_sub in k:
-            return v
+    hits = [k for k in _paths() if label_sub in k]
+    # `..._n40` is a substring of `..._n400`: prefer an exact stem, else demand uniqueness
+    exact = [k for k in hits if k == label_sub or k == label_sub + ".csv"]
+    if exact:
+        return _paths()[exact[0]]
+    if len(hits) > 1:
+        raise SystemExit(f"ambiguous seed {label_sub!r}: matches {hits}; name the file exactly")
+    if hits:
+        return _paths()[hits[0]]
     raise SystemExit(f"no probe CSV matching {label_sub!r} in {DATA}")
 
 

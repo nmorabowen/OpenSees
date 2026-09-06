@@ -97,7 +97,9 @@ as a change of scheme, and that must be stated and defaulted deliberately.
 ### C2 — `mDGamma` is not the step-total plastic multiplier (load-bearing)
 
 The request extrapolates `dGamma`, "position [25] of the recorded `gp_state`". Under
-`BackwardEuler_CPPM` that is the step total (`:1171` `NextDGamma = 0;`, then solved).
+`BackwardEuler_CPPM` that is the step total (`NextDGamma = 0.0` at `:2220`, solved as `Delta(18)` at
+`:2274`). *(An earlier version of this line cited `:1171`, which is inside `MaxStrainInc`; the
+`/code-review` pass of 2026-09-05 caught it.)*
 Under every substepped explicit scheme it is **the last substep's multiplier**:
 `ForwardEuler` assigns `NextDGamma = (…)/temp4` (`:1342`) fresh on each substep and
 `ModifiedEuler` never accumulates it. Extrapolating it across a step whose substep count

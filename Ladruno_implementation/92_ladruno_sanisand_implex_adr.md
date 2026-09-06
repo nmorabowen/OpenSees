@@ -112,7 +112,8 @@ implexError = || sigma~ - sigma_implicit || / ( || sigma_implicit || + P_atm * e
 ```
 
 **Why the plastic strain and not `dGamma`** (the request's choice, corrected — scoping §C2):
-`mDGamma` is the step total only under `BackwardEuler_CPPM` (`:1171`). Under every
+`mDGamma` is the step total only under `BackwardEuler_CPPM` (zeroed at `:2220`, solved as
+`Delta(18)` at `:2274`). Under every
 substepped explicit scheme it is *the last substep's* multiplier — `ForwardEuler`
 reassigns it fresh at `:1342`, `ModifiedEuler` never accumulates it — and at the corner the
 substep count swings by orders of magnitude between steps, so extrapolating it extrapolates
@@ -142,8 +143,12 @@ vanilla**, and inherits the guards for free.
    measured it crossing into tension (`min p = −1.37 / −0.16 / −0.09 kPa` at 40 / 80 / 160
    steps on a `+0.0101 kPa` state — first order, O(1)–O(10) relative). **P1 applies the
    code's own device to the extrapolated stress: `sigma~ = dev(sigma~) + p_min*I1` whenever
-   `tr(sigma~)/3 < p_min`.** The ring still flows; what disappears is Newton's missing
-   descent direction, not the mechanics.
+   `tr(sigma~)/3 < p_min`.** *(Review, 2026-09-05: that clamp repairs the isotropic part
+   only; the runaway quantity is the unbounded `f·d_eps_p(n)`, which distorts the deviator
+   by the same order. P0 decides between the clamp and **bounding `f`** so the whole
+   `sigma~` stays admissible — the second is the deeper fix and acceptance 1b must then
+   check the deviator too, not just `tr`.)* The ring still flows; what disappears is
+   Newton's missing descent direction, not the mechanics.
 
 **And the cost, stated first because the campaign must print it (scoping §C5):**
 IMPL-EX is a first-order-in-`dt` perturbation of the constitutive response with the
@@ -203,7 +208,7 @@ join the material responses on the `ASDConcrete3DMaterial.cpp:2073-2077` templat
 |---|---|---|
 | **D0** | Sequence against WP-86b (#792) | **P0 opens now; C++ (P1+) is GATED on #792 T8**, the GATE U re-run with the substep cap and the consistent-tangent default. Owner checkpoint **CP1**. |
 | **D1** | Extrapolated history variable | **Plastic strain** (§2). `dGamma` + frozen flow direction stays on the table as the textbook alternative and is measured against it at P0; it would require the companion to be scheme 2 and a vanilla hook. |
-| **D2** | Time source | `-implexDt {pseudo\|strain\|user}`, default `pseudo` = `ops_Dt` (ASD behaviour). Correct for the TIMs deck **including under subdivision**, because it drives settlement by `LoadControl` on a prescribed-settlement SP pattern so pseudo-time is proportional to settlement. Guarded at `dt = 0` (holds, stage switch); **refused** on integrators that solve for the load factor (`DisplacementControl`, arc length), where `dt = d(lambda)` is not proportional to the increment and changes sign past a limit point. |
+| **D2** | Time source | `-implexDt {pseudo\|strain\|user}`, default `pseudo` = `ops_Dt` (ASD behaviour). Correct for the TIMs deck **including under subdivision**, because it drives settlement by `LoadControl` on a prescribed-settlement SP pattern so pseudo-time is proportional to settlement. Guarded at `dt = 0` (holds, stage switch); **refused** on integrators that solve for the load factor (`DisplacementControl`, arc length), where `dt = d(lambda)` is not proportional to the increment and changes sign past a limit point. **Why refuse rather than clamp:** the June `LadrunoRCConcrete` entry in `LEDGER_quirks` (§ "IMPL-EX in a STATIC analysis") proved a clamp-and-degrade fix (`tf` falls back to `alpha`, capped at `2·alpha`) for a *cyclic wall* whose static steps are meant to be uniform. Here the ratio is the extrapolation itself — a wrong `dt` is a wrong answer that passes every gate — so SANISAND refuses where the ratio cannot be trusted and degrades only where it can (`dt = 0` holds). |
 | **D3** | Companion integrator | **REVERSED by P0.** Default **scheme 1 (`ModifiedEuler`) with `-maxSubsteps` required** (#792 T1) so the companion cannot seize. Scheme 2 is *permitted* but its low-p Newton is disabled (`:2264`, literal `errFlag = 0`) and on the corner path 58–74 % of its calls integrate by `explicit_integrator` — it is not an implicit return where the campaign's problem lives, and it costs a 19-unknown Newton everywhere else. Schemes 3 / 5 / 7 / 8 / 9 refused with a sentence (5 additionally carries the zero-`r` defect). |
 | **D4** | Class tags | **None new.** Flags on 33019 / 33020 / 33021. The wire format grows: `sendSelf` / `recvSelf` / both `getCopy` forms carry the flags and `d_eps_p`, per the ADR-86 six-override rule and the FSPM `getCopy` lesson. |
 | **D5** | Vanilla footprint | **Zero** under D1. If P0 overturns D1, one flag seam in `ManzariDafalias.h` on the `mHonorTolRInME` / `mMaxSubstepsInME` pattern plus a `LEDGER_vanilla_files` row. |
