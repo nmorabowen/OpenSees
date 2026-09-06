@@ -9,11 +9,28 @@ ADR-92 P0 oracle results (`_adr92_p0_oracle_results.md`), and the plan's own
 section 4 record of what the C++ author decided and what the plan got wrong.
 
 REUSE, NOT RETYPING.  `_PARAMS` / `_XY` / `_P_ATM`, the confine-first
-zero-free-DOF rig (`_build_confined` / `_drive_confined` / `_drive_confined_at`
-/ `_stress` / `_reldiff`), the low-p `-Pmin` rig (`_PMIN_*`, `_drive_confined_at`),
-and the recorded ADR-86b regression number (`_RECORDED_PR_SENSITIVITY`) are all
-imported from the two sibling files, not copied -- a third copy of Gorini's
-constants was flagged as a drift risk in review.
+zero-free-DOF rig (`_build_confined` / `_drive_confined` / `_stress` /
+`_reldiff`), the low-p `-Pmin` rig's constants and series generator
+(`_PMIN_*`, `_c_series_at`), and the recorded ADR-86b regression number
+(`_RECORDED_PR_SENSITIVITY`) are all imported from the two sibling files, not
+copied -- a third copy of Gorini's constants was flagged as a drift risk in
+review.
+
+POST-FIRST-RUN NOTE (2026-09-06).  This file ran against the first P1 binary
+(42dbf066e) and scored 11/15 before this pass. Two failures were this file's
+own deck-design bugs, not the C++, and are fixed here: `-implex` vs `-implex`
+off was compared at DIFFERENT effective substep caps (`_CAP_ADEQUATE` /
+`_CAP_TIGHT` now make the cap a controlled variable, everywhere an ON/OFF
+pair is compared); the two refusal tests asserted `analyze() != 0` on a
+ZERO-free-DOF deck, where a refusal has no equation to fail and is therefore
+invisible to the return code (measured: the material printed the refusal
+warning 16 times and `analyze()` still returned 0) -- both now run on
+`_build_free_dof_triaxial`, a genuinely free-DOF `LadrunoBrick` cube. The
+floor-clamp test's ISOCHORIC deviatoric ramp also measured clamp count == 0
+against that binary; `_build_floor_seeking_deck` replaces it with a
+net-DILATING ramp (see that function's docstring for why isochoric shear was
+probably too mild). The tangent-identity/`revertToLastCommit` failure from
+that same run is NOT this file's fault and is not touched here.
 
 WHAT A ZERO-FREE-DOF DECK CAN AND CANNOT SHOW UNDER `-implex`.  This matters
 enough to say once, centrally, rather than in every test that runs into it.
@@ -254,71 +271,135 @@ def test_stage0_inertness_gravity_and_hold_is_bit_identical():
 #  Gate 4 -- the p_min floor clamp on sigma~, and its own diagnostic
 # ===========================================================================
 
-def test_floor_clamp_fires_and_implexDetail_reports_it():
-    """On a path that already threatens the base's OWN low-p floor, the NEW
-    clamp on `sigma~` (W2) fires too, and `implexDetail` says so.
+def _build_floor_seeking_deck(tag, opts, e_conf=None, n_dev=60, lat=1.5):
+    """A confine-first zero-free-DOF deck, like `sani._drive_confined_at`, but
+    with the deviatoric ramp's lateral/axial ratio pushed ABOVE the isochoric
+    value (`sani._C_LAT = 0.5`, net volumetric strain zero) so the path net
+    DILATES instead of merely shearing at constant volume.
 
-    THE DECK IS NOT NEW.  `sani._drive_confined_at(sani._PMIN_E_CONF_LOW, ...)`
-    is `test_pmin_is_inert_at_ordinary_confinement`'s OWN low-p rig: at
-    `e_conf = 2e-7` the stage flip lands at `p = 0.1145 kPa`, and that file's
-    own measurement with `-Pmin` at the class default (`_PMIN_LADRUNO =
-    1.0e-3*P_atm = 0.101 kPa`) is `p = -0.5647 kPa` (NEGATIVE) at deviatoric
-    step 1, before the BASE's own low-p branch resets it back to
-    `m_Pmin*I` at step 2. That is exactly the regime W2 exists for: a
-    committed state sitting close enough to the floor that ONE more step's
-    stress estimate can cross it. Under `-implex`, `sigma~` is built directly
-    from the FROZEN elastic operator (`sigma_n + Ce*(d_eps - f*d_eps_p)`) with
-    no return-map correction at all, so it has even less to stop it
-    overshooting the floor than the base's own (corrected) explicit return
-    does.
-
-    WHY THIS IS EVIDENCE AND NOT A GUESS.  This is the same physical
-    mechanism P0's G3 gate measured directly (`min p = -1.369 kPa` on a
-    dedicated floor-seeking path, `_adr92_p0_oracle_results.md` section 5) --
-    a committed state near `m_Pmin` under continued loading drives the
-    UNCLAMPED extrapolation through the floor. This test reuses an EXISTING,
-    already-measured low-p rig from the sibling file rather than trying to
-    reproduce P0's exact single-Gauss-point path, so the clamp-fires
-    assertion is qualitative (count > 0), not a specific number -- the count
-    itself is a property of this build, which does not exist yet.
-
-    THE IDENTITY, asserted alongside the count.  `ladrunoImplexMeasureError`
-    computes the deviatoric and volumetric legs of the same error over
-    `||d_sigma||^2 == ||d_dev||^2 + 3*(dp)^2` (dev and I1 are orthogonal), so
-    `implexDetail`'s three error components must satisfy that identity at
-    every read, on ANY path -- this is checked as a coherence gate on the
-    response itself, independent of whether the clamp fired on THIS run.
+    WHY THIS CHANGED FROM THE FIRST DRAFT.  The first draft reused
+    `sani._drive_confined_at` verbatim (its own `lat = sani._C_LAT = 0.5`,
+    isochoric).  Run against the first P1 binary, the clamp NEVER fired
+    (`implexDetail` count == 0 for the whole 40-step leg) even though the
+    BASE material's own low-p branch is independently measured to go
+    NEGATIVE on that exact deck (`test_ladruno_sanisand.py`: p = -0.5647 kPa
+    at deviatoric step 1 with `-Pmin` at the class default). The likely
+    reason: `mImplexDEpsP` is exactly zero until the FIRST commit after the
+    stage flip (`ladrunoImplexInitState`'s own comment -- "which is what
+    makes the first plastic step a pure elastic prediction"), so `sigma~` on
+    an isochoric shear's early steps is a much MILDER elastic-only
+    prediction than the base's full elastoplastic return, and apparently
+    mild enough here to stay clear of the floor. P0's own G3 path was not
+    isochoric shear either -- it was described as "volumetric extension...
+    while the point keeps flowing" (`_adr92_p0_oracle_results.md` section 5).
+    `sani._c_series_at` already exposes the lat ratio as a parameter, so this
+    supplies `lat > 0.5` (net dilation) rather than writing a new series
+    generator; e_conf/e_ax/n_conf stay the SAME already-proven magnitudes
+    the sibling `_PMIN_*` family uses (only the ratio changes), so this is
+    not a numerically untested regime.
     """
+    if e_conf is None:
+        e_conf = sani._PMIN_E_CONF_LOW      # -> p ~ 0.1145 kPa at the flip
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    s_lat, s_ax = sani._c_series_at(e_conf, n_dev, n_conf=sani._C_N_CONF,
+                                    e_ax=sani._C_E_AX, lat=lat)
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -e_conf)
+            if y == 1.:
+                ops.sp(n, 2, -e_conf)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -e_conf)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+    return n_dev
+
+
+def test_floor_clamp_fires_and_implexDetail_reports_it():
+    """On a NET-DILATING path at the same low confinement the base material's
+    own low-p branch is independently known to threaten, the NEW clamp on
+    `sigma~` (W2) fires too, and `implexDetail` says so -- checked PER STEP,
+    not only at the end, both for the clamp's own fire count/flag and for the
+    `||d_sigma||^2 == ||d_dev||^2 + 3*(dp)^2` identity `ladrunoImplexMeasureError`
+    computes (dev and I1 are orthogonal, so this must hold at every read,
+    independent of whether the clamp fired on that particular step).
+
+    SEE `_build_floor_seeking_deck` for why this is NOT the first draft's
+    isochoric deck: that one measured clamp count == 0 against the first P1
+    binary, and the fix is a path shape (net dilation, not constant-volume
+    shear), not a weaker assertion.  The count is still not asserted as an
+    exact number -- only that it is possible on a build to which this file
+    has never been run -- see `_adr92_p0_oracle_results.md` section 5 for the
+    same MECHANISM (not the same deck) measured directly by P0.
+    """
+    tag = 8107
     opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
             '-implex', '-maxSubsteps', _CAP_ADEQUATE)
-    _stress, _trace = sani._drive_confined_at(sani._PMIN_E_CONF_LOW, opts,
-                                              n_dev=sani._PMIN_N_DEV, tag=8107)
+    n_dev = _build_floor_seeking_deck(tag, opts)
 
-    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
-    assert len(detail) == 6, ('implexDetail did not return the documented '
-                              '6-component vector', detail)
-    total, dev, vol, fired_last, count, f_last = detail
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(sani._C_N_CONF):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
 
-    # The identity, ADR-92 P1 section 4.1: ||d_sigma||^2 == ||d_dev||^2 + 3*(dp)^2,
-    # i.e. total^2 == dev^2 + vol^2 over the SAME denominator.
-    lhs = total * total
-    rhs = dev * dev + vol * vol
-    scale = max(lhs, rhs, 1.0e-30)
-    assert abs(lhs - rhs) <= 1.0e-8 * scale, (
-        'implexDetail\'s total/deviatoric/volumetric legs violate the '
-        '||d_sigma||^2 == ||d_dev||^2 + 3*(dp)^2 identity the source claims '
-        '(ladrunoImplexMeasureError)', detail)
+    max_count = 0.0
+    ever_fired = False
+    for step in range(n_dev):
+        assert ops.analyze(1) == 0, f'deviatoric step {step + 1} failed'
 
-    assert count > 0, (
-        'the p_min clamp on sigma~ never fired on a deck that already drives '
-        'the BASE material\'s own low-p branch negative at the same '
-        'confinement and -Pmin (measured in test_ladruno_sanisand.py: '
-        'p = -0.5647 kPa at deviatoric step 1). If the clamp genuinely never '
-        'engages here, either W2 is not wired into ladrunoImplexTrial(), or '
-        'this deck needs a harder push -- but do not weaken this assertion '
-        'to pass; re-derive the deck instead', detail, _trace[:5])
-    assert fired_last in (0.0, 1.0), ('implexDetail\'s fired flag was not '
-                                      'boolean-valued', detail)
+        detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+        assert len(detail) == 6, ('implexDetail did not return the documented '
+                                  '6-component vector', step, detail)
+        total, dev, vol, fired_last, count, f_last = detail
+
+        # The identity, ADR-92 P1 section 4.1: ||d_sigma||^2 == ||d_dev||^2 +
+        # 3*(dp)^2, i.e. total^2 == dev^2 + vol^2 over the SAME denominator --
+        # must hold at EVERY step, clamp firing or not.
+        lhs = total * total
+        rhs = dev * dev + vol * vol
+        scale = max(lhs, rhs, 1.0e-30)
+        assert abs(lhs - rhs) <= 1.0e-8 * scale, (
+            'implexDetail\'s total/deviatoric/volumetric legs violate the '
+            '||d_sigma||^2 == ||d_dev||^2 + 3*(dp)^2 identity the source '
+            'claims (ladrunoImplexMeasureError)', step, detail)
+        assert fired_last in (0.0, 1.0), ('implexDetail\'s fired flag was '
+                                          'not boolean-valued', step, detail)
+
+        max_count = max(max_count, count)
+        ever_fired = ever_fired or bool(fired_last)
+
+    assert max_count > 0 and ever_fired, (
+        'the p_min clamp on sigma~ never fired on a NET-DILATING path at the '
+        'same low confinement (e_conf = sani._PMIN_E_CONF_LOW) where the '
+        'BASE material\'s own low-p branch is independently measured to go '
+        'negative (test_ladruno_sanisand.py). If the clamp genuinely never '
+        'engages on this shape either, either W2 is not wired into '
+        'ladrunoImplexTrial(), or the path still is not aggressive enough -- '
+        'raise `lat` further rather than weakening this assertion',
+        max_count, ever_fired)
 
 
 # ===========================================================================
@@ -556,6 +637,69 @@ def test_implex_maxsubsteps_zero_is_also_refused():
                        '-implex', '-maxSubsteps', 0)
 
 
+# ---------------------------------------------------------------------------
+#  A refusal is only OBSERVABLE from analyze()'s return code on a deck with
+#  genuine free DOFs.
+#
+#  The first draft of both refusal tests below used the confine-first
+#  ZERO-free-DOF rig (`sanint._build_brick`, matching the SUBSTEP-CAP tests'
+#  own idiom).  Run against the first P1 binary: the material DID refuse --
+#  the D2 warning ("the pseudo-time increment is negative (-1)") printed 16
+#  times -- but `analyze()` still returned 0, because with zero free DOFs
+#  there is no equation for a refusal to fail, and the domain's pseudo time
+#  moved on regardless.  Confirmed on a genuinely free-DOF deck (both
+#  `stdBrick` and `LadrunoBrick`): the SAME refusal returns rc = -3.  So
+#  every test in this file that needs to OBSERVE a refusal through
+#  `analyze()`'s return code now uses `_build_free_dof_triaxial` below --
+#  the same single-`LadrunoBrick` drained-triaxial shape gate 3's tangent-
+#  identity probe uses, minus the `-implexDt strain` source (that source
+#  cannot go negative at all -- it is a norm -- and D2's refusal is
+#  specifically about the DEFAULT `pseudo` source going negative).
+# ---------------------------------------------------------------------------
+
+def _build_free_dof_triaxial(tag, extra_opts=(), p0=None):
+    """A LadrunoBrick drained-triaxial cube with GENUINE free DOFs (the
+    positive-face nodes are LOADED, not `sp`-prescribed) -- see the note
+    above this function for why the refusal tests need this and the
+    zero-free-DOF rig cannot substitute for it."""
+    if p0 is None:
+        p0 = _PROBE_P0
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS,
+                   1, 2, 1, 1.0e-7, 1.0e-7,           # IntScheme, TanType, JacoType, TolF, TolR
+                   '-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM,
+                   *extra_opts)
+    ops.element('LadrunoBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag,
+               '-geom', 'linear', '-formulation', 'bbar')
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    q = p0 / 4.0
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.load(n, -q, 0.0, 0.0)
+            if y == 1.:
+                ops.load(n, 0.0, -q, 0.0)
+            if k == 1:
+                ops.load(n, 0.0, 0.0, -q)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormUnbalance', _PROBE_TOL_REL * p0, _PROBE_MAXITER, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_CONF)
+    ops.analysis('Static')
+
+
 def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchanged():
     """D2's refusal by symptom: a NEGATIVE pseudo-time increment (`ops_Dt < 0`)
     is refused via `LADRUNO_MATERIAL_REFUSED`, and the committed state is
@@ -569,20 +713,16 @@ def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchang
     negative under the DEFAULT (`pseudo`) dt source -- no limit point, no
     special integrator needed.
 
-    `LadrunoBrick`, not `stdBrick`: this test reads the ELEMENT-level return
-    code from `analyze()`, and `stdBrick` discards it
-    (`test_ladruno_sanisand_integrator.py`'s own rule).
+    A FREE-DOF deck, not the confine-first `sp` rig -- see the note above
+    `_build_free_dof_triaxial` for the measured reason (a refusal is
+    invisible to `analyze()`'s return code with zero free DOFs; the deck
+    still visibly PRINTS the refusal warning, it just cannot be asserted on
+    via the return code).
     """
     tag = 8212
-    opts = ('-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM, '-honorTolR', 0,
-            '-implex', '-maxSubsteps', _CAP_ADEQUATE)
-    sanint._build_brick(tag, opts)
-    sanint._confine(tag)
-
-    # A couple of NORMAL (positive dt) deviatoric steps first, so
-    # mImplexDtCommit > 0 by the time the negative step is tried.
-    for step in range(3):
-        assert ops.analyze(1) == 0, f'nominal deviatoric step {step + 1} failed'
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_free_dof_triaxial(tag, opts)
+    _establish_plastic_history(tag)
 
     before = list(ops.eleResponse(1, 'material', 1, 'stress'))
 
@@ -608,96 +748,51 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     tolerance, via `LADRUNO_MATERIAL_REFUSED`, and the committed state is
     unchanged across the refusal.
 
+    A FREE-DOF deck (`_build_free_dof_triaxial`), for the same measured
+    reason as the D2 test above: a zero-free-DOF deck's `analyze()` cannot
+    fail on a refusal at all (no equations to fail), so it would report
+    success and the committed state would move regardless of what the
+    material returned -- which is exactly the failure mode the first draft
+    of this test hit.
+
     THE DECK'S EXPECTATION IS QUALITATIVE, sourced from the P0 oracle's own
     measurement at the SAME calibrated parameters (`_adr92_p0_oracle_results.md`
     section 4, T2 table, p0 = 5 kPa): `implexError` grows from ~2.7e-3 at the
     nominal increment to 1.26 at 5x the nominal increment -- both values well
     on either side of the ADR-92 default tolerance (0.05). This test does not
-    try to reproduce those exact numbers (a different deck, a different path)
-    -- it takes several NOMINAL steps (expected to pass), then one step FIVE
-    TIMES the size (expected to fail the same way, on the same physics, at
-    the same low confinement), and asserts only the qualitative outcome the
-    oracle licenses: the big step is refused.
+    try to reproduce those exact numbers (a different deck, a different
+    control variable -- FORCE, not strain) -- it confines to p0 = 5 kPa (the
+    exact oracle confinement), takes `_PROBE_N_HISTORY` NOMINAL deviatoric
+    steps (expected to pass), then ONE step TEN TIMES that per-step load
+    (expected to fail the same way, on the same physics, at the same low
+    confinement), and asserts only the qualitative outcome the oracle
+    licenses: the big step is refused.
     """
     tag = 8213
-    opts = ('-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM, '-honorTolR', 0,
-            '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexControl', 0.05, 0.01)
-
-    # A low-confinement rig, LadrunoBrick (return-code observability), built
-    # directly (sanint._build_brick's series is tuned for its own ordinary
-    # confinement, not a specific low p0).
-    e_conf_lowp = 3.0e-7      # a small isotropic strain -> low p at the flip
-    n_conf = 10
-    e_ax_nominal = 5.0e-5     # ~nominal campaign increment, per step
-    n_nominal = 5
-    e_ax_big = 5 * e_ax_nominal   # the 5x jump
-
-    ops.wipe()
-    ops.model('basic', '-ndm', 3, '-ndf', 3)
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            ops.node(4 * k + j + 1, x, y, float(k))
-    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
-    ops.element('LadrunoBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag,
-               '-geom', 'linear', '-formulation', 'bbar')
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
-                    1 if k == 0 else 0)
-
-    s_lat = [i / n_conf for i in range(n_conf + 1)]
-    s_ax = list(s_lat)
-    r_lat = 0.5 * e_ax_nominal / e_conf_lowp     # isochoric lateral/axial ratio
-    for i in range(1, n_nominal + 1):
-        s_lat.append(1.0 - r_lat * i)
-        s_ax.append(1.0 + (e_ax_nominal / e_conf_lowp) * i)
-    # the one BIG step
-    s_lat.append(s_lat[-1] - 0.5 * e_ax_big / e_conf_lowp)
-    s_ax.append(s_ax[-1] + e_ax_big / e_conf_lowp)
-    s_lat.append(s_lat[-1])       # PathSeries hold point
-    s_ax.append(s_ax[-1])
-
-    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
-    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
-    ops.pattern('Plain', 1, 1)
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            n = 4 * k + j + 1
-            if x == 1.:
-                ops.sp(n, 1, -e_conf_lowp)
-            if y == 1.:
-                ops.sp(n, 2, -e_conf_lowp)
-    ops.pattern('Plain', 2, 2)
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            if k == 1:
-                ops.sp(4 * k + j + 1, 3, -e_conf_lowp)
-    ops.constraints('Transformation')
-    ops.numberer('Plain')
-    ops.system('FullGeneral')
-    ops.test('NormDispIncr', 1.0e-13, 25, 0)
-    ops.algorithm('Newton')
-    ops.integrator('LoadControl', 1.0)
-    ops.analysis('Static')
-
-    ops.updateMaterialStage('-material', tag, '-stage', 0)
-    for step in range(n_conf):
-        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
-    ops.updateMaterialStage('-material', tag, '-stage', 1)
-    for step in range(n_nominal):
-        assert ops.analyze(1) == 0, (
-            f'nominal deviatoric step {step + 1} failed -- the nominal '
-            'increment itself is expected to pass -implexControl')
+    _build_free_dof_triaxial(tag, opts, p0=5.0)
+    _establish_plastic_history(tag)
 
     before = list(ops.eleResponse(1, 'material', 1, 'stress'))
-    rc = ops.analyze(1)   # the 5x jump
+
+    # The 10x jump: a THIRD pattern, on top of the confinement (pattern 1)
+    # and the nominal deviatoric history (pattern 2), both already frozen by
+    # _establish_plastic_history's own loadConst.
+    big_dq = 10.0 * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -big_dq)
+    ops.integrator('LoadControl', 1.0)
+    rc = ops.analyze(1)
     assert rc != 0, (
-        'a deviatoric increment 5x the nominal one, at low confinement, was '
+        'a deviatoric load increment 10x the nominal one, at p0 = 5 kPa, was '
         'NOT refused by -implexControl. P0 measured implexError escalating '
-        'sharply with increment size at low p0 (section 4 of the oracle '
-        'results memo); if this genuinely never refuses on this deck, '
-        're-derive the deck rather than weakening this assertion', rc)
+        'sharply with increment size at this exact confinement (section 4 '
+        'of the oracle results memo); if this genuinely never refuses on '
+        'this deck, re-derive the deck rather than weakening this assertion',
+        rc)
 
     ops.reset()
     after = list(ops.eleResponse(1, 'material', 1, 'stress'))
