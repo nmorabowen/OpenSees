@@ -172,6 +172,8 @@ reporting convention.
 | G6 mass | massMod=0.5 -> frequencies scale by sqrt(2), stiffness untouched |
 | G7 refusals | R1-R4 each error cleanly; modifier 0.0 accepted |
 | G8 passthrough | `LayeredShell` wrapped at 1.0 -> identical nonlinear run |
+| G9 frame equivalence | flexure-controlled cantilever (L/d=10) built as a frame (`A,I x0.35`) and as a shell mesh (`f11,f22,f12 x0.35`): both soften by exactly 1/0.35 to 8 sig figs, and the shell/frame ratio is identical gross and cracked -- the modifier scales THROUGH the discretisation gap |
+| G10 in-plane no-op | `m11,m22,m12` and `v13,v23` change in-plane flexure by 0.0000%: out-of-plane modifiers are a silent no-op on a wall loaded in its own plane |
 
 ## 10. ETABS cross-validation
 

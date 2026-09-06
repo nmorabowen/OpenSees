@@ -2028,6 +2028,16 @@ features:
       modifiers distinct, analytic exact-doubling, SPD under f11=f22=0.01,
       Ep_mod parity, mass sqrt(2), the four refusals, and LayeredShell
       nonlinear passthrough.
+      G9/G10 (tests/test_ladrunoShellModifier_frame_equivalence.py, 6 more tests,
+      21 total): a flexure-controlled cantilever (L/d=10) built as a FRAME with
+      A,I scaled 0.35 and as a ShellMITC4 mesh with f11/f22/f12 scaled 0.35
+      softens by exactly 1/0.35 in BOTH, to 8 significant figures, and the
+      shell/frame ratio is identical gross and cracked — the modifier scales
+      through the discretisation gap rather than distorting it (that gap is
+      bilinear membrane locking: −12.6% at 20x2 → −0.5% at 120x24, while the
+      softening ratio is 2.8571 at every density). G10 pins the trap: m11/m22/m12
+      and v13/v23 change in-plane flexure by 0.0000%, so cracking a wall with the
+      "bending" modifiers is a SILENT no-op.
       ADR-87 D2 MUTATION GATE: family SHELLMOD, gated at the section accessors
       (getStressResultant / getSectionTangent / getInitialTangent) since the
       feature has no element of its own. ZERO score 0.733 (11/15 killed, floor
