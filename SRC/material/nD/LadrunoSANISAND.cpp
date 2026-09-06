@@ -1758,7 +1758,39 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // ---- W7: the refusal ---------------------------------------------------
     if (mImplexOpt.control) {
         this->ladrunoImplexMeasureError(mSigma, sigImplicit, mEpsilon);
-        if (mImplexError > mImplexOpt.errorTol) {
+
+        // Ladruno ADR-92 fix (BVP ctl regression, MEASURED 2026-09-06): do not
+        // refuse a step the extrapolation operator has not been PRIMED for.
+        //
+        // mImplexDEpsP is identically zero until the first commit after the
+        // elastoplastic stage flip (ladrunoImplexInitState's own contract, and
+        // what makes the first plastic step a pure elastic prediction). On that
+        // one step sigma~ = sigma_n + Ce:d_eps carries NO extrapolated plastic
+        // strain, so implexError is not measuring the extrapolation at all -- it
+        // is measuring the distance the IMPLICIT companion travels on its own,
+        // which at a stage flip includes the finite yield-surface drift
+        // correction of a committed stress that was accumulated elastically
+        // (mElastFlag == 0) and is now outside the freshly activated surface.
+        //
+        // That quantity does NOT vanish with d_eps, so refusing it makes the
+        // control refuse for ever and hands the driver a dead analysis. MEASURED
+        // on the ADR-92 BVP registered arm (adr92_bvp_fix/ctl_diag): with f = 1
+        // and |d_eps_p(n)| = 0 at every rung, the error over the seven-rung
+        // subdivision ladder ran 0.139 / 0.0758 / 0.145 / 0.110 / 0.0911 /
+        // 0.0811 / 0.0760 as |dt| fell 2e-5 -> 3.125e-7, i.e. it ASYMPTOTED at
+        // ~0.076 instead of decaying, and the leg died at s/B = 0.00000 having
+        // never taken a step. A pure elastic predictor's error must scale with
+        // d_eps; this one does not, which is the signature of a companion jump
+        // that is independent of the increment.
+        //
+        // The error is still measured, still accumulated, and still reported
+        // through implexError / implexDetail / avgImplexError -- only the
+        // REFUSAL is suppressed, and only on the un-primed step. An ordinary
+        // elastic step also has d_eps_p(n) = 0, but there sigma~ is exact and
+        // the error is ~0, so this guard cannot mask a real refusal.
+        const bool implexPrimed = (this->GetNorm_Cov(mImplexDEpsP) > 0.0);
+
+        if (implexPrimed && mImplexError > mImplexOpt.errorTol) {
             // Below the reduction limit there is nothing left to cut, so refusing
             // again would only turn a bounded inaccuracy into a dead analysis.
             //
