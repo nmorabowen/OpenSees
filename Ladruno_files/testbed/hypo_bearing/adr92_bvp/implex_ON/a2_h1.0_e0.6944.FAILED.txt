@@ -1,0 +1,1 @@
+h1.0_e0.6944: only 0 converged steps -- the push never started (step collapsed to the DS_MIN floor at s/B = 0.00000 (every ladder rung failed at ds = 0.000156 mm))

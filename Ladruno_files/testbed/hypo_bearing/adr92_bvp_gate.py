@@ -62,14 +62,23 @@ def load(root):
     return out
 
 
-def decompose(d):
+def decompose(d, refused=0):
     st, nf, ns, nr = d["steps"], d["nfail"], d["nsub"], d["nrelax"]
     rung3 = nr
     rung2 = nf - 3 * ns - 2 * nr
     rung1 = st - rung2 - rung3
-    fail_it = ns * sum(RUNG_CAPS) + rung2 * RUNG_CAPS[0] + rung3 * (RUNG_CAPS[0] + RUNG_CAPS[1])
+    # A step that FAILED ALL THREE RUNGS ground through every cap: charge it in full.
+    # But a step REFUSED by the material (-implexControl, -maxSubsteps) did not grind
+    # -- it was declined, often on the first evaluation of the first rung. Charging it
+    # three caps overstates the IMPL-EX arm badly: measured 2026-09-06, arm A came back
+    # 85.0 % "failed-rung iterations" while NO step had left rung 1, which is impossible
+    # as a ladder cost and is an artefact of this line. `refused` splits them.
+    ladder_fails = max(ns - refused, 0)
+    fail_it = (ladder_fails * sum(RUNG_CAPS) + refused * RUNG_CAPS[0]
+               + rung2 * RUNG_CAPS[0] + rung3 * (RUNG_CAPS[0] + RUNG_CAPS[1]))
     ok_it = st * CONVERGED_ITERS
     return dict(steps=st, rung1=rung1, rung2=rung2, rung3=rung3, nsub=ns,
+                refused=refused,
                 past1=(st - rung1) / st * 100.0 if st else float("nan"),
                 failshare=fail_it / (fail_it + ok_it) * 100.0 if (fail_it + ok_it) else 0.0)
 
@@ -81,7 +90,7 @@ def table(title, legs):
     print(hdr); print("-" * len(hdr))
     rows = []
     for d in legs:
-        k = decompose(d)
+        k = decompose(d, int(d.get('n_material_refused', 0) or 0))
         rows.append(k)
         flag = "yes" if d.get("implex") else ("?" if "implex" not in d else "no")
         print(f"{d['_dir']:>26}{flag:>8}{k['steps']:>7}{k['rung1']:>7}{k['rung2']:>7}"

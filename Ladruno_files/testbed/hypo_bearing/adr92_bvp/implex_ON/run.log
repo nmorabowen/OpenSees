@@ -1,0 +1,23 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 80e65a4de9bd6741261332b6f92de3a84bb4c642
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\adr92_bvp\implex_ON
+    date                        : 2026-09-06T01:29:30
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : on, control [0.05, 0.01]
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2400 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    LEG FAILED A CONTROL: h1.0_e0.6944: only 0 converged steps -- the push never started (step collapsed to the DS_MIN floor at s/B = 0.00000 (every ladder rung failed at ds = 0.000156 mm))
+
+done; run sanisand_tau0_summary.py on the output directory
+exit=0 01:29
