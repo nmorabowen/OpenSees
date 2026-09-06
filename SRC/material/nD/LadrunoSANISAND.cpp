@@ -44,6 +44,9 @@
 #include <OPS_Globals.h>                  // ops_InitialStateAnalysis (declared at OPS_Globals.h:75)
 #include <classTags.h>                    // ND_TAG_LadrunoSANISAND{,3D,PlaneStrain} -- added by stage S3
 #include <elementAPI.h>
+#include <MaterialResponse.h>             // Ladruno (ADR-86b): the -maxSubsteps diagnostic response
+#include <Information.h>
+#include <LadrunoMaterialStatus.h>        // Ladruno (ADR-86b): LADRUNO_MATERIAL_REFUSED
 
 #include <string.h>
 #include <math.h>
@@ -54,10 +57,26 @@
 //    nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi \
 //        $P_atm $m $h0 $ch $nb $A0 $nd $z_max $cz $Rho                         \
 //        <$IntScheme $TanType $JacoType $TolF $TolR>                           \
-//        <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0|1>
+//        <-Presidual $pr> <-Pmin $pmin> <-honorTolR 0|1> <-maxSubsteps $n>
 //
-//  The first 18 positional doubles and the 5 positional optionals are IDENTICAL
-//  to `nDMaterial ManzariDafalias`, so a deck migrates by renaming the command.
+//  The first 18 positional doubles and the 5 positional optionals occupy the
+//  SAME SLOTS as `nDMaterial ManzariDafalias`, so a deck migrates by renaming
+//  the command. ONE default differs, deliberately, as of ADR-86b:
+//
+//      TanType  vanilla parser 0 (ELASTIC tangent) -> here 2 (CONSISTENT)
+//
+//  Rationale (ADR-90 GATE U, LEDGER_quirks): `ManzariDafalias3D::getTangent()`
+//  returns `mCe` for TanType 0, so a deck that emits only the 18 positional
+//  parameters hands `algorithm Newton` an elastic tangent -- modified Newton
+//  with linear convergence, dressed as full Newton. It is invisible on a
+//  zero-free-DOF material-point deck (there are no equations to iterate) and
+//  cost ~7x of wall time on the first boundary-value problem this fork put the
+//  material into. Vanilla `OPS_ManzariDafaliasMaterial` KEEPS its own default
+//  of 0 (`ManzariDafalias.cpp:93`) -- it is not changed, because every existing
+//  vanilla deck and golden file depends on it. So the two parsers now disagree
+//  on this one slot, ON PURPOSE, and both say so.
+//  `mCep_Consistent` is UNSYMMETRIC under non-associated flow: pair TanType 2
+//  with an unsymmetric solver (`system Pardiso -matrixType 0`, UmfPack, ...).
 //
 //  ARGUMENT ARITHMETIC -- this parser deliberately does NOT compute
 //  `numArgs - k` to decide how many optionals to read. `OPS_SAniSandMSMaterial`
@@ -105,7 +124,8 @@ OPS_LadrunoSANISAND(void)
         opserr << "Want: nDMaterial LadrunoSANISAND tag? G0? nu? e_init? Mc? c? lambda_c? e0? ksi?"
                << " P_atm? m? h0? Ch? nb? A0? nd? z_max? cz? Rho?"
                << " <IntScheme? TanType? JacoType? TolF? TolR?>"
-               << " <-Presidual pr?> <-Pmin pmin?> <-honorTolR 0|1>" << endln;
+               << " <-Presidual pr?> <-Pmin pmin?> <-honorTolR 0|1>"
+               << " <-maxSubsteps n?>" << endln;
         return 0;
     }
 
@@ -113,16 +133,22 @@ OPS_LadrunoSANISAND(void)
     double dData[18];
     double oData[5];
 
-    oData[0] = 1;          // IntScheme   ) defaults identical to
-    oData[1] = 0;          // TanType     ) OPS_ManzariDafaliasMaterial,
-    oData[2] = 1;          // JacoType    ) so a renamed deck behaves
-    oData[3] = 1.0e-7;     // TolF        ) identically
+    oData[0] = 1;          // IntScheme   ) slots identical to
+    // Ladruno (ADR-86b): TanType default 0 -> 2. This is the ONE positional
+    // default that differs from OPS_ManzariDafaliasMaterial, and it differs on
+    // purpose -- see the long note at the head of this parser. 0 = mCe
+    // (ELASTIC), 1 = mCep, 2 = mCep_Consistent.
+    oData[1] = 2;          // TanType     ) OPS_ManzariDafaliasMaterial's,
+    oData[2] = 1;          // JacoType    ) and all but TanType carry the
+    oData[3] = 1.0e-7;     // TolF        ) same DEFAULT too
     oData[4] = 1.0e-7;     // TolR        )
 
     double presidual = 0.0;    // Ladruno: default -- a cohesionless sand has no cohesion
     double pmin      = -1.0;   // Ladruno: sentinel -- resolve to 1.0e-3 * P_atm in the ctor
     int    honorTolR = 0;      // Ladruno: default = vanilla's hardcoded ModifiedEuler
                                //          substep tolerance 1e-4 (ADR-86 PR-3)
+    int    maxSubsteps = 0;    // Ladruno (ADR-86b): 0 = UNCAPPED = vanilla, so every
+                               //          existing deck is byte-identical
 
     int numData = 1;
     if (OPS_GetIntInput(&numData, &tag) != 0) {
@@ -211,6 +237,22 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
+        else if (strcmp(argTok, "-maxSubsteps") == 0 || strcmp(argTok, "-maxsubsteps") == 0) {
+            // Ladruno (ADR-86b): the substep-COUNT cap on ModifiedEuler.
+            seenFlag = true;
+            numData  = 1;
+            if (OPS_GetIntInput(&numData, &maxSubsteps) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -maxSubsteps wants one non-negative integer" << endln;
+                return 0;
+            }
+            if (maxSubsteps < 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -maxSubsteps must be >= 0 (got " << maxSubsteps
+                       << "). 0 means UNCAPPED, which is vanilla's behaviour." << endln;
+                return 0;
+            }
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -231,7 +273,7 @@ OPS_LadrunoSANISAND(void)
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": unrecognized option '" << argTok << "'."
                        << " Expected a numeric positional optional or one of"
-                       << " -Presidual / -Pmin / -honorTolR" << endln;
+                       << " -Presidual / -Pmin / -honorTolR / -maxSubsteps" << endln;
                 return 0;
             }
             nPos++;
@@ -244,7 +286,7 @@ OPS_LadrunoSANISAND(void)
                             dData[6],  dData[7],  dData[8],  dData[9],  dData[10], dData[11],
                             dData[12], dData[13], dData[14], dData[15], dData[16], dData[17],
                             (int)oData[0], (int)oData[1], (int)oData[2], oData[3], oData[4],
-                            presidual, pmin, honorTolR);                              // Ladruno
+                            presidual, pmin, honorTolR, maxSubsteps);                 // Ladruno
 
     if (theMaterial == 0)
         opserr << "WARNING ran out of memory for nDMaterial LadrunoSANISAND material with tag: "
@@ -266,12 +308,13 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     double c, double lambda_c, double e0, double ksi, double P_atm, double m, double h0, double ch,
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
-    double Presidual, double Pmin, int honorTolR)
+    double Presidual, double Pmin, int honorTolR, int maxSubsteps)
   : ManzariDafalias(tag, classTag, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, ch,
                     nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType, JacoType, TolF, TolR),
     mPresidualInput(Presidual),
     mPminInput(Pmin),
-    mHonorTolR(honorTolR)                                                             // Ladruno
+    mHonorTolR(honorTolR),
+    mMaxSubsteps(maxSubsteps)                                                         // Ladruno
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
@@ -285,13 +328,14 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     double c, double lambda_c, double e0, double ksi, double P_atm, double m, double h0, double ch,
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
-    double Presidual, double Pmin, int honorTolR)
+    double Presidual, double Pmin, int honorTolR, int maxSubsteps)
   : ManzariDafalias(tag, ND_TAG_LadrunoSANISAND, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm,
                     m, h0, ch, nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType,
                     JacoType, TolF, TolR),
     mPresidualInput(Presidual),
     mPminInput(Pmin),
-    mHonorTolR(honorTolR)                                                             // Ladruno
+    mHonorTolR(honorTolR),
+    mMaxSubsteps(maxSubsteps)                                                         // Ladruno
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
@@ -306,7 +350,8 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
   : ManzariDafalias(classTag),
     mPresidualInput(0.0),
     mPminInput(-1.0),
-    mHonorTolR(0)                                                                     // Ladruno
+    mHonorTolR(0),
+    mMaxSubsteps(0)                                                                   // Ladruno
 {
     this->applyLadrunoConstants();
 }
@@ -316,7 +361,8 @@ LadrunoSANISAND::LadrunoSANISAND()
   : ManzariDafalias(ND_TAG_LadrunoSANISAND),
     mPresidualInput(0.0),
     mPminInput(-1.0),
-    mHonorTolR(0)                                                                     // Ladruno
+    mHonorTolR(0),
+    mMaxSubsteps(0)                                                                   // Ladruno
 {
     this->applyLadrunoConstants();
 }
@@ -359,6 +405,15 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
                << " substep tolerance 1e-4)." << endln;
         mHonorTolR = 0;
     }
+    // Ladruno (ADR-86b): the base seam is an `int` substep COUNT, so a negative
+    // value is not "a different cap", it is a nonsense one -- and because the
+    // guard tests `> 0`, a negative would silently mean "uncapped" instead of
+    // being refused. Refuse it here for the same reason the parser does.
+    if (mMaxSubsteps < 0) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": maxSubsteps = " << mMaxSubsteps
+               << " < 0 is meaningless; using 0 (UNCAPPED, vanilla's behaviour)." << endln;
+        mMaxSubsteps = 0;
+    }
 }
 
 // ===========================================================================
@@ -391,6 +446,7 @@ LadrunoSANISAND::applyLadrunoConstants(void)
     m_Presidual     = mPresidualInput;
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
+    mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
 }
 
 // Ladruno (ADR-86 PR-3): does this deck's IntScheme actually reach the code that
@@ -482,6 +538,24 @@ LadrunoSANISAND::echoLadrunoConstants(void)
            << (mHonorTolR ? ", this deck's TolR" : ", vanilla's hardcoded value")
            << ")";
 
+    // Ladruno (ADR-86b): the TANGENT the deck will actually run. This is echoed
+    // because the parser default MOVED (0 -> 2) and a silent default change is
+    // exactly the defect class this class exists to make impossible. Named as a
+    // tangent, not as a number, so the reader does not have to remember the map.
+    opserr << ", TanType = " << (int)mTangType << " ("
+           << ((int)mTangType == 0 ? "ELASTIC mCe -- Newton degrades to modified Newton"
+              : ((int)mTangType == 1 ? "continuum mCep" : "consistent mCep_Consistent (unsymmetric)"))
+           << ")";
+
+    // Ladruno (ADR-86b): the substep-count cap. Say the NUMBER and say what
+    // happens when it fires -- "0" alone reads like "no substeps".
+    opserr << ", maxSubsteps = " << mMaxSubsteps;
+    if (mMaxSubsteps == 0)
+        opserr << " (UNCAPPED, vanilla: dT_min = 1e-6 is the only bound)";
+    else
+        opserr << " (ModifiedEuler FAILS the update past this many substeps,"
+                  " so the step can be cut)";
+
     // ADR 86 D5a (still open) / D5b (repaired in vanilla by PR-2).
     // The PR-1 text here read "D_factor ... ships UNCHANGED and is still
     // kPa-dimensional in this PR". PR-2 non-dimensionalised the sigmoid at all
@@ -514,6 +588,20 @@ LadrunoSANISAND::echoLadrunoConstants(void)
                        " unconditionally -- ModifiedEuler was the outlier that did"
                        " not, which is why the seam exists."
                      : " Use IntScheme 1 (ModifiedEuler) if you want it.")
+               << endln;
+    }
+
+    // Ladruno (ADR-86b): -maxSubsteps reads the SAME single site as -honorTolR
+    // (inside ModifiedEuler), so it has exactly the same inertness hazard and
+    // gets exactly the same warning. Kept as a separate `if` rather than folded
+    // into the one above so that a deck setting only one of the two flags is
+    // told about the one it set.
+    if (mMaxSubsteps != 0 && !this->schemeReachesModifiedEuler()) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -maxSubsteps " << mMaxSubsteps << " has NO EFFECT with IntScheme "
+               << (int)mScheme << ". The seam it sets (ManzariDafalias mMaxSubstepsInME)"
+               << " is read at exactly one site, inside ModifiedEuler(), and this scheme"
+               << " does not route there. Use IntScheme 1 (ModifiedEuler) if you want it."
                << endln;
     }
 }
@@ -577,14 +665,14 @@ LadrunoSANISAND::getCopy(const char *type)
         clone = new LadrunoSANISANDPlaneStrain(this->getTag(), m_G0, m_nu, m_e_init, m_Mc,
                        m_c, m_lambda_c, m_e0, m_ksi, m_P_atm, m_m, m_h0, m_ch, m_nb, m_A0,
                        m_nd, m_z_max, m_cz, massDen, mScheme, mTangType, mJacoType, mTolF, mTolR,
-                       mPresidualInput, mPminInput, mHonorTolR);                      // Ladruno
+                       mPresidualInput, mPminInput, mHonorTolR, mMaxSubsteps);        // Ladruno
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
         clone = new LadrunoSANISAND3D(this->getTag(), m_G0, m_nu, m_e_init, m_Mc, m_c, m_lambda_c,
                        m_e0, m_ksi, m_P_atm, m_m, m_h0, m_ch, m_nb, m_A0, m_nd, m_z_max, m_cz,
                        massDen, mScheme, mTangType, mJacoType, mTolF, mTolR,
-                       mPresidualInput, mPminInput, mHonorTolR);                      // Ladruno
+                       mPresidualInput, mPminInput, mHonorTolR, mMaxSubsteps);        // Ladruno
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -604,6 +692,14 @@ LadrunoSANISAND::getCopy(const char *type)
 //      data(1) = mPminInput        (as given; < 0 = "1e-3*P_atm" sentinel)
 //      data(2) = m_Presidual       (the RESOLVED value actually in force)
 //      data(3) = (double)mHonorTolR
+//      data(4) = (double)mMaxSubsteps   (Ladruno, ADR-86b)
+//
+//  ADR-86b widened this Vector(4) to a Vector(5). Both ends of any channel are
+//  the SAME BUILD in every supported workflow (an MP job runs one binary; a
+//  FileDatastore is read back by the engine that wrote it), so this is a
+//  fork-internal format and no compatibility shim is owed. What it DOES break is
+//  reading a datastore written by a pre-ADR-86b build -- that is a size mismatch
+//  on a different FileDatastore file, i.e. a loud failure, not a silent one.
 //
 //  data(2) is redundant with data(0) today. It is sent anyway so a restored
 //  material can be compared against what the sender was actually running without
@@ -627,12 +723,13 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(4);                                                     // Ladruno
+    static Vector ladrunoData(5);                                                     // Ladruno
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
     ladrunoData(2) = m_Presidual;
     ladrunoData(3) = (double)mHonorTolR;
+    ladrunoData(4) = (double)mMaxSubsteps;   // Ladruno (ADR-86b)
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -653,7 +750,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(4);                                                     // Ladruno
+    static Vector ladrunoData(5);                                                     // Ladruno
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -667,12 +764,81 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
     mHonorTolR      = (int)ladrunoData(3);
+    mMaxSubsteps    = (int)ladrunoData(4);   // Ladruno (ADR-86b)
 
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
     this->applyLadrunoConstants();                                                    // Ladruno
 
     return 0;
+}
+
+// ===========================================================================
+//  Ladruno (ADR-86b): the substep-cap status, and its diagnostic response
+// ===========================================================================
+
+// The rule the wrappers' setTrialStrain returns, in ONE place.
+//
+// `mSubstepCapHitInME` is reset at the top of every ManzariDafalias::integrate()
+// and set only by ModifiedEuler()'s cap, so it describes THIS material update
+// and no earlier one. When it is set the strain increment was not integrated:
+// the trial state is partially updated (harmless -- nothing reads it after a
+// failed update) and the COMMITTED state is untouched, because integrate()
+// writes only trial members.
+//
+// LADRUNO_MATERIAL_REFUSED, not a bare -1, and the distinction is load-bearing:
+// see the long note in SRC/material/LadrunoMaterialStatus.h. In one line --
+// `ASDConcrete3DMaterial` already returns a negative code to mean "an inner
+// iteration missed, here is my best state", and the fork's own rule (ADR-33/34,
+// LEDGER_quirks) is that such a code must NOT fail the step, because doing so
+// makes softening analyses fragile. Measured: propagating any `< 0` in
+// LadrunoBrick killed two long-green ASDConcrete mesh-objectivity gates. This
+// code means something else -- "the increment was not integrated at all" -- so
+// it gets its own value and the element propagates only that.
+//
+// NOT applied to schemes that never call ModifiedEuler: on those the flag can
+// never be set, so this is 0 by construction rather than by a branch.
+int
+LadrunoSANISAND::ladrunoUpdateStatus(void) const
+{
+    return mSubstepCapHitInME ? LADRUNO_MATERIAL_REFUSED : 0;
+}
+
+// Ladruno (ADR-86b): "substeps" / "substepsME" -- what the last update cost.
+//
+// Cheap by construction: two ints already maintained by the integrator, read
+// through the ordinary MaterialResponse path, so nothing is computed for a deck
+// that does not ask. Defined on the BASE Ladruno class, so LadrunoSANISAND3D and
+// LadrunoSANISANDPlaneStrain (neither of which overrides setResponse) inherit
+// it, and anything else falls through to ManzariDafalias::setResponse unchanged.
+//
+// The id only has to miss the base's 1..8; it is not a class tag and nothing may
+// derive one from it. Named for what it reports rather than for its digits, and
+// `constexpr` rather than a macro for the same reasons as the refusal code.
+constexpr int LadrunoSanisandSubstepResponseID = 33086;   // Ladruno (ADR-86b)
+
+Response *
+LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
+{
+    if (argc > 0 && (strcmp(argv[0], "substeps") == 0 ||
+                     strcmp(argv[0], "substepsME") == 0 ||
+                     strcmp(argv[0], "ladrunoSubsteps") == 0)) {
+        static Vector probe(2);
+        return new MaterialResponse(this, LadrunoSanisandSubstepResponseID, probe);
+    }
+    return ManzariDafalias::setResponse(argv, argc, output);
+}
+
+int
+LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
+{
+    if (responseID == LadrunoSanisandSubstepResponseID) {
+        static Vector out(2);
+        out(0) = (double)mSubstepsTakenInME;   // substeps spent in the LAST update
+        out(1) = mSubstepCapHitInME ? 1.0 : 0.0;
+        return matInformation.setVector(out);
+    }
+    return ManzariDafalias::getResponse(responseID, matInformation);
 }
 
 // ===========================================================================
@@ -705,6 +871,32 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
       << ",  TanType = " << (int)mTangType << ",  JacoType = " << (int)mJacoType << endln;
     s << "  TolF       = " << mTolF << ",  TolR = " << mTolR
       << ",  honorTolR = " << mHonorTolR << endln;
+    // Ladruno (ADR-86b): the substep cap and the state it left behind.
+    s << "  maxSubsteps = " << mMaxSubsteps
+      << (mMaxSubsteps == 0 ? "  (UNCAPPED = vanilla; ModifiedEuler is bounded only by"
+                              " dT_min = 1e-6, i.e. up to 1e6 substeps per update)"
+                            : "  (ModifiedEuler returns FAILURE past this count instead of"
+                              " force-accepting; the committed state is left untouched)") << endln;
+    s << "             last update: " << mSubstepsTakenInME << " ModifiedEuler substep(s)"
+      << (mSubstepCapHitInME ? ", CAP HIT (that update did not integrate)" : "") << endln;
+    // Ladruno (ADR-86b): the same inertness note the -honorTolR block below carries.
+    // Both flags drive seams read at EXACTLY ONE site, inside ModifiedEuler(), so on
+    // a scheme that never routes there the cap is stored, echoed, wired -- and does
+    // nothing. NB IntScheme 7 is called INT_MAXSTR_MFE and does NOT reach
+    // ModifiedEuler: MaxStrainInc has no case for it and falls through to
+    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name;
+    // schemeReachesModifiedEuler() encodes the switch and is correct as written.
+    if (mMaxSubsteps != 0 && !this->schemeReachesModifiedEuler())
+        s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
+             " ModifiedEuler(), so -maxSubsteps is INERT on this deck." << endln;
+    // A record that also states what the cap would COST if it fired: the element
+    // must propagate the refusal. LadrunoBrick does; Brick / BrickUP / QuadUP /
+    // stdBrick discard it, and under those a capped run is invalid, not merely
+    // un-cut. The material cannot see its element, so this is a statement, not a
+    // check.
+    if (mMaxSubsteps != 0)
+        s << "             NOTE: a cap is only safe under an element that PROPAGATES"
+             " a material refusal (today: LadrunoBrick)." << endln;
     // Ladruno (ADR-86 PR-3): the seam is wired now (it was "inactive in PR-1").
     // Report the tolerance the integrator ACTUALLY ran with, and whether this
     // deck's scheme even reaches the site that reads it -- a record that says

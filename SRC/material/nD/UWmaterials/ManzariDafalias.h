@@ -196,6 +196,37 @@ class ManzariDafalias : public NDMaterial
 	// Gmax = B*P_atm/(0.3+0.7*en*en)*sqrt(p/P_atm) and never mention m_e_init or
 	// this flag.
 	bool    mUseCurrentVoidRatioInG;
+	// Ladruno (ADR-86b): substep-COUNT cap seam for ModifiedEuler.
+	// ManzariDafalias::ModifiedEuler() bounds its adaptive substep only from
+	// BELOW (`dT_min = 1e-6`), never by a COUNT, so one Gauss-point update can
+	// cost up to 1e6 return maps. Measured on a strip footing on softening
+	// SANISAND (ADR-90 GATE U): single `analyze(1)` calls of 11-34 minutes, with
+	// the stepping controller using 0 of its 80 subdivisions -- the integrator
+	// never failed, it just did not terminate in useful time, so nothing
+	// upstream could react. See LEDGER_quirks.md and _adr90_tau0_qu_band.md §6.3.
+	//
+	//   mMaxSubstepsInME    0 = UNCAPPED = vanilla. Any positive value caps the
+	//                       substeps a single material update (one integrate())
+	//                       may spend inside ModifiedEuler, summed over every
+	//                       inner call, and makes the update FAIL when it is hit
+	//                       rather than silently force-accepting.
+	//   mSubstepsTakenInME  diagnostic counter, reset at the top of integrate().
+	//                       Its increment SATURATES at INT_MAX (signed overflow is
+	//                       UB, and a wrapped counter would silently re-arm a cap
+	//                       that had already fired). Kept `int`, not widened: the
+	//                       seam, the wire slot and the response all carry an int.
+	//   mSubstepCapHitInME  set when the cap fires; reset at the top of
+	//                       integrate(), so it is sticky across the several
+	//                       ModifiedEuler calls MaxEnergyInc/MaxStrainInc make
+	//                       inside ONE material update. Read by the fork
+	//                       wrappers' setTrialStrain to return non-zero.
+	//
+	// The default 0 makes the guard `mMaxSubstepsInME > 0 && ...` select the
+	// false branch verbatim -- vanilla is bit-identical, and nothing but a
+	// derived constructor ever writes a non-zero value.
+	int     mMaxSubstepsInME;
+	int     mSubstepsTakenInME;
+	bool    mSubstepCapHitInME;
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	double	m_Pmin;			// Minimum allowable mean effective stress
     double  m_Presidual;    // small residual pressure (due to cohesion)

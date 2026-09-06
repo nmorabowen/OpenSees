@@ -95,7 +95,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double nd, double z_max, double cz, double mDen,
                     int integrationScheme = 1, int tangentType = 0, int JacoType = 1,
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
-                    double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0);   // Ladruno
+                    double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
+                    int maxSubsteps = 0);   // Ladruno
 
     // full constructor, classTag defaults to ND_TAG_LadrunoSANISAND.
     // Defaults of the five optional integration args match the base's
@@ -105,7 +106,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double nd, double z_max, double cz, double mDen,
                     int integrationScheme = 2, int tangentType = 2, int JacoType = 1,
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
-                    double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0);   // Ladruno
+                    double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
+                    int maxSubsteps = 0);   // Ladruno
 
     // specific-type null constructor (used by the wrappers' null constructors)
     LadrunoSANISAND(int classTag);
@@ -135,7 +137,24 @@ class LadrunoSANISAND : public ManzariDafalias
 
     void Print(OPS_Stream &s, int flag = 0);
 
+    // --- ADR-86b: the substep cap's two public seams -------------------------
+
+    // Ladruno (ADR-86b): "substeps" / "substepsME" -- the ModifiedEuler substep
+    // count of the LAST material update at this integration point, and whether
+    // the cap fired. Response IDs are in the 3308x band so they cannot collide
+    // with the base's 1..8. Added on the BASE Ladruno class so both wrappers
+    // inherit them (neither overrides setResponse).
+    Response *setResponse(const char **argv, int argc, OPS_Stream &output);
+    int       getResponse(int responseID, Information &matInformation);
+
   protected:
+
+    // Ladruno (ADR-86b): the status the wrappers' setTrialStrain returns.
+    // 0 = the update integrated; -1 = the substep cap fired, the strain
+    // increment was NOT integrated, and the committed state is untouched.
+    // Both LadrunoSANISAND3D and LadrunoSANISANDPlaneStrain call this rather
+    // than reading mSubstepCapHitInME directly, so the rule lives in one place.
+    int ladrunoUpdateStatus(void) const;   // Ladruno
 
     double mPresidualInput;   // Ladruno: p_residual as given by the user (>= 0)
     double mPminInput;        // Ladruno: p_min as given; < 0 is the SENTINEL for
@@ -151,6 +170,17 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          mHonorTolRInME is the base-side seam it acts
                               //          on, and keeping them distinct keeps the two
                               //          greppable apart.
+    int    mMaxSubsteps;      // Ladruno (ADR-86b): the DECK-LEVEL request, >= 0.
+                              //          0 = UNCAPPED = vanilla, the default, so every
+                              //          existing deck stays byte-identical. A positive
+                              //          value is wired to the base's `int
+                              //          mMaxSubstepsInME` seam, which
+                              //          ManzariDafalias::ModifiedEuler() reads as a
+                              //          substep-COUNT cap and on which it FAILS the
+                              //          update rather than force-accepting. Same
+                              //          two-name convention as mHonorTolR above: this
+                              //          is the request, mMaxSubstepsInME is the
+                              //          base-side seam it acts on.
 
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the

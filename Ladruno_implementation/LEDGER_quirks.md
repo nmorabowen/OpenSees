@@ -1634,7 +1634,9 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
 - **The projection's singularity guard must be a CONDITION-NUMBER gate, not an exact-pivot test-solve.** `LadrunoConstraintProjector::buildMass` used to probe `LtML = LᵀML` with a single `Matrix::Solve(e0,x0)`, which only fails on an EXACT zero pivot. A *near*-singular `LtML` (a barely-dependent retained direction, hugely disparate tied masses, a near-redundant constraint) passes the solve, then `project()` amplifies round-off into a garbage acceleration — silently wrong. P6 estimates `cond = λmax/λmin` of the SPD `LtML` via a self-contained cyclic-**Jacobi** symmetric eigensolve (`ladrunoSymEigJacobi`, ~50 lines, no LAPACK — deliberately, to sidestep the bundled-LAPACK `dsygv_`-missing gap, [[project_zonea_link_blocker]]); **refuse** above `1e12` (also catches exact-singular `λmin≤0`), **warn** above `1e8`. Jacobi `t`-form root `θ=(aqq−app)/(2apq)`, `t=sign(θ)/(|θ|+√(θ²+1))` (smaller root) is exact even for a 1e13:1 eigenvalue spread.
 - **To TEST the cond gate you need a group with nRet≥2** — a single `equalDOF` makes `LtML` a 1×1 scalar (cond≡1, never trips). Use a **multi-master `equationConstraint`** (`equationConstraint(cN,cD,1.0, r1N,r1D,-0.5, r2N,r2D,-0.5)` ⇒ `u_c=0.5u_{r1}+0.5u_{r2}`, two retained DOFs in ONE group). A retained-mass ratio of `1e13` gives `LtML≈[[1e13,0.25],[0.25,1.25]]`, `cond≈8e12` → refused; `1e10` → `cond≈8e9` (warn, runs). A tiny ROTATIONAL mass on a rigidLink-beam master does NOT ill-condition `LtML` (the slave's translational mass props the retained `rz` up through the lever arm — that is the projection working, not a defect).
 - **Frozen-Ccr staleness: the lever arm that goes stale is the master-ROTATION → slave-TRANSLATION cross term, NOT any rotational tie.** A direct `equalDOF` on `rz` (rotation→rotation, coeff 1) is exact under any rotation and must NOT be flagged; a rigidLink-beam / rigidDiaphragm couples master `rz` into slave `ux,uy` (the offset lever arm) and DOES drift past ~0.1 rad. `flagRotMonitor` requires `masterDof` rotational AND `slaveDof` translational (rotational test by OpenSees convention from `ndm=node->getCrds().Size()`, `ndf`: `(ndm==2&&dof≥2)||(ndm==3&&ndf≥6&&dof≥3)`; translational = `dof<ndm`). The warn-once latch + per-step drift read live in the handler's `applyLoad()` (already the per-step hook).
-- **NEVER use `ops.logFile` to capture `opserr` in a pytest — it POLLUTES every later test in the shared openseespy process. Use pytest `capfd`.** `ops.logFile(path,"-noEcho")` calls `opserr.setFile(path,...)` and there is NO command to restore `opserr` to the console — so once any test redirects `opserr` to a file, EVERY subsequent test in the same process (openseespy is ONE process per pytest session) that reads `opserr` from stderr gets an EMPTY string (`assert 'X' in ''`). The P6 staleness test first used `logFile` (it passed in isolation AND in the projection-only battery, since nothing captured `opserr` after it) and on the FULL Zone-A run it silently broke 7 downstream mass-scaling / consistent-PCG tests that capture `opserr` via `capfd` — **green locally, red on CI**. **Fix: capture with pytest's `capfd` fixture** (`out = capfd.readouterr(); txt = out.err + out.out`) — file-descriptor level, per-test, non-polluting, does NOT redirect `opserr` away (it is also how the mass-scaling tests capture their `-verbose`/warning reports). **General lesson: any global OpenSees stream/state mutation in a test (logFile, a left-open recorder, defaultUnits) leaks across the whole shared-process suite — before trusting a new test's green, run it TOGETHER with the broader integrator/mass-scaling set, not just its own file.** Learned 2026-06-21, P6 (#337 → #338 test-fix follow-up).
+- **NEVER use `ops.logFile` to capture `opserr` in a pytest — it POLLUTES every later test in the shared openseespy process. Use pytest `capfd`.** `ops.logFile` is **PROCESS-GLOBAL** state, not per-test: `ops.logFile(path,"-noEcho")` calls `opserr.setFile(path,...)` and there is **NO "off"** — no command to restore `opserr` to the console — so once any test redirects `opserr` to a file, it **steals `opserr` from every later `capfd`-based test in the same session**: EVERY subsequent test in the same process (openseespy is ONE process per pytest session) that reads `opserr` from stderr gets an EMPTY string (`assert 'X' in ''`). Capture with `capfd` **inside pytest** instead — it is file-descriptor level and does not touch `opserr`'s own redirect state. The P6 staleness test first used `logFile` (it passed in isolation AND in the projection-only battery, since nothing captured `opserr` after it) and on the FULL Zone-A run it silently broke 7 downstream mass-scaling / consistent-PCG tests that capture `opserr` via `capfd` — **green locally, red on CI**. **Fix: capture with pytest's `capfd` fixture** (`out = capfd.readouterr(); txt = out.err + out.out`) — file-descriptor level, per-test, non-polluting, does NOT redirect `opserr` away (it is also how the mass-scaling tests capture their `-verbose`/warning reports). **General lesson: any global OpenSees stream/state mutation in a test (logFile, a left-open recorder, defaultUnits) leaks across the whole shared-process suite — before trusting a new test's green, run it TOGETHER with the broader integrator/mass-scaling set, not just its own file.** Learned 2026-06-21, P6 (#337 → #338 test-fix follow-up).
+- **RE-HIT 2026-09-05 (ADR-86b), and the symptom is worth recording because it does not look like this entry.** A new gate used `ops.logFile` to count a material warning and "released" it by redirecting to a *second* file — which is not a release, there is no release. The two `capfd` gates later in the SAME FILE then read `''` and failed with *"an explicit `TanType 0` did not survive the parser"* — an assertion about the PARSER, on a file that had never been near the parser. **A `logFile` leak presents as a wrong-looking failure in unrelated assertions, not as a missing-output failure**, so the entry above is the thing to search for when a capture is inexplicably empty. Note the companion entry further down (`ops.logFile(path, '-noEcho')` is how a *driver* captures `opserr`) is about a standalone script, where the process ends with the run; the two are not in conflict, and neither applies to the other's setting.
+- **When a gate genuinely needs a fresh, uncontended process-wide state** — a throttle budget, a once-per-process latch — neither tool is the answer: run it in a CHILD process via `tests/_testbed/subprocess_run.run_python_script`. ADR-86b's cap gate asserts against a budget of 10 that a sibling test in the same file spends hundreds of times over; in-process it would pass or fail on file order.
 - **WINDOWS STALE-OBJECT BUILD TRAP: `build.bat OpenSees OpenSeesPy` can link a STALE object for a just-edited `.cpp` into the `.pyd`.** After editing `LadrunoConstraintProjector.cpp`, a combined `OpenSees OpenSeesPy` build (exit 0) produced an `opensees.pyd` that still ran the OLD `buildMass` (cond gate absent → an ill-conditioned model that should refuse ran clean). Re-running `build.bat OpenSeesPy` ALONE (after touching the file again) recompiled it and the gate appeared. Symptom: a behavior change you just implemented is absent despite a green build. **Fix/avoid:** when a single-file edit's behavior is missing after a multi-target build, rebuild the **single** consumer target (`OpenSeesPy`) to force the recompile, or wipe the build dir. CI (fresh g++ from scratch) is unaffected — this is a Windows incremental-build quirk only. Learned 2026-06-21, P6 (#334-followup).
 
 ### ADR-41 C1 mortar kernel: the constant-pressure patch test does NOT catch the things you'd expect — it reduces to `Σφ=1` and passes even on broken geometry; the clip's real job is exactness, and silent area-bias hides under it
@@ -4339,6 +4341,40 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   `strict_convergence 1` before you suspect anything else**; a clean run under
   the flag rules this defect out in one shot.
 
+### `stdBrick`/`BrickUP`/`QuadUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b)
+
+- **Bites:** any material that refuses a trial strain (a strict-mode ASDP
+  rejection, a `ManzariDafalias`/`LadrunoSANISAND` substep-cap refusal, ...)
+  hosted in `stdBrick`, `BrickUP`, or `QuadUP`. `Brick::update()` writes
+  `success = ...->setTrialStrain(strain);` and then **unconditionally**
+  `return 0;` — the code is assigned and never read. `BrickUP`/`QuadUP` call
+  `setTrialStrain` inside a *void* `formResidAndTangent`, so there is no return
+  path for the code at all. So the material refuses, prints its `opserr` line,
+  returns a failure code — and the analysis reports success regardless of what
+  that code was.
+- **Why:** these are vanilla elements, written before any Ladruno material
+  needed a fail-loud contract; nobody expected `setTrialStrain` to return
+  anything worth checking. Found while measuring ADR-84 P2a's
+  `strict_convergence` gate (§6c finding 2) — `TenNodeTetrahedron` already
+  accumulates and returns the sum (a pre-existing fork fix, TIMs report item
+  8), which is why the ADR-84 contract tests use the tet host instead of
+  `stdBrick`.
+- **Deliberately NOT fixed for `stdBrick`:** `return success` is an
+  unconditional behaviour change for every `stdBrick` + every material, which
+  is precisely the blast radius an opt-in refusal contract exists to avoid.
+  Pinned by `tests/test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal`
+  so that fixing `Brick.cpp` shows up as a loud, informative test failure
+  rather than a mystery elsewhere.
+- **Workaround/status (2026-09-05, ADR-86b review-fix):** **`LadrunoBrick` now
+  propagates the sentinel (`LADRUNO_MATERIAL_REFUSED`) on ALL FIVE `update()`
+  paths, including `updateHypo` and `formEAStrue`** (ADR-86b's original repair
+  covered four of five; the review pass confirmed `updateHypo`/`formEAStrue`
+  are also sentinel-aligned, not the blanket `< 0` an earlier ledger row
+  mistakenly claimed — see `LEDGER_implementations.md`'s ADR-86b row). **`stdBrick`,
+  `BrickUP`, and `QuadUP` still swallow the refusal, unchanged** — this defect
+  is not fixed on any vanilla element, only worked around by using
+  `LadrunoBrick` for every gate that needs the return code to mean something.
+
 ### A `special_return` hook that writes the tangent itself SILENTLY OVERRIDES `tangent_type` (FIXED, ADR-84 P3)
 
 - **Bites:** any ASDP yield function opting into `yf_has_special_return`
@@ -5073,6 +5109,19 @@ dressed as full Newton.
   this is free accuracy-wise. Measured on the WP-A2 deck, `q` at the matched `s/B = 0.002`
   checkpoint moved **0.52 %** between the two configurations.
 
+> **FIXED for `LadrunoSANISAND` in WP-86b (ADR-86b, PR pending); NOT fixed in vanilla, on purpose.**
+> `OPS_LadrunoSANISAND`'s `oData[1]` now defaults to **2** (the consistent tangent), and the
+> construction echo NAMES the tangent it will run (`TanType = 2 (consistent mCep_Consistent
+> (unsymmetric))`), so the change cannot be silent either.
+> **`OPS_ManzariDafaliasMaterial` keeps its own default of `0`** (`ManzariDafalias.cpp:93`,
+> re-verified at source during WP-86b) — every existing vanilla deck and every golden file produced
+> by one depends on it, and moving it would be a silent answer-change in exactly the way this entry
+> complains about. So **the two parsers now disagree on this one positional slot, deliberately.**
+> An emitter or a deck that names all five positionals is immune to both defaults and to any future
+> move; do that rather than relying on either.
+> Note the null and parallel constructors already defaulted to 2 (`:365`, `:426`), so the fork
+> parser is now the one that AGREES with them and vanilla's parser is the outlier.
+
 ## Newton cannot reach a tight `NormDispIncr` on SANISAND — the substepped `ModifiedEuler` return makes the discrete map only piecewise smooth and the residual STALLS around 1e-6 m
 
 **Found 2026-09-05, ADR-90 WP-A2.**
@@ -5104,6 +5153,13 @@ ADR-63 note-71 failure mode.
   h0 = 0.25 than at h0 = 1.0, so the same nominal number is a different physical requirement on
   each mesh of the sequence. A force tolerance scaled by `gamma*V` is identical on all three by
   construction.
+
+> **DOCUMENTED, NOT CHANGED, in WP-86b (ADR-86b T3, PR pending).** Written up as a deck rule in
+> `86_ladruno_sanisand_apegmsh_emitter_guide.md` §6 with the measured table. **Deliberately NO
+> runtime warning:** a material cannot see which convergence test the deck installed, so any check
+> would have to live in the analysis layer and would fire on every non-SANISAND deck that ever uses
+> a displacement norm. The stall is a property of the substepped return, not of the deck, so the
+> guidance is the fix.
 
 ## `LadrunoBrick -b` is a body force **per unit VOLUME**, not per unit mass — it is never multiplied by rho
 
@@ -5203,6 +5259,45 @@ once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of
   while every regularized run finishes at 250 steps on every mesh. The cost explosion IS the
   ill-posedness.
 
+> **ADDRESSED in WP-86b (ADR-86b, PR pending) — opt-in, default unchanged.** `nDMaterial
+> LadrunoSANISAND` gains **`-maxSubsteps N`**, wired to a new vanilla flag seam
+> `ManzariDafalias::mMaxSubstepsInME` read at the top of `ModifiedEuler`'s `while (T < 1.0)`.
+> **Default `0` = UNCAPPED = exactly the behaviour described above**, so nothing changes for a deck
+> that does not ask, and vanilla `ManzariDafalias` stays bit-identical.
+> Past the cap the integrator does **NOT** force-accept — force-accepting is what hid the cost in
+> the first place. It flags, prints one throttled `opserr` line naming tag/`T`/`dT` (PROCESS budget
+> of 10), and returns; the committed state is untouched (`integrate()` writes only trial members),
+> `setTrialStrain` returns `-1`, and the step FAILS so a subdivision controller finally has
+> something to react to. Precedent: ADR-84's `strict_convergence`.
+> **Size the cap from a measurement, not a guess:** `eleResponse <ele> material <gp> substeps`
+> returns `[substeps_taken, cap_hit]` for the last update at that point.
+> **THE PRECONDITION, and it is the sharp edge of this feature.** A cap is only safe under an
+> element that **propagates** a material refusal — today **`LadrunoBrick` only**. The capped update
+> returns at `T < 1`, so it leaves a **partially-integrated** trial stress/`alpha`/`fabric` and a
+> partial `aCep_Consistent`. An element that discards the return code assembles that partial state
+> and reports convergence, which is strictly **WORSE** than the un-capped force-accept it replaces
+> (that at least always drove `T` to 1). Under vanilla `Brick` (`update()` discards it), `BrickUP` /
+> `QuadUP` (`setTrialStrain` inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and
+> `stdBrick`, **a capped run is INVALID, not merely un-cut.** Nothing checks this at run time — a
+> material cannot see its element — so the default `0` (which cannot reach the branch) is the only
+> thing standing between a user and that state.
+> **One more thing that will bite.** The cap bounds one whole `integrate()`, not one `ModifiedEuler`
+> call — `MaxEnergyInc`/`MaxStrainInc` (IntScheme 0/4/6/8/9) call `ModifiedEuler` several times
+> inside one material update, which is why the counter is reset in `integrate()` and not at the top
+> of `ModifiedEuler`. (IntScheme 7 is *called* `INT_MAXSTR_MFE` and does NOT reach `ModifiedEuler`:
+> `MaxStrainInc` has no case for it and falls through to `ForwardEuler` — read the switch, not the
+> name.)
+> **A `-maxSubsteps` cap of 1 is VACUOUS.** `ModifiedEuler`'s error-controlled stepper always tries
+> `dT = 1` (the whole increment) FIRST; that first attempt almost always exceeds `TolE` on anything
+> but a trivial elastic step, so it is rejected and retried at a smaller `dT` — the loop body runs at
+> least twice (the failed `dT=1` attempt, then the first real substep) before a single "substep" has
+> been accepted. So `mSubstepsTakenInME` is `>= 2` for essentially every plastic update regardless of
+> how cheap it is, and a cap of `1` fires on every single one of them, not just the pathological ones
+> a cap is meant to catch. **Workaround:** never hand-pick a small cap — measure the deck's own cost
+> first (`eleResponse <ele> material <gp> substeps` after an uncapped run, exactly as
+> `tests/test_ladruno_sanisand_integrator.py`'s gates do) and set the cap below THAT, not below some
+> assumed-cheap constant like `1` or `2`. Learned 2026-09-05, ADR-86b review-fix pass.
+
 ## `LadrunoSANISAND` at the fork-default `-Presidual 0` clamps a free-surface Gauss point on a DILATING deck, and says so -- but only in `opserr`
 
 **Found 2026-09-05, ADR-90 WP-A2.**
@@ -5227,6 +5322,104 @@ that floor and the material logs
   surcharge to keep the free surface confined, or an explicitly accepted and disclosed clamp.
   The gravity state is no warning at all: the shallowest Gauss point sat at 1.56-6.25 kPa, 15-60x
   the floor, on every mesh, before the push ever started.
+
+> **DOCUMENTED, NOT CHANGED, in WP-86b (ADR-86b T4, PR pending). The default STAYS `-Presidual 0`.**
+> The three options — a declared non-zero `-Presidual`, a small surcharge, an explicitly accepted
+> clamp — with what each buys and costs, and a fork-side (non-binding) recommendation, are written
+> up in `86_ladruno_sanisand_handoff.md` §5b and, in consumer language, in
+> `86_ladruno_sanisand_apegmsh_emitter_guide.md` §7.
+> **It is a modelling decision on a CALIBRATED soil, not a numerical tidy-up, and it is not one
+> parameter:** per the ADR-86 PR-3 tripwire memo, `p_residual` ALSO bounds the `D_factor` dilatancy
+> sigmoid from below — vanilla's 1.01 kPa held `D_factor >= 0.4278` while `p_r = 0` drops that floor
+> to 4.83e-4, a factor of **886** — so restoring a non-zero `p_r` re-engages ADR-86 **D5a**, which
+> is still open. Whichever option is taken, COUNT the clamp events and report the number.
+> **It gets closer, not further, after WP-86b:** the substep cap and the `TanType` default exist to
+> let a leg reach deeper settlements, and this clamp is the next thing waiting there.
+## `ManzariDafalias` `gp_state[25]` (`mDGamma`) is the LAST SUBSTEP's plastic multiplier, not the step total, under every substepped scheme
+
+**Found 2026-09-05, ADR-92 scoping; measured by the P0 oracle (`_adr92_p0_oracle_results` §6).**
+
+`BackwardEuler_CPPM` zeroes `NextDGamma` and solves for it (`ManzariDafalias.cpp:2220`, `:2274`), so under
+`IntScheme 2` it is the increment's plastic multiplier. Under `ModifiedEuler` (scheme 1, the
+deck default), `RungeKutta4/45` and the `MaxStrainInc`/`MaxEnergyInc` family, every substep
+**overwrites** it (`ModifiedEuler` `:1498`, `:1570`; `RungeKutta4` `:1744-1807`; `RungeKutta45`
+`:1973-2016`; `ForwardEuler` `:1342`, which the `MaxStrainInc`/`MaxEnergyInc` FE variants call)
+and nothing sums it — the recorder sees whatever
+the last substep computed, which depends on how many substeps the controller chose.
+
+- **Bites:** anything that reads `state[25]` as "how much plastic flow this step" — a recorder,
+  a dilatancy post-processor, and any IMPL-EX that extrapolates `dGamma`. The TIMs request for
+  ADR-92 proposed exactly that; the oracle measured the two extrapolation forms **identical to
+  2e-10 kPa under scheme 2 and 37 kPa apart on a 277 kPa stress under scheme 1**.
+- **Workaround:** integrate the plastic strain yourself from the committed `eps - eps_e`
+  (`getState` entries 0-5 are `eps_e`; `strain` is `eps`) — that IS a step total. ADR-92 D1.
+
+## `ManzariDafalias::ForwardEuler` (`IntScheme 5`) has a shadowed `Vector r` — `r` is identically ZERO, both `(n:r)` terms are silently dropped
+
+**Found 2026-09-05, ADR-92 P0 source extraction, verified at source.**
+
+`:1330-1332` reads `Vector r(6); if (p > small) Vector r = GetDevPart(CurStress) / p;` — the
+inner declaration is block-scoped, dies at the brace, and the outer `r` used at `:1334`,
+`:1337`, `:1342`, `:1350` stays zero. `Kp`, `temp4` and `NextDGamma` lose their volumetric
+coupling. The P0 oracle, reproducing it verbatim, puts scheme 5's terminal `q/p` at **1.188
+against 0.946** for scheme 1 on the same path — a silent 26 % on mobilised strength.
+
+- **Scope, measured not assumed:** `ModifiedEuler` (`:1483`) and `GetElastoPlasticTangent`
+  (`:4839`) both use the corrected two-statement form `r = GetDevPart(...); r /= p;` with the
+  one-liner commented out directly above — the trap was hit and fixed twice and missed once.
+  `explicit_integrator`'s `default:` is `ModifiedEuler` (`:1060`), so scheme 2's fallback is
+  clean too. **Reaches schemes 5, 9 and 4 only. Not the deck default; not the TIMs campaign.**
+- **Fix owed (vanilla, two lines, separate PR):** `r = GetDevPart(CurStress); r /= p;` inside
+  the `if`. Until then the entry above on schemes 3/5 having no error control has a second
+  reason not to use 5.
+
+## `BackwardEuler_CPPM` (`IntScheme 2`) is NOT an implicit return at low `p`, and its non-convergence NEVER propagates
+
+**Found 2026-09-05, ADR-92 P0; verified at source; measured on the oracle's corner path.**
+
+Two things, both by design in the shipped code:
+
+1. The low-`p` branch (`tr/3 < m_Pmin`, `:2234` — the one test that omits `m_Presidual`) has
+   its Newton **disabled by a literal `errFlag = 0`** (`:2264-2266`, `NewtonIter2_negP`
+   commented out, author's note *"tension-cutoff surface ... not working properly. Using
+   explicit integrator for the time being"*). Every such step is integrated by
+   `explicit_integrator`, i.e. `ModifiedEuler`, and flagged as success. On a Gauss-point path
+   onto the `p_min` floor with shear kept on, **58-74 % of all scheme-2 calls went this way.**
+2. Away from the floor, the retry ladder on Newton failure is: 50-step forward-Euler warm start
+   -> recursive bisection (`mMaxSubStep = 10`) -> `explicit_integrator(...); errFlag = 1;`
+   (`:2434-2437`). It gives up and returns an explicit answer **marked converged**. `Check()`'s
+   `tr(stress) < 0` test is commented out (`:4907`).
+
+- **Bites:** anyone choosing scheme 2 "because it is implicit" for a free-surface / low-`p`
+  problem — the corner of a footing, a slope face, a retaining-wall backfill surface. There it
+  costs a 19-unknown Newton per Gauss point and delivers `ModifiedEuler`. ADR-92 D3 was
+  written on that assumption and reversed on this measurement.
+- **Rule:** at low confinement the only integrator you are ever running is `ModifiedEuler`, so
+  cap it (`-maxSubsteps`, #792 T1) rather than route around it. Related: the dead
+  `NewtonIter2_negP` entry above.
+
+## IMPL-EX over a HYPOELASTIC law must be INCREMENTAL, and the extrapolated stress needs the `p_min` clamp
+
+**Found 2026-09-05 — the first by the ADR-92 Fable review before the oracle ran, the second by
+the oracle's corner gate (`_adr92_p0_oracle_results` §5, §8).**
+
+- **Incremental, not total.** ASD-style IMPL-EX is usually written `sigma~ = C:(eps - eps_p~)`.
+  `ManzariDafalias` integrates `dsigma = Ce(p):deps_e` with moduli at the **committed** stress
+  (`elastic_integrator` `:1008-1011`, `BackwardEuler_CPPM` `:2223-2226`); rebuilding the stress
+  from a total elastic strain discards the pressure-dependent history. Measured **at a ZERO
+  increment**: the total form returns `p = 99.50` on a committed `100.00` (0.5 %) and
+  **`1.11` on a committed `5.00` (78 %)**. Its error does not vanish as `dt -> 0`, so a
+  convergence gate fails for a reason that has nothing to do with IMPL-EX. Write
+  `sigma~ = sigma_n + Ce(p_n):((eps_{n+1} - eps_n) - f*d_eps_p(n))`. Same family as the
+  ADR-90 P0b entry above (a wrapper's proof silently assuming a constant elastic operator).
+- **Clamp `sigma~`.** Nothing in the extrapolation knows about the floor: on a path driven onto
+  `p_min = 0.0101 kPa` the extrapolated mean stress reached **-1.37 / -0.16 / -0.09 kPa** at
+  40 / 80 / 160 steps (first order, O(1)-O(10) relative) while the committed state sat at
+  `+0.0101`. Apply the code's own device — `sigma~ = dev(sigma~) + p_min*I1` when
+  `tr(sigma~)/3 < p_min` — or the free-surface element receives tensile mean stress every
+  iteration. Related: the static-`ops_Dt` IMPL-EX entry (§ "IMPL-EX in a STATIC analysis") —
+  ADR-92 D2 rediscovered it from the `Domain.cpp:2054` side.
+
 ## `InitStrainNDMaterial` special-cases the literal string "ThreeDimensional" when forwarding to `getCopy(void)`; `StagedStrainNDMaterial` has NO such special case at all — a `getCopy(void)` override for a 2D subclass has NO reachable caller through either wrapper
 
 **Found 2026-09-04, ADR-90 WP-B, while covering `LadrunoSANISANDPlaneStrain::getCopy(void)`.
@@ -5357,3 +5550,63 @@ wrapped-vs-unwrapped bit-identical comparison isolates `getCopy(void)` alone. Pa
   implicit-analysis choice, not an explicit one. `std`/`bbar` remain the
   no-stabilization reference.
 - *2026-07-30 (Tier-A `Kstab` scope challenge).*
+
+## `LadrunoBrick::update()` DISCARDED `setTrialStrain`'s return code on four of its five formulation paths — so no material could ever fail a step through it
+
+**Found 2026-09-05, WP-86b (ADR-86b), while wiring the SANISAND substep cap. Fixed in the same PR.**
+
+The `stdBrick`-swallows-return-codes trap is already on this ledger. What was not known is that the
+fork's own brick had the same hole on most of its paths, and that the two paths which DID propagate
+are the newest ones — so it reads, from the code, as if the element already had the contract.
+
+`LadrunoBrick::update()` dispatches by formulation. Before WP-86b:
+
+| path | propagated a material failure? |
+|---|---|
+| `-geom finite` -> `updateFinite()` | yes |
+| `-geom hypo` -> `updateHypo()` (`:1720`, `< 0`) | yes |
+| `Formulation::EAS` -> `formEAStrue()` | yes |
+| `Formulation::SSP` (centroid slot 0) | **no** — bare call, `return 0` |
+| `Formulation::URI` + `Hourglass::PHYSICAL` (8 GPs) | **no** |
+| `Formulation::URI` (perturbation, centroid) | **no** |
+| std / **b-bar** (the 8-GP default loop) | **no** |
+
+So on `-formulation bbar` — the formulation ADR-90 S3 freezes for the whole SANISAND campaign — a
+material that refused the increment was indistinguishable from one that integrated it. All four now
+test for a refusal, name the element and Gauss point through one throttled reporter, and return -1.
+
+- **Why it stayed invisible:** almost no OpenSees `NDMaterial` returns non-zero from
+  `setTrialStrain` — the whole UW family hardcodes `return 0`, and so did both `LadrunoSANISAND`
+  wrappers until ADR-86b. A contract nothing exercises is a contract nobody notices is missing.
+- **The tell, if you are looking for it:** an element `update()` that ends in a bare
+  `materialPointers[i]->setTrialStrain(strain);` with no `if`. Grep for that shape before assuming
+  any element propagates material failure.
+- **Upstream `stdBrick` still does not propagate.** Any gate on a material's failure return must use
+  `LadrunoBrick` (or another element you have checked), or it silently tests nothing.
+
+### ...and the obvious repair — propagate any `< 0` — is WRONG. Measured.
+
+The first ADR-86b cut did exactly that and **broke two long-green gates**:
+`test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity` and
+`::test_ssp_hourglass_energy_fraction_in_cracked_band` died at
+`Domain::update - domain failed in update`, load factor 605, after months of passing.
+
+`ASDConcrete3DMaterial::setTrialStrain` **does** return negative — out of `compute()`
+(`ASDConcrete3DMaterial.cpp:1607+`) — but it means *"an inner iteration missed, here is my best
+state"*, not *"I did not integrate this increment"*. That is precisely the case the fork already
+settled the other way in ADR-33/34 (the `LadrunoDispBeamColumn3d` `solveHingeJump` entry above):
+**return 0 with the last iterate plus a loud warning**, because a failure code there makes softening
+analyses fragile — a fixed-increment run dies at a kink the global Newton would have walked through.
+
+**OpenSees has no convention separating the two meanings**, so ADR-86b introduced one for the fork:
+`LADRUNO_MATERIAL_REFUSED` (`SRC/material/LadrunoMaterialStatus.h`, value `-33086`) means *the
+increment was NOT integrated and the committed state is unchanged*. `LadrunoBrick::update()`
+propagates **only that exact value**; every other non-zero code keeps whatever treatment it already
+had. Adopting it cost **zero** behaviour change anywhere else, and the two ASD gates went green
+again.
+
+- **Rule for any future fork material with a real failure mode:** returning a bare `-1` buys you
+  nothing (elements swallow it), and returning `-1` *and* teaching an element to honour `< 0` buys
+  you the ASD regression. Return the sentinel.
+- **`updateHypo()` / `updateFinite()` keep their pre-existing `< 0` tests.** They predate ADR-86b
+  and were not touched; only the std/b-bar, SSP and the two URI paths use the sentinel.

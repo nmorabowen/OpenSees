@@ -573,6 +573,135 @@ develops — which is the rate-independent ill-posedness making itself felt as
 
 ---
 
+## 7b. ADDENDUM 2026-09-05 — the same COARSE legs on a CAPPED integrator (WP-86b)
+
+> [!info] This section ADDS a measurement; it does not revise anything above.
+> Sections 1–7 stand as written. They were measured on engine
+> `548fe911427e90a2edfead05cb3672a738d25b6d` with an **uncapped**
+> `ModifiedEuler`, which is still the default; nothing here changes what that
+> run reported or what §7 licenses ADR 90 to say.
+
+**What was run.** WP-86b (`wp/86b-sanisand-integrator`) implemented §7's *"owed
+next"* item 1 — the `dT_min` / substep-cap study on `ManzariDafalias` — as a
+`-maxSubsteps N` flag on `nDMaterial LadrunoSANISAND`, default `0` = uncapped.
+Past the cap `ModifiedEuler` **fails the update instead of force-accepting**,
+`setTrialStrain` returns a refusal, `LadrunoBrick` propagates it, and the
+driver's own `ds *= 0.5` controller finally has something to react to.
+
+The **two coarse legs** of §6.1 were re-run on this engine at **two caps**, one
+45-minute chunk, four concurrent processes (`OMP_NUM_THREADS=4`) on the same
+24-core box. Engine `5c01bb5f7a580be9f73568a2e8f98b3a2b263c39`; driver
+`sanisand_tau0_band.py --maxsubsteps <N>`; outputs in
+`Ladruno_files/testbed/hypo_bearing/adr86b_t8/`. Everything else — mesh,
+material, `-Presidual 0`, `TanType 2`, `NormUnbalance 1e-5·γV`, `DS_MAX`,
+`SUBDIV_BUDGET 80` — is §6.1's configuration unchanged.
+
+**Why 1000 and 10000.** Measured on a single-element confine-first
+`LadrunoBrick` deck, the substeps one *healthy* plastic update spends scale
+almost exactly with the strain increment: **3268 / 1554 / 664 / 289** at
+`n_dev = 40 / 80 / 160 / 320`. The structural ceiling is `1/dT_min = 10^6`. So
+1000 and 10000 bracket the two decades between "a normal update plus margin"
+and "clearly pathological but still 100× below the ceiling". A 2-point sweep,
+not a tuned number.
+
+### 7b.1 The legs
+
+| leg | cap | mode | `s/B` end | steps | **subdiv** | ladder fails | relaxed | wall (s) | **worst step (s)** |
+|---|---|---|---|---|---|---|---|---|---|
+| h1.0_e0.6944 | — *(§6.1)* | KILLED | 0.0228 | 51 | **0**/80 | — | — | 2401 | **759** |
+| h1.0_e0.6944 | 1000 | WALL | **0.05875** | 162 | **18**/80 | 294 | 110 | 2705 | **93.9** |
+| h1.0_e0.6944 | 10000 | WALL | 0.04780 | 65 | 2/80 | 64 | 23 | 2737 | 204.2 |
+| h1.0_e0.60 | — *(§6.1)* | KILLED | 0.0153 | 48 | **0**/80 | — | — | 951 | **168** |
+| h1.0_e0.60 | 1000 | **BUDGET** | 0.03201 | 578 | **81**/80 | 1193 | 444 | 1774 | **69.9** |
+| h1.0_e0.60 | 10000 | WALL | **0.03374** | 144 | 16/80 | 269 | 104 | 2718 | 106.7 |
+
+**Three things this table says, and one it does not.**
+
+1. **The controller is no longer inert.** §6.3's headline was `0/80` on every
+   one of six legs — "the controller had every resource it was given and never
+   used any of it". With a cap it uses **2, 16, 18 and 81** of them, and the
+   dense `cap = 1000` leg *exhausts* the pinned budget and stops on `BUDGET` —
+   a controller stop, not a seizure. That is the mechanism working exactly as
+   designed: the integrator now reports "I did not integrate this", and the
+   step gets cut.
+2. **Every leg gets substantially deeper.** `s/B` end moves **0.0228 → 0.0588**
+   (2.6×) on Gorini's density and **0.0153 → 0.0337** (2.2×) on the dense one.
+   The dense `cap = 1000` leg reached 0.032 in **1774 s**, against 0.0153 in
+   951 s uncapped.
+3. **The seizure shortens by up to 8×.** Longest gap between two consecutive
+   converged steps: **759 s → 93.9 s** (Gorini, cap 1000) and
+   **168 s → 69.9 s** (dense, cap 1000). It is not eliminated — capping bounds
+   one Gauss-point update, not the ~10² updates a failed ladder rung spends.
+
+**What it does NOT say: still no capacity.** Not one leg peaked or plateaued.
+The driver's own three-clause rule reports `plateau = NO / peaked = NO` on all
+four, with the tail slope still **53 %, 107 %, 111 % and 276 %** of its initial
+value — i.e. two legs are steepening, not flattening. Three legs end on `WALL`
+and are **INADMISSIBLE** by `00_canonical_testbed` §1b exactly as §6.1's were;
+the fourth ends on `BUDGET`, which is an ordinary non-capacity rather than a
+seizure. **`q_u` remains unmeasured, and §1's "unreachable, not merely
+uncertain" verdict is unchanged — only less expensive to keep failing to reach.**
+
+### 7b.2 The cap does not move the answer
+
+Matched-settlement `q` at the shared checkpoints, against §6.2's published
+values:
+
+| leg | `s/B` | §6.2 (uncapped) | cap 1000 | cap 10000 |
+|---|---|---|---|---|
+| h1.0_e0.6944 | 0.002 | 55.756 | **55.756** | **55.756** |
+| h1.0_e0.6944 | 0.005 | 120.602 | 120.941 | 120.941 |
+| h1.0_e0.6944 | 0.010 | 232.128 | 233.165 | 233.730 |
+| h1.0_e0.6944 | 0.020 | 450.392 | 454.598 | 451.570 |
+| h1.0_e0.60 | 0.002 | 84.12 | **84.12** | **84.12** |
+| h1.0_e0.60 | 0.005 | 194.39 | **194.389** | **194.389** |
+
+Bit-identical at every checkpoint the uncapped run reached *before its first
+cap event*, and within **0.28–0.94 %** afterwards — inside the **0.8–1.4 %**
+solver-configuration floor §5.3 established. The cap changes *which steps
+succeed*, never *what a step returns*; a capped update is discarded, not
+force-accepted, so there is no half-integrated state to contaminate the path.
+
+New rows the uncapped campaign never reached: `s/B = 0.020` on the **dense**
+density (882.8 / 852.3 kPa) and `s/B = 0.040` on Gorini's (875.3 / 877.5 kPa) —
+a 3.6 % and 0.25 % two-cap spread respectively, the first of which is not
+resolved above §5.4's scatter.
+
+### 7b.3 Caveats, stated rather than assumed
+
+- **Wall times are not a performance measurement.** Four concurrent processes at
+  `OMP_NUM_THREADS = 4`, against §8's six at 3. Both are upper bounds under
+  contention. The *subdivision counts* and the *matched-settlement values* do
+  not depend on that; the wall and worst-step columns do.
+- **The engine differs from this branch's final HEAD by a test-only commit and
+  by one narrowing of the failure code** (a blanket `< 0` propagation in
+  `LadrunoBrick` was replaced by the exact `LADRUNO_MATERIAL_REFUSED` sentinel,
+  after it was measured to break two ASDConcrete gates). On a deck whose only
+  material is `LadrunoSANISAND` the two are indistinguishable by construction.
+- **Two caps is a sweep, not a calibration.** Cap 1000 is deeper on Gorini's
+  density and cap 10000 is deeper on the dense one; the ordering is not
+  consistent, and with one leg each there is no basis for preferring either.
+  What *is* consistent across all four is that both beat uncapped on every
+  column.
+- **`-Presidual` is still 0** and §3.1's clamp still fires past
+  `s/B ≈ 0.0153` on the dense legs — which these runs now go well beyond. The
+  decision §7's owed-work item 2 asks for is **written up but not taken**
+  (`86_ladruno_sanisand_handoff.md` §5b); it is now the binding one.
+
+### 7b.4 What this changes for ADR 90 §8.1
+
+The proposed close-out named the ADR-86 integrator follow-up as "the actionable
+engine work" and then: *"Then re-run GATE U."* This is that re-run, on the two
+coarse legs, and its answer is **partial**: the integrator is no longer the
+thing that stops a leg — the controller and the wall clock are — but a **peak
+is still not reachable**, so §8.1's condition for judging WP-F (*"a peak becomes
+reachable AND the matched-settlement band is outside OQ2's tolerance"*) is
+**still not met on its first clause**. §7's owed-work item 1 also asked for *"a
+cheaper deck"* — a purpose-sized domain for a weighted mechanism — and that half
+has not been done. On this evidence the close-out stands.
+
+---
+
 ## 8. Reproducing
 
 ```bash

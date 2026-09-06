@@ -121,7 +121,17 @@ LoadPath::update(const Vector &deltaU)
     }
 
     myModel->incrDisp(deltaU);    
-    myModel->updateDomain();
+    // Ladruno (ADR-86b): `updateDomain()`'s return code was DISCARDED here, so an
+    // element that failed its state determination -- a material refusing the
+    // increment, a collapsed configuration, a non-converged internal iteration --
+    // reached the algorithm as a SUCCESSFUL update and the step could not be cut.
+    // `LoadControl` (:149) and `DisplacementControl` (:289, :347) already check it;
+    // this integrator and `ArcLength` were the two that did not. Additive: on every
+    // deck where nothing fails, `updateDomain()` returns 0 and the branch is dead.
+    if (myModel->updateDomain() < 0) {                              // Ladruno (ADR-86b)
+      opserr << "LoadPath::update - model failed to update for new dU\n";
+      return -1;
+    }
     return 0;
 }
 

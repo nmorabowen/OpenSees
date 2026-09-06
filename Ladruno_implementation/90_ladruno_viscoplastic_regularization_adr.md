@@ -621,6 +621,24 @@ change is deliberate: §3.3's honest-framing test forbids choosing De to hit a t
 > **Then re-run GATE U.** **WP-F is judged only if a peak becomes reachable AND the
 > matched-settlement band is outside OQ2's tolerance** — which requires TIMs to supply OQ2 first.
 
+> [!info] **DONE, and PARTIALLY re-run — 2026-09-05, WP-86b (`wp/86b-sanisand-integrator`)**
+> The engine work above shipped as an ADR-86 follow-up, with no new ADR and no new classTag:
+> **`-maxSubsteps N`** (default `0` = uncapped, so no existing deck moves), the **`TanType` parser
+> default 0 → 2** on the fork class only (vanilla keeps 0 — its golden files depend on it), and the
+> **tolerance** and **`-Presidual`** items as documentation with **no default changed**.
+> The **coarse legs were re-run** at two caps: `[[_adr90_tau0_qu_band]]` **§7b**, which ADDS a
+> measurement and revises nothing above it.
+>
+> **The answer is partial, and it does not move this close-out.** The integrator is no longer what
+> stops a leg — subdivisions used go **0/80 → 2, 16, 18 and 81/80** (one leg now *exhausts* the
+> pinned budget and stops on `BUDGET`, a controller stop rather than a seizure), `s/B` reach
+> improves **2.1–2.6×**, and the longest single step falls **759 s → 93.9 s**. Matched-settlement
+> `q` is bit-identical at every checkpoint the uncapped run had reached and within 0.28–0.94 %
+> beyond, i.e. inside §5.3's solver-configuration floor. **But no leg peaks or plateaus** (tail
+> slope still 53–276 % of initial), so the condition for judging WP-F fails on its **first** clause,
+> `q_u` remains unmeasured, and §1's *"unreachable, not merely uncertain"* stands unchanged.
+> The other half of GATE U's owed item 1 — **a purpose-sized, cheaper domain** — has not been done.
+
 **PROPOSED, not decided.** The owner decides at **CP2**. Nothing in §5 is authorised by it, and
 33022 stays reserved either way.
 

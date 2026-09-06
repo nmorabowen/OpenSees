@@ -37,6 +37,7 @@
 #include <Information.h>
 #include <MaterialResponse.h>
 #include <Parameter.h>
+#include <LadrunoMaterialStatus.h>  // Ladruno (ADR-84 -> ADR-86b): LADRUNO_MATERIAL_REFUSED
 
 #include "ASDPlasticMaterial3DTraits.h"
 
@@ -2188,7 +2189,13 @@ private:
                            << "remaining candidate is the conservative vertex projection, "
                            << "which would discard the deviatoric state"
                            << " -- rejecting step (strict_convergence)" << endln;
-                    return -1;
+                    // Ladruno (ADR-84 -> ADR-86b): was a bare -1. LadrunoBrick's
+                    // update() paths (updateHypo/formEAStrue) now check ONLY the
+                    // LADRUNO_MATERIAL_REFUSED sentinel, not a blanket `< 0` -- a
+                    // bare -1 here was silently SWALLOWED under -geom hypo/EAS,
+                    // which is strictly worse than the pre-sentinel behaviour this
+                    // rejection was written to replace. See LadrunoMaterialStatus.h.
+                    return LADRUNO_MATERIAL_REFUSED;
                 }
 
                 TrialStress          = sigma_sr;
@@ -2338,7 +2345,9 @@ private:
                        << " iterations without converging: |Phi| = " << Phi_final
                        << " >= tol_yf = " << tol_yf
                        << " -- rejecting step (strict_convergence)" << endln;
-                return -1;
+                // Ladruno (ADR-84 -> ADR-86b): was a bare -1; same rationale as the
+                // special_return fallback above. See LadrunoMaterialStatus.h.
+                return LADRUNO_MATERIAL_REFUSED;
             }
         }
 

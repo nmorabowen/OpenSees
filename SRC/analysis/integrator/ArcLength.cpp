@@ -302,7 +302,21 @@ dLAMBDA2=dLambda;
     theModel->applyLoadDomain(currentLambda);    
 
 
-    theModel->updateDomain();
+    // Ladruno (ADR-86b): `updateDomain()`'s return code was DISCARDED here -- see
+    // the twin note in LoadPath::update(). An arc-length continuation that cannot
+    // tell a failed state determination from a successful one carries a
+    // partially-integrated material state along the path.
+    // SCOPE: only this site, inside update(), is guarded. The sibling call in
+    // newStep() (:219) is a different lifecycle point -- it applies the predicted
+    // load before any iteration -- and is left alone; ADR-86b's defect is a
+    // CORRECTOR that cannot see a refused increment.
+    // NB the fork's own `LadrunoArcLength` is a separate StaticIntegrator (NOT
+    // derived from this class) and already checks it (LadrunoArcLength.cpp:367),
+    // so this repairs vanilla only and changes nothing in the robust-solve ladder.
+    if (theModel->updateDomain() < 0) {                             // Ladruno (ADR-86b)
+      opserr << "ArcLength::update - model failed to update for new dU\n";
+      return -1;
+    }
     
     // set the X soln in linearSOE to be deltaU for convergence Test
     theLinSOE->setX(*deltaU);
