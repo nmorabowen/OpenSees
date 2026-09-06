@@ -2038,6 +2038,12 @@ features:
       run to attach a new family; ZERO is it) — an honest gap, not a claim.
       Windows mutant builds via the new Ladruno_scripts/mutation_build.bat; the
       CI recipe is Ubuntu-only and does not port (preset pins binaryDir).
+      FULL ZONE-A GREEN on this branch: 2143 passed, 34 skipped, 209 deselected,
+      1 xfailed, 0 failed, 0 errors (31m11s), all 15 of this feature's tests
+      included in the zone_a selection. NB the local sweep needed scipy (CMS
+      oracle, ADR-1000) and sympy (hex20 oracle, ADR-72) installed — CI installs
+      both, this machine had neither, and a single collection error aborts the
+      whole run, so no full local Zone-A was possible here before WP-91.
       Zero vanilla behavior change —
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
