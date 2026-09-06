@@ -115,8 +115,11 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     int    dtSource;         // -implexDt {pseudo|strain|user}
     double dtUser;           // -implexDt user $dt
 
+    // errorTol default: measured 2026-09-06 (_adr92_p1_bvp_gate_rerun.md sweep)
+    // -- 0.05 fails on reach, 0.1 is the tightest tolerance that beats the
+    // implicit control's depth under 5% mean deviation. (WP-92d)
     LadrunoImplexOptions()
-      : enabled(false), control(false), errorTol(0.05), reductionLimit(0.01),
+      : enabled(false), control(false), errorTol(0.1), reductionLimit(0.01),
         alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0) {}
 };
 
