@@ -1,7 +1,7 @@
 ---
 title: LadrunoShellModifier — ETABS-style shell stiffness modifiers
 project: Ladruno
-status: draft — PR #793 open, not yet merged
+status: shipped — PR #793
 priority: medium
 adr: ADR 91
 tags:

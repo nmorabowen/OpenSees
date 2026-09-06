@@ -1,7 +1,7 @@
 ---
 title: LadrunoShellModifier — implementation guide for apeGmsh
 project: Ladruno
-status: ready to implement — fork dependency is on PR #793 (draft)
+status: ready to implement — fork dependency shipped in PR #793
 priority: high
 adr: ADR 91
 tags:
