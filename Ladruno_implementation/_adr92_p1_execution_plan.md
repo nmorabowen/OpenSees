@@ -184,8 +184,46 @@ plane-strain deck, which is the defect class this whole file family exists to pr
 its own `-honorTolR` / `-maxSubsteps` inertness warnings). It is **untested at P1**; P2 owns
 its gate.
 
+### 4.4 A defect the first battery could not see: the arming flag is eaten by the revert
+
+`Domain::revertToLastCommit()` does not stop at reverting. It sets `dT = 0.0`, re-applies the
+committed load and ends `return this->update();` — **one zero-strain-increment state
+determination through every material at `ops_Dt == 0`**. §4.2 item 1's fix freezes `f` "at the
+first trial call after a commit or a `revertToLastCommit`", so that ghost call was arming the
+step at `dt = 0` ⇒ `f = 0` and *consuming the arm*. **The retried step then ran its whole
+ladder rung with the plastic extrapolation switched off** — no crash, correct committed answer
+(the companion at commit is untouched), and an `implexError` reported for an operator the deck
+never asked for. It hit the **default** `pseudo` source, and a failed step followed by a revert
+is an ordinary event in every adaptive run.
+
+Fixed: arm from the first trial call whose strain increment is **non-zero**; a zero increment
+takes `f = 0` for that evaluation only — which is exactly what W6 requires of a
+`LoadControl 0.0` hold — and leaves the step armed. Under `pseudo` this cannot perturb any step
+that moves (`ops_Dt` is identical on every call of a step, so *which* call arms is
+unobservable), so no already-green gate should shift. `revertToLastCommit` now also clears the
+sticky `mSubstepsTakenInME` / `mSubstepCapHitInME` diagnostics.
+
+This is the `dT = 0` trap `LEDGER_quirks` already recorded for rate-dependent materials,
+arriving in a new variable. **Anything keying off "the first call of a step" must assume that
+call is a zero-increment ghost.**
+
 ## Log
 
+- 2026-09-06 — First test battery on binary `42dbf066e`: 11 pass, 4 fail, 1 skip.
+  **The flagship claim holds** — `-implex` ON vs OFF at an adequate substep cap is
+  **bit-identical** on a zero-free-DOF deck; the apparent failure was the test comparing
+  `-maxSubsteps 200` against an uncapped control on a deck needing 1000-5000 substeps, so the
+  cap was the variable. Parser/D3 refusals behave as written and the refusal chain fires end
+  to end (material → `LadrunoBrick` → `Domain::update` → step cut, committed state intact).
+  **`test_tangent_identity_frozen_ce_on_strain_dt_source` is a TEST defect (b), not a code
+  defect:** its `_probe_once` ends in `ops.reset()`, which is `Domain::revertToStart()` — it
+  ZEROES `mSigma_n`/`mEpsilon_n`/`mAlpha_n`/`mFabric_n`, leaves the static `mElastFlag` on the
+  plastic stage, and then runs its own trailing `update()`; `sigma~ = 0` then trips the `p_min`
+  clamp and returns `p_min*I1`, which is the reported `[-0.0101]*3` with three IEEE `-0.0`
+  shears. The fix is to DELETE the `ops.reset()`: a failed `StaticAnalysis` step already calls
+  `Domain::revertToLastCommit()` + `revertToLastStep()` itself. **Chasing it found a real
+  code defect the test could never have seen** (its reset masked it): see §4.4. Both recorded
+  in `LEDGER_quirks`.
 - 2026-09-05 (later) — W1-W9 written on `wp/92c-implex-p1`. `g++ -fsyntax-only` clean on all
   three touched translation units; **nothing has been built or run** — every gate in §2 waits
   on the owner's `Ladruno_scripts\build.bat OpenSees OpenSeesPy`, and gate 2 (oracle parity)

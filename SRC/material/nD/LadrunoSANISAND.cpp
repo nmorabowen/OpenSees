@@ -1452,8 +1452,40 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // commitState() owes a companion return after this.
     mImplexTrialDone = true;
 
-    if (mImplexStepArmed)
-        this->ladrunoImplexArmStep();
+    // W6: freeze f for the step -- but ONLY from a trial call that actually
+    // carries a strain increment.
+    //
+    // The naive `if (mImplexStepArmed) armStep();` is WRONG, and it is wrong on
+    // the DEFAULT dt source. `Domain::revertToLastCommit()` does not stop at
+    // reverting: it sets `dT = 0.0`, re-applies the committed load and ends
+    // `return this->update();` (Domain.cpp), i.e. it pushes ONE zero-increment
+    // state determination through every material at `ops_Dt == 0`. That call
+    // would arm the step at `dt = 0`, hence `f = 0`, and CONSUME the arm -- so
+    // the retried step that follows would run its whole ladder rung with the
+    // plastic extrapolation switched off, silently, and `implexError` would be
+    // the error of an operator the deck never asked for. A failed step followed
+    // by a revert is an ordinary event in every adaptive run, and this is the
+    // same trap `LEDGER_quirks` already records for rate-dependent materials
+    // ("Domain::revertToLastCommit() sets dT = 0 and re-applies the load").
+    //
+    // A zero strain increment therefore takes f = 0 for THAT evaluation --
+    // sigma~ = sigma_n exactly, which is what W6 requires of a `LoadControl 0.0`
+    // hold -- and leaves the step ARMED for the first call that moves. On a
+    // genuine hold every call is a zero increment, so f stays 0 throughout and
+    // the hold is unchanged. Under `-implexDt pseudo` this cannot perturb any
+    // step that does move: ops_Dt is the same on every call of a step, so which
+    // call arms it is unobservable.
+    if (mImplexStepArmed) {
+        Vector dArm(6);
+        dArm = mEpsilon;
+        dArm.addVector(1.0, mEpsilon_n, -1.0);
+        if (this->GetNorm_Cov(dArm) > 0.0) {
+            this->ladrunoImplexArmStep();       // clears mImplexStepArmed
+        } else {
+            mImplexDt     = 0.0;
+            mImplexFactor = 0.0;                // no strain advanced, no plastic flow predicted
+        }
+    }
 
     // D2's refusal, by symptom. A material has no handle on the integrator, so
     // "refuse DisplacementControl and arc length" is enforced where it actually
@@ -1674,6 +1706,15 @@ LadrunoSANISAND::revertToLastCommit(void)
     mImplexStepArmed  = true;
     mImplexDt         = mImplexDtCommit;
     mImplexClampFired = false;
+
+    // The -implexControl probe's integrate() writes these two, and nothing on
+    // the IMPL-EX path calls ladrunoUpdateStatus() to clear them. Left sticky
+    // they would make the `substeps` response and Print() report a cap hit
+    // belonging to a step that was thrown away. Diagnostic-only -- integrate()
+    // resets both at its top -- but a diagnostic that survives a revert is a
+    // diagnostic that lies.
+    mSubstepsTakenInME = 0;
+    mSubstepCapHitInME = false;
 
     double K = 0.0, G = 0.0;
     this->ladrunoImplexFreezeTangent(K, G);
