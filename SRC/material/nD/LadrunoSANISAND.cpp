@@ -1635,6 +1635,22 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         this->ladrunoRestoreTrialFromCommitted();
         double Kr = 0.0, Gr = 0.0;
         this->ladrunoImplexFreezeTangent(Kr, Gr);
+
+        // Ladruno ADR-92 fix (BVP ctl regression, 2026-09-06): a refused trial
+        // must leave the step RE-ARMED and the commit hook disowned, at EVERY
+        // refusal site. The arm is consumed by ladrunoImplexArmStep() on the first
+        // trial call that carries a strain increment, and dt / f are frozen with
+        // it for the whole step. Today the re-arm happens only in
+        // revertToLastCommit(), i.e. only because StaticAnalysis.cpp:185 calls
+        // Domain::revertToLastCommit() on a failed solveCurrentStep -- so a driver
+        // that halves its increment and re-analyses WITHOUT a revert, or an element
+        // that does not propagate the refusal, would run the retry on the FIRST
+        // attempt's frozen dt and f and measure an error belonging to an increment
+        // it never applied. Re-arming here makes the retry measure its own
+        // increment whatever the caller does, and costs nothing when the revert
+        // does happen (it re-arms an already-armed step).
+        mImplexStepArmed = true;
+        mImplexTrialDone = false;
         return LADRUNO_MATERIAL_REFUSED;
     }
 
@@ -1666,6 +1682,22 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
             this->ladrunoRestoreTrialFromCommitted();
             double Kf = 0.0, Gf = 0.0;
             this->ladrunoImplexFreezeTangent(Kf, Gf);
+
+            // Ladruno ADR-92 fix (BVP ctl regression, 2026-09-06): a refused trial
+            // must leave the step RE-ARMED and the commit hook disowned, at EVERY
+            // refusal site. The arm is consumed by ladrunoImplexArmStep() on the first
+            // trial call that carries a strain increment, and dt / f are frozen with
+            // it for the whole step. Today the re-arm happens only in
+            // revertToLastCommit(), i.e. only because StaticAnalysis.cpp:185 calls
+            // Domain::revertToLastCommit() on a failed solveCurrentStep -- so a driver
+            // that halves its increment and re-analyses WITHOUT a revert, or an element
+            // that does not propagate the refusal, would run the retry on the FIRST
+            // attempt's frozen dt and f and measure an error belonging to an increment
+            // it never applied. Re-arming here makes the retry measure its own
+            // increment whatever the caller does, and costs nothing when the revert
+            // does happen (it re-arms an already-armed step).
+            mImplexStepArmed = true;
+            mImplexTrialDone = false;
             return LADRUNO_MATERIAL_REFUSED;
         }
 
@@ -1799,6 +1831,22 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                                   " response." << endln;
                 }
                 mSigma = mSigma_n;
+
+                // Ladruno ADR-92 fix (BVP ctl regression, 2026-09-06): a refused trial
+                // must leave the step RE-ARMED and the commit hook disowned, at EVERY
+                // refusal site. The arm is consumed by ladrunoImplexArmStep() on the first
+                // trial call that carries a strain increment, and dt / f are frozen with
+                // it for the whole step. Today the re-arm happens only in
+                // revertToLastCommit(), i.e. only because StaticAnalysis.cpp:185 calls
+                // Domain::revertToLastCommit() on a failed solveCurrentStep -- so a driver
+                // that halves its increment and re-analyses WITHOUT a revert, or an element
+                // that does not propagate the refusal, would run the retry on the FIRST
+                // attempt's frozen dt and f and measure an error belonging to an increment
+                // it never applied. Re-arming here makes the retry measure its own
+                // increment whatever the caller does, and costs nothing when the revert
+                // does happen (it re-arms an already-armed step).
+                mImplexStepArmed = true;
+                mImplexTrialDone = false;
                 return LADRUNO_MATERIAL_REFUSED;
             }
         }
