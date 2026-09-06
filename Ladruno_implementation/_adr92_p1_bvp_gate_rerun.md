@@ -2,7 +2,7 @@
 title: "ADR 92 / P1 gate 1 rerun — control and uncontrolled arms on the fixed binary"
 project: Ladruno
 type: results
-status: "Registered arm (-implex -implexControl 0.05 0.01): NO VERDICT -- gate refuses verbatim `no leg records under adr92_bvp_fix/ctl` (0 converged steps, 0 JSON, before lane A's re-fix; PENDING RE-RUN). Control and -implex/control-OFF arms: COMPLETE, gated, VERDICT (control-OFF arm only) = PREDICTION MET."
+status: "All three arms COMPLETE. Registered arm (-implex -implexControl 0.05 0.01, build afb95c40c): gate --registered-arm VERDICT = PARTIAL -- 0.0% past rung 1 (converged-only) but 13.8% on attempts (81/585), 99.0% failed-rung iterations; terminated BUDGET at s/B 0.02754. Control-OFF arm (build 2473ce46c): VERDICT = PREDICTION MET (0.0%/0.0%), as before."
 priority: high
 owner: nmora
 related:
@@ -48,56 +48,86 @@ worktree, output under `Ladruno_files/testbed/hypo_bearing/adr92_bvp_fix/<arm>/`
 > legs. Every `wall_s` / speedup number below is indicative only, not a clean
 > single-tenant measurement.
 
-## Registered arm (`ctl`, `-implex -implexControl 0.05 0.01`) -- PLACEHOLDER, PENDING
+> [!warning] **The registered arm (`ctl`) ran on a different build than `control` /
+> `noctl`.** `control` and `noctl` above ran on `2473ce46c2ae44412246ca305f3843463f389cad`;
+> `ctl` (below) ran on `afb95c40c9e3da1cc97d6aabe8168644c53d0e82`, after lane A fixed a
+> step-1 refusal defect: the first push step after `updateMaterialStage 1` has no
+> plastic history yet, so `implexError` there was measuring the companion's own
+> drift-correction jump rather than a genuine extrapolation error; that un-primed step
+> is now exempt from `-implexControl` refusal. **The only `SRC/` change between the two
+> builds is that exemption, which is gated on the un-primed-step condition and cannot
+> touch a control-OFF leg (implex off entirely) or the already-complete `noctl` leg
+> (implex on, control off -- nothing to refuse).** `control` and `noctl` were therefore
+> **not** re-run; the overlay and gate comparisons below mix builds deliberately, and
+> the gate's own build-mismatch WARN (visible below) is expected, not a defect.
 
-**This section is intentionally incomplete.** The registered arm produced **zero
-converged steps and zero JSON leg records** (the driver's `assert len(rows) > 8`
-fired before any checkpoint or final write). `adr92_bvp_gate.py --implex
-adr92_bvp_fix/ctl --baseline adr92_bvp_fix/control` refuses verbatim:
+## Registered arm (`ctl`, `-implex -implexControl 0.05 0.01`, build `afb95c40c9`)
+
+`adr92_bvp_gate.py --implex adr92_bvp_fix/ctl --baseline adr92_bvp_fix/control
+--registered-arm` verdict, verbatim:
 
 ```
-no leg records under adr92_bvp_fix/ctl
+  --registered-arm: restricted to legs with implex_control set (the pre-registered `-implex -implexControl` arm)
+  builds: implex ['afb95c40c'], baseline ['2473ce46c']
+  *** WARN: baseline and implex arms ran on DIFFERENT engine builds (['2473ce46c'] vs ['afb95c40c']) -- this gate is not a same-binary comparison ***
+
+  past rung 1               52.2 %  ->     0.0 %   (converged steps only)
+  past rung 1 (attempts)    52.2 %  ->    13.8 %   (steps + nsub, apples-to-apples denominator -- review B4/F2)
+  failed-rung iters         83.5 %  ->    99.0 %
+
+  VERDICT: PARTIAL -- between the prediction and a refutation. Report the
+  table as measured; do not round it toward either.
 ```
 
-This is a genuine regression in *reach* relative to the pre-fix `implex_ctl` leg (which
-got 110 converged steps to `s/B = 0.005` before seizing): the B2 floor fix landed by
-lane A now arms `mImplexDt0` correctly and enforces the reduction limit as designed,
-and at `reductionLimit = 0.01` that enforcement refuses **every** ladder rung on the
-very first attempted step (`implexError` 0.129-0.295 vs `tol 0.05`, `|dt| = 2e-05`
-already at the `floor 2e-07`) -- the material's own throttled log records 10 explicit
-`-implexControl REFUSES` lines (budget-suppressed after that; `implexRefusals` was
-never read since the process exited via the driver's own control-assert before any
-`eleResponse` call) and `7 NewtonRaphson + 7 NewtonLineSearch + 7 AcceleratedNewton`
-ladder-rung failures (7 subdivisions x 3 rungs = 21, consistent with the FLOOR
-termination). Lane A is re-fixing this and will re-run into `adr92_bvp_fix/ctl/`
-separately; **do not read the control/noctl comparison below as a "with vs without
-control" result** -- it is control vs the unregistered control-OFF arm only, exactly
-as the red/blue review found for the pre-fix data.
+The WARN is the expected build-mismatch flag from the callout above, not a defect --
+`control`'s data is unaffected by the fix that separates the two builds. `ctl` reached
+504 converged steps (all on rung 1: `nfail = 243` were all incurred inside the 81
+subdivided-and-abandoned attempts, none on a converged step) before hitting the
+**BUDGET** termination (`subdiv_budget = 80`, `nsub = 81` -- one over) at `s/B =
+0.02754`. **0.0 % past rung 1 on the converged-only denominator, 13.8 % on the
+attempts-based one (81/585)** -- exactly the coordinator's expectation, and the review
+B4/F2 point made concrete: 0.0 % converged-only is a survivorship artefact (every
+attempt that entered the ladder past rung 1 also failed all three rungs and was
+subdivided away, so it never became a "converged step on rung 2/3" to count), while
+81 of 585 attempts (13.8 %) really did enter the ladder. `failed-rung iterations` =
+99.0 % is the highest of any arm measured in this campaign -- consistent with `nsub`
+now capturing genuine ladder-cost work (81 abandoned 3-rung attempts) rather than the
+pre-fix ctl leg's single-step death.
+
+`n_material_refused = 10270` (the process-wide `-implexControl` refusal counter, final
+read) against 504 converged steps: **20.4 refusals per converged step** -- i.e. the
+control is firing repeatedly and being overridden by retries within a step's ladder,
+not just at the 81 abandoned attempts. The curve CSV's own cumulative `implex_refusals`
+column reads 10126 at the last converged row, 144 short of the final 10270 -- the gap
+is refusals incurred during the terminal (505th) subdivision attempt, after the last
+converged row was written but before the BUDGET stop; expected, not a bug (the curve
+column is a per-converged-step snapshot, not a running total sampled every attempt).
 
 ## Overview
 
-| | control | `-implex`, control OFF (`noctl`) |
-|---|---|---|
-| steps (converged) | 69 | **142** |
-| attempts (steps + nsub) | 69 | 142 |
-| rung 1 / rung 2 / rung 3 | 33 / 15 / 21 | **142 / 0 / 0** |
-| nsub (subdivisions) | 0/80 | 0/80 |
-| past rung 1 (converged-only) | **52.2 %** | **0.0 %** |
-| past rung 1 (attempts) | **52.2 %** | **0.0 %** |
-| failed-rung iterations | **83.5 %** | **0.0 %** |
-| n_material_refused | 0 | 0 |
-| termination | WALL @ `s/B` 0.0678 | **TARGET @ 0.25000** |
-| q_u (kPa, NOT a capacity for either -- WALL/no-peak) | 1529.844 | 4387.784 |
-| t_init (matched window, `s <= 1 mm`, 19/19 pts) | 16745.0 kPa/m | 16978.7 kPa/m |
-| t_init (old 4-point fit, kept for continuity) | 23773.3 | 5404.2 |
-| tail % of t_init (matched window) | **63.3 %** | **32.6 %** |
-| wall_s (see caveats above) | 2467.8 s | 127.4 s |
+| | control (`2473ce46c`) | `-implex`, control OFF (`noctl`, `2473ce46c`) | `-implex -implexControl 0.05 0.01` (`ctl`, `afb95c40c`) |
+|---|---|---|---|
+| steps (converged) | 69 | **142** | 504 |
+| attempts (steps + nsub) | 69 | 142 | **585** |
+| rung 1 / rung 2 / rung 3 | 33 / 15 / 21 | **142 / 0 / 0** | **504 / 0 / 0** |
+| nsub (subdivisions) | 0/80 | 0/80 | **81/80 (over budget)** |
+| past rung 1 (converged-only) | **52.2 %** | **0.0 %** | **0.0 %** |
+| past rung 1 (attempts) | **52.2 %** | **0.0 %** | **13.8 %** |
+| failed-rung iterations | **83.5 %** | **0.0 %** | **99.0 %** |
+| n_material_refused | 0 | 0 | **10270** (20.4/converged step) |
+| termination | WALL @ `s/B` 0.0678 | **TARGET @ 0.25000** | **BUDGET @ 0.02754** |
+| q_u (kPa, NOT a capacity for any -- WALL/no-peak/BUDGET) | 1529.844 | 4387.784 | 657.342 |
+| t_init (matched window, `s <= 1 mm`) | 16745.0 kPa/m (19 pts) | 16978.7 kPa/m (19 pts) | 16888.8 kPa/m (20 pts) |
+| t_init (old 4-point fit, kept for continuity) | 23773.3 | 5404.2 | 17771.8 |
+| tail % of t_init (matched window) | **63.3 %** | **32.6 %** | **67.4 %** |
+| wall_s (see caveats above; `ctl` ran ALONE, see below) | 2467.8 s | 127.4 s | 114.8 s |
 
-`t_init` on the matched window (`s <= max(1 mm, 5*ds_base) = 1 mm`) agrees between the
-two arms to **1.4 %** (16745 vs 16979 kPa/m), confirming the red/blue review's finding
-(B4/F10) that the old 4-point fit's 4.4x gap was an artefact of an unmatched window, not
-a different initial problem. Neither arm plateaus on the matched-window tail
-(`PLATEAU_FRAC = 2 %`; both far above it).
+`t_init` on the matched window (`s <= max(1 mm, 5*ds_base) = 1 mm`) agrees across all
+**three** arms to within **1.4 %** (16745 / 16979 / 16889 kPa/m for control / noctl /
+ctl -- `ctl` sits almost exactly between the other two, despite the different build and
+regime), confirming the red/blue review's finding (B4/F10) that the old 4-point fit's
+4.4x gap was an artefact of an unmatched window, not a different initial problem. No
+arm plateaus on the matched-window tail (`PLATEAU_FRAC = 2 %`; all three far above it).
 
 ## Gate verdicts (`adr92_bvp_gate.py`, baseline = the new `control`)
 
@@ -121,13 +151,17 @@ leaving nothing):
 --registered-arm: no leg under --implex has implex_control set -- nothing left to gate
 ```
 
-**Reading these together:** the "PREDICTION MET" verdict above is, exactly as the
-red/blue review found on the pre-fix data, reachable **only** on the unregistered
-control-OFF arm. The pre-registered gate (`--registered-arm`, `-implex
--implexControl`) currently has no data to report at all -- not PARTIAL, not REFUTED,
-literally empty, because the registered leg cannot complete a single step on this
-binary. Builds matched on both runs (`implex ['2473ce46c']`, `baseline
-['2473ce46c']`) -- no WARN.
+**Reading these together:** the "PREDICTION MET" verdict above is reachable only on
+the unregistered control-OFF arm, exactly as the red/blue review found on the pre-fix
+data. The pre-registered gate (`--registered-arm`, `-implex -implexControl`) now has
+data and returns **PARTIAL** (see the "Registered arm" section above for the verbatim
+output) -- the ladder is gone on the converged-only count (every ladder-touching
+attempt failed all three rungs and was subdivided away rather than converging on rung
+2/3) but still fires on 13.8 % of attempts and, when it does, burns through all three
+rungs at a 99.0 % failed-iteration share, the highest of any arm in this campaign.
+Builds matched for the control-OFF run (`implex ['2473ce46c']`, baseline
+`['2473ce46c']`) -- no WARN there; the registered-arm run mixes builds deliberately
+(see the callout above) and its WARN is expected.
 
 ## Overlay: `q_foot` at matched `s/B`, `noctl` vs `control`
 
@@ -153,33 +187,66 @@ there). This is a materially *smaller* deviation than the pre-fix review's
 the deeper control reach here (0.0678 vs the earlier 0.0553) extends the checkable
 overlap and the deviation is monotonically settling rather than spiking mid-range.
 
+## Overlay: `q_foot` at matched `s/B`, `ctl` vs `control`
+
+`ctl` ran to `s/B = 0.02754` before BUDGET; the overlap with `control` (which reaches
+0.0678) is bounded by `ctl`'s own endpoint. **`ctl` ran ALONE** (no other leg's process
+was active during its window, 12:41-12:42) -- only the PID 74216 machine-load caveat
+applies to its `wall_s`, not the sequencing defect above.
+
+| s/B | q_control (kPa) | q_ctl (kPa) | dev % | wall_control (s) | wall_ctl (s) | speedup |
+|---|---|---|---|---|---|---|
+| 0.00001 | 1.336 | 2.739 | **+104.98** | 0.228 | 0.074 | 3.1x |
+| 0.0005 | 17.753 | 18.435 | +3.84 | 5.537 | 2.917 | 1.9x |
+| 0.001 | 31.877 | 32.897 | +3.20 | 15.361 | 5.656 | 2.7x |
+| 0.002 | 58.158 | 59.753 | +2.74 | 29.891 | 11.531 | 2.6x |
+| 0.005 | 131.840 | 134.716 | +2.18 | 108.248 | 27.835 | 3.9x |
+| 0.01 | 248.853 | 253.579 | +1.90 | 288.707 | 53.890 | 5.4x |
+| 0.02 | 477.979 | 485.178 | +1.51 | 623.415 | 90.544 | 6.9x |
+| 0.0275 (`ctl`'s own endpoint) | 647.430 | 656.433 | +1.39 | 880.690 | 114.406 | 7.7x |
+
+Per-step over the full overlap `s/B <= 0.02754` (n = 504 matched points): **mean
+|deviation| = 2.30 %, max |deviation| = 104.98 % at s/B = 0.00001** (step 1, the same
+pure elastic-predictor outlier seen on `noctl`). **Excluding step 1** (n = 503): mean
+|deviation| = 2.10 %, max |deviation| = 21.53 %. `ctl` tracks `control` noticeably
+*tighter* than `noctl` does over the same range (2.30 % mean here vs `noctl`'s 4.78 %
+mean over its own, larger overlap; both dominated by the same step-1 outlier) -- the
+error control is doing exactly what it is built to do, at the cost of only reaching
+`s/B = 0.0275` in the process.
+
 ## `implexError` (ADR §8's own reporting mandate)
 
 `noctl`'s curve CSV (`implex_err_avg` column, read once per step from the process-wide
 `avgImplexError` accumulator, non-destructive): **mean 0.00113, max 0.00349** over the
 142 converged steps -- comfortably under the registered tolerance of 0.05, which is
-exactly why the control-OFF arm never refuses anything (`n_material_refused = 0`) while
-the registered arm above refuses on step 1.
+exactly why the control-OFF arm never refuses anything (`n_material_refused = 0`).
+`ctl`'s own curve (same column, over its 504 converged steps): **mean 0.00003, max
+0.00226** -- an order of magnitude *smaller* than `noctl`'s, because every step whose
+error would have pushed the running average up was instead refused and retried at a
+smaller `ds` before it could commit; the accumulator only ever sees the error of steps
+the control let through.
 
 `implex_err_max_at_checkpoints` (max over yielding elements of `implexDetail[0]`, the
 per-Gauss-point total error slot):
 
-| s/B | control (implex off) | noctl |
-|---|---|---|
-| 0.002 | 0.0 | 0.00326 |
-| 0.005 | 0.0 | 0.00959 |
-| 0.01 | 0.0 | 0.01640 |
-| 0.02 | 0.0 | 0.04256 |
-| 0.04 | 0.0 | 0.04878 |
-| 0.08 | -- (control did not reach) | 0.01483 |
-| 0.15 | -- (control did not reach) | 0.01688 |
+| s/B | control (implex off) | noctl | ctl |
+|---|---|---|---|
+| 0.002 | 0.0 | 0.00326 | 0.00044 |
+| 0.005 | 0.0 | 0.00959 | 0.00032 |
+| 0.01 | 0.0 | 0.01640 | 0.00072 |
+| 0.02 | 0.0 | 0.04256 | 0.00036 |
+| 0.04 | 0.0 | 0.04878 | -- (`ctl` did not reach) |
+| 0.08 | -- (control did not reach) | 0.01483 | -- |
+| 0.15 | -- (control did not reach) | 0.01688 | -- |
 
-Note the **max**-over-elements figure (0.0426-0.0488 through s/B 0.02-0.04) sits close
-to the registered tolerance of 0.05, while the **average** above is two orders smaller
--- confirming ADR §8's own prediction that the error concentrates at a small number of
-corner Gauss points rather than being uniform, which is exactly the population the
-registered `-implexControl 0.05` arm is built to catch, and exactly why it refuses
-immediately once armed correctly.
+Note the **max**-over-elements figure on `noctl` (0.0426-0.0488 through s/B 0.02-0.04)
+sits close to the registered tolerance of 0.05, while `ctl`'s checkpoint max stays two
+orders below it (3.2e-4 to 7.2e-4) throughout -- consistent with ADR §8's own
+prediction that the error concentrates at a small number of corner Gauss points: on
+`ctl` the control is catching and refusing exactly those points *before* a checkpoint
+snapshot can see them elevated, which is also why `n_material_refused = 10270` is so
+much larger than the 81 abandoned attempts alone -- most refusals are single ladder
+rungs within an otherwise-successful step's retries, not whole-step losses.
 
 ## One paragraph per arm
 
@@ -206,28 +273,50 @@ matched window (16978.7 kPa/m) agrees with control's (16745.0) to 1.4 %; the old
 4-point fit's headline 4.4x gap does not reproduce with a like-for-like window. `tail
 = 32.6 %` of the matched-window `t_init` -- still no plateau, at any denominator.
 
-**ctl (registered arm).** See the placeholder section above. Zero converged steps,
-zero leg records, gate refuses with no data to average. PENDING a lane-A re-run once
-the immediate first-step refusal (an `implexError` of 0.13-0.30 against `tol 0.05` at
-the deck's very first, smallest step) is understood -- whether that is a correctly
-strict floor doing its job on a genuinely too-tight `reductionLimit`, or a residual
-defect, is not decided by this data and must not be guessed at here.
+**ctl (registered arm).** After lane A's un-primed-step exemption (build
+`afb95c40c9`), terminated **BUDGET** at `s/B = 0.02754` after 504 converged steps
+(all rung 1) and 81 abandoned 3-rung subdivisions (`nsub = 81` against
+`subdiv_budget = 80` -- one over), `n_material_refused = 10270` (20.4 per converged
+step), 114.8 s wall (single-tenant, only the PID 74216 machine-load caveat applies).
+Gate `--registered-arm` verdict: **PARTIAL** (0.0 % past rung 1 converged-only,
+13.8 % on attempts, 99.0 % failed-rung iterations -- the highest failed-rung share
+measured in this campaign). Tracks `control` *tighter* than `noctl` does over their
+respective overlaps (2.30 % mean deviation vs 4.78 %, both dominated by the same
+step-1 elastic-predictor outlier), and its own `implexError` stays two orders below
+the registered tolerance at every checkpoint it reached -- the control is doing its
+job, at the cost of reaching only 41 % of `control`'s own depth (`s/B` 0.0275 vs
+0.0678) in comparable wall time (114.8 s vs 2467.8 s, though `control`'s time is
+contended and not a clean comparator either). `ctl_diag/` (committed alongside) is lane A's own pre-fix reproduction of the
+zero-step failure, kept for provenance.
 
 ## What is NOT yet answered
 
-- The registered gate verdict (PASS/PARTIAL/REFUTE on `-implex -implexControl`) --
-  no data.
-- Whether `reductionLimit = 0.01` is simply too tight for this deck's first step, or
-  whether a looser value (the memo's owed tolerance sweep, still not run) reaches
-  depth while keeping `implexError` bounded.
-- A clean (single-tenant) wall-clock measurement -- both the PID 74216 background load
-  and the control/noctl overlap window contaminate every number in this memo's timing
-  columns.
+- Whether `reductionLimit = 0.01` is simply too tight for this deck past the
+  un-primed first step (the ladder still fires on 13.8 % of attempts and burns every
+  rung when it does), or whether a looser value (the memo's owed tolerance sweep,
+  still not run) reaches depth while keeping `implexError` bounded -- `ctl`'s own
+  checkpoint-max `implexError` (3.2e-4 to 7.2e-4) is two orders below the 0.05
+  tolerance, which argues the refusals are not marginal near-misses but a stricter
+  population the control is catching well inside its budget.
+- A clean (single-tenant) wall-clock measurement for `control` and `noctl` -- both the
+  PID 74216 background load and the control/noctl overlap window (disclosed above)
+  contaminate their timing columns; `ctl`'s own wall_s is single-tenant modulo PID
+  74216 only.
+- Whether `ctl` would reach `control`-comparable depth given a larger `subdiv_budget`
+  (it hit `BUDGET`, not `FLOOR` or a converged termination) -- not measured here.
 
 ## Log
 
 - 2026-09-06 -- Rerun on pinned build `2473ce46c2ae44412246ca305f3843463f389cad`
   (lane A's pytest battery: 20 passed, immediately prior). `control` and `noctl`
-  legs complete and gated; `ctl` (the registered arm) produced zero data and is
-  PENDING a lane-A re-fix and re-run. Sequencing defect (control/noctl overlap,
-  ~158 s) and a pre-existing unrelated-process machine load disclosed above.
+  legs complete and gated. Sequencing defect (control/noctl overlap, ~158 s) and a
+  pre-existing unrelated-process machine load disclosed above.
+- 2026-09-06 (later) -- Registered arm (`ctl`) filled in on build
+  `afb95c40c9e3da1cc97d6aabe8168644c53d0e82`, after lane A's un-primed-step exemption
+  fix (the first push step after the stage flip has no plastic history, so
+  `implexError` there measured the companion's drift-correction jump, not a genuine
+  extrapolation error; that step is now exempt from refusal). `control`/`noctl` were
+  **not** re-run -- the fix cannot affect either (control-OFF has no companion to
+  refuse from; the un-primed-step exemption only changes `-implexControl` behaviour,
+  which `noctl` never exercises since its control is off). Gate `--registered-arm`
+  verdict: PARTIAL. All three arms now complete.
