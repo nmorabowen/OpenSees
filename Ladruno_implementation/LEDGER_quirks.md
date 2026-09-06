@@ -5335,6 +5335,90 @@ that floor and the material logs
 > is still open. Whichever option is taken, COUNT the clamp events and report the number.
 > **It gets closer, not further, after WP-86b:** the substep cap and the `TanType` default exist to
 > let a leg reach deeper settlements, and this clamp is the next thing waiting there.
+## `ManzariDafalias` `gp_state[25]` (`mDGamma`) is the LAST SUBSTEP's plastic multiplier, not the step total, under every substepped scheme
+
+**Found 2026-09-05, ADR-92 scoping; measured by the P0 oracle (`_adr92_p0_oracle_results` §6).**
+
+`BackwardEuler_CPPM` zeroes `NextDGamma` and solves for it (`ManzariDafalias.cpp:2220`, `:2274`), so under
+`IntScheme 2` it is the increment's plastic multiplier. Under `ModifiedEuler` (scheme 1, the
+deck default), `RungeKutta4/45` and the `MaxStrainInc`/`MaxEnergyInc` family, every substep
+**overwrites** it (`ModifiedEuler` `:1498`, `:1570`; `RungeKutta4` `:1744-1807`; `RungeKutta45`
+`:1973-2016`; `ForwardEuler` `:1342`, which the `MaxStrainInc`/`MaxEnergyInc` FE variants call)
+and nothing sums it — the recorder sees whatever
+the last substep computed, which depends on how many substeps the controller chose.
+
+- **Bites:** anything that reads `state[25]` as "how much plastic flow this step" — a recorder,
+  a dilatancy post-processor, and any IMPL-EX that extrapolates `dGamma`. The TIMs request for
+  ADR-92 proposed exactly that; the oracle measured the two extrapolation forms **identical to
+  2e-10 kPa under scheme 2 and 37 kPa apart on a 277 kPa stress under scheme 1**.
+- **Workaround:** integrate the plastic strain yourself from the committed `eps - eps_e`
+  (`getState` entries 0-5 are `eps_e`; `strain` is `eps`) — that IS a step total. ADR-92 D1.
+
+## `ManzariDafalias::ForwardEuler` (`IntScheme 5`) has a shadowed `Vector r` — `r` is identically ZERO, both `(n:r)` terms are silently dropped
+
+**Found 2026-09-05, ADR-92 P0 source extraction, verified at source.**
+
+`:1330-1332` reads `Vector r(6); if (p > small) Vector r = GetDevPart(CurStress) / p;` — the
+inner declaration is block-scoped, dies at the brace, and the outer `r` used at `:1334`,
+`:1337`, `:1342`, `:1350` stays zero. `Kp`, `temp4` and `NextDGamma` lose their volumetric
+coupling. The P0 oracle, reproducing it verbatim, puts scheme 5's terminal `q/p` at **1.188
+against 0.946** for scheme 1 on the same path — a silent 26 % on mobilised strength.
+
+- **Scope, measured not assumed:** `ModifiedEuler` (`:1483`) and `GetElastoPlasticTangent`
+  (`:4839`) both use the corrected two-statement form `r = GetDevPart(...); r /= p;` with the
+  one-liner commented out directly above — the trap was hit and fixed twice and missed once.
+  `explicit_integrator`'s `default:` is `ModifiedEuler` (`:1060`), so scheme 2's fallback is
+  clean too. **Reaches schemes 5, 9 and 4 only. Not the deck default; not the TIMs campaign.**
+- **Fix owed (vanilla, two lines, separate PR):** `r = GetDevPart(CurStress); r /= p;` inside
+  the `if`. Until then the entry above on schemes 3/5 having no error control has a second
+  reason not to use 5.
+
+## `BackwardEuler_CPPM` (`IntScheme 2`) is NOT an implicit return at low `p`, and its non-convergence NEVER propagates
+
+**Found 2026-09-05, ADR-92 P0; verified at source; measured on the oracle's corner path.**
+
+Two things, both by design in the shipped code:
+
+1. The low-`p` branch (`tr/3 < m_Pmin`, `:2234` — the one test that omits `m_Presidual`) has
+   its Newton **disabled by a literal `errFlag = 0`** (`:2264-2266`, `NewtonIter2_negP`
+   commented out, author's note *"tension-cutoff surface ... not working properly. Using
+   explicit integrator for the time being"*). Every such step is integrated by
+   `explicit_integrator`, i.e. `ModifiedEuler`, and flagged as success. On a Gauss-point path
+   onto the `p_min` floor with shear kept on, **58-74 % of all scheme-2 calls went this way.**
+2. Away from the floor, the retry ladder on Newton failure is: 50-step forward-Euler warm start
+   -> recursive bisection (`mMaxSubStep = 10`) -> `explicit_integrator(...); errFlag = 1;`
+   (`:2434-2437`). It gives up and returns an explicit answer **marked converged**. `Check()`'s
+   `tr(stress) < 0` test is commented out (`:4907`).
+
+- **Bites:** anyone choosing scheme 2 "because it is implicit" for a free-surface / low-`p`
+  problem — the corner of a footing, a slope face, a retaining-wall backfill surface. There it
+  costs a 19-unknown Newton per Gauss point and delivers `ModifiedEuler`. ADR-92 D3 was
+  written on that assumption and reversed on this measurement.
+- **Rule:** at low confinement the only integrator you are ever running is `ModifiedEuler`, so
+  cap it (`-maxSubsteps`, #792 T1) rather than route around it. Related: the dead
+  `NewtonIter2_negP` entry above.
+
+## IMPL-EX over a HYPOELASTIC law must be INCREMENTAL, and the extrapolated stress needs the `p_min` clamp
+
+**Found 2026-09-05 — the first by the ADR-92 Fable review before the oracle ran, the second by
+the oracle's corner gate (`_adr92_p0_oracle_results` §5, §8).**
+
+- **Incremental, not total.** ASD-style IMPL-EX is usually written `sigma~ = C:(eps - eps_p~)`.
+  `ManzariDafalias` integrates `dsigma = Ce(p):deps_e` with moduli at the **committed** stress
+  (`elastic_integrator` `:1008-1011`, `BackwardEuler_CPPM` `:2223-2226`); rebuilding the stress
+  from a total elastic strain discards the pressure-dependent history. Measured **at a ZERO
+  increment**: the total form returns `p = 99.50` on a committed `100.00` (0.5 %) and
+  **`1.11` on a committed `5.00` (78 %)**. Its error does not vanish as `dt -> 0`, so a
+  convergence gate fails for a reason that has nothing to do with IMPL-EX. Write
+  `sigma~ = sigma_n + Ce(p_n):((eps_{n+1} - eps_n) - f*d_eps_p(n))`. Same family as the
+  ADR-90 P0b entry above (a wrapper's proof silently assuming a constant elastic operator).
+- **Clamp `sigma~`.** Nothing in the extrapolation knows about the floor: on a path driven onto
+  `p_min = 0.0101 kPa` the extrapolated mean stress reached **-1.37 / -0.16 / -0.09 kPa** at
+  40 / 80 / 160 steps (first order, O(1)-O(10) relative) while the committed state sat at
+  `+0.0101`. Apply the code's own device — `sigma~ = dev(sigma~) + p_min*I1` when
+  `tr(sigma~)/3 < p_min` — or the free-surface element receives tensile mean stress every
+  iteration. Related: the static-`ops_Dt` IMPL-EX entry (§ "IMPL-EX in a STATIC analysis") —
+  ADR-92 D2 rediscovered it from the `Domain.cpp:2054` side.
 
 ## `InitStrainNDMaterial` special-cases the literal string "ThreeDimensional" when forwarding to `getCopy(void)`; `StagedStrainNDMaterial` has NO such special case at all — a `getCopy(void)` override for a 2D subclass has NO reachable caller through either wrapper
 
