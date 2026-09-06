@@ -17,7 +17,10 @@ copied -- a third copy of Gorini's constants was flagged as a drift risk in
 review.
 
 POST-FIRST-RUN NOTE (2026-09-06).  This file ran against the first P1 binary
-(42dbf066e) and scored 11/15 before this pass. Two failures were this file's
+(42dbf066e) and scored 13 passed / 2 failed / 1 skipped of 16 collected
+(11 single `def test_...` plus one 5-way `@pytest.mark.parametrize`) --
+NOT "15", a figure that undercounted the parametrized cases and that this
+docstring itself used to repeat. Two failures were this file's
 own deck-design bugs, not the C++, and are fixed here: `-implex` vs `-implex`
 off was compared at DIFFERENT effective substep caps (`_CAP_ADEQUATE` /
 `_CAP_TIGHT` now make the cap a controlled variable, everywhere an ON/OFF
@@ -31,6 +34,34 @@ against that binary; `_build_floor_seeking_deck` replaces it with a
 net-DILATING ramp (see that function's docstring for why isochoric shear was
 probably too mild). The tangent-identity/`revertToLastCommit` failure from
 that same run is NOT this file's fault and is not touched here.
+
+LANE B / P1 RED-BLUE REVIEW PASS (2026-09-06,
+`Ladruno_implementation/_adr92_p1_redblue_review.md` section 5 item 2).
+Responds to RED-3's findings (raw evidence
+`_adr92_p1_redblue/red3_tests_process.md`, blue verdicts
+`blue3_tests_process.md`), fixing what that review assigned to the test
+lane and nothing in `SRC/` (lanes A/C own the C++ and the driver/gate).
+Six things changed: (1) a genuinely free-DOF settlement-column deck drives a
+MONOTONE NEGATIVE pseudo-clock (`LoadControl(-ds)`, the campaign deck's own
+shape) through a `ds` change and asserts `implexDetail[5]` tracks the
+SIGNED ratio `dt_{n+1}/dt_n * alpha` -- the gap B1 exploited (F1/F7,
+coverage row 10); (2) `-implexControl` and the commit-time companion
+refusal are now COUNTED via the new `implexRefusals` response (Vector(4):
+total, d2, control, companion) -- the companion-at-commit case (B3:
+`Domain::commit()` discards the return code, so this counter is the ONLY
+way to observe it from Python) gets a dedicated test (coverage row 20,
+previously NOT COVERED); (3) `getCopy(const char*)` is now exercised AFTER
+a sibling element has genuine plastic history, not before any `analyze()`
+call (F9); (4) the db roundtrip runs on a free-DOF deck where ON and OFF
+are measurably different FIRST, checked before the roundtrip rather than
+as a skip-fallback after it (F6); (5) a PlaneStrain (`-ndm 2`) smoke test
+and a scheme-2-without-cap parse refusal close two more coverage gaps
+(row 17 and the D3 companion case); (6) the two tests RED-3/BLUE-3's
+coverage matrix records as "RED (unmarked)" (rows 6, 11) are resolved --
+one strengthened with the positive control row 11 says it lacked, one
+marked `xfail(strict=True)` with the reason it is out of this lane's
+scope -- and the stale-semantics test (F7) is renamed to describe the
+SHIPPED sign-change contract, not the retired negative-only one.
 
 WHAT A ZERO-FREE-DOF DECK CAN AND CANNOT SHOW UNDER `-implex`.  This matters
 enough to say once, centrally, rather than in every test that runs into it.
@@ -569,6 +600,17 @@ def _probe_once(tag, sign, probe_pattern_tag, probe_ts_tag):
     return stress, strain
 
 
+@pytest.mark.xfail(strict=True, reason=(
+    'known-red per the P1 red/blue review (RED-3 F5/F11, coverage row 6: '
+    '"RED (unmarked)"); the mechanism this test exercises (`-implexDt '
+    'strain`, ladrunoImplexArmStep / ladrunoImplexFreezeTangent) is '
+    'ORTHOGONAL to the C++ this lane\'s fix touches (B1/B2/B3: the pseudo-dt '
+    'ratio, the -implexControl floor, and the commit-time companion refusal '
+    '-- none of which this deck reaches, since its dt source is a strain '
+    'norm, not the pseudo-clock, and it never triggers a refusal). Root '
+    'cause undiagnosed by the review ("attributed to neither side yet", '
+    'BLUE-3 F11) and out of lane B\'s scope; do not xfail this away again '
+    'once a diagnosis exists -- fix it or file the follow-up.'))
 def test_tangent_identity_frozen_ce_on_strain_dt_source():
     """Returned tangent (`getTangent()`, frozen to `Ce(p_n)` under `-implex`)
     reproduces a numerical `d(sigma~)/d(eps)` taken from TWO forced,
@@ -576,12 +618,24 @@ def test_tangent_identity_frozen_ce_on_strain_dt_source():
     long mechanism note above this test for why this is the honest way to
     reach `sigma~` from Python and why the two probes share the same frozen
     `f`.
+
+    Kills a mutant that lets `f` drift between the +h/-h probes (an
+    UNFROZEN, strain-dependent factor breaking the affine identity) or that
+    reports the tangent from an unclamped/stale `Ce`.
     """
     _build_probe_triaxial(_PROBE_TAG)
     _establish_plastic_history(_PROBE_TAG)
 
     ce_flat = list(ops.eleResponse(1, 'material', 1, 'tangent'))
     stress_before = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    detail_before = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail_before[3] == 0.0 and detail_before[4] == 0.0, (
+        'the p_min clamp fired before the probes even started -- _PROBE_P0 '
+        'is supposed to sit AWAY from the floor (LEDGER_quirks: "a '
+        'tangent-identity gate must be run on a path where the clamp is '
+        'idle, and a test that reports identity to machine precision on a '
+        'clamped path is measuring nothing"); raise _PROBE_P0 rather than '
+        'weakening this precondition check', detail_before)
 
     sp, ep = _probe_once(_PROBE_TAG, +1.0, probe_pattern_tag=90, probe_ts_tag=90)
     sm, em = _probe_once(_PROBE_TAG, -1.0, probe_pattern_tag=91, probe_ts_tag=91)
@@ -592,6 +646,14 @@ def test_tangent_identity_frozen_ce_on_strain_dt_source():
         'revertToLastCommit() is not fully restoring the committed state, so '
         'the two probes are not actually taken from the same base state',
         stress_before, stress_after)
+
+    detail_after = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail_after[3] == 0.0 and detail_after[4] == detail_before[4], (
+        'the p_min clamp fired DURING one of the two forced probes -- the '
+        'affine-tangent identity this test checks assumes an UNCLAMPED '
+        'sigma~ on both probes; a clamp firing on only one of them would '
+        'break the identity for a reason unrelated to the tangent freeze',
+        detail_before, detail_after)
 
     d_sigma = [a - b for a, b in zip(sp, sm)]
     d_eps = [a - b for a, b in zip(ep, em)]
@@ -652,6 +714,26 @@ def test_implex_maxsubsteps_zero_is_also_refused():
     with pytest.raises(Exception):
         ops.nDMaterial('LadrunoSANISAND', 8211, *_PARAMS,
                        '-implex', '-maxSubsteps', 0)
+
+
+def test_scheme2_without_maxsubsteps_is_refused_under_implex():
+    """IntScheme 2 under `-implex` with NO `-maxSubsteps` must be refused at
+    PARSE TIME exactly like the default scheme 1
+    (`test_implex_scheme1_requires_maxsubsteps`) -- ADR-92 D3's whole point
+    is that the companion must be ABLE to fail, and per the P1 review
+    (RED-1 F5), the old code only WARNED here, nested under `verbose`, which
+    is `false` on every `getCopy`/`recvSelf` path -- so a capped-0 scheme-2
+    deck could previously sail through construction (and every clone of it)
+    silently.
+
+    Kills a mutant that special-cases scheme 2 out of the "-implex requires
+    -maxSubsteps" refusal, or that leaves the refusal gated behind
+    `verbose`.
+    """
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8221, *_PARAMS,
+                       2, 2, 1, 1.0e-7, 1.0e-7, '-implex')
 
 
 # ---------------------------------------------------------------------------
@@ -717,10 +799,21 @@ def _build_free_dof_triaxial(tag, extra_opts=(), p0=None):
     ops.analysis('Static')
 
 
-def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchanged():
-    """D2's refusal by symptom: a NEGATIVE pseudo-time increment (`ops_Dt < 0`)
-    is refused via `LADRUNO_MATERIAL_REFUSED`, and the committed state is
-    unchanged across the refusal.
+def test_implex_sign_change_in_pseudo_dt_is_refused_and_leaves_committed_state_unchanged():
+    """D2's SHIPPED contract, as of `3c788778f`: the guard is a SIGN CHANGE
+    between the committed and the trial pseudo-clock
+    (`mImplexDtCommit != 0.0 && mImplexDt * mImplexDtCommit < 0.0`), not
+    "any negative `ops_Dt`" -- a MONOTONE negative clock (every step
+    negative, the campaign deck's own shape) is legal and must run at the
+    real `dt_{n+1}/dt_n` ratio (see
+    `test_negative_monotone_clock_runs_the_spec_factor` for that case; this
+    test's OLD name and docstring described the retired "any negative dt"
+    rule and are fixed here per the P1 review, RED-3 F7).
+
+    This deck reaches the sign-change branch specifically: positive
+    committed steps (`_establish_plastic_history`) followed by ONE negative
+    `LoadControl(-1.0)` step, so `mImplexDtCommit > 0`, `mImplexDt < 0`,
+    product `< 0`.
 
     HOW A NEGATIVE `ops_Dt` IS PRODUCED, without touching DisplacementControl
     or arc-length at all: `ops_Dt` is `currentTime - committedTime`
@@ -735,6 +828,10 @@ def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchang
     invisible to `analyze()`'s return code with zero free DOFs; the deck
     still visibly PRINTS the refusal warning, it just cannot be asserted on
     via the return code).
+
+    Kills a mutant that drops the sign-change guard entirely (D2 disabled)
+    or that reverts to the retired "any negative dt" rule (which would ALSO
+    refuse a monotone-negative leg, the exact regression B1 was about).
     """
     tag = 8212
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
@@ -746,11 +843,11 @@ def test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchang
     ops.integrator('LoadControl', -1.0)
     rc = ops.analyze(1)
     assert rc != 0, (
-        'a negative pseudo-time increment (LoadControl(-1.0)) was NOT '
-        'refused. ADR-92 D2 requires the material to refuse this step '
-        'because dt_{n+1}/dt_n is the extrapolation factor itself and a '
-        'reversed load factor makes it a wrong answer that would pass every '
-        'other gate', rc)
+        'a SIGN CHANGE in the pseudo-time increment (positive committed '
+        'steps, then LoadControl(-1.0)) was NOT refused. ADR-92 D2 requires '
+        'the material to refuse this step because dt_{n+1}/dt_n is the '
+        'extrapolation factor itself and a reversed load factor makes it a '
+        'wrong answer that would pass every other gate', rc)
 
     # NO ops.reset(): the failed step's own revertToLastCommit already ran.
     after = list(ops.eleResponse(1, 'material', 1, 'stress'))
@@ -764,6 +861,17 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     """`-implexControl` refuses a step whose extrapolation error exceeds its
     tolerance, via `LADRUNO_MATERIAL_REFUSED`, and the committed state is
     unchanged across the refusal.
+
+    FIXED PER THE P1 REVIEW (RED-3 F5/coverage row 11): the old version
+    asserted only `rc != 0` on the big step, with "no positive control
+    separating refusal from ordinary non-convergence" -- any Newton failure
+    for ANY reason would have passed. This version adds the positive
+    control the review asked for, using the new `implexRefusals` response
+    (Vector(4): total, d2, control, companion): the NOMINAL steps
+    (established below) must NOT increment the control slot, and the big
+    step MUST -- so a green run here proves the refusal was specifically
+    `-implexControl`'s tolerance gate, not e.g. a companion cap or an
+    unrelated equilibrium failure.
 
     A FREE-DOF deck (`_build_free_dof_triaxial`), for the same measured
     reason as the D2 test above: a zero-free-DOF deck's `analyze()` cannot
@@ -782,16 +890,27 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     exact oracle confinement), takes `_PROBE_N_HISTORY` NOMINAL deviatoric
     steps (expected to pass), then ONE step TEN TIMES that per-step load
     (expected to fail the same way, on the same physics, at the same low
-    confinement), and asserts only the qualitative outcome the oracle
-    licenses: the big step is refused.
+    confinement). The tolerance passed to `-implexControl` here (5e-4, down
+    from the earlier draft's 0.05) is deliberately tight -- per B2/LEDGER_
+    implementations, 0.05 is "unusable from 5e-4 at p0 = 5" on this class of
+    deck, so a loose tolerance risked the nominal steps ALSO refusing
+    (destroying the positive control) or the big step NOT refusing on a
+    build where the floor bug (B2) is still live; 5e-4 is chosen to be
+    unambiguous on either side once B2 is fixed.
+
+    Kills a mutant that reports SOME refusal on the big step (e.g. a
+    companion cap failure masquerading as -implexControl) without the
+    control slot itself moving, or that also refuses the nominal steps
+    (an over-tight/broken floor).
     """
     tag = 8213
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 0.05, 0.01)
+            '-implexControl', 5.0e-4, 0.01)
     _build_free_dof_triaxial(tag, opts, p0=5.0)
     _establish_plastic_history(tag)
 
     before = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    refusals_after_nominal = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
 
     # The 10x jump: a THIRD pattern, on top of the confinement (pattern 1)
     # and the nominal deviatoric history (pattern 2), both already frozen by
@@ -810,6 +929,15 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
         'of the oracle results memo); if this genuinely never refuses on '
         'this deck, re-derive the deck rather than weakening this assertion',
         rc)
+
+    refusals_after_big = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    assert refusals_after_big[2] - refusals_after_nominal[2] >= 1, (
+        'analyze() failed on the big step, but implexRefusals[2] (the '
+        '-implexControl-specific counter) did not move -- the positive '
+        'control this test is supposed to provide. Either the refusal was '
+        'NOT -implexControl (a companion cap or an unrelated Newton '
+        'failure), or the counter is not wired to this refusal site',
+        refusals_after_nominal, refusals_after_big)
 
     # NO ops.reset(): the failed step's own revertToLastCommit already ran.
     after = list(ops.eleResponse(1, 'material', 1, 'stress'))
@@ -911,88 +1039,484 @@ def test_implex_db_roundtrip_carries_flags_and_history():
         'were off', ref_off, out)
 
 
-def test_implex_getcopy_does_not_share_history_across_gauss_points():
-    """`getCopy(const char*)` (the prototype -> per-Gauss-point path every
-    `stdBrick`/`LadrunoBrick` construction uses) deliberately does NOT
-    transfer `mImplexDEpsP` -- "a fresh integration point starts with
-    d_eps_p = 0" (`LadrunoSANISAND.cpp`'s own comment on the getCopy(const
-    char*) implementation). Two elements built from the SAME prototype
-    material tag must therefore be INDEPENDENT: driving one through a full
-    plastic history must not perturb what the other, never touched, reports.
+def test_getcopy_after_plastic_history_shares_options_not_history():
+    """`getCopy(const char*)` (the per-Gauss-point path every
+    `stdBrick`/`LadrunoBrick` construction uses) builds a BRAND NEW object
+    from SCALAR CONSTRUCTOR PARAMETERS ONLY -- "a fresh integration point
+    starts with d_eps_p = 0" (`LadrunoSANISAND.cpp`'s own comment) -- never
+    from `this`'s own committed members. So a bystander element created from
+    the SAME material tag AFTER a sibling has already been driven deep into
+    plasticity must still start at IDENTICALLY ZERO plastic strain.
 
-    Two stdBrick cubes sharing ONE `LadrunoSANISAND` tag -- exactly what
-    `getCopy("ThreeDimensional")` is for (each element calls it once per
-    Gauss point on construction, independently). Element 1's nodes are driven
-    through the confine-first path; element 2's nodes are never given an
-    `sp` beyond the base fixities, so it sits at zero strain throughout.
+    FIXED PER THE P1 REVIEW (RED-3/BLUE-3 F9): the superseded version of
+    this test built BOTH elements before taking a single `analyze()` step,
+    so "bystander plastic strain == 0" was true by triviality -- nothing had
+    happened to ANYTHING yet, and a mutant that TRIED to leak history would
+    have had no history to leak. This version drives element 1 through the
+    full `sani._drive` elastic-plus-plastic history FIRST (measured
+    nonzero), and only THEN constructs element 2 from the same tag, in the
+    SAME still-live domain -- so a mutant that made getCopy(const char*)
+    read or share ANY committed member off a sibling clone (rather than
+    building fresh from scalars) has real, driven history available to leak
+    and would be caught here.
     """
     tag = 8303
-    ops.wipe()
-    ops.model('basic', '-ndm', 3, '-ndf', 3)
-    # element 1: nodes 1-8 (driven)
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            ops.node(4 * k + j + 1, x, y, float(k))
-    # element 2: nodes 11-18 (never driven)
+    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+
+    sani._drive('LadrunoSANISAND', tag, opts)   # element 1 (tag 1): full history
+
+    driven = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    driven_pstrain = list(ops.eleResponse(1, 'material', 1, 'plasticstrains'))
+    assert _vnorm(driven_pstrain) > 0.0, (
+        'element 1 was never actually driven into plasticity -- the deck, '
+        'not getCopy, is broken', driven, driven_pstrain)
+
+    # element 2: a SEPARATE, fully-fixed stdBrick sharing ONLY the material
+    # TAG, constructed in the SAME live domain AFTER element 1's plastic
+    # history already exists.
     for k in range(2):
         for j, (x, y) in enumerate(_XY):
             ops.node(10 + 4 * k + j + 1, x, y, float(k))
-
-    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
-    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
-    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
     ops.element('stdBrick', 2, 11, 12, 13, 14, 15, 16, 17, 18, tag)
-
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
-                    1 if k == 0 else 0)
-    # element 2: ALL three DOFs of ALL eight nodes fixed -- zero free DOFs and
-    # zero prescribed strain, an inert bystander rather than merely "not
-    # pushed as hard".
     for k in range(2):
         for j, (x, y) in enumerate(_XY):
             ops.fix(10 + 4 * k + j + 1, 1, 1, 1)
 
-    ops.timeSeries('Linear', 1)
-    ops.pattern('Plain', 1, 1)
-    for k in range(2):
-        for j, (x, y) in enumerate(_XY):
-            n = 4 * k + j + 1
-            if x == 1.:
-                ops.sp(n, 1, sani._LAT * sani._E_AX)
-            if y == 1.:
-                ops.sp(n, 2, sani._LAT * sani._E_AX)
-            if k == 1:
-                ops.sp(n, 3, -sani._E_AX)
-    ops.constraints('Transformation')
-    ops.numberer('Plain')
-    ops.system('FullGeneral')
-    ops.test('NormDispIncr', 1.0e-13, 25, 0)
-    ops.algorithm('Newton')
-    ops.integrator('LoadControl', 1.0 / sani._NTOT)
-    ops.analysis('Static')
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, (
+        'the domain failed to re-solve after adding the bystander element -- '
+        'a harness problem, not the claim under test')
 
-    ops.updateMaterialStage('-material', tag, '-stage', 0)
-    for step in range(sani._N_EL):
-        assert ops.analyze(1) == 0, f'elastic-stage step {step + 1} failed'
-    ops.updateMaterialStage('-material', tag, '-stage', 1)
-    for step in range(sani._N_PL):
-        assert ops.analyze(1) == 0, f'plastic-stage step {step + 1} failed'
-
-    driven = list(ops.eleResponse(1, 'material', 1, 'stress'))
     bystander_strain = list(ops.eleResponse(2, 'material', 1, 'strain'))
     bystander_pstrain = list(ops.eleResponse(2, 'material', 1, 'plasticstrains'))
 
-    assert _vnorm(driven) > 0.0, (
-        'element 1 was never actually driven -- the deck is broken, not the '
-        'claim under test', driven)
     assert all(abs(v) == 0.0 for v in bystander_strain), (
-        'element 2 (never sp-driven) reports nonzero strain -- the deck '
-        'setup, not getCopy, is at fault', bystander_strain)
+        'the bystander element (fully fixed, added after element 1 was '
+        'already driven) reports nonzero strain -- the deck, not getCopy, is '
+        'at fault', bystander_strain)
     assert all(abs(v) == 0.0 for v in bystander_pstrain), (
-        'element 2, sitting at zero strain the whole run, reports NONZERO '
+        'element 2, constructed from the SAME material tag AFTER element 1 '
+        'had already committed nonzero plastic strain, reports NONZERO '
         'plastic strain -- getCopy("ThreeDimensional") is leaking element '
-        '1\'s d_eps_p history into element 2\'s Gauss-point copy, which '
-        'shares only the PROTOTYPE material tag and must otherwise be fully '
-        'independent', bystander_pstrain)
+        '1\'s d_eps_p history into a sibling built from a driven prototype',
+        bystander_pstrain, driven_pstrain)
+
+
+# ===========================================================================
+#  P1 red/blue review, section 5 item 2 -- the negative monotone clock (B1),
+#  counted refusals (B2/B3), and the coverage-matrix gaps the review named.
+# ===========================================================================
+#
+#  A GENUINELY FREE-DOF SETTLEMENT COLUMN.  Every deck in this file above
+#  this point is either zero-free-DOF (`sani._build`/`_drive`,
+#  `_build_floor_seeking_deck`) or force-controlled
+#  (`_build_probe_triaxial`/`_build_free_dof_triaxial`). B1 (the extrapolation
+#  factor pinned at `alpha` for the life of a `LoadControl(-ds)` leg) needs
+#  BOTH at once: genuine free DOFs (so `analyze()` actually solves something
+#  every step, matching a real BVP Newton loop) AND a displacement-controlled
+#  `LoadControl(-ds)` deck (the campaign's own shape, `sanisand_tau0_band.py`,
+#  where `ops_Dt < 0` by design). Neither existing rig is that deck.
+#
+#  Three node layers (k = 0, 1, 2), two stacked `LadrunoBrick` cubes. The
+#  SAME per-layer roller convention as every other free-DOF deck in this file
+#  (`fx = 1 if x==0`, `fy = 1 if y==0`, `fz = 1 if k==0`) is used at every
+#  layer -- so the BASE (k=0) is the only layer with a z fixity, and the TOP
+#  (k=2) gets an explicit `sp` prescribing its z displacement. The MIDDLE
+#  layer (k=1) receives no `sp` at all: its z DOF (and, at the (1,1) corner,
+#  its x/y DOFs too) are genuinely FREE, giving the deck real equations for
+#  Newton to solve -- unlike every zero-free-DOF deck elsewhere in this file.
+#
+#  THE `sp` COEFFICIENT IS 1.0, DELIBERATELY.  With a `Linear` time series
+#  (value == pseudo time `t`) and an `sp` coefficient of exactly 1.0, the
+#  top-layer z displacement equals `t` itself, so each `LoadControl(-ds)`
+#  step's `deltaLambda` (== the material's `ops_Dt`) is ALSO, directly, that
+#  step's physical displacement increment -- there is no second scale factor
+#  to keep straight between "the dt the material sees" and "the displacement
+#  the deck applies", which is exactly the correspondence B1's test needs.
+#
+#  MAGNITUDES ARE NOT MEASURED ON A BINARY (none exists yet for this lane;
+#  see the module docstring's "NUMBERS NOT INVENTED" section) -- they are
+#  tied to scales this file's OTHER decks already prove converge:
+#  `_SETTLE_DS0` is `sani._E_AX / sani._N_PL`, the exact per-step magnitude
+#  `sani._drive` takes 20 plastic steps at; `_SETTLE_E_CONF` is the same
+#  order of magnitude as `sani._C_E_AX`'s per-step contribution. If this
+#  deck does not converge on the real binary, adjust the magnitudes -- this
+#  is the same "measure, then adjust" discipline `_build_floor_seeking_deck`
+#  documents for itself.
+# ---------------------------------------------------------------------------
+_SETTLE_E_CONF = 2.0e-4                      # top-layer lateral confinement, stage 0
+_SETTLE_N_CONF = 10
+_SETTLE_DS0 = sani._E_AX / sani._N_PL        # ~1.5e-5, sani._drive's own proven per-step scale
+_SETTLE_DS1 = 2.0 * _SETTLE_DS0
+
+
+def _build_settlement_column(tag, opts):
+    """Two stacked `LadrunoBrick` cubes, three node layers -- see the block
+    comment above this function for the roller convention and why the
+    middle layer is genuinely free."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(3):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('LadrunoBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag,
+               '-geom', 'linear', '-formulation', 'bbar')
+    ops.element('LadrunoBrick', 2, 5, 6, 7, 8, 9, 10, 11, 12, tag,
+               '-geom', 'linear', '-formulation', 'bbar')
+    for k in range(3):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            ops.fix(n, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    # pattern 1: lateral confinement, TOP layer only, applied over the
+    # elastic stage below and then loadConst'd.
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for j, (x, y) in enumerate(_XY):
+        n = 8 + j + 1
+        if x == 1.:
+            ops.sp(n, 1, -_SETTLE_E_CONF)
+        if y == 1.:
+            ops.sp(n, 2, -_SETTLE_E_CONF)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-10, 30, 0)
+    ops.algorithm('Newton')
+    ops.analysis('Static')
+
+
+def test_negative_monotone_clock_runs_the_spec_factor():
+    """B1: `implexDetail[5]` (the extrapolation factor `f`) tracks the
+    SIGNED ratio `dt_{n+1}/dt_n * alpha` across a `ds` change on a
+    `LoadControl(-ds)` leg with GENUINE free DOFs -- not pinned at `alpha`
+    for the whole leg, which is what the OLD `mImplexDtCommit > 0.0` gate
+    (instead of `!= 0.0` with a sign-consistent ratio) did on exactly this
+    shape of deck, because two consecutive negative increments never
+    reached the ratio branch at all.
+
+    Kills the B1 mutant directly: an `f` that reads `alpha` (1.0) on the
+    ds-doubling step, instead of `2.0 * alpha`, is the bug the campaign's
+    own BVP legs shipped with.
+    """
+    tag = 8400
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_settlement_column(tag, opts)
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    ops.integrator('LoadControl', 1.0 / _SETTLE_N_CONF)
+    for step in range(_SETTLE_N_CONF):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+    ops.loadConst('-time', 0.0)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+    # pattern 2: top-layer z settlement, coefficient 1.0 -- see the block
+    # comment above _build_settlement_column for why that makes ds the
+    # physical displacement increment too.
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.sp(8 + j + 1, 3, 1.0)
+
+    alpha = 1.0   # no -implexAlpha given -> the class default (LadrunoSANISAND.h)
+    ds_sequence = [_SETTLE_DS0, _SETTLE_DS0, _SETTLE_DS0, _SETTLE_DS1, _SETTLE_DS1]
+    # step 1: mImplexDtCommit == 0.0 right after the stage flip (
+    #   ladrunoImplexInitState) -> f = alpha, by the spec's own dtCommit==0
+    #   branch, regardless of ds. steps 2-3: constant ds -> ratio 1.0. step 4:
+    #   ds DOUBLES -> ratio 2.0. step 5: ds constant again (at the new value)
+    #   -> ratio back to 1.0, proving the factor is a live ratio and not
+    #   stuck at whatever the previous step computed.
+    expected_f = [alpha, 1.0, 1.0, 2.0 * alpha, 1.0]
+
+    for i, (ds, exp_f) in enumerate(zip(ds_sequence, expected_f)):
+        ops.integrator('LoadControl', -ds)
+        assert ops.analyze(1) == 0, f'settlement step {i + 1} failed (ds={ds!r})'
+        detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+        f = detail[5]
+        assert f == pytest.approx(exp_f, rel=1.0e-6, abs=1.0e-9), (
+            'implexDetail[5] (f) did not track the signed dt_{n+1}/dt_n * '
+            'alpha ratio on a monotone-negative-clock LoadControl(-ds) leg '
+            '-- this is B1: a material that pins f at alpha for the whole '
+            'leg (the old mImplexDtCommit > 0.0 gate) passes every step '
+            'here with f == alpha instead of the expected ratio',
+            i, ds, exp_f, f, detail)
+
+
+# ===========================================================================
+#  B2/B3 -- counted, observable refusals via the new implexRefusals response
+# ===========================================================================
+
+def test_implexcontrol_refusal_is_counted_and_reported():
+    """`-implexControl` refusing increments `implexRefusals` (Vector(4):
+    total, d2, control, companion) at BOTH index 0 (total) and index 2
+    (control-specific), and leaves the committed stress unchanged on a
+    free-DOF deck (where a silently-accepted wrong answer WOULD move it).
+
+    Kills a mutant that refuses (rc != 0, as the sibling qualitative test
+    already checks) without incrementing the counter -- per B2/F8, the
+    counter is the ONLY way `n_material_refused`-style accounting can ever
+    be recovered from a deck instead of grepped out of an unthrottled log.
+    """
+    tag = 8214
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', 1.0e-9, 0.5)
+    _build_free_dof_triaxial(tag, opts, p0=5.0)
+    _establish_plastic_history(tag)
+
+    before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    before_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    assert len(before_refusals) == 4, (
+        'implexRefusals did not return the documented 4-component vector '
+        '(total, d2, control, companion)', before_refusals)
+
+    big_dq = 10.0 * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -big_dq)
+    ops.integrator('LoadControl', 1.0)
+    rc = ops.analyze(1)
+    assert rc != 0, (
+        'a deviatoric load increment 10x the nominal one, at an essentially '
+        'zero -implexControl tolerance (1e-9), was NOT refused', rc)
+
+    after_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    after_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert after_refusals[0] - before_refusals[0] >= 1, (
+        'implexRefusals[0] (total) did not increment across a forced '
+        '-implexControl refusal', before_refusals, after_refusals)
+    assert after_refusals[2] - before_refusals[2] >= 1, (
+        'implexRefusals[2] (control-specific) did not increment across a '
+        'forced -implexControl refusal', before_refusals, after_refusals)
+    assert after_stress == before_stress, (
+        'the committed stress moved across a COUNTED -implexControl '
+        'refusal -- the counter incremented but the state protection it is '
+        'supposed to accompany (mSigma = mSigma_n) did not hold',
+        before_stress, after_stress)
+
+    # avgImplexError must be a NON-DESTRUCTIVE read (F6 in the majors list:
+    # the old takeAverageError() zeroed the accumulator on every call, so a
+    # recorder over an 8-point mesh got the average at point 1 and 0.0
+    # everywhere else). Two back-to-back reads, no analyze() in between,
+    # must agree.
+    avg_1 = ops.eleResponse(1, 'material', 1, 'avgImplexError')[0]
+    avg_2 = ops.eleResponse(1, 'material', 1, 'avgImplexError')[0]
+    assert avg_1 == avg_2, (
+        'avgImplexError changed between two consecutive reads with no '
+        'analyze() in between -- the accumulator is being reset/consumed '
+        'on read instead of reported non-destructively', avg_1, avg_2)
+
+
+def test_companion_refusal_at_commit_is_observable():
+    """B3: the COMMIT-time companion (`ladrunoImplexCommit` hitting the
+    `-maxSubsteps` cap) refuses, and that refusal is OBSERVABLE only through
+    `implexRefusals[3]` (companion) -- `Domain::commit()` is `elePtr->
+    commitState();` with the return code discarded, so `analyze()` itself
+    keeps returning 0 even though the companion's own re-integration failed.
+    This is the DEFAULT configuration this file's other decks exercise
+    least: `-implexControl` OFF, cap mandatory.
+
+    Also checks the NEXT step's `f` is NOT stale: B3 requires the material
+    to commit its best-effort state (mEpsilon_n, mImplexDtCommit) even when
+    the companion itself refuses, so a constant-ds step immediately after a
+    counted companion refusal must still read f == 1.0 (the ordinary
+    same-ds ratio), not 0.0 or NaN.
+
+    Reuses `sani._build`'s own zero-free-DOF deck: its per-step magnitude is
+    independently documented (block comment above `_CAP_ADEQUATE`) to need
+    1000-5000 ModifiedEuler substeps, so `_CAP_TIGHT` (200) forces the
+    companion to refuse on every plastic-stage commit -- deliberately, this
+    is the one test in the file where that is the point rather than a
+    caveat.
+    """
+    tag = 8215
+    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_TIGHT)
+    sani._build('LadrunoSANISAND', tag, opts)
+    sani._elastic_leg(tag)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+    before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+
+    for step in range(3):
+        rc = ops.analyze(1)
+        assert rc == 0, (
+            'the step itself should still "succeed" from Domain::commit()\'s '
+            'point of view -- Domain::commit() is unconditional and '
+            'discards the material return code; a nonzero rc here means '
+            'something else in the deck broke, not the companion refusal',
+            step, rc)
+
+    after_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    assert after_refusals[0] - before_refusals[0] > 0, (
+        'implexRefusals[0] (total) never incremented even though this cap '
+        'is documented (below _CAP_ADEQUATE) to be too tight for this '
+        "deck's own plastic increment", before_refusals, after_refusals)
+    assert after_refusals[3] - before_refusals[3] > 0, (
+        'the companion refusal at commitState (ladrunoImplexCommit hitting '
+        'the -maxSubsteps cap) never incremented implexRefusals[3]. Since '
+        'Domain::commit() discards commitState()\'s return code, this '
+        'counter is the ONLY way to observe a companion refusal from '
+        'Python -- if it stays at 0 the refusal is silently swallowed '
+        'exactly as B3 found', before_refusals, after_refusals)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    f_last = detail[5]
+    assert math.isfinite(f_last), (
+        'the extrapolation factor is not finite (NaN/inf) on the step after '
+        'a companion refusal at commit -- B3 requires committing a valid '
+        'best-effort state even when the companion itself fails',
+        f_last, detail)
+    assert f_last == pytest.approx(1.0, rel=1.0e-6, abs=1.0e-9), (
+        'the extrapolation factor after a companion refusal at commit is '
+        'not 1.0 on this constant-ds deck -- B3 requires the material to '
+        'commit its best-effort state (mEpsilon_n, mImplexDtCommit) even '
+        'when the companion itself refuses, so the NEXT step\'s f must '
+        'still be the ordinary same-ds ratio, not stale or zero',
+        f_last, detail)
+
+
+# ===========================================================================
+#  Coverage-matrix gaps named by the P1 review: db roundtrip on a deck where
+#  ON != OFF (F6), and the PlaneStrain lane (row 17)
+# ===========================================================================
+
+_RT_N_TOTAL = 6            # further deviatoric steps, split around the save point
+
+
+def test_db_roundtrip_on_a_deck_where_on_differs_from_off():
+    """`sendSelf`/`recvSelf` round trip on a deck where `-implex` ON and OFF
+    committed stresses PROVABLY differ (F6: every ON/OFF pair elsewhere in
+    this file is zero-free-DOF, where gate 5 proves they CANNOT differ, so
+    `test_implex_db_roundtrip_carries_flags_and_history`'s own non-vacuity
+    guard skips on every run and the assertion that could see a dropped
+    flag never executes). This uses the free-DOF triaxial deck instead,
+    checks the ON/OFF gap FIRST -- not as a skip-fallback at the end -- and
+    only then exercises save/restore on the ON leg, so a mutant that drops
+    the -implex flags or the mImplexDEpsP history on restore lands off the
+    ON reference by a MEASURED, non-floor amount.
+
+    If `database()` is unsupported on this build, skips with the reason
+    (matching `_roundtrip_implex`'s own convention).
+    """
+    p0 = 5.0
+    opts_on = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+
+    # non-vacuity FIRST, on two independent one-shot builds -- not the
+    # roundtrip skeleton itself -- so this can never accidentally pass
+    # because the LATER roundtrip deck happens to be insensitive.
+    tag_on_probe, tag_off_probe = 8307, 8308
+    _build_free_dof_triaxial(tag_on_probe, opts_on, p0=p0)
+    _establish_plastic_history(tag_on_probe)
+    on_probe = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    _build_free_dof_triaxial(tag_off_probe, (), p0=p0)
+    _establish_plastic_history(tag_off_probe)
+    off_probe = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    gap = sani._reldiff(off_probe, on_probe)
+    assert gap > _SENSITIVITY_FLOOR, (
+        'on this free-DOF triaxial deck, -implex ON and OFF committed the '
+        'SAME stress within the sensitivity floor -- the roundtrip below '
+        'would prove nothing on this deck; raise the confinement/step size '
+        'rather than weakening this gate', gap, off_probe, on_probe)
+
+    tag_rt = 8309
+    n_cut = 3
+    dq3 = 3.0 * _PROBE_DQ_NOMINAL
+    dq3q = dq3 / 4.0
+
+    with tempfile.TemporaryDirectory(prefix='ladruno_sanisand_implex_free_rt_',
+                                     ignore_cleanup_errors=True) as td:
+        dbpath = os.path.join(td, 'sanisand_implex_free_rt')
+
+        _build_free_dof_triaxial(tag_rt, opts_on, p0=p0)
+        _establish_plastic_history(tag_rt)
+
+        ops.timeSeries('Linear', 3)
+        ops.pattern('Plain', 3, 3)
+        for j, (x, y) in enumerate(_XY):
+            ops.load(4 + j + 1, 0.0, 0.0, -dq3q)
+        ops.integrator('LoadControl', 1.0 / _RT_N_TOTAL)
+        for step in range(n_cut):
+            assert ops.analyze(1) == 0, f'pre-save continuation step {step + 1} failed'
+        mid = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+        try:
+            ops.database('File', dbpath)
+        except Exception as exc:                       # noqa: BLE001
+            pytest.skip(f'database() unsupported in this build: {exc}')
+        saved = ops.save(1)
+        if saved is not None and saved < 0:
+            pytest.skip('database save returned failure on this build')
+
+        _build_free_dof_triaxial(tag_rt, opts_on, p0=p0)   # fresh, uncommitted skeleton
+        ops.database('File', dbpath)
+        ops.restore(1)
+        after = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+        ops.wipeAnalysis()
+        ops.constraints('Transformation')
+        ops.numberer('Plain')
+        ops.system('FullGeneral')
+        ops.test('NormUnbalance', _PROBE_TOL_REL * p0, _PROBE_MAXITER, 0)
+        ops.algorithm('Newton')
+        ops.integrator('LoadControl', 1.0 / _RT_N_TOTAL)
+        ops.analysis('Static')
+        for step in range(_RT_N_TOTAL - n_cut):
+            assert ops.analyze(1) == 0, f'post-restore continuation step {step + 1} failed'
+        out = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert sani._reldiff(mid, after) <= _EQ_TOL, (
+        'the restored -implex material did not come back on the state it '
+        'was saved at (free-DOF deck)', mid, after)
+
+    # unbroken reference: the SAME deck, SAME total load, no save/restore.
+    tag_ref = 8310
+    _build_free_dof_triaxial(tag_ref, opts_on, p0=p0)
+    _establish_plastic_history(tag_ref)
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq3q)
+    ops.integrator('LoadControl', 1.0 / _RT_N_TOTAL)
+    for step in range(_RT_N_TOTAL):
+        assert ops.analyze(1) == 0, f'reference continuation step {step + 1} failed'
+    ref_final = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert sani._reldiff(ref_final, out) <= 1.0e-12, (
+        'the restored -implex material, continued to the SAME total load, '
+        'does not match an UNBROKEN run to 1e-12 on a deck where -implex ON '
+        'and OFF are measurably different -- the flags or the mImplexDEpsP '
+        'history did not survive sendSelf/recvSelf',
+        ref_final, out, gap)
+
+
+def test_plane_strain_implex_smoke():
+    """`-implex` on `LadrunoSANISANDPlaneStrain` (`-ndm 2`, the
+    `quad ... PlaneStrain` -> `getCopy("PlaneStrain")` route) at least RUNS
+    -- coverage row 17: every 2D deck in this file before this test used
+    `-ndm 3` only, so a mutant that wired IMPL-EX into the 3D wrapper alone
+    (or that crashes/refuses on the 2D one) had zero chance of being caught.
+    Reuses `sani._build_ps`/`_drive_ps` -- the SAME proven zero-free-DOF
+    plane-strain deck `test_ladruno_sanisand.py` already uses for the
+    PlaneStrain lane's other gates.
+    """
+    tag = 8311
+    opts = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    sani._build_ps(tag, opts)
+    sani._elastic_leg(tag)
+    sani._plastic_leg(tag)
+    stress = sani._stress()
+    assert _vnorm(stress) > 0.0, (
+        'the plane-strain -implex deck committed a zero stress -- the deck, '
+        'not -implex, is broken', stress)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert len(detail) == 6, (
+        'implexDetail did not return the documented 6-component vector on '
+        'the PlaneStrain lane', detail)
+    assert math.isfinite(detail[5]), (
+        "implexDetail's f (index 5) is not finite on the PlaneStrain lane",
+        detail)
