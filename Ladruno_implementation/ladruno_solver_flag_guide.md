@@ -127,6 +127,21 @@ ladder silently discarded `-BLR` and `-stats`, so an older binary gives you a fu
 solve and no stats while *looking* like it honoured the flags. If you see no `INFOG`
 lines, your binary predates P2h.
 
+> [!warning] `-stats` on the SERIAL build prints nothing — because the serial build has no MUMPS
+> (TIMs request 2026-09-07, F5; measured on `bc63a388e`+F4). `_MUMPS` is defined only for the
+> parallel targets (`CMakeLists.txt` ~996/1217/1292/1408); ADR-75 P1b made PARDISO the desktop
+> solver and left MUMPS to the cluster (`CMakeLists.txt:588-594`). `system Mumps -stats` on
+> `OpenSees.exe` or the serial pyd therefore answers *"unknown system type"* — the flag is not
+> dropped, the solver is absent. The serial `MumpsSolver.cpp` path the request cites (no
+> `printStats`, 2-arg constructor, `commands.cpp:4341-4345` warns the flag is ignored) is real in
+> the source but unreachable in any shipped serial binary, so nothing was wired there: it would be
+> dead, unverifiable code. **To get the INFOG/RINFOG lines on a desktop**, run one rank of the
+> parallel build — `mpiexec -n 1 OpenSeesMP.exe deck.tcl` or `openseesmp` — where rank 0 prints them
+> (`MumpsParallelSolver.cpp:295-319`); that launch needs the packaged `dist\openseesmp` runtime,
+> which only a **no-argument** `build.bat` produces (a 4-target build drops it —
+> `LEDGER_quirks.md`). Linking MUMPS into the serial targets is an ADR-75 policy reversal for the
+> owner, not a flag fix. Ledger: `LEDGER_quirks.md` "The serial `MumpsSolver` is never compiled".
+
 ---
 
 ## apeGmsh
