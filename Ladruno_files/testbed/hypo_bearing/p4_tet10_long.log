@@ -1,0 +1,318 @@
+[14:33:27] [control 0] engine C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90\5408bcef-bf62-4967-964e-a179fa61676a\scratchpad\dist_p4\bin\opensees.pyd
+[14:33:27] [control 0] ladrunoBuild() = 0388889713bcdb7f6bb1a4bc6fac09f5b4e1d67a
+[14:33:27]     [control 2] lagrange tet10 surcharge over 40 top faces: sum 30.000000000 m^2 vs 30.000000000 exact (rel 0.00e+00)
+[14:33:27] === leg tet10_h1.0_p4long: TenNodeTetrahedron (lagrange surcharge basis), tet mesh h0 = 1.0 m, 2583 nodes / 7749 DOF, 1200 tet10 elements (vs H20 h0=1.0: 4659 DOF; H8 h0=1.0: 1386 DOF -- tet10 is DOF-expensive per note, not directly comparable)
+[14:33:27]     ORACLE q_u = q0*N_q = 138.907 kPa (phi_ps = 27.470 deg); non-associated (gate)
+[14:33:27]     initial 1-D state m0 = 0.2680 of yield  (SAFE)
+[14:33:27]     [control 3] elastic pre-step reaction 300.000000000 vs 300.000000000 kN (+2.220e-14 %)  -> PASS
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+[14:33:27]     [surcharge] plastic-model equilibrium 300.000000 vs 300.000000 kN (-0.000000 %)   [Pardiso, 0.2s]
+[14:33:27]     [control M0] elements at mob >= 0.9 before the push: 0 of 1200  (must be 0), 4 GP/element (expect 4)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:33:27]     ALLOWANCES: ds base/floor/max = 0.02/0.0002/0.2 mm, subdivision budget = 200, s/B target = 0.15, wall cap = 14400 s, cond-at = 5 mm
+[14:33:27]     [branch] ds fell to 0.02 mm (trigger 5 mm) at s/B = 0.00000: arming the branch-census cadence sampler
+NormCep = 5.15806e-22
+NormCep = 2.98588e-22
+NormCep = 4.58e-22
+NormCep = 4.85967e-22
+NormCep = 5.53109e-22
+NormCep = 3.70983e-22
+NormCep = 4.89241e-22
+NormCep = 4.08336e-22
+NormCep = 2.98311e-22
+NormCep = 2.81215e-22
+DruckerPrager: further NormCep messages suppressed (Ladruno ADR-95)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:35:15]     [branch] s/B 0.003500  q    74.05  GP seen/empty 4800/0  branch(0,1,2,3)=(4374,422,0,4)  forced 0  detAmin_min -7.411e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:37:07]     [branch] s/B 0.008500  q   107.04  GP seen/empty 4800/0  branch(0,1,2,3)=(3731,1059,0,10)  forced 0  detAmin_min -7.417e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:39:05]     [branch] s/B 0.013500  q   128.02  GP seen/empty 4800/0  branch(0,1,2,3)=(3972,811,0,17)  forced 0  detAmin_min -6.599e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:40:47]     [branch] s/B 0.018500  q   142.61  GP seen/empty 4800/0  branch(0,1,2,3)=(4286,485,0,29)  forced 0  detAmin_min -6.195e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:43:42]     [branch] s/B 0.023500  q   152.25  GP seen/empty 4800/0  branch(0,1,2,3)=(3361,1428,0,11)  forced 0  detAmin_min -7.584e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:45:33]     [branch] s/B 0.028500  q   156.98  GP seen/empty 4800/0  branch(0,1,2,3)=(2659,2126,0,15)  forced 0  detAmin_min -7.405e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:47:27]     [branch] s/B 0.033500  q   158.75  GP seen/empty 4800/0  branch(0,1,2,3)=(3396,1376,0,28)  forced 0  detAmin_min -7.298e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:50:26]     [branch] s/B 0.038500  q   159.69  GP seen/empty 4800/0  branch(0,1,2,3)=(3177,1591,0,32)  forced 0  detAmin_min -7.147e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:53:31]     [branch] s/B 0.043500  q   160.27  GP seen/empty 4800/0  branch(0,1,2,3)=(4040,728,0,32)  forced 0  detAmin_min -7.389e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:56:29]     [branch] s/B 0.048500  q   160.68  GP seen/empty 4800/0  branch(0,1,2,3)=(3625,1133,0,42)  forced 0  detAmin_min -7.546e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[14:59:19]     [branch] s/B 0.053500  q   160.99  GP seen/empty 4800/0  branch(0,1,2,3)=(3900,851,0,49)  forced 0  detAmin_min -7.486e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:01:04]     [branch] s/B 0.058500  q   161.22  GP seen/empty 4800/0  branch(0,1,2,3)=(3454,1294,0,52)  forced 0  detAmin_min -7.410e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:04:04]     [branch] s/B 0.063500  q   161.40  GP seen/empty 4800/0  branch(0,1,2,3)=(3992,749,0,59)  forced 0  detAmin_min -7.632e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:06:27]     [branch] s/B 0.068500  q   161.56  GP seen/empty 4800/0  branch(0,1,2,3)=(3811,924,0,65)  forced 0  detAmin_min -7.737e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:07:57]     [branch] s/B 0.073500  q   161.70  GP seen/empty 4800/0  branch(0,1,2,3)=(3685,1046,0,69)  forced 0  detAmin_min -7.399e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:09:19]     [branch] s/B 0.078500  q   161.82  GP seen/empty 4800/0  branch(0,1,2,3)=(3687,1030,0,83)  forced 0  detAmin_min -7.440e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:10:39]     [branch] s/B 0.083500  q   161.92  GP seen/empty 4800/0  branch(0,1,2,3)=(3703,1004,0,93)  forced 0  detAmin_min -7.478e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:12:01]     [branch] s/B 0.088500  q   162.00  GP seen/empty 4800/0  branch(0,1,2,3)=(3586,1119,0,95)  forced 0  detAmin_min -7.775e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:13:05]     [branch] s/B 0.093500  q   162.08  GP seen/empty 4800/0  branch(0,1,2,3)=(3692,1002,0,106)  forced 0  detAmin_min -7.768e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:14:07]     [branch] s/B 0.098500  q   162.14  GP seen/empty 4800/0  branch(0,1,2,3)=(3543,1160,0,97)  forced 0  detAmin_min -7.759e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:15:10]     [branch] s/B 0.103500  q   162.21  GP seen/empty 4800/0  branch(0,1,2,3)=(3690,1006,0,104)  forced 0  detAmin_min -7.758e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:16:15]     [branch] s/B 0.108500  q   162.26  GP seen/empty 4800/0  branch(0,1,2,3)=(3489,1184,0,127)  forced 0  detAmin_min -7.764e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:17:19]     [branch] s/B 0.113500  q   162.31  GP seen/empty 4800/0  branch(0,1,2,3)=(3649,1036,0,115)  forced 0  detAmin_min -7.768e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:18:26]     [branch] s/B 0.118500  q   162.36  GP seen/empty 4800/0  branch(0,1,2,3)=(3486,1180,0,134)  forced 0  detAmin_min -7.772e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:19:40]     [branch] s/B 0.123500  q   162.41  GP seen/empty 4800/0  branch(0,1,2,3)=(3679,970,0,151)  forced 0  detAmin_min -7.775e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:20:45]     [branch] s/B 0.128500  q   162.45  GP seen/empty 4800/0  branch(0,1,2,3)=(3693,956,0,151)  forced 0  detAmin_min -7.775e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:21:50]     [branch] s/B 0.133500  q   162.49  GP seen/empty 4800/0  branch(0,1,2,3)=(3545,1093,0,162)  forced 0  detAmin_min -7.775e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:22:49]     [branch] s/B 0.138500  q   162.51  GP seen/empty 4800/0  branch(0,1,2,3)=(3061,1690,0,49)  forced 0  detAmin_min -7.598e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:23:47]     [branch] s/B 0.143500  q   162.54  GP seen/empty 4800/0  branch(0,1,2,3)=(2986,1774,0,40)  forced 0  detAmin_min -7.594e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:24:42]     [branch] s/B 0.148500  q   162.57  GP seen/empty 4800/0  branch(0,1,2,3)=(3226,1519,0,55)  forced 0  detAmin_min -7.595e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[15:25:14]     [diag 3] AT THE WALL, s/B 0.15000: sigma_min/scale 9.067e-05, cond 1.099e+05, lam_min(sym)/scale -7.569e-03, negative eigenvalues of the symmetric part: 7 of 4785
+[15:25:14]     [branch] AT THE WALL, s/B 0.150000: GP seen/empty 4800/0  branch(0,1,2,3)=(3846,773,0,181)  forced 0  detAmin_min -7.768e-02
+[15:25:14]     [branch] 31 station(s) written to tpd_tet10_h1.0_p4long_branch.csv/.npz; 148800 live GP responses, 0 empty
+[15:25:14] 
+[15:25:14]     --- termination -------------------------------------------------
+[15:25:14]     1515 steps, 0 failed attempts, 0/200 subdivisions, 0 relaxed, 3086 s
+[15:25:14]     MODE = TARGET   [reached the target settlement]
+[15:25:14]     q_max = 162.57 kPa = 1.1704 of exact (138.91 kPa); end s/B = 0.15000 of 0.15
+[15:25:14]     tail dq/ds = 2.6 kPa/m = 0.018 % of initial -> PLATEAU
+[15:25:14]     CAPACITY = YES
+
+           tet10_h1.0_p4long            tet10 mode=TARGET    ratio=1.1704 tail=0.018% sub=0/200 CAP=yes
+P1_DONE exit=0 

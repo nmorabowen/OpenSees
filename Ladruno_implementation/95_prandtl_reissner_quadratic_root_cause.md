@@ -31,7 +31,7 @@ With the return map repaired (commit `31322a47a`, `fix(adr95-p4)`):
 
 | element | pre-fix (allowance named) | fixed material |
 |---|---|---|
-| LadrunoBrick20 uri, h0 = 1.0 | FLOOR at s/B 0.01114, 0.769 of exact | __H20_FIXED__ |
+| LadrunoBrick20 uri, h0 = 1.0 | FLOOR at s/B 0.01114, 0.769 of exact | **TARGET s/B 0.15, 0.9757 of exact (q_max), 0.962 at the end, tail −0.0015 % — CAPACITY plateau**; corner GPs from s/B 0.0129 on (0–6 per station), all returned to I1 = T, det −0.06 … −0.07 throughout (`_p4long`, 382 stations) |
 | TenNodeTetrahedron, tet mesh h0 = 1.0 | FLOOR at s/B 0.00161, 0.391 | TARGET at s/B 0.02, 1.051 (still hardening); long leg **TARGET s/B 0.15, 1.1704, tail 0.018 % — CAPACITY plateau**; corner GPs present from the first plastic stations (min 4, 40–181 in the plateau window), all returned to I1 = T, det O(1) |
 | BezierTet10 std | FLOOR at s/B 0.00168, 0.410 | **TARGET s/B 0.15, 1.1824, tail 0.018 % — CAPACITY plateau**; corner GPs 120–203 in the plateau window, all returned, det O(1) |
 | BezierTet10 -bbar | TARGET at its s/B 0.02 cap, 0.9726 still hardening (0.7128 at matched s/B 0.008); no corner GP in range | **TARGET s/B 0.15, 1.0403 of exact, tail 0.0035 % — a CAPACITY plateau** |

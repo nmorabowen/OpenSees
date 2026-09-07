@@ -1,5 +1,9 @@
 # ADR-95 P4 — the UW DruckerPrager corner fix, and the decisive leg
 
+> Placeholders filled by the orchestrator 2026-09-07 16:10 from the relaunched `_p4long` leg (the
+> P4 agent died on a session rate limit before its own decisive leg finished; that leg had reached
+> s/B 0.1219 / 0.9674 on the wall clock — consistent).
+
 ```
 VERDICT  ADR-95 P4 — H1 CONFIRMED AS CAUSE.  The quadratic wall was a CODING
          DEFECT in the vanilla UW DruckerPrager return map, not element physics.
@@ -22,8 +26,8 @@ bit-ident  so: line 697's denominator is itself wrong ON THE CONE.  Gate fastest
            q 150.707506 -> 150.707256 (1.7e-6 rel), 563 -> 310 steps, 2628 ->
            487 s.  Both stay far inside the gate band (1.0517 .. 1.1167).
 decisive   h20uri h0 1.0 —  p1: MODE FLOOR at s/B 0.01114, q 0.7689 of exact,
-leg        detAmin -6.6e+07 at the 4 corner GPs.  p4: __P4_MODE__ at s/B
-           __P4_SB__ (__P4_X__x p1's reach), q __P4_Q__ of exact; corner GPs
+leg        detAmin -6.6e+07 at the 4 corner GPs.  p4: TARGET at s/B
+           0.15000 (13.5x p1's reach), q 0.9757 of exact; corner GPs
            (branch 3) appear from s/B 0.0177 on, are returned to I1 = T, and
            detAmin_min stays -5.8e-2 .. -6.1e-2 — O(1) throughout, vs the
            1000x sigma_min collapse p1 measured.  cond flat at ~9.5e4.
