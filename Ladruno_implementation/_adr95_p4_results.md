@@ -227,9 +227,9 @@ fixed build, against P1's identical invocation.
 
 | | P1 (pre-fix) | P4 (fixed) |
 |---|---|---|
-| MODE | **FLOOR** at s/B 0.01114 | __P4_MODE_ROW__ |
-| q_max | 106.81 kPa = **0.7689** of exact | __P4_Q_ROW__ |
-| end s/B | 0.01114 of 0.15 | __P4_SB_ROW__ |
+| MODE | **FLOOR** at s/B 0.01114 | **TARGET** (s/B 0.15 reached; capacity, tail −0.0015 %) |
+| q_max | 106.81 kPa = **0.7689** of exact | 135.54 kPa = **0.9757** of exact |
+| end s/B | 0.01114 of 0.15 | 0.15000 of 0.15 (13.5x the pre-fix reach) |
 | corner GPs | 4, all at once, at the wall station | present from s/B 0.0177, 0–4 per station, transient |
 | `I1` at those GPs | 0.80–0.98 **≥ T**, `f2 = +0.03…+0.21` | returned to `I1 = T` |
 | `detAmin_min` | **−6.642e+07** at the corner GPs | **−5.8e−2 … −6.1e−2**, flat |
