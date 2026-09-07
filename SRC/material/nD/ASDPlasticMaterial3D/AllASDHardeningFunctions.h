@@ -151,6 +151,7 @@ struct ArmstrongFrederickPolicy {
 
 
 
+// Ladruno (HB/StiffSoil integration, ledger row 337): StiffSoil shear/cap hardening IVs
 #include "StiffSoil_HardeningFunctions.h"
 
 // Plastic deviatoric strain for shear mechanism
