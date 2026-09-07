@@ -46,6 +46,18 @@ traded reach for a bounded refusal count rather than an unbounded ladder (§7 be
 
 ---
 
+
+> [!warning] **Push idiom is a precondition for `-implexControl` (measured 2026-09-07, Esmeralda).**
+> Drive a prescribed-settlement push as the fork's campaigns do — `LoadControl(-ds)` on an `sp`
+> pattern under a `Linear` series with the `Transformation` handler — **not** with
+> `DisplacementControl`. Under `DisplacementControl` the load-factor prediction from the frozen
+> elastic tangent puts an O(1) trial strain on a near-zero-stiffness free-surface ring whatever
+> the step size, so the control refuses at iteration 1 and the leg walls (four legs walled at
+> s/B 0.0009–0.002 with error rising 30× while ds shrank 16×). Under `LoadControl(-ds)` the same
+> deck, engine and material walk at the full step with the error scaling with ds and the curve
+> overlaying the implicit twin to line width. The D2 sign-change guard is not the reason
+> (zero firings either way); the pseudo clock is exact on this idiom.
+
 ## 1. The command
 
 ```tcl

@@ -124,9 +124,10 @@ option C (accept-and-count) **localised to the floor points only**, where the mo
 answer to protect. *Cost:* trivial; wire slot. *Experiment (pre-registered):* the registered
 arm with I.5 must reach the control-OFF arm's depth with the same overlay (≤ 5 % mean vs the
 implicit control over its reach) and report the exempt count per step; if the overlay
-degrades, the exempted points were carrying load and I.5 is refuted. *Verdict:* **the
-cheapest lift of the wall that exists, and the one that tells us most** — its census is the
-direct measure of how much of the domain is "at the floor" as the push proceeds.
+degrades, the exempted points were carrying load and I.5 is refuted. *Verdict (revised 2026-09-07):* **PARKED — its motivating evidence was withdrawn.** The O(1)
+event was DisplacementControl's trial states, not the ring's material state (Log); under the
+fork's push idiom the control's error is O(ds) and the registered arm walks. Keep the census
+idea only if a floor-bound ring ever shows up under LoadControl(-ds).
 
 ### II. Material-side (declare what the ring is)
 
@@ -261,3 +262,24 @@ benchmark is a real footing or the idealised half-space.
   candidate **I.5 floor-aware control** (accept-and-count localised to floor points) as the
   cheapest lift and P0 item 6 to separate absolute discrepancy from denominator. Their
   worst-Gauss-point path dump (`implexDetail` 3–5, `implexRefusals`, per step) is P0's input.
+- 2026-09-07 (03:00) — **Reversal, and the reading that stands (Esmeralda jobs 146451 dense,
+  146453 loose, 146438 implicit twin; same engine/mesh/material, `p_r` 1.01, cap 20000,
+  control 0.1/0.01, pseudo clock, surcharge 10):** under **`LoadControl(-ds)` on the
+  prescribed-settlement sp** — the fork's own push idiom — the registered IMPL-EX arm walks
+  straight past every DisplacementControl wall: s/B 0.0079 (dense) and 0.0082 (loose) at
+  25 min, at the full 1e-4 m step, committed ring error steady at 3e-4–1e-3, clamp never
+  fired at the ring element, zero D2 refusals, and the only control refusals are the early
+  growth attempts (refused at iteration 1, accepted six steps later). **The error IS O(ds)
+  here**, and the dense IMPL-EX leg overlays the implicit leg to line width over the whole
+  overlap. So the O(1) event of the previous entry was **not the material's state at the
+  ring**: it was the trial states DisplacementControl puts the ring through — a load-factor
+  prediction from the frozen elastic tangent lands an O(1) trial strain on a near-zero-
+  stiffness ring whatever ds is, and the control refuses at iteration 1 (their inference from
+  the two refusal patterns and the two error scalings; not measured per iterate). Candidate
+  I.5 is parked. For the ledger and the guide: **the fork's push idiom is a precondition for
+  `-implexControl`; under DisplacementControl the control sees trial strains that do not
+  scale with the step.** Both entries written. The ring question of this ADR — no plateau,
+  what the material does at the floor — is unchanged; what changed is that IMPL-EX's control
+  is no longer in the way of measuring it. Paths: `labs/ape/response-curve-matrix/level3/
+  D-L-dl-vt-{dense,gorini}-q10-sp-{implex,implicit}/coarse/out/` on the TIMs worktree,
+  `ring_point.csv` per step at Gauss point 5 of element 4047; ESMERALDA.md §48–49.
