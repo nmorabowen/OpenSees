@@ -62,7 +62,14 @@
 //        <-implex> <-implexControl $tol $reductionLimit> <-implexAlpha $a>      \
 //        <-implexDt pseudo|strain|user <$dt>>                                   \
 //        <-implexFloor implicit|accept|refuse> <-implexGuard on|off>            \
-//        <-implexTrialGuard on|off> <-reversalTol $tol> <-reversalRel $ratio>
+//        <-implexTrialGuard on|off> <-reversalTol $tol> <-reversalRel $ratio>    \
+//        <-flipAlphaIn init|vanilla>
+//
+//  Ladruno ADR-92 P2-7 (redesign): -flipAlphaIn is likewise NOT an -implex
+//  option -- `init` (the DEFAULT) sets mAlpha_in := mAlpha_n deterministically
+//  at the elastic->plastic stage flip, on EITHER path; `vanilla` is a no-op,
+//  kept for A/B comparison against the pre-P2-7 defect (see the member note in
+//  the header). Live with -implex off exactly as on.
 //
 //  Ladruno ADR-92 P2-5 / P2-5b: -reversalTol / -reversalRel are NOT IMPL-EX
 //  options (neither has an "-implex" gate or sawImplexToken involvement) --
@@ -154,6 +161,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexFloor implicit|accept|refuse> <-implexGuard on|off>" // Ladruno ADR-92 P2
                << " <-implexTrialGuard on|off>"                                 // Ladruno ADR-92 P2-6
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
+               << " <-flipAlphaIn init|vanilla>"                                // Ladruno ADR-92 P2-7
                << endln;
         return 0;
     }
@@ -183,6 +191,9 @@ OPS_LadrunoSANISAND(void)
     double reversalRel  = 0.05;     // Ladruno ADR-92 P2-5b: default relative floor,
                                //          scaled off the last COMMITTED strain
                                //          increment; 0 disables the relative part
+    int    flipAlphaInMode = 0;     // Ladruno ADR-92 P2-7: 0 = init (default), 1 = vanilla.
+                               //          Matches LadrunoSANISAND::FLIP_ALPHA_IN_INIT, which
+                               //          is `protected` and therefore not nameable here.
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
     // makes an existing SANISAND deck byte-identical.
@@ -337,6 +348,40 @@ OPS_LadrunoSANISAND(void)
                           " step once the noise floor tracks the solver tolerance); 0"
                           " disables the relative part and leaves -reversalTol's absolute"
                           " test unchanged." << endln;
+                return 0;
+            }
+        }
+        // Ladruno ADR-92 P2-7 (redesign): NOT an -implex option either -- see
+        // the parser comment block above. `init` (default) sets
+        // mAlpha_in := mAlpha_n deterministically at the elastic->plastic
+        // stage flip; `vanilla` leaves the base's own (noisy) sign test alone.
+        else if (strcmp(argTok, "-flipAlphaIn") == 0 || strcmp(argTok, "-flipalphain") == 0) {
+            seenFlag = true;
+            const char *rawMode = OPS_GetString();
+            if (rawMode == 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -flipAlphaIn wants init|vanilla" << endln;
+                return 0;
+            }
+            char modeTok[32];
+            int  mc = 0;
+            while (mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+
+            if (strcmp(modeTok, "init") == 0)
+                flipAlphaInMode = 0;   // LadrunoSANISAND::FLIP_ALPHA_IN_INIT
+            else if (strcmp(modeTok, "vanilla") == 0)
+                flipAlphaInMode = 1;   // LadrunoSANISAND::FLIP_ALPHA_IN_VANILLA
+            else {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -flipAlphaIn wants init|vanilla, got '" << modeTok
+                       << "'. init (the DEFAULT) sets mAlpha_in := mAlpha_n deterministically"
+                          " at the elastic->plastic stage flip -- the base never initialises"
+                          " mAlpha_in itself, so it otherwise stays at whatever it held from"
+                          " the elastic stage (typically 0) and the first plastic modulus"
+                          " starts small instead of large; vanilla leaves ManzariDafalias's"
+                          " own loading-reversal sign test to decide, reproducing the defect,"
+                          " kept only for A/B comparison." << endln;
                 return 0;
             }
         }
@@ -577,7 +622,7 @@ OPS_LadrunoSANISAND(void)
                        << " -Presidual / -Pmin / -honorTolR / -maxSubsteps /"
                        << " -implex / -implexControl / -implexAlpha / -implexDt /"
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
-                       << " -reversalTol / -reversalRel" << endln;   // Ladruno ADR-92 P2-5/P2-5b
+                       << " -reversalTol / -reversalRel / -flipAlphaIn" << endln;    // Ladruno ADR-92 P2-5/P2-5b/P2-7
                 return 0;
             }
             nPos++;
@@ -631,7 +676,8 @@ OPS_LadrunoSANISAND(void)
                             dData[12], dData[13], dData[14], dData[15], dData[16], dData[17],
                             (int)oData[0], (int)oData[1], (int)oData[2], oData[3], oData[4],
                             presidual, pmin, honorTolR, maxSubsteps, reversalTol,
-                            reversalRel);    // Ladruno ADR-92 P2-5b
+                            reversalRel,     // Ladruno ADR-92 P2-5b
+                            flipAlphaInMode);   // Ladruno ADR-92 P2-7
 
     if (theMaterial == 0) {
         opserr << "WARNING ran out of memory for nDMaterial LadrunoSANISAND material with tag: "
@@ -669,7 +715,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel)
+    double reversalRel, int flipAlphaInMode)
   : ManzariDafalias(tag, classTag, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, ch,
                     nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType, JacoType, TolF, TolR),
     mPresidualInput(Presidual),
@@ -679,7 +725,9 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mImplexStageFlipAbsorbed(false)                                                   // Ladruno ADR-92 P2-7
+    mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7
+    mStageFlipHandled(false),                                                         // Ladruno ADR-92 P2-7
+    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
@@ -695,7 +743,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel)
+    double reversalRel, int flipAlphaInMode)
   : ManzariDafalias(tag, ND_TAG_LadrunoSANISAND, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm,
                     m, h0, ch, nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType,
                     JacoType, TolF, TolR),
@@ -706,7 +754,9 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mImplexStageFlipAbsorbed(false)                                                   // Ladruno ADR-92 P2-7
+    mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7
+    mStageFlipHandled(false),                                                         // Ladruno ADR-92 P2-7
+    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
@@ -727,7 +777,9 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mImplexStageFlipAbsorbed(false)                                                   // Ladruno ADR-92 P2-7
+    mFlipAlphaInMode(0),                                                              // Ladruno ADR-92 P2-7
+    mStageFlipHandled(false),                                                         // Ladruno ADR-92 P2-7
+    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -743,7 +795,9 @@ LadrunoSANISAND::LadrunoSANISAND()
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mImplexStageFlipAbsorbed(false)                                                   // Ladruno ADR-92 P2-7
+    mFlipAlphaInMode(0),                                                              // Ladruno ADR-92 P2-7
+    mStageFlipHandled(false),                                                         // Ladruno ADR-92 P2-7
+    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -808,6 +862,15 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
         opserr << "WARNING LadrunoSANISAND tag " << tag << ": reversalRel = " << mReversalRel
                << " < 0 is meaningless; using the default 0.05." << endln;
         mReversalRel = 0.05;
+    }
+    // Ladruno ADR-92 P2-7: the base member this drives is compared by value
+    // (0 / 1), so any other integer would silently collapse to "vanilla"
+    // through the `!= FLIP_ALPHA_IN_INIT` idiom used elsewhere -- refuse
+    // rather than let that happen unannounced.
+    if (mFlipAlphaInMode != FLIP_ALPHA_IN_INIT && mFlipAlphaInMode != FLIP_ALPHA_IN_VANILLA) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": flipAlphaInMode = " << mFlipAlphaInMode
+               << " is not init(0) or vanilla(1); using the default init(0)." << endln;
+        mFlipAlphaInMode = FLIP_ALPHA_IN_INIT;
     }
 }
 
@@ -994,12 +1057,18 @@ LadrunoSANISAND::echoLadrunoConstants(void)
 
     opserr << endln;
 
-    // Ladruno ADR-92 P2-7: unconditional, like the P2-5c line above -- the
-    // absorption itself only fires under -implex (gated at the hook site,
-    // updateParameter()), but the deck-level echo is one cheap line and this
-    // is the channel section 4.4 asks for.
+    // Ladruno ADR-92 P2-7 (redesign): unconditional, like the P2-5c line above
+    // -- the deterministic mAlpha_in reset fires on EITHER path (not gated on
+    // -implex), and the synthetic companion return only under -implex, but the
+    // deck-level echo is one cheap line and this is the channel section 4.4
+    // asks for.
     opserr << "LadrunoSANISAND tag " << this->getTag()
-           << ": stage flip absorbs the drift correction (P2-7)" << endln;
+           << ": -flipAlphaIn " << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla")
+           << " (flip: alpha_in := alpha "
+           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT
+                 ? "(init, the default)"
+                 : "(vanilla: unchanged -- the base's own, possibly noisy, sign test decides)")
+           << "; drift absorbed under -implex only (P2-7))" << endln;
 
     // Ladruno (ADR-86 PR-3): -honorTolR 1 on a scheme that never calls
     // ModifiedEuler() is accepted, stored and wired -- and does nothing. Say so
@@ -1117,6 +1186,7 @@ LadrunoSANISAND::getCopy(const char *type)
         // d_eps_p comment above states.
         clone->mReversalRel     = mReversalRel;                                      // Ladruno ADR-92 P2-5b
         clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
+        clone->mFlipAlphaInMode = mFlipAlphaInMode;                                  // Ladruno ADR-92 P2-7
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1128,6 +1198,7 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mReversalTol = mReversalTol;                                           // Ladruno ADR-92 P2-5
         clone->mReversalRel     = mReversalRel;                                      // Ladruno ADR-92 P2-5b
         clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
+        clone->mFlipAlphaInMode = mFlipAlphaInMode;                                  // Ladruno ADR-92 P2-7
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1193,6 +1264,17 @@ LadrunoSANISAND::getCopy(const char *type)
 //                      relative threshold from zero runs a different guard
 //                      from the rank beside it on the very next step)
 //
+//  Ladruno ADR-92 P2-7 (redesign) widened it once more, 29 -> 30:
+//
+//      data(29)     = (double)mFlipAlphaInMode   (-flipAlphaIn; same
+//                      non-IMPL-EX rule as mReversalTol/mReversalRel above --
+//                      the deck's request, per-material deck-level state)
+//
+//  mStageFlipHandled / mPrimed are NOT sent, on the same rule as
+//  mImplexGuardReversal/mImplexGuardSoftening above: they are transient,
+//  reconstructible from the next flip/commit, and were never sent by the
+//  first attempt either.
+//
 //  mImplexGuardArmed is COMMITTED-state-derived and decides the very next step's
 //  f, so it crosses for the same reason mImplexDtCommit does: a rank that
 //  receives a material whose committed predecessor was softening, and restarts
@@ -1235,7 +1317,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(29);                                                    // Ladruno ADR-92 P2-5b
+    static Vector ladrunoData(30);                                                    // Ladruno ADR-92 P2-7
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1273,6 +1355,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     ladrunoData(27) = mReversalRel;
     ladrunoData(28) = mDEpsNormCommit;
 
+    // Ladruno ADR-92 P2-7 (redesign)
+    ladrunoData(29) = (double)mFlipAlphaInMode;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1292,7 +1377,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(29);                                                    // Ladruno ADR-92 P2-5b
+    static Vector ladrunoData(30);                                                    // Ladruno ADR-92 P2-7
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1353,6 +1438,13 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // history fields (mImplexDt etc.) already use.
     mReversalRel    = ladrunoData(27);
     mDEpsNormCommit = ladrunoData(28);
+
+    // Ladruno ADR-92 P2-7 (redesign): the deck's request. mStageFlipHandled /
+    // mPrimed are NOT restored (see the sendSelf comment) -- a received
+    // material behaves as if it had just been constructed with respect to the
+    // stage-flip bookkeeping, which is what the pre-existing constructor
+    // defaults already give it.
+    mFlipAlphaInMode = (int)ladrunoData(29);
 
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
@@ -2024,10 +2116,26 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  in regardless of how the deck tuned the noise floor. Hold-skip commits
 //  (once per point per hold, not per call here) are counted separately in
 //  `implexGuards[5]` at the two commit sites.
+//
+//  Ladruno ADR-92 P2-7 (redesign): GUARD SCOPE -- gated on mPrimed, ahead of
+//  even the P2-5c dt==0 check. Before the first plastic commitState() since
+//  the elastic->plastic stage flip, this whole function is a no-op and
+//  ManzariDafalias::integrate()'s own loading-reversal sign test stands
+//  exactly as it ran: harmless under `-flipAlphaIn init` (mAlpha_in was just
+//  set equal to mAlpha at the flip, so the test's outcome does not matter),
+//  and a faithful reproduction of the pre-P2-7 defect under `vanilla`, which
+//  is the whole point of that token. mPrimed is set at the first plastic
+//  commitState() (see commitState() / ladrunoImplexCommit()) -- NOT by the
+//  -implex synthetic companion return in updateParameter(), which stays
+//  un-priming by construction (it calls ManzariDafalias::commitState()
+//  directly, bypassing this class's override).
 // ---------------------------------------------------------------------------
 bool
 LadrunoSANISAND::ladrunoGuardReversalNoise(void)
 {
+    if (!mPrimed)   // Ladruno ADR-92 P2-7 (redesign)
+        return false;
+
     // Ladruno ADR-92 P2-5c: sufficient on its own -- see the block comment
     // above. `ops_Dt` (OPS_Globals.h) is the domain's own pseudo-time
     // increment for the CURRENT update, visible regardless of -implexDt
@@ -2842,6 +2950,14 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // found on the extrapolated stress.
     int res = ManzariDafalias::commitState();
 
+    // Ladruno ADR-92 P2-7 (redesign): PRIMED at the first plastic commit after
+    // the flip -- see the guard-scope note at ladrunoGuardReversalNoise().
+    // This path (ladrunoImplexCommit()) only ever runs while elastoplastic
+    // (mImplexTrialDone is set true only from ladrunoImplexTrial(), reached
+    // only when ladrunoImplexActive() -- mElastFlag != 0 -- was true), so no
+    // extra guard is needed here.
+    mPrimed = true;
+
     // Ladruno ADR-92 P2-3: a ZERO-INCREMENT commit must not overwrite the
     // extrapolation history.
     //
@@ -2991,6 +3107,14 @@ LadrunoSANISAND::commitState(void)
             // noteHoldSkipCommit().
             LadrunoImplexGlobals::instance().noteHoldSkipCommit();
         }
+
+        // Ladruno ADR-92 P2-7 (redesign): PRIMED at the first PLASTIC commit
+        // after the flip -- see the guard-scope note at
+        // ladrunoGuardReversalNoise(). A stage-0 (elastic) commit does not
+        // prime; mElastFlag is the STATIC shared flag every instance reads.
+        if (mElastFlag != 0)
+            mPrimed = true;
+
         return ManzariDafalias::commitState();
     }
 
@@ -3169,67 +3293,106 @@ LadrunoSANISAND::updateParameter(int parameterID, Information &info)
     // accumulated during the elastic stage is the wrong history to extrapolate
     // from, and there is no reason a stage-0 dt should set the ratio for the
     // first plastic step either.
-    if (res == 0 && mImplexOpt.enabled && (parameterID == 1 || parameterID == 5)) {
+    // Ladruno ADR-92 P2-7 (redesign): NO LONGER gated on mImplexOpt.enabled at
+    // this outer level -- item (1) below (the deterministic mAlpha_in reset)
+    // fires on the stage flip on EVERY LadrunoSANISAND deck, -implex or not.
+    // Only item (3), the synthetic companion return, is -implex-only, and it
+    // is gated on its own further down.
+    if (res == 0 && (parameterID == 1 || parameterID == 5)) {
         if (mElastFlag != 0) {
-            // Ladruno ADR-92 P2-7: the stage flip itself leaves the committed
-            // state un-corrected. `Elastic2Plastic()` (just run, above, inside
-            // the base call) recomputes mAlpha/mAlpha_n from the CURRENT
-            // committed stress, but nothing has yet asked the plastic return
-            // to pull mSigma back onto the freshly activated surface -- that
-            // correction normally happens inside integrate()'s own return
-            // mapping, and the first REAL push step is the first caller. On
-            // the -implex path that first caller compares an elastic
-            // extrapolation against a companion that, uniquely on this one
-            // step, ALSO performs the drift correction -- measured on the
-            // fork's R3 footing: implexError 0.239 on step 1 vs 0.02-0.03 on
-            // every later step, dropping to 0.051 once a `LoadControl(0.0)`
-            // hold is inserted before the push. A hold works because
-            // ladrunoImplexCommit()'s zero-increment path (P2-3) already runs
-            // integrate() once from the committed state and commits the
-            // correction with the history left untouched; this reproduces
-            // that, driven by the stage flip instead of an explicit hold, so
-            // a deck that does not insert one still gets it.
+            // Ladruno ADR-92 P2-7 (redesign): the stage flip, handled ONCE per
+            // flip. `mStageFlipHandled` guards a REPEAT call at the same stage
+            // (e.g. `updateMaterialStage 1` issued again while already at 1)
+            // from re-running any of this on an unchanged committed state; it
+            // is reset only when the stage goes back to 0, below.
             //
-            // `mImplexStageFlipAbsorbed` guards a REPEAT call at the same
-            // stage (e.g. `updateMaterialStage 1` issued again while already
-            // at 1) from re-running the return on an unchanged committed
-            // state; it is reset only when the stage goes back to 0, below.
-            if (!mImplexStageFlipAbsorbed) {
-                // Zero pseudo-time increment from the committed state --
-                // exactly the P2-3/P2-5c hold predicate (mImplexDt == 0.0 /
-                // ops_Dt == 0.0), but reached here directly rather than
-                // through ladrunoImplexTrial()/commitState(), because no
-                // trial has been set for this step yet.
-                mEpsilon = mEpsilon_n;
-                this->integrate();                        // mElastFlag == 1: the plastic
-                                                            // return, its own stress
-                                                            // correction included.
-                ManzariDafalias::commitState();            // the hold-preserved commit:
-                                                            // mImplexDEpsP / mImplexDtCommit
-                                                            // / the P2-2 guard flags are
-                                                            // NOT touched by this path, so
-                                                            // they stay at whatever
-                                                            // ladrunoImplexInitState() (next)
-                                                            // sets them to -- the material
-                                                            // stays un-primed.
-                LadrunoImplexGlobals::instance().noteHoldSkipCommit();   // it IS one
+            // SOURCE FACTS (see the class-level design note / ADR-92 P2-7
+            // plan): `ManzariDafalias::elastic_integrator` sets
+            // `NextAlpha = dev(sigma)/p` on EVERY elastic-stage step
+            // (`:1055`), so at this flip `mAlpha = mAlpha_n` is already the
+            // committed gravity ratio -- but `mAlpha_in` is NEVER touched in
+            // the elastic stage (elastic_integrator does not write it, and
+            // `Elastic2Plastic()`, just run above inside the base call, does
+            // not either -- its own initialisation lines are commented out).
+            // The ONLY place `mAlpha_in` is ever set is `integrate()`'s own
+            // loading-reversal sign test (`:1005-1013`), which is noise on a
+            // near-zero increment -- and, composed with the P2-5/5b/5c guard
+            // that exists to undo exactly that noise, effectively NEVER
+            // initialises it, leaving `(alpha - alpha_in):n` large and the
+            // plastic modulus Kp small from the first plastic step onward
+            // (measured: the implicit path runs 23-33% soft from step 1).
+            if (!mStageFlipHandled) {
+                // --- (1) deterministic mAlpha_in initialisation, BOTH paths.
+                // `-flipAlphaIn init` (the DEFAULT) sets mAlpha_in := mAlpha_n
+                // here -- the physically intended Dafalias-Manzari start of
+                // plastic loading (the reference IS the current back-stress;
+                // h -> infinity initially). `-flipAlphaIn vanilla` is a
+                // deliberate no-op, kept only for A/B comparison against the
+                // defect above.
+                if (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT) {
+                    mAlpha      = mAlpha_n;    // trial/committed consistent
+                    mAlpha_in   = mAlpha_n;
+                    mAlpha_in_n = mAlpha_n;
+                }
+                // vanilla: nothing to do -- ManzariDafalias::integrate()'s own
+                // sign test decides, exactly as it always has.
 
-                // Every OTHER commit site (ladrunoImplexCommit(),
-                // revertToLastCommit()'s re-arm) re-freezes mCe at the new
-                // mSigma_n before returning -- integrate()'s own
-                // loading-reversal test reads mCe, and the first REAL push
-                // step is the very next integrate() call. Skipping this would
-                // leave mCe at its stage-0 value (a different sqrt(p/P_atm)
-                // factor than mElastFlag == 1 uses) and reopen a mismatch of
-                // the same shape this fix removes.
-                double Kabs = 0.0, Gabs = 0.0;
-                this->ladrunoImplexFreezeTangent(Kabs, Gabs);
+                // --- (2) PRIMED-AT-FLIP = false. The P2-5/5b/5c reversal-
+                // noise guard (ladrunoGuardReversalNoise()) is a no-op until
+                // the first plastic commitState() completes -- see the
+                // guard-scope note at its definition. This is harmless under
+                // `init` (mAlpha == mAlpha_in already, so the base's own sign
+                // test has nothing to get wrong) and faithfully reproduces the
+                // pre-P2-7 noise under `vanilla`.
+                mPrimed = false;
 
-                mImplexStageFlipAbsorbed = true;
+                mStageFlipHandled = true;   // record: the flip has been handled
+
+                // --- (3) UNDER -implex ONLY: the zero pseudo-time-increment
+                // companion return, run AFTER (1) so it uses the corrected
+                // mAlpha_in, and committed HOLD-STYLE, exactly as the first
+                // attempt (691f4064d) shipped it: mImplexDEpsP /
+                // mImplexDtCommit / the P2-2 guard flags are left untouched
+                // (`ladrunoImplexInitState()`, called unconditionally below
+                // when -implex is on, is what actually zeroes the fresh
+                // plastic-stage history), no reversal-noise guard runs on it
+                // (it does not go through ladrunoGuardReversalNoise() at all
+                // -- see (2)'s note), and it calls
+                // ManzariDafalias::commitState() DIRECTLY, bypassing this
+                // class's commitState() override entirely, so it does NOT
+                // set mPrimed -- the "hold rule" (P2-3/P2-5c) that governs an
+                // ORDINARY hold commit must not apply at the flip itself.
+                if (mImplexOpt.enabled) {
+                    mEpsilon = mEpsilon_n;
+                    this->integrate();                        // mElastFlag == 1: the plastic
+                                                                // return, its own stress
+                                                                // correction included, now
+                                                                // starting from the corrected
+                                                                // mAlpha_in.
+                    ManzariDafalias::commitState();            // the hold-preserved,
+                                                                // NON-PRIMING commit.
+                    LadrunoImplexGlobals::instance().noteHoldSkipCommit();   // it IS one
+
+                    // Every OTHER commit site (ladrunoImplexCommit(),
+                    // revertToLastCommit()'s re-arm) re-freezes mCe at the new
+                    // mSigma_n before returning -- integrate()'s own
+                    // loading-reversal test reads mCe, and the first REAL push
+                    // step is the very next integrate() call. Skipping this
+                    // would leave mCe at its stage-0 value (a different
+                    // sqrt(p/P_atm) factor than mElastFlag == 1 uses) and
+                    // reopen a mismatch of the same shape this fix removes.
+                    double Kabs = 0.0, Gabs = 0.0;
+                    this->ladrunoImplexFreezeTangent(Kabs, Gabs);
+                }
             }
-            this->ladrunoImplexInitState();
+            if (mImplexOpt.enabled)
+                this->ladrunoImplexInitState();
         } else {
-            mImplexStageFlipAbsorbed = false;   // Ladruno ADR-92 P2-7: back to stage 0
+            // Ladruno ADR-92 P2-7 (redesign): back to stage 0 -- both flags
+            // reset so a LATER flip re-runs (1)/(3) and starts un-primed
+            // again.
+            mStageFlipHandled = false;
+            mPrimed           = false;
         }
     }
 

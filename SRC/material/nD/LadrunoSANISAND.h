@@ -164,7 +164,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
-                    double reversalRel = 0.05);      // Ladruno ADR-92 P2-5b
+                    double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
+                    int flipAlphaInMode = 0);        // Ladruno ADR-92 P2-7 (redesign): 0 = init, 1 = vanilla
 
     // full constructor, classTag defaults to ND_TAG_LadrunoSANISAND.
     // Defaults of the five optional integration args match the base's
@@ -177,7 +178,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
-                    double reversalRel = 0.05);      // Ladruno ADR-92 P2-5b
+                    double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
+                    int flipAlphaInMode = 0);        // Ladruno ADR-92 P2-7 (redesign): 0 = init, 1 = vanilla
 
     // specific-type null constructor (used by the wrappers' null constructors)
     LadrunoSANISAND(int classTag);
@@ -405,16 +407,52 @@ class LadrunoSANISAND : public ManzariDafalias
     bool   mImplexClampFired; // the p_min clamp acted on the LAST extrapolation
     long   mImplexClampCount; // how often it has acted at this integration point
 
-    // Ladruno ADR-92 P2-7: has the elastic (0) -> plastic (nonzero) stage flip
-    // ALREADY run its zero-increment drift-absorbing companion return? Guards
-    // updateParameter()'s W5 hook against re-absorbing on a redundant repeat
-    // call (`updateMaterialStage 1` issued again while already at stage 1),
-    // which would otherwise re-run integrate()+commitState() on an unchanged
-    // committed state every time. NOT touched by ladrunoImplexInitState() --
-    // its lifetime is the plastic stage itself, not a single step -- so it is
-    // set false in the constructors/initialize() below and reset false only
-    // when the stage goes back to 0 (see updateParameter()).
-    bool   mImplexStageFlipAbsorbed;   // Ladruno ADR-92 P2-7
+    // Ladruno ADR-92 P2-7 (redesign): -flipAlphaIn mode. FLIP_ALPHA_IN_INIT
+    // (0, the DEFAULT) makes the elastic->plastic stage flip set
+    // mAlpha_in = mAlpha_in_n := mAlpha_n deterministically -- the physically
+    // intended Dafalias-Manzari start of plastic loading (the reference IS
+    // the current back-stress; h -> infinity initially). FLIP_ALPHA_IN_VANILLA
+    // (1) is a no-op: mAlpha_in is left to ManzariDafalias::integrate()'s own
+    // loading-reversal sign test, which is noise on a near-zero increment and,
+    // composed with the P2-5/5b/5c guard that undoes exactly that noise,
+    // effectively NEVER initialises it -- kept only for A/B comparison against
+    // the defect this fixes. NOT an -implex option: the reset fires on the
+    // flip on EITHER path (see LadrunoGuardReversalNoise()'s mPrimed gate,
+    // below, for why this is safe under vanilla too).
+    enum FlipAlphaInMode {                                        // Ladruno ADR-92 P2-7
+        FLIP_ALPHA_IN_INIT    = 0,
+        FLIP_ALPHA_IN_VANILLA = 1
+    };
+    int    mFlipAlphaInMode;   // Ladruno ADR-92 P2-7 (redesign): -flipAlphaIn init|vanilla
+
+    // Ladruno ADR-92 P2-7 (redesign): has the elastic (0) -> plastic (nonzero)
+    // stage flip ALREADY run its once-per-flip handling (the deterministic
+    // mAlpha_in reset above and, under -implex, the zero-increment companion
+    // return)? Guards updateParameter()'s W5 hook against re-running either on
+    // a redundant repeat call (`updateMaterialStage 1` issued again while
+    // already at stage 1). NOT touched by ladrunoImplexInitState() -- its
+    // lifetime is the plastic stage itself, not a single step -- so it is set
+    // false in the constructors/initialize() below and reset false only when
+    // the stage goes back to 0 (see updateParameter()). This is the direct
+    // descendant of the first attempt's (691f4064d) mImplexStageFlipAbsorbed,
+    // renamed because it now also guards the (non -implex-gated) deterministic
+    // init.
+    bool   mStageFlipHandled;   // Ladruno ADR-92 P2-7 (redesign)
+
+    // Ladruno ADR-92 P2-7 (redesign): has at least one PLASTIC commitState()
+    // happened since the flip? ladrunoGuardReversalNoise() (the P2-5/5b/5c
+    // reversal-noise guard) is a no-op while this is false, so the base's own
+    // loading-reversal sign test in ManzariDafalias::integrate() runs
+    // UNTOUCHED on the first plastic step -- with -flipAlphaIn init that test
+    // is already a no-op (mAlpha == mAlpha_in there), and with vanilla it
+    // reproduces the pre-P2-7 noise exactly, which is the point of the A/B
+    // token. Set true at the first plastic commitState() after the flip
+    // (either path) -- but NOT by the -implex synthetic companion return in
+    // updateParameter(), which bypasses this class's commitState() override
+    // entirely (it calls ManzariDafalias::commitState() directly) and must
+    // stay un-priming, per the design note there. Reset false when the stage
+    // goes back to 0.
+    bool   mPrimed;   // Ladruno ADR-92 P2-7 (redesign)
 
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
