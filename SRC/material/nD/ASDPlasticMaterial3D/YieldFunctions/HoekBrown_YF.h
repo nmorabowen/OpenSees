@@ -215,19 +215,36 @@ public:
         // σt = -s * σci / mb (for a = 0.5)
         // For general a, it's approximately the same
 
-        double sigma_t = -s * sigma_ci / mb;  // Tensile strength (negative value)
+        (void) a;
 
-        // Get the mean stress
-        double I1 = sigma.getI1();
-        double p = I1 / 3.0;  // Mean stress (positive in compression)
+        // Ladruno (ADR-94 wp/94c, B4): this test was INVERTED and its sign
+        // convention was wrong, which did not matter while the integrator's apex
+        // call site was dead code.  It read `p = I1/3` (which is TENSION-positive
+        // here, not compression-positive as its comment claimed) and fired when
+        // p < -s*sigma_ci/mb, i.e. deep in hydrostatic COMPRESSION -- the opposite
+        // half-axis from the Hoek-Brown tensile apex -- and APEX_STRESS then
+        // returned an interior point.  Now that the call site is live, that pair
+        // would have replaced a legitimate compressive state with a near-zero
+        // stress on every compression deck.
+        //
+        // Near the apex the composite yield function is its Rankine tension cut-off
+        // branch, f_tension = sigma_1(tension-positive) - T, with rock-mass tensile
+        // strength T = s*sigma_ci/mb > 0.  That is a three-plane corner whose vertex
+        // is sigma = T*I; the normal cone at a Rankine vertex is the positive octant
+        // in principal space, so the trial state projects onto the vertex exactly
+        // when ALL THREE tension-positive principal stresses are >= T, i.e. when the
+        // LARGEST compression-positive principal is <= -T.
+        if (!(mb > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return false;
 
-        // Check if we're near the tensile apex
-        // The apex is at p = sigma_t (all principal stresses equal to sigma_t)
-        if (p < sigma_t * 1.01) {  // Small tolerance
-            return true;
-        }
+        double T = s * sigma_ci / mb;          // tensile strength, TENSION-positive
 
-        return false;
+        VoigtVector sigma_geo = -sigma;        // compression-positive
+        auto [pr3, pr2, pr1] = sigma_geo.principalStresses();   // ascending
+        (void) pr3;
+        (void) pr2;
+
+        return pr1 <= -T;
     }
 
     APEX_STRESS
@@ -239,8 +256,14 @@ public:
         double mb = GET_PARAMETER_VALUE(HB_mb);
         double s = GET_PARAMETER_VALUE(HB_s);
 
-        // Tensile strength (apex stress state - hydrostatic tension)
-        double sigma_t = -s * sigma_ci / mb;
+        // Ladruno (ADR-94 wp/94c, B4): sign fixed.  The rock-mass tensile strength
+        // is T = s*sigma_ci/mb, and this class stores stress TENSION-POSITIVE, so
+        // the hydrostatic-tension apex is +T on the three normal slots.  The old
+        // -s*sigma_ci/mb put the "apex" in hydrostatic COMPRESSION, where the
+        // composite yield function evaluates to max(-sigma_ci*(2s)^a, -2T) < 0 --
+        // an interior point, not the apex.  With +T both branches vanish:
+        // f_tension = T - T = 0 and f_shear = 0 - sigma_ci*0^a = 0.
+        double sigma_t = s * sigma_ci / mb;
 
         // Return hydrostatic stress state at tensile strength
         // (all normal stresses equal, no shear)
@@ -253,6 +276,20 @@ public:
     // reproduced verbatim here since we keep it live instead (see marker).
 
     using internal_variables_t = std::tuple<NO_HARDENING>;
+
+    // Ladruno (ADR-94 wp/94c, M5): f has the units of stress and its natural
+    // magnitude is the rock-mass uniaxial compressive strength sigma_ci * s^a
+    // (5350 kPa for the ADR-94 sigma_ci = 50 MPa fixture -- nine orders above the
+    // 1e-6 absolute default, which is exactly the M5 defect).
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double sigma_ci = GET_PARAMETER_VALUE(HB_sigci);
+        double s        = GET_PARAMETER_VALUE(HB_s);
+        double a        = GET_PARAMETER_VALUE(HB_a);
+        double sc = sigma_ci * std::pow(s > 0 ? s : 0.0, a);
+        return sc < 0 ? -sc : sc;
+    }
 
     using parameters_t = std::tuple<HB_sigci, HB_mb, HB_s, HB_a, HB_ds>;
 

@@ -386,6 +386,21 @@ public:
 
     using internal_variables_t = std::tuple<EpsQpShearType>;
 
+    // Ladruno (ADR-94 wp/94c, M5): the shear surface is Mohr-Coulomb-scaled, so
+    // c*cos(phi) is its cohesion-like scale; the reference pressure backstops the
+    // cohesionless case.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double phi  = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        double c    = GET_PARAMETER_VALUE(MC_c);
+        double pref = GET_PARAMETER_VALUE(SS_pref);
+        double sc = c * std::cos(phi);
+        if (sc < 0) sc = -sc;
+        if (pref < 0) pref = -pref;
+        return sc > 0 ? sc : pref;
+    }
+
     using parameters_t = std::tuple<MC_phi,MC_c,MC_ds,SS_E50_ref, SS_Eur_ref, SS_Rf, SS_m, SS_pref>;
 
 private:

@@ -81,6 +81,9 @@ void print_usage(void)
        "End_Model_Parameters \\ \n"
        "Begin_Integration_Options \\ \n"
        "    f_absolute_tol (double value)\\ \n"
+       "    f_relative_tol (double value, default 0 = off) : tolerance becomes\n"
+       "        max(f_absolute_tol, f_relative_tol * yield-function strength scale),\n"
+       "        which makes convergence independent of the unit system\\ \n" // Ladruno (ADR-94 wp/94c, M5)
        "    stress_absolute_tol (double value)\\ \n"
        "    n_max_iterations (int value)\\ \n"
        "    return_to_yield_surface (0 or 1)\\ \n"
@@ -320,7 +323,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     // Ladruno (ADR-94 wp/94a): the valid Begin_Integration_Options tokens, printed
     // verbatim when one is not recognised so the user can see the spelling.
     static const char* const ASDP_VALID_INTEGRATION_OPTIONS =
-        "f_absolute_tol, stress_absolute_tol, n_max_iterations, strict_convergence, "
+        "f_absolute_tol, f_relative_tol, stress_absolute_tol, n_max_iterations, strict_convergence, "
         "rk45_dT_min, rk45_niter_max, return_to_yield_surface, integration_method, "
         "tangent_type, End_Integration_Options";
 
@@ -342,7 +345,8 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     // Ladruno (HB/StiffSoil integration, ledger row 337): default Backward_Euler/Secant
     int method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
     int tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Secant;
-    double f_absolute_tol = 1e-6; 
+    double f_absolute_tol = 1e-6;
+    double f_relative_tol = 0.0; // Ladruno (ADR-94 wp/94c, M5): 0 = off, i.e. absolute tolerance only (byte-identical to before)
     double stress_absolute_tol = 1e-6; 
     int n_max_iterations = 100;
     int return_to_yield_surface = 1;
@@ -466,6 +470,13 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                     OPS_GetDouble(&get_one_value, &f_absolute_tol);
                     cout << "   Setting f_absolute_tol = " << f_absolute_tol << endl;
                     option_recognised = true;   // Ladruno (ADR-94 wp/94a)
+                }
+
+                if (std::strcmp(param_name, "f_relative_tol") == 0) // Ladruno (ADR-94 wp/94c, M5)
+                {
+                    OPS_GetDouble(&get_one_value, &f_relative_tol);
+                    cout << "   Setting f_relative_tol = " << f_relative_tol << endl;
+                    option_recognised = true;
                 }
 
                 if (std::strcmp(param_name, "stress_absolute_tol") == 0)
@@ -664,7 +675,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
         }
     }
 
-    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence); // Ladruno (ADR-84 P2a)
+    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence, f_relative_tol); // Ladruno (ADR-84 P2a); Ladruno (ADR-94 wp/94c, M5)
 
     return true;   // Ladruno (ADR-94 wp/94a)
 }

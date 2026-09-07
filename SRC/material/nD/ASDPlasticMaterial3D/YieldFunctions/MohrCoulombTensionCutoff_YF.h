@@ -495,6 +495,21 @@ public:
 
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
+    // Ladruno (ADR-94 wp/94c, M5): composite max(f_MC, f_TC).  The Mohr-Coulomb
+    // branch is scaled by c*cos(phi) and the tension cut-off by |TC_min_stress|;
+    // the larger of the two is the scale of the composite.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        double c   = GET_PARAMETER_VALUE(MC_c);
+        double tc  = GET_PARAMETER_VALUE(TC_min_stress);
+        double smc = c * std::cos(phi);
+        if (smc < 0) smc = -smc;
+        if (tc  < 0) tc  = -tc;
+        return smc > tc ? smc : tc;
+    }
+
     using parameters_t = std::tuple<MC_phi, MC_c, MC_ds, MC_psi, TC_min_stress>;
 
 private:

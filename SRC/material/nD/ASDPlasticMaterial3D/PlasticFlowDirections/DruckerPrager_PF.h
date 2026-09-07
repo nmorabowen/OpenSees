@@ -63,6 +63,16 @@ public:
             dev_part = dev_part / den;
         else
             dev_part.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0.0`; NaN*0 == NaN
+
+        // Ladruno (ADR-94 wp/94c, B4/B5): identical correction to
+        // DruckerPrager_YF::df_dsigma_ij -- d sqrt(J2)/d v is r/(2 sqrt(J2)) on the
+        // three normal slots and r/sqrt(J2) on the three shear slots.  The flat
+        // `r/den` was 2x too large on the normal slots, so the plastic flow
+        // direction (and with etabar == eta the associativity check that compares
+        // m against n) was wrong for every non-pure-shear stress state.
+        dev_part(0) *= 0.5;
+        dev_part(1) *= 0.5;
+        dev_part(2) *= 0.5;
             
         // Add pressure-dependent part: etabar * dp/dsigma = etabar/3 * I
         // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- `VoigtVector x; x *= 0.0;` multiplies

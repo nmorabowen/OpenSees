@@ -58,6 +58,16 @@ public:
         if (abs(den) > sqrt(tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             vv_out = vv_out / den;
 
+        // Ladruno (ADR-94 wp/94c, B5): VOIGT/engineering convention, matching
+        // VonMises_YF::df_dsigma_ij (associated flow).  d(eps^p)_12 = dLambda *
+        // dg/d sigma_12, and the Voigt slot stores gamma^p_12 = 2*(eps^p)_12, so
+        // the shear slots of m carry the factor 2.  `TrialPlastic_Strain +=
+        // dLambda*m` and `Eelastic*m` (whose shear diagonal is mu, not 2*mu) both
+        // require exactly this.  See ADR-94 B5.
+        vv_out(3) *= 2.0;   // gamma12
+        vv_out(4) *= 2.0;   // gamma23
+        vv_out(5) *= 2.0;   // gamma13
+
         return vv_out;
     }
 

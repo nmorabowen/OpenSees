@@ -133,6 +133,15 @@ public:
   
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
+    // Ladruno (ADR-94 wp/94c, M5): a Rankine cut-off is scaled by its own
+    // threshold stress.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double tc = GET_PARAMETER_VALUE(TC_min_stress);
+        return tc < 0 ? -tc : tc;
+    }
+
     using parameters_t = std::tuple<MC_ds, TC_min_stress>;
 
 private:

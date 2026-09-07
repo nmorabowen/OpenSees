@@ -59,6 +59,22 @@ public:
             dev_part = dev_part / den;
         else
             dev_part.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0.0`; NaN*0 == NaN
+
+        // Ladruno (ADR-94 wp/94c, B4/B5): sqrt(J2) = sqrt(0.5 * r_ij r_ij), so the
+        // per-slot chain rule is NOT flat:
+        //     d sqrt(J2) / d sigma_ij = r_ij / (2 sqrt(J2))      (tensor)
+        //     d sqrt(J2) / d v_ii     = r_ii / (2 sqrt(J2))      (Voigt, normal)
+        //     d sqrt(J2) / d v_ij     = r_ij /    sqrt(J2)       (Voigt, shear)
+        // `r/den` (what the line above produces) is the SHEAR answer applied to all
+        // six slots: exactly 2x too large on the three normal slots.  That is a
+        // real, convention-independent gradient bug -- ADR-94 B4 measured 0.971
+        // relative error against a central difference at a pure-normal point, and
+        // it is the reason Drucker-Prager matched NEITHER the tensor nor the Voigt
+        // finite difference.  Halving the normal slots leaves the gradient in the
+        // Voigt convention used everywhere else in the framework.
+        dev_part(0) *= 0.5;
+        dev_part(1) *= 0.5;
+        dev_part(2) *= 0.5;
             
         // Add pressure-dependent part: eta * dp/dsigma = eta/3 * I
         // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- `VoigtVector x; x *= 0.0;` multiplies
@@ -98,30 +114,84 @@ public:
             return dbl_result;
         }
         
-        auto df_dalpha = -(s - alpha) / den;
+        // Ladruno (ADR-94 wp/94c, B4/B5): same two corrections as df_dsigma_ij --
+        // d sqrt(J2)/d alpha carries the 1/2 on the normal slots (the old
+        // `-(s-alpha)/den` was 2x too large there, so the kinematic-hardening term
+        // of H was 2x too large for every Drucker-Prager with a tensor IV), and the
+        // result is expressed in the Voigt convention so the contraction with the
+        // hardening rate is a plain dot.
+        VoigtVector df_dalpha = -(s - alpha) / den;
+        df_dalpha(0) *= 0.5;
+        df_dalpha(1) *= 0.5;
+        df_dalpha(2) *= 0.5;
         VoigtVector hh = GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType);
-        dbl_result += tensor_dot_stress_like(df_dalpha, hh);
+        dbl_result += df_dalpha.dot(hh);
         
         return dbl_result;
     }
 
 
+    // Ladruno (ADR-94 wp/94c, B4): implemented.  Both methods were `Implement!!!`
+    // stubs (check returned false, apex returned the zero stress), which is why
+    // Drucker-Prager hydrostatic tension ran the flank return map past sqrt(J2) = 0
+    // and committed NaN.
     CHECK_APEX_REGION
     {
+        double xi_c = GET_PARAMETER_VALUE(DP_xi_c);
+        double eta  = GET_PARAMETER_VALUE(DP_eta);
 
-        // Implement!!! 
+        if (!(eta > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return false;                 // no cone -> no apex
 
-        return false;
+        auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+        VoigtVector r = sigma.deviator() - alpha;
+        double tmp = tensor_dot_stress_like(r, r);
+        tmp = tmp > 0 ? tmp : 0;
+        const double q = std::sqrt(0.5 * tmp);      // sqrt(J2)
+        const double p = sigma.meanStress();        // TENSION-POSITIVE (trace/3)
+        const double p_apex = xi_c / eta;
+
+        // Cone geometry in the (p, q) half-plane, q >= 0:
+        //   f = q + eta*p - xi_c = 0  =>  the yield surface is the straight line
+        //   q = xi_c - eta*p, which terminates at the apex (p_apex, 0) with
+        //   p_apex = xi_c/eta.  Beyond that point the flank return would have to
+        //   drive sqrt(J2) NEGATIVE, which is what produced the NaN.
+        //   The unit tangent at the apex pointing AWAY from the flank is
+        //   t ~ (1, -eta), so a trial state projects onto the apex rather than
+        //   onto the flank exactly when (P - apex) . t >= 0, i.e.
+        //         p - p_apex >= eta * q.
+        // HONEST CAVEAT: the exact condition in the ELASTIC metric is
+        //         p - p_apex >= (K * etabar / G) * q,
+        // which needs the bulk and shear moduli and the plastic potential's
+        // dilatancy -- none of which this signature can see.  The Euclidean test
+        // coincides with it when K*etabar/G == eta.  The integrator independently
+        // validates f(sigma_apex) against the yield tolerance before committing an
+        // apex return, so a misclassification cannot commit an inadmissible stress;
+        // it only falls back to the generic return map.
+        return (p - p_apex) >= eta * q;
     }
 
     APEX_STRESS
     {
+        double xi_c = GET_PARAMETER_VALUE(DP_xi_c);
+        double eta  = GET_PARAMETER_VALUE(DP_eta);
 
-        // Implement!!! 
-        vv_out = VoigtVector(0,0,0,0,0,0);
+        // Hydrostatic apex, TENSION-POSITIVE because meanStress() == trace/3:
+        // q = 0 and f = eta*p - xi_c = 0  =>  p = xi_c/eta, giving f(sigma_apex)
+        // identically 0.
+        const double p_apex = (eta != 0.0) ? xi_c / eta : 0.0;
+        vv_out = VoigtVector(p_apex, p_apex, p_apex, 0, 0, 0);
 
         return vv_out;
+    }
 
+    // Ladruno (ADR-94 wp/94c, M5): f = sqrt(J2) + eta*p - xi_c, so xi_c (the
+    // adjusted cohesion) is the term that sets f's scale.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double xi_c = GET_PARAMETER_VALUE(DP_xi_c);
+        return xi_c < 0 ? -xi_c : xi_c;
     }
 
 
