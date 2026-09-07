@@ -97,6 +97,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
+| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, set `α_in := α` deterministically at every point (`init`) or leave initialisation to the old round-off-noise sign test (`vanilla`) | `init` | ADR-92 P2-7; see §11 |
 
 ## 2. What the nine words mean
 
@@ -398,6 +399,18 @@ hold's increment is `<= 1e-2` of the previous step, a genuine reversal is `~1×`
 reference is kept across a zero-increment commit so a run of holds does not drift the baseline.
 Still building; no holds inside a reported push on either material until the hold acceptance
 passes (hold probe `alpha_in` changed = 0 on both arms).
+
+### Deterministic `alpha_in` at the stage flip — `-flipAlphaIn`, P2-7
+
+Vanilla `ManzariDafalias` never explicitly initialises `α_in` at the `updateMaterialStage 0 -> 1`
+flip; it relies on the loading-reversal sign test inside `integrate()` firing on the first plastic
+step, which on a zero-increment re-equilibration decides `α_in` by round-off noise — and the
+P2-5/5b/5c reversal-noise guards turned that occasional reset into never, leaving `α_in = 0` and
+the implicit path 23-33 % soft from step 1. `-flipAlphaIn init` (the default) removes the
+dependency on that noise by setting `α_in := α` deterministically at every point at the flip on
+both the implicit and IMPL-EX paths, so the vanilla twin's own early-step stiffness now changes
+under the fork's build (a modelling correction, not a regression) — pass `-flipAlphaIn vanilla` to
+reproduce the old noise-dependent number for an A/B comparison against a pre-P2-7 run.
 
 ### `stressCorrection` now works — P2-4
 
