@@ -113,12 +113,12 @@ public:
 
 private:
 
-    static VoigtVector result; //For returning VoigtVector's
+    mutable VoigtVector result = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 
 };
 
-template <class AlphaHardeningType,  class KHardeningType>
-VoigtVector VonMises_YF<AlphaHardeningType, KHardeningType>::result;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 
 #endif

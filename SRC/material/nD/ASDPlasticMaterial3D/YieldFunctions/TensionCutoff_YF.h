@@ -138,11 +138,11 @@ public:
 private:
 
 
-    static VoigtVector vv_out; //For returning VoigtVector's
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 };
 
-template <class NO_HARDENING>
-VoigtVector TensionCutoff_YF<NO_HARDENING>::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 //Declares this YF as featuring an apex
 template<class NO_HARDENING>

@@ -115,6 +115,26 @@ public:
         : NDMaterial(0, thisClassTag)
     {
         stress_set_externally = false; // Ladruno (HB/StiffSoil integration, ledger row 337): init new flag
+
+        // Ladruno (ADR-94 wp/94b, M1/F1): dsigma / depsilon_elpl / intersection_* /
+        // Stiffness used to be class-statics (one copy per <E,Y,P,tag> specialization,
+        // zero-initialised once by the loader and then shared by every Gauss point,
+        // element and material tag). They are ordinary members now, so each instance
+        // must zero its own -- Eigen fixed-size storage is NOT zero-initialised.
+        // first_step was never initialised in this constructor at all.
+        first_step = true;
+        TrialStress.setZero();
+        CommitStress.setZero();
+        TrialStrain.setZero();
+        CommitStrain.setZero();
+        TrialPlastic_Strain.setZero();
+        CommitPlastic_Strain.setZero();
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+        initial_iv_captured = false;
     }
 
 
@@ -136,6 +156,14 @@ public:
 
         first_step = true;
         stress_set_externally = false;
+
+        // Ladruno (ADR-94 wp/94b, M1/F1): per-instance now (were class-statics).
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+        initial_iv_captured = false;
     }
 
 
@@ -228,6 +256,16 @@ public:
 
     int setTrialStrain(const Vector &v)
     {
+        // Ladruno (ADR-94 wp/94b, M6): snapshot the internal variables exactly once, on
+        // the first strain any element hands us. At that point the parser has finished
+        // configuring this instance and no integration has run, so this IS the "start"
+        // state revertToStart() has to restore. utuple_storage offers commit_all() and
+        // revert_all() only -- it has no initial-value facility of its own.
+        if (!initial_iv_captured)
+        {
+            iv_storage_initial = iv_storage;
+            initial_iv_captured = true;
+        }
 
         // Ladruno (HB/StiffSoil integration, ledger row 337): skip K0 init if stress was set externally
         if (first_step && !stress_set_externally)
@@ -731,6 +769,17 @@ public:
     {
         static Matrix return_matrix(6, 6);
 
+        // Ladruno (ADR-94 wp/94b, M1): Stiffness is per-instance now. An instance whose
+        // integrator has never run would hand the assembler an exactly-zero (singular)
+        // block, where the old class-static happened to carry whatever the last
+        // instance to integrate had left in it. Fall back to the elastic tangent at the
+        // committed stress -- the only defensible tangent for a state nobody has
+        // integrated yet.
+        if (Stiffness.isZero(0.0))
+        {
+            Stiffness = et(CommitStress, parameters_storage);
+        }
+
         copyToMatrixReference(Stiffness, return_matrix);
 
         return return_matrix;
@@ -741,10 +790,13 @@ public:
     {
         static Matrix return_matrix(6, 6);
 
+        // Ladruno (ADR-94 wp/94b, F1): this was `Stiffness = Eelastic;` -- a "getter"
+        // that clobbered the shared tangent every other instance's later getTangent()
+        // would read. Compute into a local and copy that to the return buffer; the
+        // member state is left alone.
         VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
-        Stiffness = Eelastic;
 
-        copyToMatrixReference(this->Stiffness, return_matrix);
+        copyToMatrixReference(Eelastic, return_matrix);
 
         return return_matrix;
     }
@@ -783,30 +835,69 @@ public:
     //Reverts the commited variables to the trials and calls revert on BET Classes.
     int revertToLastCommit(void)
     {
+        // Ladruno (ADR-94 wp/94b, M6/H4): every statement in this body used to be
+        // commented out, so a step that failed to converge left the dirty trial state
+        // behind while the method reported success. Domain::revertToLastCommit() calls
+        // this on every element of a failed step; revert means revert.
+        TrialStress = CommitStress;
+        TrialStrain = CommitStrain;
+        TrialPlastic_Strain = CommitPlastic_Strain;
 
-        // cerr << "ASDPlasticMaterial3D::revertToLastCommit !!!\n" ;
+        iv_storage.revert_all();
 
+        // No committed tangent is stored anywhere, so the only tangent consistent with
+        // the committed state is the elastic one evaluated at the committed stress.
+        Stiffness = et(CommitStress, parameters_storage);
 
-        // TrialStress = CommitStress;
-        // TrialStrain = CommitStrain;
-        // TrialPlastic_Strain = CommitPlastic_Strain;
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
 
-        // iv_storage.revert_all();
-
-        // if (GLOBAL_INT_max_iter[ASDP_TAG] > 0 || GLOBAL_DBL_max_error[ASDP_TAG] > 0.)
-        // {
-        //     // cout << "  () ASDP Integration Info. Tag = " << ASDP_TAG << " max_iter = " << GLOBAL_INT_max_iter[ASDP_TAG] << " max_error = " << GLOBAL_DBL_max_error[ASDP_TAG] << endl;
-        //     GLOBAL_INT_max_iter[ASDP_TAG] = 0;
-        //     GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
-        // }
+        if (GLOBAL_INT_max_iter[ASDP_TAG] > 0 || GLOBAL_DBL_max_error[ASDP_TAG] > 0.)
+        {
+            GLOBAL_INT_max_iter[ASDP_TAG] = 0;
+            GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
+        }
 
         return 0;
     }
 
     int revertToStart(void)
     {
-        cerr << "ASDPlasticMaterial3D::revertToStart - not implemented!!!\n" ;
-        return -1;
+        // Ladruno (ADR-94 wp/94b, M6/H4): was `cerr << "not implemented"; return -1;`,
+        // and Domain::revertToStart() / OPS_resetModel() both discard that -1, so
+        // ops.reset() left the material's committed state alive underneath a
+        // zeroed geometry (contract doc S4: "a third, inconsistent number").
+        // Restore exactly the freshly-constructed, freshly-parsed state.
+        TrialStress.setZero();
+        CommitStress.setZero();
+        TrialStrain.setZero();
+        CommitStrain.setZero();
+        TrialPlastic_Strain.setZero();
+        CommitPlastic_Strain.setZero();
+
+        if (initial_iv_captured)
+        {
+            iv_storage = iv_storage_initial;
+        }
+        iv_storage.revert_all();
+
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+
+        // first_step = true re-arms the InitialP0 geostatic seed in setTrialStrain(),
+        // which is what a fresh instance would do on its own first strain.
+        first_step = true;
+        stress_set_externally = false;
+
+        GLOBAL_INT_max_iter[ASDP_TAG] = 0;
+        GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
+
+        return 0;
     }
 
     NDMaterial *getCopy(void)
@@ -828,6 +919,11 @@ public:
         newmaterial->iv_storage = this->iv_storage;
         newmaterial->parameters_storage = this->parameters_storage;
         newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
+        // Ladruno (ADR-94 wp/94b, H14/F6): first_step was never copied, so a copy made
+        // from an already-advanced instance silently re-armed the InitialP0 seed.
+        newmaterial->first_step = this->first_step;
+        newmaterial->iv_storage_initial = this->iv_storage_initial;
+        newmaterial->initial_iv_captured = this->initial_iv_captured;
 
         return newmaterial;
     }
@@ -851,6 +947,11 @@ public:
             newmaterial->iv_storage = this->iv_storage;
             newmaterial->parameters_storage = this->parameters_storage;
             newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
+        // Ladruno (ADR-94 wp/94b, H14/F6): first_step was never copied, so a copy made
+        // from an already-advanced instance silently re-armed the InitialP0 seed.
+        newmaterial->first_step = this->first_step;
+        newmaterial->iv_storage_initial = this->iv_storage_initial;
+        newmaterial->initial_iv_captured = this->initial_iv_captured;
 
             return newmaterial;
         } else
@@ -1430,7 +1531,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -1612,7 +1713,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -2093,7 +2194,7 @@ private:
         double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
 
         // -------- setup
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon = strain_incr;
 
         const VoigtVector& sigma   = CommitStress;
@@ -2429,7 +2530,7 @@ private:
         int errorcode = -1;
 
         // ------------------ setup ------------------
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -2716,7 +2817,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -3147,7 +3248,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -3507,7 +3608,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -4214,6 +4315,11 @@ protected:
     iv_storage_t iv_storage;
     parameters_storage_t parameters_storage;
 
+    // Ladruno (ADR-94 wp/94b, M6): snapshot of iv_storage as configured at model-build
+    // time so revertToStart() can restore the internal variables' initial values.
+    iv_storage_t iv_storage_initial;
+    bool initial_iv_captured;
+
     std::string current_parameter_name; // Stores the most recent parameter name from setParameter
 
 protected:
@@ -4234,11 +4340,17 @@ protected:
     bool first_step;
     bool stress_set_externally;
 
-    static VoigtVector dsigma;
-    static VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
-    static VoigtVector intersection_stress;
-    static VoigtVector intersection_strain;
-    static VoigtMatrix Stiffness;
+    // Ladruno (ADR-94 wp/94b, M1/F1): these five were `static` -- ONE copy shared by
+    // every Gauss point, element and material tag of a given <E,Y,P,tag> specialization,
+    // so the whole model was assembled with the tangent of the last GP integrated
+    // (ADR-94 H1) and no threaded element loop (ADR-75b) could ever be deterministic.
+    // The per-tag INT_OPT_*/GLOBAL_* maps above stay static: they are keyed by material
+    // tag and shared by design.
+    VoigtVector dsigma;
+    VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
+    VoigtVector intersection_stress;
+    VoigtVector intersection_strain;
+    VoigtMatrix Stiffness;
 
 
 };
@@ -4267,20 +4379,9 @@ std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::GLOBAL_DBL_max_err
 template < class E, class Y, class P, int tag>
 std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::GLOBAL_INT_max_iter; 
 
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::dsigma;
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::depsilon_elpl;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag >::intersection_stress;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::intersection_strain;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtMatrix ASDPlasticMaterial3D< E,  Y,  P,  tag>::Stiffness;  //Used to compute the yield surface intersection.
+// Ladruno (ADR-94 wp/94b, M1/F1): the out-of-class definitions of dsigma,
+// depsilon_elpl, intersection_stress, intersection_strain and Stiffness were here.
+// They are ordinary per-instance members now -- see the declarations above.
 
 
 #endif
