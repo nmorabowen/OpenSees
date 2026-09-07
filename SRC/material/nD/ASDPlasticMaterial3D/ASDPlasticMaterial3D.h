@@ -115,6 +115,26 @@ public:
         : NDMaterial(0, thisClassTag)
     {
         stress_set_externally = false; // Ladruno (HB/StiffSoil integration, ledger row 337): init new flag
+
+        // Ladruno (ADR-94 wp/94b, M1/F1): dsigma / depsilon_elpl / intersection_* /
+        // Stiffness used to be class-statics (one copy per <E,Y,P,tag> specialization,
+        // zero-initialised once by the loader and then shared by every Gauss point,
+        // element and material tag). They are ordinary members now, so each instance
+        // must zero its own -- Eigen fixed-size storage is NOT zero-initialised.
+        // first_step was never initialised in this constructor at all.
+        first_step = true;
+        TrialStress.setZero();
+        CommitStress.setZero();
+        TrialStrain.setZero();
+        CommitStrain.setZero();
+        TrialPlastic_Strain.setZero();
+        CommitPlastic_Strain.setZero();
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+        initial_iv_captured = false;
     }
 
 
@@ -136,6 +156,14 @@ public:
 
         first_step = true;
         stress_set_externally = false;
+
+        // Ladruno (ADR-94 wp/94b, M1/F1): per-instance now (were class-statics).
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+        initial_iv_captured = false;
     }
 
 
@@ -228,6 +256,16 @@ public:
 
     int setTrialStrain(const Vector &v)
     {
+        // Ladruno (ADR-94 wp/94b, M6): snapshot the internal variables exactly once, on
+        // the first strain any element hands us. At that point the parser has finished
+        // configuring this instance and no integration has run, so this IS the "start"
+        // state revertToStart() has to restore. utuple_storage offers commit_all() and
+        // revert_all() only -- it has no initial-value facility of its own.
+        if (!initial_iv_captured)
+        {
+            iv_storage_initial = iv_storage;
+            initial_iv_captured = true;
+        }
 
         // Ladruno (HB/StiffSoil integration, ledger row 337): skip K0 init if stress was set externally
         if (first_step && !stress_set_externally)
@@ -482,6 +520,31 @@ public:
     }
 
 
+    // Ladruno (ADR-94 wp/94c, M5): THE yield tolerance -- every |f| test in this
+    // file goes through here.
+    //
+    // ADR-94 M5: `f_absolute_tol` is an ABSOLUTE tolerance in stress units, tested
+    // against a |Phi| whose natural scale is sigma_y (VM), xi_c (DP), c*cos(phi)
+    // (MC/MCTC), sigma_ci*s^a (HB) -- four orders across the catalogue before the
+    // user picks a unit system.  Measured: the same MC problem completes 20/20 in
+    // kPa and is refused on step 1 in Pa, same physics, same strains.
+    //
+    // `f_relative_tol` (default 0, i.e. OFF and byte-identical to before) adds a
+    // unit-invariant floor:  tol = max(f_absolute_tol, f_relative_tol * scale),
+    // with `scale` supplied by the yield function itself (YF_STRENGTH_SCALE).  A YF
+    // that declares no scale returns 0 and is unaffected even with the option on.
+    double yf_tolerance() const
+    {
+        const double abs_tol = DBL_OPT_f_absolute_tol[ASDP_TAG]; // KEEP_RAW_ABS_TOL (this IS the accessor)
+        const double rel = DBL_OPT_f_relative_tol[ASDP_TAG];
+        if (!(rel > 0.0))
+            return abs_tol;
+        double scale = yf.strength_scale(iv_storage, parameters_storage);
+        if (scale < 0) scale = -scale;
+        const double rel_tol = rel * scale;
+        return (rel_tol > abs_tol) ? rel_tol : abs_tol;
+    }
+
     // Ladruno (ADR-94 wp/94a): ONE admissibility gate for strict_convergence.
     //
     // ADR-94 B2/M2: `strict_convergence` only ever reached Backward_Euler, and the
@@ -496,13 +559,13 @@ public:
     {
         if (INT_OPT_strict_convergence[ASDP_TAG] == 0)
             return false;
-        const double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+        const double tol_yf = yf_tolerance();
         const double yf_val = yf(stress_state, iv_storage, parameters_storage);
         if (yf_val <= tol_yf)
             return false;
         opserr << "ASDPlasticMaterial3D::" << where << " (tag " << ASDP_TAG
                << ") - refusing to commit an inadmissible state: f = " << yf_val
-               << " > f_absolute_tol = " << tol_yf
+               << " > yield tolerance = " << tol_yf
                << " -- rejecting step (strict_convergence)" << endln;
         return true;
     }
@@ -549,7 +612,7 @@ public:
 
             if (yf_val_start < 0) {
                 // Find the intersection of the yield surface between the start and trial stress
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing(
                     local_stress, trial_stress, 0.0, 1.0, tol_yf);
                 
@@ -731,6 +794,17 @@ public:
     {
         static Matrix return_matrix(6, 6);
 
+        // Ladruno (ADR-94 wp/94b, M1): Stiffness is per-instance now. An instance whose
+        // integrator has never run would hand the assembler an exactly-zero (singular)
+        // block, where the old class-static happened to carry whatever the last
+        // instance to integrate had left in it. Fall back to the elastic tangent at the
+        // committed stress -- the only defensible tangent for a state nobody has
+        // integrated yet.
+        if (Stiffness.isZero(0.0))
+        {
+            Stiffness = et(CommitStress, parameters_storage);
+        }
+
         copyToMatrixReference(Stiffness, return_matrix);
 
         return return_matrix;
@@ -741,10 +815,13 @@ public:
     {
         static Matrix return_matrix(6, 6);
 
+        // Ladruno (ADR-94 wp/94b, F1): this was `Stiffness = Eelastic;` -- a "getter"
+        // that clobbered the shared tangent every other instance's later getTangent()
+        // would read. Compute into a local and copy that to the return buffer; the
+        // member state is left alone.
         VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
-        Stiffness = Eelastic;
 
-        copyToMatrixReference(this->Stiffness, return_matrix);
+        copyToMatrixReference(Eelastic, return_matrix);
 
         return return_matrix;
     }
@@ -783,30 +860,69 @@ public:
     //Reverts the commited variables to the trials and calls revert on BET Classes.
     int revertToLastCommit(void)
     {
+        // Ladruno (ADR-94 wp/94b, M6/H4): every statement in this body used to be
+        // commented out, so a step that failed to converge left the dirty trial state
+        // behind while the method reported success. Domain::revertToLastCommit() calls
+        // this on every element of a failed step; revert means revert.
+        TrialStress = CommitStress;
+        TrialStrain = CommitStrain;
+        TrialPlastic_Strain = CommitPlastic_Strain;
 
-        // cerr << "ASDPlasticMaterial3D::revertToLastCommit !!!\n" ;
+        iv_storage.revert_all();
 
+        // No committed tangent is stored anywhere, so the only tangent consistent with
+        // the committed state is the elastic one evaluated at the committed stress.
+        Stiffness = et(CommitStress, parameters_storage);
 
-        // TrialStress = CommitStress;
-        // TrialStrain = CommitStrain;
-        // TrialPlastic_Strain = CommitPlastic_Strain;
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
 
-        // iv_storage.revert_all();
-
-        // if (GLOBAL_INT_max_iter[ASDP_TAG] > 0 || GLOBAL_DBL_max_error[ASDP_TAG] > 0.)
-        // {
-        //     // cout << "  () ASDP Integration Info. Tag = " << ASDP_TAG << " max_iter = " << GLOBAL_INT_max_iter[ASDP_TAG] << " max_error = " << GLOBAL_DBL_max_error[ASDP_TAG] << endl;
-        //     GLOBAL_INT_max_iter[ASDP_TAG] = 0;
-        //     GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
-        // }
+        if (GLOBAL_INT_max_iter[ASDP_TAG] > 0 || GLOBAL_DBL_max_error[ASDP_TAG] > 0.)
+        {
+            GLOBAL_INT_max_iter[ASDP_TAG] = 0;
+            GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
+        }
 
         return 0;
     }
 
     int revertToStart(void)
     {
-        cerr << "ASDPlasticMaterial3D::revertToStart - not implemented!!!\n" ;
-        return -1;
+        // Ladruno (ADR-94 wp/94b, M6/H4): was `cerr << "not implemented"; return -1;`,
+        // and Domain::revertToStart() / OPS_resetModel() both discard that -1, so
+        // ops.reset() left the material's committed state alive underneath a
+        // zeroed geometry (contract doc S4: "a third, inconsistent number").
+        // Restore exactly the freshly-constructed, freshly-parsed state.
+        TrialStress.setZero();
+        CommitStress.setZero();
+        TrialStrain.setZero();
+        CommitStrain.setZero();
+        TrialPlastic_Strain.setZero();
+        CommitPlastic_Strain.setZero();
+
+        if (initial_iv_captured)
+        {
+            iv_storage = iv_storage_initial;
+        }
+        iv_storage.revert_all();
+
+        dsigma.setZero();
+        depsilon_elpl.setZero();
+        intersection_stress.setZero();
+        intersection_strain.setZero();
+        Stiffness.setZero();
+
+        // first_step = true re-arms the InitialP0 geostatic seed in setTrialStrain(),
+        // which is what a fresh instance would do on its own first strain.
+        first_step = true;
+        stress_set_externally = false;
+
+        GLOBAL_INT_max_iter[ASDP_TAG] = 0;
+        GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
+
+        return 0;
     }
 
     NDMaterial *getCopy(void)
@@ -828,6 +944,11 @@ public:
         newmaterial->iv_storage = this->iv_storage;
         newmaterial->parameters_storage = this->parameters_storage;
         newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
+        // Ladruno (ADR-94 wp/94b, H14/F6): first_step was never copied, so a copy made
+        // from an already-advanced instance silently re-armed the InitialP0 seed.
+        newmaterial->first_step = this->first_step;
+        newmaterial->iv_storage_initial = this->iv_storage_initial;
+        newmaterial->initial_iv_captured = this->initial_iv_captured;
 
         return newmaterial;
     }
@@ -851,6 +972,11 @@ public:
             newmaterial->iv_storage = this->iv_storage;
             newmaterial->parameters_storage = this->parameters_storage;
             newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
+        // Ladruno (ADR-94 wp/94b, H14/F6): first_step was never copied, so a copy made
+        // from an already-advanced instance silently re-armed the InitialP0 seed.
+        newmaterial->first_step = this->first_step;
+        newmaterial->iv_storage_initial = this->iv_storage_initial;
+        newmaterial->initial_iv_captured = this->initial_iv_captured;
 
             return newmaterial;
         } else
@@ -1325,7 +1451,7 @@ public:
         TrialStress = stress;
     }
 
-    bool set_constitutive_integration_method(int method, int tangent, double f_absolute_tol, double stress_absolute_tol, int n_max_iterations, int return_to_yield_surface, int rk45_niter_max, double rk45_dT_min, int strict_convergence = 0) // Ladruno (ADR-84 P2a): opt-in strict_convergence flag, default 0 preserves upstream behavior
+    bool set_constitutive_integration_method(int method, int tangent, double f_absolute_tol, double stress_absolute_tol, int n_max_iterations, int return_to_yield_surface, int rk45_niter_max, double rk45_dT_min, int strict_convergence = 0, double f_relative_tol = 0.0) // Ladruno (ADR-84 P2a): opt-in strict_convergence flag, default 0 preserves upstream behavior. Ladruno (ADR-94 wp/94c, M5): opt-in f_relative_tol, default 0 = off
     {
         // Ladruno (ADR-94 wp/94a): ADR-94 M8 -- Forward_Euler_Crisfield,
         // Multistep_Forward_Euler, Multistep_Forward_Euler_Crisfield and
@@ -1350,6 +1476,7 @@ public:
             DBL_OPT_RK45_dT_min[ASDP_TAG] = rk45_dT_min ;
             INT_OPT_RK45_niter_max[ASDP_TAG] = rk45_niter_max ;
             INT_OPT_strict_convergence[ASDP_TAG] = strict_convergence ; // Ladruno (ADR-84 P2a)
+            DBL_OPT_f_relative_tol[ASDP_TAG] = f_relative_tol ; // Ladruno (ADR-94 wp/94c, M5)
 
             GLOBAL_INT_max_iter[ASDP_TAG] = 0;
             GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
@@ -1364,6 +1491,7 @@ public:
             cout << "   rk45_niter_max = " << rk45_niter_max << endl;
             cout << "   rk45_dT_min = " << rk45_dT_min << endl;
             cout << "   strict_convergence = " << strict_convergence << endl; // Ladruno (ADR-84 P2a)
+            cout << "   f_relative_tol = " << f_relative_tol << endl; // Ladruno (ADR-94 wp/94c, M5)
 
             return true;
         }
@@ -1430,7 +1558,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -1472,7 +1600,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -1612,7 +1740,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -1654,7 +1782,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -2090,10 +2218,10 @@ private:
 
         // Ladruno (HB/StiffSoil integration, ledger row 337): hoisted earlier for the elastic-exit checks below
         int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
-        double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
+        double tol_yf   = yf_tolerance(); 
 
         // -------- setup
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon = strain_incr;
 
         const VoigtVector& sigma   = CommitStress;
@@ -2144,71 +2272,125 @@ private:
 
         // Deal with the APEX if needed
         // -------- APEX return (one-shot projection) -------------------------------
+        // Ladruno (ADR-94 wp/94c, B4): REVIVED.  The whole body below was commented
+        // out, so `check_apex_region` was called and its answer discarded for every
+        // yield function that declares `yf_has_apex` -- Drucker-Prager then ran the
+        // flank return map past sqrt(J2) = 0 and committed NaN on hydrostatic
+        // tension.  The projection is the classic one-shot vertex return:
+        //     sigma   = sigma_apex
+        //     d eps^p = C : (sigma_trial - sigma_apex),  C = inv(E) at commit
+        // with the plastic multiplier recovered as the least-squares projection of
+        // d eps^p onto the apex flow direction so hardening internal variables
+        // (evaluated ONCE, at the apex state) still advance; for the perfectly
+        // plastic opt-ins that term is identically zero.
         if constexpr (yf_has_apex<YieldFunctionType>::value)
         {
             if (yf.check_apex_region(TrialStress, iv_storage, parameters_storage))
             {
-                // // 1) Target apex stress from YF (hydrostatic vector in Voigt form)
-                // const VoigtVector sigma_apex = yf.apex_stress(iv_storage, parameters_storage);
+                // Copy out of the YF's return buffer immediately: `apex_stress`
+                // and `df_dsigma_ij` share one mutable member per functor.
+                const VoigtVector sigma_apex = yf.apex_stress(iv_storage, parameters_storage);
 
-                // // 2) Plastic strain increment needed to hit apex:
-                // //    Δε^p = S_elastic : (σ_trial − σ_apex)
-                // // const VoigtMatrix Selastic = se(CommitStress, parameters_storage); // compliance at commit
-                
-                // const VoigtVector rhs = TrialStress - sigma_apex;
+                // The apex the YF names must actually BE on its own surface.  This
+                // is what makes the classification safe: a yield function whose
+                // apex geometry is wrong (or whose region test misfires) falls
+                // through to the generic return map instead of committing a
+                // fabricated stress.  NaN-safe: !(x <= tol) is true for NaN.
+                const double f_apex = yf(sigma_apex, iv_storage, parameters_storage);
+                const double f_apex_abs = (f_apex < 0) ? -f_apex : f_apex;
+                if (!(f_apex_abs <= tol_yf))
+                {
+                    if (be_strict)
+                    {
+                        opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                               << ") - the trial stress classifies as an APEX state but the "
+                               << "yield function's own apex is not on its surface: |f(sigma_apex)| = "
+                               << f_apex_abs << " > tol = " << tol_yf
+                               << " -- rejecting step (strict_convergence)" << endln;
+                        return LADRUNO_MATERIAL_REFUSED;
+                    }
+                    // fall through to the generic return map
+                }
+                else
+                {
+                    // d eps^p = inv(E) * (sigma_trial - sigma_apex)
+                    const VoigtVector rhs = TrialStress - sigma_apex;
+                    VoigtVector dep = VoigtVector::Zero();
+                    {
+                        Eigen::Matrix<double, 6, 6> E_eig;
+                        Eigen::Matrix<double, 6, 1> rhs_eig;
+                        for (int i = 0; i < 6; ++i)
+                        {
+                            rhs_eig(i) = rhs(i);
+                            for (int j = 0; j < 6; ++j) E_eig(i, j) = Eelastic(i, j);
+                        }
+                        Eigen::Matrix<double, 6, 1> dep_eig;
+                        auto chol = E_eig.selfadjointView<Eigen::Lower>().llt();
+                        if (chol.info() == Eigen::Success) dep_eig = chol.solve(rhs_eig);
+                        else                               dep_eig = E_eig.ldlt().solve(rhs_eig);
+                        for (int i = 0; i < 6; ++i) dep(i) = dep_eig(i);
+                    }
 
-                // // const VoigtVector dep      = Selastic * (TrialStress - sigma_apex);
-                // // If Eelastic is SPD (usual for linear elasticity):
-                // // Eigen::LLT<VoigtMatrix> chol(et(CommitStress, parameters_storage));
-                // // VoigtVector dep;
-                // // if (chol.info() == Eigen::Success) {
-                // //     dep = chol.solve(rhs);
-                // // } else {
-                // //     // fallback if not strictly SPD
-                // //     dep = Eelastic.ldlt().solve(rhs);
-                // // }
+                    // Plastic multiplier: least-squares projection of dep onto the
+                    // apex flow direction.  Both are ENGINEERING-strain-like Voigt
+                    // vectors, so the inner product is the engineering contraction
+                    // (ADR-94 wp/94c, B5) -- not the stress-like one the dead code
+                    // used.
+                    const VoigtVector m_apex = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
+                    const double m_dot_m = tensor_dot_engineering_strain_like(m_apex, m_apex);
+                    double dLambda_apex = 0.0;
+                    if (m_dot_m > MACHINE_EPSILON)
+                    {
+                        dLambda_apex = tensor_dot_engineering_strain_like(m_apex, dep) / m_dot_m;
+                        if (dLambda_apex < 0.0) dLambda_apex = 0.0;   // keep lambda >= 0
+                    }
 
+                    TrialStress          = sigma_apex;
+                    TrialPlastic_Strain  = TrialPlastic_Strain + dep;
 
-                // Eigen::Matrix<double,6,6> E_eig;        // copia desde Eelastic
-                // Eigen::Matrix<double,6,1> rhs_eig;      // copia desde rhs
-                // for (int i=0;i<6;++i) {
-                //     rhs_eig(i) = rhs(i);
-                //     for (int j=0;j<6;++j) E_eig(i,j) = Eelastic(i,j);
-                // }
-                // Eigen::Matrix<double,6,1> dep_eig;
-                // auto chol = E_eig.selfadjointView<Eigen::Lower>().llt();
-                // if (chol.info()==Eigen::Success) dep_eig = chol.solve(rhs_eig);
-                // else                             dep_eig = E_eig.ldlt().solve(rhs_eig);
-                // VoigtVector dep = dep_eig;  // asigna de vuelta
+                    // Internal variables: ONE hardening evaluation, at the apex.
+                    // Every yield function that opts into `yf_has_apex` today is
+                    // perfectly plastic (Null hardening), so this term is exactly
+                    // zero for them and the IVs are unchanged; it is written this
+                    // way so a hardening Drucker-Prager does not silently freeze.
+                    iv_storage.apply([&](auto & internal_variable)
+                    {
+                        auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
+                        internal_variable.trial_value += dLambda_apex * h;
+                    });
 
-                // // 3) Equivalent plastic multiplier using apex flow direction
-                // //    (least-squares projection of dep onto m_apex)
-                // // const VoigtVector m_apex   = pf.apex_flow_direction(sigma_apex, iv_storage, parameters_storage);
-                // const VoigtVector m_apex   = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
-                // double m_dot_m             = tensor_dot_stress_like(m_apex, m_apex);
-                // double dLambda_apex        = 0.0;
-                // double dLambda             = 0.0;
-                // if (m_dot_m > MACHINE_EPSILON) {
-                //     dLambda_apex = tensor_dot_stress_like(m_apex, dep) / m_dot_m;
-                //     if (dLambda + dLambda_apex < 0.0) dLambda_apex = -dLambda; // keep λ ≥ 0
-                //     dLambda += dLambda_apex;
-                // }
+                    // Tangent.  The honest continuum operator at a perfectly plastic
+                    // apex is ZERO: the stress is pinned at sigma_apex, so no strain
+                    // increment that stays in the apex region changes it.  That is
+                    // rank-deficient by construction and will make an element whose
+                    // every Gauss point sits at the apex singular -- which is the
+                    // true state of affairs, and why it is only produced for the
+                    // tangent types the user opts into.  Secant (the DEFAULT) blends
+                    // it with the elastic operator, exactly as the special_return
+                    // path above does, and stays invertible.
+                    {
+                        VoigtMatrix apex_stiff = VoigtMatrix::Zero();
+                        using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
+                        switch (INT_OPT_tangent_operator_type[ASDP_TAG])
+                        {
+                        case TOT::Elastic:
+                            Stiffness = Eelastic;
+                            break;
+                        case TOT::Continuum:
+                        case TOT::Algorithmic:
+                        case TOT::Numerical_Algorithmic_FirstOrder:
+                        case TOT::Numerical_Algorithmic_SecondOrder:
+                            Stiffness = apex_stiff;
+                            break;
+                        case TOT::Secant:
+                        default:
+                            Stiffness = VoigtMatrix((apex_stiff + Eelastic) / 2.0);
+                            break;
+                        }
+                    }
 
-                // // 4) Update stress, plastic strain, internal variables
-                // TrialStress         = sigma_apex;
-                // TrialPlastic_Strain = TrialPlastic_Strain + dep;
-
-                // iv_storage.apply([&](auto & internal_variable)
-                // {
-                //     auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
-                //     internal_variable.trial_value += dLambda_apex * h;
-                // });
-
-                // // 5) Tangent: simplest safe choice is elastic; or call your usual builder
-                // //    If you have a special apex-consistent tangent, compute it inside ComputeTangentStiffness()
-                // Stiffness = Eelastic;
-                // // ComputeTangentStiffness(); // (optional if it knows how to handle apex)
-                // return 0;
+                    return 0;
+                }
             }
         }
 
@@ -2324,7 +2506,19 @@ private:
 
             // dΦ/dλ ≈ - n^T E m + H
             // const double dPhi_dLambda = - (n.transpose() * Eelastic * m) + H;
-            const double nEm = tensor_dot_stress_like(n, Eelastic * m);
+            // Ladruno (ADR-94 wp/94c, B5): ONE convention, everywhere.  With a
+            // Voigt-convention `n` (shear slots already carrying the symmetric
+            // partner) the plastic modulus is a PLAIN contraction n_i (E m)_i --
+            // the factor 2 lives in n, not in the dot product.  This line was the
+            // ONLY site of six that doubled it a second time; it happened to be
+            // right for the old tensor-convention von Mises and wrong for the five
+            // Voigt-convention families (MC/HB/MCTC/StiffSoil), and no single
+            // choice here could be right for both.  Now it matches
+            // ComputeTangentStiffness, compute_local_stress, Forward_Euler,
+            // Forward_Euler_Subincrement and Backward_Euler_LineSearch.
+            // GCC: bind the Eigen product to a local before contracting.
+            const VoigtVector Em = Eelastic * m;
+            const double nEm = n.dot(Em);
             const double dPhi_dLambda = H - nEm;   // == - n^T E m + H
 
             if (std::abs(dPhi_dLambda) < MACHINE_EPSILON) {
@@ -2429,7 +2623,7 @@ private:
         int errorcode = -1;
 
         // ------------------ setup ------------------
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -2445,7 +2639,7 @@ private:
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
         // tolerancias
-        const double tol_abs = (DBL_OPT_f_absolute_tol[ASDP_TAG] > 0.0) ? DBL_OPT_f_absolute_tol[ASDP_TAG] : 1e-10;
+        const double tol_abs = (yf_tolerance() > 0.0) ? yf_tolerance() : 1e-10;
         const double tol_rel = 1e-8;
         const int    max_iter = 30;
         // Ladruno (ADR-94 wp/94a): refusal flag out of the solve lambda (which
@@ -2716,7 +2910,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -2757,7 +2951,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -3031,7 +3225,7 @@ private:
                 // Make surface the internal variables are already updated. And then, return to the yield surface.
                 double y0  = yf(TrialStress, iv_storage, parameters_storage) ;
                 int iter = 0;
-                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double TOL = this->yf_tolerance();
                 double NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
                 // do
                 if(y0 > 0 && iter < NITER)
@@ -3147,7 +3341,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -3185,7 +3379,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -3343,7 +3537,7 @@ private:
                     
                     // Validate yield function drift
                     double yf_val = yf(current_Sigma, current_iv_storage, parameters_storage);
-                    if (yf_val > 10 * DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                    if (yf_val > 10 * yf_tolerance()) {
                         // cout << "Warning: Yield function drift detected: f = " << yf_val << endl;
                     }
                 }
@@ -3370,7 +3564,7 @@ private:
             if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
             {
                 double yf_val_after_corrector = yf(TrialStress, iv_storage, parameters_storage);
-                if (yf_val_after_corrector > DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                if (yf_val_after_corrector > yf_tolerance()) {
                     const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
                     const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
                     double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
@@ -3393,7 +3587,7 @@ private:
             {
                 double y0 = yf(TrialStress, iv_storage, parameters_storage);
                 int iter = 0;
-                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double TOL = this->yf_tolerance();
                 int NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
                 
                 if(y0 > TOL && iter < NITER)
@@ -3507,7 +3701,7 @@ private:
 
         int errorcode = -1;
 
-        static VoigtVector depsilon;
+        VoigtVector depsilon;  // Ladruno (ADR-94 wp/94b, M1): was `static` -- a function-local buffer shared across every instance of this specialization
         depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
@@ -3548,7 +3742,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = yf_tolerance();
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -3911,7 +4105,7 @@ private:
             if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
             {
                 double yf_val_after_corrector = yf(TrialStress, iv_storage, parameters_storage);
-                if (yf_val_after_corrector > DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                if (yf_val_after_corrector > yf_tolerance()) {
                     const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
                     const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
                     double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
@@ -3934,7 +4128,7 @@ private:
             {
                 double y0 = yf(TrialStress, iv_storage, parameters_storage);
                 int iter = 0;
-                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double TOL = this->yf_tolerance();
                 int NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
                 
                 if(y0 > TOL && iter < NITER)
@@ -4214,6 +4408,11 @@ protected:
     iv_storage_t iv_storage;
     parameters_storage_t parameters_storage;
 
+    // Ladruno (ADR-94 wp/94b, M6): snapshot of iv_storage as configured at model-build
+    // time so revertToStart() can restore the internal variables' initial values.
+    iv_storage_t iv_storage_initial;
+    bool initial_iv_captured;
+
     std::string current_parameter_name; // Stores the most recent parameter name from setParameter
 
 protected:
@@ -4227,6 +4426,7 @@ protected:
     static std::map<int, double> DBL_OPT_RK45_dT_min;
     static std::map<int, int> INT_OPT_RK45_niter_max;
     static std::map<int, int> INT_OPT_strict_convergence; // Ladruno (ADR-84 P2a): 1 = fail loud on BE non-convergence instead of silently accepting
+    static std::map<int, double> DBL_OPT_f_relative_tol; // Ladruno (ADR-94 wp/94c, M5): 0 = off (absolute tolerance only)
 
     static std::map<int, int> GLOBAL_INT_max_iter; 
     static std::map<int, double> GLOBAL_DBL_max_error; 
@@ -4234,11 +4434,23 @@ protected:
     bool first_step;
     bool stress_set_externally;
 
-    static VoigtVector dsigma;
-    static VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
-    static VoigtVector intersection_stress;
-    static VoigtVector intersection_strain;
-    static VoigtMatrix Stiffness;
+    // Ladruno (ADR-94 wp/94b, M1/F1): these five were `static` -- ONE copy shared by
+    // every Gauss point, element and material tag of a given <E,Y,P,tag> specialization,
+    // so the whole model was assembled with the tangent of the last GP integrated
+    // (ADR-94 H1) and no threaded element loop (ADR-75b) could ever be deterministic.
+    // The per-tag INT_OPT_*/GLOBAL_* maps above stay static: they are keyed by material
+    // tag and shared by design.
+    // The four scratch buffers are `mutable` because `compute_local_stress()` --
+    // the const helper the numerical-tangent probe calls -- writes them. It used to
+    // write the class-STATIC copies, i.e. it scribbled on every other instance's
+    // scratch state; `mutable` keeps that behaviour byte-identical while confining
+    // the damage to the probing instance. `Stiffness` is deliberately NOT mutable:
+    // no const method may set the tangent.
+    mutable VoigtVector dsigma;
+    mutable VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
+    mutable VoigtVector intersection_stress;
+    mutable VoigtVector intersection_strain;
+    VoigtMatrix Stiffness;
 
 
 };
@@ -4261,26 +4473,17 @@ template < class E, class Y, class P, int tag>
 std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::INT_OPT_RK45_niter_max;
 template < class E, class Y, class P, int tag>
 std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::INT_OPT_strict_convergence; // Ladruno (ADR-84 P2a)
+template < class E, class Y, class P, int tag>
+std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::DBL_OPT_f_relative_tol; // Ladruno (ADR-94 wp/94c, M5)
 
 template < class E, class Y, class P, int tag>
 std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::GLOBAL_DBL_max_error;
 template < class E, class Y, class P, int tag>
 std::map<int, int> ASDPlasticMaterial3D< E,  Y,  P,  tag>::GLOBAL_INT_max_iter; 
 
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::dsigma;
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::depsilon_elpl;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag >::intersection_stress;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtVector ASDPlasticMaterial3D< E,  Y,  P,  tag>::intersection_strain;  //Used to compute the yield surface intersection.
-
-template < class E, class Y, class P, int tag>
-VoigtMatrix ASDPlasticMaterial3D< E,  Y,  P,  tag>::Stiffness;  //Used to compute the yield surface intersection.
+// Ladruno (ADR-94 wp/94b, M1/F1): the out-of-class definitions of dsigma,
+// depsilon_elpl, intersection_stress, intersection_strain and Stiffness were here.
+// They are ordinary per-instance members now -- see the declarations above.
 
 
 #endif

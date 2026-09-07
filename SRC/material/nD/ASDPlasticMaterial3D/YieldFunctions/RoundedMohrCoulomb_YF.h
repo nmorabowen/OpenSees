@@ -167,15 +167,22 @@ private:
         return dg;
     }
 
-    static VoigtVector vv_out; //For returning VoigtVector's
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 };
 
-template <class EtaHardeningType>
-VoigtVector RoundedMohrCoulomb_YF<EtaHardeningType>::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
-//Declares this YF as featuring an apex
-template<class EtaHardeningType>
-struct yf_has_apex<RoundedMohrCoulomb_YF<EtaHardeningType>> : std::true_type {};
+// Ladruno (ADR-94 wp/94c, B4): trait DROPPED, not implemented.
+// This class declared `yf_has_apex` but defines NEITHER `check_apex_region` NOR
+// `apex_stress`, so any registered specialization would fail to compile the moment
+// the integrator's apex call site went live (ADR-94 B4 / red2 Q5).  It is not
+// registered today -- `AllYieldFunctions.h` keeps its #include commented out -- so
+// there is no behaviour to preserve and nothing to test an implementation against.
+// Declaring a capability the class does not have is the defect; re-add the trait in
+// the same change that adds the two methods.
+// template<class EtaHardeningType>
+// struct yf_has_apex<RoundedMohrCoulomb_YF<EtaHardeningType>> : std::true_type {};
 
 #endif
 

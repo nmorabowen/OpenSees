@@ -52,6 +52,7 @@ LadrunoStabilizedUnbalance — true-equilibrium test (-stabilize)
 LadrunoProjection — explicit constraint projection (equalDOF+)
 LadrunoTie — non-conforming mesh ties (collocation + mortar)
 LadrunoContact — NTS + mortar/ALM contact, friction, 2D + 3D
+contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
 stressesPlaneStrain — exact sigma_zz response (plane strain)
 Ladruno — modular HDF5 .ladruno recorder
 LadrunoMonitor — live SWMR-HDF5 analysis monitor
@@ -67,7 +68,7 @@ LadrunoPorousOverlay — staggered u-p overlay pattern
 system Pardiso — threaded MKL sparse-direct (reuse, -krylov)
 system Mumps — distributed MUMPS (-BLR, -stats, half-storage)
 MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)
-LadrunoSANISAND — -implex (IMPL-EX), p_r/p_min, -maxSubsteps cap
+LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
 LadrunoLoadControl — -tangentPredictor for prescribed-disp paths
 LadrunoShellModifier — ETABS-style shell stiffness modifiers
-ASDPlasticMaterial3D — fail-loud contract + loud parser (ADR-94)
+ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)

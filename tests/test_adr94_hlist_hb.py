@@ -357,12 +357,14 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
     ``p = xi_c/eta`` with zero deviatoric stress the whole way (the exact
     degenerate case CHECK_APEX_REGION exists for).
 
-    ``DruckerPrager_YF::CHECK_APEX_REGION`` is a stub returning ``false``
-    (``DruckerPrager_YF.h:105-111``, "Implement!!!"), and even where a YF's
-    ``check_apex_region`` DOES return true (HoekBrown), the
-    ``ASDPlasticMaterial3D.h`` Backward_Euler call site's corrective body is
-    entirely commented out (~2093-2161) -- apex handling is a no-op for
-    every YF today.
+    **FIXED by wp/94c.**  ``DruckerPrager_YF::CHECK_APEX_REGION`` was a stub
+    returning ``false`` ("Implement!!!"), and even where a YF's
+    ``check_apex_region`` DID return true the ``ASDPlasticMaterial3D.h``
+    Backward_Euler call site's corrective body was entirely commented out, so
+    apex handling was a no-op for every YF.  Both are now implemented: the trial
+    state is projected onto ``sigma = (xi_c/eta) * I`` and the step succeeds.
+    The name of this test is kept for traceability with the ADR-94 register; it
+    now pins the FIX, not the NaN.
 
     MEASURED CONSEQUENCE IS UNDEFINED BEHAVIOUR, NOT A DETERMINISTIC DEFECT:
     on this exact-zero-deviator apex path, ``DruckerPrager_YF``/``_PF`` build
@@ -425,11 +427,26 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
         f"(0 = step taken, -3 = global Newton gave up after the material "
         f"refused with LADRUNO_MATERIAL_REFUSED)")
 
-    assert any(c != 0 for c in codes), (
-        f"every step on the hydrostatic-TENSION apex path reported success "
-        f"({codes}) -- the path runs past the DP cone's tip, so the material "
-        f"must eventually refuse; wp/94a's sentinel widening may have "
-        f"regressed.")
+    # FIXED by wp/94c (ADR-94 B4, the second half).  `DruckerPrager_YF`'s
+    # `CHECK_APEX_REGION`/`APEX_STRESS` are implemented and the Backward_Euler
+    # apex call site is live, so the path no longer has to be refused: the
+    # material RETURNS TO THE APEX and every step succeeds.  Refusing was the
+    # right answer only while the apex could not be represented.
+    # MEASURED on 3622d6214: codes = forty 0s, 40 finite rows, and the committed
+    # state stops dead at the apex.
+    assert codes == [0] * 40, (
+        f"the hydrostatic-tension apex path no longer completes: {codes} -- "
+        f"wp/94c's apex return may have regressed")
+
+    last = np.array(hist[-1], dtype=float)
+    assert np.max(np.abs(last[3:])) <= 1e-8 * DP_P_APEX, (
+        f"apex stress carries shear: {last}")
+    assert np.max(np.abs(last[:3] - last[:3].mean())) <= 1e-8 * DP_P_APEX, (
+        f"apex stress is not hydrostatic: {last}")
+    p_end = float(last[:3].mean())
+    assert abs(p_end - DP_P_APEX) <= 1e-6 * DP_P_APEX, (
+        f"the path was driven to 2x the apex volumetric strain but committed "
+        f"p = {p_end}, not the apex pressure xi_c/eta = {DP_P_APEX}")
 
 
 @pytest.mark.t0m

@@ -174,19 +174,53 @@ public:
     }
 
 
+    // Ladruno (ADR-94 wp/94c, B4): this test was written when the integrator's
+    // apex call site was dead code, so its eagerness never mattered.  Now that the
+    // call site is live it decides which trial states are projected onto the apex,
+    // so it is the proper NORMAL-CONE test rather than the bare `p beyond p_apex`.
     CHECK_APEX_REGION
     {
+        using namespace std;
+
         double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
-        double c = GET_PARAMETER_VALUE(MC_c);
-        double I1 = sigma.getI1();
-        double p = -I1 / 3;
+        double c   = GET_PARAMETER_VALUE(MC_c);
 
-        if (p < - c / tan(phi))
-        {
-            return true;
-        }
+        double sphi = sin(phi);
+        if (!(sphi > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return false;         // phi == 0 is Tresca: a cylinder, with no apex
 
-        return false;
+        // f = A(theta)*sqrt(J2) + sin(phi)*p - c*cos(phi), with p TENSION-POSITIVE
+        // (p = I1/3) and A(theta) = cos(theta) - sin(theta)*sin(phi)/sqrt(3) > 0 for
+        // every admissible Lode angle.  In the (p, r = sqrt(J2)) half-plane the
+        // surface is the line r = (c*cos(phi) - sin(phi)*p)/A, which terminates at
+        // the apex (p_apex, 0), p_apex = c*cos(phi)/sin(phi) = c/tan(phi).  A trial
+        // state projects onto the apex rather than onto the flank exactly when
+        //         p - p_apex >= (sin(phi)/A) * r
+        // (the tangent-perpendicular test at the endpoint of the flank).  The old
+        // form kept only the p term, which classified deviatorically loaded states
+        // near the apex as apex states.  Same elastic-metric caveat as
+        // DruckerPrager_YF::check_apex_region; the integrator validates
+        // f(sigma_apex) before committing.
+        double A = cos(sigma.lodeAngle()) - sin(sigma.lodeAngle()) * sphi / sqrt(3.0);
+        if (!(A > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return false;
+
+        double p = sigma.getI1() / 3.0;
+        double r = sqrt(sigma.getJ2() > 0 ? sigma.getJ2() : 0.0);
+        double p_apex = c * cos(phi) / sphi;
+
+        return (p - p_apex) >= (sphi / A) * r;
+    }
+
+    // Ladruno (ADR-94 wp/94c, M5): f = A*sqrt(J2) + sin(phi)*p - c*cos(phi), so
+    // c*cos(phi) is the term that sets f's scale (it degenerates to c for phi = 0).
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        double c   = GET_PARAMETER_VALUE(MC_c);
+        double sc  = c * std::cos(phi);
+        return sc < 0 ? -sc : sc;
     }
 
     APEX_STRESS
@@ -208,11 +242,11 @@ public:
 private:
 
 
-    static VoigtVector vv_out; //For returning VoigtVector's
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 };
 
-template <class NO_HARDENING>
-VoigtVector MohrCoulomb_YF<NO_HARDENING>::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 //Declares this YF as featuring an apex
 template<class NO_HARDENING>

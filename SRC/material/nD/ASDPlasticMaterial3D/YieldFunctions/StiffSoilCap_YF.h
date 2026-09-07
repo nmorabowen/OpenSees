@@ -158,15 +158,24 @@ public:
 
     using internal_variables_t = std::tuple<CapPressureType>;
 
+    // Ladruno (ADR-94 wp/94c, M5): the cap has no cohesion parameter -- its
+    // pressure-like scale is the reference pressure SS_pref.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double pref = GET_PARAMETER_VALUE(SS_pref);
+        return pref < 0 ? -pref : pref;
+    }
+
     using parameters_t = std::tuple<MC_phi, MC_ds, SS_alpha, SS_pref, SS_m, SS_beta>;
 
 private:
 
-    static VoigtVector vv_out; //For returning VoigtVector's
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 };
 
-template <class CapPressureType>
-VoigtVector StiffSoilCap_YF<CapPressureType>::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 
 #endif

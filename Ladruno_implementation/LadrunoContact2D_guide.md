@@ -266,6 +266,18 @@ better. Size the facet length from the **expected penetration depth**
 instead, independent of the elastic mesh's own resolution — see
 `tests/test_adr85_contact2d_t4_hertz.py`'s `hm` sizing for a worked example.
 
+
+## ndf > 2 in 2-D vs ndf > 3 in 3-D (ADR-96)
+
+The 2-D lane keeps its `ndf == ndm == 2` **equality** gate: a 2-D u-p node
+(ndf 3) or a 2-D beam node is still refused here, by design (this guide's
+adoption record in apeGmsh assumes it). The **3-D** lanes are different since
+ADR-96: rigid plane, NTS, mortar/ALM and edge-edge accept ndf >= 3 nodes, using
+each node's first three DOFs as the translations and leaving the rest (a
+`LadrunoUP` pore pressure, rotations) untouched — "passenger DOFs". That is not
+gap flow or pressure penetration (ADR-47 deferral 9 is still deferred). See
+`96_ladruno_contact_passenger_dof_adr.md`.
+
 ## Known coverage gaps (demand-driven, not blocking)
 
 - **`WARN_VTX2D_SIDE_FLIP`** — REPRODUCED for the first time in T4 (four

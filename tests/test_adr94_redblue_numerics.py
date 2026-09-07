@@ -284,6 +284,18 @@ def test_R2_mc_hydrostatic_tension_through_apex_stays_finite():
 # 3. f_absolute_tol is ABSOLUTE in stress units: the unit system alone decides
 #    whether strict_convergence refuses the step
 # ---------------------------------------------------------------------------
+# wp/94c (ADR-94 B5): the unit gap needed to reproduce M5 grew by six orders.
+# Pre-94c, Backward_Euler's consistency scalar over-counted the shear terms for
+# every Voigt-convention YF (MohrCoulomb included), so the Newton iteration was
+# slow enough that a x1000 change of units alone pushed the residual past the
+# 1e-6 absolute default.  With that contraction fixed the same deck lands at
+# f <= 0 in kPa, in Pa and in mPa -- measured: it completes 20/20 even with
+# `f_absolute_tol 0` -- and x1e9 is where the absolute tolerance finally binds.
+# The FINDING is unchanged (the unit system, not the physics, decides); this is
+# the deck that still shows it.
+UNIT_GAP = 1.0e9
+
+
 def _mat_mc_strict(tag, scale, ftol=1.0e-6, nit=100, strict=1):
     ops.nDMaterial(
         "ASDPlasticMaterial3D", tag,
@@ -321,14 +333,20 @@ def test_R2_f_absolute_tol_makes_strict_convergence_unit_dependent():
     except Exception as exc:                       # pragma: no cover
         pytest.skip(f"MohrCoulomb_YF / LadrunoBrick unavailable: {exc}")
     codes_kpa, _ = _drive(20)
-    _build(lambda t: _mat_mc_strict(t, 1000.0), 20, 0.0, 0.0, ez)
+    _build(lambda t: _mat_mc_strict(t, UNIT_GAP), 20, 0.0, 0.0, ez)
     codes_pa, _ = _drive(20)
     ok_kpa = sum(1 for c in codes_kpa if c == 0)
     ok_pa = sum(1 for c in codes_pa if c == 0)
-    assert ok_kpa == 20, f"kPa run was expected to complete: {codes_kpa}"
+    assert ok_kpa == 20, f"reference-unit run was expected to complete: {codes_kpa}"
     assert ok_pa == 0 and codes_pa[-1] != 0, (
-        "the Pa run (identical physics, stresses x1000) was expected to be "
-        f"REFUSED at the same default f_absolute_tol: {codes_pa}")
+        f"the x{UNIT_GAP:.0e} run (identical physics, identical strains) was "
+        f"expected to be REFUSED at the same default f_absolute_tol: {codes_pa}")
+
+    # wp/94c ships the remedy as an OPT-IN: `f_relative_tol` scales the tolerance
+    # by the yield function's own strength (`c*cos(phi)` for MohrCoulomb), and
+    # tests/test_adr94c_numerics.py::test_C4_f_relative_tol_makes_the_verdict_unit_independent
+    # runs this same pair with it on and gets 20/20 both times.  The default is
+    # still absolute, so the finding above is still the shipped behaviour.
 
 
 # ---------------------------------------------------------------------------
@@ -371,14 +389,19 @@ def test_R2_strict_convergence_is_a_noop_on_stdbrick():
     successes.  ADR-84 P2a's fail-loud gate therefore has no effect at all on
     the most widely used solid element in OpenSees -- including for
     ``Backward_Euler``, the one integrator the gate reaches."""
+    # wp/94c: this refusal used to be provoked with `ftol=1e-12` at scale 1.0.
+    # Backward_Euler now converges to f <= 0 on that deck even with
+    # `f_absolute_tol 0`, so the reproducer is the UNIT_GAP deck instead -- same
+    # material, same strains, stresses x1e9.  What is under test is the HOST, not
+    # the tolerance: whatever makes the material refuse, stdBrick drops it.
     ez = 0.01
     try:
-        _build_ele("LadrunoBrick", lambda t: _mat_mc_strict(t, 1.0, ftol=1e-12),
+        _build_ele("LadrunoBrick", lambda t: _mat_mc_strict(t, UNIT_GAP),
                    20, 0.0, 0.0, ez)
     except Exception as exc:                       # pragma: no cover
         pytest.skip(f"MohrCoulomb_YF / LadrunoBrick unavailable: {exc}")
     codes_lb, _ = _drive(20)
-    _build_ele("stdBrick", lambda t: _mat_mc_strict(t, 1.0, ftol=1e-12),
+    _build_ele("stdBrick", lambda t: _mat_mc_strict(t, UNIT_GAP),
                20, 0.0, 0.0, ez)
     codes_sb, _ = _drive(20)
     assert sum(1 for c in codes_lb if c == 0) == 0, (

@@ -74,6 +74,23 @@ public:
         if (abs(den) > 100*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             result = result / den;
 
+        // Ladruno (ADR-94 wp/94c, B5): VOIGT convention.
+        //   f = sqrt(r_ij r_ij) with r held in raw (undoubled) Voigt storage, so
+        //     df/d sigma_12 = r_12/den                (tensor derivative)
+        //     df/d v_12     = 2*r_12/den              (Voigt derivative)
+        // because the stored slot v_12 drives BOTH sigma_12 and sigma_21.  The
+        // normal slots are identical under both conventions.
+        // Every consumption site is a plain Voigt contraction (n^T E m), and both
+        // `TrialPlastic_Strain += dLambda*m` and `Eelastic*m` require an
+        // ENGINEERING-shear operand, so Voigt is the convention the framework
+        // actually needs -- and the one MC/HB/MCTC/StiffSoil already return.
+        // Returning the bare tensor derivative here (as this did) under-counted
+        // shear by 2 in the yield normal, the flow direction and the plastic
+        // strain update.  See ADR-94 B5.
+        result(3) *= 2.0;   // v12
+        result(4) *= 2.0;   // v23
+        result(5) *= 2.0;   // v13
+
         return result;
     }
     
@@ -99,11 +116,31 @@ public:
             return dbl_result;
         }
 
-        auto df_dalpha = -(s - alpha) / den;
+        // Ladruno (ADR-94 wp/94c, B5): df/dalpha in the SAME Voigt convention as
+        // df_dsigma_ij above (shear slots doubled), contracted with the hardening
+        // rate by a plain dot.  Numerically identical to the old tensor-convention
+        // `tensor_dot_stress_like(df_dalpha, hh)` -- the factor 2 just moves from
+        // the contraction into the operand, and scaling by 2 is exact in IEEE --
+        // but it keeps ONE convention across the file.
+        VoigtVector df_dalpha = -(s - alpha) / den;
+        df_dalpha(3) *= 2.0;
+        df_dalpha(4) *= 2.0;
+        df_dalpha(5) *= 2.0;
         VoigtVector hh = GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType);
-        dbl_result +=  tensor_dot_stress_like(df_dalpha, hh);
+        dbl_result +=  df_dalpha.dot(hh);
 
         return dbl_result;
+    }
+
+    // Ladruno (ADR-94 wp/94c, M5): f = sqrt(r:r) - sqrt(2/3)*k, so the term that
+    // sets f's scale is sqrt(2/3)*sigma_y, with sigma_y the CURRENT yield stress
+    // internal variable (not a model parameter for this YF).
+    YF_STRENGTH_SCALE
+    {
+        (void) parameters_storage;
+        auto k = GET_TRIAL_INTERNAL_VARIABLE(KHardeningType);
+        double kv = k.value();
+        return SQRT_2_over_3 * (kv < 0 ? -kv : kv);
     }
 
     using internal_variables_t = std::tuple<AlphaHardeningType, KHardeningType>;
@@ -113,12 +150,12 @@ public:
 
 private:
 
-    static VoigtVector result; //For returning VoigtVector's
+    mutable VoigtVector result = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 
 };
 
-template <class AlphaHardeningType,  class KHardeningType>
-VoigtVector VonMises_YF<AlphaHardeningType, KHardeningType>::result;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 
 #endif

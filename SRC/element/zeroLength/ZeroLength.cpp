@@ -279,7 +279,7 @@ ZeroLength::ZeroLength(int tag,
 		       int doRayleigh)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(1), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -324,7 +324,7 @@ ZeroLength::ZeroLength(int tag,
 		       int direction)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), transformation(3,3), useRayleighDamping(2),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(2),
   theMatrix(0), theVector(0),
   numMaterials1d(1), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -377,7 +377,7 @@ ZeroLength::ZeroLength(int tag,
 		       Damping *damping)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(n1dMat), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -439,7 +439,7 @@ ZeroLength::ZeroLength(int tag,
 		       int doRayleigh)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(n1dMat), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -486,7 +486,7 @@ ZeroLength::ZeroLength(int tag,
 ZeroLength::ZeroLength(void)
   :Element(0,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(0), numDOF(0), transformation(3,3),
+  dimension(0), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3),
   theMatrix(0), theVector(0),
   numMaterials1d(0), theMaterial1d(0),
   dir1d(0), t1d(0), d0(0), v0(0),
@@ -531,7 +531,9 @@ ZeroLength::~ZeroLength()
   
   if (v0 != 0)
     delete v0;
-    
+  delete passengerMatrix;   // Ladruno (ADR-96)
+  delete passengerVector;
+
   if (theDamping)
   {
     delete theDamping;
@@ -562,9 +564,44 @@ ZeroLength::getNodePtrs(void)
 }
 
 int
-ZeroLength::getNumDOF(void) 
+ZeroLength::getNumDOF(void)
 {
-    return numDOF;
+    return (numDOFPassenger > 0) ? numDOFPassenger : numDOF;   // Ladruno (ADR-96)
+}
+
+// Ladruno (ADR-96): scatter the 6-slot translational core into the element's
+// [node1 dofNd1 | node2 dofNd2] layout. Only reachable in passenger mode.
+const Matrix &
+ZeroLength::scatterPassenger(const Matrix &core)
+{
+    Matrix &out = *passengerMatrix;
+    out.Zero();
+    const int map[6] = {0, 1, 2, passengerOffset2, passengerOffset2 + 1, passengerOffset2 + 2};
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 6; j++)
+            out(map[i], map[j]) = core(i, j);
+    return out;
+}
+
+const Vector &
+ZeroLength::scatterPassenger(const Vector &core)
+{
+    Vector &out = *passengerVector;
+    out.Zero();
+    const int map[6] = {0, 1, 2, passengerOffset2, passengerOffset2 + 1, passengerOffset2 + 2};
+    for (int i = 0; i < 6; i++)
+        out(map[i]) = core(i);
+    return out;
+}
+
+// Ladruno (ADR-96): b - a over the first n entries only (the translations),
+// so a (3,4) pair never subtracts vectors of different length.
+static Vector
+ladrunoFirstDiff(const Vector &b, const Vector &a, int n)
+{
+    Vector d(n);
+    for (int i = 0; i < n; i++) d(i) = b(i) - a(i);
+    return d;
 }
 
 
@@ -588,6 +625,8 @@ ZeroLength::setDomain(Domain *theDomain)
     numDOF = 2;
     theMatrix = &ZeroLengthM2;
     theVector = &ZeroLengthV2;
+    numDOFPassenger = 0;   // Ladruno (ADR-96): re-decided below on every setDomain
+    ladrunoDisabled = false;   // Ladruno (ADR-96)
     
     // first set the node pointers
     int Nd1 = connectedExternalNodes(0);
@@ -611,12 +650,35 @@ ZeroLength::setDomain(Domain *theDomain)
     int dofNd1 = theNodes[0]->getNumberDOF();
     int dofNd2 = theNodes[1]->getNumberDOF();	
 
+    // Ladruno (ADR-96): passenger mode -- decided BEFORE the vanilla equal-ends
+    // refusal so a (3,4) u-p pair, a (4,4) pair or a (3,6) pair is routed to the
+    // 6-slot translational core instead of silently disabled. Rotational -dir
+    // (4..6) has no core slot there and is refused with a message.
+    bool passenger = false;
+    if (dimension == 3 && dofNd1 >= 3 && dofNd2 >= 3 &&
+        !(dofNd1 == dofNd2 && (dofNd1 == 3 || dofNd1 == 6))) {
+      if (dir1d != 0) {
+        for (int m = 0; m < numMaterials1d; m++) {
+          if ((*dir1d)(m) > 2) {
+            opserr << "WARNING ZeroLength::setDomain(): element " << this->getTag()
+                   << " joins nodes of ndf " << dofNd1 << " and " << dofNd2
+                   << " (passenger mode, ADR-96): only translational -dir 1..3 exist there, got dir "
+                   << (*dir1d)(m) + 1 << "; element disabled\n";
+            this->ladrunoDisable();   // Ladruno (ADR-96): inert, not half-initialised
+            return;
+          }
+        }
+      }
+      passenger = true;
+    }
+
     // if differing dof at the ends - print a warning message
-    if ( dofNd1 != dofNd2 ) {
+    if ( !passenger && dofNd1 != dofNd2 ) {   // Ladruno (ADR-96): unless passenger
       opserr << "WARNING ZeroLength::setDomain(): nodes " << Nd1 << " and " << Nd2 <<
 	"have differing dof at ends for ZeroLength " << this->getTag() << endln;
+      this->ladrunoDisable();   // Ladruno (ADR-96): was a bare return -> t1d NULL -> access violation in the post-add update()
       return;
-    }	
+    }
 
     // Check that length is zero within tolerance
     const Vector &end1Crd = theNodes[0]->getCrds();
@@ -638,7 +700,19 @@ ZeroLength::setDomain(Domain *theDomain)
     this->DomainComponent::setDomain(theDomain);
     
     // set the number of dof for element and set matrix and vector pointer
-    if (dimension == 1 && dofNd1 == 1) {
+    if (passenger) {   // Ladruno (ADR-96)
+	numDOF = 6;
+	theMatrix = &ZeroLengthM6;
+	theVector = &ZeroLengthV6;
+	elemType  = D3N6;
+	numDOFPassenger  = dofNd1 + dofNd2;
+	passengerOffset2 = dofNd1;
+	if (passengerMatrix != 0) delete passengerMatrix;
+	if (passengerVector != 0) delete passengerVector;
+	passengerMatrix = new Matrix(numDOFPassenger, numDOFPassenger);
+	passengerVector = new Vector(numDOFPassenger);
+    }
+    else if (dimension == 1 && dofNd1 == 1) {
 	numDOF = 2;    
 	theMatrix = &ZeroLengthM2;
 	theVector = &ZeroLengthV2;
@@ -682,10 +756,10 @@ ZeroLength::setDomain(Domain *theDomain)
     // get trial displacements and take difference
     const Vector& disp1 = theNodes[0]->getTrialDisp();
     const Vector& disp2 = theNodes[1]->getTrialDisp();
-    Vector  diffD  = disp2-disp1;
+    Vector  diffD  = (numDOFPassenger > 0) ? ladrunoFirstDiff(disp2, disp1, 3) : disp2-disp1;   // Ladruno (ADR-96)
     const Vector& vel1  = theNodes[0]->getTrialVel();
     const Vector& vel2  = theNodes[1]->getTrialVel();
-    Vector  diffV = vel2-vel1;
+    Vector  diffV = (numDOFPassenger > 0) ? ladrunoFirstDiff(vel2, vel1, 3) : vel2-vel1;   // Ladruno (ADR-96)
 
     // to avoid incorrect results, do not set initial disp/vel upon call of null constructor
     // when using database commands
@@ -788,19 +862,34 @@ ZeroLength::revertToStart()
 }
 
 
+// Ladruno (ADR-96): make a REFUSED element inert instead of half-initialised.
+// numDOF/theMatrix/theVector are already at their 2-slot defaults here; a zero
+// t1d of that width makes every accessor a well-defined zero, and update()
+// returns before touching the nodes (whose DOF counts may not even match).
+void
+ZeroLength::ladrunoDisable(void)
+{
+    ladrunoDisabled = true;
+    if (t1d != 0) delete t1d;
+    t1d = new Matrix(numMaterials1d > 0 ? numMaterials1d : 1, numDOF);
+    t1d->Zero();
+}
+
 int
 ZeroLength::update(void)
 {
     double strain;
     double strainRate;
+    if (ladrunoDisabled)   // Ladruno (ADR-96): refused element is inert
+      return 0;
 
     // get trial displacements and take difference
     const Vector& disp1 = theNodes[0]->getTrialDisp();
     const Vector& disp2 = theNodes[1]->getTrialDisp();
-    Vector  diff  = disp2-disp1;
+    Vector  diff  = (numDOFPassenger > 0) ? ladrunoFirstDiff(disp2, disp1, 3) : disp2-disp1;   // Ladruno (ADR-96)
     const Vector& vel1  = theNodes[0]->getTrialVel();
     const Vector& vel2  = theNodes[1]->getTrialVel();
-    Vector  diffv = vel2-vel1;
+    Vector  diffv = (numDOFPassenger > 0) ? ladrunoFirstDiff(vel2, vel1, 3) : vel2-vel1;   // Ladruno (ADR-96)
     
     if (d0 != 0)
       diff -= *d0;
@@ -868,7 +957,7 @@ ZeroLength::getTangentStiff(void)
       for(int j=0; j<i; j++)
 	stiff(j,i) = stiff(i,j);
 
-    return stiff;
+    return (numDOFPassenger > 0) ? scatterPassenger(stiff) : stiff;   // Ladruno (ADR-96)
 }
 
 
@@ -906,7 +995,7 @@ ZeroLength::getInitialStiff(void)
       for(int j=0; j<i; j++)
 	stiff(j,i) = stiff(i,j);
 
-    return stiff;
+    return (numDOFPassenger > 0) ? scatterPassenger(stiff) : stiff;   // Ladruno (ADR-96)
 }
     
 
@@ -923,6 +1012,7 @@ ZeroLength::getDamp(void)
     
     if (useRayleighDamping == 1) {
 
+        if (numDOFPassenger > 0) return this->Element::getDamp();   // Ladruno (ADR-96): element-sized
         damp = this->Element::getDamp();
 
     } else if (useRayleighDamping == 2) {
@@ -964,7 +1054,7 @@ ZeroLength::getDamp(void)
       for(int j=0; j<i; j++)
 	damp(j,i) = damp(i,j);
     
-    return damp;
+    return (numDOFPassenger > 0) ? scatterPassenger(damp) : damp;   // Ladruno (ADR-96)
 }
 
 
@@ -972,8 +1062,8 @@ const Matrix &
 ZeroLength::getMass(void)
 {
   // no mass 
-  theMatrix->Zero();    
-  return *theMatrix; 
+  theMatrix->Zero();
+  return (numDOFPassenger > 0) ? scatterPassenger(*theMatrix) : *theMatrix;   // Ladruno (ADR-96)
 }
 
 
@@ -1019,7 +1109,7 @@ ZeroLength::getResistingForce()
     
   } // end loop over 1d materials 
   
-  return *theVector;
+  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
 }
 
 
@@ -1043,7 +1133,7 @@ ZeroLength::getDampingForce()
     } // end loop over 1d materials
   }
   
-  return *fd;
+  return (numDOFPassenger > 0) ? scatterPassenger(*fd) : *fd;   // Ladruno (ADR-96)
 }
 
 
@@ -1053,11 +1143,17 @@ ZeroLength::getResistingForceIncInertia()
   // this already includes damping forces from materials
   this->getResistingForce();
   
-  if (theDamping) *theVector += this->getDampingForce();
+  if (theDamping) { this->getDampingForce(); *theVector += *fd; }   // Ladruno (ADR-96): core fd, not the scattered public return
   
   // add the damping forces from rayleigh damping
   if (useRayleighDamping == 1) {
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
+      if (numDOFPassenger > 0) {   // Ladruno (ADR-96): Rayleigh forces are element-sized
+        Vector &out = *passengerVector;
+        scatterPassenger(*theVector);
+        out += this->getRayleighDampingForces();
+        return out;
+      }
       *theVector += this->getRayleighDampingForces();
     }  
   } else if (useRayleighDamping == 2) {
@@ -1073,7 +1169,7 @@ ZeroLength::getResistingForceIncInertia()
       }
   }
 
-  return *theVector;
+  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
 }
 
 
@@ -1574,7 +1670,7 @@ ZeroLength::getResponse(int responseID, Information &eleInformation)
 {
     const Vector& disp1 = theNodes[0]->getTrialDisp();
     const Vector& disp2 = theNodes[1]->getTrialDisp();
-    const Vector  diff  = disp2-disp1;
+    const Vector  diff  = (numDOFPassenger > 0) ? ladrunoFirstDiff(disp2, disp1, 3) : disp2-disp1;   // Ladruno (ADR-96)
     Vector &theVec = *(eleInformation.theVector);
     ID &theID = *(eleInformation.theID);
     
@@ -1730,7 +1826,7 @@ ZeroLength::getResistingForceSensitivity(int gradIndex)
     
   } // end loop over 1d materials 
   
-  return *theVector;
+  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
 }
  
 int
@@ -1787,7 +1883,7 @@ ZeroLength::getTangentStiffSensitivity(int gradIndex)
       for(int j=0; j<i; j++)
 	stiff(j,i) = stiff(i,j);
 
-    return stiff;
+    return (numDOFPassenger > 0) ? scatterPassenger(stiff) : stiff;   // Ladruno (ADR-96)
 }
 
 const Matrix &
@@ -1824,7 +1920,7 @@ ZeroLength::getInitialStiffSensitivity(int gradIndex)
       for(int j=0; j<i; j++)
 	stiff(j,i) = stiff(i,j);
 
-    return stiff;
+    return (numDOFPassenger > 0) ? scatterPassenger(stiff) : stiff;   // Ladruno (ADR-96)
 }
 
 

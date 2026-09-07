@@ -51,6 +51,7 @@ public:
 
     ElasticityBase() {
         static_assert(has_parameters_t<T>::value, "Derived class must have a 'parameters_t' type alias.");
+        EE_MATRIX.setZero();  // Ladruno (ADR-94 wp/94b): per-instance now, so zero it here
     }
     
     ELASTICITY_MATRIX
@@ -60,11 +61,13 @@ public:
 
 protected:
 
-    static VoigtMatrix EE_MATRIX; 
+    // Ladruno (ADR-94 wp/94b, M1/F2): was `static` -- one elastic-tangent buffer shared
+    // by every material instance using this elasticity model (the comment in
+    // LinearIsotropic3D_EL::operator() admits as much: "It may have values from another
+    // instance with different parameters"). `mutable` because operator() is const.
+    mutable VoigtMatrix EE_MATRIX;
 };
 
-template <class T>
-VoigtMatrix ElasticityBase<T>::EE_MATRIX;
 
 
 #endif

@@ -1822,7 +1822,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
 
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
-                if (sn == 0 || sn->getNumberDOF() != 3) {
+                if (sn == 0 || sn->getNumberDOF() < 3 /* Ladruno ADR-96: ndf>3 rides as passenger */) {
                     // ADR-78 P1: dropping a slave node here leaves a hole in an
                     // otherwise-live interface -- the same silently-partial contact
                     // the surface pre-flight exists to prevent, one level down.
@@ -1831,7 +1831,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     opserr << "FATAL LadrunoContactHandler::handle() - contact " << ct.tag
                            << " slave node " << sTags(si) << " ndf="
                            << (sn != 0 ? sn->getNumberDOF() : 0)
-                           << " != 3; ABORTING (P2b is 3D translational -- ADR-78 P1)\n";
+                           << " < 3; ABORTING (P2b needs the first three DOFs as translations -- ADR-78 P1; ndf > 3 rides as a passenger, ADR-96)\n";
                     return ladrunoContactFatal();
                 }
                 const Vector &Xs0 = sn->getCrds();
@@ -1854,7 +1854,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     Node *segNodes[4]; int badTag = 0, badNdf = 0;
                     for (int k = 0; k < nps; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * nps + k));
-                        if (mn == 0 || mn->getNumberDOF() != 3) {
+                        if (mn == 0 || mn->getNumberDOF() < 3 /* Ladruno ADR-96 */) {
                             badTag = mTags(seg * nps + k);
                             badNdf = (mn != 0) ? mn->getNumberDOF() : -1;
                             break;
@@ -2332,7 +2332,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 double Sx[4][3];                                  // ref coords (ADR-57 E2 stand-down)
                 for (int k = 0; k < npsS; k++) {
                     Node *sn = theDomain->getNode(sTags(sf * npsS + k));
-                    if (sn == 0 || sn->getNumberDOF() != 3) {
+                    if (sn == 0 || sn->getNumberDOF() < 3 /* Ladruno ADR-96: ndf>3 rides as passenger */) {
                         // ADR-78 P1 (added on review): was warn-and-skip-the-facet, which is
                         // the mortar twin of the NTS slave-ndf abort. Leaving the two lanes
                         // inconsistent meant a mortar interface could still lose facets while
@@ -2340,7 +2340,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         opserr << "FATAL LadrunoContactHandler::handle() - mortar contact "
                                << mc.tag << " slave node " << sTags(sf * npsS + k) << " ndf="
                                << (sn != 0 ? sn->getNumberDOF() : -1)
-                               << " != 3; ABORTING (mortar is 3D translational -- ADR-78 P1)\n";
+                               << " < 3; ABORTING (mortar needs the first three DOFs as translations -- ADR-78 P1; ndf > 3 rides as a passenger, ADR-96)\n";
                         return ladrunoContactFatal();
                     }
                     sNodes[k] = sn;
@@ -2355,7 +2355,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     double Mx[4][3];                              // ref coords (ADR-57 E2 stand-down)
                     for (int k = 0; k < npsM; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * npsM + k));
-                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        if (mn == 0 || mn->getNumberDOF() < 3 /* Ladruno ADR-96 */) { ok = false; break; }
                         mNodes[k] = mn;
                         const Vector &Xk = mn->getCrds();
                         for (int d = 0; d < 3; d++) { Mx[k][d] = Xk(d); mcen[d] += Xk(d); }
@@ -2560,7 +2560,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 Node *sN[4]; bool ok = true; double Scen[3] = {0, 0, 0}, Sx[4][3];
                 for (int k = 0; k < npsS; k++) {
                     Node *sn = theDomain->getNode(sTags(sf * npsS + k));
-                    if (sn == 0 || sn->getNumberDOF() != 3) { ok = false; break; }
+                    if (sn == 0 || sn->getNumberDOF() < 3 /* Ladruno ADR-96: ndf>3 rides as passenger */) { ok = false; break; }
                     sN[k] = sn;
                     const Vector &X = sn->getCrds();
                     for (int d = 0; d < 3; d++) { Sx[k][d] = X(d); Scen[d] += X(d); }
@@ -2572,7 +2572,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     Node *mN[4]; ok = true; double Mcen[3] = {0, 0, 0}, Mx[4][3];
                     for (int k = 0; k < npsM; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * npsM + k));
-                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        if (mn == 0 || mn->getNumberDOF() < 3 /* Ladruno ADR-96 */) { ok = false; break; }
                         mN[k] = mn;
                         const Vector &X = mn->getCrds();
                         for (int d = 0; d < 3; d++) { Mx[k][d] = X(d); Mcen[d] += X(d); }

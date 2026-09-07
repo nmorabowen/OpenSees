@@ -5906,7 +5906,8 @@ a material-level flag a recorder reads. Returning a sentinel from
 ### ASDPlasticMaterial3D's tangent is a CLASS-STATIC — every Gauss point is assembled with the last GP's tangent (ADR-94 H1)
 - **Bites:** any multi-element or strain-gradient model on any ASDP specialization, on every host that calls `setTrialStrain` for all GPs in `update()` and `getTangent()` in a later loop (`Brick`, `LadrunoBrick`, `TenNodeTetrahedron`, ...). `Stiffness`, `dsigma`, `depsilon_elpl`, `intersection_*` are `static` members of `ASDPlasticMaterial3D<E,Y,P,tag>` (header 4116-4120); `getTangent()` copies the static; `getInitialTangent()` overwrites it as a side effect. Measured: two disconnected elements whose tangents differ by 13.6 % assemble bit-identical blocks, and which one wins is the domain iteration order.
 - **Why it hid:** every ASDP test was a single-element homogeneous driver, where all GPs share one state. Converged RESULTS are still exact (the residual uses each element's own stress) — the cost is Newton effort (+62 % on a two-cube model, 5.3x with the `Secant` default) and non-convergence on hard steps.
-- **Rule:** never gate tangent quality with a homogeneous rig; use two elements in different states and `printA('-sparse','-ret')`. ASDP is a permanent ADR-75b threading blocker until the statics are per-instance (jaabell-bound, see `reviews/adr94_verdict.md` §7b).
+- **Rule:** never gate tangent quality with a homogeneous rig; use two elements in different states and `printA('-sparse','-ret')`. The rule is the durable part: this is the third fork subsystem where a class-static return/scratch buffer survived review because every test was single-element (see the `ManzariDafalias` entry above and the `LadrunoCST` `getMass()` idiom).
+- **Status (wp/94b):** FIXED. Thirty per-evaluation statics across nineteen files are per-instance members now: `Stiffness`, `dsigma`, `depsilon_elpl`, `intersection_stress`, `intersection_strain` (ordinary members, out-of-class definitions deleted), the seven per-integrator `static VoigtVector depsilon` function-locals (plain locals), the seventeen YF/PF `static VoigtVector vv_out`/`result` return buffers and `ElasticityBase::EE_MATRIX` (`mutable` members, since the accessors are const). `getInitialTangent()` no longer writes `Stiffness`. **ADR-75b is no longer blocked by ASDP's statics** -- what remains is the vanilla OpenSees return-by-reference idiom (`static Vector result(6)` / `static Matrix return_matrix(6,6)` in `getStress()`, `getTangent()`, `getInitialTangent()`, `getResponse()`), which every `NDMaterial` in the tree has. Those are NOT harmless under threading -- the returned reference escapes the call, so two threads in `getTangent()` on different instances still race on one buffer -- but they are a vanilla-wide `NDMaterial` API problem, not an ASDP one, and they carry no cross-instance CONSTITUTIVE state. **Two traps found while fixing it:** (1) a per-instance `Stiffness` starts at exactly ZERO where the shared static used to carry the last integrator's result, so an instance queried before its first `setTrialStrain` would hand the assembler a singular block -- `getTangent()` now falls back to the elastic tangent at the committed stress; (2) Eigen fixed-size members are NOT zero-initialised, so every one of them has to be zeroed in BOTH constructors (the default constructor did not even initialise `first_step`).
 
 ### `LadrunoBrick` compares ONLY `== LADRUNO_MATERIAL_REFUSED` — a bare `-1` from a material is treated as success (ADR-94 B2)
 - **Bites:** every material failure path that returns a plain `-1` (ASDP: 13 of its 15 failure sites, including the NaN guard and the singular-tangent guard; only two `Backward_Euler` sites return the sentinel). `stdBrick` drops every code. Only `TenNodeTetrahedron` (`success += ...`) propagates both. Measured: Drucker-Prager commits NaN stress with `analyze() == 0` on `LadrunoBrick` while the material prints `NaN!` and returns `-1`.
@@ -5922,7 +5923,9 @@ a material-level flag a recorder reads. Returning a sentinel from
 
 ### `f_absolute_tol` is absolute in stress units — the unit system decides whether `strict_convergence` refuses (ADR-94 M5)
 - **Bites:** the same Mohr-Coulomb problem completes 20/20 in kPa at the default `1e-6` and is refused on step 1 in Pa. `|Phi|` scales with σy (VM), c·cosφ (MC), σci·s^a (HB, ~5 MPa at 50 MPa rock), four decades across the catalogue before units. Tightening to `1e-10` refuses both.
-- **Rule:** quote units next to every tolerance; size `f_absolute_tol` to the YF's own strength scale (a relative tolerance is jaabell-bound work).
+- **Rule:** quote units next to every tolerance; size `f_absolute_tol` to the YF's own strength scale.
+- **Status (wp/94c):** FIXED (opt-in). `f_relative_tol` makes the yield tolerance `max(f_absolute_tol, f_relative_tol * yf.strength_scale())`, with `strength_scale()` supplied by the yield function itself (`sqrt(2/3)*sigma_y` for VM, `xi_c` for DP, `c*cos(phi)` for MC/MCTC, `sigma_ci*s^a` for HB, the cohesion-like term for StiffSoil; a YF that declares none returns 0 and is unaffected). Default is **0, i.e. OFF and byte-identical**, so this is a switch you have to reach for; the shipped default is still absolute and still unit-dependent. `tests/test_adr94c_numerics::test_C4_f_relative_tol_makes_the_verdict_unit_independent` runs the same MC problem in two unit systems 1e9 apart and gets 20/20 both times with the option on.
+- **The reproducer moved, and that is worth knowing:** wp/94c's shear-slot fix (below) also corrected `Backward_Euler`'s consistency scalar for every Voigt-convention YF, and the MC deck that used to be refused at x1000 now completes even with `f_absolute_tol 0`. The unit gap needed to reproduce M5 grew from x1e3 to x1e9. The defect is unchanged in kind; a faster-converging return map just hid it further out. Do not read "my deck passes now" as "the tolerance is scale-free".
 
 ### `strict_convergence 1` is the whole fail-loud contract for ASDPlasticMaterial3D — what it does and does not promise (ADR-94 wp/94a)
 - **What it now covers (all integrators, not just `Backward_Euler`):** the eight `f`-decreasing "call it elastic" early exits additionally require `yf_val_end <= tol_yf`; BE's `dLambda + deltaLambda < 0` fallback refuses instead of committing the elastic predictor as success; ME/RK45 refuse an out-of-tolerance substep at `dT_min` instead of accepting it unconditionally; each integrator re-evaluates `yf` after its return-to-yield block and refuses on `f > tol_yf`; and BE's two pre-existing gates (special-return fallback, scalar-Newton exhaustion) are unchanged. Every refusal is `LADRUNO_MATERIAL_REFUSED` plus one `opserr` line naming the tag, the integrator and `|f|`.
@@ -5954,3 +5957,77 @@ expected outcome is "the solver fails" must state WHY it fails and be re-checked
 material or solver changes; assert the discrimination you need (here: distinct answers), not the
 failure mode you happened to observe.
 
+### A bit-identity gate cannot certify a fix that removes shared static state (ADR-94 wp/94b)
+- **Bites:** wp/94b's gate compared committed-stress histories of 23 single-element decks dumped IN ONE PROCESS on the pre-fix build (`229842f7f`) against the per-instance build (`11e3a1283`): 14/23 decks deviated, mostly 1e-9..1e-16 absolute, and the Hoek-Brown deck by 0.12 kPa at step 1 (2e-5 relative). Neither is a wrong answer: (a) the old build's statics carried state between decks run sequentially in one process, so the BASELINE was the contaminated side; (b) the fix changes the assembled tangent, hence the global Newton path, so converged stresses differ at the global-tolerance level — on rock with E ~ 1e7 kPa a `NormDispIncr 1e-8` tolerance is Δσ ≈ E·1e-8 ≈ 0.1 kPa, which is what was measured.
+- **Why:** "byte-identical before/after" presumes the change is inert on the converged path; a tangent fix is not inert on the PATH, only on the RESULT, and a static-state fix is not even inert on the baseline.
+- **Rule:** gate a static-state or tangent fix on (1) per-deck runs in FRESH subprocesses on both builds, and (2) converged-result agreement within the global tolerance (the R1 blue two-cube test does this at 1e-6), plus (3) iteration counts (the two-cube model went from +62 % to −12 % versus the separate sum). Keep bit-identity gates for changes that do not touch the tangent. Also: `tests/test_adr94_matrix.py` regenerates the tracked `_adr94_matrix.md` on every run — revert it before committing unless the regeneration is intended.
+
+### Shear-slot convention: Voigt everywhere (ADR-94 wp/94c)
+- **The rule, first:** in `ASDPlasticMaterial3D` a `VoigtVector` stores the shear component ONCE (`v11 v22 v33 v12 v23 v13`), and **every** yield-function gradient and plastic-flow direction is in the **VOIGT** convention -- the shear slot is `df/dv_12 = 2 * df/dsigma_12`, and the flow direction carries ENGINEERING shear `gamma = 2 eps`. Consume them with a **plain dot product**; never with `tensor_dot_stress_like`, which doubles the shear terms a second time. If you write a new YF or PF, differentiate with respect to the STORED slot, not with respect to `sigma_ij`.
+- **Why Voigt and not tensor:** the framework does `TrialPlastic_Strain += dLambda * m` and `Eelastic * m`, and `LinearIsotropic3D_EL`'s shear diagonal is `G`, not `2G`. Both operations only make sense if `m` carries engineering shear. The convention is not a taste; it is fixed by the two operations that consume `m`.
+- **Bites (what wp/94c found):** the catalogue was SPLIT. `VonMises_YF`/`_PF` returned the bare tensor derivative; `MohrCoulomb`, `HoekBrown`, `MohrCoulombTensionCutoff` and both `StiffSoil` YFs returned the Voigt one (the numerically differentiated ones get it for free, since they perturb the stored slot); `DruckerPrager_YF`/`_PF` matched NEITHER (a real gradient error: `d sqrt(J2)/d v` is `r/(2 sqrt(J2))` on the three NORMAL slots and `r/sqrt(J2)` on the three shear slots, and the code applied the shear answer to all six). Consumption was split the same way: of six sites contracting `n` with `E m`, five used a plain dot and `Backward_Euler` alone used `tensor_dot_stress_like` -- right for the tensor half, wrong for the Voigt half, and no single choice there could be right for both.
+- **It hides on every shear-free deck.** Triaxial and uniaxial decks have zero shear slots, so the two conventions agree exactly and a regression suite built from them says nothing. The measurement that decides it is a SIMPLE-SHEAR plastic step against a closed-form radial return (`Ladruno_implementation/adr94_oracle/vm_shear_oracle.py`): 1.5e-13 relative after the fix, O(1) before it. The component finite-difference harness (`adr94_oracle/fd_components.cpp`) is the other half -- score every YF against BOTH a Voigt and a tensor central difference and the convention it is actually in is unambiguous (VonMises 3.53e-01 -> 1.13e-08, DruckerPrager 9.71e-01 -> 1.15e-08 against the Voigt FD).
+- **The same split lives in the contraction HELPERS.** `OTHER/eigenAPI/typedefs.h`'s `tensor_dot_strain_like` is a verbatim copy of `tensor_dot_stress_like`: it DOUBLES the shear terms, which is correct only for tensor-shear storage. Every strain-like Voigt quantity here is engineering, so `a_ij b_ij` for two of them needs the shear terms HALVED -- wp/94c added `tensor_dot_engineering_strain_like` for that and left the misnamed original alone. `AllASDHardeningFunctions`' `h = H*sqrt(2/3 * m.dot(m))` and Armstrong-Frederick's single `eq_norm` lambda (applied to both engineering `m`/`depsilon` AND the tensor-shear back stress `alpha`) were both mis-weighted by it.
+- **Rule:** when you touch a gradient, a flow direction or a contraction in this subsystem, rebuild `fd_components.cpp` against the edited headers and read the table before and after. And expect a convention fix to change converged results on sheared paths: `tet/dp/BE/default` moved 2.7% (and its committed `|f|` improved from 9.2e-07 to 7.3e-12), VonMises `Backward_Euler` halved its iteration count, and the `Numerical_Algorithmic` tangents went from 31% to 4.6% away from the consistent tangent.
+
+### A dead call site protects a wrong answer, and reviving it exposes it (ADR-94 wp/94c B4)
+- **Bites:** `Backward_Euler`'s apex return (~2093-2161) was commented out in its entirety, so `yf.check_apex_region(...)` was CALLED and its answer DISCARDED for every yield function declaring `yf_has_apex`. Under that cover: `DruckerPrager_YF::CHECK_APEX_REGION`/`APEX_STRESS` were `// Implement!!!` stubs (`return false`, and the ZERO stress); `HoekBrown_YF`'s pair had an inverted sign convention and fired in hydrostatic COMPRESSION, returning an interior point as the "apex"; `MohrCoulomb_YF`'s test was the bare `p beyond p_apex` rather than a normal-cone test; and `RoundedMohrCoulomb_YF` declared the trait while defining NEITHER method, so registering it would have failed to COMPILE the moment the site went live.
+- **Rule:** a `if constexpr (trait)` block whose body is commented out is worse than no trait -- it type-checks the declaration without exercising it. Before reviving one, audit every implementation of the trait; expect at least one to be a stub and at least one to be silently wrong.
+- **The integrator must not trust the YF's geometry.** wp/94c's revived site evaluates `f(sigma_apex)` and only commits the projection when `|f| <= tol`; otherwise it falls through to the generic return map (or refuses under `strict_convergence`). That is what makes a wrong `apex_stress` a performance problem instead of a fabricated stress.
+- **What it still cannot check:** a MISCLASSIFICATION. `check_apex_region` is a Euclidean normal-cone test in `(p, sqrt(J2))`, while the exact condition is in the ELASTIC metric (`p - p_apex >= (K*etabar/G)*q` for DP), and the YF signature cannot see `K` or `G`. `f(sigma_apex) = 0` by construction, so the gate cannot catch a state that should have returned to the flank. Keep apex-region tests conservative, and prefer the degenerate case (`sqrt(J2) -> 0`, where there is no flank direction at all) when in doubt.
+## `FE_Element::setID()` is greedy: it copies EVERY equation of every DOF_Group (ADR-96)
+
+`SRC/analysis/fe_ele/FE_Element.cpp` `setID()` walks `myDOF_Groups`, copies each
+group's full `getID()` into `myID` and returns `-3` the moment it runs past `numDOF`
+— leaving a half-filled map behind. A handler-level adapter with a fixed
+per-node slot count (the contact `LadrunoContactFE`, `3·(1+n_ps)`) therefore
+cannot connect an ndf-4 (`LadrunoUP`) or ndf-6 node through the base method: the
+pressure/rotation equation lands in a translation slot. `numDOF` and `theModel`
+are **private** in `FE_Element`, so an override must size itself from
+`myID.Size()` and reach the groups through `Node::getDOF_GroupPtr()`. Fix pattern:
+`LadrunoContactFE::setID()` (ADR-96). Domain elements do not hit this because
+`FE_Element(ele)` sizes `numDOF` from `ele->getNumDOF()` — which is why a
+mixed-ndf `ZeroLength` has to REPORT the element size (`dofNd1 + dofNd2`) and
+scatter its core, not just relax its count check.
+
+## `ZeroLength::numDOF` is the element size everywhere, not a "count check" (ADR-96)
+
+`setDomain()` dispatches `numDOF`/`elemType` on `(dimension, ndf)` pairs and
+every accessor, the `t1d` transformation, `d0`/`v0`, `commitSensitivity` and the
+responses loop to `numDOF` or `numDOF/2`. Three sites subtract whole nodal
+vectors (`disp2 - disp1` in `setDomain`, `update`, `getResponse`), which throws
+on a (3,4) pair before any count check is reached. "Relax the count check" is
+therefore not a one-line change; the passenger scatter (ADR-96 D4) is the
+minimal one that keeps the vanilla path byte-identical.
+
+## Vanilla `ZeroLength`'s "differing dof at ends" refusal CRASHED at the `element` command (ADR-96)
+
+`ZeroLength::setDomain()` refused a mixed-ndf pair with a warning and a bare
+`return`, leaving `t1d` NULL. `Domain::addElement()` calls `element->update()`
+right after `element->setDomain()` (`Domain.cpp:493-494`), and
+`ZeroLength::update()` dereferences `t1d` through `computeCurrentStrain1d()`:
+access violation, upstream, on every such deck — measured on a `(2,3)` pair
+while building ADR-96's G3 gate (the guide's "warn + bail" row was wrong: it
+was warn + crash). The passenger-mode rotational-`-dir` refusal inherited the
+same path. Both now call `ladrunoDisable()` (a zero `t1d` of the default 2-slot
+width, `update()` a no-op); the warning text is unchanged and the element stays
+in the domain contributing nothing. `tests/test_adr96_passenger_dof.py`
+(`test_g3_rotational_dir_is_refused_on_a_passenger_pair`,
+`test_g3_ndf_2_pair_is_still_refused_as_vanilla`) are the regression guards.
+
+## The serial `MumpsSolver` is never compiled in this fork (TIMs F5, 2026-09-07)
+
+`CMakeLists.txt` defines `_MUMPS` only for the parallel targets (`OpenSeesSP`,
+`OpenSeesMP`, `OpenSeesPyMP`: lines ~996/1217/1292/1408); the serial `OpenSees` /
+`OpenSeesPy` targets get no MUMPS at all — ADR-75 P1b kept MUMPS as the CLUSTER
+solver and made PARDISO the desktop one (`CMakeLists.txt:588-594`). Measured on
+the F4 build: `system Mumps -stats` on `OpenSees.exe` and the pyd both answer
+"unknown system type". So the "silent serial `MumpsSolver.cpp` path" the TIMs
+note cites (`MumpsSolver.cpp:150-200`, no `printStats`, both parsers construct it
+2-arg and `commands.cpp:4341-4345` warns `-stats` is ignored) is real in the
+source but UNREACHABLE in any shipped serial binary. Wiring `-stats` there would
+be dead, unverifiable code; MUMPS statistics on the desktop come from a one-rank
+`mpiexec -n 1 OpenSeesMP` / `openseesmp` run (rank 0 prints them,
+`MumpsParallelSolver.cpp:295-319`) — which needs the packaged `dist\openseesmp`
+runtime (a no-arg `build.bat`), not the 4-target build. Linking MUMPS into the
+serial targets is an ADR-75 policy reversal for the owner, not a "small" WP.

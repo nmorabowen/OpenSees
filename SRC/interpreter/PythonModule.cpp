@@ -630,6 +630,7 @@ initopensees(void)
 "        • LadrunoProjection — explicit constraint projection (equalDOF+)\n"
 "        • LadrunoTie — non-conforming mesh ties (collocation + mortar)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact, friction, 2D + 3D\n"
+"        • contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)\n"
 "        • stressesPlaneStrain — exact sigma_zz response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "        • LadrunoMonitor — live SWMR-HDF5 analysis monitor\n"
@@ -645,10 +646,10 @@ initopensees(void)
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov)\n"
 "        • system Mumps — distributed MUMPS (-BLR, -stats, half-storage)\n"
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
-"        • LadrunoSANISAND — -implex (IMPL-EX), p_r/p_min, -maxSubsteps cap\n"
+"        • LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
-"        • ASDPlasticMaterial3D — fail-loud contract + loud parser (ADR-94)\n"
+"        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);
