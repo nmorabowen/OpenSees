@@ -562,6 +562,22 @@ def _implex_globals(implex):
     return err_avg, refusals
 
 
+def _implex_guards(implex):
+    """Read the process-wide `implexGuards` census (ADR-92 P2), same idiom as
+    `_implex_globals` above -- element 1 / Gauss point 1 sees the same
+    process-wide `LadrunoImplexGlobals` counters as every other yielding
+    point, and the read is non-destructive.  Returns the CUMULATIVE
+    (floor_fallbacks, guards_fired, holds_preserved, reserved) 4-tuple; same
+    never-reset-between-legs caveat as `implexRefusals` applies."""
+    if not implex:
+        return (0.0, 0.0, 0.0, 0.0)
+    try:
+        g = ops.eleResponse(1, "material", 1, "implexGuards")
+        return (float(g[0]), float(g[1]), float(g[2]), float(g[3]))
+    except Exception:
+        return (0.0, 0.0, 0.0, 0.0)
+
+
 def _implex_err_max(fld, n_hex, implex):
     """Max over YIELDING elements of `implexDetail[0]` (ADR-92 P1 review B4
     item 3).  `implexDetail` is genuinely per-Gauss-point (each integration
@@ -819,9 +835,11 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     fh.write(f"# ADR90 WP-A2 tau=0 band, build {build} "
              f"(expected {EXPECTED_BUILD}), leg {tag}\n")
     w.writerow(["s_m", "s_over_B", "q_foot_kPa", "q_base_kPa", "ds_mm",
-                "relaxed", "wall_s", "implex_err_avg", "implex_refusals"])
+                "relaxed", "wall_s", "implex_err_avg", "implex_refusals",
+                "guard_floor", "guard_f0", "guard_hold", "guard_res"])
 
     rows, ds, good = [], DS_BASE, 0
+    guard_prev = _implex_guards(implex)
     nfail = nrelax = nsub = 0
     mode, verdict = "TARGET", "reached the target settlement"
     checkpoints, cp_left = [], [c for c in CHECKPOINTS if c <= sfrac + 1e-12]
@@ -879,8 +897,12 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         qb = -(sum(ops.nodeReaction(t, 3) for t in base) - r0_base) / area
         s = uz0 - ops.getTime()
         implex_err_avg, implex_refusals_cum = _implex_globals(implex)
+        guard_cum = _implex_guards(implex)
+        guard_delta = tuple(c - p for c, p in zip(guard_cum, guard_prev))
+        guard_prev = guard_cum
         rows.append((s, s / r3.B_FOOT, qf, qb, ds * 1000.0, relaxed,
-                     time.time() - t0, implex_err_avg, float(implex_refusals_cum)))
+                     time.time() - t0, implex_err_avg, float(implex_refusals_cum),
+                     guard_delta[0], guard_delta[1], guard_delta[2], guard_delta[3]))
         w.writerow([f"{v:.9g}" for v in rows[-1]])
         fh.flush()
         if verbose and len(rows) % 25 == 0:
@@ -1038,6 +1060,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     n_outside = txt.count("Outside Bounding")
     n_clamp = txt.count("CLAMPING")
     _, n_material_refused = _implex_globals(implex)
+    (n_guard_floor, n_guard_f0, n_guard_hold,
+     n_guard_res) = _implex_guards(implex)
 
     res = dict(
         tag=tag, h0=h0, e_name=ename, e_init=e_init,
@@ -1076,6 +1100,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         attempts=len(rows) + nsub, wall_overlap_note="",
         budget_used_frac=nsub / float(SUBDIV_BUDGET),
         n_material_refused=n_material_refused,
+        n_guard_floor=n_guard_floor, n_guard_f0=n_guard_f0,
+        n_guard_hold=n_guard_hold, n_guard_res=n_guard_res,
         implex_err_max_at_checkpoints=dict(implex_err_max_cp),
         n_yield_ele=n_yield, vol_yield=v_yield, epsq_max=epsq_max,
         wall_s=wall, wall_grav_s=t_grav, csv=csv_path, field=field_path,
