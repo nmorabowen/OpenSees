@@ -420,6 +420,37 @@ loaded `dist/bin/opensees.pyd` (887fea475) predates BOTH the
 tests above are now written against the LATEST interface, untested
 against any binary that ships it, for a reason that has nothing to do
 with their own claims.
+
+FINAL BATTERY, P2-7c (2026-09-07, `ladrunoBuild() == 4e07ef014`, defaults
+`-flipAlphaIn vanilla` / `-implexFlipAbsorb off`, `mStageFlipHandled` on
+the wire, per-instance flip detection). Full run: 36 passed / 2 xfailed /
+0 skipped of 38 collected -- clean, no C++-side failures found this
+round. `test_implex_db_roundtrip_carries_flags_and_history`'s extended
+redundant-re-assert check now PASSES (confirms the flip marker fix).
+Part (c) of `test_flip_absorbs_drift_under_implex` needed a TEST-SIDE
+fix: `_build_p27_k0`'s single continuous ramp made the "first push" a
+pure continuation of the SAME proportional ray the elastic leg already
+followed -- the (homogeneous, conical) yield surface never gets crossed
+that way, so `err_init`/`err_vanilla` both measured exactly `0.0`
+regardless of push magnitude (up to 10x), a "radial path never yields"
+degeneracy, same class `test_ladruno_sanisand.py`'s own docstring
+documents for `_OPTS_PR0` -- NOT a P2-7c defect. Fixed with a dedicated
+`_build_p27_k0_pathpush` (two-channel `Path` series, push segment at
+`_P27_PUSH_LAT = 0.3`, deliberately off the elastic leg's own
+`_P27_LAT = 0.1` ray); measured `init` error 0.0272, `vanilla` error
+0.1530, ratio 5.63 (> the required 2). Part (b)'s 2-element
+`implexGuards[5]` delta also needed reading AFTER the flip AND one
+genuine push step, not right after the bare `updateMaterialStage` call
+(per-instance flip detection resolves at the first plastic TRIAL, so a
+bare stage update alone only reaches the first element -- see that
+part's own updated docstring). Re-checked the `-implexGuard off` pins
+on B1 (`test_negative_monotone_clock_runs_the_spec_factor`) and M10
+(`test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio`)
+directly against 4e07ef014 with the guard ON: both still fail exactly
+as their own docstrings predict (B1: step 3 onward reads `f = 0.0`, not
+the ratio; M10: the post-refusal retry step reads `f = 0.0`, not
+`1.0`) -- both decks deliberately sit at/below the `p_min` floor
+(independent of the P2-7c flip machinery), so both pins STAY.
 """
 import math
 import os
@@ -4046,25 +4077,105 @@ def _build_p27_k0_2elem(tag, opts):
     ops.analysis('Static')
 
 
+_P27_PUSH_LAT = 0.3   # the push segment's OWN lateral ratio -- deliberately
+                     # DIFFERENT from _P27_LAT (0.1); see
+                     # _build_p27_k0_pathpush's own docstring for why the
+                     # push needs to leave the elastic ramp's own radial
+                     # direction, not continue it. Measured (4e07ef014):
+                     # init/vanilla max errors 0.0272/0.1530, ratio 5.6.
+
+
+def _build_p27_k0_pathpush(tag, opts):
+    """The SAME K0-like elastic ramp as `_build_p27_k0` (_P27_LAT,
+    _P27_E_AX, _P27_N_EL steps, t = 0 -> 1), as a TWO-CHANNEL `Path`
+    series (matching `sani._c_series`'s own technique: the `sp` magnitude
+    is FIXED per channel, `_P27_E_AX`, and the series itself carries the
+    ratio) -- followed by ONE MORE step at a DIFFERENT lateral ratio,
+    `_P27_PUSH_LAT`, not `_P27_LAT`.
+
+    WHY THE PUSH NEEDS A DIFFERENT RATIO (measured, 4e07ef014, WP-92e lane
+    B2, 2026-09-07). `_build_p27_k0`'s single `Linear` series makes ANY
+    "first real push" step (`_flip_and_first_push_error`'s original
+    design) a PURE CONTINUATION of the SAME proportional ray the elastic
+    leg already followed. The yield surface is homogeneous (a cone
+    through the origin) and `alpha` -- hence `alpha_in` under `init` --
+    already sits exactly on that ray at the flip, so continuing along the
+    IDENTICAL ray never crosses it: measured `eta` EXACTLY unchanged and
+    `plasticstrains` EXACTLY zero after a push of up to 10x the elastic
+    leg's own per-step magnitude, on BOTH `init` and `vanilla` -- the same
+    "radial path never yields" pathology `test_ladruno_sanisand.py`'s own
+    module docstring documents for `_OPTS_PR0`. Only used by
+    `_flip_and_first_push_error` -- the OTHER `_build_p27_k0` callers
+    (`test_flip_initialises_alpha_in_at_every_point`,
+    `test_flip_absorbs_drift_under_implex` parts (a)/(b),
+    `test_guard_only_on_primed_states`) do not need genuine post-flip
+    yielding for their own claims, so they are left on the simpler,
+    already-passing single-segment deck.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+
+    s_lat = [_P27_LAT * i / _P27_N_EL for i in range(_P27_N_EL + 1)]
+    s_ax = [1.0 * i / _P27_N_EL for i in range(_P27_N_EL + 1)]
+    s_lat.append(_P27_LAT + _P27_PUSH_LAT)   # ONE push step, ratio = _P27_PUSH_LAT
+    s_ax.append(1.0 + 1.0)
+    s_lat.append(s_lat[-1])                  # the PathSeries hold point
+    s_ax.append(s_ax[-1])
+
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, _P27_E_AX)
+            if y == 1.:
+                ops.sp(n, 2, _P27_E_AX)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
 def _flip_and_first_push_error(tag, flip_mode):
-    """`_build_p27_k0` (K0-like ramp, ONE element) + `-implex
-    -implexFlipAbsorb on`, elastic leg, the flip, then ONE real plastic
-    push step (SAME per-step magnitude as the elastic leg,
-    `1.0 / _P27_N_EL`) -- returns `max_implexError` across all 8 Gauss
-    points after that first push. `flip_mode` is REQUIRED (`'init'` or
-    `'vanilla'`, no default) -- P2-7c's `-flipAlphaIn` default is
-    `vanilla`, so this helper does not guess. `-implexFlipAbsorb on` is
-    EXPLICIT too (P2-7c's SECOND interface change: the companion absorb
-    defaults OFF) -- the whole point of this comparison is the absorb's
-    own benefit, so it has to be on for either arm to show anything.
+    """`_build_p27_k0_pathpush` (K0-like elastic ramp, ONE element, THEN
+    one push step at a DIFFERENT lateral ratio -- see that function's own
+    docstring for why) + `-implex -implexFlipAbsorb on`, elastic leg, the
+    flip, then that ONE real (non-radial) plastic push step -- returns
+    `max_implexError` across all 8 Gauss points after it. `flip_mode` is
+    REQUIRED (`'init'` or `'vanilla'`, no default) -- P2-7c's
+    `-flipAlphaIn` default is `vanilla`, so this helper does not guess.
+    `-implexFlipAbsorb on` is EXPLICIT too (P2-7c's SECOND interface
+    change: the companion absorb defaults OFF) -- the whole point of this
+    comparison is the absorb's own benefit, so it has to be on for either
+    arm to show anything.
     """
     opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexFlipAbsorb', 'on', '-flipAlphaIn', flip_mode]
-    _build_p27_k0(tag, tuple(opts))
-    _p27_elastic_leg(tag)
+    _build_p27_k0_pathpush(tag, tuple(opts))
 
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'elastic-stage step {step + 1} failed'
     ops.updateMaterialStage('-material', tag, '-stage', 1)
-    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
     assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
     return max(_read_all_implex_error(ngp=8))
 
@@ -4088,11 +4199,20 @@ def test_flip_absorbs_drift_under_implex():
     (b) `-implexFlipAbsorb on` EXPLICIT, on a TWO-element deck
         (`_build_p27_k0_2elem`): `implexGuards[5]` (the SAME hold-skip-
         commit slot P2-5c's literal holds use) increments by EXACTLY 16
-        across the flip -- TWO elements (8 Gauss points each), because
-        P2-7c's flip-handled tracking is PER INSTANCE (see
-        `_build_p27_k0_2elem`'s own docstring for why a single-element
-        deck cannot tell "every instance flips" from "only the first
-        one does").
+        across the flip PLUS ONE real (non-hold) push step -- TWO
+        elements (8 Gauss points each), because P2-7c's flip-handled
+        tracking is PER INSTANCE, resolved at the first PLASTIC TRIAL
+        (see `_build_p27_k0_2elem`'s own docstring for why a
+        single-element deck cannot tell "every instance flips" from
+        "only the first one does"). MEASURED (4e07ef014): the bare
+        `updateMaterialStage(...,1)` call alone only reaches the FIRST
+        element (delta reads 8, not 16) -- the second element's own
+        material instances have not been handed a trial strain yet, so
+        their flip is still pending; a LITERAL HOLD afterward does not
+        give a clean 16 either (it ALSO trips P2-5c's own hold-skip
+        count on the same slot for both elements, measured 32) -- only a
+        REAL push step reads cleanly, matching part (c)'s own single-
+        element convention.
 
     (c) `-implexFlipAbsorb on` EXPLICIT, single-element, BOTH
         `-flipAlphaIn` modes EXPLICIT too (there is no default to lean
@@ -4149,6 +4269,24 @@ def test_flip_absorbs_drift_under_implex():
         stress_off, stress_on_default)
 
     # -- (b) -implexFlipAbsorb on, 2-element deck: implexGuards[5] += 16 --
+    #
+    # MEASURED (this run, binary 4e07ef014): the bare updateMaterialStage(
+    # ...,1) call ALONE only reaches ONE element's material instances (its
+    # own commit title: "updateMaterialStage reaches one element" -- P2-7c
+    # made the flip PER-INSTANCE, at the first plastic TRIAL, so the SECOND
+    # element's own flip-and-absorb is deferred until ITS material is
+    # first handed a trial strain, which does not happen until an
+    # analyze() call runs). Reading the delta right after
+    # updateMaterialStage (no analyze() in between) therefore reads 8, not
+    # 16 -- not a defect, just reading before the second element's own
+    # first trial has happened. A LITERAL HOLD does NOT fix this cleanly
+    # either: LoadControl(0.0) ALSO trips P2-5c's own hold-skip-commit
+    # census on the SAME implexGuards[5] slot for BOTH elements (all 16
+    # points, a genuine but UNRELATED source of +16), on top of whatever
+    # the flip-absorb itself contributes -- measured 32, not 16, that way.
+    # The clean read is after the flip AND one REAL (non-hold) push step,
+    # matching `_flip_and_first_push_error`'s own single-element
+    # convention exactly.
     tag_2elem = 8432
     opts_2elem = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexFlipAbsorb', 'on')
     _build_p27_k0_2elem(tag_2elem, opts_2elem)
@@ -4158,15 +4296,17 @@ def test_flip_absorbs_drift_under_implex():
 
     guards_before_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
     ops.updateMaterialStage('-material', tag_2elem, '-stage', 1)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    assert ops.analyze(1) == 0, '2-element deck: the first real plastic push step failed to converge'
     guards_after_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
     delta5 = guards_after_flip[5] - guards_before_flip[5]
     assert delta5 == 16.0, (
         'implexGuards[5] (hold-skip commits) did not increase by EXACTLY '
-        '16 (TWO elements x 8 Gauss points each) across the flip on the '
-        '2-element deck, under EXPLICIT -implexFlipAbsorb on -- the '
-        'flip\'s companion-absorb is supposed to run at EVERY '
-        'per-Gauss-point instance, not just the first element\'s',
-        delta5, guards_before_flip, guards_after_flip)
+        '16 (TWO elements x 8 Gauss points each) across the flip PLUS one '
+        'real push step on the 2-element deck, under EXPLICIT '
+        '-implexFlipAbsorb on -- the flip\'s companion-absorb is supposed '
+        'to run at EVERY per-Gauss-point instance, not just the first '
+        'element\'s', delta5, guards_before_flip, guards_after_flip)
 
     # -- (c) -implexFlipAbsorb on, single-element, init vs vanilla ratio --
     tag_init = 8430
