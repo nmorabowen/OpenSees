@@ -243,6 +243,17 @@ Two structurally important facts:
    nodes must have **equal** ndf — the flexibility is in *which* dofs the materials
    act on, not in bridging dissimilar nodes.
 
+   > [!tip] Fork exception — ADR-96 passenger DOFs
+   > In 3-D the fork's `ZeroLength` **does** bridge dissimilar nodes when both have
+   > ndf >= 3: it keeps its 6-slot translational core and scatters it into a
+   > `dofNd1 + dofNd2` element, so a `zeroLength -mat ENT -dir 3` can pair an ndf-3
+   > footing skin node with an ndf-4 `LadrunoUP` soil node. DOF 4 (pore pressure)
+   > and any rotations are never read or written. The same convention lets the
+   > 3-D contact lanes (rigid plane, NTS, mortar, edge-edge) take ndf-4/ndf-6
+   > slaves and masters: the adapter's `setID()` copies each node's FIRST three
+   > equations. Not gap flow, not pressure penetration (ADR-47 deferral 9 stays
+   > deferred). See `96_ladruno_contact_passenger_dof_adr.md`.
+
 > [!danger] The core hazard
 > "Mixed ndf" is safe *within a node's own element family*. It becomes unsafe the
 > moment a **single element straddles two nodes of different ndf** — and the failure
@@ -255,7 +266,8 @@ Two structurally important facts:
 | Element family | dofs/node assumed | Behavior when a node's ndf differs |
 |---|---|---|
 | Truss | 1/2/3 by (ndm,ndf), both ends equal | warn + fallback numDOF=2 |
-| ZeroLength / ZeroLengthSection | any, both ends equal; scales `2*ndf` | warn + bail if ends differ |
+| ZeroLength | any, both ends equal; scales `2*ndf` — **fork (ADR-96): in 3-D any pair with both ndf >= 3 is accepted**, the first three DOFs are the translational core and the rest ride as passengers (`(3,4)` u-p, `(4,4)`, `(3,6)`); rotational `-dir` refused there | warn + inert for ndf < 3 or 2-D mismatches (vanilla's bail was a crash at the `element` command — `t1d` NULL in the post-add `update()`; fork makes it inert, ADR-96) |
+| ZeroLengthSection | any, both ends equal; scales `2*ndf` | warn + bail if ends differ |
 | ElasticBeam2d/3d | 3 / 6 | `exit(-1)` |
 | FourNodeQuad (and plane solids) | 2 | silent `return`, no setDomain |
 | Brick / 3D solids | 3 (hardcoded 24 total) | **no check** → corruption if ndf≠3 |

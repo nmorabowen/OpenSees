@@ -184,6 +184,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoProjection — explicit constraint projection (equalDOF+)\n"
 "        • LadrunoTie — non-conforming mesh ties (collocation + mortar)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact, friction, 2D + 3D\n"
+"        • contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)\n"
 "        • stressesPlaneStrain — exact sigma_zz response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "        • LadrunoMonitor — live SWMR-HDF5 analysis monitor\n"
