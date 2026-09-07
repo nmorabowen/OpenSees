@@ -20,6 +20,7 @@ target_sources(OPS_Material
 
 target_include_directories(OPS_Material PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
+# Ladruno (HB/StiffSoil integration, ledger row 337): documents /bigobj need
 # /bigobj is set globally for MSVC at the top-level CMakeLists — see the note
 # there. Needed by OPS_AllASDPlasticMaterial3Ds.cpp which instantiates >64K
 # COFF sections worth of templated material specializations.

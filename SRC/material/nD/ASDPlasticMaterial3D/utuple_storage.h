@@ -186,8 +186,12 @@ public:
 
 
     //To set a parameter by name
-    void setParameterByName(const char* name, double value)  {
-        setParameterByName_impl<0>(name, value);
+    // Ladruno (ADR-94 wp/94a): was void -- an unknown name fell through the
+    // recursion's base case with no warning and no way for the parser to know
+    // (ADR-94 B1/H13: a typo'd `MC_phi` silently ran the model at phi = 0).
+    // Now reports whether ANY component claimed the name.
+    bool setParameterByName(const char* name, double value)  {
+        return setParameterByName_impl<0>(name, value);
     }
 
     //Get names of parameter types
@@ -213,8 +217,9 @@ public:
     }
 
     //To set an internal variable by name
-    void setInternalVariableByName(const char* name, int size, double *values)  {
-        setInternalVariableByName_impl<0>(name, size, values);
+    // Ladruno (ADR-94 wp/94a): was void -- see setParameterByName above.
+    bool setInternalVariableByName(const char* name, int size, double *values)  {
+        return setInternalVariableByName_impl<0>(name, size, values);
     }
     
     std::string getVariableNamesAndHardeningLaws() const {
@@ -268,24 +273,30 @@ private:
 
     // Implementations for setParameterByName
     template <std::size_t I, typename std::enable_if<I < std::tuple_size<tuple_t>::value, int>::type = 0>
-    void setParameterByName_impl(const char* name, double value)  {
+    bool setParameterByName_impl(const char* name, double value)  {   // Ladruno (ADR-94 wp/94a): was void
         using current_type = typename std::tuple_element<I, tuple_t>::type;
 
         auto current_name =std::get<I>(data).getName();
 
-
+        // Ladruno (ADR-94 wp/94a): upstream recursed BOTH inside the else branch and
+        // unconditionally afterwards, so the tail was walked twice. Walk it once and
+        // report whether this component or any later one claimed the name.
+        bool found = false;
         if (std::strcmp(current_name, name) == 0) {
             std::get<I>(data).value = value;
-        } else {
-            setParameterByName_impl<I + 1>(name, value);
+            found = true;
         }
 
-        setParameterByName_impl<I + 1>(name, value);
+        if (setParameterByName_impl<I + 1>(name, value))
+            found = true;
+
+        return found;
     }
 
     template <std::size_t I, typename std::enable_if<I == std::tuple_size<tuple_t>::value, int>::type = 0>
-    void setParameterByName_impl(const char* name, double value)  {
-        // Base case, do nothing.
+    bool setParameterByName_impl(const char* name, double value)  {   // Ladruno (ADR-94 wp/94a): was void
+        // Base case: nothing left to try, so the name was never claimed.
+        return false;
     }
 
     // Implementations for getInternalVariableByNameImpl
@@ -351,28 +362,32 @@ private:
 
     // Implementations for setInternalVariableByName
     template <std::size_t I, typename std::enable_if<I < std::tuple_size<tuple_t>::value, int>::type = 0>
-    void setInternalVariableByName_impl(const char* name, int size, double * values)  {
+    bool setInternalVariableByName_impl(const char* name, int size, double * values)  {   // Ladruno (ADR-94 wp/94a): was void
         using current_type = typename std::tuple_element<I, tuple_t>::type;
 
         auto current_name =std::get<I>(data).getName();
 
-
+        // Ladruno (ADR-94 wp/94a): single-walk + found flag; see setParameterByName_impl.
+        bool found = false;
         if (std::strcmp(current_name, name) == 0) {
             for (int i = 0; i < size; ++i)
             {
                 std::get<I>(data).trial_value[i] = values[i];
                 std::get<I>(data).committed_value[i] = values[i];
             }
-        } else {
-            setInternalVariableByName_impl<I + 1>(name, size, values);
+            found = true;
         }
 
-        setInternalVariableByName_impl<I + 1>(name, size, values);
+        if (setInternalVariableByName_impl<I + 1>(name, size, values))
+            found = true;
+
+        return found;
     }
 
     template <std::size_t I, typename std::enable_if<I == std::tuple_size<tuple_t>::value, int>::type = 0>
-    void setInternalVariableByName_impl(const char* name, int size, double *values)  {
-        // Base case, do nothing.
+    bool setInternalVariableByName_impl(const char* name, int size, double *values)  {   // Ladruno (ADR-94 wp/94a): was void
+        // Base case: nothing left to try, so the name was never claimed.
+        return false;
     }
 
 

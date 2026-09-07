@@ -70,7 +70,10 @@ struct NullHardeningTensorPolicy {
     static constexpr const char* NAME = "NullHardeningTensorFunction";
     HARDENING_FUNCTION_DEFINITION 
     {
-        VoigtVector zero;
+        // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- this RETURNED uninitialised Eigen
+        // storage. Every consumer of a Null tensor hardening law read whatever the
+        // heap happened to hold, NaN included.
+        VoigtVector zero = VoigtVector::Zero();
         return zero;
     }
     using parameters_t = tuple<>;
@@ -125,13 +128,13 @@ struct ArmstrongFrederickPolicy {
         cout << "mdev        = " << mdev.transpose() << endl;
         cout << "alpha       = " << alpha.transpose() << endl;
         cout << "alpha_norm  = " << alpha_norm << "  <= alpha_limit = " << alpha_limit <<  endl;
-        VoigtVector derivative;
+        VoigtVector derivative = VoigtVector::Zero();   // Ladruno (ADR-94 wp/94a): ADR-94 B4
 
         //Compute the derivative (hardening function)
         if (alpha_norm >= alpha_limit)
         {
             cout << "Saturation!" << endl;
-            derivative *= 0;  // Take care of the saturation limit in case of overshooting
+            derivative.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0` on uninitialised storage
         }
         else
         {
@@ -151,6 +154,7 @@ struct ArmstrongFrederickPolicy {
 
 
 
+// Ladruno (HB/StiffSoil integration, ledger row 337): StiffSoil shear/cap hardening IVs
 #include "StiffSoil_HardeningFunctions.h"
 
 // Plastic deviatoric strain for shear mechanism

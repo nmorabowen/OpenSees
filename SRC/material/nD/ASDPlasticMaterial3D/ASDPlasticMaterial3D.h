@@ -114,7 +114,7 @@ public:
     ASDPlasticMaterial3D( )
         : NDMaterial(0, thisClassTag)
     {
-        stress_set_externally = false;
+        stress_set_externally = false; // Ladruno (HB/StiffSoil integration, ledger row 337): init new flag
     }
 
 
@@ -229,6 +229,7 @@ public:
     int setTrialStrain(const Vector &v)
     {
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): skip K0 init if stress was set externally
         if (first_step && !stress_set_externally)
         {
             double p0 = parameters_storage.template get<InitialP0>().value;
@@ -480,6 +481,31 @@ public:
         }
     }
 
+
+    // Ladruno (ADR-94 wp/94a): ONE admissibility gate for strict_convergence.
+    //
+    // ADR-94 B2/M2: `strict_convergence` only ever reached Backward_Euler, and the
+    // "f merely DECREASED => call it elastic" shortcut exists in EIGHT places. Under
+    // the flag, none of them may commit a state that is still outside the surface.
+    // Returns true (and says so on opserr) when `stress_state` must be refused.
+    // Flag off: constant-false, so every caller is byte-identical to upstream.
+    //
+    // NaN-safe on purpose: `!(yf_val <= tol)` is TRUE for NaN, so a NaN yield value
+    // is a refusal, not an accept (ADR-94 B4).
+    bool ladruno_strict_rejects(const char* where, const VoigtVector& stress_state) const
+    {
+        if (INT_OPT_strict_convergence[ASDP_TAG] == 0)
+            return false;
+        const double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+        const double yf_val = yf(stress_state, iv_storage, parameters_storage);
+        if (yf_val <= tol_yf)
+            return false;
+        opserr << "ASDPlasticMaterial3D::" << where << " (tag " << ASDP_TAG
+               << ") - refusing to commit an inadmissible state: f = " << yf_val
+               << " > f_absolute_tol = " << tol_yf
+               << " -- rejecting step (strict_convergence)" << endln;
+        return true;
+    }
     int compute_local_stress(
         const VoigtVector& local_stress, const VoigtVector& local_strain,
         const VoigtVector& strain_incr, VoigtVector& stress_incr) const
@@ -508,6 +534,12 @@ public:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) {
             // Elastic response: no plastic correction
             stress_incr = dsigma;  // Stress increment is purely elastic
+            // Ladruno (ADR-94 wp/94a): the tangent-probe twin of the eight
+            // f-decreasing exits. Its three callers ignore the return code, so
+            // `stress_incr` is left assigned above and the numerical tangent is
+            // unchanged; the code is reported for contract uniformity.
+            if (ladruno_strict_rejects("compute_local_stress", trial_stress))
+                return LADRUNO_MATERIAL_REFUSED;
         } else {
             // Plastic response: need to apply plastic correction
             // Compute plastic correction by finding the intersection of the yield surface
@@ -795,7 +827,7 @@ public:
         newmaterial->CommitPlastic_Strain = this->CommitPlastic_Strain;
         newmaterial->iv_storage = this->iv_storage;
         newmaterial->parameters_storage = this->parameters_storage;
-        newmaterial->stress_set_externally = this->stress_set_externally;
+        newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
 
         return newmaterial;
     }
@@ -818,7 +850,7 @@ public:
             newmaterial->CommitPlastic_Strain = this->CommitPlastic_Strain;
             newmaterial->iv_storage = this->iv_storage;
             newmaterial->parameters_storage = this->parameters_storage;
-            newmaterial->stress_set_externally = this->stress_set_externally;
+            newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
 
             return newmaterial;
         } else
@@ -870,6 +902,7 @@ public:
                 cout << "       ---->  K03D" << endl;
                 return param.addObject(8, this);
             }
+            // Ladruno (HB/StiffSoil integration, ledger row 337): register stress-increment setParameter tokens
             else if (strcmp(argv[0], "trialStressIncrement") == 0) {
                 return param.addObject(9, this);
             }
@@ -926,6 +959,7 @@ public:
 
         cout << "ASDPlasticMaterial3D::updateParameter  responseID = " << responseID << endl;
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): debug-print the Information payload
         opserr << " info = "; // << info << endln;
         info.Print(opserr);
 
@@ -935,7 +969,7 @@ public:
                 const Vector& newStress = *(info.theVector);
                 CommitStress = VoigtVector::fromStress(newStress);
                 TrialStress = CommitStress;
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             }
             return 0;
         }
@@ -960,7 +994,7 @@ public:
             if (info.theType == VectorType) {
                 const Vector& newTrialStress = *(info.theVector);
                 TrialStress = VoigtVector::fromStress(newTrialStress);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             }
             return 0;
         }
@@ -985,7 +1019,7 @@ public:
                 cout << "ASDPL @ tag = " << this->getTag() << " K02D  K0 = " << K02D << endl;
                 CommitStress(0) = K02D * CommitStress(1);
                 CommitStress(2) = K02D * CommitStress(1);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             // }
             return 0;
         }
@@ -995,10 +1029,11 @@ public:
                 cout << "ASDPL @ tag = " << this->getTag() << " K03D  K0 = " << K03D << endl;
                 CommitStress(0) = K03D * CommitStress(2);
                 CommitStress(1) = K03D * CommitStress(2);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             // }
             return 0;
         }
+        // Ladruno (HB/StiffSoil integration, ledger row 337): responseID 9-21, trial/commit stress-increment updateParameter handlers
         else if (responseID == 9) { // trialStressIncrement
             if (info.theType == VectorType) {
                 const Vector& newTrialStress = *(info.theVector);
@@ -1292,18 +1327,19 @@ public:
 
     bool set_constitutive_integration_method(int method, int tangent, double f_absolute_tol, double stress_absolute_tol, int n_max_iterations, int return_to_yield_surface, int rk45_niter_max, double rk45_dT_min, int strict_convergence = 0) // Ladruno (ADR-84 P2a): opt-in strict_convergence flag, default 0 preserves upstream behavior
     {
+        // Ladruno (ADR-94 wp/94a): ADR-94 M8 -- Forward_Euler_Crisfield,
+        // Multistep_Forward_Euler, Multistep_Forward_Euler_Crisfield and
+        // Full_Backward_Euler were ACCEPTED here but have NO case in the
+        // setTrialStrain dispatch switch, so selecting one silently fell through to
+        // the switch default. Only values that actually dispatch are accepted.
         if ( method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Not_Set
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Crisfield
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Multistep_Forward_Euler
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Multistep_Forward_Euler_Crisfield
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Full_Backward_Euler)
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch)
         {
             INT_OPT_constitutive_integration_method[ASDP_TAG] = (ASDPlasticMaterial3D_Constitutive_Integration_Method) method ;
             INT_OPT_tangent_operator_type[ASDP_TAG] = (ASDPlasticMaterial3D_Tangent_Operator_Type) tangent ;
@@ -1333,7 +1369,10 @@ public:
         }
         else
         {
-            cerr << "ASDPlasticMaterial3D::set_constitutive_integration_method - Unknown constitutive_integration_method\n";
+            // Ladruno (ADR-94 wp/94a): cerr is invisible under most OpenSees front ends.
+            opserr << "ASDPlasticMaterial3D::set_constitutive_integration_method - refusing "
+                   << "constitutive_integration_method " << method
+                   << " (unknown, or an enum value with no dispatch case -- ADR-94 M8)" << endln;
             return false;
         }
     }
@@ -1392,7 +1431,7 @@ private:
         int errorcode = -1;
 
         static VoigtVector depsilon;
-        depsilon *= 0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
         const VoigtVector& sigma = CommitStress;
@@ -1400,9 +1439,9 @@ private:
 
         iv_storage.revert_all();
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
@@ -1423,6 +1462,9 @@ private:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
         {
             Stiffness = Eelastic;
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Forward_Euler", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             return 0;
         }
         else  //Plasticity
@@ -1464,7 +1506,7 @@ private:
                 cout << "hardening = " << hardening << endl;
                 cout << "den = " << den << endl;
                 printTensor1("depsilon_elpl", depsilon_elpl);
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
 
             double dLambda =  n.transpose() * Eelastic * depsilon_elpl;
@@ -1542,10 +1584,13 @@ private:
                 // cout << "den = " << den << endl;
                 // cout << "dLambda = " << dLambda << endl;
 
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
             else
             {
+                // Ladruno (ADR-94 wp/94a)
+                if (ladruno_strict_rejects("Forward_Euler (post return-to-yield)", TrialStress))
+                    return LADRUNO_MATERIAL_REFUSED;
                 return 0;
             }
 
@@ -1568,7 +1613,7 @@ private:
         int errorcode = -1;
 
         static VoigtVector depsilon;
-        depsilon *= 0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
         const VoigtVector& sigma = CommitStress;
@@ -1576,9 +1621,9 @@ private:
 
         iv_storage.revert_all();
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
@@ -1599,6 +1644,9 @@ private:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
         {
             Stiffness = Eelastic;
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Forward_Euler_Subincrement", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             return 0;
         }
         else  //Plasticity
@@ -1646,7 +1694,7 @@ private:
                     cout << "hardening = " << hardening << endl;
                     cout << "den = " << den << endl;
                     printTensor1("depsilon_elpl", depsilon_elpl);
-                    return -1;
+                    return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
                 }
 
                 double dLambda =  n.transpose() * Eelastic * depsilon_elpl;
@@ -1711,10 +1759,13 @@ private:
                 // cout << "den = " << den << endl;
                 // cout << "dLambda = " << dLambda << endl;
 
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
             else
             {
+                // Ladruno (ADR-94 wp/94a)
+                if (ladruno_strict_rejects("Forward_Euler_Subincrement (post return-to-yield)", TrialStress))
+                    return LADRUNO_MATERIAL_REFUSED;
                 return 0;
             }
 
@@ -2037,6 +2088,7 @@ private:
 
         int errorcode = -1;
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): hoisted earlier for the elastic-exit checks below
         int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
         double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
 
@@ -2049,9 +2101,9 @@ private:
 
         iv_storage.revert_all();
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
@@ -2281,7 +2333,7 @@ private:
                 cout << "  =>  n = " << n.transpose() << endl;
                 cout << "  =>  m = " << m.transpose() << endl;
                 cout << "  =>  H = " << H << endl;
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
 
             const double deltaLambda = - Phi / dPhi_dLambda;
@@ -2300,6 +2352,17 @@ private:
             if (dLambda + deltaLambda < 0.0) {
                 cout << " PLASTIC INCONSISTENCY - ELASTIC STEP! (dLambda + deltaLambda < 0.0)" << endl << endl;
                 // step cannot be plastic; fall back to elastic in this rare case
+                // Ladruno (ADR-94 wp/94a): ADR-94 B3/H7 -- this branch commits the
+                // ELASTIC PREDICTOR exactly and returns success, and it fires
+                // before the be_strict exhaustion check below, so it was an
+                // eighth silent-accept site inside the DEFAULT integrator.
+                if (be_strict) {
+                    opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                           << ") - plastic inconsistency (dLambda + deltaLambda < 0): the"
+                           << " elastic predictor would be committed uncorrected"
+                           << " -- rejecting step (strict_convergence)" << endln;
+                    return LADRUNO_MATERIAL_REFUSED;
+                }
                 Stiffness = Eelastic;
                 return 0;
             }
@@ -2323,7 +2386,7 @@ private:
             const double norm_trial_stress = TrialStress.transpose() * TrialStress;
             if (!(norm_trial_stress == norm_trial_stress)) { // NaN chec
                cout << "NaN!" << endl;
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
         }
         // cout << "BE - END iterations----------" << endl << endl;
@@ -2351,6 +2414,9 @@ private:
             }
         }
 
+        // Ladruno (ADR-94 wp/94a)
+        if (ladruno_strict_rejects("Backward_Euler (post return-to-yield)", TrialStress))
+            return LADRUNO_MATERIAL_REFUSED;
         ComputeTangentStiffness();
 
         return 0;
@@ -2364,7 +2430,7 @@ private:
 
         // ------------------ setup ------------------
         static VoigtVector depsilon;
-        depsilon *= 0.0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
         const VoigtVector& sigma   = CommitStress;
@@ -2372,9 +2438,9 @@ private:
 
         iv_storage.revert_all();
 
-        dsigma *= 0.0;
-        intersection_stress *= 0.0;
-        intersection_strain *= 0.0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
@@ -2382,6 +2448,9 @@ private:
         const double tol_abs = (DBL_OPT_f_absolute_tol[ASDP_TAG] > 0.0) ? DBL_OPT_f_absolute_tol[ASDP_TAG] : 1e-10;
         const double tol_rel = 1e-8;
         const int    max_iter = 30;
+        // Ladruno (ADR-94 wp/94a): refusal flag out of the solve lambda (which
+        // can only say true/false, and whose `false` means "halve the step").
+        bool ls_strict_refused = false;
 
         auto converged = [&](double Phi, double Phi_scale)->bool {
             double tol = std::max(tol_abs, tol_rel * std::max(1.0, Phi_scale));
@@ -2405,6 +2474,11 @@ private:
             // Misma lógica que usabas: puramente elástico o moviéndose "hacia adentro"
             if ( (yf_start <= 0.0 && yf_end <= 0.0) || (yf_start > yf_end) ) {
                 Stiffness = Eelastic;
+                // Ladruno (ADR-94 wp/94a)
+                if (ladruno_strict_rejects("Backward_Euler_LineSearch", TrialStress)) {
+                    ls_strict_refused = true;
+                    return false;
+                }
                 return true;
             }
 
@@ -2580,13 +2654,20 @@ private:
             iv_storage.revert_all();
 
             if (solve_increment(dEps)) { ok = true; break; }
+            // Ladruno (ADR-94 wp/94a): a strict refusal is not a "try a smaller step".
+            if (ls_strict_refused) break;
 
             // reducir paso y reintentar
             dEps *= 0.5;
         }
 
-        if (!ok) return -1;
+        // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
+        if (ls_strict_refused) return LADRUNO_MATERIAL_REFUSED;
+        if (!ok) return LADRUNO_MATERIAL_REFUSED;
 
+        // Ladruno (ADR-94 wp/94a)
+        if (ladruno_strict_rejects("Backward_Euler_LineSearch (post return-to-yield)", TrialStress))
+            return LADRUNO_MATERIAL_REFUSED;
         return 0;
     }
 
@@ -2636,16 +2717,16 @@ private:
         int errorcode = -1;
 
         static VoigtVector depsilon;
-        depsilon *= 0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
 
         iv_storage.revert_all();
 
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
 
@@ -2667,6 +2748,9 @@ private:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
         {
             Stiffness = Eelastic;
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Runge_Kutta_45_Error_Control_old", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
         }
         else  //Plasticity
         {
@@ -2899,7 +2983,7 @@ private:
                 {
                     cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " exceeded number of iterations. niter = " << niter << " niter_max = " <<this->INT_OPT_RK45_niter_max[ASDP_TAG] << " T= " << T << " dT = " << dT << endl;
                     // throw std::runtime_error("ASDPLasticMaterial3D - Unable to find a valid bracket in compute_yf_crossing");
-                    return -1;
+                    return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
                 }
 
             }
@@ -3044,6 +3128,9 @@ private:
                 exit(-1);
             }
 
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Runge_Kutta_45_Error_Control_old (post return-to-yield)", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             ComputeTangentStiffness();
         }
 
@@ -3061,14 +3148,14 @@ private:
         int errorcode = -1;
 
         static VoigtVector depsilon;
-        depsilon *= 0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
         iv_storage.revert_all();
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
         dsigma = Eelastic * depsilon;
@@ -3088,6 +3175,9 @@ private:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
         {
             Stiffness = Eelastic;
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Modified_Euler_Error_Control", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             return 0;
         }
         else  //Plasticity
@@ -3220,7 +3310,7 @@ private:
                     dT *= 0.5;
                     if (dT < dT_min) {
                         cout << "ASDPlasticMaterial3D::Modified_Euler_Error_Control - Minimum step size reached with NaN" << endl;
-                        return -1;
+                        return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
                     }
                     continue;
                 }
@@ -3232,6 +3322,16 @@ private:
 
                 // Accept or reject step
                 if (step_error <= TolE || effective_dT <= dT_min) {
+                    // Ladruno (ADR-94 wp/94a): ADR-94 M2(c) -- at dT_min the error control degenerates to
+                    // accept-everything. Under strict_convergence an out-of-tolerance
+                    // substep is a refusal, not an acceptance.
+                    if (step_error > TolE && INT_OPT_strict_convergence[ASDP_TAG] != 0) {
+                        opserr << "ASDPlasticMaterial3D::Modified_Euler_Error_Control (tag " << ASDP_TAG
+                               << ") - substep accepted at dT_min with step_error = " << step_error
+                               << " > stress_absolute_tol = " << TolE
+                               << " -- rejecting step (strict_convergence)" << endln;
+                        return LADRUNO_MATERIAL_REFUSED;
+                    }
                     // Accept step - use corrector solution
                     current_Sigma = corrector_sigma;
                     current_EpsilonPl = corrector_pstrain;
@@ -3255,7 +3355,7 @@ private:
                 if (niter > max_iterations)
                 {
                     cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " Modified Euler exceeded number of iterations. niter = " << niter << " niter_max = " << max_iterations << " T= " << T << " dT = " << dT << endl;
-                    return -1;
+                    return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
                 }
             }
 
@@ -3374,9 +3474,12 @@ private:
                 printTensor1("m = " , pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage) );
                 cout << "hardening  = " << yf.hardening( depsilon_elpl, pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage),  TrialStress, iv_storage, parameters_storage) << endl;
 
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
 
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Modified_Euler_Error_Control (post return-to-yield)", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             ComputeTangentStiffness();
         }
 
@@ -3405,7 +3508,7 @@ private:
         int errorcode = -1;
 
         static VoigtVector depsilon;
-        depsilon *= 0;
+        depsilon.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
         depsilon = strain_incr;
 
         // CRITICAL FIX: Initialize trial values from committed values at start
@@ -3413,9 +3516,9 @@ private:
             iv.trial_value = iv.committed_value;
         });
 
-        dsigma *= 0;
-        intersection_stress *= 0;
-        intersection_strain *= 0;
+        dsigma.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_stress.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
+        intersection_strain.setZero();  // Ladruno (ADR-94 wp/94a): *= 0 does not clear NaN
 
         VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
         dsigma = Eelastic * depsilon;
@@ -3435,6 +3538,9 @@ private:
         if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
         {
             Stiffness = Eelastic;
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Runge_Kutta_45_Error_Control", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             return 0;
         }
         else  //Plasticity
@@ -3741,7 +3847,7 @@ private:
                     dT *= 0.5;
                     if (dT < dT_min) {
                         cout << "ASDPlasticMaterial3D::RK45 - Minimum step size reached with NaN" << endl;
-                        return -1;
+                        return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
                     }
                     continue;
                 }
@@ -3753,6 +3859,16 @@ private:
 
                 // Accept or reject step
                 if (step_error <= TolE || effective_dT <= dT_min) {
+                    // Ladruno (ADR-94 wp/94a): ADR-94 M2(c) -- at dT_min the error control degenerates to
+                    // accept-everything. Under strict_convergence an out-of-tolerance
+                    // substep is a refusal, not an acceptance.
+                    if (step_error > TolE && INT_OPT_strict_convergence[ASDP_TAG] != 0) {
+                        opserr << "ASDPlasticMaterial3D::Runge_Kutta_45_Error_Control (tag " << ASDP_TAG
+                               << ") - substep accepted at dT_min with step_error = " << step_error
+                               << " > stress_absolute_tol = " << TolE
+                               << " -- rejecting step (strict_convergence)" << endln;
+                        return LADRUNO_MATERIAL_REFUSED;
+                    }
                     // Accept step - use 5th order solution
                     current_Sigma = next_Sigma_5th;
                     current_EpsilonPl = next_EpsilonPl_5th;
@@ -3928,7 +4044,7 @@ private:
                 printTensor1("m = " , pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage) );
                 cout << "hardening  = " << yf.hardening( depsilon_elpl, pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage),  TrialStress, iv_storage, parameters_storage) << endl;
 
-                return -1;
+                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
 
             // ADDED: Final consistency check for internal variables
@@ -3943,10 +4059,15 @@ private:
             cout << "Final yield function value: " << final_yf << endl;
             #endif
 
+            // Ladruno (ADR-94 wp/94a)
+            if (ladruno_strict_rejects("Runge_Kutta_45_Error_Control (post return-to-yield)", TrialStress))
+                return LADRUNO_MATERIAL_REFUSED;
             ComputeTangentStiffness();
         }
 
-        return RK45_EXIT_FLAG;
+        // Ladruno (ADR-94 wp/94a): RK45_EXIT_FLAG is set to -1 when the substep
+        // iteration budget is exhausted; that bare -1 was dropped by every hex host.
+        return RK45_EXIT_FLAG == 0 ? 0 : LADRUNO_MATERIAL_REFUSED;
     }
 
 

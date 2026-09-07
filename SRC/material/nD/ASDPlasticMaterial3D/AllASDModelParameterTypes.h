@@ -83,6 +83,7 @@ using DP_xi_c = ModelParameterType<double, DP_xi_c_Name>;
 struct DP_etabar_Name { static constexpr const char* name = "DP_etabar";};   // for non-associated DP, slope from dilatancy angle 
 using DP_etabar = ModelParameterType<double, DP_etabar_Name>;
 
+// Ladruno (HB/StiffSoil integration, ledger row 337): StiffSoil + Hoek-Brown model parameters
 //Stiffening soil model
 struct SS_E50_ref_Name { static constexpr const char* name = "SS_E50_ref";};   
 using SS_E50_ref = ModelParameterType<double, SS_E50_ref_Name>;

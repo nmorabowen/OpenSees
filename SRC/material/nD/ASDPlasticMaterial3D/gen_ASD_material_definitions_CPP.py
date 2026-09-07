@@ -1,4 +1,7 @@
 #!/usr/bin/python
+# Ladruno (HB/StiffSoil integration, ledger row 337): this generator also emits
+# the HoekBrown + StiffSoil registrations into ASD_material_definitions.cpp
+# (a generated file -- see the single marker line at the top of that file).
 from itertools import product
 
 # ============================================================================
@@ -16,7 +19,7 @@ YF = [
     "VonMises_YF",
     "DruckerPrager_YF",
     "MohrCoulomb_YF",
-    "HoekBrown_YF",
+    "HoekBrown_YF",  # Ladruno (HB/StiffSoil integration, ledger row 337): new Hoek-Brown YF
     # "TensionCutoff_YF",
 ]
 
@@ -50,6 +53,7 @@ IV_YF["MohrCoulomb_YF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
 
+# Ladruno (HB/StiffSoil integration, ledger row 337): Hoek-Brown IV mapping
 IV_YF["HoekBrown_YF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
@@ -80,6 +84,7 @@ IV_PF["MohrCoulomb_PF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
 
+# Ladruno (HB/StiffSoil integration, ledger row 337): Hoek-Brown IV mapping
 IV_PF["HoekBrown_PF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
