@@ -144,7 +144,7 @@ assertions describe exactly the `accept` mode's contract, and P2's new
 default (`implicit`) would otherwise silently change what floor behaviour
 that test is exercising out from under it.
 
-Collected count after this lane: 31 `def test_...` functions, 35 collected
+Collected count after this lane: 34 `def test_...` functions, 38 collected
 items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
 every other function is a single collected item) -- up from the P1 file's
 21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
@@ -336,6 +336,42 @@ invisible to `capsys`/`redirect_stderr`; a hand-rolled `os.dup2` around
 pytest's own fd-level capture measured empty (nested redirects raced
 pytest's own capture machinery) -- pytest's `capfd` fixture is the
 reliable way to read it back, used here instead.
+
+SIXTH ROUND, P2-7 REDESIGNED -- WRITTEN, NOT RUN (2026-09-07). The dist/bin
+`.pyd` at the time this section was written still holds the FIRST
+(mis-specified) P2-7 attempt (691f4064d, a hold-style skip that was never
+actually built) and is being rebuilt against the redesigned interface
+(`-flipAlphaIn init|vanilla`, `Ladruno_implementation/
+92_ladruno_sanisand_implex_adr.md`'s P2-7 row). Three new tests
+(`test_flip_initialises_alpha_in_at_every_point`,
+`test_flip_absorbs_drift_under_implex`, `test_guard_only_on_primed_
+states`) written against that interface and NOT yet run against any
+binary -- per the module docstring's own opening rule, nothing in that
+section is a measured number; every expected value there is derived
+algebraically from the interface text (`alpha_in := alpha_n` is an exact
+copy, so `==` not `approx`; `implexGuards[5] += 8` is the element's own
+Gauss-point count, stated directly in the interface) or is a qualitative
+direction the ADR's own P2-7 row already reports ("ratio > 2", loosely
+under the ADR's measured "O(0.2) drift" vs "0.02-0.03 later steps" gap).
+`test_explicit_default_words_are_byte_identical`'s `explicit_words` tuple
+gained `-flipAlphaIn init`, extending its word/order byte-identity claim
+to the new token (a WORD-PRESENCE claim, not a physics one -- that test's
+own deck confines isotropically, so the flip's alpha_in effect is vacuous
+there by construction; see the test's updated docstring).
+
+The four P1/P2-2 era tests pinned to `-implexGuard off` (B1, M10, and the
+two inside `_drive_floor_ladder`'s callers) are UNCHANGED this round.
+P2-7's deterministic flip may resolve the underlying un-primed-commit
+issue that motivated some of those pins, but "unpin only if they pass"
+cannot be honoured without running the rebuilt binary -- re-verify and
+unpin (or explain why not) in the NEXT round, against the new hash, not
+here.
+
+DO NOT RUN THIS FILE until told the new build hash -- the currently
+loaded `dist/bin/opensees.pyd` predates `-flipAlphaIn` entirely and would
+fail every one of the three new tests at construction (`nDMaterial`
+itself would refuse the unknown token) for a reason that has nothing to
+do with their own claims.
 """
 import math
 import os
@@ -3594,10 +3630,19 @@ def test_explicit_default_words_are_byte_identical(capfd):
     is not reproducible from a single material point at all and needs a
     genuine multi-element/BVP repro, which is out of this lane's scope
     (a Python material-point rig, not a mesh).
+
+    `-flipAlphaIn init` ADDED to `explicit_words` (P2-7 redesign, WP-92e
+    lane B2, 2026-09-07) -- NOT YET RE-RUN against a binary that ships the
+    token; the "MEASURED ON THIS DECK (d30c66582...)" paragraph above
+    describes the run BEFORE this addition. `sani._build` is not this
+    test's deck (`_build_free_dof_triaxial` + `_confine_only`, isotropic,
+    is), so the flip's own alpha_in-init effect is vacuous here (alpha is
+    already 0) -- this addition only extends the WORD/ORDER byte-identity
+    claim to the new token, not a physics claim about it.
     """
     tag_a, tag_b, tag_c = 8900, 8901, 8902
     explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
-                      '-implexFloor', 'implicit')
+                      '-implexFloor', 'implicit', '-flipAlphaIn', 'init')
 
     stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
     stresses_b, guards_b = _drive_explicit_default_words(tag_b, explicit_words)
@@ -3659,3 +3704,227 @@ def test_explicit_default_words_are_byte_identical(capfd):
         'explicit-words decks -- the flags are being PARSED to a different '
         'internal state despite reading the same on/on/implicit values',
         line_a, line_b, line_c)
+
+
+# ===========================================================================
+#  ADR-92 P2-7, redesigned (WP-92e lane B2, 2026-09-07) -- deterministic
+#  alpha_in at the elastic->plastic stage flip.
+#
+#  WRITTEN BEFORE THE BINARY EXISTS. The dist/bin .pyd at the time this
+#  section was written still holds the FIRST (mis-specified) P2-7 attempt
+#  (691f4064d, a hold-style skip that was never built) and is being
+#  rebuilt against the redesigned interface below -- per the module
+#  docstring's own rule, nothing in this section is a number read off a
+#  real binary. Do not run this file until told the new build hash.
+#
+#  INTERFACE (Ladruno_implementation/92_ladruno_sanisand_implex_adr.md,
+#  the P2-7 row): new token `-flipAlphaIn init|vanilla`, default `init`.
+#  At `updateMaterialStage 1` the fork sets `alpha_in := alpha_n` at EVERY
+#  Gauss point, on BOTH the purely implicit and the `-implex` path, under
+#  `init`; `vanilla` leaves `alpha_in` at its elastic-stage placeholder
+#  (zero), reproducing the old noise-initialisation behaviour for A/B. The
+#  reversal-noise guard (P2-5/5b/5c) applies ONLY to PRIMED states (after
+#  the first plastic commit since the flip) -- the flip itself, and any
+#  hold before the material is primed, must never arm it. Under `-implex`
+#  the flip additionally runs a zero-increment companion return, committed
+#  hold-style (history left at zero, counted in `implexGuards[5]` -- the
+#  SAME slot P2-5c's literal holds use, `+= the Gauss-point count`, once
+#  per point, at the flip).
+#
+#  THE DECK MUST BE ANISOTROPIC AT THE FLIP, NOT `_confine_only`'s OWN
+#  ISOTROPIC ONE. `_confine_only`'s ramp confines equally on every face,
+#  so `alpha == 0` at ITS OWN flip regardless of whether this fix exists --
+#  an `alpha_in == alpha` check there would read `0 == 0` under a mutant
+#  that drops the write entirely, which is exactly the "isotropic deck
+#  makes the fix unfalsifiable" trap the redesigned ADR text itself calls
+#  out. `sani._build`'s single continuous ramp (`_LAT = 0.25` lateral vs
+#  `1.0` axial, BOTH active from the very first elastic-stage step) is
+#  reused instead: by the end of the 5-step elastic leg the committed
+#  stress -- and therefore `alpha = dev(sigma)/p` -- is already
+#  anisotropic, a K0-like state, so `alpha_in == alpha` at the flip is a
+#  claim with real content.
+# ===========================================================================
+
+def test_flip_initialises_alpha_in_at_every_point():
+    """ADR-92 P2-7: at `updateMaterialStage 1`, `alpha_in := alpha_n` at
+    EVERY Gauss point, on both the purely implicit deck (no `-implex`
+    token) and the `-implex` deck, under the DEFAULT `-flipAlphaIn init`.
+    `-flipAlphaIn vanilla` leaves `alpha_in` at zero (the elastic stage's
+    own placeholder) instead, on both paths.
+
+    See the section block comment above for why `sani._build`'s K0-like
+    ramp is used instead of an isotropic confine-first deck, and why a
+    non-vacuity check (Gauss point 1's `alpha` is genuinely nonzero at the
+    flip) comes first.
+
+    Kills a mutant that drops the flip's `alpha_in` write entirely (init
+    would then read identically to vanilla -- zero -- everywhere), that
+    only writes Gauss point 1 (every OTHER point would still read the old
+    placeholder), or that reaches only one of the two paths (the other
+    deck's read would still show the pre-fix value).
+    """
+    for implex_on, tag in ((False, 8420), (True, 8421)):
+        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+        sani._build('LadrunoSANISAND', tag, opts)
+        sani._elastic_leg(tag)
+
+        # the flip itself -- read BEFORE any push into the plastic stage.
+        ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        alpha = _read_all_alpha(ngp=8)
+        alpha_in = _read_all_alpha_in(ngp=8)
+
+        assert _vnorm(alpha[0]) > 0.0, (
+            'the elastic-stage stress is isotropic (alpha == 0) at Gauss '
+            'point 1 right after the flip (implex_on=%r) -- sani._build\'s '
+            'own K0-like ramp (_LAT = 0.25 lateral, active from the first '
+            'elastic step) is supposed to leave a genuinely anisotropic '
+            'stress there; a zero here makes the alpha_in == alpha check '
+            'below vacuous' % implex_on, alpha[0])
+
+        for gp in range(8):
+            assert alpha[gp] == alpha_in[gp], (
+                'alpha_in does not equal alpha at Gauss point %d right '
+                'after updateMaterialStage 1, under the DEFAULT '
+                '-flipAlphaIn init (implex_on=%r) -- the flip is supposed '
+                'to set alpha_in := alpha_n deterministically at every '
+                'Gauss point' % (gp + 1, implex_on), alpha[gp], alpha_in[gp])
+
+    # -- -flipAlphaIn vanilla: alpha_in stays at its elastic-stage value --
+    for implex_on, tag in ((False, 8422), (True, 8423)):
+        opts = ('-flipAlphaIn', 'vanilla')
+        if implex_on:
+            opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) + opts
+        sani._build('LadrunoSANISAND', tag, opts)
+        sani._elastic_leg(tag)
+        ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        alpha_in_vanilla = _read_all_alpha_in(ngp=8)
+        for gp in range(8):
+            assert all(v == 0.0 for v in alpha_in_vanilla[gp]), (
+                'alpha_in is NOT the elastic-stage placeholder (zero) at '
+                'Gauss point %d under -flipAlphaIn vanilla (implex_on=%r) '
+                '-- vanilla is supposed to reproduce the OLD behaviour, '
+                'leaving alpha_in untouched by the flip'
+                % (gp + 1, implex_on), alpha_in_vanilla[gp])
+
+
+def _read_all_implex_error(ele=1, ngp=8):
+    return [ops.eleResponse(ele, 'material', gp, 'implexDetail')[0] for gp in range(1, ngp + 1)]
+
+
+def _flip_and_first_push_error(tag, flip_mode):
+    """`sani._build` (K0-like ramp) + `-implex`, elastic leg, the flip
+    (`implexGuards[5]` delta captured across it), then ONE real plastic
+    push step (`sani._build`'s own `_analysis()` per-step magnitude,
+    `1.0 / sani._NTOT`) -- returns `(delta5_at_flip, max_implexError_
+    across_all_8_GPs_after_that_first_push)`.
+    """
+    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE]
+    if flip_mode is not None:
+        opts += ['-flipAlphaIn', flip_mode]
+    sani._build('LadrunoSANISAND', tag, tuple(opts))
+    sani._elastic_leg(tag)
+
+    guards_before_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+    guards_after_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta5 = guards_after_flip[5] - guards_before_flip[5]
+
+    ops.integrator('LoadControl', 1.0 / sani._NTOT)
+    assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
+    max_err = max(_read_all_implex_error(ngp=8))
+    return delta5, max_err
+
+
+def test_flip_absorbs_drift_under_implex():
+    """ADR-92 P2-7: under `-implex`, the flip runs a zero-increment
+    companion return, committed hold-style, at every Gauss point --
+    `implexGuards[5]` (the SAME hold-skip-commit slot P2-5c's literal
+    holds use) increments by EXACTLY the Gauss-point count (8) across the
+    flip, on the DEFAULT `-flipAlphaIn init`.
+
+    The companion absorb PLUS the deterministic `alpha_in` write together
+    are supposed to leave the FIRST REAL plastic push step's extrapolation
+    error far smaller than under `-flipAlphaIn vanilla` (the old,
+    noise-initialised `alpha_in`, still driving an un-corrected O(0.2)-
+    scale gap into that first step per the ADR's own P2-7 measurement) --
+    checked as `max(implexError)` across all 8 Gauss points on both
+    variants, asserting the vanilla:init ratio exceeds 2.
+
+    Kills a mutant that drops the flip's companion-absorb call
+    (`implexGuards[5]` would not move at the flip at all, only at literal
+    holds elsewhere) or that makes `-flipAlphaIn` cosmetic (the ratio
+    would collapse toward 1).
+    """
+    tag_init = 8430
+    delta5_init, err_init = _flip_and_first_push_error(tag_init, None)   # default = init
+    assert delta5_init == 8.0, (
+        'implexGuards[5] (hold-skip commits) did not increase by EXACTLY '
+        '8 (this element\'s Gauss-point count) across the flip, under the '
+        'DEFAULT -flipAlphaIn init -- the flip is supposed to run a '
+        'zero-increment companion return, committed hold-style, at every '
+        'point', delta5_init)
+
+    tag_vanilla = 8431
+    _delta5_vanilla, err_vanilla = _flip_and_first_push_error(tag_vanilla, 'vanilla')
+
+    assert err_init > 0.0, (
+        'the DEFAULT (-flipAlphaIn init) first-push max implexError read '
+        'exactly zero -- cannot form the ratio this test needs', err_init)
+    ratio = err_vanilla / err_init
+    assert ratio > 2.0, (
+        'the -flipAlphaIn vanilla first-push max implexError is not more '
+        'than 2x the DEFAULT (init) one -- the flip\'s deterministic '
+        'alpha_in write plus the zero-increment companion absorb are '
+        'supposed to leave the first REAL plastic step\'s extrapolation '
+        'error far smaller than the old (noise-initialised) behaviour',
+        err_init, err_vanilla, ratio)
+
+
+def test_guard_only_on_primed_states():
+    """ADR-92 P2-7: the reversal-noise guard (P2-5/5b/5c) applies ONLY to
+    PRIMED states (after the first plastic commit since the flip). A hold
+    placed BEFORE the first plastic commit -- right after the flip, on the
+    DEFAULT `-flipAlphaIn init` -- must not change `alpha_in` (init
+    already equalised it to `alpha` at the flip, so there is nothing left
+    for the hold to disturb), and the FIRST REAL plastic push step
+    afterward must read its ordinary dt ratio for `f`
+    (`implexDetail[5]`), NOT `0.0` -- i.e. the un-primed pre-priming hold
+    must not have armed the P2-2 guard flag.
+
+    Kills a mutant that lets an UN-PRIMED hold arm the guard anyway (the
+    first real push step would read `f = 0` instead of its ratio) or that
+    lets the pre-priming hold disturb `alpha_in` (P2-7's own `init` write
+    would then not be the LAST word on `alpha_in` before priming).
+    """
+    tag = 8440
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # default: init, guard on
+    sani._build('LadrunoSANISAND', tag, opts)
+    sani._elastic_leg(tag)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)   # the flip
+
+    alpha_in_after_flip = _read_all_alpha_in(ngp=8)
+
+    # the hold, BEFORE the first plastic commit (i.e. before priming).
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, 'the pre-priming hold failed to converge'
+
+    alpha_in_after_hold = _read_all_alpha_in(ngp=8)
+    for gp in range(8):
+        assert alpha_in_after_hold[gp] == alpha_in_after_flip[gp], (
+            'alpha_in changed at Gauss point %d across the pre-priming '
+            'hold -- -flipAlphaIn init already equalised it to alpha at '
+            'the flip; the hold must not disturb it'
+            % (gp + 1), alpha_in_after_flip[gp], alpha_in_after_hold[gp])
+
+    # the first REAL plastic push step.
+    ops.integrator('LoadControl', 1.0 / sani._NTOT)
+    assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail[5] != 0.0, (
+        'implexDetail[5] (f) on the first real plastic step, right after '
+        'a pre-priming hold, is exactly 0.0 -- the un-primed hold '
+        'spuriously armed the reversal/softening guard; the guard is '
+        'supposed to apply ONLY to PRIMED states (after the first '
+        'plastic commit since the flip)', detail)
