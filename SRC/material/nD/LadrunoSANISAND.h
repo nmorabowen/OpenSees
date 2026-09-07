@@ -107,6 +107,16 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     // setParameter "implexDt").
     enum DtSource { DT_PSEUDO = 0, DT_STRAIN = 1, DT_USER = 2 };
 
+    // Ladruno ADR-92 P2-1: what -implexControl does at the reduction floor, where
+    // there is nothing left to cut. `implicit` (the DEFAULT) delivers the
+    // COMPANION's stress for that step at that Gauss point, under the frozen Ce
+    // -- the operator stays SPD, the committed state cannot carry an O(1) error,
+    // and the self-sustaining gap-closing loop ADR 93's 2026-09-07 census
+    // measured has nothing left to feed on. `accept` is the pre-P2 behaviour
+    // (commit the extrapolation whatever its error). `refuse` returns the
+    // sentinel at the floor too -- an honest wall instead of a creeping curve.
+    enum FloorMode { FLOOR_IMPLICIT = 0, FLOOR_ACCEPT = 1, FLOOR_REFUSE = 2 };
+
     bool   enabled;          // -implex
     bool   control;          // -implexControl
     double errorTol;         // -implexControl $tol
@@ -114,13 +124,16 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     double alpha;            // -implexAlpha
     int    dtSource;         // -implexDt {pseudo|strain|user}
     double dtUser;           // -implexDt user $dt
+    int    floorMode;        // -implexFloor {implicit|accept|refuse}  Ladruno ADR-92 P2-1
+    bool   guard;            // -implexGuard {on|off}                  Ladruno ADR-92 P2-2
 
     // errorTol default: measured 2026-09-06 (_adr92_p1_bvp_gate_rerun.md sweep)
     // -- 0.05 fails on reach, 0.1 is the tightest tolerance that beats the
     // implicit control's depth under 5% mean deviation. (WP-92d)
     LadrunoImplexOptions()
       : enabled(false), control(false), errorTol(0.1), reductionLimit(0.01),
-        alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0) {}
+        alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0),
+        floorMode(FLOOR_IMPLICIT), guard(true) {}   // Ladruno ADR-92 P2
 };
 
 class LadrunoSANISAND : public ManzariDafalias
@@ -172,7 +185,8 @@ class LadrunoSANISAND : public ManzariDafalias
     NDMaterial *getCopy(void);
     NDMaterial *getCopy(const char *type);
 
-    // Base Vector(97) wire format unchanged; one extra Vector(4) follows it.
+    // Base Vector(97) wire format unchanged; one extra Vector(25) follows it
+    // (Vector(4) at ADR-86, 5 at ADR-86b, 22 at ADR-92 P1, 25 at ADR-92 P2).
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -308,6 +322,19 @@ class LadrunoSANISAND : public ManzariDafalias
     // tr(sigma~) only, so if the deviatoric error is the same order the
     // pressure error was, the clamp is the wrong fix and a bound on f replaces
     // it. Measured, reported, not asserted.
+    // Ladruno ADR-92 P2-2: the softening / reversal guard, ARMED AT COMMIT and
+    // consumed by the NEXT step's arm. `reversal` = the committed mAlpha_in_n
+    // moved in this commit (the base's loading-reversal detector fired, so the
+    // previous plastic increment belongs to a branch the material has just left);
+    // `softening` = the plastic modulus Kp at the NEW committed state is <= 0.
+    // Either makes d_eps_p(n) the wrong thing to extrapolate -- the seat replay
+    // (_adr93_seat_replay.md) measured err 0.4625 there, and f = 0 on that step
+    // brings it to 0.029, under tol, with no refusal. The two components are kept
+    // separately only so Print() can say WHICH fired.
+    bool   mImplexGuardArmed;      // Ladruno ADR-92 P2-2: reversal || softening
+    bool   mImplexGuardReversal;   // Ladruno ADR-92 P2-2
+    bool   mImplexGuardSoftening;  // Ladruno ADR-92 P2-2
+
     double mImplexError;      // ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps_n||)
     double mImplexErrorDev;   // the deviatoric part of the same quotient
     double mImplexErrorVol;   // the volumetric part (sqrt(3)*|dp|) of the same quotient
@@ -367,6 +394,15 @@ class LadrunoSANISAND : public ManzariDafalias
     // operator the extrapolated stress was actually built with whatever TanType
     // the deck asked for. Returns K and G through the reference arguments.
     void ladrunoImplexFreezeTangent(double &K, double &G);   // Ladruno (ADR-92 P1)
+
+    // Ladruno ADR-92 P2-2: the plastic modulus at the CURRENT COMMITTED state,
+    // Kp = (2/3) p h (b:n), computed from ONE ManzariDafalias::GetStateDependent()
+    // call on (mSigma_n, mAlpha_n, mFabric_n, mVoidRatio, mAlpha_in_n). This is
+    // the base's own expression, verbatim from ManzariDafalias.cpp:1373 /
+    // GetElastoPlasticTangent(:4954) -- the source-true seam, not a proxy. Called
+    // ONCE per commit, only with -implex on and -implexGuard on. Not const:
+    // GetStateDependent() is not.
+    double ladrunoImplexCommittedKp(void);   // Ladruno ADR-92 P2-2
 
     // The single "win the last write" helper. Called from every constructor
     // (after the base ctor has returned), from revertToStart via initialize(),
