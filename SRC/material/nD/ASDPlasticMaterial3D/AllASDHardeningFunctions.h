@@ -50,7 +50,13 @@ struct LinearHardeningForScalarPolicy {
     HARDENING_FUNCTION_DEFINITION 
     {
         double H = GET_PARAMETER_VALUE(ScalarLinearHardeningParameter);
-        double h = H * sqrt((2 * m.dot(m)) / 3);
+        // Ladruno (ADR-94 wp/94c, B5): the equivalent plastic strain rate is
+        // sqrt(2/3 * m_ij m_ij), and m is an ENGINEERING-shear Voigt vector, so the
+        // shear slots enter with weight 1/2, not 1.  A plain `m.dot(m)` mis-weighted
+        // them for every yield function.  Identical on any shear-free path; for the
+        // (now Voigt) von Mises flow direction it restores h == H*sqrt(2/3) exactly,
+        // on every stress path rather than only on the pure-normal axis.
+        double h = H * sqrt((2 * tensor_dot_engineering_strain_like(m, m)) / 3);
         return h;
     }
     using parameters_t = tuple<ScalarLinearHardeningParameter>;
@@ -70,7 +76,10 @@ struct NullHardeningTensorPolicy {
     static constexpr const char* NAME = "NullHardeningTensorFunction";
     HARDENING_FUNCTION_DEFINITION 
     {
-        VoigtVector zero;
+        // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- this RETURNED uninitialised Eigen
+        // storage. Every consumer of a Null tensor hardening law read whatever the
+        // heap happened to hold, NaN included.
+        VoigtVector zero = VoigtVector::Zero();
         return zero;
     }
     using parameters_t = tuple<>;
@@ -109,13 +118,23 @@ struct ArmstrongFrederickPolicy {
         auto alpha_dev = alpha.deviator();
 
 
-        auto eq_norm = [](VoigtVector v){  return sqrt((2./3.)*v.squaredNorm());};
+        // Ladruno (ADR-94 wp/94c, B5): `sqrt(2/3 * v.squaredNorm())` is a PLAIN sum
+        // of squares, which mis-weights the three shear slots for BOTH kinds of
+        // operand this lambda was used on.  Strain-like Voigt vectors (the flow
+        // direction m, depsilon) store engineering shear (gamma = 2 eps), so
+        // eps_ij eps_ij = normals + 0.5*shears; the back stress alpha is stress-like
+        // and stores tensor shear, so a_ij a_ij = normals + 2*shears (red2 Q3
+        // reported the alpha side as "under-weighting shear by 2").  Each operand
+        // now uses the matching contraction.  Identical on any shear-free path.
+        auto eq_norm_strain = [](const VoigtVector& v){ return sqrt((2. / 3.) * tensor_dot_engineering_strain_like(v, v)); };
+        auto eq_norm_stress = [](const VoigtVector& v){ return sqrt((2. / 3.) * tensor_dot_stress_like(v, v)); };
 
-        auto mdev = m.deviator();
-        double mdev_eq = eq_norm(mdev);
-        auto dEPS_dev = depsilon.deviator();
-        double dEPS_dev_eq = eq_norm(dEPS_dev);
-        double alpha_norm = eq_norm(alpha_dev);
+        VoigtVector mdev = m.deviator();
+        double mdev_eq = eq_norm_strain(mdev);
+        VoigtVector dEPS_dev = depsilon.deviator();
+        double dEPS_dev_eq = eq_norm_strain(dEPS_dev);
+        VoigtVector alpha_dev_v = alpha_dev;
+        double alpha_norm = eq_norm_stress(alpha_dev_v);
         // double alpha_norm = alpha_dev.norm();
         // double alpha_limit = sqrt(2. / 3.) * ha / cr;
         double alpha_limit =  ha / cr;
@@ -125,13 +144,13 @@ struct ArmstrongFrederickPolicy {
         cout << "mdev        = " << mdev.transpose() << endl;
         cout << "alpha       = " << alpha.transpose() << endl;
         cout << "alpha_norm  = " << alpha_norm << "  <= alpha_limit = " << alpha_limit <<  endl;
-        VoigtVector derivative;
+        VoigtVector derivative = VoigtVector::Zero();   // Ladruno (ADR-94 wp/94a): ADR-94 B4
 
         //Compute the derivative (hardening function)
         if (alpha_norm >= alpha_limit)
         {
             cout << "Saturation!" << endl;
-            derivative *= 0;  // Take care of the saturation limit in case of overshooting
+            derivative.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0` on uninitialised storage
         }
         else
         {

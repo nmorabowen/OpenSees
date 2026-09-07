@@ -1,7 +1,7 @@
 ---
 title: ADR 94 — ASDPlasticMaterial3D implementation review
 project: Ladruno
-status: verdict shipped (2026-09-07, #804) — fixes are separate WPs
+status: complete (2026-09-07) — verdict #804, fix wave #806/#809/#815 merged
 priority: high
 owner: nmora
 tags:
@@ -248,6 +248,33 @@ Token discipline (binding for every agent prompt):
   DP comment is wrong.
 - **Row 337 marker debt** closed in the same PR (comment-only markers on the HB/StiffSoil
   integration hunks).
+- **2026-09-07, fix wave** (owner: "we are allowed to change this vanilla material" — the
+  jaabell-bound column of the verdict collapsed into fork WPs; "merge, continue the orchestration").
+  Four PRs, all merged the same day: **#806** `wp/94d-hb-port` (jaabell's composite Hoek–Brown,
+  tension plateau 587 → 245.0 kPa = textbook σt, compression bit-identical); **#809**
+  `wp/94a-fail-loud` (sentinel at all 15 failure sites, strict mode on every integrator, loud parser
+  + required-parameter check, Eigen `setZero` at 6 sites, `Backward_Euler_LineSearch` and
+  `Runge_Kutta_45_Error_Control_old` refused; 78 passed); **#815** `wp/94c-numerics` carrying
+  `wp/94b-statics` (#813 closed as superseded after a syntax slip in a test edit): per-instance
+  `Stiffness`/buffers, real `revertToLastCommit`/`revertToStart`, `getCopy` copies `first_step`
+  (two-cube iteration penalty +62 % → −12 %); ONE shear-slot convention (Voigt) at every YF/PF and
+  every contraction site — VonMises simple shear vs closed-form radial return **1.5e-13**, VM/DP FD
+  gradient error 3.5e-1 / 9.7e-1 → 1e-8; live apex return with DP apex methods (hydrostatic tension
+  40/40 finite); opt-in `f_relative_tol` with per-YF `strength_scale()`; 89 passed.
+- **Results changes stated plainly:** DP paths change by design (2.7e-2 rel on the review deck);
+  Hoek–Brown moves 2.5e-3 rel between two admissible states (cutting-plane path dependence, verdict
+  M3); VM/MC/MCTC shear-free paths differ only at FP re-association level (≤ 2e-9 rel).
+- **Left open after the wave:** `stdBrick` still swallows every material return code (by design,
+  pinned); no consistent tangent exists for the cutting-plane map (D2, a closest-point rewrite would
+  be ADR 95); `StiffSoilShear` NaNs on step 1 (M9, untested combo); `RK45_old` final NaN guard still
+  calls `exit(-1)` (integrator is parser-refused); `tests/test_adr94_matrix.py` regenerates the
+  tracked `_adr94_matrix.md` on every run and its HB oracle predates the composite port; banner text
+  amended after the last build (cosmetic).
+- **Orchestration lessons** (also in `LEDGER_quirks.md`): MSVC green ≠ GCC green (temporaries into
+  non-const refs); cross-platform float pins need global-tolerance-size bounds (≥ 1e-6 rel), 1e-9
+  failed twice; a bit-identity gate cannot certify a static-state/tangent fix; agents that stage
+  edits as scripts survive session restarts (three were orphaned), builds launched via WMI survive
+  too, `Start-Process` ones do not; run a test file once before pushing a "trivial" edit to it.
 
 ## See also
 

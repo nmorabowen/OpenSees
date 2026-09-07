@@ -64,22 +64,41 @@ the cloud (StiffSoil_EL restricted to its admissible p > 0 subset).
 
 ## Results (smooth-region — the meaningful number)
 
-| Component | max rel. err (smooth) | max rel. err (singular, expected) | worst smooth point | non-finite? |
-|---|---:|---:|---|---|
-| VonMises_YF | **3.53e-01** | 5.61e+00 | shear-heavy random point (see below) | no |
-| DruckerPrager_YF | **9.71e-01** | 6.40e+00 | pure-normal Lode-edge point (θ=30°,p=50,r=30) | no |
-| MohrCoulomb_YF | 3.41e-06 | 2.58e-01 | shear-heavy random point | no |
-| HoekBrown_YF | 2.45e-06 | 9.94e-01 | shear-heavy random point | no |
-| StiffSoilCap_YF | 2.18e-06 | 9.83e+01 | shear-heavy random point | no |
-| StiffSoilShear_YF | 1.52e-05 | 9.90e-01 | shear-heavy random point | no |
-| MohrCoulombTensionCutoff_YF | 2.15e-07 | 8.91e-01 | shear-heavy random point (near p=1 apex-ish) | no |
+Regenerated on `wp/94c-numerics` (commit `3622d6214`) with the same harness, same
+194-point cloud, same seed. "vs Voigt FD" is the number that matters: after wp/94c
+every yield function is differentiated in ONE convention (Voigt / engineering shear),
+so the whole column is at finite-difference truncation noise. The "vs tensor FD"
+column is the same gradient scored against the OTHER convention, and is now uniformly
+~0.7 — i.e. the catalogue is no longer split, it is uniformly Voigt.
+
+| Component | vs Voigt FD, pre-94c | vs Voigt FD, **wp/94c** | vs tensor FD, wp/94c | singular region (expected) | non-finite? |
+|---|---:|---:|---:|---:|---|
+| VonMises_YF | **3.53e-01** | **1.13e-08** | 7.06e-01 | 5.68e+00 | no |
+| DruckerPrager_YF | **9.71e-01** | **1.15e-08** | 6.85e-01 | 2.97e+00 | no |
+| MohrCoulomb_YF | 3.41e-06 | 3.41e-06 | 6.54e-01 | 2.58e-01 | no |
+| HoekBrown_YF | 2.45e-06 | 2.45e-06 | 7.06e-01 | 1.57e-01 | no |
+| StiffSoilCap_YF | 2.18e-06 | 2.18e-06 | 6.95e-01 | 9.83e+01 | no |
+| StiffSoilShear_YF | 1.52e-05 | 1.52e-05 | 7.06e-01 | 9.90e-01 | no |
+| MohrCoulombTensionCutoff_YF | 2.15e-07 | 2.15e-07 | 6.54e-01 | 8.91e-01 | no |
+
+VonMises and DruckerPrager are the only two rows that moved, and they are the only two
+wp/94c touched. VM's 3.53e-01 was the *convention* split (it returned the bare tensor
+derivative); DP's 9.71e-01 was a genuine gradient error on top of it — `d sqrt(J2)/d v`
+is `r/(2 sqrt(J2))` on the normal slots and `r/sqrt(J2)` on the shear slots, and the
+code applied the shear answer to all six. The five analytical-or-numerical Voigt YFs are
+bit-for-bit unchanged, which is the evidence that wp/94c moved VM/DP *onto* the majority
+convention rather than moving the goalposts.
+
+The two dropping to ~1e-8 rather than ~1e-6 is not a better derivative: VM and DP are
+now CLOSED-FORM against a closed-form FD, while MC/HB/MCTC/StiffSoil differentiate
+their own numerically differentiated `df_dsigma_ij`, so their floor is FD-on-FD noise.
 
 PF / EL:
 
 | Component | Result |
 |---|---|
 | VonMises_PF (associated, alpha shared with YF) | 0/194 non-finite; **max_assoc_err = 0.0** (exactly matches YF normal) |
-| DruckerPrager_PF (etabar = eta, associated) | 0/194 non-finite; **max_assoc_err = 0.0** (exactly matches YF normal — inherits the SAME 2x-normal-component defect as the YF, consistently) |
+| DruckerPrager_PF (etabar = eta, associated) | 0/194 non-finite; **max_assoc_err = 0.0** (exactly matches YF normal — pre-94c it inherited the SAME 2x-normal-slot defect as the YF, consistently; wp/94c fixed both, and the associativity identity still holds exactly) |
 | MohrCoulomb_PF | 0/194 non-finite |
 | HoekBrown_PF | 0/194 non-finite |
 | StiffSoilCap_PF | 0/194 non-finite |

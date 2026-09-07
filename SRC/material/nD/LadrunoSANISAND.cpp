@@ -3608,13 +3608,19 @@ constexpr int LadrunoSanisandImplexDetailResponseID   = 33092;   // Ladruno (ADR
 // process-wide refusal ledger. Same band, same rule -- a response id, not a
 // class tag, and nothing may derive one from it.
 constexpr int LadrunoSanisandImplexRefusalsResponseID = 33093;   // Ladruno ADR-92 fix
+// Ladruno (TIMs request 2026-09-07, F4): the two scalars the model computes on
+// every update and never exposed -- the state parameter psi = e - e_c(p') and
+// the yield-function value GetF() (the signed distance to the surface). Same
+// band, same rule: response ids, not class tags.
+constexpr int LadrunoSanisandPsiResponseID           = 33094;   // Ladruno (TIMs F4)
+constexpr int LadrunoSanisandYieldDistanceResponseID = 33095;   // Ladruno (TIMs F4)
 // Ladruno ADR-92 P2: `implexGuards`, the census of six P2 events (P2-1, P2-2,
 // P2-3, P2-5's slot 3 (formerly reserved), P2-6's slot 4, and P2-5c's slot 5).
 // Same band, same rule -- a response id, not a class tag. None of the six
 // prints anything per occurrence (they are the designed behaviour of
 // P2-1/2/3/5/5c/6, not warnings), so this response is the ONLY record that
 // they fired.
-constexpr int LadrunoSanisandImplexGuardsResponseID    = 33094;   // Ladruno ADR-92 P2
+constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
 LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
@@ -3646,6 +3652,20 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
                      strcmp(argv[0], "ImplexRefusals") == 0)) {
         static Vector probe4(4);
         return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
+    }
+    // Ladruno (TIMs request 2026-09-07, F4): read-only diagnostics. Both are
+    // evaluated from the COMMITTED state at read time (post-commit
+    // mSigma == mSigma_n, mVoidRatio refreshed in commitState), so a recorder
+    // sees the psi and f that fed the last committed update.
+    if (argc > 0 && (strcmp(argv[0], "psi") == 0 ||
+                     strcmp(argv[0], "stateParameter") == 0)) {
+        static Vector probe1(1);
+        return new MaterialResponse(this, LadrunoSanisandPsiResponseID, probe1);
+    }
+    if (argc > 0 && (strcmp(argv[0], "yieldDistance") == 0 ||
+                     strcmp(argv[0], "yieldFunction") == 0)) {
+        static Vector probe1(1);
+        return new MaterialResponse(this, LadrunoSanisandYieldDistanceResponseID, probe1);
     }
     // Ladruno ADR-92 P2 (grown to 5 slots by P2-6, 6 by P2-5c)
     if (argc > 0 && (strcmp(argv[0], "implexGuards") == 0 ||
@@ -3714,6 +3734,26 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out6(4) = (double)mImplexClampCount;           // ... and how often, ever
         out6(5) = mImplexFactor;                       // f, frozen for this step
         return matInformation.setVector(out6);
+    }
+    // Ladruno (TIMs request 2026-09-07, F4)
+    if (responseID == LadrunoSanisandPsiResponseID) {
+        // The model's OWN definition, GetStateDependent verbatim: p' carries
+        // m_Presidual and is floored at `small`, so this is the psi that fed
+        // M^b / M^d at the last commit -- not a post-processed e - e_c(p).
+        // With the fork's default p_r = 0 the two coincide.
+        static Vector out1(1);
+        double p = one3 * this->GetTrace(mSigma_n) + m_Presidual;
+        p = (p < small) ? small : p;
+        out1(0) = this->GetPSI(mVoidRatio, p);
+        return matInformation.setVector(out1);
+    }
+    if (responseID == LadrunoSanisandYieldDistanceResponseID) {
+        // f = |s - p'*alpha| - sqrt(2/3)*m*p' on the committed pair. Negative
+        // inside the cone, ~0 (to mTolF) on it; never positive after a
+        // converged return.
+        static Vector out1(1);
+        out1(0) = this->GetF(mSigma_n, mAlpha_n);
+        return matInformation.setVector(out1);
     }
     return ManzariDafalias::getResponse(responseID, matInformation);
 }

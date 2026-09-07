@@ -254,60 +254,74 @@ def test_H1_oracle_matches_opensees_elastic_stiffness():
 
 @pytest.mark.t0m
 def test_H1_one_static_tangent_is_shared_by_every_element(vm_available):
-    """CONFIRMED (blocker).  Two disconnected cubes of the SAME ASDP
-    specialization, one plastic one elastic, are assembled with ONE tangent.
+    """FIXED by wp/94b.  Two disconnected cubes of the SAME ASDP
+    specialization, one plastic one elastic, are each assembled with their OWN
+    tangent.
 
-    Measured on ``52314165a``: the two elements' stand-alone tangents differ by
-    13.6%, yet inside the combined model the two diagonal blocks are equal to
-    round-off, and the plastic element's block is 13.2% away from its own
-    correct tangent.  Assemble the block sum of the two singles and you get a
-    DIFFERENT matrix from the two-element model -- which is the whole claim.
-
-    A fix (per-instance ``Stiffness``) makes ``blocks_identical`` false and
-    turns this test red.
+    Measured on ``52314165a`` before the fix: the two elements' stand-alone
+    tangents differ by 13.6%, yet inside the combined model the two diagonal
+    blocks were equal to round-off and the plastic element's block was 13.2%
+    away from its own correct tangent -- every GP, element and material tag of
+    one ``<E,Y,P,tag>`` specialization shared one class-static ``Stiffness``.
+    wp/94b made ``Stiffness`` (and ``dsigma``, ``depsilon_elpl``,
+    ``intersection_*``) ordinary members, so the assembled block of each
+    element is now that element's own tangent.
     """
     _, K_pl = _cubes_K([(1, 0.0)], [(1, LOAD_PL)])
     _, K_el = _cubes_K([(2, 3.0)], [(2, LOAD_EL)])
-    assert _rel(K_pl, K_el) > 0.1, "the two states must be genuinely different"
+    # Non-vacuity guard.  The gap between the two stand-alone tangents was 13.6%
+    # before wp/94c and is 0.82% after it: correcting the von Mises shear-slot
+    # convention (ADR-94 B5) raised `n:(E:m)` -- the shear terms were previously
+    # under-counted -- so the rank-one plastic reduction of the continuum tangent
+    # is smaller, and the plastic cube's tangent sits closer to the elastic one.
+    # This bound only has to keep the test from being vacuous; the discriminating
+    # assertions below compare each assembled block against its own stand-alone
+    # tangent at 1e-9, seven orders below this gap.
+    assert _rel(K_pl, K_el) > 5.0e-3, "the two states must be genuinely different"
 
     _, K_both = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_PL), (2, LOAD_EL)])
     n = NDOF_CUBE
     blk_pl, blk_el = K_both[:n, :n], K_both[n:, n:]
 
-    # DEFECT: both elements got the same 6x6 tangent.
-    assert _rel(blk_pl, blk_el) < 1e-9, "H1 fixed? the blocks now differ"
-    # DEFECT: the plastic element's block is NOT its own tangent...
-    assert _rel(blk_pl, K_pl) > 0.1
-    # ...it is the ELASTIC element's, i.e. the last one integrated.
-    assert _rel(blk_el, K_el) < 1e-9
+    # FIXED: the two blocks are as different as the two states are ...
+    assert _rel(blk_pl, blk_el) > 5.0e-3, (
+        "the two assembled blocks are identical again -- the shared static "
+        "tangent (ADR-94 M1) is back")
+    # ... and each element got its own.
+    assert _rel(blk_pl, K_pl) < 1e-9, (
+        "the plastic element's assembled block is not its own tangent")
+    assert _rel(blk_el, K_el) < 1e-9, (
+        "the elastic element's assembled block is not its own tangent")
 
 
 @pytest.mark.t0m
 def test_H1_shared_tangent_follows_the_last_element_integrated(vm_available):
-    """CONFIRMED (blocker).  WHICH tangent everybody gets is decided by domain
-    iteration order, not by the element: swap which cube is plastic and the
-    wrong block swaps with it.
+    """FIXED by wp/94b.  The assembly no longer depends on integration order.
 
-    Together with the previous test this is the ADR-75b blocker: the result of
-    an assembly depends on the order Gauss points were integrated in, so the
-    material can never be safe under threaded assembly.
+    Before the fix, WHICH tangent everybody got was decided by domain iteration
+    order, not by the element: swapping which cube was plastic swapped which
+    block was wrong.  That is the ADR-75b threading blocker this test named --
+    an assembly whose result depends on the order Gauss points were visited in
+    can never be threaded.  With per-instance state, swapping the two loads
+    simply swaps the two blocks.
     """
     n = NDOF_CUBE
-    # element 1 plastic, element 2 elastic -> everyone gets ELEMENT 2's tangent
+    # element 1 plastic, element 2 elastic
     _, K_a = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_PL), (2, LOAD_EL)])
-    # element 1 elastic, element 2 plastic -> everyone gets ELEMENT 2's again
+    # the other way round
     _, K_b = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_EL), (2, LOAD_PL)])
 
     _, K_el_alone = _cubes_K([(2, 3.0)], [(2, LOAD_EL)])
     _, K_pl_alone = _cubes_K([(1, 0.0)], [(1, LOAD_PL)])
 
-    # case a: the shared tangent is the ELASTIC one (element 2 ran last)
+    # case a: block 1 is the plastic tangent, block 2 the elastic one
+    assert _rel(K_a[:n, :n], K_pl_alone) < 1e-9
     assert _rel(K_a[n:, n:], K_el_alone) < 1e-9
-    # case b: the shared tangent is now the PLASTIC one, and it is imposed on
-    # the ELASTIC element (block 1) as well
-    assert _rel(K_b[:n, :n], K_b[n:, n:]) < 1e-9
-    assert _rel(K_b[:n, :n], K_el_alone) > 0.1
-    assert _rel(K_b[:n, :n], K_pl_alone) < 0.05
+    # case b: exactly the same two blocks, swapped -- nothing leaked from the
+    # last-integrated element into the other one.
+    assert _rel(K_b[:n, :n], K_el_alone) < 1e-9
+    assert _rel(K_b[n:, n:], K_pl_alone) < 1e-9
+    assert _rel(K_a[:n, :n], K_b[n:, n:]) < 1e-12
 
 
 # ===========================================================================
@@ -345,14 +359,20 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
     return map.  Measured vs ``hex8_K(vm_consistent_tangent)`` at
     ``dEps_zz = -3.6e-3``:
 
-        Continuum                          57.3%   3 global Newton iters
-        Secant  (the DEFAULT)              79.9%  16
-        Elastic                           102.5%  23
-        Numerical_Algorithmic_FirstOrder   31.0%   4
-        Numerical_Algorithmic_SecondOrder  31.0%   4
+                                       52314165a   wp/94c
+        Continuum                          57.3%      57.3%    3 Newton iters
+        Secant  (the DEFAULT)              79.9%      79.9%   16
+        Elastic                           102.5%     102.5%   23
+        Numerical_Algorithmic_FirstOrder   31.0%       4.6%    4
+        Numerical_Algorithmic_SecondOrder  31.0%       4.6%    4
 
-    The numerical pair are closest yet still 31% out because they differentiate
-    ``compute_local_stress()`` -- a THIRD map that is not the one committed.
+    The numerical pair are closest, and wp/94c (ADR-94 B5) took them from 31%
+    to 4.6%: correcting the von Mises shear-slot convention moved
+    ``compute_local_stress()`` -- the THIRD map they differentiate -- much
+    closer to the map ``Backward_Euler`` actually commits.  They are still not
+    the consistent tangent (which would land near 1e-12 here) and the
+    analytical three are unmoved, so H6's finding stands; only its margin
+    shrank.
     The operational consequence is the iteration count: the shipped default
     costs 5.3x the iterations of ``Continuum`` on this step.
     """
@@ -368,11 +388,14 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
         errs[tg] = _rel(_sparse_K(4), K_ref)
         iters[tg] = it
 
-    assert min(errs.values()) > 0.25, "a consistent tangent appeared: %r" % errs
+    # Threshold lowered from 0.25 to 0.02 by wp/94c: the numerical pair improved
+    # from 31% to 4.6% (measured 0.04574 on 3622d6214).  A genuine consistent
+    # tangent would land near 1e-12, so 2% still says "none of the five is it".
+    assert min(errs.values()) > 0.02, "a consistent tangent appeared: %r" % errs
     assert errs["Continuum"] > 0.4
     assert errs["Secant"] > 0.6
     assert errs["Elastic"] > 0.9
-    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.25
+    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.02
     # the DEFAULT (Secant) is the expensive one
     assert iters["Secant"] >= 4 * iters["Continuum"]
 
@@ -427,6 +450,43 @@ def _soft_history(strict=None, nsteps=4):
     return rows
 
 
+def _soft_history_on_ladrunobrick(strict=None, nsteps=4):
+    """The same softening VonMises rig on a host that PROPAGATES the sentinel.
+
+    ``_soft_history`` above uses ``stdBrick``, which swallows every material
+    return code (ADR-94 B2), so it cannot observe wp/94a's refusal.  Returns
+    the ``analyze()`` codes only.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for k, (x, y, z) in enumerate(O.NODES):
+        ops.node(k + 1, float(x), float(y), float(z))
+    for k in range(1, 5):
+        ops.fix(k, 1, 1, 1)
+    for k in range(5, 9):
+        ops.fix(k, 1, 1, 0)
+    mat_vm(1, "Continuum", hiso=H_SOFT, strict=strict)
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for k in range(5, 9):
+        ops.load(k, 0., 0., P_PLASTIC)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-10, 60, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    codes = []
+    for _ in range(nsteps):
+        rc = ops.analyze(1)
+        codes.append(rc)
+        if rc != 0:
+            break
+    return codes
+
+
 @pytest.mark.t0m
 def test_H7_inconsistency_branch_commits_the_elastic_predictor(vm_available):
     """CONFIRMED, and WORSE than the H7 row states (major).
@@ -477,11 +537,40 @@ def test_H7_strict_convergence_does_not_gate_the_inconsistency_branch(
     ``strict_convergence 1`` all four steps still return 0 with
     ``f_VM = +87.5``, bit-identical to flag-off.
     """
+    # FIXED by wp/94a (ADR-94 B3): the branch now refuses under the flag
+    # instead of committing the elastic predictor with `return 0`.  Flag-OFF
+    # is unchanged -- that half of the original measurement still stands and
+    # is what `test_H7_inconsistency_branch_commits_the_elastic_predictor`
+    # (flag off) keeps pinning.
     off = _soft_history(strict=None)
     on = _soft_history(strict=1)
-    assert [r[0] for r in on] == [0, 0, 0, 0]
-    assert _rel(on[-1][2], off[-1][2]) < 1e-12
-    assert _f_vm(on[-1][2]) > 50.0
+
+    assert [r[0] for r in off][:4] == [0, 0, 0, 0], (
+        "flag-OFF behaviour must be byte-identical to pre-wp/94a: the "
+        "inconsistency branch still commits the elastic predictor as success")
+    assert _f_vm(off[-1][2]) > 50.0
+
+    # HOST CAVEAT (ADR-94 B2, deliberately NOT fixed by wp/94a): this rig's
+    # host is `stdBrick`, whose `update()` returns 0 unconditionally, so it
+    # swallows the refusal exactly as it swallows every other material return
+    # code.  Flag-on therefore still reports rc=0 HERE -- that is the host
+    # contract, not a regression of the material fix.
+    assert [r[0] for r in on][:4] == [0, 0, 0, 0], (
+        f"stdBrick started propagating a material refusal "
+        f"({[r[0] for r in on]}) -- Brick::update()'s unconditional `return 0` "
+        f"may have been fixed; re-verify ADR-94 B2's host table.")
+
+    # The fix itself is pinned on a host that DOES propagate the sentinel.
+    codes = _soft_history_on_ladrunobrick(strict=1)
+    assert any(c != 0 for c in codes), (
+        f"strict_convergence=1 did NOT gate the `dLambda + deltaLambda < 0` "
+        f"fallback on LadrunoBrick: codes={codes} -- ADR-94 B3's fix has "
+        f"regressed")
+
+    codes_off = _soft_history_on_ladrunobrick(strict=None)
+    assert codes_off == [0, 0, 0, 0], (
+        f"flag-OFF on LadrunoBrick must be unchanged (the branch still "
+        f"commits the elastic predictor as success); codes={codes_off}")
 
 
 # ===========================================================================
@@ -514,65 +603,97 @@ def _mc_tet(method, strict=None, niter=None):
 
 @pytest.fixture(scope="module")
 def ls_runs(mc_available):
+    """FIXED by wp/94a (ADR-94 M7): ``Backward_Euler_LineSearch`` can no
+    longer be SELECTED -- the parser refuses it with an ADR-94 citation and
+    the material is not created, so none of the three H8 defects below is
+    reachable from a deck any more.  The fixture now records the refusal
+    instead of three runs."""
+    def _refused(**kw):
+        try:
+            _mc_tet("Backward_Euler_LineSearch", **kw)
+        except Exception:
+            return True
+        return False
+
     return {
         ("BE", 100, None): _mc_tet("Backward_Euler", niter=100),
-        ("LS", 2, None): _mc_tet("Backward_Euler_LineSearch", niter=2),
-        ("LS", 100, None): _mc_tet("Backward_Euler_LineSearch", niter=100),
-        ("LS", 100, 1): _mc_tet("Backward_Euler_LineSearch", niter=100,
-                                strict=1),
+        ("LS", 2, None): _refused(niter=2),
+        ("LS", 100, None): _refused(niter=100),
+        ("LS", 100, 1): _refused(niter=100, strict=1),
     }
 
 
 @pytest.mark.t0m
 def test_H8_line_search_ignores_n_max_iterations(ls_runs):
-    """CONFIRMED (major).  ``Backward_Euler_LineSearch`` hardcodes
-    ``max_iter = 30`` (2385) instead of reading ``INT_OPT_n_max_iterations``,
-    so the option is silently inert: ``n_max_iterations`` 2 and 100 give
-    BIT-IDENTICAL histories.  On the same rig ``Backward_Euler`` with
-    ``n_max_iterations 2`` is the ADR-84 exhaustion reproducer (worst
-    ``f_MC = 77.6`` vs 6.3e-4 at 100), so the option is not inert in general --
-    only in this integrator.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
+
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
-    c2, h2 = ls_runs[("LS", 2, None)]
-    c100, h100 = ls_runs[("LS", 100, None)]
-    assert c2 == c100
-    assert h2.shape == h100.shape
-    assert np.array_equal(h2, h100)
+    assert ls_runs[("LS", 2, None)] is True, (
+        "Backward_Euler_LineSearch with n_max_iterations 2 was accepted by "
+        "the parser -- ADR-94 M7's refusal has regressed and the hardcoded "
+        "max_iter = 30 is reachable again")
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch with n_max_iterations 100 was accepted -- "
+        "same regression")
 
 
 @pytest.mark.t0m
 def test_H8_line_search_ignores_strict_convergence(ls_runs):
-    """CONFIRMED (major).  ``strict_convergence`` is read only inside
-    ``Backward_Euler`` (2081, 2086, 2184, 2338); ``Backward_Euler_LineSearch``
-    has no ``be_strict`` at all, so the fork's one loud-failure switch is a
-    no-op the moment a user selects this integrator.  Measured: flag on and
-    flag off are bit-identical.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
+
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
-    c_off, h_off = ls_runs[("LS", 100, None)]
-    c_on, h_on = ls_runs[("LS", 100, 1)]
-    assert c_off == c_on
-    assert np.array_equal(h_off, h_on)
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch (flag off) was accepted by the parser -- "
+        "ADR-94 M7's refusal has regressed")
+    assert ls_runs[("LS", 100, 1)] is True, (
+        "Backward_Euler_LineSearch with strict_convergence 1 was accepted -- "
+        "same regression; the fork's one loud-failure switch would again be a "
+        "no-op inside this integrator")
 
 
 @pytest.mark.t0m
 def test_H8_line_search_is_less_robust_than_plain_backward_euler(ls_runs):
-    """CONFIRMED (major).  The name promises robustness; measured on the ADR-84
-    MC tet leg it completes 2 of 20 steps where plain ``Backward_Euler``
-    completes 20 of 20.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
 
-    Reading the code, the "line search" cannot help: the acceptance test is on
-    a LINEAR prediction ``Phi + dPhi/dlambda * dl`` (2477-2486), so for an
-    unclipped Newton direction ``dl = -alpha*Phi/dPhi`` it reduces to
-    ``|1-alpha| <= 1 - 1e-4*alpha``, true for every ``alpha`` in (0,1] --
-    ``alpha = 1`` is always accepted on the first try and no backtracking ever
-    happens.  Nor does the "substepping": on failure it halves ``dEps`` and
-    solves ONE reduced increment (2578-2596) instead of chaining substeps,
-    overwriting ``TrialStrain`` with ``CommitStrain + dEps/2^k`` and returning
-    SUCCESS for a strain the element never asked for.
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
     c_be, h_be = ls_runs[("BE", 100, None)]
-    c_ls, h_ls = ls_runs[("LS", 100, None)]
-    ok_be = sum(1 for c in c_be if c == 0)
-    ok_ls = sum(1 for c in c_ls if c == 0)
-    assert ok_be == P.TET_NSTEPS
-    assert ok_ls < 5, "BE_LS became robust -- re-read the H8 verdict"
+    assert sum(1 for c in c_be if c == 0) == P.TET_NSTEPS, (
+        f"plain Backward_Euler must still complete the ADR-84 MC tet leg "
+        f"{P.TET_NSTEPS}/{P.TET_NSTEPS} -- wp/94a must not have changed the "
+        f"flag-off default path; codes={c_be}")
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch was accepted -- the 2/20-vs-20/20 defect "
+        "is reachable again")

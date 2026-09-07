@@ -9,7 +9,11 @@ Three things R1 did not measure:
    ``if (!(norm_trial_stress == norm_trial_stress)) { cout << "NaN!"; return
    -1; }``) DOES fire and DOES return -1 -- the -1 is then dropped on the way
    up.  So the defect is a *return-code contract* defect, not (only) a missing
-   check.
+   check. PLATFORM CAVEAT: the NaN itself is UNDEFINED BEHAVIOUR (an
+   uninitialised ``VoigtVector pressure_part; pressure_part *= 0.0;`` in
+   DruckerPrager_YF/_PF), not a deterministic defect -- Ubuntu CI's fresh
+   heap commits a clean, finite history on the identical apex path, so the
+   guard never fires there; only Windows' dirty pytest heap reproduces it.
 
 2. **The NaN is DP-specific, not "apex-declared-YF"-generic.**  Five YFs
    specialize ``yf_has_apex`` to true (DruckerPrager, HoekBrown, MohrCoulomb,
@@ -29,6 +33,7 @@ Driver: the single ``LadrunoBrick`` unit cube of ``test_adr94_hlist_hb.py``
 Build ``52314165a``.  Wall time ~1.5 s.
 """
 import math
+import re
 import subprocess
 import sys
 import textwrap
@@ -38,6 +43,15 @@ import pytest
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
+
+_PRESSURE_PART_IDIOM = re.compile(
+    r"VoigtVector\s+pressure_part\s*;\s*\n\s*pressure_part\s*\*=\s*0\.0\s*;")
+
+
+def _source(rel_path):
+    import pathlib
+    here = pathlib.Path(__file__).resolve().parent.parent
+    return (here / rel_path).read_text(encoding="utf-8", errors="replace")
 
 _CUBE = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
          5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
@@ -167,8 +181,36 @@ def _pypath():
 def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
     """R1-C said "nothing in the existing gates trips".  Measured: the
     Backward_Euler NaN guard prints "NaN!" and returns -1 on the apex path,
-    and analyze() still reports 0 with a NaN stress committed.  The gate
-    works; the return code is lost between the material and the analysis."""
+    and analyze() still reports 0 with a NaN stress committed on Windows.
+    The gate works; the return code is lost between the material and the
+    analysis.
+
+    PLATFORM CAVEAT: the NaN itself is UNDEFINED BEHAVIOUR, not a
+    deterministic defect -- ``DruckerPrager_YF``/``_PF`` build their
+    pressure term via ``VoigtVector pressure_part; pressure_part *= 0.0;``,
+    multiplying UNINITIALISED Eigen storage by zero rather than actually
+    zero-constructing it. Windows' churned pytest heap reliably reads stale
+    nonzero/NaN bits there; Ubuntu CI's fresh heap reads zero and the same
+    apex path commits a clean, finite history, so the guard never fires and
+    "NaN!" never prints. The structural sentinel below (the pseudo-init
+    idiom's continued presence) is what actually pins this; the "NaN!"/
+    committed-NaN checks are gated on NaN having actually been committed.
+    """
+    yf_src = _source("SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions"
+                      "/DruckerPrager_YF.h")
+    pf_src = _source("SRC/material/nD/ASDPlasticMaterial3D"
+                      "/PlasticFlowDirections/DruckerPrager_PF.h")
+    # FIXED by wp/94a (ADR-94 B4 + B2).  Both halves of Q5 are closed: the
+    # pseudo-init idiom is gone (the NaN is no longer manufactured), and the
+    # guards that DO fire return LADRUNO_MATERIAL_REFUSED instead of a bare -1
+    # (so a hex host no longer swallows them).  Grep-gate inverted.
+    assert not _PRESSURE_PART_IDIOM.search(yf_src), (
+        "DruckerPrager_YF.h has the uninitialised `VoigtVector pressure_part; "
+        "pressure_part *= 0.0;` idiom AGAIN -- wp/94a's Eigen-init fix was "
+        "reverted.")
+    assert not _PRESSURE_PART_IDIOM.search(pf_src), (
+        "DruckerPrager_PF.h has the same idiom again -- see above.")
+
     out = _run_child(_DP_CHILD.replace("{PYPATH}", _pypath()))
     if "RESULT_CODES=" not in out:
         pytest.skip("DP/LadrunoBrick child run unavailable:\n" + out[-800:])
@@ -176,15 +218,20 @@ def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
     codes = eval(out.split("RESULT_CODES=")[1].splitlines()[0], _ns)
     stress = eval(out.split("RESULT_STRESS=")[1].splitlines()[0], _ns)
     nan_committed = any(s != s for s in stress)
-    # (a) the material DID detect the NaN and returned -1
-    assert "NaN!" in out, (
-        "expected Backward_Euler's own NaN guard to fire on the DP apex path; "
-        "stdout tail:\n" + out[-1500:])
-    # (b) ... and the analysis never saw it
-    assert all(c == 0 for c in codes), (
-        "expected every analyze() to report success despite the guard firing, "
-        f"got {codes}")
-    assert nan_committed, f"expected a NaN committed stress, got {stress}"
+    all_finite = all(math.isfinite(s) for s in stress)
+
+    # (a) FIXED: no committed state is non-finite any more, on any heap.
+    assert all_finite and not nan_committed, (
+        f"a non-finite stress was COMMITTED on the DP apex path -- wp/94a's "
+        f"Eigen-init fix has regressed; stress={stress}, codes={codes}")
+
+    # (b) FIXED: the material is now allowed to refuse here and LadrunoBrick
+    # propagates the sentinel, so a non-zero code is correct rather than the
+    # swallowed rc=0 this test used to pin.  Only 0 and -3 are legal.
+    bad = [c for c in codes if c not in (0, -3)]
+    assert not bad, (
+        f"unexpected analyze() codes on the DP apex path: {codes} (0 = step "
+        f"taken, -3 = global Newton gave up after the material refused)")
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +284,18 @@ def test_R2_mc_hydrostatic_tension_through_apex_stays_finite():
 # 3. f_absolute_tol is ABSOLUTE in stress units: the unit system alone decides
 #    whether strict_convergence refuses the step
 # ---------------------------------------------------------------------------
+# wp/94c (ADR-94 B5): the unit gap needed to reproduce M5 grew by six orders.
+# Pre-94c, Backward_Euler's consistency scalar over-counted the shear terms for
+# every Voigt-convention YF (MohrCoulomb included), so the Newton iteration was
+# slow enough that a x1000 change of units alone pushed the residual past the
+# 1e-6 absolute default.  With that contraction fixed the same deck lands at
+# f <= 0 in kPa, in Pa and in mPa -- measured: it completes 20/20 even with
+# `f_absolute_tol 0` -- and x1e9 is where the absolute tolerance finally binds.
+# The FINDING is unchanged (the unit system, not the physics, decides); this is
+# the deck that still shows it.
+UNIT_GAP = 1.0e9
+
+
 def _mat_mc_strict(tag, scale, ftol=1.0e-6, nit=100, strict=1):
     ops.nDMaterial(
         "ASDPlasticMaterial3D", tag,
@@ -274,14 +333,20 @@ def test_R2_f_absolute_tol_makes_strict_convergence_unit_dependent():
     except Exception as exc:                       # pragma: no cover
         pytest.skip(f"MohrCoulomb_YF / LadrunoBrick unavailable: {exc}")
     codes_kpa, _ = _drive(20)
-    _build(lambda t: _mat_mc_strict(t, 1000.0), 20, 0.0, 0.0, ez)
+    _build(lambda t: _mat_mc_strict(t, UNIT_GAP), 20, 0.0, 0.0, ez)
     codes_pa, _ = _drive(20)
     ok_kpa = sum(1 for c in codes_kpa if c == 0)
     ok_pa = sum(1 for c in codes_pa if c == 0)
-    assert ok_kpa == 20, f"kPa run was expected to complete: {codes_kpa}"
+    assert ok_kpa == 20, f"reference-unit run was expected to complete: {codes_kpa}"
     assert ok_pa == 0 and codes_pa[-1] != 0, (
-        "the Pa run (identical physics, stresses x1000) was expected to be "
-        f"REFUSED at the same default f_absolute_tol: {codes_pa}")
+        f"the x{UNIT_GAP:.0e} run (identical physics, identical strains) was "
+        f"expected to be REFUSED at the same default f_absolute_tol: {codes_pa}")
+
+    # wp/94c ships the remedy as an OPT-IN: `f_relative_tol` scales the tolerance
+    # by the yield function's own strength (`c*cos(phi)` for MohrCoulomb), and
+    # tests/test_adr94c_numerics.py::test_C4_f_relative_tol_makes_the_verdict_unit_independent
+    # runs this same pair with it on and gets 20/20 both times.  The default is
+    # still absolute, so the finding above is still the shipped behaviour.
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +389,19 @@ def test_R2_strict_convergence_is_a_noop_on_stdbrick():
     successes.  ADR-84 P2a's fail-loud gate therefore has no effect at all on
     the most widely used solid element in OpenSees -- including for
     ``Backward_Euler``, the one integrator the gate reaches."""
+    # wp/94c: this refusal used to be provoked with `ftol=1e-12` at scale 1.0.
+    # Backward_Euler now converges to f <= 0 on that deck even with
+    # `f_absolute_tol 0`, so the reproducer is the UNIT_GAP deck instead -- same
+    # material, same strains, stresses x1e9.  What is under test is the HOST, not
+    # the tolerance: whatever makes the material refuse, stdBrick drops it.
     ez = 0.01
     try:
-        _build_ele("LadrunoBrick", lambda t: _mat_mc_strict(t, 1.0, ftol=1e-12),
+        _build_ele("LadrunoBrick", lambda t: _mat_mc_strict(t, UNIT_GAP),
                    20, 0.0, 0.0, ez)
     except Exception as exc:                       # pragma: no cover
         pytest.skip(f"MohrCoulomb_YF / LadrunoBrick unavailable: {exc}")
     codes_lb, _ = _drive(20)
-    _build_ele("stdBrick", lambda t: _mat_mc_strict(t, 1.0, ftol=1e-12),
+    _build_ele("stdBrick", lambda t: _mat_mc_strict(t, UNIT_GAP),
                20, 0.0, 0.0, ez)
     codes_sb, _ = _drive(20)
     assert sum(1 for c in codes_lb if c == 0) == 0, (
