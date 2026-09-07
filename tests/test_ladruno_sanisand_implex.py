@@ -1351,8 +1351,20 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
 
 def _roundtrip_implex(matcmd, tag, opts, n_cut, n_total):
     """`test_ladruno_sanisand.py`'s own `_roundtrip`, with the plastic-leg
-    split parametrised and IMPL-EX opts threaded through. Returns (stress at
-    the save, stress right after the restore, final stress)."""
+    split parametrised and IMPL-EX opts threaded through. Returns (stress
+    at the save, stress right after the restore, final stress,
+    `implexGuards[5]` immediately before/after the REDUNDANT post-restore
+    `updateMaterialStage(...,1)` re-assert, `alpha_in` at all 8 Gauss
+    points immediately before/after that SAME re-assert).
+
+    ADR-92 P2-7c: `mStageFlipHandled` (the flip-handled marker) is now ON
+    THE WIRE, so that redundant re-assert -- the fork's OWN established,
+    documented idiom for coping with `mElastFlag`'s process-wide-static
+    reset-on-construction quirk, issued here on a JUST-RESTORED material,
+    exactly as `test_implex_db_roundtrip_carries_flags_and_history` always
+    has -- must NOT re-run the flip's own work (the companion absorb, the
+    alpha_in write) a second time.
+    """
     with tempfile.TemporaryDirectory(prefix='ladruno_sanisand_implex_',
                                      ignore_cleanup_errors=True) as td:
         dbpath = os.path.join(td, 'sanisand_implex_rt')
@@ -1377,14 +1389,23 @@ def _roundtrip_implex(matcmd, tag, opts, n_cut, n_total):
         ops.restore(1)
         after = sani._stress()
 
+        # ADR-92 P2-7c: the redundant re-assert, and what it must NOT do.
+        guards5_before_reassert = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))[5]
+        alpha_in_before_reassert = _read_all_alpha_in(ngp=8)
+
         ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        guards5_after_reassert = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))[5]
+        alpha_in_after_reassert = _read_all_alpha_in(ngp=8)
+
         ops.wipeAnalysis()
         sani._analysis()
         for step in range(n_total - n_cut):
             assert ops.analyze(1) == 0, f'post-restore plastic step {step + 1} failed'
         out = sani._stress()
         ops.wipe()
-        return mid, after, out
+        return (mid, after, out, guards5_before_reassert, guards5_after_reassert,
+               alpha_in_before_reassert, alpha_in_after_reassert)
 
 
 def test_implex_db_roundtrip_carries_flags_and_history():
@@ -1406,14 +1427,30 @@ def test_implex_db_roundtrip_carries_flags_and_history():
     step) would very likely diverge from the reference somewhere in the
     remaining plastic steps, because the extrapolation factor and the history
     it carries feed directly into every subsequent committed stress.
+
+    ADR-92 P2-7c ADDITION (WP-92e lane B2, 2026-09-07): `opts_on` now
+    carries `-implexFlipAbsorb on -flipAlphaIn init` EXPLICITLY -- both
+    non-default, so the flip actually does something observable -- and
+    the test asserts that `_roundtrip_implex`'s own REDUNDANT post-restore
+    `updateMaterialStage(...,1)` re-assert does NOT re-run that work.
+    `mStageFlipHandled` is now on the wire specifically so a restored
+    material's own defensive re-assert (this codebase's established,
+    documented idiom for `mElastFlag`'s process-wide-static reset) cannot
+    silently corrupt an already-primed history the way it did before this
+    fix (measured, pre-fix, on 887fea475: `alpha_in` at Gauss point 1
+    shifted from `[-0.60569, -0.60569, 1.21138, ...]` to `[-0.62953,
+    -0.62953, 1.25906, ...]` across exactly this re-assert, propagating to
+    a 0.00588 committed-stress reldiff against the 1e-12 tolerance).
     """
-    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                                    '-implexFlipAbsorb', 'on', '-flipAlphaIn', 'init')
 
     ref = sani._drive('LadrunoSANISAND', 8300, opts_on)
 
     n_cut = 12
-    mid, after, out = _roundtrip_implex('LadrunoSANISAND', 8301, opts_on,
-                                        n_cut=n_cut, n_total=sani._N_PL)
+    (mid, after, out, guards5_before_reassert, guards5_after_reassert,
+     alpha_in_before_reassert, alpha_in_after_reassert) = _roundtrip_implex(
+        'LadrunoSANISAND', 8301, opts_on, n_cut=n_cut, n_total=sani._N_PL)
     assert sani._reldiff(mid, after) <= _EQ_TOL, (
         'the restored -implex material did not come back on the state it '
         'was saved at', mid, after)
@@ -1421,6 +1458,22 @@ def test_implex_db_roundtrip_carries_flags_and_history():
         'after the round trip the -implex material no longer finishes on '
         'the reference (unbroken) answer -- the flags or the d_eps_p history '
         'did not survive sendSelf/recvSelf', ref, out)
+
+    # ADR-92 P2-7c: the redundant re-assert must not re-run the flip work.
+    assert guards5_after_reassert == guards5_before_reassert, (
+        'implexGuards[5] moved across the REDUNDANT post-restore '
+        'updateMaterialStage(...,1) re-assert -- mStageFlipHandled is '
+        'supposed to be on the wire now (P2-7c), so a restored material '
+        'must not re-run the zero-increment companion absorb',
+        guards5_before_reassert, guards5_after_reassert)
+    for gp in range(8):
+        assert alpha_in_after_reassert[gp] == alpha_in_before_reassert[gp], (
+            'alpha_in changed at Gauss point %d across the REDUNDANT '
+            'post-restore updateMaterialStage(...,1) re-assert -- '
+            'mStageFlipHandled is supposed to be on the wire now (P2-7c), '
+            'so a restored material\'s ALREADY-primed alpha_in must not '
+            'be re-initialised from the CURRENT alpha' % (gp + 1),
+            alpha_in_before_reassert[gp], alpha_in_after_reassert[gp])
 
     # Non-vacuity: an -implex OFF reference run on the SAME deck up to the
     # cut, if the round trip silently dropped -implex entirely (falling back
@@ -3970,15 +4023,19 @@ def _build_p27_k0_2elem(tag, opts):
 
 
 def _flip_and_first_push_error(tag, flip_mode):
-    """`_build_p27_k0` (K0-like ramp, ONE element) + `-implex`, elastic
-    leg, the flip, then ONE real plastic push step (SAME per-step
-    magnitude as the elastic leg, `1.0 / _P27_N_EL`) -- returns
-    `max_implexError` across all 8 Gauss points after that first push.
-    `flip_mode` is REQUIRED (`'init'` or `'vanilla'`, no default) --
-    P2-7c's `-flipAlphaIn` default is `vanilla`, so this helper does not
-    guess.
+    """`_build_p27_k0` (K0-like ramp, ONE element) + `-implex
+    -implexFlipAbsorb on`, elastic leg, the flip, then ONE real plastic
+    push step (SAME per-step magnitude as the elastic leg,
+    `1.0 / _P27_N_EL`) -- returns `max_implexError` across all 8 Gauss
+    points after that first push. `flip_mode` is REQUIRED (`'init'` or
+    `'vanilla'`, no default) -- P2-7c's `-flipAlphaIn` default is
+    `vanilla`, so this helper does not guess. `-implexFlipAbsorb on` is
+    EXPLICIT too (P2-7c's SECOND interface change: the companion absorb
+    defaults OFF) -- the whole point of this comparison is the absorb's
+    own benefit, so it has to be on for either arm to show anything.
     """
-    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE, '-flipAlphaIn', flip_mode]
+    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexFlipAbsorb', 'on', '-flipAlphaIn', flip_mode]
     _build_p27_k0(tag, tuple(opts))
     _p27_elastic_leg(tag)
 
@@ -3989,35 +4046,87 @@ def _flip_and_first_push_error(tag, flip_mode):
 
 
 def test_flip_absorbs_drift_under_implex():
-    """ADR-92 P2-7(c): under `-implex`, the flip runs a zero-increment
-    companion return, committed hold-style, at every Gauss point --
-    REGARDLESS of the `-flipAlphaIn` choice (the companion absorb and the
-    alpha_in initialisation are independent knobs; only the absorb is
-    checked here, on the DEFAULT `-flipAlphaIn`, now `vanilla`).
-    `implexGuards[5]` (the SAME hold-skip-commit slot P2-5c's literal
-    holds use) increments by EXACTLY 16 across the flip -- TWO elements
-    (8 Gauss points each), because P2-7c's flip-handled tracking is PER
-    INSTANCE (see `_build_p27_k0_2elem`'s own docstring for why a
-    single-element deck cannot tell "every instance flips" from "only
-    the first one does").
+    """ADR-92 P2-7(c): the flip's zero-increment companion return
+    (committed hold-style, at every Gauss point) is now OPT-IN --
+    `-implexFlipAbsorb on|off`, DEFAULT OFF (it broke ADR-92 gate 5's
+    ON == OFF byte-identity, and Esmeralda showed the P2-2b guard-scope
+    fix alone already recovers the implicit twin's start).
 
-    Separately (single-element, BOTH `-flipAlphaIn` modes EXPLICIT, since
-    there is no default to lean on for this comparison): the deterministic
-    `alpha_in` write under `init` is supposed to leave the FIRST REAL
-    plastic push step's extrapolation error far smaller than under
-    `vanilla` (the old, noise-initialised `alpha_in`, still driving an
-    un-corrected O(0.2)-scale gap into that first step per the ADR's own
-    P2-7 measurement) -- checked as `max(implexError)` across all 8 Gauss
-    points on both variants, asserting the vanilla:init ratio exceeds 2.
+    THREE parts:
 
-    Kills a mutant that drops the flip's companion-absorb call
-    (`implexGuards[5]` would not move at the flip at all, only at literal
-    holds elsewhere), that only flips ONE instance per element (the delta
-    would read 8 or some other count short of 16, not 16), or that makes
-    `-flipAlphaIn` cosmetic (the ratio would collapse toward 1).
+    (a) DEFAULT flags (`-implexFlipAbsorb off`): `implexGuards[5]` must
+        NOT move at the flip, and gate 5 itself -- `-implex` ON commits
+        the BIT-IDENTICAL stress to OFF, on `_build_p27_k0`'s own
+        zero-free-DOF deck, through the flip and a few pushes -- must
+        hold. This is the direct confirmation that turning the absorb
+        off restores the invariant it broke.
+
+    (b) `-implexFlipAbsorb on` EXPLICIT, on a TWO-element deck
+        (`_build_p27_k0_2elem`): `implexGuards[5]` (the SAME hold-skip-
+        commit slot P2-5c's literal holds use) increments by EXACTLY 16
+        across the flip -- TWO elements (8 Gauss points each), because
+        P2-7c's flip-handled tracking is PER INSTANCE (see
+        `_build_p27_k0_2elem`'s own docstring for why a single-element
+        deck cannot tell "every instance flips" from "only the first
+        one does").
+
+    (c) `-implexFlipAbsorb on` EXPLICIT, single-element, BOTH
+        `-flipAlphaIn` modes EXPLICIT too (there is no default to lean
+        on for this comparison): the deterministic `alpha_in` write
+        under `init` is supposed to leave the FIRST REAL plastic push
+        step's extrapolation error far smaller than under `vanilla` (the
+        old, noise-initialised `alpha_in`, still driving an un-corrected
+        O(0.2)-scale gap into that first step per the ADR's own P2-7
+        measurement) -- checked as `max(implexError)` across all 8 Gauss
+        points on both variants, asserting the vanilla:init ratio
+        exceeds 2.
+
+    Kills a mutant that leaves the absorb ON by default (part (a)'s
+    `implexGuards[5]` delta would be nonzero, and gate 5 would break
+    again), that drops the flip's companion-absorb call entirely under
+    `on` (part (b)'s delta would read 0, not 16), that only flips ONE
+    instance per element (part (b)'s delta would read 8 or some other
+    count short of 16), or that makes `-flipAlphaIn` cosmetic (part
+    (c)'s ratio would collapse toward 1).
     """
+    # -- (a) DEFAULT flags: no absorb at the flip, gate 5 holds --------
+    tag_off, tag_on_default = 8433, 8434
+    opts_default_off = ()
+    opts_default_on = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # DEFAULT -implexFlipAbsorb (off)
+
+    _build_p27_k0(tag_off, opts_default_off)
+    _p27_elastic_leg(tag_off)
+    ops.updateMaterialStage('-material', tag_off, '-stage', 1)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    for step in range(3):
+        assert ops.analyze(1) == 0, f'off-leg push step {step + 1} failed'
+    stress_off = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    _build_p27_k0(tag_on_default, opts_default_on)
+    _p27_elastic_leg(tag_on_default)
+    guards_before_default_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ops.updateMaterialStage('-material', tag_on_default, '-stage', 1)
+    guards_after_default_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta5_default = guards_after_default_flip[5] - guards_before_default_flip[5]
+    assert delta5_default == 0.0, (
+        'implexGuards[5] moved at the flip under DEFAULT flags '
+        '(-implexFlipAbsorb off) -- the companion absorb is supposed to '
+        'be opt-in now, inert by default', delta5_default,
+        guards_before_default_flip, guards_after_default_flip)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    for step in range(3):
+        assert ops.analyze(1) == 0, f'on-leg (default absorb off) push step {step + 1} failed'
+    stress_on_default = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert stress_off == stress_on_default, (
+        'gate 5 (-implex ON == OFF committed stress) does NOT hold on '
+        'this zero-free-DOF deck under DEFAULT flags -- -implexFlipAbsorb '
+        'off is supposed to restore that byte-identity',
+        stress_off, stress_on_default)
+
+    # -- (b) -implexFlipAbsorb on, 2-element deck: implexGuards[5] += 16 --
     tag_2elem = 8432
-    opts_2elem = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # DEFAULT -flipAlphaIn (vanilla)
+    opts_2elem = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexFlipAbsorb', 'on')
     _build_p27_k0_2elem(tag_2elem, opts_2elem)
     ops.updateMaterialStage('-material', tag_2elem, '-stage', 0)
     for step in range(_P27_N_EL):
@@ -4030,10 +4139,12 @@ def test_flip_absorbs_drift_under_implex():
     assert delta5 == 16.0, (
         'implexGuards[5] (hold-skip commits) did not increase by EXACTLY '
         '16 (TWO elements x 8 Gauss points each) across the flip on the '
-        '2-element deck -- the flip\'s companion-absorb is supposed to run '
-        'at EVERY per-Gauss-point instance, not just the first element\'s',
+        '2-element deck, under EXPLICIT -implexFlipAbsorb on -- the '
+        'flip\'s companion-absorb is supposed to run at EVERY '
+        'per-Gauss-point instance, not just the first element\'s',
         delta5, guards_before_flip, guards_after_flip)
 
+    # -- (c) -implexFlipAbsorb on, single-element, init vs vanilla ratio --
     tag_init = 8430
     err_init = _flip_and_first_push_error(tag_init, 'init')
 
