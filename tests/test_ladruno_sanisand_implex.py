@@ -394,11 +394,32 @@ a flip, not separately root-caused. The interface changed again
 (P2-7(c), default flipped to `vanilla`) before any of this could be
 addressed -- superseded, not resolved.
 
+THIRD P2-7 INTERFACE CHANGE (2026-09-07, still not run): the flip's
+zero-increment companion return under `-implex` becomes ITS OWN opt-in
+token, `-implexFlipAbsorb on|off`, default OFF -- it is what broke gate
+5's ON == OFF byte-identity (887fea475's own finding above), and
+Esmeralda showed the P2-2b guard-scope fix alone already recovers the
+implicit twin's start without it. `test_flip_absorbs_drift_under_implex`
+now has three parts: (a) DEFAULT flags, `implexGuards[5]` inert at the
+flip AND gate 5 itself confirmed holding again on `_build_p27_k0`; (b)
+EXPLICIT `-implexFlipAbsorb on`, the 2-element `implexGuards[5] += 16`
+check; (c) EXPLICIT `on`, the `init` vs `vanilla` error-ratio check
+(unusable without the absorb on, since that is what produces the
+benefit being compared). `mStageFlipHandled` (the flip-handled marker)
+is now ON THE WIRE -- `test_implex_db_roundtrip_carries_flags_and_
+history` extended to assert its OWN redundant post-restore
+`updateMaterialStage(...,1)` re-assert (the fork's established idiom,
+issued on a JUST-restored material) does not re-run the companion
+absorb or the alpha_in write a second time, with both now EXPLICITLY
+on/init so the check is not vacuous. The echo-line byte-identity test's
+word list gained `-implexFlipAbsorb off` (the new default).
+
 DO NOT RUN THIS FILE until told the new build hash -- the currently
-loaded `dist/bin/opensees.pyd` (887fea475) predates the `vanilla`-default
-redesign, and the tests above are now written against the NEW default,
-untested against any binary that ships it, for a reason that has nothing
-to do with their own claims.
+loaded `dist/bin/opensees.pyd` (887fea475) predates BOTH the
+`vanilla`-default redesign and `-implexFlipAbsorb` entirely, and the
+tests above are now written against the LATEST interface, untested
+against any binary that ships it, for a reason that has nothing to do
+with their own claims.
 """
 import math
 import os
@@ -3711,25 +3732,28 @@ def test_explicit_default_words_are_byte_identical(capfd):
     genuine multi-element/BVP repro, which is out of this lane's scope
     (a Python material-point rig, not a mesh).
 
-    `-flipAlphaIn vanilla` ADDED to `explicit_words` (P2-7(c) redesign,
-    WP-92e lane B2, 2026-09-07) -- NOT YET RE-RUN against a binary that
-    ships the token; the "MEASURED ON THIS DECK (d30c66582...)" paragraph
-    above describes the run BEFORE this addition. `vanilla`, not `init`:
-    `-flipAlphaIn`'s DEFAULT is `vanilla` (Esmeralda showed `init`'s
-    "fix" was actually a modelling change -- the implicit twin's own
-    number moved off vanilla's to the digit -- so `vanilla` is the
-    default and `init` the opt-in), and this test's whole point is
-    "explicit words matching the DEFAULT must be byte-identical to
-    omitting them" -- using `init` here would test a DIFFERENT (non-
-    default) claim entirely. `sani._build` is not this test's deck
-    (`_build_free_dof_triaxial` + `_confine_only`, isotropic, is), so the
-    flip's own alpha_in effect is vacuous here (alpha is already 0)
-    either way -- this addition only extends the WORD/ORDER byte-identity
-    claim to the new token, not a physics claim about it.
+    `-flipAlphaIn vanilla` AND `-implexFlipAbsorb off` ADDED to
+    `explicit_words` (P2-7(c) redesign, WP-92e lane B2, 2026-09-07) --
+    NOT YET RE-RUN against a binary that ships either token; the
+    "MEASURED ON THIS DECK (d30c66582...)" paragraph above describes the
+    run BEFORE this addition. `vanilla`/`off`, not `init`/`on`: both
+    tokens' DEFAULT is the "leave it alone" value now (Esmeralda showed
+    `init`'s "fix" was actually a modelling change -- the implicit twin's
+    own number moved off vanilla's to the digit; the companion absorb
+    under `on` broke gate 5's ON == OFF byte-identity), and this test's
+    whole point is "explicit words matching the DEFAULT must be
+    byte-identical to omitting them" -- using the non-default value for
+    either would test a DIFFERENT claim entirely. `sani._build` is not
+    this test's deck (`_build_free_dof_triaxial` + `_confine_only`,
+    isotropic, is), so the flip's own alpha_in effect is vacuous here
+    (alpha is already 0) either way -- this addition only extends the
+    WORD/ORDER byte-identity claim to the two new tokens, not a physics
+    claim about them.
     """
     tag_a, tag_b, tag_c = 8900, 8901, 8902
     explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
-                      '-implexFloor', 'implicit', '-flipAlphaIn', 'vanilla')
+                      '-implexFloor', 'implicit', '-flipAlphaIn', 'vanilla',
+                      '-implexFlipAbsorb', 'off')
 
     stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
     stresses_b, guards_b = _drive_explicit_default_words(tag_b, explicit_words)
