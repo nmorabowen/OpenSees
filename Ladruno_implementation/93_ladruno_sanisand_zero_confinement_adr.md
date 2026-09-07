@@ -448,4 +448,24 @@ benchmark is a real footing or the idealised half-space.
   is not free under `-implex`.** Fix: on a zero-increment commit keep the previous `dt_n` and
   history (one line); until then, no holds inside an IMPL-EX push, and any census taken by a
   hold must be on a leg whose curve is not reported.
+- 2026-09-07 (seat replay `_adr93_seat_replay.md`, `5878766e0` — **reproduction gate MET, error
+  reproduced 0.4625**, from the read 26-slot state with the step-332 increment inverted and
+  gated on alpha/z/dGamma/alpha_in/substeps 43 vs 43). **The seat's state at 331:** ψ −0.18,
+  `η/M^b` 0.52, `D` −0.023, `(α−α_in):n = −0.16` ⇒ **`Kp = −0.76 G`** (post-peak softening,
+  tangent 20× under elastic); **step 332 reset `α_in := α_n`** (a reversal) ⇒ `Kp = +4.7e11`.
+  Exact identity `σ~ − σ_impl = Ce:(Δε_p(n+1) − f·Δε_p(n))` (residual 1.8e-12). **(e) is
+  half-refuted:** from that state a *small* Δε does not give O(σ) plastic strain
+  (`‖Δε_p‖/‖Δε‖` = 6e-4 / 9e-3 / 7e-2 at 1e-7 / 1e-6 / 1e-5, superlinear collapse); the term
+  is O(σ) because the seat's actual `‖Δε‖` on 331 was **1.28e-4, 164× the step's kinematic
+  strain** (the ring: 4.2×) — **the loop supplies the size, softening + the reversal supply
+  the non-extrapolability.** So the seed *is* the loop reaching a softening point: the gap
+  closure concentrates strain where `Kp < 0`, the oscillating strain there flips the loading
+  direction, `α_in` resets, and the previous plastic increment is the wrong thing to
+  extrapolate. **Prevention on that row, one number each:** alpha 0.5 → 0.217 (halves);
+  variant B (direction) → 0.462 (nothing); f cap → 0.4625 (inert); **history from the last
+  full step / f = 0 → 0.029, under tol.** The cheapest operator guard is therefore *no
+  extrapolation* (`f = 0`) on a step whose committed predecessor showed `Kp ≤ 0` or an `α_in`
+  reset — the elastic predictor is within tolerance there. ADR 92 P2 now has its four items
+  with numbers (written into the ADR); ADR 93's own question (the ring at the floor, no
+  plateau) is untouched by all of this and is what the campaign returns to once P2 lands.
 
