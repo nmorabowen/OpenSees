@@ -411,4 +411,14 @@ benchmark is a real footing or the idealised half-space.
   that point only (loses SPD locally). (B) is the candidate: it turns the floor from
   "accept the extrapolation" into "fall back to the implicit return at this point", which is
   what the control was asking for. The seed remains a separate question.
+- 2026-09-07 (local seeded-gap probe, single `LadrunoBrick` with free lateral DOFs) — **INSENSITIVE,
+  not a refutation.** After one deliberately bad commit (error 0.124 at ds 1e-2), probes at
+  ds 1e-4 … 1e-7 give `‖Δε‖/ds = 1.0000` exactly, seeded or clean, and errors that track ds
+  (3e-4 → 4.4e-7). But `‖Δε‖ = ds` to five figures means the prescribed axial component *is*
+  the norm: the free lateral DOFs contribute nothing measurable, so a gap-closing increment of
+  the size seen at Esmeralda's ring (2–9× a strain that is itself ~0.4–0.8 ds) would be
+  invisible here. In the footing the ring's strain is entirely equilibrium-driven, which is
+  the regime the loop needs. A local reproduction would need a multi-element free-surface
+  deck (the `adr92_bvp_fix` R3 deck with a seeded floor-accept), not a single element.
+  Esmeralda's ring ratios stand as the evidence for the loop.
 
