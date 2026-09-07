@@ -73,7 +73,7 @@ nDMaterial LadrunoSANISAND $tag  <23 constants>  \
     -Presidual $pr -Pmin $pmin -honorTolR $h -maxSubsteps $N \
     -implex  <-implexControl $tol $reductionLimit>  <-implexAlpha $a> \
     <-implexDt pseudo|strain|user <$dt>>  \
-    <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>
+    <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>
 ```
 
 ```python
@@ -95,6 +95,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexDt pseudo\|strain\|user <$dt>` | source for `dt_{n+1}` in `f` | `pseudo` | see §5 |
 | `-implexFloor implicit\|accept\|refuse` | what a Gauss point commits when `-implexControl` hits the reduction floor with nothing left to cut | `implicit` | ADR-92 P2-1; see §11 |
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
+| `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 
 ## 2. What the nine words mean
 
@@ -206,7 +207,7 @@ not warnings), so this response is the only record any of them fired at all.
 | `avgImplexError` | 1 | process-wide running mean over all commits |
 | `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` `f`, frozen for this step (reads `0` on a guarded step, §11) |
 | `implexRefusals` | 4 | `[0]` total refusals · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` |
-| `implexGuards` | 4 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reserved |
+| `implexGuards` | 5 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) |
 
 Python:
 
@@ -360,7 +361,10 @@ material has already left. The tangent identity is unaffected (`f` is still a co
 step, and it is still exactly `Ce`); only the prediction's accuracy is traded, not the step or the
 operator's symmetry. A guarded step reads `implexDetail[5] == 0` (that slot is `f`, frozen for the
 step). Measured on the seat replay (element 4095, GP 8): error 0.4625 as shipped, 0.029 — under
-`tol` — with the guard firing.
+`tol` — with the guard firing. `-implexGuard` only fires on a *committed* predecessor's state;
+`-implexTrialGuard` (P2-6, `on` by default, `implexGuards[4]`) covers the trial that first
+*reaches* a softening/reversing point mid-step by retrying that Gauss point with `f = 0` before
+the control refuses it.
 
 ### The hold rule — P2-3
 
