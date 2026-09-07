@@ -88,7 +88,8 @@
 
 #include <map>
 #include <vector>
-#include <algorithm> 
+#include <utility>    // Ladruno (ADR-88): std::pair for interpNodeParents
+#include <algorithm>
 #include <string>
 
 #include <hdf5.h>
@@ -156,6 +157,12 @@ protected:
 
     void node_matching_BruteForce(double d_tol, const ID& internal, const Matrix& xyz, const Vector& drmbox_x0, double& d_err, int & n_nodes_found);
 
+    // Ladruno (ADR-88): reconstructs DRM_D/DRM_A for every node resolved via
+    // element-provided interpolation (see interpNodeParents / do_intitialization)
+    // from its parents' already-computed values. Called once per step, right
+    // after drm_direct_read/drm_differentiate_displacements.
+    void resolveInterpolatedNodeMotions();
+
 private:
 
     std::string dataset_fname;   // Name of the HDF5 dataset containing the DRM motions  
@@ -185,6 +192,14 @@ private:
     std::map<int, int> nodetag2station_id;
     std::map<int, int> nodetag2local_pos;
     ID station_id2data_pos;
+
+    // Ladruno (ADR-88): node tag -> list of (parent node tag, weight) pairs,
+    // for nodes resolved via DRMHigherOrderNode interpolation instead of a
+    // direct H5DRM station match (e.g. BezierTet10's 6 mid-edge nodes). Absent
+    // entry = node matched a real station directly (pre-ADR-88 behavior,
+    // unchanged). Populated in do_intitialization, consumed in
+    // resolveInterpolatedNodeMotions.
+    std::map<int, std::vector<std::pair<int, double> > > interpNodeParents;
 
     //HDF5 handles
     hid_t ih5_fname;
