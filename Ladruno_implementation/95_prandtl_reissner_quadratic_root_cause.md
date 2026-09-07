@@ -129,7 +129,7 @@ cutoff branch *earlier*. On the repaired material it reaches its own, higher col
 the physics (ψ = φ is the strong upper solution). The control's purpose — that the two flow rules
 answer *differently*, so the non-associated agreement is a measurement — is intact and is what the
 revised assertion checks (`ASSOC_MIN_SEPARATION = 0.20` above the band top; measured separation
-0.58). Gate rerun after the revision: __GATE_RERUN__. **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
+0.58). Gate rerun after the revision: **11/11 passed** (`gate_rerun_p5.log`, 10 min 45 s, build `feb358fda`). **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
 final-norm divide at 670) — an upstream PR candidate under the campaign's authorship rules.
 
 ## 5. Element technology (H4) — measured, secondary, unchanged
