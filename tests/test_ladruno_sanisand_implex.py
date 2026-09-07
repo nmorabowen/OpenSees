@@ -103,6 +103,52 @@ the P0 oracle table (`_adr92_p0_oracle_results.md` section 4: IMPL-EX-A's
 error grows sharply with increment size at low confinement -- "breaks at
 5e-4" at p0 = 5 kPa).  Nothing here is a number read off THIS build, because
 this build does not exist yet.
+
+LANE B2 / P2 BATTERY (2026-09-07, WP-92e).  Five new tests written for the
+"P2 (owed)" table at the end of `Ladruno_implementation/
+92_ladruno_sanisand_implex_adr.md`, against the interfaces lane A2 is
+building to (not yet built at the time this file was written -- lane A2's
+own note says so, and the module docstring's rule above applies here too:
+nothing below is a number read off a real binary). Four items, all
+process-wide/non-destructive per the new `implexGuards` response
+(`Vector(4)`: [0] floor fallbacks, [1] f=0 guards, [2] hold-preserved
+commits, [3] reserved/unused):
+
+  * `test_floor_fallback_delivers_implicit_stress_and_counts` --
+    `-implexFloor implicit|accept|refuse` (new default `implicit`) at the
+    `-implexControl` reduction floor.
+  * `test_guard_zeroes_f_after_reversal` / `test_guard_zeroes_f_after_softening`
+    -- `-implexGuard on|off` (default `on`): the elastic-predictor (`f = 0`)
+    override on the step after a commit whose state shows a load reversal
+    (`alpha_in` reset) or softening (`Kp <= 0` / declining stress ratio).
+    The softening gate has NO way to be verified against a real run from
+    this lane (no binary exists yet, and lane B2 cannot build one) -- it
+    detects the softening onset AT RUNTIME from the committed state (a
+    peak-then-decline in `eta/M_b`, the observable macroscopic signature of
+    `Kp` crossing zero under monotonic straining) and calls `pytest.xfail`
+    with the actual numbers reached if the dense confine-first deck never
+    softens within its step budget, rather than asserting a canned outcome
+    that was never measured.
+  * `test_hold_keeps_clock_and_history` -- a `LoadControl(0.0)` hold
+    preserves `mImplexDtCommit` and the `d_eps_p` history from the step
+    BEFORE the hold, rather than resetting either.
+  * `test_setparameter_stresscorrection_takes_effect` -- the
+    `updateParameter` dispatch fix for `ManzariDafalias`'s `stressCorrection`
+    responseID (9, `ManzariDafalias.cpp:897`), previously a no-op reaching
+    `LadrunoSANISAND` through the IMPL-EX-era dispatch.
+
+Also pins `test_implexcontrol_floor_accepts_once_reduction_limit_is_reached`
+(the P1/M4 mutation-gate survivor, written against the OLD unconditional-
+accept floor behaviour) to `-implexFloor accept` explicitly -- its own
+assertions describe exactly the `accept` mode's contract, and P2's new
+default (`implicit`) would otherwise silently change what floor behaviour
+that test is exercising out from under it.
+
+Collected count after this lane: 26 `def test_...` functions, 30 collected
+items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
+every other function is a single collected item) -- up from the P1 file's
+21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
+walk over the module's top-level `test_*` `FunctionDef`s, not by hand-count.
 """
 import math
 import os
@@ -1667,12 +1713,25 @@ def test_implexcontrol_floor_accepts_once_reduction_limit_is_reached():
     Kills a mutant that never arms `mImplexDt0` (or arms it with the wrong
     sign/magnitude): with the floor dead, the ladder refuses FOREVER and
     this test's final `assert rc == 0` fails.
+
+    PINNED TO `-implexFloor accept` (ADR-92 P2, WP-92e lane B2, 2026-09-07).
+    This test was written against the ONLY floor behaviour that existed at
+    the time -- unconditional accept, exactly what `-implexFloor accept`
+    now names -- and its own assertion (`last_detail[0] > tol`: the
+    accepted step still carries the RAW large extrapolation error) is that
+    mode's contract verbatim. P2 changes the DEFAULT to `implicit` (see
+    `test_floor_fallback_delivers_implicit_stress_and_counts`), under which
+    the floor step would commit the implicit companion's own answer instead
+    and this assertion would most likely fail for a reason that has nothing
+    to do with the M4 mutant this test exists to kill. Pinning the mode
+    keeps this test's claim exactly what it always was.
     """
     tag = 8320
     tol = 1.0e-9
     reduction_limit = 0.3
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', tol, reduction_limit)
+            '-implexControl', tol, reduction_limit,
+            '-implexFloor', 'accept')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)
 
@@ -1945,3 +2004,518 @@ def test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio():
         'last TRULY committed dt -- if the re-arm (mImplexStepArmed) is '
         'missing, f would instead reflect the REFUSED attempt\'s frozen '
         'dt', detail_small[5], expected_f, detail_big, detail_small)
+
+
+# ===========================================================================
+#  ADR-92 P2 (owed) -- `-implexFloor`, `-implexGuard`, the hold-safe clock,
+#  and the `stressCorrection` updateParameter dispatch fix.
+#
+#  Written 2026-09-07 (WP-92e, lane B2) against the interfaces lane A2 is
+#  building to, BEFORE any P2 binary exists -- see the module docstring's
+#  "LANE B2 / P2 BATTERY" paragraph for the full brief and its caveats.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+#  1. `-implexFloor implicit|accept|refuse` (new default `implicit`)
+# ---------------------------------------------------------------------------
+
+def _drive_floor_ladder(tag, floor_mode, tol=1.0e-9, reduction_limit=0.3,
+                        big_factor=20.0, max_attempts=8, ds0=0.05):
+    """Prime a free-DOF triaxial deck (same shape as the M4 survivor test
+    above), then force a subdivision ladder DOWN TO the -implexControl
+    reduction floor -- `tol` is unreachable by construction, so only the
+    floor branch (never a genuinely small error) can ever end the ladder,
+    under any of the three -implexFloor modes.
+
+    Returns a list of (ds, rc, implexDetail) for every rung attempted, in
+    order, stopping at the first accepted (rc == 0) attempt if any.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', tol, reduction_limit,
+            '-implexFloor', floor_mode)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -6.0 / 4.0)
+
+    ops.integrator('LoadControl', ds0)
+    rc_prime = ops.analyze(1)
+    assert rc_prime == 0, ('the priming step (un-primed, arms mImplexDt0) '
+                           'failed to converge -- a harness problem', rc_prime)
+    ops.loadConst('-time', 0.0)
+
+    ds = ds0 * big_factor
+    history = []
+    for attempt in range(max_attempts):
+        ops.integrator('LoadControl', ds)
+        rc = ops.analyze(1)
+        detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+        history.append((ds, rc, detail))
+        if rc == 0:
+            break
+        ds = ds / 2.0
+    return history
+
+
+def test_floor_fallback_delivers_implicit_stress_and_counts():
+    """ADR-92 P2: `-implexFloor` selects what happens at the
+    `-implexControl` reduction floor (`|mImplexDt| < reductionLimit *
+    mImplexDt0`), where the OLD (P1) behaviour unconditionally accepted the
+    extrapolated `sigma~` no matter how large its error. Drives the SAME
+    ladder as `test_implexcontrol_floor_accepts_once_reduction_limit_is_reached`
+    under all three modes:
+
+      * `refuse` -- every rung refuses, including the floor rung itself;
+        there is nothing to fall back to.
+      * `accept` -- the RETIRED unconditional-accept behaviour (negative
+        control / the mutant this test is written to catch if
+        `-implexFloor` is silently ignored): the floor step is accepted
+        with the RAW large extrapolation error still on the wire.
+      * `implicit` (the NEW default) -- the floor step is accepted, but the
+        GP delivers the IMPLICIT companion's own stress for that step
+        instead of the extrapolation, so the committed `implexError`
+        collapses relative to the immediately preceding (refused) attempt's
+        -- sigma~ == sigma_implicit at commit, to within genuine numerical
+        noise, not the raw first-order extrapolation gap.
+
+    `implexGuards[0]` (floor fallbacks) must increment ONLY on the
+    `implicit` run's floor acceptance, and `implexGuards[3]` (reserved,
+    always 0 by the response's own contract) must never move under any of
+    the three mechanisms this file exercises.
+
+    Kills a mutant that ignores `-implexFloor` entirely (every mode behaves
+    like the old unconditional accept -- caught by `refuse` never actually
+    refusing at the floor, and by the `implicit` run's error ratio staying
+    close to 1 instead of collapsing), or that swaps `implicit`/`accept`.
+    """
+    tol = 1.0e-9
+    reduction_limit = 0.3
+
+    hist_refuse = _drive_floor_ladder(8330, 'refuse', tol, reduction_limit)
+    assert all(rc != 0 for _, rc, _ in hist_refuse), (
+        '-implexFloor refuse accepted a step at (or below) the reduction '
+        'floor -- refuse is supposed to refuse EVERY rung, including the '
+        'floor rung, since there is nothing to fall back to', hist_refuse)
+
+    hist_accept = _drive_floor_ladder(8331, 'accept', tol, reduction_limit)
+    accepted_accept = [h for h in hist_accept if h[1] == 0]
+    assert accepted_accept, (
+        '-implexFloor accept never reached an accepted step -- the ladder '
+        'harness itself needs re-deriving, not this assertion', hist_accept)
+    ds_a, rc_a, detail_a = accepted_accept[-1]
+    assert detail_a[0] > tol, (
+        '-implexFloor accept is supposed to commit the RAW, large '
+        'extrapolation error at the floor (the retired unconditional- '
+        'accept behaviour) -- if this reads near zero, the flag stopped '
+        'selecting the accept mode', detail_a, tol)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert len(guards_before) == 4, (
+        'implexGuards did not return the documented 4-component vector',
+        guards_before)
+    hist_implicit = _drive_floor_ladder(8332, 'implicit', tol, reduction_limit)
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    accepted_idx = next((i for i, h in enumerate(hist_implicit) if h[1] == 0), None)
+    assert accepted_idx is not None, (
+        '-implexFloor implicit never reached an accepted step', hist_implicit)
+    assert accepted_idx > 0, (
+        'the FIRST attempt was accepted -- the ladder needs to actually '
+        'refuse at least once before reaching the floor for this test to '
+        'distinguish the floor fallback from an ordinary accept',
+        hist_implicit)
+
+    _, rc_last_refused, detail_last_refused = hist_implicit[accepted_idx - 1]
+    ds_floor, rc_floor, detail_floor = hist_implicit[accepted_idx]
+    assert rc_floor == 0, ('sanity: the located "accepted" attempt did not '
+                           'actually converge', hist_implicit)
+
+    err_floor = detail_floor[0]
+    err_last_refused = detail_last_refused[0]
+    assert err_last_refused > 0.0, (
+        'the last refused attempt reported a zero error -- cannot form the '
+        'ratio this test needs', detail_last_refused)
+    ratio = err_floor / err_last_refused
+    assert ratio < 0.1, (
+        '-implexFloor implicit is supposed to deliver the IMPLICIT stress '
+        'at the floor, collapsing the committed implexError relative to '
+        'the immediately preceding refused attempt -- got a ratio of %r '
+        '(floor error %r vs last-refused error %r), not < 0.1'
+        % (ratio, err_floor, err_last_refused), hist_implicit)
+
+    assert guards_after[0] - guards_before[0] >= 1, (
+        'implexGuards[0] (floor fallbacks) did not increment across the '
+        '-implexFloor implicit ladder reaching its floor',
+        guards_before, guards_after)
+    assert guards_after[3] == guards_before[3], (
+        'implexGuards[3] (reserved) moved -- it is documented to always '
+        'read 0; a mutant that shifts the vector by one slot would show up '
+        'here first', guards_before, guards_after)
+
+
+# ---------------------------------------------------------------------------
+#  2. `-implexGuard on|off` -- the elastic predictor after a load reversal
+# ---------------------------------------------------------------------------
+
+def _drive_reversal(tag, guard_mode):
+    """`_establish_plastic_history`, then ONE reversal step (the axial
+    deviator load flips sign, so `(alpha - alpha_in):n < 0` at that commit
+    and `alpha_in` resets), then ONE continuation step in the SAME reversed
+    direction and at the SAME `LoadControl` magnitude as the reversal step
+    itself -- so a live (non-guarded) `f` on the continuation step would
+    read the ordinary same-ds ratio (1.0, no `-implexAlpha` given), making
+    a guard-forced `f = 0` unambiguous against it.
+
+    Returns (implexDetail on the continuation step, implexGuards before the
+    continuation step, implexGuards after it).
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexGuard', guard_mode)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    # the reversal step: opposite sign to _establish_plastic_history's own
+    # compressive pattern -- relieves, then reverses, the axial deviator.
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)
+    ops.integrator('LoadControl', 1.0)
+    rc_rev = ops.analyze(1)
+    assert rc_rev == 0, ('the reversal step failed to converge', rc_rev)
+    ops.loadConst('-time', 0.0)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    # the continuation step -- same reversed direction, same magnitude.
+    ops.timeSeries('Linear', 5)
+    ops.pattern('Plain', 5, 5)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)
+    ops.integrator('LoadControl', 1.0)
+    rc_cont = ops.analyze(1)
+    assert rc_cont == 0, ('the post-reversal continuation step failed to '
+                          'converge', rc_cont)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+def test_guard_zeroes_f_after_reversal():
+    """ADR-92 P2: `-implexGuard on` (the default) forces the elastic
+    predictor (`implexDetail[5] == 0.0`, i.e. `f = 0`) on the step
+    immediately after a commit whose state shows a load reversal
+    (`alpha_in` reset). `-implexGuard off` leaves the extrapolation live on
+    that same step, reading the ordinary dt ratio instead.
+
+    Kills a mutant that never wires the reversal-guard branch (both modes
+    would read the live ratio) or that ignores `-implexGuard off` (the
+    guard would fire regardless of the flag).
+    """
+    detail_on, guards_before_on, guards_after_on = _drive_reversal(8340, 'on')
+    assert detail_on[5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the step immediately '
+        'after a committed load reversal (alpha_in reset) -- -implexGuard '
+        'on is supposed to force the elastic-predictor (f = 0) '
+        'extrapolation on that step', detail_on)
+    assert guards_after_on[1] - guards_before_on[1] >= 1, (
+        'implexGuards[1] (f=0 guards) did not increment across the '
+        'post-reversal step even though implexDetail[5] read 0.0',
+        guards_before_on, guards_after_on)
+
+    detail_off, guards_before_off, guards_after_off = _drive_reversal(8341, 'off')
+    expected_f_off = 1.0   # same-ds continuation, no -implexAlpha given
+    assert detail_off[5] == pytest.approx(expected_f_off, rel=1.0e-6, abs=1.0e-9), (
+        'with -implexGuard off, implexDetail[5] should equal the ordinary '
+        'dt ratio on the SAME post-reversal step where -implexGuard on '
+        'forces f = 0 -- if this also reads 0.0, the guard is not gated by '
+        'the flag', detail_off, expected_f_off)
+    assert guards_after_off[1] == guards_before_off[1], (
+        'implexGuards[1] moved with -implexGuard off -- the guard count '
+        'must not increment when the guard itself is disabled',
+        guards_before_off, guards_after_off)
+
+
+# ---------------------------------------------------------------------------
+#  3. `-implexGuard on` -- the elastic predictor after softening
+#
+#  NO BINARY EXISTS FOR THIS LANE TO MEASURE AGAINST (module docstring,
+#  "LANE B2 / P2 BATTERY"). Whether the dense confine-first deck below
+#  actually reaches a peak-then-decline in eta/M_b within its step budget
+#  is genuinely unknown from here -- default e_init (0.6944) IS already
+#  dense-of-critical at this deck's confinement (psi ~ -0.13, computed from
+#  _PARAMS: e_c = e0 - lambda_c*(p/Patm)**ksi at p ~ 1.7 kPa, the CONFINED
+#  deck's own measured confinement pressure -- see `_c_series`'s block
+#  comment), and the net-DILATING shape (`lat = 1.5`) is the same one
+#  `_build_floor_seeking_deck` already proves drives the material hard
+#  toward its limits. But "dense and dilating enough to threaten the p_min
+#  floor" (that function's own proven regime, at a MUCH lower confinement)
+#  is not the same claim as "reaches a peak-then-decline in stress ratio at
+#  THIS confinement within 400 steps" -- so this test measures its own
+#  outcome at runtime and reports whichever one is true, rather than
+#  asserting one that was never checked.
+# ---------------------------------------------------------------------------
+
+_SOFTEN_N_DEV = 400
+_SOFTEN_E_CONF = sani._C_E_CONF     # ~1.7 kPa confinement (measured on the
+                                    # sibling _drive_confined deck), safely
+                                    # above the p_min floor
+_SOFTEN_LAT = 1.5                   # net-dilating -- _build_floor_seeking_deck's
+                                    # own proven shape
+
+
+def test_guard_zeroes_f_after_softening():
+    """ADR-92 P2: `-implexGuard on` forces the elastic predictor
+    (`implexDetail[5] == 0.0`) on the step after a commit whose state shows
+    SOFTENING (`Kp <= 0`), the same mechanism
+    `test_guard_zeroes_f_after_reversal` checks for a load reversal.
+
+    `Kp` itself is not a Python-visible response, so this test uses the
+    macroscopic proxy every critical-state model shares: under monotone
+    straining, a stress ratio (`eta/M_b`, `sani._state_probe`'s own
+    `ratio` field) that has been rising step over step and then, for the
+    first time, DECLINES is the observable signature of the return map
+    having found `Kp <= 0` at that declining commit (a still-rising ratio
+    implies `Kp > 0`: the material is still hardening toward the bounding
+    surface). The FIRST such decline is taken as the softening commit, and
+    the guard is checked on the step immediately after it.
+
+    See the block comment above this test for why the outcome is measured
+    at runtime rather than asserted: if the deck never softens within
+    `_SOFTEN_N_DEV` steps, this calls `pytest.xfail` with the actual
+    numbers reached (the eta/M_b history) rather than faking a pass or a
+    hard failure for a claim nobody has verified from this lane.
+    """
+    tag = 8350
+    opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    n_dev = _build_floor_seeking_deck(tag, opts, e_conf=_SOFTEN_E_CONF,
+                                      n_dev=_SOFTEN_N_DEV, lat=_SOFTEN_LAT)
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(sani._C_N_CONF):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+    max_ratio = float('-inf')
+    prev_ratio = None
+    ratio_history = []
+    soften_step = None
+    for step in range(n_dev):
+        assert ops.analyze(1) == 0, f'deviatoric step {step + 1} failed'
+        ratio = sani._state_probe()['ratio']
+        ratio_history.append(ratio)
+        if prev_ratio is not None and ratio < prev_ratio and prev_ratio >= max_ratio:
+            soften_step = step   # THIS commit is the first decline
+            break
+        max_ratio = max(max_ratio, ratio)
+        prev_ratio = ratio
+
+    if soften_step is None:
+        pytest.xfail(
+            'the dense confine-first deck (e_conf=%r, lat=%r) never showed '
+            'a peak-then-decline in eta/M_b over %d deviatoric steps -- '
+            'reached a max ratio of %.6f (last 5: %r) without softening. '
+            'This is a real measurement against a real build, not a stand- '
+            'in: either raise n_dev/lat, lower e_conf, or accept that this '
+            'deck/parameter set does not soften in the tested range'
+            % (_SOFTEN_E_CONF, _SOFTEN_LAT, n_dev, max_ratio,
+               ratio_history[-5:]))
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert ops.analyze(1) == 0, (
+        'the post-softening confirmation step failed to converge', soften_step)
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    assert detail[5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the step immediately '
+        'after the committed state first showed a peak-then-decline in '
+        'eta/M_b (the softening proxy) -- -implexGuard on is supposed to '
+        'force the elastic-predictor (f = 0) extrapolation on that step',
+        soften_step, ratio_history[-3:], detail)
+    assert guards_after[1] - guards_before[1] >= 1, (
+        'implexGuards[1] (f=0 guards) did not increment across the '
+        'post-softening step', guards_before, guards_after)
+
+
+# ---------------------------------------------------------------------------
+#  4. The hold-safe clock -- a LoadControl(0.0) commit preserves
+#     mImplexDtCommit and the d_eps_p history from the step BEFORE it.
+# ---------------------------------------------------------------------------
+
+_HOLD_DS = 0.02
+
+
+def _drive_hold_sequence(tag, with_hold):
+    """A few constant-ds plastic history steps (so "the ds before the
+    hold" is unambiguous), optionally a LoadControl(0.0) hold, then ONE
+    continuation step at the SAME ds. `-implexAlpha 0.7` makes the
+    dtCommit-reset fallback (`mImplexDtCommit == 0.0 -> f = alpha`)
+    distinguishable from the correct hold-preserving answer (`f = 1.0`,
+    the ratio against the dt from BEFORE the hold): if the hold silently
+    reset the clock, this deck would read 0.7 on the continuation step
+    instead of 1.0.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexAlpha', 0.7)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+
+    ops.integrator('LoadControl', _HOLD_DS)
+    for step in range(_PROBE_N_HISTORY):
+        assert ops.analyze(1) == 0, f'history step {step + 1} failed'
+    ops.loadConst('-time', 0.0)
+
+    guards_before = guards_after = None
+    if with_hold:
+        ops.integrator('LoadControl', 0.0)
+        guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+        assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
+        guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    ops.integrator('LoadControl', _HOLD_DS)
+    assert ops.analyze(1) == 0, 'the post-hold continuation step failed to converge'
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return detail, stress, guards_before, guards_after
+
+
+def test_hold_keeps_clock_and_history():
+    """ADR-92 P2: a `LoadControl(0.0)` commit (the gravity-hold /
+    re-equilibration idiom) must be COUNTED (`implexGuards[2]`
+    increments) and must PRESERVE `mImplexDtCommit` and the `d_eps_p`
+    history from the step BEFORE the hold -- not reset either, and not
+    treat the hold itself as an ordinary same-ds step.
+
+    See `_drive_hold_sequence` for why `-implexAlpha 0.7` makes the two
+    possible readings unambiguous (0.7 = the dtCommit-reset fallback,
+    1.0 = the correct hold-preserving ratio against the PRE-hold dt), and
+    the module docstring's "WHAT A ZERO-FREE-DOF DECK CAN AND CANNOT SHOW"
+    section for why this uses the free-DOF triaxial rig rather than a
+    zero-free-DOF one -- a hold-then-continue sequence needs a mechanically
+    meaningful hold, not a vacuous one.
+
+    Also checks the two sequences (with and without the hold) commit the
+    SAME final stress to 1e-10 -- the hold is a no-op on the MECHANICS
+    (zero load increment, nothing to solve for) even though it is not a
+    no-op on the IMPL-EX clock bookkeeping this test's other assertions
+    check.
+    """
+    detail_hold, stress_hold, guards_before, guards_after = _drive_hold_sequence(
+        8360, with_hold=True)
+    assert guards_before is not None and len(guards_before) == 4, (
+        'implexGuards did not return the documented 4-component vector',
+        guards_before)
+    assert guards_after[2] - guards_before[2] >= 1, (
+        'implexGuards[2] (hold-preserved commits) did not increment across '
+        'the LoadControl(0.0) hold step', guards_before, guards_after)
+
+    assert detail_hold[5] == pytest.approx(1.0, rel=1.0e-6, abs=1.0e-9), (
+        'implexDetail[5] (f) on the step after a LoadControl(0.0) hold, at '
+        'the SAME ds as before the hold, is not 1.0 -- the hold is '
+        'supposed to keep mImplexDtCommit (and the d_eps_p history) from '
+        'the step BEFORE the hold, so the ratio must be against THAT dt, '
+        'not reset by the hold. -implexAlpha 0.7 makes the dtCommit-reset '
+        'fallback read 0.7 instead, so this distinguishes the two',
+        detail_hold)
+
+    _, stress_no_hold, _, _ = _drive_hold_sequence(8361, with_hold=False)
+    assert sani._reldiff(stress_no_hold, stress_hold) <= 1.0e-10, (
+        'the committed stress after the hold-then-continue sequence does '
+        'not match the SAME sequence run WITHOUT the hold, to 1e-10 -- the '
+        'hold is supposed to be a mechanical no-op on the committed answer '
+        'even though it is not a no-op on the clock bookkeeping',
+        stress_no_hold, stress_hold)
+
+
+# ---------------------------------------------------------------------------
+#  5. `ops.setParameter(..., 'stressCorrection')` now takes effect
+# ---------------------------------------------------------------------------
+
+def _drive_stresscorrection(mat_tag, val):
+    """Confine, optionally `setParameter(..., 'stressCorrection')` right
+    before the plastic leg, then take `_PROBE_N_HISTORY` nominal plastic
+    steps. `-ele 1` (the element tag `_build_free_dof_triaxial` always
+    uses), NOT `mat_tag` (the material tag) -- setParameter's `-ele` is an
+    element selector, per every other setParameter call in this fork's own
+    test suite (`test_energyBalanceRecorder.py`,
+    `test_initStrain_dimension_general.py`).
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_free_dof_triaxial(mat_tag, opts, p0=50.0)
+    _confine_only(mat_tag)
+
+    if val is not None:
+        ops.setParameter('-val', val, '-ele', 1, 'stressCorrection')
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+
+    first_stress = None
+    for step in range(_PROBE_N_HISTORY):
+        assert ops.analyze(1) == 0, f'plastic step {step + 1} failed'
+        if step == 0:
+            first_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    final_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return first_stress, final_stress
+
+
+def test_setparameter_stresscorrection_takes_effect():
+    """ADR-92 P2: `ops.setParameter('-val', N, '-ele', <tags>,
+    'stressCorrection')` now reaches `ManzariDafalias::mStressCorrectionInUse`
+    (responseID 9, `ManzariDafalias.cpp:897`) through `LadrunoSANISAND` --
+    previously a no-op on this subclass (the parameter dispatch, `setParameter`
+    at `:852`, was reachable, but nothing carried the update through to
+    where `Stress_Correction()` reads the flag).
+
+    `Stress_Correction()` (`ManzariDafalias.cpp:2676`) is the drift-back-
+    onto-the-yield-surface step inside `ModifiedEuler`'s successful-substep
+    branch (`:1790`, the default -implex companion), guarded
+    `if (!mStressCorrectionInUse) return;` (`:2681`) -- so forcing it off
+    with `-val 0` must measurably move the FIRST plastic step's committed
+    stress away from the default (compiled-in `true`, every constructor)
+    answer, and explicitly setting it back to `1` must reproduce that SAME
+    default answer exactly, proving `-val 1` maps to the identical boolean
+    the constructors hardcode rather than some other encoding.
+
+    Kills a mutant that drops the P2 dispatch fix (every -val is a no-op,
+    all three runs land on the default answer) or that maps `-val 1` to
+    something other than the compiled-in default (e.g. any nonzero treated
+    the same as zero, or a sign flip).
+    """
+    first_default, final_default = _drive_stresscorrection(8370, val=None)
+    first_off, final_off = _drive_stresscorrection(8371, val=0)
+    first_on, final_on = _drive_stresscorrection(8372, val=1)
+
+    assert sani._reldiff(first_default, first_off) > _SENSITIVITY_FLOOR, (
+        '-val 0 did not move the FIRST plastic step away from the default '
+        '(stressCorrection compiled-in true) answer -- the positive '
+        'control this test needs is vacuous; either the P2 dispatch fix '
+        "did not land, or this deck never reaches Stress_Correction() at "
+        "all (it only runs inside ModifiedEuler's successful-substep "
+        'branch)', first_default, first_off)
+
+    assert sani._reldiff(first_default, first_on) <= _EQ_TOL, (
+        'explicitly setting stressCorrection to 1 (the compiled-in '
+        'default) does not reproduce the answer of never calling '
+        'setParameter at all -- either -val 1 is not mapping to the same '
+        'boolean the constructors hardcode, or the dispatch is not '
+        'idempotent', first_default, first_on)
+    assert sani._reldiff(final_default, final_on) <= _EQ_TOL, (
+        'the same divergence as above, carried through the rest of the '
+        'plastic history', final_default, final_on)
