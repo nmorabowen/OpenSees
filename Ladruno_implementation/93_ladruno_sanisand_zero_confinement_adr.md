@@ -341,9 +341,11 @@ benchmark is a real footing or the idealised half-space.
   Zero-free-DOF confine-first deck, `stdBrick`, ds 1e-3, 30 plastic steps, zero companion cap
   hits (max 17 572 substeps under the 20 000 cap): a tiny follow-on increment of 1e-6 / 1e-8 /
   1e-10 gives `|Δσ|/|σ| ÷ d_eps` = 145 / 152 / 152 for `-implex`, identical for the implicit
-  twin (bit-identical committed state, expected with no free DOFs), and 145 / 146 / 146 with
-  `stressCorrection` off — the linear, on-surface signature over three decades, not the
-  O(1)-constant one. (A first attempt on the free-DOF settlement column was not evidence: a
+  twin (bit-identical committed state, expected with no free DOFs), and 145 / 146 / 146 on an arm that set `stressCorrection` to 0 via `setParameter` — **which is a
+  silent no-op on this build** (quirks row 2026-09-07: `updateParameter` reads `theInt`), so that
+  arm is NOT a stress-correction-off control and its small differences from arm A are unexplained
+  (a fresh material instance, not the parameter). The linear, on-surface signature over three
+  decades stands on the `-implex` and implicit arms; the correction's role is UNTESTED. (A first attempt on the free-DOF settlement column was not evidence: a
   `dt = 0` hold measures no `implexError` by construction, the hold moves nodes to close the
   committed state's equilibrium gap, and that column hits the companion cap on 19/30 commits
   even at 20 000 — three quirks rows written.) **Loose Esmeralda leg 146456** ended at s/B
