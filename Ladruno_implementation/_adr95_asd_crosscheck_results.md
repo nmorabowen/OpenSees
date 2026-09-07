@@ -1,3 +1,24 @@
+# ADR-95 ASD-DP cross-check — VERDICT (2026-09-07, merged build feb358fda, staged dist_p5)
+
+**The trigger is implementation-independent; the defect is not.** Same deck, `ASDPlasticMaterial3D`
+DruckerPrager (η = 3α, ξ_c = SY/√3, ψ = 0; NO tension cutoff exists in `DruckerPrager_YF`, and its
+`CHECK_APEX_REGION`/`APEX_STRESS` are stubs — ADR-94 open item):
+- `h8bbar` linear control: **TARGET s/B 0.15, q 147.40 = 1.0611 of exact** (UW-DP on the same mesh:
+  1.0850 — a 2.2 % cone-fit difference between the two implementations, not a wall question); 0 GPs
+  with mean stress ≥ 0 anywhere on the path, 0 NaN.
+- `h20uri`: **FLOOR at s/B 0.01804, q 122.45 = 0.8815 (ALLOWANCE)**, with the global tangent HEALTHY
+  at the wall (σ_min/scale 2.38e-4, cond 8.5e4) and **exactly 4 GPs at mean stress ≥ 0 (I1 max
+  +0.77 kPa) appearing at the last two stations and never before** — the same four footing-edge GPs
+  that hit UW's cutoff, now hitting ASD's cone APEX, where the return map is a stub and the ladder
+  collapses without a tangent event. No NaN (the ADR-94 B4 fix is in this build).
+⇒ Both fork DP implementations fail at the first tensile Gauss points beside the footing edge, each
+through its own defect: UW via the dead corner/cutoff branch (FIXED, #803), ASD via the unimplemented
+apex return (OPEN, ADR-94). ASD walls later (0.018 vs 0.011) because without a cutoff I1 rises
+further before the apex is reached. Legs: `asd_h8bbar.log`, `asd_h20uri.log`, `asd_path_diag.py`.
+
+---
+(previous blocked-state record follows)
+
 # ADR-95 ASD Drucker-Prager cross-check -- BLOCKED before either leg ran
 
 **VERDICT: neither leg (h8bbar control, h20uri) produced a usable path.** Both

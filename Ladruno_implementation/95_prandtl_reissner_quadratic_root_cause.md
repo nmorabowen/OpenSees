@@ -91,6 +91,17 @@ before. The linear SY 2 control: TARGET. This knob is **consistent with** H1 but
 falsifier: SY moves T, the very quantity the defect triggers on, so any hypothesis that lives at the
 cutoff would pass it. The independent confirmation is P4 (the fix removes the wall). q is not comparable across SY (it adds cohesion to the oracle); reach and mode are.
 
+## 3b. Is it UW-specific? The ASD-DP cross-check
+
+The fork's other Drucker–Prager, `ASDPlasticMaterial3D` (no tension cutoff; apex return is an
+unimplemented stub — ADR-94), on the merged build: linear control TARGET at 1.0611 (a 2.2 % cone-fit
+offset from UW's 1.0850, not a wall question); **`h20uri` FLOOR at s/B 0.01804, 0.8815, with a
+healthy global tangent, at exactly the station where the first 4 GPs reach mean stress ≥ 0** — the
+same footing-edge GPs, now at the cone apex instead of the cutoff. So the *trigger* (first tensile
+GPs beside the footing edge, which only quadratic elements resolve) is implementation-independent;
+the *defect* is per-implementation: UW's dead corner branch (fixed here), ASD's stub apex return
+(open, ADR-94). Record: `_adr95_asd_crosscheck_results.md`.
+
 ## 4. The defect, precisely (source review)
 
 `DruckerPrager.cpp` (upstream, fmckenna 2011): residual/Jacobian assembly switches on the *value*
