@@ -32,8 +32,8 @@ With the return map repaired (commit `31322a47a`, `fix(adr95-p4)`):
 | element | pre-fix (allowance named) | fixed material |
 |---|---|---|
 | LadrunoBrick20 uri, h0 = 1.0 | FLOOR at s/B 0.01114, 0.769 of exact | __H20_FIXED__ |
-| TenNodeTetrahedron, tet mesh h0 = 1.0 | FLOOR at s/B 0.00161, 0.391 | TARGET at s/B 0.02, 1.051 (still hardening 18 %); long leg __TET10_LONG__ |
-| BezierTet10 std | FLOOR at s/B 0.00168, 0.410 | __BEZSTD_LONG__ |
+| TenNodeTetrahedron, tet mesh h0 = 1.0 | FLOOR at s/B 0.00161, 0.391 | TARGET at s/B 0.02, 1.051 (still hardening); long leg **TARGET s/B 0.15, 1.1704, tail 0.11 % — CAPACITY plateau**, 40–181 corner GPs returned to I1 = T, det O(1) |
+| BezierTet10 std | FLOOR at s/B 0.00168, 0.410 | **TARGET s/B 0.15, 1.1824, tail 0.11 % — CAPACITY plateau**, 120–203 corner GPs returned, det O(1) |
 | BezierTet10 -bbar | TARGET s/B 0.02, 0.713 at matched s/B 0.008 (no corner GP in range) | **TARGET s/B 0.15, 1.0403 of exact, tail 0.02 % — a CAPACITY plateau** |
 | LadrunoBrick -bbar (control) | TARGET, 1.0850 | TARGET, 1.0850 (q_max identical to printed digits) |
 
@@ -80,7 +80,10 @@ forced-accept bailout never fires (no `Jact =` in any log, `n_forced = 0` everyw
 
 SY 0.2 → 2 → 20 kPa moves T from 0.82 to 8.2 to 82 kPa. Prediction: the quadratic wall moves out
 in s/B; the linear control keeps plateauing. Measured (pre-fix material, correct determinant map):
-__P2__. q is not comparable across SY (it adds cohesion to the oracle); reach and mode are.
+SY 0.2 → FLOOR at s/B 0.01114 (n = 2: 0.01124); SY 2 → FLOOR at **0.01351** (+21 %); SY 20 → FLOOR at
+**0.03791** (+240 %). Monotone in T, as predicted, and every wall is the same event: 4 corner GPs with a
+pathological determinant (−3e7 … −5e7 at SY 2, −3e7 at SY 20) at the last converged state, none
+before. The linear SY 2 control: TARGET. q is not comparable across SY (it adds cohesion to the oracle); reach and mode are.
 
 ## 4. The defect, precisely (source review)
 
