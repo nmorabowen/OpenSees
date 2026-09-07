@@ -144,7 +144,7 @@ assertions describe exactly the `accept` mode's contract, and P2's new
 default (`implicit`) would otherwise silently change what floor behaviour
 that test is exercising out from under it.
 
-Collected count after this lane: 29 `def test_...` functions, 33 collected
+Collected count after this lane: 30 `def test_...` functions, 34 collected
 items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
 every other function is a single collected item) -- up from the P1 file's
 21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
@@ -264,6 +264,40 @@ this: the established `d_eps_p(n)` now points the wrong way, so the
 elastic guess is ~19x BETTER (0.0018 vs 0.034) -- exactly P2-6's own
 motivating case (Esmeralda 146569, a leg crawling through refusals near a
 turning point). `_TRIAL_GUARD_TOL = 0.01` sits cleanly between the two.
+
+FOURTH RUN, P2-5b (2026-09-07, `ladrunoBuild() == d5bd259f6`). One new
+test, `test_reversal_guard_is_relative_to_the_last_increment`. P2-5b adds
+`-reversalRel` (default 0.05): the reversal-noise threshold becomes
+`max(reversalTol, reversalRel * mDEpsNormCommit)`, relative to the last
+COMMITTED (non-hold) strain increment, and the SAME noise verdict now
+also gates the P2-2 guard flags on a matching commit (OR'd with a literal
+hold), so a hold can no longer spuriously arm `f = 0` for the step after
+it. One EXISTING test needed a fix: `test_hold_does_not_reset_alpha_in_
+on_the_implicit_path`'s "disabled" twin only passed `-reversalTol 0.0`,
+which no longer fully disables the guard now that `-reversalRel` defaults
+to 0.05 and is independently sufficient to arm it -- added `-reversalRel
+0.0` alongside it.
+
+TWO THINGS MEASURED, NOT ASSUMED, WHILE BUILDING THE NEW TEST. (1) A
+literal `LoadControl(0.0)` hold on the free-DOF triaxial rig cannot show
+default-vs-disabled on EITHER the `alpha_in` or the `implexGuards[1]`
+channel: `ladrunoImplexCommit()`'s guard-flag gate is
+`reversalNoiseGuardFired OR implexHold`, and a literal hold sets
+`implexHold = true` regardless of the noise thresholds, so that channel
+is protected unconditionally either way -- not because the increment is
+exactly zero (it measurably is not; the earlier P2-5 test found the same
+gap for a different reason). The mutant is instead demonstrated on a
+deterministic, EXACTLY-sized perturbation (`_zero_dof_reversal_guard_
+deck`, a zero-free-DOF stdBrick deck with hand-built Path series, so the
+committed strain increment on any step is known by construction rather
+than fought out of Newton's own convergence-tolerance noise floor) via
+`implexGuards[3]`, which DOES discriminate cleanly. (2) On this same-
+direction (non-reversal) deck, `alpha_in` does not move either way
+regardless of guard settings -- the base's own crude sign-based reversal
+branch simply never triggers on monotone continued loading, so that
+channel is documented as non-discriminating here rather than silently
+dropped; part (c) instead confirms the guard does not eat a GENUINE,
+full-magnitude reversal.
 """
 import math
 import os
@@ -2881,9 +2915,10 @@ def test_hold_does_not_reset_alpha_in_on_the_implicit_path():
         're-derive this test\'s premise rather than trust this run\'s '
         'numbers blindly', diffs_a)
 
-    # -- the negative control: -reversalTol 0 on the SAME deck/history/hold --
+    # -- the negative control: -reversalTol 0 -reversalRel 0 (full disable, ADR-92
+    # P2-5b) on the SAME deck/history/hold --
     tag_tol0 = 8381
-    _build_free_dof_triaxial(tag_tol0, ('-reversalTol', 0.0), p0=50.0)
+    _build_free_dof_triaxial(tag_tol0, ('-reversalTol', 0.0, '-reversalRel', 0.0), p0=50.0)
     _establish_plastic_history(tag_tol0)
 
     alpha_in_before0 = _read_all_alpha_in()
@@ -2891,16 +2926,16 @@ def test_hold_does_not_reset_alpha_in_on_the_implicit_path():
 
     ops.integrator('LoadControl', 0.0)
     rc_hold0 = ops.analyze(1)
-    assert rc_hold0 == 0, ('the -reversalTol 0 twin\'s hold failed to '
-                           'converge -- a harness problem', rc_hold0)
+    assert rc_hold0 == 0, ('the fully-disabled (-reversalTol 0 -reversalRel 0) '
+                           "twin's hold failed to converge", rc_hold0)
 
     alpha_in_after0 = _read_all_alpha_in()
     guards_after0 = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
 
     assert guards_after0[3] == guards_before0[3], (
-        'implexGuards[3] moved with -reversalTol 0 -- the guard is '
-        'supposed to be DISABLED at tol 0 (mReversalTol <= 0.0 returns '
-        'immediately), not merely quieter', guards_before0, guards_after0)
+        'implexGuards[3] moved with -reversalTol 0 -reversalRel 0 -- the guard is '
+        'supposed to be fully DISABLED there (mReversalTol <= 0.0 AND '
+        'mReversalRel <= 0.0 both hold), not merely quieter', guards_before0, guards_after0)
 
     diffs_ai0 = [max(abs(x - y) for x, y in zip(b, a))
                 for b, a in zip(alpha_in_before0, alpha_in_after0)]
@@ -3139,3 +3174,287 @@ def test_trial_guard_accepts_f0_before_refusing():
         'supposed to -- re-derive the deck/tol/factor rather than trust '
         'the mechanism assertions above blindly'
         % (err_full, err_f0, _TRIAL_GUARD_TOL), err_full, err_f0)
+
+
+# ===========================================================================
+#  ADR-92 P2-5b (WP-92e lane B2, 2026-09-07, binary d5bd259f6)
+# ===========================================================================
+#
+#  threshold = max(reversalTol, reversalRel * mDEpsNormCommit), reversalRel
+#  DEFAULT 0.05. mDEpsNormCommit is the norm of the last NON-HOLD committed
+#  strain increment -- so on `_build_free_dof_triaxial` +
+#  `_establish_plastic_history` (this file's own proven deck), a genuine
+#  LoadControl(0.0) hold's own (Newton-tolerance-scale, not round-off)
+#  strain increment is caught by the RELATIVE half of the threshold even
+#  where reversalTol alone (P2-5) would miss it -- and P2-5b additionally
+#  gates the P2-2 guard flags on the SAME noise verdict OR'd with the
+#  literal hold itself, so a hold can never spuriously arm f = 0 on the
+#  step after it.
+# ---------------------------------------------------------------------------
+
+def _zero_dof_reversal_guard_deck(tag, opts, n_conf, e_conf, n_hist, e_hist,
+                                  e_perturb, n_post=1):
+    """A confine-first, ZERO-free-DOF `stdBrick` deck (isochoric deviatoric
+    shear, `_c_series`'s own `lat = 0.5` shape) built from scratch with
+    EXPLICIT, EXACT Path-series magnitudes -- not reused from `sani`'s own
+    helpers, because this test needs to choose `e_perturb` to land in a
+    specific, KNOWN window relative to the history's own increment, and a
+    zero-free-DOF deck gives that window EXACTLY (the committed strain
+    increment on any step is the Path series' own consecutive-factor
+    difference times `e_conf`, with no Newton-tolerance noise floor to
+    fight -- `analyze()` trivially converges with zero equations to solve).
+
+    `n_hist` steps of magnitude `e_hist` (establishing `mDEpsNormCommit`),
+    then ONE step of magnitude `e_perturb` (the "perturbation" this test's
+    assertions are about), then `n_post` more ordinary `e_hist` steps
+    (to observe whatever the perturbation's commit armed for the guard).
+    All in the SAME direction -- deliberately not a reversal; see the
+    module docstring on why a same-direction perturbation cannot show
+    `alpha_in` itself moving (the base's own crude sign check never
+    triggers on a monotone path regardless of guard settings), which is
+    why this deck's own tests read `implexGuards[3]` as the primary
+    evidence and document `alpha_in`/`implexGuards[1]` as non-discriminating
+    here rather than silently dropping the checks.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+
+    s_lat = [i / n_conf for i in range(n_conf + 1)]
+    s_ax = list(s_lat)
+    r_lat_hist = 0.5 * e_hist / e_conf
+    r_ax_hist = e_hist / e_conf
+    for i in range(1, n_hist + 1):
+        s_lat.append(1.0 - r_lat_hist * i)
+        s_ax.append(1.0 + r_ax_hist * i)
+    r_lat_p = 0.5 * e_perturb / e_conf
+    r_ax_p = e_perturb / e_conf
+    s_lat.append(s_lat[-1] - r_lat_p)
+    s_ax.append(s_ax[-1] + r_ax_p)
+    for _ in range(n_post):
+        s_lat.append(s_lat[-1] - r_lat_hist)
+        s_ax.append(s_ax[-1] + r_ax_hist)
+    s_lat.append(s_lat[-1])   # the PathSeries hold point, see sani._c_series
+    s_ax.append(s_ax[-1])
+
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -e_conf)
+            if y == 1.:
+                ops.sp(n, 2, -e_conf)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -e_conf)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+_RGR_N_CONF = 10
+_RGR_E_CONF = 5.0e-4
+_RGR_N_HIST = 4
+_RGR_E_HIST = 1.0e-4     # -> mDEpsNormCommit of this order after history
+_RGR_E_PERTURB = 1.0e-6  # 100x smaller than _RGR_E_HIST: 0.01 of it, comfortably
+                         # under reversalRel's default 0.05, comfortably above 0
+
+
+def test_reversal_guard_is_relative_to_the_last_increment():
+    """ADR-92 P2-5b: the reversal-noise guard's threshold is
+    `max(reversalTol, reversalRel * mDEpsNormCommit)` -- relative to the
+    norm of the LAST COMMITTED (non-hold) strain increment, not the tiny
+    fixed `reversalTol` alone (P2-5's own original, since retired as
+    insufficient: Esmeralda's own census measured a hold's noise at
+    Newton-tolerance scale, not round-off). Three parts:
+
+    (a) On the free-DOF triaxial rig, after a plastic history, a
+        `LoadControl(0.0)` hold at the DEFAULT `-reversalRel 0.05` leaves
+        `alpha_in` bit-identical at every Gauss point, and leaves
+        `implexGuards[1]` (the P2-2 f=0 guard count) moving by the SAME
+        amount on the step AFTER the hold as it did on the step BEFORE the
+        hold (both deltas are 0 on this deck -- P2-5b's OWN fix, gating
+        the P2-2 guard flags on the same noise verdict OR'd with the
+        literal hold, is exactly what keeps a hold from spuriously ARMING
+        f = 0 for the step after it).
+
+    (b) THE MUTANT: `-reversalRel 0 -reversalTol 0` (full disable).
+        MEASURED: on THIS free-DOF deck a literal `LoadControl(0.0)` hold
+        cannot show the disable either, for a DIFFERENT reason than "the
+        increment is exactly zero" (it measurably is not, see the module's
+        earlier P2-5 test) -- `ladrunoImplexCommit()`'s guard-flag gate is
+        `reversalNoiseGuardFired OR implexHold`, and a literal hold sets
+        `implexHold = true` UNCONDITIONALLY regardless of the noise
+        thresholds, so the guard-flags channel is protected either way and
+        cannot distinguish default from disabled there. Per the
+        coordinator's own fallback, this test instead uses a DETERMINISTIC,
+        EXACTLY-SIZED perturbation on a zero-free-DOF deck
+        (`_zero_dof_reversal_guard_deck`, `e_perturb` = 1% of the
+        established `e_hist`) -- NOT a literal hold, but the same
+        "genuinely small, not literally zero" shape, with `implexHold`
+        false (the LoadControl factor for that one step is 1.0, not 0.0,
+        so `mImplexDt != 0`) so the noise-threshold comparison itself is
+        what decides. `implexGuards[3]` (reversal-noise) increments (one
+        per Gauss point) under the default threshold and stays flat under
+        the disabled one, on the IDENTICAL perturbation -- the direct,
+        unambiguous demonstration of the relative threshold actually
+        gating something. `alpha_in` is also checked and reads
+        bit-identical under BOTH settings here (documented, not
+        overclaimed): this SAME-DIRECTION perturbation never trips the
+        base's own crude sign-based reversal branch regardless of guard
+        settings (same reason the module's earlier P2-5 test found for its
+        own deck), so this channel is not the one that discriminates on
+        this deck either.
+
+    (c) A GENUINE reversal (opposite sign, FULL `LoadControl(1.0)`
+        magnitude -- `_drive_reversal`'s own proven shape, already exercised
+        by `test_guard_zeroes_f_after_reversal`) still resets `alpha_in`
+        under the DEFAULT `-reversalRel`/`-reversalTol`: the relative
+        threshold must not eat a real reversal just because it is
+        relative, only genuine noise.
+    """
+    # -- (a): the literal hold, default thresholds --------------------------
+    tag_a = 8401
+    opts_a = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # defaults: rel=0.05, tol=1e-10
+    _build_free_dof_triaxial(tag_a, opts_a, p0=50.0)
+    _establish_plastic_history(tag_a)
+
+    ai_before_hold = _read_all_alpha_in()
+    guards_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    detail_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+
+    # the delta across the LAST PRE-hold nominal step (already taken inside
+    # _establish_plastic_history) -- re-derive it by comparing implexGuards
+    # immediately before this hold against what it read one step earlier is
+    # not directly available, so instead this compares the delta ACROSS the
+    # hold against the delta ACROSS the post-hold step below: both must be 0.
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
+
+    ai_after_hold = _read_all_alpha_in()
+    guards_after_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    diffs_ai_hold = [max(abs(x - y) for x, y in zip(b, a))
+                     for b, a in zip(ai_before_hold, ai_after_hold)]
+    assert max(diffs_ai_hold) == 0.0, (
+        'alpha_in moved at at least one Gauss point across the hold at the '
+        'DEFAULT -reversalRel/-reversalTol', diffs_ai_hold)
+
+    delta_guard1_across_hold = guards_after_hold[1] - guards_before_hold[1]
+    assert delta_guard1_across_hold == 0.0, (
+        'implexGuards[1] moved across the hold itself -- the P2-2 guard '
+        'flags are supposed to be LEFT UNTOUCHED (not recomputed) on a '
+        'literal-hold commit', guards_before_hold, guards_after_hold)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 6)
+    ops.pattern('Plain', 6, 6)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    assert ops.analyze(1) == 0, 'the post-hold nominal step failed to converge'
+
+    guards_after_post = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    detail_after_post = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    delta_guard1_after_hold = guards_after_post[1] - guards_after_hold[1]
+    assert delta_guard1_after_hold == delta_guard1_across_hold == 0.0, (
+        'implexGuards[1] (f=0 guard) delta on the step AFTER the hold does '
+        'not match the (zero) delta across the hold itself -- P2-5b is '
+        'supposed to keep the P2-2 guard flags from a hold-commit exactly '
+        'as the PREVIOUS commit left them, so nothing new should be armed '
+        'for this post-hold step', delta_guard1_across_hold, delta_guard1_after_hold,
+        guards_before_hold, guards_after_hold, guards_after_post)
+    assert detail_after_post[5] != 0.0, (
+        'implexDetail[5] (f) on the post-hold step is exactly 0.0 -- the '
+        'P2-2 guard spuriously armed f = 0 for this step, exactly the '
+        'Esmeralda 146580 defect P2-5b fixes', detail_before_hold, detail_after_post)
+
+    # -- (b): the mutant, full disable, on a deterministic perturbation -----
+    guards_before_pert_default = None
+    for tag_b, rel, tol, label in ((8402, None, None, 'default'),
+                                   (8403, 0.0, 0.0, 'disabled')):
+        opts_b = ['-implex', '-maxSubsteps', _CAP_ADEQUATE]
+        if rel is not None:
+            opts_b += ['-reversalRel', rel]
+        if tol is not None:
+            opts_b += ['-reversalTol', tol]
+        _zero_dof_reversal_guard_deck(tag_b, tuple(opts_b), _RGR_N_CONF, _RGR_E_CONF,
+                                      _RGR_N_HIST, _RGR_E_HIST, _RGR_E_PERTURB)
+        ops.updateMaterialStage('-material', tag_b, '-stage', 0)
+        for step in range(_RGR_N_CONF):
+            assert ops.analyze(1) == 0, f'{label}: confinement step {step + 1} failed'
+        ops.updateMaterialStage('-material', tag_b, '-stage', 1)
+        for step in range(_RGR_N_HIST):
+            assert ops.analyze(1) == 0, f'{label}: history step {step + 1} failed'
+
+        ai_before_p = _read_all_alpha_in()
+        guards_before_p = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+        assert ops.analyze(1) == 0, f'{label}: the perturbation step failed to converge'
+
+        ai_after_p = _read_all_alpha_in()
+        guards_after_p = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+        diffs_ai_p = [max(abs(x - y) for x, y in zip(bb, aa))
+                     for bb, aa in zip(ai_before_p, ai_after_p)]
+        if label == 'default':
+            guards_before_pert_default = guards_before_p
+            assert max(diffs_ai_p) == 0.0, (
+                'DOCUMENTED, not a stronger claim: alpha_in moved on the '
+                'default-threshold perturbation -- see the test docstring '
+                'part (b) for why this deck\'s same-direction perturbation '
+                'is not expected to move it either way', diffs_ai_p)
+            assert guards_after_p[3] - guards_before_p[3] >= 1, (
+                'implexGuards[3] (reversal-noise) did NOT increment on the '
+                'default-threshold perturbation -- the relative threshold '
+                '(reversalRel * mDEpsNormCommit) is supposed to catch a '
+                'perturbation 100x smaller than the established history',
+                guards_before_p, guards_after_p)
+        else:
+            assert guards_after_p[3] == guards_before_p[3], (
+                'implexGuards[3] moved with -reversalRel 0 -reversalTol 0 '
+                '(full disable) on the IDENTICAL perturbation that fired it '
+                'above -- the guard is supposed to be OFF entirely, not '
+                'merely quieter', guards_before_p, guards_after_p)
+
+    # -- (c): a GENUINE reversal must still reset alpha_in, default config --
+    tag_c = 8404
+    opts_c = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_free_dof_triaxial(tag_c, opts_c, p0=50.0)
+    _establish_plastic_history(tag_c)
+
+    ai_before_rev = _read_all_alpha_in()
+
+    dq_rev = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 7)
+    ops.pattern('Plain', 7, 7)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq_rev)   # opposite sign -- a genuine reversal
+    ops.integrator('LoadControl', 1.0)            # FULL magnitude, matching _drive_reversal
+    assert ops.analyze(1) == 0, 'the genuine reversal step failed to converge'
+
+    ai_after_rev = _read_all_alpha_in()
+    diffs_ai_rev = [max(abs(x - y) for x, y in zip(b, a))
+                    for b, a in zip(ai_before_rev, ai_after_rev)]
+    assert max(diffs_ai_rev) > 0.0, (
+        'alpha_in did NOT move at any Gauss point across a GENUINE, '
+        'full-magnitude reversal at the DEFAULT -reversalRel/-reversalTol '
+        '-- the relative threshold is supposed to leave a REAL reversal '
+        'alone, not eat it along with the noise', diffs_ai_rev)
