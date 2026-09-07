@@ -457,7 +457,22 @@ class LadrunoSANISAND : public ManzariDafalias
     // (below the combined threshold) and therefore undid the reset -- read by
     // ladrunoImplexCommit() to gate the P2-2 reversal/softening detection at
     // commit with the SAME criterion; the trial-time call sites discard it.
-    bool ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b
+    //
+    // Ladruno ADR-92 P2-5c: `ops_Dt == 0.0` is checked FIRST and is
+    // sufficient on its own, ahead of (and regardless of) mReversalTol /
+    // mReversalRel -- a hold is a fact the DOMAIN reports, not something the
+    // material has to infer from a strain norm, so it is not vulnerable to
+    // the same undershoot P2-5b fixed for far-field / early-push points
+    // whose own last increment was itself tiny (R3 footing: 136/1600
+    // IMPL-EX, 88/1600 implicit still reset at the relative floor). Under
+    // `-implexDt user` a user-supplied dt of exactly 0 is ALSO a hold by
+    // this rule (mImplexDt tracks ops_Dt only for the DT_PSEUDO default; a
+    // user or strain dt source reads a different `ops_Dt == 0.0` fact --
+    // still true when the domain itself is not advancing time). A
+    // genuinely load-controlled hold under DisplacementControl has d(lambda)
+    // = 0 rather than ops_Dt = 0 and is NOT caught by this rule -- it is a
+    // different kind of hold, unaddressed here.
+    bool ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b / P2-5c
 
     // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
     // definition. `epsRef` is the strain the denominator is scaled by: the P0

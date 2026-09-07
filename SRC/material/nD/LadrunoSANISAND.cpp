@@ -967,6 +967,12 @@ LadrunoSANISAND::echoLadrunoConstants(void)
                   " a hold's noise tracks the solver tolerance, not round-off, so the"
                   " absolute test alone under-catches it)";
 
+    // Ladruno ADR-92 P2-5c: unconditional, not gated on reversalTol/reversalRel
+    // (or on -implex) -- ops_Dt == 0.0 is checked ahead of both.
+    opserr << "; reversal test skipped on dt == 0 (ops_Dt, unconditionally --"
+              " a hold has no loading to test for a reversal in); hold-skip"
+              " commits counted in implexGuards[5]";
+
     // ADR 86 D5a (still open) / D5b (repaired in vanilla by PR-2).
     // The PR-1 text here read "D_factor ... ships UNCHANGED and is still
     // kPa-dimensional in this PR". PR-2 non-dimensionalised the sigmoid at all
@@ -1501,12 +1507,25 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     void noteTrialGuardF0(void)       { nTrialGuardF0++; }   // Ladruno ADR-92 P2-6
     long getTrialGuardF0(void) const  { return nTrialGuardF0; }
 
+    // Ladruno ADR-92 P2-5c: the hold-SKIP-commit census, read through
+    // `implexGuards`'s new slot 5. Unlike `nReversalNoise` above (bumped once
+    // per ladrunoGuardReversalNoise() CALL -- once per Newton trial as well as
+    // at commit), this is bumped exactly ONCE PER COMMIT, at the two commit
+    // sites (the plain implicit commitState() path and ladrunoImplexCommit()),
+    // whenever that commit's own ops_Dt == 0.0. A hold on an N-point mesh
+    // therefore reads +N here regardless of how many Newton iterations the
+    // hold took to converge -- the number a harness can check against the
+    // mesh's own point count.
+    void noteHoldSkipCommit(void)       { nHoldSkipCommit++; }
+    long getHoldSkipCommits(void) const { return nHoldSkipCommit; }
+
   private:
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
         nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0),
         nFloorFallback(0), nGuardF0(0), nHoldPreserved(0),
-        nReversalNoise(0), nTrialGuardF0(0) {}   // Ladruno ADR-92 P2-5 / P2-6
+        nReversalNoise(0), nTrialGuardF0(0),
+        nHoldSkipCommit(0) {}   // Ladruno ADR-92 P2-5 / P2-6 / P2-5c
     LadrunoImplexGlobals(const LadrunoImplexGlobals &);
     LadrunoImplexGlobals &operator=(const LadrunoImplexGlobals &);
 
@@ -1522,6 +1541,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     long        nHoldPreserved;    // Ladruno ADR-92 P2-3
     long        nReversalNoise;    // Ladruno ADR-92 P2-5
     long        nTrialGuardF0;     // Ladruno ADR-92 P2-6
+    long        nHoldSkipCommit;   // Ladruno ADR-92 P2-5c
 };
 
 } // anonymous namespace
@@ -1978,10 +1998,35 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  this to gate the P2-2 reversal/softening detection at commit with the
 //  SAME criterion (see the note there); the two trial-time call sites
 //  discard it.
+//
+//  Ladruno ADR-92 P2-5c: reversal test skipped on dt == 0. P2-5b's relative
+//  floor still undershoots at points whose own last committed increment was
+//  itself tiny (far-field, early push): the R3 footing measured 136/1600
+//  IMPL-EX and 88/1600 implicit points still resetting mAlpha_in on a hold
+//  after P2-5b. A hold is a GLOBAL fact the material can read directly --
+//  `ops_Dt`, the domain's pseudo-time increment, is exactly 0.0 on a
+//  `LoadControl(0.0)` hold step and on the zero-strain settle pass
+//  `Domain::revertToLastCommit()` pushes through every material (P2-3 already
+//  keys the IMPL-EX history freeze on the analogous `mImplexDt == 0.0`).
+//  Checked FIRST, unconditionally -- ahead of the mReversalTol / mReversalRel
+//  opt-out below, because a hold produces no loading to test for a reversal
+//  in regardless of how the deck tuned the noise floor. Hold-skip commits
+//  (once per point per hold, not per call here) are counted separately in
+//  `implexGuards[5]` at the two commit sites.
 // ---------------------------------------------------------------------------
 bool
 LadrunoSANISAND::ladrunoGuardReversalNoise(void)
 {
+    // Ladruno ADR-92 P2-5c: sufficient on its own -- see the block comment
+    // above. `ops_Dt` (OPS_Globals.h) is the domain's own pseudo-time
+    // increment for the CURRENT update, visible regardless of -implexDt
+    // source.
+    if (ops_Dt == 0.0) {
+        mAlpha_in = mAlpha_in_n;
+        LadrunoImplexGlobals::instance().noteReversalNoiseGuard();
+        return true;
+    }
+
     if (mReversalTol <= 0.0 && mReversalRel <= 0.0)
         return false;
 
@@ -2687,6 +2732,15 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // guard, not by alpha_in).
     const bool reversalNoiseGuardFired = this->ladrunoGuardReversalNoise();
 
+    // Ladruno ADR-92 P2-5c: this commit's own hold-skip census, keyed on the
+    // SAME `ops_Dt == 0.0` predicate ladrunoGuardReversalNoise() just checked
+    // -- but counted once HERE, at commit, not once per call of that function
+    // (it is also called from the IMPL-EX trial/control-probe sites, which
+    // would otherwise multiply-count a single hold). See the `implexGuards[5]`
+    // contract at LadrunoImplexGlobals::noteHoldSkipCommit().
+    if (ops_Dt == 0.0)
+        LadrunoImplexGlobals::instance().noteHoldSkipCommit();
+
     // Ladruno ADR-92 P2-5b: the norm of the strain increment THIS commit is
     // about to bake in, captured NOW while mEpsilon / mEpsilon_n still hold
     // the trial / OLD-committed pair (same convention as the guard call
@@ -2916,6 +2970,15 @@ LadrunoSANISAND::commitState(void)
             dEpsCommit = mEpsilon;
             dEpsCommit.addVector(1.0, mEpsilon_n, -1.0);
             mDEpsNormCommit = this->GetNorm_Cov(dEpsCommit);
+        }
+        else {
+            // Ladruno ADR-92 P2-5c: this commit's own reversal test was
+            // skipped by ladrunoGuardReversalNoise() (called from
+            // ladrunoTrialUpdate() above, on the SAME ops_Dt == 0.0 predicate).
+            // Counted once here, at commit, not at the trial call -- see the
+            // `implexGuards[5]` contract at LadrunoImplexGlobals::
+            // noteHoldSkipCommit().
+            LadrunoImplexGlobals::instance().noteHoldSkipCommit();
         }
         return ManzariDafalias::commitState();
     }
@@ -3162,11 +3225,12 @@ constexpr int LadrunoSanisandImplexDetailResponseID   = 33092;   // Ladruno (ADR
 // process-wide refusal ledger. Same band, same rule -- a response id, not a
 // class tag, and nothing may derive one from it.
 constexpr int LadrunoSanisandImplexRefusalsResponseID = 33093;   // Ladruno ADR-92 fix
-// Ladruno ADR-92 P2: `implexGuards`, the census of five P2 events (P2-1, P2-2,
-// P2-3, P2-5's slot 3 (formerly reserved), and P2-6's slot 4). Same band, same
-// rule -- a response id, not a class tag. None of the five prints anything per
-// occurrence (they are the designed behaviour of P2-1/2/3/5/6, not warnings),
-// so this response is the ONLY record that they fired.
+// Ladruno ADR-92 P2: `implexGuards`, the census of six P2 events (P2-1, P2-2,
+// P2-3, P2-5's slot 3 (formerly reserved), P2-6's slot 4, and P2-5c's slot 5).
+// Same band, same rule -- a response id, not a class tag. None of the six
+// prints anything per occurrence (they are the designed behaviour of
+// P2-1/2/3/5/5c/6, not warnings), so this response is the ONLY record that
+// they fired.
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33094;   // Ladruno ADR-92 P2
 
 Response *
@@ -3200,10 +3264,10 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static Vector probe4(4);
         return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
     }
-    // Ladruno ADR-92 P2 (grown to 5 slots by P2-6)
+    // Ladruno ADR-92 P2 (grown to 5 slots by P2-6, 6 by P2-5c)
     if (argc > 0 && (strcmp(argv[0], "implexGuards") == 0 ||
                      strcmp(argv[0], "ImplexGuards") == 0)) {
-        static Vector probe4g(5);
+        static Vector probe4g(6);
         return new MaterialResponse(this, LadrunoSanisandImplexGuardsResponseID, probe4g);
     }
     return ManzariDafalias::setResponse(argv, argc, output);
@@ -3244,17 +3308,18 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out4(3) = (double)g.getRefusalsCompanion();  // companion hit -maxSubsteps
         return matInformation.setVector(out4);
     }
-    // Ladruno ADR-92 P2: the guard census (grown 4 -> 5 by P2-6). Process-wide,
-    // non-destructive, and NOT cleared by a commit round -- a leg's running
-    // totals, exactly like `implexRefusals` beside it.
+    // Ladruno ADR-92 P2: the guard census (grown 4 -> 5 by P2-6, 5 -> 6 by
+    // P2-5c). Process-wide, non-destructive, and NOT cleared by a commit
+    // round -- a leg's running totals, exactly like `implexRefusals` beside it.
     if (responseID == LadrunoSanisandImplexGuardsResponseID) {
-        static Vector out4g(5);
+        static Vector out4g(6);
         const LadrunoImplexGlobals &g = LadrunoImplexGlobals::instance();
         out4g(0) = (double)g.getFloorFallbacks();        // P2-1: floor -> implicit stress
         out4g(1) = (double)g.getGuardsFired();           // P2-2: f = 0 after reversal/softening
         out4g(2) = (double)g.getHoldsPreserved();        // P2-3: zero-dt commits left alone
         out4g(3) = (double)g.getReversalNoiseGuards();   // Ladruno ADR-92 P2-5: reversal-noise guards
         out4g(4) = (double)g.getTrialGuardF0();          // Ladruno ADR-92 P2-6: trial-time f = 0 fallbacks
+        out4g(5) = (double)g.getHoldSkipCommits();       // Ladruno ADR-92 P2-5c: hold-skip commits (once/point/hold)
         return matInformation.setVector(out4g);
     }
     if (responseID == LadrunoSanisandImplexDetailResponseID) {
@@ -3315,6 +3380,9 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
         s << "  (2nd threshold = reversalRel * ||last committed d_eps|| = "
           << (mReversalRel * mDEpsNormCommit)
           << "; see `implexGuards`[3])" << endln;
+    // Ladruno ADR-92 P2-5c: unconditional, ahead of both thresholds above.
+    s << "  reversal test skipped on dt == 0 (ops_Dt, unconditionally);"
+         " hold-skip commits counted in implexGuards[5]" << endln;
     // Ladruno (ADR-86b): the substep cap and the state it left behind.
     s << "  maxSubsteps = " << mMaxSubsteps
       << (mMaxSubsteps == 0 ? "  (UNCAPPED = vanilla; ModifiedEuler is bounded only by"
