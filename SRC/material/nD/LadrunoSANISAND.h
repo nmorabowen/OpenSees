@@ -163,7 +163,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
                     int maxSubsteps = 0,
-                    double reversalTol = 1.0e-10);   // Ladruno ADR-92 P2-5
+                    double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
+                    double reversalRel = 0.05);      // Ladruno ADR-92 P2-5b
 
     // full constructor, classTag defaults to ND_TAG_LadrunoSANISAND.
     // Defaults of the five optional integration args match the base's
@@ -175,7 +176,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
                     int maxSubsteps = 0,
-                    double reversalTol = 1.0e-10);   // Ladruno ADR-92 P2-5
+                    double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
+                    double reversalRel = 0.05);      // Ladruno ADR-92 P2-5b
 
     // specific-type null constructor (used by the wrappers' null constructors)
     LadrunoSANISAND(int classTag);
@@ -305,6 +307,39 @@ class LadrunoSANISAND : public ManzariDafalias
     // the defect lives in the base's integrate(), not in ADR-92's own code.
     double mReversalTol;      // Ladruno ADR-92 P2-5
 
+    // Ladruno ADR-92 P2-5b: P2-5's ABSOLUTE floor cannot work by itself -- a
+    // LoadControl(0.0) hold's per-Gauss-point strain increment tracks the
+    // SOLVER's tolerance, not round-off. Measured on the R3 footing (1600
+    // GPs, LoadControl 0.0): median ~4e-9, max 6.4e-8 (IMPL-EX) / 1.4e-6
+    // (implicit), so 99-100% of points exceed 1e-10 and mAlpha_in still
+    // resets at 42% (IMPL-EX) / 9.5% (implicit) of them; at 1e-7 the
+    // implicit arm still resets 2.2%. -reversalRel scales a SECOND,
+    // RELATIVE threshold off mDEpsNormCommit (below): the guard predicate in
+    // ladrunoGuardReversalNoise() becomes
+    //
+    //     ||d_eps|| < max(mReversalTol, mReversalRel * mDEpsNormCommit)
+    //
+    // Default 0.05: a hold's increment is <= 1e-2 of the previous real
+    // step's, a genuine reversal step is ~1x it, and a halved retry is
+    // 0.5x -- 0.05 separates a hold from either with margin. 0 disables the
+    // relative part and recovers P2-5's pure absolute test exactly.
+    double mReversalRel;      // Ladruno ADR-92 P2-5b
+
+    // Ladruno ADR-92 P2-5b: the COMMITTED reference the relative threshold
+    // above reads -- ||eps_n - eps_{n-1}||, GetNorm_Cov (the same convention
+    // ladrunoGuardReversalNoise() uses for d_eps: mEpsilon is strain, i.e.
+    // covariant/engineering-shear-component, not stress; see the base's own
+    // comments at ManzariDafalias.cpp:5279-5299). Updated at EVERY commit
+    // EXCEPT a zero-increment one (composes with P2-3: on the implicit path
+    // a hold is `ops_Dt == 0.0`; on the IMPL-EX path it reuses P2-3's own
+    // `mImplexDt == 0.0` predicate) -- a hold must not overwrite the
+    // reference the NEXT step's threshold reads, on the exact same
+    // reasoning P2-3 already applies to mImplexDtCommit / mImplexDEpsP.
+    // Zeroed on revertToStart (ladrunoImplexInitState); carried through
+    // getCopy(const char*) and the wire (sendSelf/recvSelf) like any other
+    // per-Gauss-point committed history variable.
+    double mDEpsNormCommit;   // Ladruno ADR-92 P2-5b
+
     // =======================================================================
     //  Ladruno (ADR-92 P1): IMPL-EX state.
     //
@@ -410,13 +445,14 @@ class LadrunoSANISAND : public ManzariDafalias
     // extrapolated state.
     void ladrunoRestoreTrialFromCommitted(void);   // Ladruno (ADR-92 P1)
 
-    // Ladruno ADR-92 P2-5: undoes ManzariDafalias::integrate()'s
+    // Ladruno ADR-92 P2-5 / P2-5b: undoes ManzariDafalias::integrate()'s
     // loading-reversal reset when the strain increment that triggered it was
-    // round-off noise, not a real reversal. Call AFTER integrate() (or the
-    // -implexControl probe's own call to it) returns, while mEpsilon /
+    // round-off/solver noise, not a real reversal. Call AFTER integrate() (or
+    // the -implexControl probe's own call to it) returns, while mEpsilon /
     // mEpsilon_n still hold the increment integrate() just read. See the
-    // mReversalTol member comment for the defect this repairs.
-    void ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5
+    // mReversalTol / mReversalRel member comments for the defect this repairs
+    // and the relative threshold P2-5b added.
+    void ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b
 
     // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
     // definition. `epsRef` is the strain the denominator is scaled by: the P0
