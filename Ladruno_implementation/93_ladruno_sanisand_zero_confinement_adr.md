@@ -36,9 +36,9 @@ updated: 2026-09-06
 
 | fact | where | consequence at p → 0 |
 |---|---|---|
-| Elastic moduli `G, K ∝ sqrt(p / P_atm)` | `ManzariDafalias::GetElasticModuli` | stiffness → 0; the element carries nothing and its tangent is singular-ish |
+| Elastic moduli `G, K ∝ sqrt(p / P_atm)`, with `p = tr(σ)/3` floored at **`m_Pmin`** and **`m_Presidual` absent** | `ManzariDafalias::GetElasticModuli`, all three overloads (`:4834-4835`, `:4876-4877`, `:4896-4897`) — **source-verified 2026-09-06, `_adr93_p0_ring_replay`** | stiffness → 0; the element carries nothing and its tangent is singular-ish. **There is NO stiffness floor today**: `p_r` does not enter here, so `G, K → 0` with `p` whatever `p_r` is, and the only thing standing between the moduli and zero is `p_min = 1e-4 P_atm` |
 | Plastic modulus and dilatancy carry `p` via `psi`, `M^b`, `M^d`, `D` | `GetStateDependent` | the cone collapses to a point; the return has nothing to return to |
-| `m_Presidual` enters ~30 mean-stress sites as `p = tr(σ)/3 + p_r` | header note, `LadrunoSANISAND.h:28-62` | vanilla's 1.01 kPa is an apparent cohesion `c = p_r tan φ ≈ 0.95 kPa` **and** bounds the `D_factor` dilatancy sigmoid from below (floor 0.4278); the fork's default `p_r = 0` (NTUASand02) drops that floor by 886× (**D5a, still open**) |
+| `m_Presidual` enters ~30 mean-stress sites as `p = tr(σ)/3 + p_r` — **all of them plastic-side**: the yield function `GetF`, `psi`, `M^b`, `M^d`, `D`, the `D_factor` sigmoid's argument, and the `ModifiedEuler` / `BackwardEuler` low-`p` guards. It does **NOT** enter `GetElasticModuli` (row 1), so it floors STRENGTH and never STIFFNESS | header note, `LadrunoSANISAND.h:28-62`; 38 `m_Presidual` sites in `ManzariDafalias.cpp`, none in `GetElasticModuli` | vanilla's 1.01 kPa is an apparent cohesion `c = p_r tan φ ≈ 0.95 kPa` **and** bounds the `D_factor` dilatancy sigmoid from below (floor 0.4278); the fork's default `p_r = 0` (NTUASand02) drops that floor by 886× (**D5a, still open**) |
 | `m_Pmin` clamp: deviator preserved, pressure pasted in | `ModifiedEuler`, `RungeKutta45` | a clamped Gauss point is a projection, not a constitutive answer; `p_min = 1e-3 P_atm = 0.101 kPa` in the fork |
 | Substep error norm is **already mixed, with a hardcoded switch**: `err = ‖Δσ₂−Δσ₁‖` if `‖σ‖ < 0.5` else `‖Δσ₂−Δσ₁‖ / (2‖σ‖)`, against `TolE = 1e-4`; `dT_min = 1e-6`, `q = max(0.8·sqrt(TolE/err), 0.1)` | `ManzariDafalias.cpp:1746-1753`, `:1419`, `:1655` | the switch `0.5` is **unit-bearing** (0.5 kPa on a kPa deck = 5e-3 P_atm) and not declared; at the ring the absolute branch demands `1e-4` stress units per substep while the ring's strain increment per step is large (it has no stiffness to resist), so `dT` collapses → 1000–5000 substeps on the campaign deck, 64 000 unregularised; `-maxSubsteps` (ADR-86b) caps the count and force-accepts. P0 (ADR 92) showed the seizure does **not** reproduce at a prescribed-strain Gauss point with deck-sized increments: it is the *BVP path* (ring strain per step) that drives it |
 | `BackwardEuler_CPPM` low-p branch returns `errFlag = 0` without solving | `ManzariDafalias.cpp:2264` (P0, ADR 92) | the "implicit" companion is the same explicit return in this regime |
@@ -131,15 +131,20 @@ idea only if a floor-bound ring ever shows up under LoadControl(-ds).
 
 ### II. Material-side (declare what the ring is)
 
-**II.1 Decoupled floors: stiffness floor ≠ strength floor.** Today one number (`p_r`) both
-stiffens (`G(p + p_r)`) and strengthens (`M^b, M^d, D` through `psi(p + p_r)`). Split them:
-`p_r,e` in the elastic moduli only (keeps the tangent regular, adds no strength, no cohesion),
-`p_r,p = 0` in the plastic state functions. *Physics:* a sand with a small non-zero small-strain
-stiffness at zero confinement — defensible (suction, interlock) and *calibratable separately*.
-*Cost:* one new parameter on the wire; ~6 of the ~30 `p_r` sites move. *Experiment:* oracle
-sensitivity of the G0 rows to `p_r,e ∈ {0, 0.1, 1} kPa` with `p_r,p = 0`; then the deck.
-*Verdict:* **the most promising material-side option** because it separates the two things
-the vanilla `p_r` conflates and leaves the calibration of strength untouched.
+**II.1 A stiffness floor, which today does not exist.** *(Reworded 2026-09-06 against the source;
+the earlier text claimed `p_r` "both stiffens (`G(p + p_r)`) and strengthens" and that II.1 was a
+**split** of that coupling. It is not: `p_r` never reaches `GetElasticModuli` (§1 row 1), so today
+`G, K → 0` with `p` whatever `p_r` is and the only floor is `p_min`.)* So II.1 is not a split — it
+is a **NEW, elastic-only parameter `p_r,e`** entering the moduli as `G, K ∝ sqrt((p + p_r,e)/P_atm)`
+and nowhere else, with the plastic floor `p_r,p` left free to be 0. *Physics:* a sand with a small
+non-zero small-strain stiffness at zero confinement — defensible (suction, interlock), adds no
+strength and no cohesion, and *calibratable separately* precisely because it touches nothing the
+strength calibration used. *Cost:* one new parameter on the wire; **3 sites** (the three
+`GetElasticModuli` overloads), not "~6 of the ~30". *Experiment:* oracle sensitivity of the G0 rows
+to `p_r,e ∈ {0, 0.1, 1} kPa` with `p_r,p = 0`, **on a Gauss point that reaches the floor** — the
+P0 replay ran the arms but on a confined point, where `λ_min(Ce) ≥ 3.97e4 kPa` and the question
+cannot be posed (`_adr93_p0_ring_replay` §3). *Verdict:* **still the most promising material-side
+option**, because it is the only candidate that puts a floor under the stiffness at all.
 
 **II.2 Settle D5a — the `D_factor` sigmoid at `p_r = 0`.** The tripwire memo measured the
 factor of 886 and listed four experiments. Whatever this ADR chooses, the sigmoid's floor is
@@ -283,3 +288,16 @@ benchmark is a real footing or the idealised half-space.
   is no longer in the way of measuring it. Paths: `labs/ape/response-curve-matrix/level3/
   D-L-dl-vt-{dense,gorini}-q10-sp-{implex,implicit}/coarse/out/` on the TIMs worktree,
   `ring_point.csv` per step at Gauss point 5 of element 4047; ESMERALDA.md §48–49.
+- 2026-09-06 — **P0 ran on those dumps and is INCONCLUSIVE for this ADR's question**
+  (`_adr93_p0_ring_replay`): the instrumented point is chosen by GEOMETRY (top row, first element
+  outboard of the footprint) and is **confined throughout** — `p` rises 6 → 51 kPa (dense) / 35
+  (gorini), `clamp_fired` = 0 on all 362 steps, the `D_factor` sigmoid never fires. So I.1's
+  substep cut is 1.00× *because the point never seizes*, II.1's floor is a ≤ 8 % perturbation of
+  `G` on a regular tangent, and D5a is unmeasurable; the §4 decision rule **stays unapplied** and
+  the tables are kept only as a confined-point control arm. The reproduction gate reached 3e-5
+  (not 1e-6): `ring_point.csv` carries no `getState` slots, so `alpha`/`z`/`alpha_in` had to be
+  fitted. **What P0 needs: the point with MINIMUM committed `p` at the wall — chosen by state, not
+  geometry — from a leg that walls, with `alpha`(6), `z`(6), `alpha_in`(6) and `e` dumped every
+  step.** One thing the run did settle: §1 row 1 above, and the II.1 rewording that follows from
+  it. Open for ADR 92: the IMPL-EX legs replay ~100× worse than their implicit twins (2.4e-3 /
+  6.8e-3 against 2.8e-5 / 2.5e-5) on fitted states, unexplained.
