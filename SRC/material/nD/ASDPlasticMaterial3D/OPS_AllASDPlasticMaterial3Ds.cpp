@@ -30,6 +30,8 @@
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <list>
+#include <set>       // Ladruno (ADR-94 wp/94a): required-parameter bookkeeping
+#include <string>    // Ladruno (ADR-94 wp/94a)
 
 #ifndef M_PI
 #define M_PI 3.1415926535897932384626433832795
@@ -37,8 +39,16 @@
 
 #include "AllASDPlasticMaterial3Ds.h"
 
+// Ladruno (ADR-94 wp/94a): was void. ADR-94 B1/H13 -- an unrecognised token inside
+// Begin_Integration_Options, an unknown model-parameter name, and a model parameter
+// never given a value were ALL accepted silently (the last one running at 0.0, so a
+// typo'd MC_phi ran the model at phi = 0). Parsing now FAILS and the material is not
+// created. `asdp_parse_rejected` distinguishes "your options were wrong" from the
+// pre-existing "no such YF/PF/EL/IV combination" report downstream.
 template <typename T>
-void populate_ASDPlasticMaterial3D(T* instance);
+bool populate_ASDPlasticMaterial3D(T* instance);
+
+static bool asdp_parse_rejected = false;   // Ladruno (ADR-94 wp/94a)
 
 typedef std::tuple<std::string, std::string, std::string, std::string> model_spec_t;
 
@@ -71,10 +81,19 @@ void print_usage(void)
        "End_Model_Parameters \\ \n"
        "Begin_Integration_Options \\ \n"
        "    f_absolute_tol (double value)\\ \n"
+       "    f_relative_tol (double value, default 0 = off) : tolerance becomes\n"
+       "        max(f_absolute_tol, f_relative_tol * yield-function strength scale),\n"
+       "        which makes convergence independent of the unit system\\ \n" // Ladruno (ADR-94 wp/94c, M5)
        "    stress_absolute_tol (double value)\\ \n"
        "    n_max_iterations (int value)\\ \n"
        "    return_to_yield_surface (0 or 1)\\ \n"
        "    strict_convergence (0 or 1, default 0) : 1 = Backward_Euler fails loud on non-convergence\\ \n" // Ladruno (ADR-84 P2a)
+       "    integration_method (string) : Backward_Euler | Forward_Euler |\n"
+       "        Forward_Euler_Subincrement | Modified_Euler_Error_Control |\n"
+       "        Runge_Kutta_45_Error_Control\n"
+       "    (ADR-94: Backward_Euler_LineSearch and Runge_Kutta_45_Error_Control_old are REFUSED;\n"
+       "     every model parameter except MassDensity and InitialP0 is REQUIRED; and any\n"
+       "     unrecognised token here is an ERROR -- the material is not created.)\n"
        "    method (string) : Forward_Euler | Runge_Kutta_45_Error_Control\\ \n"
        "    tangent (string) : Elastic | Numerical_Algorithmic_FirstOrder | Numerical_Algorithmic_SecondOrder\\ \n"
        "End_Integration_Options \\ \n"
@@ -92,6 +111,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
 
     // check arguments
     int numArgs = OPS_GetNumRemainingInputArgs();
+    // Ladruno (HB/StiffSoil integration, ledger row 337): allow 2-arg calls (yf_type only)
     if (numArgs < 2) {
         "nDMaterial ASDPlasticMaterial3D Error: Few arguments \n";
         opserr << "    numArgs = " << numArgs << endln << endln;
@@ -120,6 +140,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
     el_type = numArgs >= 4 ? OPS_GetString() : " X ";
     iv_type = numArgs >= 5 ? OPS_GetString() : " X ";
     
+    // Ladruno (HB/StiffSoil integration, ledger row 337): debug-print numArgs for wildcard search
     opserr << "    numArgs = " << numArgs << endln << endln;
 
 
@@ -133,6 +154,8 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
 
     std::list<model_spec_t> available_models;
 
+    asdp_parse_rejected = false;   // Ladruno (ADR-94 wp/94a)
+
     NDMaterial* instance = ASDPlasticMaterial3DFactory(tag, yf_type, pf_type, el_type, iv_type, available_models);
 
     if(std::strcmp(yf_type, "list")==0)
@@ -145,6 +168,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
             std::string model_el_type = std::get<2>(model);
             std::string model_iv_type = std::get<3>(model);
             
+            // Ladruno (HB/StiffSoil integration, ledger row 337): wildcard placeholder search
             if (std::strcmp(pf_type, model_yf_type.c_str())==0 || std::strcmp(pf_type, " X ")==0 )
             {
                 cout << "  YF = " << model_yf_type << endl;
@@ -153,6 +177,17 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
                 cout << "  IV = " << model_iv_type << endl << endln;
             }
         }
+    }
+
+    // Ladruno (ADR-94 wp/94a): the YF/PF/EL/IV combination WAS found; its options or
+    // parameters were rejected. Printing the "material not found" table here would send
+    // the user hunting for the wrong bug.
+    if(instance==nullptr && asdp_parse_rejected)
+    {
+        opserr << "nDMaterial ASDPlasticMaterial3D " << tag
+               << " - REJECTED: see the ASDPlasticMaterial3D error(s) above."
+               << " The material was NOT created (ADR-94)." << endln;
+        return nullptr;
     }
 
     if(instance==nullptr)
@@ -224,6 +259,7 @@ NDMaterial*  ASDPlasticMaterial3DFactory(int instance_tag, const char * yf_type,
 
 
 
+// Ladruno (HB/StiffSoil integration, ledger row 337): reformatted signature, no functional change
 template<typename EL, typename YF, typename PF>
 NDMaterial* createASDPlasticMaterial3D(int instance_tag, 
         const char* yf_type, const char* pf_type, const char* el_type, const char* iv_type, 
@@ -246,7 +282,13 @@ NDMaterial* createASDPlasticMaterial3D(int instance_tag,
         std::strcmp(iv_type,instance->getIVName().c_str())==0 
         )
     {
-        populate_ASDPlasticMaterial3D(instance);
+        // Ladruno (ADR-94 wp/94a): a rejected deck must not produce a material.
+        if (!populate_ASDPlasticMaterial3D(instance))
+        {
+            delete instance;
+            instance_pointers.push_back(nullptr);
+            return nullptr;
+        }
         cout << "\n\nPrinting material info\n";
         instance->Print(opserr);
         cout << "\n\nDone creating ASDPlasticMaterial3D \n\n\n";
@@ -269,10 +311,21 @@ NDMaterial* createASDPlasticMaterial3D(int instance_tag,
 
 
 template <typename T>
-void populate_ASDPlasticMaterial3D(T* instance)
+bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): was void
 {
 
     int get_one_value = 1;
+
+    // Ladruno (ADR-94 wp/94a): names the deck actually assigned, for the
+    // required-parameter check at the end of this function.
+    std::set<std::string> assigned_parameters;
+
+    // Ladruno (ADR-94 wp/94a): the valid Begin_Integration_Options tokens, printed
+    // verbatim when one is not recognised so the user can see the spelling.
+    static const char* const ASDP_VALID_INTEGRATION_OPTIONS =
+        "f_absolute_tol, f_relative_tol, stress_absolute_tol, n_max_iterations, strict_convergence, "
+        "rk45_dT_min, rk45_niter_max, return_to_yield_surface, integration_method, "
+        "tangent_type, End_Integration_Options";
 
     cout << "\n\nDefined internal variables: \n";
     auto iv_names = instance->getInternalVariablesNames();
@@ -289,9 +342,11 @@ void populate_ASDPlasticMaterial3D(T* instance)
     });
 
     // Default integration options
+    // Ladruno (HB/StiffSoil integration, ledger row 337): default Backward_Euler/Secant
     int method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
     int tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Secant;
-    double f_absolute_tol = 1e-6; 
+    double f_absolute_tol = 1e-6;
+    double f_relative_tol = 0.0; // Ladruno (ADR-94 wp/94c, M5): 0 = off, i.e. absolute tolerance only (byte-identical to before)
     double stress_absolute_tol = 1e-6; 
     int n_max_iterations = 100;
     int return_to_yield_surface = 1;
@@ -321,6 +376,21 @@ void populate_ASDPlasticMaterial3D(T* instance)
                 }
 
                 int iv_size = instance->getInternalVariableSizeByName(iv_name);
+                // Ladruno (ADR-94 wp/94a): an unknown IV name returns -1 here, which was
+                // then handed straight to OPS_GetDouble as a count. Fail instead.
+                if (iv_size < 0 || iv_size > 6)
+                {
+                    opserr << "nDMaterial ASDPlasticMaterial3D - unknown internal variable '"
+                           << iv_name << "' inside Begin_Internal_Variables." << endln;
+                    opserr << "   Defined internal variables for this model:" << endln;
+                    auto iv_names_tuple = instance->getInternalVariablesNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+                    for_each_in_tuple(iv_names_tuple, [](auto & nm)
+                    {
+                        opserr << "      " << nm << endln;
+                    });
+                    asdp_parse_rejected = true;
+                    return false;
+                }
                 OPS_GetDouble(&iv_size, iv_values);
                 cout << iv_name << " = ";
                 for (int i = 0; i < iv_size; ++i)
@@ -328,7 +398,14 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     cout << iv_values[i] << " ";
                 }
                 cout << endl;
-                instance->setInternalVariableByName(iv_name, iv_size, &iv_values[0]);
+                if (!instance->setInternalVariableByName(iv_name, iv_size, &iv_values[0]))
+                {
+                    // Ladruno (ADR-94 wp/94a)
+                    opserr << "nDMaterial ASDPlasticMaterial3D - internal variable '"
+                           << iv_name << "' was not accepted by any component." << endln;
+                    asdp_parse_rejected = true;
+                    return false;
+                }
             }
 
         }
@@ -349,7 +426,23 @@ void populate_ASDPlasticMaterial3D(T* instance)
 
                 OPS_GetDouble(&get_one_value, &param_value);
                 cout << param_name << " = " << param_value << endl;
-                instance->setParameterByName(param_name, param_value);
+                // Ladruno (ADR-94 wp/94a): ADR-94 B1/H13 -- a misspelled parameter name
+                // used to be dropped by utuple_storage's base case, leaving the intended
+                // parameter at its 0.0 default (a typo'd MC_phi ran the model at phi = 0).
+                if (!instance->setParameterByName(param_name, param_value))
+                {
+                    opserr << "nDMaterial ASDPlasticMaterial3D - unknown model parameter '"
+                           << param_name << "' inside Begin_Model_Parameters." << endln;
+                    opserr << "   Valid parameters for this model:" << endln;
+                    auto param_names_tuple = instance->getParameterNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+                    for_each_in_tuple(param_names_tuple, [](auto & name)
+                    {
+                        opserr << "      " << name << endln;
+                    });
+                    asdp_parse_rejected = true;
+                    return false;
+                }
+                assigned_parameters.insert(std::string(param_name));
             }
         }
 
@@ -366,38 +459,57 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     break;
                 }
 
+                // Ladruno (ADR-94 wp/94a): the chain below is a run of independent `if`s
+                // with no `else`, so an unrecognised token (and its value) was silently
+                // dropped -- ADR-94 B1/H13 measured `strict_convergance` (typo) producing
+                // byte-identical results to omitting the option entirely.
+                bool option_recognised = false;
+
                 if (std::strcmp(param_name, "f_absolute_tol") == 0)
                 {
                     OPS_GetDouble(&get_one_value, &f_absolute_tol);
                     cout << "   Setting f_absolute_tol = " << f_absolute_tol << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
+                }
+
+                if (std::strcmp(param_name, "f_relative_tol") == 0) // Ladruno (ADR-94 wp/94c, M5)
+                {
+                    OPS_GetDouble(&get_one_value, &f_relative_tol);
+                    cout << "   Setting f_relative_tol = " << f_relative_tol << endl;
+                    option_recognised = true;
                 }
 
                 if (std::strcmp(param_name, "stress_absolute_tol") == 0)
                 {
                     OPS_GetDouble(&get_one_value, &stress_absolute_tol);
                     cout << "   Setting stress_absolute_tol = " << stress_absolute_tol << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
 
                 if (std::strcmp(param_name, "n_max_iterations") == 0)
                 {
                     OPS_GetInt(&get_one_value, &n_max_iterations);
                     cout << "   Setting n_max_iterations = " << n_max_iterations << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
                 if (std::strcmp(param_name, "strict_convergence") == 0) // Ladruno (ADR-84 P2a)
                 {
                     OPS_GetInt(&get_one_value, &strict_convergence);
                     cout << "   Setting strict_convergence = " << strict_convergence << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
                 if (std::strcmp(param_name, "rk45_dT_min") == 0)
                 {
                     OPS_GetDouble(&get_one_value, &rk45_dT_min);
                     cout << "   Setting rk45_dT_min = " << rk45_dT_min << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
 
                 if (std::strcmp(param_name, "rk45_niter_max") == 0)
                 {
                     OPS_GetInt(&get_one_value, &rk45_niter_max);
                     cout << "   Setting rk45_niter_max = " << rk45_niter_max << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
                 if (std::strcmp(param_name, "return_to_yield_surface") == 0)
                 {
@@ -410,9 +522,18 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     else if (std::strcmp(method_name, "Iterative_Return") == 0)
                         return_to_yield_surface = 2;
                     else
-                    	return_to_yield_surface = 1;
+                    {
+                        // Ladruno (ADR-94 wp/94a): was a silent default to One_Step_Return.
+                        opserr << "nDMaterial ASDPlasticMaterial3D - unknown "
+                               << "return_to_yield_surface '" << method_name << "'." << endln;
+                        opserr << "   Valid values: Disabled, One_Step_Return, Iterative_Return"
+                               << endln;
+                        asdp_parse_rejected = true;
+                        return false;
+                    }
 
                     cout << "   Setting return_to_yield_surface = " << return_to_yield_surface << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
 
                 if (std::strcmp(param_name, "integration_method") == 0)
@@ -427,19 +548,52 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     else if (std::strcmp(method_name, "Runge_Kutta_45_Error_Control") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control;
                     else if (std::strcmp(method_name, "Runge_Kutta_45_Error_Control_old") == 0)
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old;
+                    {
+                        // Ladruno (ADR-94 wp/94a): ADR-94 M8/H9 -- this integrator's drift
+                        // check is an empty `if` body and its NaN guard calls exit(-1) on
+                        // the whole process. The code is kept (it is the reference the
+                        // non-_old RK45 was derived from) but it may not be selected.
+                        opserr << "nDMaterial ASDPlasticMaterial3D - integration_method "
+                               << "'Runge_Kutta_45_Error_Control_old' is REFUSED (ADR-94 M8):"
+                               << " its yield-drift check is dead code and its NaN guard"
+                               << " calls exit() on the process."
+                               << " Use Runge_Kutta_45_Error_Control or Backward_Euler."
+                               << endln;
+                        asdp_parse_rejected = true;
+                        return false;
+                    }
                     else if (std::strcmp(method_name, "Backward_Euler") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;                    
                     else if (std::strcmp(method_name, "Backward_Euler_LineSearch") == 0)
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch;
+                    {
+                        // Ladruno (ADR-94 wp/94a): ADR-94 M7/H8 -- measured 2/20 steps
+                        // where plain Backward_Euler does 20/20. n_max_iterations and
+                        // strict_convergence are both inert inside it, its line search
+                        // accepts alpha = 1 unconditionally, and its "substepping" reports
+                        // success for a strain the element never asked for. Code kept,
+                        // selection refused.
+                        opserr << "nDMaterial ASDPlasticMaterial3D - integration_method "
+                               << "'Backward_Euler_LineSearch' is REFUSED (ADR-94 M7):"
+                               << " it ignores n_max_iterations, its line search cannot cut"
+                               << " the step, and its substepping returns success for a"
+                               << " strain increment the element never asked for."
+                               << " Use Backward_Euler." << endln;
+                        asdp_parse_rejected = true;
+                        return false;
+                    }
                     else
                     {
-                        cout << "\n\nWARNING! Unrecognised ASDPlasticMaterial3D_Constitutive_Integration_Method name " << method_name << endl;
-                        cout << "Available methods: Forward_Euler, Forward_Euler_Subincrement, Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control\n\n" << endl;
-                        cout << "Defaulting to Modified_Euler_Error_Control\n\n" << endl;
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control;
+                        // Ladruno (ADR-94 wp/94a): was a silent default to Modified_Euler.
+                        opserr << "nDMaterial ASDPlasticMaterial3D - unknown "
+                               << "integration_method '" << method_name << "'." << endln;
+                        opserr << "   Valid values: Forward_Euler, Forward_Euler_Subincrement, "
+                               << "Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control, "
+                               << "Backward_Euler" << endln;
+                        asdp_parse_rejected = true;
+                        return false;
                     }
                     cout << "   Setting integration method = " << method_name << " method_int = " << method << endl;
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
 
                 if (std::strcmp(param_name, "tangent_type") == 0)
@@ -457,19 +611,73 @@ void populate_ASDPlasticMaterial3D(T* instance)
                         tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_SecondOrder;
                     else
                     {
-                        cout << "WARNING! Unrecognised ASDPlasticMaterial3D_Tangent_Operator_Type name " << tangent_type_name << endl;
-                        cout << "Defaulting to Elastic" << endl;
-                        tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Elastic;
+                        // Ladruno (ADR-94 wp/94a): was a silent default to Elastic.
+                        opserr << "nDMaterial ASDPlasticMaterial3D - unknown tangent_type '"
+                               << tangent_type_name << "'." << endln;
+                        opserr << "   Valid values: Elastic, Continuum, Secant, "
+                               << "Numerical_Algorithmic_FirstOrder, "
+                               << "Numerical_Algorithmic_SecondOrder" << endln;
+                        asdp_parse_rejected = true;
+                        return false;
                     }
                     cout << "   Setting tangent type = " << tangent_type_name << " tangent int = " << tangent << endl;
-                    
+                    option_recognised = true;   // Ladruno (ADR-94 wp/94a)
+
+                }
+
+                // Ladruno (ADR-94 wp/94a): the `else` the if-chain above never had.
+                if (!option_recognised)
+                {
+                    opserr << "nDMaterial ASDPlasticMaterial3D - unknown option '"
+                           << param_name << "' inside Begin_Integration_Options." << endln;
+                    opserr << "   Valid options: " << ASDP_VALID_INTEGRATION_OPTIONS << endln;
+                    asdp_parse_rejected = true;
+                    return false;
                 }
 
             }
         }
     }
 
-    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence); // Ladruno (ADR-84 P2a)
+    // Ladruno (ADR-94 wp/94a): ADR-94 B1 / ADR-84 P2(e) -- every model parameter this
+    // specialization declares must be given a value. Unset ones silently ran at 0.0,
+    // which for a friction angle or a cohesion is a DIFFERENT, weaker material that
+    // still converges. MassDensity and InitialP0 are genuinely optional (0 = no mass,
+    // no geostatic seed).
+    {
+        std::string missing;
+        int n_missing = 0;
+        auto required_names_tuple = instance->getParameterNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+        for_each_in_tuple(required_names_tuple,
+            [&missing, &n_missing, &assigned_parameters](auto & name)
+        {
+            std::string n(name);
+            if (n == "MassDensity" || n == "InitialP0")
+                return;
+            if (assigned_parameters.find(n) == assigned_parameters.end())
+            {
+                missing += (n_missing ? ", " : "");
+                missing += n;
+                ++n_missing;
+            }
+        });
+
+        if (n_missing > 0)
+        {
+            opserr << "nDMaterial ASDPlasticMaterial3D - " << n_missing
+                   << " required model parameter(s) were never given a value: "
+                   << missing.c_str() << endln;
+            opserr << "   An unset parameter defaults to 0.0, which is a different"
+                   << " material that still converges (ADR-94 B1). Set them inside"
+                   << " Begin_Model_Parameters ... End_Model_Parameters." << endln;
+            asdp_parse_rejected = true;
+            return false;
+        }
+    }
+
+    instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence, f_relative_tol); // Ladruno (ADR-84 P2a); Ladruno (ADR-94 wp/94c, M5)
+
+    return true;   // Ladruno (ADR-94 wp/94a)
 }
 
 

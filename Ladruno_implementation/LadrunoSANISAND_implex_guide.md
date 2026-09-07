@@ -218,6 +218,26 @@ A recorder over the process-wide counter, once per step, is the practical way to
 `implexRefusals` on a long run: `recorder Element -ele $ele -file refusals.out -material $ip
 implexRefusals`.
 
+
+### 6.1 State diagnostics: `psi` and `yieldDistance` (not IMPL-EX specific)
+
+Two more scalar responses, added for the TIMs proposed-model request (2026-09-07, F4). They are
+read-only and answer from the **committed** state, so a recorder sees the values that fed the
+last committed update.
+
+| response | slots | meaning |
+|---|---|---|
+| `psi` (alias `stateParameter`) | 1 | the state parameter `psi = e - e_c(p')`, the model's own `GetPSI` with `p' = p + p_residual` floored at 1e-10 — the psi behind `M^b` and `M^d`. With the fork's default `p_r = 0` this is plain `e - e_c(p)` from `state[24]` and the mean stress. |
+| `yieldDistance` (alias `yieldFunction`) | 1 | the yield-function value `f = |s - p' alpha| - sqrt(2/3) m p'` on the committed pair: negative inside the cone, `~mTolF` (1e-7 default) on it, never positive after a converged return. |
+
+```python
+psi = ops.eleResponse(eleTag, "material", intPtNum, "psi")[0]
+f   = ops.eleResponse(eleTag, "material", intPtNum, "yieldDistance")[0]
+```
+
+Vanilla `ManzariDafalias` does not answer either name (empty response). Both are inherited by the
+3D and plane-strain wrappers. Test: `tests/test_ladruno_sanisand_responses.py`.
+
 ## 7. Choosing the tolerance
 
 The registered `-implexControl` operating point (`tol = 0.05`, `reductionLimit = 0.01`) was swept

@@ -88,6 +88,17 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
     const VoigtVector& apex_stress(const IVStorageType& internal_variables_storage, \
                         const ParameterStorageType& parameters_storage) const
 
+// Ladruno (ADR-94 wp/94c, M5): the YF's own strength scale -- the stress magnitude
+// that normalises f -- so a RELATIVE yield tolerance can be formed:
+//     tol = max(f_absolute_tol, f_relative_tol * strength_scale)
+// ADR-94 M5 measured the same Mohr-Coulomb problem passing 20/20 in kPa and being
+// refused on step 1 in Pa at the default absolute 1e-6: the unit system decided
+// pass/fail.  A YF that does not define one inherits the base's 0.0, which makes
+// f_relative_tol inert for it (the absolute tolerance still applies).
+#define YF_STRENGTH_SCALE template <typename IVStorageType, typename ParameterStorageType> \
+    double strength_scale(const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage) const
+
 // Ladruno (ADR-84 P0): signature for the opt-in special return (see
 // yf_has_special_return above). Called by the constitutive integrator after
 // the elastic check and before the scalar-Newton plastic correction, with the
@@ -152,6 +163,15 @@ public:
     YIELD_FUNCTION_HARDENING
     {
         return static_cast<T*>(this)->df_dxi_star_h_star(depsilon, m , sigma, internal_variables_storage, parameters_storage);
+    }
+
+    // Ladruno (ADR-94 wp/94c, M5): default -- this YF declares no strength scale,
+    // so `f_relative_tol` contributes nothing and only `f_absolute_tol` binds.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        return 0.0;
     }
 
     inline const char* getName() const { return static_cast<T*>(this)->NAME; }

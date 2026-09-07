@@ -1,3 +1,4 @@
+// Ladruno (HB/StiffSoil integration, ledger row 337): adds include guard
 #ifndef HardeningFunctionBase_H
 #define HardeningFunctionBase_H
 

@@ -62,11 +62,25 @@ public:
         if (abs(den) > sqrt(0.5*tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             dev_part = dev_part / den;
         else
-            dev_part *= 0.0;  // Zero out if denominator too small
+            dev_part.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0.0`; NaN*0 == NaN
+
+        // Ladruno (ADR-94 wp/94c, B4/B5): identical correction to
+        // DruckerPrager_YF::df_dsigma_ij -- d sqrt(J2)/d v is r/(2 sqrt(J2)) on the
+        // three normal slots and r/sqrt(J2) on the three shear slots.  The flat
+        // `r/den` was 2x too large on the normal slots, so the plastic flow
+        // direction (and with etabar == eta the associativity check that compares
+        // m against n) was wrong for every non-pure-shear stress state.
+        dev_part(0) *= 0.5;
+        dev_part(1) *= 0.5;
+        dev_part(2) *= 0.5;
             
         // Add pressure-dependent part: etabar * dp/dsigma = etabar/3 * I
-        VoigtVector pressure_part;
-        pressure_part *= 0.0;  // Initialize to zero
+        // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- `VoigtVector x; x *= 0.0;` multiplies
+        // UNINITIALISED Eigen storage by zero, which does not clear heap garbage that
+        // decodes as NaN. This is where the Drucker-Prager hydrostatic-tension NaN was
+        // born (and then committed with analyze() == 0). Same fix as the ADR-84 P0
+        // constructor precedent in ASDPlasticMaterial3D.h.
+        VoigtVector pressure_part = VoigtVector::Zero();
         pressure_part(0) = etabar / 3.0;  // sigma_xx component
         pressure_part(1) = etabar / 3.0;  // sigma_yy component  
         pressure_part(2) = etabar / 3.0;  // sigma_zz component
@@ -84,12 +98,12 @@ public:
 
 private:
 
-    static VoigtVector vv_out; 
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 
 };
 
 
-template<class AlphaHardeningType, class EtaHardeningType>
-VoigtVector DruckerPrager_PF<AlphaHardeningType, EtaHardeningType  >::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 #endif

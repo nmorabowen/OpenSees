@@ -284,6 +284,55 @@ Rayleigh factors are refused so a spurious `βK` can't shrink the step.
 
 ---
 
+### 6.x Corotational transport (scoping only — TIMs request 2026-09-07, F6)
+
+**Status: scoped, not built; TIMs' G4 measures whether it matters first.**
+
+What exists. `buildB()` (`LadrunoKinematicCoupling.cpp:335-350`) fills the gap operator
+once, in `setDomain`, from the **reference** lever arms `d_i = X_i − X_R`
+(`resolveGeometry`, `:200-275`): the translation row is
+`u_i − u_R − [d_i]_× θ_R`, i.e. the small-rotation form `u_i = u_R + θ_R × d_i`.
+`B` is constant, so `K = k·BᵀB` and `r = k·Bᵀg` are geometrically linear. The
+reference-point transfer `Q_R2(z) = Q_R2(z_M) + Q_1·(z − z_M)` that TIMs post-process is
+exact under that linearisation only; at a rocking angle `θ` the neglected term in the
+slave position is `O(θ²)·|d_i|` (for `θ = 2°`, `6e-4·|d_i|`), and the moment carried through
+the platen is off by the same order.
+
+What would change (three parts, ADR 29 §2.4 conventions kept).
+
+1. *Kinematics.* Replace `[d_i]_× θ_R` by the finite-rotation map: with
+   `R(θ_R)` (Rodrigues on the reference node's current rotation vector, or an
+   incremental rotation composed at each `update()`), the gap becomes
+   `g_i = (x_R + R d_i) − x_i` with `x = X + u`. `B` is then rebuilt every
+   `update()` from the **current** `R d_i` (the corotated arm), which is exactly the
+   `-geom corot` idiom the fork uses on `LadrunoUP`/`LadrunoBrick` (ADR 78/79): the
+   element does not become finite-strain, only the rigid arm rotates with the
+   master.
+2. *Tangent.* `K = k·BᵀB` is no longer the whole consistent tangent: the
+   derivative of `R d_i` with respect to `θ_R` adds a geometric block
+   `k·Σ_i gᵢ·∂²(R d_i)/∂θ_R²` (the "rotation-of-the-arm" term, symmetric for a
+   penalty energy, of the same shape as the contact `∂n/∂u` block of ADR-39 B3).
+   Dropping it keeps Newton convergent but linear-rate at large `θ`; keeping it
+   restores quadratic convergence. Under `-enforce al` the augmented multiplier
+   rides on the same `B`, unchanged.
+3. *Rotation-row bookkeeping.* `θ_i − θ_R` for slaves that carry rotations stays
+   additive only for small increments; a consistent version composes rotations
+   (quaternion or rotation-vector update). For a translation-only slave skin (the
+   TIMs footing) this part is not exercised.
+
+Cost. One `R(θ_R)` per master per iteration and an `nGap × nDOF` rebuild of `B`
+each `update()` (it is already allocated); the geometric block is a rank-`nGap`
+correction assembled in the same loop. No new class tag, no new command: it
+would be `-geom corot` on the existing element, default `linear` so every
+existing deck is byte-identical. Explicit lane: `-bipenalty` mass is unaffected
+(it is diagonal in the node DOFs), but the critical time step would pick up the
+geometric block's contribution to the stiffness bound.
+
+Trigger. Build it only if TIMs' G4 (rocking-angle sensitivity of the reference
+transfer) exceeds their tolerance; the estimate above says a few degrees is
+sub-percent. Until then this section is the scope, and the deferral is
+recorded, not silent.
+
 ## 7. Diagnostics & responses
 
 `eleResponse $tag <name>` / `recorder Element -ele $tag -<name>`:
