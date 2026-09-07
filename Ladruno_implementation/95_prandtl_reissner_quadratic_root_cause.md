@@ -32,9 +32,9 @@ With the return map repaired (commit `31322a47a`, `fix(adr95-p4)`):
 | element | pre-fix (allowance named) | fixed material |
 |---|---|---|
 | LadrunoBrick20 uri, h0 = 1.0 | FLOOR at s/B 0.01114, 0.769 of exact | __H20_FIXED__ |
-| TenNodeTetrahedron, tet mesh h0 = 1.0 | FLOOR at s/B 0.00161, 0.391 | TARGET at s/B 0.02, 1.051 (still hardening); long leg **TARGET s/B 0.15, 1.1704, tail 0.11 % — CAPACITY plateau**, 40–181 corner GPs returned to I1 = T, det O(1) |
-| BezierTet10 std | FLOOR at s/B 0.00168, 0.410 | **TARGET s/B 0.15, 1.1824, tail 0.11 % — CAPACITY plateau**, 120–203 corner GPs returned, det O(1) |
-| BezierTet10 -bbar | TARGET s/B 0.02, 0.713 at matched s/B 0.008 (no corner GP in range) | **TARGET s/B 0.15, 1.0403 of exact, tail 0.02 % — a CAPACITY plateau** |
+| TenNodeTetrahedron, tet mesh h0 = 1.0 | FLOOR at s/B 0.00161, 0.391 | TARGET at s/B 0.02, 1.051 (still hardening); long leg **TARGET s/B 0.15, 1.1704, tail 0.018 % — CAPACITY plateau**; corner GPs present from the first plastic stations (min 4, 40–181 in the plateau window), all returned to I1 = T, det O(1) |
+| BezierTet10 std | FLOOR at s/B 0.00168, 0.410 | **TARGET s/B 0.15, 1.1824, tail 0.018 % — CAPACITY plateau**; corner GPs 120–203 in the plateau window, all returned, det O(1) |
+| BezierTet10 -bbar | TARGET at its s/B 0.02 cap, 0.9726 still hardening (0.7128 at matched s/B 0.008); no corner GP in range | **TARGET s/B 0.15, 1.0403 of exact, tail 0.0035 % — a CAPACITY plateau** |
 | LadrunoBrick -bbar (control) | TARGET, 1.0850 | TARGET, 1.0850 (q_max identical to printed digits) |
 
 Coarse-mesh over-strength (1.04–1.09 at h0 = 1.0) is the gate's known from-above convergence
@@ -69,6 +69,10 @@ all four elements through `material <gp>`. P1 sampled it at every GP of the note
   the same 4 corner GPs, normalised determinant −1.5e7 … −1.0e8 on exactly those four against −0.055
   everywhere else. n = 2, both builds, same identity.
 
+Cause, not effect: the corner state is read at the last **converged** state after a zero-increment
+re-form (`station_at_wall`), and the two samplings of that state agree; the stations 5e-6 of s/B
+before it carry no corner GP.
+
 Pre-registered predictions and their fate: H1 (corner branch) **confirmed**; H2 (loss of
 ellipticity) **dead** — every plastic GP is non-elliptic in *both* elements (ψ = 0, ν = 0.45) and the
 linear element completes the collapse carrying ~400 of them; H3 (Newton algebra) **unneeded**. The
@@ -83,7 +87,9 @@ in s/B; the linear control keeps plateauing. Measured (pre-fix material, correct
 SY 0.2 → FLOOR at s/B 0.01114 (n = 2: 0.01124); SY 2 → FLOOR at **0.01351** (+21 %); SY 20 → FLOOR at
 **0.03791** (+240 %). Monotone in T, as predicted, and every wall is the same event: 4 corner GPs with a
 pathological determinant (−3e7 … −5e7 at SY 2, −3e7 at SY 20) at the last converged state, none
-before. The linear SY 2 control: TARGET. q is not comparable across SY (it adds cohesion to the oracle); reach and mode are.
+before. The linear SY 2 control: TARGET. This knob is **consistent with** H1 but is not an independent
+falsifier: SY moves T, the very quantity the defect triggers on, so any hypothesis that lives at the
+cutoff would pass it. The independent confirmation is P4 (the fix removes the wall). q is not comparable across SY (it adds cohesion to the oracle); reach and mode are.
 
 ## 4. The defect, precisely (source review)
 
@@ -102,7 +108,8 @@ central-difference check of the corner tangent in all six Voigt directions (1e-3
 P0 sentinel flipped to require I1 returned to T. The f1-only branch is **not** bit-identical, because
 its tangent denominator was wrong too: gate fastest leg 1.0849417 → 1.0849561 (+1.3e-5), mode
 BUDGET → TARGET, 1390 s → 181 s; linear control 1.7e-6 relative, 2628 s → 487 s. Both inside the gate
-band (1.0517–1.1167). **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
+band (1.0517–1.1167). Only the fastest gate leg was re-checked by the fix agent; the full slow tier
+(three resolutions plus the associated control) on the merged build is __GATE_FULL__. **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
 final-norm divide at 670) — an upstream PR candidate under the campaign's authorship rules.
 
 ## 5. Element technology (H4) — measured, secondary, unchanged
