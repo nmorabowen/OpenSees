@@ -1241,6 +1241,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--elem", default="h20uri", choices=sorted(ELEMS))
     ap.add_argument("--h0", type=float, default=1.0)
+    ap.add_argument("--sy", type=float, default=None,
+                    help="ADR-95 P2 knob: override h20_prandtl.SY (kPa apex regulariser; tension cutoff T = sqrt(2/3)*SY/rho)")
     ap.add_argument("--sfrac", type=float, default=0.15)
     ap.add_argument("--assoc", action="store_true")
     ap.add_argument("--budget", type=int, default=200)
@@ -1280,6 +1282,9 @@ def main():
     ap.add_argument("--calib", action="store_true",
                     help="run control CHI (elastic calibration) and stop")
     args = ap.parse_args()
+    if args.sy is not None:  # ADR-95 P2: must precede any model build (h20_prandtl reads the module global at call time)
+        HP.SY = args.sy
+        print(f"[adr95] SY override -> {HP.SY} kPa")
 
     if args.calib:
         calibrate_chi(args.elem, args.h0)
