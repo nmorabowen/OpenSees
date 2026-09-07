@@ -108,6 +108,26 @@ pre-commit gate (the integrator asks each material `canCommit()` before `Domain:
 or a vanilla change to propagate the return. *Verdict:* infrastructure, not an answer to the
 ring; park under ADR 92 P2.
 
+**I.5 Floor-aware `-implexControl`: refuse on error only where the stress is above the
+floor; count the rest.** The Esmeralda measurement (Log, 2026-09-07) shows the ring's
+extrapolation error is **O(1) in ds** at the wall: the committed error *rises* 30× while the
+step shrinks 16×, so the control refuses every trial down to 2e-7 m and the leg walls. A
+fixed discrepancy however small the increment is the signature of a **non-smooth event** —
+the `p_min` projection in the companion (deviator kept, pressure pasted in) or a dilatancy
+sign flip — that a linear extrapolation from the last committed step cannot see. Refusing on
+it buys nothing: no step size cures it, and the uncontrolled arm has already shown the global
+answer is insensitive to that point (overlay 2–5 % where checkable) because it carries
+nothing. *Mechanism:* at the trial, if the companion clamped or `p_impl ≤ k·p_min`, do not
+refuse; increment a fourth census (`implexRefusals` grows a "floor-exempt" slot) and keep
+measuring the error. Elsewhere the control is unchanged. *Physics:* none — it is ADR-86b's
+option C (accept-and-count) **localised to the floor points only**, where the model has no
+answer to protect. *Cost:* trivial; wire slot. *Experiment (pre-registered):* the registered
+arm with I.5 must reach the control-OFF arm's depth with the same overlay (≤ 5 % mean vs the
+implicit control over its reach) and report the exempt count per step; if the overlay
+degrades, the exempted points were carrying load and I.5 is refuted. *Verdict:* **the
+cheapest lift of the wall that exists, and the one that tells us most** — its census is the
+direct measure of how much of the domain is "at the floor" as the push proceeds.
+
 ### II. Material-side (declare what the ring is)
 
 **II.1 Decoupled floors: stiffness floor ≠ strength floor.** Today one number (`p_r`) both
@@ -183,6 +203,13 @@ All in `adr92_p0_oracle/sanisand_implex_oracle.py`, which already reproduces the
    tangent's smallest eigenvalue along the path (does the floor keep it regular?).
 4. **D5a (II.2).** The tripwire memo's four experiments on the same path.
 5. **Control arms.** Vanilla `p_r = 1.01` (option A) and `p_r = 0` unmodified.
+6. **The O(1) event (I.5).** On the Esmeralda worst-Gauss-point path (their dump, `implexDetail`
+   slots 3–5 + `implexRefusals` per step), replay in the oracle and separate the absolute
+   discrepancy `‖σ~ − σ_impl‖` from the denominator `‖σ_impl‖ + P_atm‖ε‖`: if the absolute
+   part is O(ds) and only the ratio is O(1), the *measure* is the problem and I.1's `σ_ref`
+   logic applies to the control too; if the absolute part is O(1), find the event (clamp
+   fired? `D` sign?) and I.5 is the answer. Lane E's oracle already showed the dilatancy
+   sign flip is quiet at `p0 = 5` and `100 kPa` — it has not been run at `0.1 kPa`.
 
 Decision rule, written before the run: if I.1 at a *defensible* `σ_ref` (≤ 1e-2 P_atm) cuts
 the ring's substeps by ≥ 10× with committed-stress change below the deck's push tolerance,
@@ -219,5 +246,18 @@ benchmark is a real footing or the idealised half-space.
   accepted 2.3–3.6e-5 per step at ds 0.09–0.15 mm. Scaled to their elements, their step
   size sits in the same regime, so **density, not step size, separates the two rings** —
   consistent with CP1's dense deep legs dying at half the loose depth and GATE U's clamp
-  firing on dense only. This puts II.2 (the `D_factor` floor at `p_r = 0`, D5a) ahead of I.1
-  as the first thing P0 must separate.
+  firing on dense only. **Corrected 2026-09-07:** their loose twin (e 0.6944, job 146445) walls at s/B 0.00196
+  vs dense 0.0009–0.0011 — density moves the wall by 2×, it does not remove it; step growth
+  walls at the same places, and with the surcharge EARLIER (0.00044) because growth reaches
+  larger ds sooner. Their six legs ran the PSEUDO clock under DisplacementControl with zero D2
+  firings (the 889 600 were on the cap-1000 legs).
+- 2026-09-07 — **The measurement that reorders this ADR (Esmeralda, loose job 146445 and
+  dense 146450):** `implex_err_max` at commit does **not** scale with ds at the wall. Last 40
+  rows: ds 1.25e-5 → 4–9e-4; 2.5e-5 → 1.5–2.2e-3; 5e-5 → 6e-3 then 2e-2; then at 2.5e-5 it
+  RISES to 2.6e-2 and 8.7e-2, and at 3.1e-6 it is still 4.5e-2 while Q turns over. Error ×30
+  while ds ÷16. The extrapolation error at the ring is an **O(1) event**, not O(ds): the
+  ring Gauss point crosses a non-smooth state (the `p_min` projection or the dilatancy sign)
+  where a linear extrapolation is wrong by a fixed amount however small the increment. Added
+  candidate **I.5 floor-aware control** (accept-and-count localised to floor points) as the
+  cheapest lift and P0 item 6 to separate absolute discrepancy from denominator. Their
+  worst-Gauss-point path dump (`implexDetail` 3–5, `implexRefusals`, per step) is P0's input.
