@@ -1,0 +1,50 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 87b9cf846aa6e75f96d620f24a15b24ba4503a52
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-92e-implex-p2\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-92e-implex-p2\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-92e-implex-p2\Ladruno_files\testbed\hypo_bearing\adr92_bvp_fix\p2_tol0.1
+    date                        : 2026-09-07T05:30:57
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : on, control [0.1, 0.01]
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2400 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   34.629 ds=0.3200mm t=    4.1s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=60.219 kPa, w2(z=-0.625)=5.9354 m, yield 88 ele / 113.045 m3, t=7s
+    [h1.0_e0.6944]    50 s/B=0.00330 q=   92.899 ds=0.1600mm t=   12.5s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=136.279 kPa, w2(z=-0.625)=7.9569 m, yield 160 ele / 301.240 m3, t=19s
+    [h1.0_e0.6944]    75 s/B=0.00570 q=  151.871 ds=0.3200mm t=   20.3s
+    [h1.0_e0.6944]   100 s/B=0.00970 q=  246.989 ds=0.6400mm t=   31.2s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=254.511 kPa, w2(z=-0.625)=9.5965 m, yield 194 ele / 516.950 m3, t=32s
+    [h1.0_e0.6944]   125 s/B=0.01370 q=  340.586 ds=0.3200mm t=   42.2s
+    [h1.0_e0.6944]   150 s/B=0.01770 q=  433.388 ds=0.3200mm t=   52.5s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=488.738 kPa, w2(z=-0.625)=11.2538 m, yield 198 ele / 567.544 m3, t=59s
+    [h1.0_e0.6944]   175 s/B=0.02170 q=  525.559 ds=0.3200mm t=   62.8s
+    [h1.0_e0.6944]   200 s/B=0.02570 q=  617.269 ds=0.3200mm t=   72.8s
+    [h1.0_e0.6944]   225 s/B=0.02970 q=  708.503 ds=0.3200mm t=   82.9s
+    [h1.0_e0.6944]   250 s/B=0.03370 q=  799.245 ds=0.6400mm t=   92.7s
+    [h1.0_e0.6944]   275 s/B=0.03770 q=  889.515 ds=0.3200mm t=  102.7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=943.425 kPa, w2(z=-0.625)=12.7195 m, yield 200 ele / 600.000 m3, t=108s
+    [h1.0_e0.6944]   300 s/B=0.04170 q=  979.233 ds=0.3200mm t=  112.2s
+    [h1.0_e0.6944]   325 s/B=0.04570 q= 1068.386 ds=0.3200mm t=  121.6s
+    [h1.0_e0.6944]   350 s/B=0.04970 q= 1156.921 ds=0.3200mm t=  131.2s
+    [h1.0_e0.6944]   375 s/B=0.05370 q= 1244.800 ds=0.3200mm t=  140.5s
+    [h1.0_e0.6944]   400 s/B=0.05770 q= 1331.967 ds=0.6400mm t=  149.8s
+    [h1.0_e0.6944]   425 s/B=0.06170 q= 1418.442 ds=0.3200mm t=  159.4s
+    [h1.0_e0.6944]   450 s/B=0.06570 q= 1504.094 ds=0.3200mm t=  168.5s
+    [h1.0_e0.6944]   475 s/B=0.06970 q= 1588.975 ds=0.3200mm t=  177.5s
+    [h1.0_e0.6944]   500 s/B=0.07370 q= 1673.008 ds=0.3200mm t=  186.5s
+    not a capacity (no plateau and no passed peak) -- q_max = 1719.640 kPa is a lower bound the leg reached, not a collapse load
+    at s/B = 0.07594; [h1.0_e0.6944] mode=BUDGET (pinned subdivision budget of 80 spent at s/B = 0.07594); ended s/B=0.07594 of target 0.250; plateau=NO / peaked=NO (tail 61.770 % of initial); free-advance=yes (1600.0x floor); subdivisions 81/80; 514 steps, 243 failed, 0 relaxed, 192 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 1.27e-03
+    width: w2(z=-0.625) = 13.6927 m, w2(z=-1.375) = 12.8566 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
