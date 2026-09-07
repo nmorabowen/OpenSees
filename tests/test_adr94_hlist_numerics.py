@@ -427,6 +427,43 @@ def _soft_history(strict=None, nsteps=4):
     return rows
 
 
+def _soft_history_on_ladrunobrick(strict=None, nsteps=4):
+    """The same softening VonMises rig on a host that PROPAGATES the sentinel.
+
+    ``_soft_history`` above uses ``stdBrick``, which swallows every material
+    return code (ADR-94 B2), so it cannot observe wp/94a's refusal.  Returns
+    the ``analyze()`` codes only.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for k, (x, y, z) in enumerate(O.NODES):
+        ops.node(k + 1, float(x), float(y), float(z))
+    for k in range(1, 5):
+        ops.fix(k, 1, 1, 1)
+    for k in range(5, 9):
+        ops.fix(k, 1, 1, 0)
+    mat_vm(1, "Continuum", hiso=H_SOFT, strict=strict)
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for k in range(5, 9):
+        ops.load(k, 0., 0., P_PLASTIC)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-10, 60, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    codes = []
+    for _ in range(nsteps):
+        rc = ops.analyze(1)
+        codes.append(rc)
+        if rc != 0:
+            break
+    return codes
+
+
 @pytest.mark.t0m
 def test_H7_inconsistency_branch_commits_the_elastic_predictor(vm_available):
     """CONFIRMED, and WORSE than the H7 row states (major).
@@ -477,11 +514,40 @@ def test_H7_strict_convergence_does_not_gate_the_inconsistency_branch(
     ``strict_convergence 1`` all four steps still return 0 with
     ``f_VM = +87.5``, bit-identical to flag-off.
     """
+    # FIXED by wp/94a (ADR-94 B3): the branch now refuses under the flag
+    # instead of committing the elastic predictor with `return 0`.  Flag-OFF
+    # is unchanged -- that half of the original measurement still stands and
+    # is what `test_H7_inconsistency_branch_commits_the_elastic_predictor`
+    # (flag off) keeps pinning.
     off = _soft_history(strict=None)
     on = _soft_history(strict=1)
-    assert [r[0] for r in on] == [0, 0, 0, 0]
-    assert _rel(on[-1][2], off[-1][2]) < 1e-12
-    assert _f_vm(on[-1][2]) > 50.0
+
+    assert [r[0] for r in off][:4] == [0, 0, 0, 0], (
+        "flag-OFF behaviour must be byte-identical to pre-wp/94a: the "
+        "inconsistency branch still commits the elastic predictor as success")
+    assert _f_vm(off[-1][2]) > 50.0
+
+    # HOST CAVEAT (ADR-94 B2, deliberately NOT fixed by wp/94a): this rig's
+    # host is `stdBrick`, whose `update()` returns 0 unconditionally, so it
+    # swallows the refusal exactly as it swallows every other material return
+    # code.  Flag-on therefore still reports rc=0 HERE -- that is the host
+    # contract, not a regression of the material fix.
+    assert [r[0] for r in on][:4] == [0, 0, 0, 0], (
+        f"stdBrick started propagating a material refusal "
+        f"({[r[0] for r in on]}) -- Brick::update()'s unconditional `return 0` "
+        f"may have been fixed; re-verify ADR-94 B2's host table.")
+
+    # The fix itself is pinned on a host that DOES propagate the sentinel.
+    codes = _soft_history_on_ladrunobrick(strict=1)
+    assert any(c != 0 for c in codes), (
+        f"strict_convergence=1 did NOT gate the `dLambda + deltaLambda < 0` "
+        f"fallback on LadrunoBrick: codes={codes} -- ADR-94 B3's fix has "
+        f"regressed")
+
+    codes_off = _soft_history_on_ladrunobrick(strict=None)
+    assert codes_off == [0, 0, 0, 0], (
+        f"flag-OFF on LadrunoBrick must be unchanged (the branch still "
+        f"commits the elastic predictor as success); codes={codes_off}")
 
 
 # ===========================================================================
@@ -514,65 +580,97 @@ def _mc_tet(method, strict=None, niter=None):
 
 @pytest.fixture(scope="module")
 def ls_runs(mc_available):
+    """FIXED by wp/94a (ADR-94 M7): ``Backward_Euler_LineSearch`` can no
+    longer be SELECTED -- the parser refuses it with an ADR-94 citation and
+    the material is not created, so none of the three H8 defects below is
+    reachable from a deck any more.  The fixture now records the refusal
+    instead of three runs."""
+    def _refused(**kw):
+        try:
+            _mc_tet("Backward_Euler_LineSearch", **kw)
+        except Exception:
+            return True
+        return False
+
     return {
         ("BE", 100, None): _mc_tet("Backward_Euler", niter=100),
-        ("LS", 2, None): _mc_tet("Backward_Euler_LineSearch", niter=2),
-        ("LS", 100, None): _mc_tet("Backward_Euler_LineSearch", niter=100),
-        ("LS", 100, 1): _mc_tet("Backward_Euler_LineSearch", niter=100,
-                                strict=1),
+        ("LS", 2, None): _refused(niter=2),
+        ("LS", 100, None): _refused(niter=100),
+        ("LS", 100, 1): _refused(niter=100, strict=1),
     }
 
 
 @pytest.mark.t0m
 def test_H8_line_search_ignores_n_max_iterations(ls_runs):
-    """CONFIRMED (major).  ``Backward_Euler_LineSearch`` hardcodes
-    ``max_iter = 30`` (2385) instead of reading ``INT_OPT_n_max_iterations``,
-    so the option is silently inert: ``n_max_iterations`` 2 and 100 give
-    BIT-IDENTICAL histories.  On the same rig ``Backward_Euler`` with
-    ``n_max_iterations 2`` is the ADR-84 exhaustion reproducer (worst
-    ``f_MC = 77.6`` vs 6.3e-4 at 100), so the option is not inert in general --
-    only in this integrator.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
+
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
-    c2, h2 = ls_runs[("LS", 2, None)]
-    c100, h100 = ls_runs[("LS", 100, None)]
-    assert c2 == c100
-    assert h2.shape == h100.shape
-    assert np.array_equal(h2, h100)
+    assert ls_runs[("LS", 2, None)] is True, (
+        "Backward_Euler_LineSearch with n_max_iterations 2 was accepted by "
+        "the parser -- ADR-94 M7's refusal has regressed and the hardcoded "
+        "max_iter = 30 is reachable again")
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch with n_max_iterations 100 was accepted -- "
+        "same regression")
 
 
 @pytest.mark.t0m
 def test_H8_line_search_ignores_strict_convergence(ls_runs):
-    """CONFIRMED (major).  ``strict_convergence`` is read only inside
-    ``Backward_Euler`` (2081, 2086, 2184, 2338); ``Backward_Euler_LineSearch``
-    has no ``be_strict`` at all, so the fork's one loud-failure switch is a
-    no-op the moment a user selects this integrator.  Measured: flag on and
-    flag off are bit-identical.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
+
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
-    c_off, h_off = ls_runs[("LS", 100, None)]
-    c_on, h_on = ls_runs[("LS", 100, 1)]
-    assert c_off == c_on
-    assert np.array_equal(h_off, h_on)
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch (flag off) was accepted by the parser -- "
+        "ADR-94 M7's refusal has regressed")
+    assert ls_runs[("LS", 100, 1)] is True, (
+        "Backward_Euler_LineSearch with strict_convergence 1 was accepted -- "
+        "same regression; the fork's one loud-failure switch would again be a "
+        "no-op inside this integrator")
 
 
 @pytest.mark.t0m
 def test_H8_line_search_is_less_robust_than_plain_backward_euler(ls_runs):
-    """CONFIRMED (major).  The name promises robustness; measured on the ADR-84
-    MC tet leg it completes 2 of 20 steps where plain ``Backward_Euler``
-    completes 20 of 20.
+    """    FIXED by wp/94a (ADR-94 M7).  H8 as measured: ``Backward_Euler_LineSearch``
+    hardcodes ``max_iter = 30`` instead of reading ``n_max_iterations``, never
+    reads ``strict_convergence``, its "line search" accepts alpha = 1 on the
+    first try for every step, its split loop returns SUCCESS for a strain the
+    element never asked for, and it completed 2 of 20 steps on the ADR-84 MC
+    tet leg where plain ``Backward_Euler`` completed 20 of 20.
 
-    Reading the code, the "line search" cannot help: the acceptance test is on
-    a LINEAR prediction ``Phi + dPhi/dlambda * dl`` (2477-2486), so for an
-    unclipped Newton direction ``dl = -alpha*Phi/dPhi`` it reduces to
-    ``|1-alpha| <= 1 - 1e-4*alpha``, true for every ``alpha`` in (0,1] --
-    ``alpha = 1`` is always accepted on the first try and no backtracking ever
-    happens.  Nor does the "substepping": on failure it halves ``dEps`` and
-    solves ONE reduced increment (2578-2596) instead of chaining substeps,
-    overwriting ``TrialStrain`` with ``CommitStrain + dEps/2^k`` and returning
-    SUCCESS for a strain the element never asked for.
+    The parser now REFUSES ``integration_method Backward_Euler_LineSearch``
+    with an ADR-94 citation and does not create the material, so none of that
+    is reachable from a deck.  The integrator's code is deliberately KEPT (the
+    refusal is at the parser, not a deletion), which is why the H8 row stays in
+    the register rather than being struck.  The fixture records the refusal;
+    these tests pin that the deck no longer builds.
     """
     c_be, h_be = ls_runs[("BE", 100, None)]
-    c_ls, h_ls = ls_runs[("LS", 100, None)]
-    ok_be = sum(1 for c in c_be if c == 0)
-    ok_ls = sum(1 for c in c_ls if c == 0)
-    assert ok_be == P.TET_NSTEPS
-    assert ok_ls < 5, "BE_LS became robust -- re-read the H8 verdict"
+    assert sum(1 for c in c_be if c == 0) == P.TET_NSTEPS, (
+        f"plain Backward_Euler must still complete the ADR-84 MC tet leg "
+        f"{P.TET_NSTEPS}/{P.TET_NSTEPS} -- wp/94a must not have changed the "
+        f"flag-off default path; codes={c_be}")
+    assert ls_runs[("LS", 100, None)] is True, (
+        "Backward_Euler_LineSearch was accepted -- the 2/20-vs-20/20 defect "
+        "is reachable again")
