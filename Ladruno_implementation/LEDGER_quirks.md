@@ -5889,3 +5889,33 @@ a material-level flag a recorder reads. Returning a sentinel from
   each one's own raw output before applying the same fix (more nodes, more memory) to all of them;
   here 3 of 4 were genuine OOM candidates and 1 was an unrelated, much cheaper bug hiding behind
   the same exit code.
+
+### ASDPlasticMaterial3D's tangent is a CLASS-STATIC — every Gauss point is assembled with the last GP's tangent (ADR-94 H1)
+- **Bites:** any multi-element or strain-gradient model on any ASDP specialization, on every host that calls `setTrialStrain` for all GPs in `update()` and `getTangent()` in a later loop (`Brick`, `LadrunoBrick`, `TenNodeTetrahedron`, ...). `Stiffness`, `dsigma`, `depsilon_elpl`, `intersection_*` are `static` members of `ASDPlasticMaterial3D<E,Y,P,tag>` (header 4116-4120); `getTangent()` copies the static; `getInitialTangent()` overwrites it as a side effect. Measured: two disconnected elements whose tangents differ by 13.6 % assemble bit-identical blocks, and which one wins is the domain iteration order.
+- **Why it hid:** every ASDP test was a single-element homogeneous driver, where all GPs share one state. Converged RESULTS are still exact (the residual uses each element's own stress) — the cost is Newton effort (+62 % on a two-cube model, 5.3x with the `Secant` default) and non-convergence on hard steps.
+- **Rule:** never gate tangent quality with a homogeneous rig; use two elements in different states and `printA('-sparse','-ret')`. ASDP is a permanent ADR-75b threading blocker until the statics are per-instance (jaabell-bound, see `reviews/adr94_verdict.md` §7b).
+
+### `LadrunoBrick` compares ONLY `== LADRUNO_MATERIAL_REFUSED` — a bare `-1` from a material is treated as success (ADR-94 B2)
+- **Bites:** every material failure path that returns a plain `-1` (ASDP: 13 of its 15 failure sites, including the NaN guard and the singular-tangent guard; only two `Backward_Euler` sites return the sentinel). `stdBrick` drops every code. Only `TenNodeTetrahedron` (`success += ...`) propagates both. Measured: Drucker-Prager commits NaN stress with `analyze() == 0` on `LadrunoBrick` while the material prints `NaN!` and returns `-1`.
+- **Why:** the ADR-86b review-fix deliberately narrowed the host check to the sentinel so that only "commit guaranteed unchanged" refusals abort; nobody widened the material side to match.
+- **Rule:** a material that wants to be heard by `LadrunoBrick` must return the sentinel, not `-1`. Fix direction is widening the material's sites, not loosening the host to `< 0`.
+
+### Eigen `*= 0.0` pseudo-initialisation recurs in the YF/PF headers — the ADR-84 constructor trap, four more times (ADR-94 B4)
+- **Bites:** `VoigtVector pressure_part; pressure_part *= 0.0;` in `DruckerPrager_YF.h:64-65` and `DruckerPrager_PF.h:68-69`; an uninitialised `VoigtVector zero;` returned by `NullHardeningTensorPolicy`; AF's saturation-branch `derivative`. `EIGEN_INITIALIZE_MATRICES_BY_ZERO` is defined nowhere in the tree, so stale non-finite heap bits survive and DP is the only YF that NaNs at its apex.
+- **Rule:** `setZero()` or `VoigtVector::Zero()`, never `*= 0`. Grep the idiom before trusting any new Eigen-backed component.
+
+### `f_absolute_tol` is absolute in stress units — the unit system decides whether `strict_convergence` refuses (ADR-94 M5)
+- **Bites:** the same Mohr-Coulomb problem completes 20/20 in kPa at the default `1e-6` and is refused on step 1 in Pa. `|Phi|` scales with σy (VM), c·cosφ (MC), σci·s^a (HB, ~5 MPa at 50 MPa rock), four decades across the catalogue before units. Tightening to `1e-10` refuses both.
+- **Rule:** quote units next to every tolerance; size `f_absolute_tol` to the YF's own strength scale (a relative tolerance is jaabell-bound work).
+
+### pytest `capfd` cannot see a native `.pyd`'s `cout`/`cerr` on this Windows build
+- **Bites:** a test using `capfd` to assert on `opensees.pyd` stdout/stderr sees nothing, though the same code prints under a piped shell or `subprocess`. The `.pyd`'s own linked CRT writes through a stream the mid-process `dup2` swap does not reach.
+- **Rule:** run the model in a child process and capture OS-level stdout/stderr; helper `_run_child()` in `tests/test_adr94_hlist_mechanical.py`. Pass `stdin=subprocess.DEVNULL` — without it `subprocess.run` under pytest intermittently raises `OSError: [WinError 6] The handle is invalid` from `_winapi.DuplicateHandle` (~1 in 3 runs observed).
+
+### `printA('-ret')` (dense) is EMPTY for every SOE except `FullGeneral`
+- **Bites:** `ops.printA('-ret')` returns nothing under `UmfPack` and the other sparse solvers — looks like "no tangent" rather than "wrong API" (`getA()` is null for non-dense SOEs, `OpenSeesCommands.cpp:2718`). `FullGeneral` itself crashes on fully-prescribed drivers (N = 0).
+- **Rule:** `printA('-sparse', '-ret')` works with `UmfPack` and returns `{rowIndices, colIndices, values}`. It calls `formTangent()` itself, so it reads the tangent after the last `update()` — exactly the window the ASDP static-tangent defect lives in.
+
+### `TenNodeTetrahedron::eleResponse` self-heals from nodal trial displacement on every query
+- **Bites:** "stresses"/"forces"/"material" responses always re-derive strain from the CURRENT nodal trial displacement and re-run the material, so a material-level Trial-state corruption (e.g. ASDP's no-op `revertToLastCommit`) is invisible through any eleResponse path after a domain-level revert; `ops.reset()` then reports a third stress value that is neither zero nor the pre-reset commit.
+- **Rule:** to observe raw material Trial/Commit state after a revert, use a source-level structural pin or a recorder that reads the material directly; do not conclude "fixed" from a tet eleResponse.

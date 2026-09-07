@@ -1,7 +1,7 @@
 ---
 title: ADR 94 — ASDPlasticMaterial3D implementation review
 project: Ladruno
-status: draft
+status: verdict shipped (2026-09-07, #804) — fixes are separate WPs
 priority: high
 owner: nmora
 tags:
@@ -228,8 +228,30 @@ Token discipline (binding for every agent prompt):
   waits for all. Nothing else blocks, so R3 and R4 start as soon as R0's build
   exists.
 
+## Implementation log
+
+- **2026-09-06** — plan drafted; D3 decided by owner (SP/MP out of scope). Merged as #802 (`220fbac6f`).
+- **2026-09-07** — R0–R6 executed on `wp/94-asdplastic-review-exec` (#804), 13 agents, one build
+  (`52314165a`). R0 inventory: 46 specializations, baseline 22 passed. R1: H1/H7/H8 (opus),
+  H2/H4/H5/H9/H12–15 (sonnet), H10 (sonnet). R2: three red lanes + one blue. R3a: standalone
+  g++ FD harness over every registered component — worked without linking OpenSees; found the
+  shear-slot convention split (B5) after a first "VM derivative bug" reading was withdrawn.
+  R3b (apex/HB opus lane) dropped as redundant with R1-C + red-numerics. R4: 450-cell matrix;
+  DP/HB rows not warrant-grade (harness sign convention disputed, see verdict §2). R5: sentinel
+  at 2 of 15 sites; hosts drop bare −1. R6 verdict: [[reviews/adr94_verdict]] — 15/16
+  confirmed, H6 accuracy REFUTED on VM, H1 downgraded from "results" to "cost + threading"
+  after blue's two-cube measurement. Full battery 69 passed / 4 skipped / 0 failed in 34 s.
+- **Surprises:** `capfd` cannot see the `.pyd`'s `cout` (child-process capture needed);
+  `printA('-ret')` is empty except under `FullGeneral`; the R0 agent parked on its own build
+  monitor (the recorded trap) but was woken by Monitor events; `stdBrick` swallows the sentinel
+  too, so ADR-84 P2a is a no-op on the default hex; `meanStress()` is tension-positive and the
+  DP comment is wrong.
+- **Row 337 marker debt** closed in the same PR (comment-only markers on the HB/StiffSoil
+  integration hunks).
+
 ## See also
 
-[[84_ladruno_mc_tension_cutoff_adr]] · [[reviews/adr86b_verdict]] · [[17_finite_strain_validation_plan]] ·
-[[upstream_pr_campaign]] · [[87_ladruno_depth_with_width_adr]] · [[LEDGER_vanilla_files]] ·
-[[LEDGER_quirks]] (the five ASDPlasticMaterial3D entries) · [[LEDGER_implementations]] (ADR-84 row)
+[[reviews/adr94_verdict]] · [[84_ladruno_mc_tension_cutoff_adr]] · [[reviews/adr86b_verdict]] ·
+[[17_finite_strain_validation_plan]] · [[upstream_pr_campaign]] · [[87_ladruno_depth_with_width_adr]] ·
+[[LEDGER_vanilla_files]] · [[LEDGER_quirks]] (the ASDPlasticMaterial3D entries, now twelve) ·
+[[LEDGER_implementations]] (ADR-84 and ADR-94 rows)

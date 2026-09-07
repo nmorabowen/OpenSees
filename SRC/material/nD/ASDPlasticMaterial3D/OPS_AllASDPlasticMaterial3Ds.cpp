@@ -92,6 +92,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
 
     // check arguments
     int numArgs = OPS_GetNumRemainingInputArgs();
+    // Ladruno (HB/StiffSoil integration, ledger row 337): allow 2-arg calls (yf_type only)
     if (numArgs < 2) {
         "nDMaterial ASDPlasticMaterial3D Error: Few arguments \n";
         opserr << "    numArgs = " << numArgs << endln << endln;
@@ -120,6 +121,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
     el_type = numArgs >= 4 ? OPS_GetString() : " X ";
     iv_type = numArgs >= 5 ? OPS_GetString() : " X ";
     
+    // Ladruno (HB/StiffSoil integration, ledger row 337): debug-print numArgs for wildcard search
     opserr << "    numArgs = " << numArgs << endln << endln;
 
 
@@ -145,6 +147,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
             std::string model_el_type = std::get<2>(model);
             std::string model_iv_type = std::get<3>(model);
             
+            // Ladruno (HB/StiffSoil integration, ledger row 337): wildcard placeholder search
             if (std::strcmp(pf_type, model_yf_type.c_str())==0 || std::strcmp(pf_type, " X ")==0 )
             {
                 cout << "  YF = " << model_yf_type << endl;
@@ -224,6 +227,7 @@ NDMaterial*  ASDPlasticMaterial3DFactory(int instance_tag, const char * yf_type,
 
 
 
+// Ladruno (HB/StiffSoil integration, ledger row 337): reformatted signature, no functional change
 template<typename EL, typename YF, typename PF>
 NDMaterial* createASDPlasticMaterial3D(int instance_tag, 
         const char* yf_type, const char* pf_type, const char* el_type, const char* iv_type, 
@@ -289,6 +293,7 @@ void populate_ASDPlasticMaterial3D(T* instance)
     });
 
     // Default integration options
+    // Ladruno (HB/StiffSoil integration, ledger row 337): default Backward_Euler/Secant
     int method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
     int tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Secant;
     double f_absolute_tol = 1e-6; 

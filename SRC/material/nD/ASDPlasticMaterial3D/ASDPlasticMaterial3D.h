@@ -114,7 +114,7 @@ public:
     ASDPlasticMaterial3D( )
         : NDMaterial(0, thisClassTag)
     {
-        stress_set_externally = false;
+        stress_set_externally = false; // Ladruno (HB/StiffSoil integration, ledger row 337): init new flag
     }
 
 
@@ -229,6 +229,7 @@ public:
     int setTrialStrain(const Vector &v)
     {
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): skip K0 init if stress was set externally
         if (first_step && !stress_set_externally)
         {
             double p0 = parameters_storage.template get<InitialP0>().value;
@@ -795,7 +796,7 @@ public:
         newmaterial->CommitPlastic_Strain = this->CommitPlastic_Strain;
         newmaterial->iv_storage = this->iv_storage;
         newmaterial->parameters_storage = this->parameters_storage;
-        newmaterial->stress_set_externally = this->stress_set_externally;
+        newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
 
         return newmaterial;
     }
@@ -818,7 +819,7 @@ public:
             newmaterial->CommitPlastic_Strain = this->CommitPlastic_Strain;
             newmaterial->iv_storage = this->iv_storage;
             newmaterial->parameters_storage = this->parameters_storage;
-            newmaterial->stress_set_externally = this->stress_set_externally;
+            newmaterial->stress_set_externally = this->stress_set_externally; // Ladruno (HB/StiffSoil integration, ledger row 337)
 
             return newmaterial;
         } else
@@ -870,6 +871,7 @@ public:
                 cout << "       ---->  K03D" << endl;
                 return param.addObject(8, this);
             }
+            // Ladruno (HB/StiffSoil integration, ledger row 337): register stress-increment setParameter tokens
             else if (strcmp(argv[0], "trialStressIncrement") == 0) {
                 return param.addObject(9, this);
             }
@@ -926,6 +928,7 @@ public:
 
         cout << "ASDPlasticMaterial3D::updateParameter  responseID = " << responseID << endl;
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): debug-print the Information payload
         opserr << " info = "; // << info << endln;
         info.Print(opserr);
 
@@ -935,7 +938,7 @@ public:
                 const Vector& newStress = *(info.theVector);
                 CommitStress = VoigtVector::fromStress(newStress);
                 TrialStress = CommitStress;
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             }
             return 0;
         }
@@ -960,7 +963,7 @@ public:
             if (info.theType == VectorType) {
                 const Vector& newTrialStress = *(info.theVector);
                 TrialStress = VoigtVector::fromStress(newTrialStress);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             }
             return 0;
         }
@@ -985,7 +988,7 @@ public:
                 cout << "ASDPL @ tag = " << this->getTag() << " K02D  K0 = " << K02D << endl;
                 CommitStress(0) = K02D * CommitStress(1);
                 CommitStress(2) = K02D * CommitStress(1);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             // }
             return 0;
         }
@@ -995,10 +998,11 @@ public:
                 cout << "ASDPL @ tag = " << this->getTag() << " K03D  K0 = " << K03D << endl;
                 CommitStress(0) = K03D * CommitStress(2);
                 CommitStress(1) = K03D * CommitStress(2);
-                stress_set_externally = true;
+                stress_set_externally = true; // Ladruno (HB/StiffSoil integration, ledger row 337)
             // }
             return 0;
         }
+        // Ladruno (HB/StiffSoil integration, ledger row 337): responseID 9-21, trial/commit stress-increment updateParameter handlers
         else if (responseID == 9) { // trialStressIncrement
             if (info.theType == VectorType) {
                 const Vector& newTrialStress = *(info.theVector);
@@ -2037,6 +2041,7 @@ private:
 
         int errorcode = -1;
 
+        // Ladruno (HB/StiffSoil integration, ledger row 337): hoisted earlier for the elastic-exit checks below
         int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
         double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
 
