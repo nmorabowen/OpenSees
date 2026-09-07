@@ -127,13 +127,25 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     int    floorMode;        // -implexFloor {implicit|accept|refuse}  Ladruno ADR-92 P2-1
     bool   guard;            // -implexGuard {on|off}                  Ladruno ADR-92 P2-2
 
+    // Ladruno ADR-92 P2-6: the TRIAL-time graded fallback. Esmeralda 146569
+    // (dense q10) measured the leg crawling to its subdivision budget because
+    // W7 refuses a trial extrapolated with the full f the instant its error
+    // crosses tol, even when the committed predecessor gave no advance warning
+    // (the P2-2 guard only catches a predecessor that ALREADY showed Kp <= 0 or
+    // a reversal). ON (the DEFAULT) tries f = 0 for THIS trial, before
+    // refusing, whenever the primary extrapolation's error is past tol and the
+    // reduction floor has not been reached; OFF reproduces the pre-P2-6
+    // behaviour (refuse immediately, exactly as P2-1..P2-5 shipped it).
+    bool   trialGuard;       // -implexTrialGuard {on|off}             Ladruno ADR-92 P2-6
+
     // errorTol default: measured 2026-09-06 (_adr92_p1_bvp_gate_rerun.md sweep)
     // -- 0.05 fails on reach, 0.1 is the tightest tolerance that beats the
     // implicit control's depth under 5% mean deviation. (WP-92d)
     LadrunoImplexOptions()
       : enabled(false), control(false), errorTol(0.1), reductionLimit(0.01),
         alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0),
-        floorMode(FLOOR_IMPLICIT), guard(true) {}   // Ladruno ADR-92 P2
+        floorMode(FLOOR_IMPLICIT), guard(true),
+        trialGuard(true) {}   // Ladruno ADR-92 P2 / P2-6
 };
 
 class LadrunoSANISAND : public ManzariDafalias

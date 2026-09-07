@@ -62,17 +62,18 @@
 //        <-implex> <-implexControl $tol $reductionLimit> <-implexAlpha $a>      \
 //        <-implexDt pseudo|strain|user <$dt>>                                   \
 //        <-implexFloor implicit|accept|refuse> <-implexGuard on|off>            \
-//        <-reversalTol $tol>
+//        <-implexTrialGuard on|off> <-reversalTol $tol>
 //
 //  Ladruno ADR-92 P2-5: -reversalTol is NOT an IMPL-EX option (it has no
 //  "-implex" gate and no sawImplexToken involvement) -- it repairs a defect
 //  in ManzariDafalias::integrate() itself, so it is active with -implex OFF
 //  exactly as with it ON. Default 1.0e-10 (absolute strain); 0 disables it.
 //
-//  Ladruno ADR-92 P2: the last two are the P2-1 floor fallback and the P2-2
-//  softening/reversal guard. Both DEFAULT ON (`implicit`, `on`) -- they are
-//  corrections to a measured defect, not opt-in experiments -- and both are
-//  reachable only under -implex, so a deck without it stays byte-identical.
+//  Ladruno ADR-92 P2: the P2-1 floor fallback, the P2-2 softening/reversal
+//  guard, and the P2-6 trial-time graded fallback (-implexTrialGuard) all
+//  DEFAULT ON (`implicit`, `on`, `on`) -- they are corrections to a measured
+//  defect, not opt-in experiments -- and all three are reachable only under
+//  -implex, so a deck without it stays byte-identical.
 //
 //  The first 18 positional doubles and the 5 positional optionals occupy the
 //  SAME SLOTS as `nDMaterial ManzariDafalias`, so a deck migrates by renaming
@@ -144,6 +145,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implex> <-implexControl tol? reductionLimit?>"
                << " <-implexAlpha a?> <-implexDt pseudo|strain|user <dt?>>"     // Ladruno (ADR-92)
                << " <-implexFloor implicit|accept|refuse> <-implexGuard on|off>" // Ladruno ADR-92 P2
+               << " <-implexTrialGuard on|off>"                                 // Ladruno ADR-92 P2-6
                << " <-reversalTol tol?>"                                        // Ladruno ADR-92 P2-5
                << endln;
         return 0;
@@ -489,6 +491,37 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
+        // Ladruno ADR-92 P2-6: the trial-time graded fallback.
+        else if (strcmp(argTok, "-implexTrialGuard") == 0 || strcmp(argTok, "-implextrialguard") == 0) {
+            seenFlag = true;
+            sawImplexToken = true;
+            const char *rawMode = OPS_GetString();
+            if (rawMode == 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -implexTrialGuard wants on|off" << endln;
+                return 0;
+            }
+            char modeTok[32];
+            int  mc = 0;
+            while (mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+
+            if (strcmp(modeTok, "on") == 0)
+                implexOpt.trialGuard = true;
+            else if (strcmp(modeTok, "off") == 0)
+                implexOpt.trialGuard = false;
+            else {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -implexTrialGuard wants on|off, got '" << modeTok
+                       << "'. ON (the DEFAULT) retries a trial whose extrapolation error"
+                          " is past -implexControl's tol, BEFORE refusing it and BEFORE"
+                          " the reduction floor, with f = 0 (a pure elastic predictor)"
+                          " re-measured against the SAME companion; OFF reproduces the"
+                          " pre-P2-6 behaviour (refuse immediately)."
+                       << endln;
+                return 0;
+            }
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -511,7 +544,8 @@ OPS_LadrunoSANISAND(void)
                        << " Expected a numeric positional optional or one of"
                        << " -Presidual / -Pmin / -honorTolR / -maxSubsteps /"
                        << " -implex / -implexControl / -implexAlpha / -implexDt /"
-                       << " -implexFloor / -implexGuard / -reversalTol" << endln;   // Ladruno ADR-92 P2-5
+                       << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
+                       << " -reversalTol" << endln;   // Ladruno ADR-92 P2-5
                 return 0;
             }
             nPos++;
@@ -1059,6 +1093,10 @@ LadrunoSANISAND::getCopy(const char *type)
 //                      wire because it is per-material deck-level state, on
 //                      the same rule as mPresidualInput/mPminInput above)
 //
+//  Ladruno ADR-92 P2-6 widened it once more, 26 -> 27:
+//
+//      data(26)     = (double)mImplexOpt.trialGuard  (-implexTrialGuard)
+//
 //  mImplexGuardArmed is COMMITTED-state-derived and decides the very next step's
 //  f, so it crosses for the same reason mImplexDtCommit does: a rank that
 //  receives a material whose committed predecessor was softening, and restarts
@@ -1101,7 +1139,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(26);                                                    // Ladruno ADR-92 P2-5
+    static Vector ladrunoData(27);                                                    // Ladruno ADR-92 P2-6
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1132,6 +1170,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // Ladruno ADR-92 P2-5
     ladrunoData(25) = mReversalTol;
 
+    // Ladruno ADR-92 P2-6
+    ladrunoData(26) = mImplexOpt.trialGuard ? 1.0 : 0.0;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1151,7 +1192,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(26);                                                    // Ladruno ADR-92 P2-5
+    static Vector ladrunoData(27);                                                    // Ladruno ADR-92 P2-6
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1183,6 +1224,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         opt.dtUser         = ladrunoData(11);
         opt.floorMode      = (int)ladrunoData(22);          // Ladruno ADR-92 P2-1
         opt.guard          = (ladrunoData(23) != 0.0);      // Ladruno ADR-92 P2-2
+        opt.trialGuard     = (ladrunoData(26) != 0.0);      // Ladruno ADR-92 P2-6
         this->ladrunoImplexInitState();
         if (opt.enabled && this->setLadrunoImplexOptions(opt, false) != 0) {
             opserr << "WARNING: LadrunoSANISAND::recvSelf - the received -implex option set"
@@ -1362,12 +1404,20 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     void noteReversalNoiseGuard(void)      { nReversalNoise++; }
     long getReversalNoiseGuards(void) const { return nReversalNoise; }
 
+    // Ladruno ADR-92 P2-6: the trial-time graded fallback census, read through
+    // `implexGuards`'s new slot 4. Same contract as the four counters above --
+    // process-wide, non-destructive, NOT cleared by a commit round -- and it
+    // fires from the TRIAL (ladrunoImplexTrial), not from a commit, which is
+    // why it needs its own slot rather than reusing P2-2's.
+    void noteTrialGuardF0(void)       { nTrialGuardF0++; }   // Ladruno ADR-92 P2-6
+    long getTrialGuardF0(void) const  { return nTrialGuardF0; }
+
   private:
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
         nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0),
         nFloorFallback(0), nGuardF0(0), nHoldPreserved(0),
-        nReversalNoise(0) {}   // Ladruno ADR-92 P2-5
+        nReversalNoise(0), nTrialGuardF0(0) {}   // Ladruno ADR-92 P2-5 / P2-6
     LadrunoImplexGlobals(const LadrunoImplexGlobals &);
     LadrunoImplexGlobals &operator=(const LadrunoImplexGlobals &);
 
@@ -1382,6 +1432,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     long        nGuardF0;          // Ladruno ADR-92 P2-2
     long        nHoldPreserved;    // Ladruno ADR-92 P2-3
     long        nReversalNoise;    // Ladruno ADR-92 P2-5
+    long        nTrialGuardF0;     // Ladruno ADR-92 P2-6
 };
 
 } // anonymous namespace
@@ -1432,16 +1483,17 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
         // A control tolerance, an alpha or a dt source with no -implex to read
         // them is the "a flag claims to have done something it did not do"
         // defect this class exists to make impossible. Refuse, do not ignore.
-        // Ladruno ADR-92 P2: -implexFloor / -implexGuard join the list. Their
-        // defaults are NOT neutral (implicit / on), so the test is "differs from
-        // the default", exactly as it is for alpha and the dt source.
+        // Ladruno ADR-92 P2: -implexFloor / -implexGuard / -implexTrialGuard
+        // (P2-6) join the list. Their defaults are NOT neutral (implicit / on /
+        // on), so the test is "differs from the default", exactly as it is for
+        // alpha and the dt source.
         if (opt.control || opt.alpha != 1.0 ||
             opt.dtSource != LadrunoImplexOptions::DT_PSEUDO ||
             opt.floorMode != LadrunoImplexOptions::FLOOR_IMPLICIT ||
-            !opt.guard) {
+            !opt.guard || !opt.trialGuard) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -implexControl / -implexAlpha / -implexDt / -implexFloor /"
-                      " -implexGuard were given without"
+                      " -implexGuard / -implexTrialGuard were given without"
                       " -implex. Nothing would read them. Add -implex, or remove them."
                    << endln;
             return -1;
@@ -1582,7 +1634,14 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
                      : "OFF (steps after a reversal or a softening commit extrapolate a"
                        " plastic increment that belongs to a branch the material has"
                        " left; _adr93_seat_replay.md measured err 0.4625 there)")
-               << ". Both are counted in the `implexGuards` response." << endln;
+               << ", -implexTrialGuard "
+               << (mImplexOpt.trialGuard
+                     ? "on (DEFAULT: a trial past -implexControl's tol, above the"
+                       " reduction floor, retries with f = 0 before refusing -- Esmeralda"
+                       " 146569 measured the leg crawling at 0.8 um/step without it)"
+                     : "OFF (a trial past tol refuses immediately, the pre-P2-6"
+                       " behaviour)")
+               << ". All three are counted in the `implexGuards` response." << endln;
         opserr << "LadrunoSANISAND tag " << this->getTag()
                << ": READING HAZARD (ADR 92 section 8) -- every equilibrium on this"
                   " material is an equilibrium of the EXTRAPOLATED stress. Any limit"
@@ -2222,6 +2281,85 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
             // |dt| from the first non-zero step.
             const double dtAbs = (mImplexDt < 0.0) ? -mImplexDt : mImplexDt;
             if (mImplexDt0 <= 0.0 || dtAbs >= mImplexOpt.reductionLimit * mImplexDt0) {
+                // Ladruno ADR-92 P2-6: the trial-time graded fallback, tried BEFORE
+                // this refusal. Esmeralda 146569 (dense q10) measured the leg
+                // crawling at 0.8 um/step to its subdivision budget because THIS
+                // refusal fires the instant a trial's error crosses tol -- at
+                // nearly every trial above ~1.6 um -- while the P2-2 guard above
+                // only catches a COMMITTED predecessor that ALREADY showed
+                // Kp <= 0 or a reversal, not a trial that FIRST reaches such a
+                // point with no advance warning. Retry THIS trial with f = 0 (a
+                // pure elastic predictor: sigma~_0 = sigma_n + Ce:d_eps, the same
+                // frozen Ce, the same p_min clamp) and re-measure against the
+                // SAME sigImplicit already computed above -- no second companion
+                // call. If that clears tol, deliver it and skip the refusal.
+                //
+                // Composes with P2-2: if the committed predecessor already armed
+                // the guard, mImplexFactor is already 0.0 (ladrunoImplexArmStep()
+                // consumed it before W1 ran), so mSigma already IS this trial's
+                // f = 0 extrapolation and mImplexError already IS this error --
+                // recomputing would reproduce the identical, already-refused
+                // number for no benefit. Only try when f was actually non-zero.
+                if (mImplexOpt.trialGuard && mImplexFactor != 0.0) {
+                    Vector dEps0(6);
+                    dEps0 = mEpsilon;
+                    dEps0.addVector(1.0, mEpsilon_n, -1.0);   // d_eps, f = 0 (no plastic term)
+
+                    Vector sigma0(6);
+                    sigma0 = mSigma_n;
+                    sigma0.addVector(1.0, mCe * dEps0, 1.0);
+
+                    // Same p_min floor clamp as W2 above (this function's own),
+                    // applied to sigma0 rather than mSigma.
+                    bool clamp0 = false;
+                    if (one3 * this->GetTrace(sigma0) < m_Pmin) {
+                        Vector sTilde0(6);
+                        sTilde0 = this->GetDevPart(sigma0);
+                        sigma0  = sTilde0;
+                        sigma0.addVector(1.0, mI1, m_Pmin);
+                        clamp0 = true;
+                    }
+
+                    // Save the PRIMARY (full-f) measurement so a failed fallback
+                    // can restore it -- the refusal below, and implexDetail,
+                    // must report the error that actually triggered the refusal,
+                    // byte-identical to pre-P2-6 behaviour when the fallback does
+                    // not help.
+                    const double errPrimary    = mImplexError;
+                    const double errPrimaryDev = mImplexErrorDev;
+                    const double errPrimaryVol = mImplexErrorVol;
+
+                    this->ladrunoImplexMeasureError(sigma0, sigImplicit, mEpsilon);
+
+                    if (mImplexError <= mImplexOpt.errorTol) {
+                        mSigma    = sigma0;
+                        mEpsilonE = mEpsilonE_n;
+                        mEpsilonE.addVector(1.0, dEps0, 1.0);
+                        mImplexFactor      = 0.0;   // implexDetail[5]: this step ran f = 0
+                        mImplexClampFired  = clamp0;
+                        if (clamp0)
+                            mImplexClampCount++;
+
+                        // mAlpha / mFabric / mAlpha_in / mDGamma stay untouched,
+                        // exactly as W1 leaves them -- no fabric accumulates and
+                        // no reversal is detected on an extrapolated state. The
+                        // commit-time companion (ladrunoImplexCommit) still runs
+                        // the true return from state n with the ACTUAL strain
+                        // increment, so the history advances by the companion's
+                        // plastic increment as usual and mImplexDtCommit is set
+                        // from this step's dt exactly as it is for any other
+                        // committed step.
+                        LadrunoImplexGlobals::instance().noteTrialGuardF0();
+                        return 0;
+                    }
+
+                    // The f = 0 fallback is ALSO past tol: restore the primary
+                    // measurement and fall through to the unchanged refusal.
+                    mImplexError    = errPrimary;
+                    mImplexErrorDev = errPrimaryDev;
+                    mImplexErrorVol = errPrimaryVol;
+                }
+
                 // Ladruno ADR-92 fix (red/blue major RED-1 F4/F8, contract items
                 // 4 + 5 + 7). This was the file's ONE genuinely SILENT wrong
                 // answer: it returned the sentinel while leaving mSigma = sigma~,
@@ -2822,10 +2960,10 @@ constexpr int LadrunoSanisandImplexDetailResponseID   = 33092;   // Ladruno (ADR
 // process-wide refusal ledger. Same band, same rule -- a response id, not a
 // class tag, and nothing may derive one from it.
 constexpr int LadrunoSanisandImplexRefusalsResponseID = 33093;   // Ladruno ADR-92 fix
-// Ladruno ADR-92 P2: `implexGuards`, the census of four P2 events (P2-1, P2-2,
-// P2-3, and P2-5's slot 3, formerly reserved). Same band, same rule -- a
-// response id, not a class tag. None of the four prints anything per
-// occurrence (they are the designed behaviour of P2-1/2/3/5, not warnings),
+// Ladruno ADR-92 P2: `implexGuards`, the census of five P2 events (P2-1, P2-2,
+// P2-3, P2-5's slot 3 (formerly reserved), and P2-6's slot 4). Same band, same
+// rule -- a response id, not a class tag. None of the five prints anything per
+// occurrence (they are the designed behaviour of P2-1/2/3/5/6, not warnings),
 // so this response is the ONLY record that they fired.
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33094;   // Ladruno ADR-92 P2
 
@@ -2860,10 +2998,10 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static Vector probe4(4);
         return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
     }
-    // Ladruno ADR-92 P2
+    // Ladruno ADR-92 P2 (grown to 5 slots by P2-6)
     if (argc > 0 && (strcmp(argv[0], "implexGuards") == 0 ||
                      strcmp(argv[0], "ImplexGuards") == 0)) {
-        static Vector probe4g(4);
+        static Vector probe4g(5);
         return new MaterialResponse(this, LadrunoSanisandImplexGuardsResponseID, probe4g);
     }
     return ManzariDafalias::setResponse(argv, argc, output);
@@ -2904,16 +3042,17 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out4(3) = (double)g.getRefusalsCompanion();  // companion hit -maxSubsteps
         return matInformation.setVector(out4);
     }
-    // Ladruno ADR-92 P2: the guard census. Process-wide, non-destructive, and
-    // NOT cleared by a commit round -- a leg's running totals, exactly like
-    // `implexRefusals` beside it.
+    // Ladruno ADR-92 P2: the guard census (grown 4 -> 5 by P2-6). Process-wide,
+    // non-destructive, and NOT cleared by a commit round -- a leg's running
+    // totals, exactly like `implexRefusals` beside it.
     if (responseID == LadrunoSanisandImplexGuardsResponseID) {
-        static Vector out4g(4);
+        static Vector out4g(5);
         const LadrunoImplexGlobals &g = LadrunoImplexGlobals::instance();
         out4g(0) = (double)g.getFloorFallbacks();        // P2-1: floor -> implicit stress
         out4g(1) = (double)g.getGuardsFired();           // P2-2: f = 0 after reversal/softening
         out4g(2) = (double)g.getHoldsPreserved();        // P2-3: zero-dt commits left alone
         out4g(3) = (double)g.getReversalNoiseGuards();   // Ladruno ADR-92 P2-5: reversal-noise guards
+        out4g(4) = (double)g.getTrialGuardF0();          // Ladruno ADR-92 P2-6: trial-time f = 0 fallbacks
         return matInformation.setVector(out4g);
     }
     if (responseID == LadrunoSanisandImplexDetailResponseID) {
@@ -3040,6 +3179,9 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
           << " [reversal " << (mImplexGuardReversal ? "1" : "0")
           << ", softening (Kp <= 0) " << (mImplexGuardSoftening ? "1" : "0")
           << "]" << endln;
+        s << "              -implexTrialGuard = " << (mImplexOpt.trialGuard ? "on" : "OFF")
+          << " (ADR-92 P2-6: f = 0 retry of a trial past -implexControl's tol,"
+             " before refusing and before the reduction floor)" << endln;
         s << "              implexError (last commit) = " << mImplexError
           << "   [deviatoric " << mImplexErrorDev
           << ", volumetric " << mImplexErrorVol << "]" << endln;
