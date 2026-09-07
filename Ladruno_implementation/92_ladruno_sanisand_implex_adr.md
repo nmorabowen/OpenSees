@@ -499,6 +499,15 @@ during the step); `-implexFlipAbsorb on`: `implexGuards[5]` +1600 at the flip an
 0.239); defaults: 0 at the flip and 0.239 unchanged (exempt). Price of `init` is deck-dependent: the implicit first
 step is ~7 % *softer* on this deck (3.09 vs 3.31 max stress increment) and identical to the digit on Esmeralda's.
 
+**P2-7c dense refuse arms (4e07ef014):** reference honest wall **0.01689** (Q 1933, on the twin within 0.3 %);
+`init` 0.01754 (+4 % settlement at +0.6 % on row 2); `absorb` 0.01695 (nothing). **Dense reach verdict on the
+closing engine: refuse 0.0169, implicit floor 0.0187 by crawl, implicit twin at 0.037 and rising.** The P2-7c
+default path differs from 887fea475's (0.0169 vs 0.0161, 42 545 vs 29 527 guards) because on 887fea475 the
+"guard only on primed states" rule was keyed on the one-element flip dispatch, so the guard was effectively off at
+199/200 elements — which is what returned the twin to its old number; P2-7c primes every instance itself. The
+single-element byte-identity gate cannot see a dispatch-scope difference: a mesh-level twin check belongs in the
+acceptance from now on.
+
 **P2-8 (listed, not built):** a guard threshold `-implexGuardKp <ratio>`
 firing when `Kp / G < ratio` on the committed predecessor (default 0 = today), priced by a sweep {0, 0.05, 0.2} on
 reach vs overlay; owner's call whether it belongs in this PR or the next.
