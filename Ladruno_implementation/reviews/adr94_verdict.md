@@ -154,13 +154,19 @@ Fix direction (R5): widen the sentinel to every site, do not loosen the hosts to
 
 **(a) Fork-local, opt-in or default-inert, cheap — one WP each, sentinel tests flip:**
 
+**Status:** the first four rows below SHIPPED together as **`wp/94a-fail-loud`** (one
+coherent change: "the material can always fail loud, and misconfiguration cannot be
+silent"), rather than as four separate WPs — they touch the same two files and the
+sentinel widening is what makes the parser refusal and the strict-mode gates observable.
+`wp/94e-revert` and the docs row are NOT done.
+
 | WP | Fix | Flips |
 |---|---|---|
-| `wp/94a-parser-loud` | `opserr` + construction failure on unknown integration-option / model-parameter tokens; required-parameter assertion (ADR-84 P2(e)). Add a stderr assertion to the H13 tests. | `test_H13_*` |
-| `wp/94b-sentinel-everywhere` | Return `LADRUNO_MATERIAL_REFUSED` at all 15 failure sites (incl. the `dLambda<0` fallback under `strict_convergence`, and the f-decreasing exits under the flag on every integrator). Keep hosts sentinel-only. | `test_H5_*`, `test_H7_*`, `test_R2_*stdbrick*` (expected still-swallowed on `stdBrick`), `test_adr94_contract` |
-| `wp/94c-eigen-init` | `setZero()` at the four `*= 0.0` / uninitialised `VoigtVector` sites (DP YF/PF, NullHardeningTensor, AF). Grep-gate the idiom. | `test_H10_dp_apex_*` |
-| `wp/94d-refuse-bels` | Parser refusal of `Backward_Euler_LineSearch` and `Runge_Kutta_45_Error_Control_old`; drop dead enum values from the setter. | `test_H8_*` |
-| `wp/94e-revert` | Implement `revertToLastCommit`/`revertToStart` (Trial ← Commit, IVs revert, `first_step` reset). | `test_H4_*`, contract revert tests |
+| `wp/94a-parser-loud` **[SHIPPED in `wp/94a-fail-loud`]** | `opserr` + construction failure on unknown integration-option / model-parameter tokens; required-parameter assertion (ADR-84 P2(e)). Add a stderr assertion to the H13 tests. | `test_H13_*` |
+| `wp/94b-sentinel-everywhere` **[SHIPPED in `wp/94a-fail-loud`]** | Return `LADRUNO_MATERIAL_REFUSED` at all 15 failure sites (incl. the `dLambda<0` fallback under `strict_convergence`, and the f-decreasing exits under the flag on every integrator). Keep hosts sentinel-only. | `test_H5_*`, `test_H7_*`, `test_R2_*stdbrick*` (expected still-swallowed on `stdBrick`), `test_adr94_contract` |
+| `wp/94c-eigen-init` **[SHIPPED in `wp/94a-fail-loud`]** — six sites, not four (`DuncanChang_EL`'s `EE_MATRIX` and DP's degenerate `dev_part` branch too), plus 27 `*= 0` on ASDP's own class-statics | `setZero()` at the four `*= 0.0` / uninitialised `VoigtVector` sites (DP YF/PF, NullHardeningTensor, AF). Grep-gate the idiom. | `test_H10_dp_apex_*` |
+| `wp/94d-refuse-bels` **[SHIPPED in `wp/94a-fail-loud`]** | Parser refusal of `Backward_Euler_LineSearch` and `Runge_Kutta_45_Error_Control_old`; drop dead enum values from the setter. | `test_H8_*` |
+| `wp/94e-revert` **[NOT DONE]** | Implement `revertToLastCommit`/`revertToStart` (Trial ← Commit, IVs revert, `first_step` reset). | `test_H4_*`, contract revert tests |
 | docs | `tangent_type Continuum` as the general recommendation; `strict_convergence 1` + BE required for softening; tolerance-in-units note. | — |
 
 **(b) jaabell-bound framework work (fresh-branch ports, no AI traces, bit-identical gate;
