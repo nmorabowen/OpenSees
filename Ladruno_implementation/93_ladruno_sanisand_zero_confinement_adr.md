@@ -207,3 +207,17 @@ benchmark is a real footing or the idealised half-space.
 - 2026-09-06 — Opened after ADR-92 P1 shipped (#798–#800): IMPL-EX reaches the target but the
   ring cannot be made to carry load; surcharge bought separability not confinement. Candidates
   listed, P0 proposed, no decision.
+- 2026-09-06 (later) — **External evidence, TIMs Esmeralda footing (session
+  `nonlinear-response-curve-planning-2b60bc-95`, engine c162833ed, B = 1.5 m, 0.5 m H8 bbar
+  elements, 21 058 DOF, DisplacementControl + strain clock, -Presidual 0 and the 1.01 vanilla
+  twin):** with the cap raised to 20000 (their original 1000 was the misuse: zero cap hits
+  after) the registered `-implexControl 0.1` arm still walls at s/B 0.0009 on **4082 control
+  refusals on the tolerance alone**, throttled to ds 4e-7–1.6e-6 m; the vanilla twin throttles
+  to 3e-6 m; **a 10 kPa surcharge changes nothing**. Their ring is DENSE (e = 0.60). On this
+  ADR's gate (B = 2 m, 1 m elements, loose e = 0.6944) the worst ring element's plastic
+  deviatoric strain is 2.5–3.1e-4 per mm of settlement on every arm; the controlled arm
+  accepted 2.3–3.6e-5 per step at ds 0.09–0.15 mm. Scaled to their elements, their step
+  size sits in the same regime, so **density, not step size, separates the two rings** —
+  consistent with CP1's dense deep legs dying at half the loose depth and GATE U's clamp
+  firing on dense only. This puts II.2 (the `D_factor` floor at `p_r = 0`, D5a) ahead of I.1
+  as the first thing P0 must separate.
