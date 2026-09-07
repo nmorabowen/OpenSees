@@ -144,7 +144,7 @@ assertions describe exactly the `accept` mode's contract, and P2's new
 default (`implicit`) would otherwise silently change what floor behaviour
 that test is exercising out from under it.
 
-Collected count after this lane: 30 `def test_...` functions, 34 collected
+Collected count after this lane: 31 `def test_...` functions, 35 collected
 items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
 every other function is a single collected item) -- up from the P1 file's
 21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
@@ -298,8 +298,45 @@ branch simply never triggers on monotone continued loading, so that
 channel is documented as non-discriminating here rather than silently
 dropped; part (c) instead confirms the guard does not eat a GENUINE,
 full-magnitude reversal.
+
+FIFTH RUN, P2-5c + Esmeralda regression check (2026-09-07, `ladrunoBuild()
+== d30c66582`). `implexGuards` grows `Vector(5)` -> `Vector(6)`, new slot
+[5] = hold-skip commits (once per Gauss point per hold, not per Newton
+iteration or per `ladrunoGuardReversalNoise()` call) -- every remaining
+`len(implexGuards) == 5` check in this file is now `== 6`.
+`ladrunoGuardReversalNoise()` now checks `ops_Dt == 0.0` FIRST,
+unconditionally (ahead of, independent of, `-reversalTol`/`-reversalRel`),
+because a hold is a GLOBAL domain fact, not something to infer from a
+strain norm that can itself undershoot (P2-5b's own residual gap,
+Esmeralda 146585: 136/1600 and 88/1600 points still reset on a hold). The
+P2-5/P2-5b hold test (`test_hold_does_not_reset_alpha_in_on_the_implicit_
+path`) is RENAMED and REWRITTEN as `test_hold_leaves_alpha_in_and_guard_
+flags_unchanged`: its own "disabled `-reversalTol 0 -reversalRel 0`
+should show a difference on a literal hold" claim is no longer TRUE (P2-5c
+protects a literal hold unconditionally, regardless of those settings) --
+the old "deterministic perturbation" workaround for the mutant is gone
+too, since P2-5c needs none; the new test instead checks the DIRECT,
+now-guaranteed claim (bit-identical `alpha_in`, `implexGuards[5]` == the
+Gauss-point count, matching `implexGuards[1]` deltas before/after) on
+BOTH the `-implex` and the purely implicit deck. `test_reversal_guard_is_
+relative_to_the_last_increment` (P2-5b) is UNCHANGED and still passes --
+it never used a literal hold, so P2-5c does not touch its own claims.
+
+`test_explicit_default_words_are_byte_identical` answers an Esmeralda
+field report (legs built with explicit `-implexGuard on -implexTrialGuard
+on -implexFloor implicit` running 17-20% softer from step 2 than the same
+deck with no explicit words, which read the identical option values and
+should therefore be indistinguishable) -- NOT REPRODUCED on a single
+material point: three token-order variants commit bit-identical stress at
+every one of 8 plastic steps, `implexGuards` matches exactly, and the
+construction-time echo line is character-for-character identical, all
+while `-implexTrialGuard` is CONFIRMED actively firing (not idle) on every
+run. Native `opserr` writes go straight to the C stderr file descriptor,
+invisible to `capsys`/`redirect_stderr`; a hand-rolled `os.dup2` around
+pytest's own fd-level capture measured empty (nested redirects raced
+pytest's own capture machinery) -- pytest's `capfd` fixture is the
+reliable way to read it back, used here instead.
 """
-import contextlib
 import math
 import os
 import re
@@ -3451,36 +3488,28 @@ def test_reversal_guard_is_relative_to_the_last_increment():
 #  binary d30c66582) -- explicit default words vs no words at all
 # ===========================================================================
 
-@contextlib.contextmanager
-def _capture_native_stderr():
-    """Redirect OS-level file descriptor 2 (native `opserr` writes go
-    straight to the C stderr fd, not through Python's `sys.stderr`, so
-    `capsys`/`redirect_stderr` cannot see them) into a temp file for the
-    duration of the `with` block, then restore it. Yields the open temp
-    file, already seek(0)'d and ready to `.read()` once the block exits.
-    """
-    fd = 2
-    saved_fd = os.dup(fd)
-    tmp = tempfile.TemporaryFile(mode='w+b')
-    os.dup2(tmp.fileno(), fd)
-    try:
-        yield tmp
-    finally:
-        os.dup2(saved_fd, fd)
-        os.close(saved_fd)
-        tmp.seek(0)
-
-
-def _echo_guard_floor_line(tag, opts, p0=50.0):
-    """Build the free-DOF triaxial deck with stderr captured, and return the
-    ONE echo line naming `-implexFloor`/`-implexGuard`/`-implexTrialGuard`
+def _echo_guard_floor_line(capfd, tag, opts, p0=50.0):
+    """Build the free-DOF triaxial deck and return the ONE echo line naming
+    `-implexFloor`/`-implexGuard`/`-implexTrialGuard`
     (`setLadrunoImplexOptions`'s "ADR-92 P2 --" line), with the material
     tag number blanked out so lines from different tags compare equal.
+
+    Uses pytest's OWN `capfd` fixture (fd-level capture), not a hand-rolled
+    `os.dup2` redirect -- native `opserr` writes go straight to the C
+    stderr file descriptor, not through Python's `sys.stderr`, so
+    `capsys`/`contextlib.redirect_stderr` cannot see them, and a
+    self-managed `os.dup2` around pytest's OWN fd-capture (pytest's default
+    `--capture=fd` mode has already redirected fd 2 before the test body
+    runs) measured empty every time -- nesting redirects that way is
+    fragile in exactly the way this docstring is warning the next reader
+    off. `capfd.readouterr()` is pytest's own answer to the same problem
+    and reads back clean.
     """
-    with _capture_native_stderr() as buf:
-        _build_free_dof_triaxial(tag, opts, p0=p0)
-    text = buf.read().decode('utf-8', errors='replace')
-    buf.close()
+    capfd.readouterr()   # drain whatever is already buffered from EARLIER calls
+    _build_free_dof_triaxial(tag, opts, p0=p0)
+    captured = capfd.readouterr()
+    text = captured.err + captured.out   # opserr's own stream target is not
+                                         # asserted on; check both
     lines = [l for l in text.splitlines() if 'ADR-92 P2 --' in l and 'implexFloor' in l]
     assert len(lines) == 1, (
         'expected exactly one "ADR-92 P2 --" echo line naming -implexFloor '
@@ -3517,7 +3546,7 @@ def _drive_explicit_default_words(tag, extra_opts):
     return stresses, guards
 
 
-def test_explicit_default_words_are_byte_identical():
+def test_explicit_default_words_are_byte_identical(capfd):
     """Esmeralda reports a regression on d5bd259f6: legs constructed with
     the EXPLICIT words `-implexGuard on -implexTrialGuard on -implexFloor
     implicit` run 17-20% softer from step 2 than the same deck with no
@@ -3621,9 +3650,9 @@ def test_explicit_default_words_are_byte_identical():
         'exercising the flag this test is about; the bit-identity result '
         'above would be vacuous', guards_a, guards_b)
 
-    line_a = _echo_guard_floor_line(8910, ())
-    line_b = _echo_guard_floor_line(8911, explicit_words)
-    line_c = _echo_guard_floor_line(8912, explicit_words)   # order doesn't reach the echo text itself
+    line_a = _echo_guard_floor_line(capfd, 8910, ('-implex', '-maxSubsteps', 20000))
+    line_b = _echo_guard_floor_line(capfd, 8911, ('-implex', '-maxSubsteps', 20000) + explicit_words)
+    line_c = _echo_guard_floor_line(capfd, 8912, ('-implex', '-maxSubsteps', 20000) + explicit_words)   # order doesn't reach the echo text itself
     assert line_a == line_b == line_c, (
         'the "ADR-92 P2 --" construction-time echo line (naming -implexFloor'
         '/-implexGuard/-implexTrialGuard) differs between the no-words and '
