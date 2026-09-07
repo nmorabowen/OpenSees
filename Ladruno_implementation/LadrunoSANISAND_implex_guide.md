@@ -97,7 +97,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
-| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, set `α_in := α` deterministically at every point (`init`) or leave initialisation to the old round-off-noise sign test (`vanilla`) | `init` | ADR-92 P2-7; see §11 |
+| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
 
 ## 2. What the nine words mean
 
@@ -150,7 +150,8 @@ On a non-propagating element, `-implexControl` still *measures* and *records* th
 once by `updateMaterialStage`) gates `integrate()`'s elastic branch; while it is `0` the
 extrapolated path is simply unreachable, so gravity and a `LoadControl 0.0` re-equilibration are
 bit-identical with the flag on or off. IMPL-EX's own history (`d_eps_p(n)`, `dt` bookkeeping)
-initializes at the stage flip to `updateMaterialStage 1`, not before it.
+initializes at the stage flip to `updateMaterialStage 1`, not before it. The flip handling is per
+instance and lazy, so it does not depend on how `updateMaterialStage` is dispatched.
 
 **The first plastic step after the stage flip is exempt from `-implexControl` refusal.**
 `d_eps_p(n) = eps_p(n) - eps_p(n-1)` is exactly `0` on that one step (there is no committed
@@ -400,17 +401,23 @@ reference is kept across a zero-increment commit so a run of holds does not drif
 Still building; no holds inside a reported push on either material until the hold acceptance
 passes (hold probe `alpha_in` changed = 0 on both arms).
 
-### Deterministic `alpha_in` at the stage flip — `-flipAlphaIn`, P2-7
+### `alpha_in` at the stage flip is decided by the sign test — deterministic, not noise (`-flipAlphaIn`, P2-7)
 
 Vanilla `ManzariDafalias` never explicitly initialises `α_in` at the `updateMaterialStage 0 -> 1`
 flip; it relies on the loading-reversal sign test inside `integrate()` firing on the first plastic
-step, which on a zero-increment re-equilibration decides `α_in` by round-off noise — and the
-P2-5/5b/5c reversal-noise guards turned that occasional reset into never, leaving `α_in = 0` and
-the implicit path 23-33 % soft from step 1. `-flipAlphaIn init` (the default) removes the
-dependency on that noise by setting `α_in := α` deterministically at every point at the flip on
-both the implicit and IMPL-EX paths, so the vanilla twin's own early-step stiffness now changes
-under the fork's build (a modelling correction, not a regression) — pass `-flipAlphaIn vanilla` to
-reproduce the old noise-dependent number for an A/B comparison against a pre-P2-7 run.
+step. That decision is decided by the sign test on the first plastic increment: deterministic on
+a real deck, and noise only on an exactly-zero re-equilibration where the fork's synthetic return
+uses an exactly zero increment and is neutral. The earlier, wider P2-5/5b/5c reversal-noise guard
+had suppressed that reset unconditionally at every state (not just primed ones), which is what
+left `α_in = 0` and the implicit path 23-33 % soft from step 1 — a guard-scope defect, not a
+defect in the sign test. With the guard confined to PRIMED states, Esmeralda 887fea475 (a real
+deck) shows the sign test setting `α_in := α` at 28 629/34 560 points on step 1, identical every
+run, and the implicit twin's first-step stiffness returns to the pre-P2 number to the digit
+(6.511 / 11.539 / 16.117 / 20.528). There is no defect at the flip left to fix by default, so
+`-flipAlphaIn vanilla` (the default) leaves the sign test in control and reproduces real
+`ManzariDafalias` exactly; `-flipAlphaIn init` (opt-in) forces `α_in := α` unconditionally at
+every point at the flip on both the implicit and IMPL-EX paths — a declared modelling variant,
+not a defect fix. Every P2-7 curve names which flag it used.
 
 ### `stressCorrection` now works — P2-4
 
