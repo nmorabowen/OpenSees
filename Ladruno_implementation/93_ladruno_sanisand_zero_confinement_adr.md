@@ -364,4 +364,31 @@ benchmark is a real footing or the idealised half-space.
   P2 is. **Discriminator in Esmeralda's argmax census:** `implexDetail[5]` (= `f`) on rows
   315 / 1130 / 1142 / 1290: `f ≈ 1` names the clock bookkeeping, `f ≈ 4e-3` names the
   history term (then `pstrains` differences across the chain give `‖Δε_p(n)‖`).
+- 2026-09-07 (local refusal-chain probe, single `LadrunoBrick -formulation ssp` with free
+  lateral DOFs, scratchpad only) — **clock and history bookkeeping are CLEARED.** Two forced
+  chains (4 and 7 refusals, `revertToLastCommit` between attempts): `f = ds/dt_n` exact at
+  every rung (5000 → 625; 1 → 0.0156), `‖Δε_p(n)‖` pinned at the previous committed step's
+  own plastic strain throughout (verified against `pstrains`), and a genuine floor-accept at
+  1.56e-8 committed with error 2.8e-4 continuing the smooth 2×-per-halving decay — 2.8× over
+  tol, not O(1). Reading `implexDetail` after a failed `analyze()` returns `f = 0, error = 0`
+  (the revert's zero-strain settle pass), an artefact, not corruption. **The 1.11 event is
+  not reproduced by any single-point mechanism tried:** off-surface state (refuted), clock
+  (refuted), history (refuted).
+  **Remaining candidate that no single-point probe can see — the equilibrium gap (d).** Under
+  IMPL-EX the committed stress is the companion's while equilibrium was found on `σ~`, so the
+  committed state is *not* in equilibrium; the next step's linear solve closes that gap with a
+  displacement increment that does **not** scale with ds (measured on the free-DOF column:
+  ~3 kPa stress change on a `dt = 0` hold). If the gap at the seat is O(1) after one bad
+  commit, every later attempt sees an O(1) `Δε` at the seat however small ds, the control
+  refuses to the floor, the floor commits it, the gap persists — the self-sustaining signature
+  of rows 1101–1311 on the loose leg (Q wandering, dozens of O(1) commits). What seeds the
+  first bad commit at 0.0176 is then a separate, smaller question. **Check from data already
+  in hand:** at the ring point, `‖Δε‖ / ds` across rows 298–315 (chain) vs the steady rows;
+  constant ⇒ strains scale and (d) is out; `‖Δε‖` on the 3.9e-7 rows comparable to the 1e-4
+  rows ⇒ (d). At the seat, the same from the census's `state` slots 0–5 (elastic strain) +
+  `pstrains`. If (d): the remedy is ADR 92 P2 — either measure the control error against the
+  strain the step would have had *without* the gap correction, or commit a state whose stress
+  is in equilibrium (the extrapolated one, with the implicit one as history — the alternative
+  IMPL-EX commit choice the ADR rejected at D-level and should now re-argue), or cap the
+  gap by re-solving on the committed stress before the step. None built tonight.
 
