@@ -150,108 +150,6 @@ def _mat_mc_bels(tag):
     )
 
 
-@pytest.mark.t0m
-def test_R5_be_linesearch_exhaustion_propagates_on_tet():
-    """CONFIRMED, runtime.  Reproduces H8's own measurement: on the ADR-84 MC
-    tet leg, ``Backward_Euler_LineSearch`` fails after a couple of clean
-    steps (its inner split-loop cannot chain substeps and returns a bare -1).
-    ``TenNodeTetrahedron`` propagates that -1 into a global non-convergence
-    (analyze() rc != 0).
-    """
-    ops.wipe()
-    ops.model("basic", "-ndm", 3, "-ndf", 3)
-    for t, c in _TET.items():
-        ops.node(t, *map(float, c))
-    for t in (1, 2, 3, 5, 6, 7):
-        ops.fix(t, 1, 1, 1)
-    for t in _TET_TOP:
-        ops.fix(t, 1, 1, 0)
-    _mat_mc_bels(1)
-    ops.element("TenNodeTetrahedron", 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1)
-    ops.timeSeries("Linear", 1)
-    ops.pattern("Plain", 1, 1)
-    for t in _TET_TOP:
-        ops.sp(t, 3, -0.02)
-    ops.constraints("Penalty", 1e14, 1e14)
-    ops.numberer("Plain")
-    ops.system("UmfPack")
-    ops.test("NormDispIncr", 1e-8, 100, 0)
-    ops.algorithm("Newton")
-    ops.integrator("LoadControl", 0.05)
-    ops.analysis("Static")
-    codes = [ops.analyze(1) for _ in range(20)]
-    assert codes[0] == 0, f"expected step 1 to converge cleanly; codes={codes}"
-    assert any(c != 0 for c in codes), (
-        f"Backward_Euler_LineSearch completed all 20 steps with rc=0 on the "
-        f"H8 reproducer rig -- this integrator may have been fixed; "
-        f"re-verify H8/R5 before trusting this test. codes={codes}")
-
-
-@pytest.mark.t0m
-def test_R5_be_linesearch_exhaustion_silent_at_element_level_on_ladrunobrick():
-    """CONFIRMED, runtime.  Same material/integrator on a ``LadrunoBrick``
-    host: the global Newton STILL fails (rc != 0 on every step) because the
-    corrupted/unintegrated stress unbalances the residual -- but
-    ``LadrunoBrick``'s own refusal message
-    ("...the material REFUSED the trial strain...", emitted only when the
-    sentinel-only check at 1030-1035/1079-1082/1110-1113/1181-1184/1826-1829/
-    3318-3321 fires) never appears, because a bare -1 does not match
-    ``LADRUNO_MATERIAL_REFUSED``. The element itself never notices the
-    refusal; only the accident of a bad-enough residual makes ``analyze()``
-    report failure here. Run in a CHILD process (native cout/opserr on this
-    build is not visible to capfd -- see ``_run_child``'s docstring).
-    """
-    script = (
-        "import sys; sys.path.insert(0, r'" + _TESTS_DIR + "')\n"
-        "from _testbed import ops\n"
-        "import test_asdplastic_mctc as M\n"
-        "_CUBE = {1:(0,0,0),2:(1,0,0),3:(1,1,0),4:(0,1,0),"
-        "5:(0,0,1),6:(1,0,1),7:(1,1,1),8:(0,1,1)}\n"
-        "_FIX = {1:(1,1,1),2:(0,1,1),3:(0,0,1),4:(1,0,1),"
-        "5:(1,1,0),6:(0,1,0),7:(0,0,0),8:(1,0,0)}\n"
-        "ops.wipe(); ops.model('basic', '-ndm', 3, '-ndf', 3)\n"
-        "[ops.node(i, *map(float, c)) for i, c in _CUBE.items()]\n"
-        "[ops.fix(i, *m) for i, m in _FIX.items()]\n"
-        "ops.nDMaterial('ASDPlasticMaterial3D', 1, 'MohrCoulomb_YF', "
-        "'MohrCoulomb_PF', 'LinearIsotropic3D_EL', M.IV, "
-        "'Begin_Model_Parameters', 'YoungsModulus', M.E, 'PoissonsRatio', "
-        "M.NU, 'MC_phi', M.PHI, 'MC_c', M.C, 'MC_psi', M.PSI, 'MC_ds', 0.0, "
-        "'MassDensity', 0.0, 'End_Model_Parameters', "
-        "'Begin_Internal_Variables', 'BackStress', 0.,0.,0.,0.,0.,0., "
-        "'End_Internal_Variables', 'Begin_Integration_Options', "
-        "'integration_method', 'Backward_Euler_LineSearch', "
-        "'n_max_iterations', 100, 'End_Integration_Options')\n"
-        "ops.element('LadrunoBrick', 1, 1,2,3,4,5,6,7,8, 1)\n"
-        "ops.timeSeries('Linear', 1); ops.pattern('Plain', 1, 1)\n"
-        "for i in (2,3,6,7): ops.sp(i, 1, -0.02)\n"
-        "ops.constraints('Transformation'); ops.numberer('Plain')\n"
-        "ops.system('UmfPack'); ops.test('NormDispIncr', 1e-8, 100, 0)\n"
-        "ops.algorithm('Newton'); ops.integrator('LoadControl', 0.05)\n"
-        "ops.analysis('Static')\n"
-        "codes = [ops.analyze(1) for _ in range(20)]\n"
-        "print('CODES', codes)\n"
-    )
-    proc = _run_child(script)
-    assert "CODES" in proc.stdout, (
-        f"child process did not complete (stdout={proc.stdout!r}, "
-        f"stderr={proc.stderr!r})")
-    codes_line = [ln for ln in proc.stdout.splitlines() if ln.startswith("CODES")][0]
-    codes = eval(codes_line.split("CODES", 1)[1].strip())
-    assert any(c != 0 for c in codes), (
-        f"expected the global Newton to fail at least once on this "
-        f"LadrunoBrick BE_LS rig; codes={codes} -- re-verify before trusting "
-        f"the 'silent at element level' half of this test.")
-    combined = proc.stdout + proc.stderr
-    assert "the material REFUSED the trial strain" not in combined, (
-        "LadrunoBrick now prints its own refusal warning for a bare -1 "
-        "(non-sentinel) failure -- the sentinel-only swallow may have been "
-        "widened to a blanket check; update R5's host contract.")
-
-
-# ===========================================================================
-# H4 consequence -- ops.reset() leaves the material's committed state
-# inconsistent with the (correctly) reset geometry
-# ===========================================================================
 def _mat_mc_plain(tag):
     ops.nDMaterial(
         "ASDPlasticMaterial3D", tag,
@@ -262,6 +160,120 @@ def _mat_mc_plain(tag):
         "Begin_Internal_Variables", "BackStress", 0., 0., 0., 0., 0., 0.,
         "End_Internal_Variables",
     )
+
+
+@pytest.mark.t0m
+def test_R5_be_linesearch_exhaustion_propagates_on_tet():
+    """FIXED by wp/94a (ADR-94 M7) -- the runtime pin is now a REFUSAL pin.
+
+    R5 measured this on `52314165a`: on the ADR-84 MC tet leg,
+    ``Backward_Euler_LineSearch`` failed after a couple of clean steps (its
+    inner split-loop cannot chain substeps and returned a bare -1), and
+    ``TenNodeTetrahedron`` propagated that -1 into a global non-convergence.
+    It was the ONE bare-`-1` mode this review could force reliably, which is
+    why R5 built the whole host-contract table on it.
+
+    wp/94a closes both halves at once: the split-loop exhaustion now returns
+    ``LADRUNO_MATERIAL_REFUSED`` instead of a bare -1 (so every host, not just
+    the tet, would hear it), and the parser refuses the integrator outright, so
+    no deck can reach the site at all.  The test keeps its name and now pins
+    the refusal: the material is not created and the command fails.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t_, c in _TET.items():
+        ops.node(t_, *map(float, c))
+    with pytest.raises(Exception):
+        _mat_mc_bels(1)
+    ops.wipe()
+
+    # control: the SAME deck on plain Backward_Euler still builds and still
+    # completes the leg -- the refusal is specific to the broken integrator,
+    # not a regression of the MC material itself.
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t_, c in _TET.items():
+        ops.node(t_, *map(float, c))
+    for t_ in (1, 2, 3, 5, 6, 7):
+        ops.fix(t_, 1, 1, 1)
+    for t_ in _TET_TOP:
+        ops.fix(t_, 1, 1, 0)
+    _mat_mc_plain(1)
+    ops.element("TenNodeTetrahedron", 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t_ in _TET_TOP:
+        ops.sp(t_, 3, -0.02)
+    ops.constraints("Penalty", 1e14, 1e14)
+    ops.numberer("Plain")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-8, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.05)
+    ops.analysis("Static")
+    codes = [ops.analyze(1) for _ in range(20)]
+    assert codes == [0] * 20, (
+        f"plain Backward_Euler must still complete the ADR-84 MC tet leg "
+        f"20/20; codes={codes}")
+
+
+@pytest.mark.t0m
+def test_R5_be_linesearch_exhaustion_silent_at_element_level_on_ladrunobrick():
+    """FIXED by wp/94a (ADR-94 B2 + M7).
+
+    R5 measured, on `52314165a`, that the same BE_LS deck on a
+    ``LadrunoBrick`` host made the global Newton fail on every step, but
+    ``LadrunoBrick``'s own refusal warning never appeared: its six
+    ``setTrialStrain`` checks compare ONLY ``== LADRUNO_MATERIAL_REFUSED``, and
+    the split-loop exhaustion returned a bare -1.  The failure was visible only
+    by the accident of an unbalanced residual.
+
+    wp/94a fixes the material side (all 13 bare-`-1` sites now return the
+    sentinel) and refuses the integrator at the parser.  The host side is
+    deliberately UNCHANGED -- still sentinel-only, still the right contract --
+    which is why the structural pin
+    ``test_R5_ladrunobrick_checks_only_the_sentinel`` above must stay green.
+    This test now pins that the deck cannot be built at all, in a CHILD process
+    so the parser's own opserr text is captured (native output is invisible to
+    capfd on this build -- see ``_run_child``'s docstring).
+    """
+    script = (
+        "import sys; sys.path.insert(0, r'" + _TESTS_DIR + "')\n"
+        "from _testbed import ops\n"
+        "import test_asdplastic_mctc as M\n"
+        "ops.wipe(); ops.model('basic', '-ndm', 3, '-ndf', 3)\n"
+        "try:\n"
+        "    ops.nDMaterial('ASDPlasticMaterial3D', 1, 'MohrCoulomb_YF', "
+        "'MohrCoulomb_PF', 'LinearIsotropic3D_EL', M.IV, "
+        "'Begin_Model_Parameters', 'YoungsModulus', M.E, 'PoissonsRatio', "
+        "M.NU, 'MC_phi', M.PHI, 'MC_c', M.C, 'MC_psi', M.PSI, 'MC_ds', 0.0, "
+        "'MassDensity', 0.0, 'End_Model_Parameters', "
+        "'Begin_Internal_Variables', 'BackStress', 0.,0.,0.,0.,0.,0., "
+        "'End_Internal_Variables', 'Begin_Integration_Options', "
+        "'integration_method', 'Backward_Euler_LineSearch', "
+        "'n_max_iterations', 100, 'End_Integration_Options')\n"
+        "    print('RESULT created')\n"
+        "except Exception as exc:\n"
+        "    print('RESULT refused')\n"
+    )
+    proc = _run_child(script)
+    assert "RESULT" in proc.stdout, (
+        f"child process did not complete (stdout={proc.stdout!r}, "
+        f"stderr={proc.stderr!r})")
+    assert "RESULT refused" in proc.stdout, (
+        f"Backward_Euler_LineSearch was accepted by the parser -- ADR-94 M7's "
+        f"refusal has regressed; stdout={proc.stdout[-1200:]!r}")
+
+    combined = proc.stdout + proc.stderr
+    assert "Backward_Euler_LineSearch" in combined and "ADR-94" in combined, (
+        "the refusal must name the integrator AND cite ADR-94 so a user can "
+        "find out why; got:\n" + combined[-1500:])
+
+
+# ===========================================================================
+# H4 consequence -- ops.reset() leaves the material's committed state
+# inconsistent with the (correctly) reset geometry
+# ===========================================================================
 
 
 def _tet_build_plain():

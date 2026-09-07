@@ -278,39 +278,55 @@ NON_BE_METHODS = [
     "Forward_Euler",
     "Forward_Euler_Subincrement",
     "Modified_Euler_Error_Control",
-    "Runge_Kutta_45_Error_Control_old",
 ]
+#: ``Runge_Kutta_45_Error_Control_old`` was the fourth case here; wp/94a made
+#: it un-selectable at the parser (ADR-94 M8), so it moved to
+#: ``test_adr94a_fail_loud::test_broken_integrators_are_refused``.
+REFUSED_METHODS = ["Runge_Kutta_45_Error_Control_old",
+                    "Backward_Euler_LineSearch"]
 
 
 @pytest.mark.t0m
 @pytest.mark.parametrize("method", NON_BE_METHODS)
 def test_H5_strict_convergence_does_not_gate_other_integrators(mc_available,
                                                                  method):
-    """CONFIRMED.  ``strict_convergence`` is only read inside
-    ``Backward_Euler``'s scalar-Newton loop.  The same
-    ``yf_val_start > yf_val_end`` => "elastic, no correction" shortcut exists,
-    unguarded, in FE (1423), FE_sub (1599), BE_LS (2406),
-    RK45_old (2667), ME (3088), RK45 (3435).  So turning strict_convergence on
-    does not stop any of these six from committing an inadmissible state on a
-    coarse/starved plastic leg -- unlike Backward_Euler, where
-    ``test_adr84_p2a_strict_convergence::test_flag_on_refuses_instead_of_committing``
-    shows the flag DOES refuse.
+    """FIXED by wp/94a (ADR-94 M2).  H5 as measured: ``strict_convergence``
+    was read ONLY inside ``Backward_Euler``'s scalar-Newton loop, so the same
+    ``yf_val_start > yf_val_end`` => "elastic, no correction" shortcut in FE,
+    FE_sub, BE_LS, RK45_old, ME and RK45 was unguarded and these integrators
+    committed ``f_MC`` in the hundreds-to-thousands with the flag on.
+
+    wp/94a routes the flag through ONE helper (``ladruno_strict_rejects``)
+    called at all eight of those exits, at BE's ``dLambda + deltaLambda < 0``
+    fallback, at ME/RK45's unconditional ``dT_min`` accept, and after every
+    return-to-yield block.  The corrected invariant: with the flag on, a step
+    either FAILS (the tet propagates the material's refusal, ``analyze() !=
+    0``) or commits an admissible state.  Never both.
+
+    The test name is kept so the H5 row stays traceable; it now asserts the
+    opposite of what it originally pinned.
     """
     _tet_build(lambda t: mat_mc(t, method=method, strict=1, niter=100),
                nsteps=20, utop=-0.02)
-    hist = []
+    codes, hist = [], []
     for _ in range(20):
-        ops.analyze(1)          # do not assert: a refusal would REFUTE this H
+        rc = ops.analyze(1)
+        codes.append(rc)
+        if rc != 0:
+            break
         hist.append(_tet_stress())
-    hist = np.array(hist)
-    tol = 1.0e-6 * max(2.0 * M.C * math.cos(math.radians(M.PHI)),
-                        float(np.max(np.abs(hist))))
-    fmc = np.array([M.f_mc(s) for s in hist])
-    assert float(np.max(fmc)) > tol, (
-        f"[{method}] strict_convergence=1 kept every committed state "
-        f"admissible (max f_MC={np.max(fmc):.3e} <= tol {tol:.3e}) -- this "
-        f"integrator may now be gated too; re-verify H5's site list before "
-        f"trusting this test.")
+
+    scale = 2.0 * M.C * math.cos(math.radians(M.PHI))
+    if not hist:
+        return                  # every step refused -- loud, which is the fix
+    arr = np.array(hist)
+    tol = 1.0e-6 * max(scale, float(np.max(np.abs(arr))))
+    fmc = np.array([M.f_mc(s) for s in arr])
+    assert float(np.max(fmc)) <= tol, (
+        f"[{method}] strict_convergence=1 still COMMITTED an inadmissible "
+        f"state (max f_MC={np.max(fmc):.3e} > tol {tol:.3e}) with codes "
+        f"{codes} -- wp/94a's strict gate on the f-decreasing elastic exit "
+        f"has regressed for this integrator.")
 
 
 # ===========================================================================
@@ -494,18 +510,20 @@ def test_H13_unknown_integration_option_is_silently_ignored(mc_available):
             "End_Integration_Options",
         )
 
-    # must not raise / must not refuse to parse
-    _tet_build(lambda t: mat_typo(t), nsteps=20, utop=-0.02)
-    codes_typo = [ops.analyze(1) for _ in range(20)]
+    # FIXED by wp/94a: the option chain gained the `else` it never had, so
+    # the misspelled token names itself on opserr and the material is NOT
+    # created.  The command therefore fails instead of running a deck that is
+    # byte-identical to one without the flag.
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    with pytest.raises(Exception):
+        mat_typo(1)
+    ops.wipe()
 
-    _tet_build(lambda t: mat_mc(t, niter=2), nsteps=20, utop=-0.02)
-    codes_no_flag = [ops.analyze(1) for _ in range(20)]
-
-    assert codes_typo == codes_no_flag, (
-        f"a misspelled 'strict_convergance' now produces DIFFERENT analyze "
-        f"codes ({codes_typo}) than the flag being entirely absent "
-        f"({codes_no_flag}) -- the silent-swallow defect may have been "
-        f"fixed (e.g. an else-branch was added); re-verify H13.")
+    # control: the CORRECT spelling still parses and still runs
+    _tet_build(lambda t: mat_mc(t, strict=1, niter=2), nsteps=20, utop=-0.02)
+    codes_ok = [ops.analyze(1) for _ in range(20)]
+    assert len(codes_ok) == 20
 
 
 @pytest.mark.t0m
@@ -532,29 +550,19 @@ def test_H13_unknown_model_parameter_is_silently_ignored(mc_available):
             "End_Internal_Variables",
         )
 
-    _tet_build(lambda t: mat_typo_param(t), nsteps=20, utop=-0.02)
-    for _ in range(20):
-        rc = ops.analyze(1)
-        assert rc == 0, "expected NO parse-time or solve-time error"
-    s = _tet_stress()
-    # phi silently defaulted to 0 -> f_mc computed with phi=0 must be the
-    # admissibility bound actually enforced, NOT phi=M.PHI's bound.
-    f_with_zero_phi = M.f_mc(s, phi_deg=0.0, c=M.C)
-    f_with_intended_phi = M.f_mc(s, phi_deg=M.PHI, c=M.C)
-    tol = 1.0e-6 * max(2.0 * M.C, float(np.max(np.abs(s))))
-    assert f_with_zero_phi <= max(tol, 1.0e-3), (
-        f"committed state is not admissible under phi=0 (f={f_with_zero_phi:.3e} "
-        f"> tol {max(tol, 1.0e-3):.3e}) -- the silently-defaulted-to-zero friction "
-        f"angle assumption no longer holds; re-verify H13.")
-    # non-vacuity: under the INTENDED phi the state must sit well INSIDE the
-    # (larger) admissible region -- a big negative gap from the phi=0 bound
-    # proves the material actually enforced phi=0, not the intended M.PHI.
-    gap = f_with_zero_phi - f_with_intended_phi
-    assert gap > 100.0, (
-        f"f(phi=0)={f_with_zero_phi:.3e} vs f(phi={M.PHI})={f_with_intended_phi:.3e} "
-        f"-- gap too small ({gap:.3e}) to show the typo had an observable "
-        f"effect; this reproducer would be vacuous, re-tune before trusting "
-        f"H13.")
+    # FIXED by wp/94a: `utuple_storage::setParameterByName` returns bool and
+    # the parser fails on false, so `MC_phii` can no longer leave `MC_phi` at
+    # its 0.0 default.  Belt and braces: even a name that IS spelled right but
+    # never appears now trips the required-parameter check.
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    with pytest.raises(Exception):
+        mat_typo_param(1)
+    ops.wipe()
+
+    # control: the correctly-spelled deck still builds and still runs
+    _tet_build(lambda t: mat_mc(t), nsteps=20, utop=-0.02)
+    assert ops.analyze(1) == 0
 
 
 # ===========================================================================
