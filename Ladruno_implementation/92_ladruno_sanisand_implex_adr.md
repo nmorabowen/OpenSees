@@ -484,7 +484,16 @@ the earlier engine the guard's misfire on the first commit (P2-2b's target) put 
 and carried the leg further through the softening zone. The trial guard (P2-6) fired 322 times and did not
 compensate — at those points the trial fails with `f = 0` too. Reading: through the shear zone, more
 elastic-predictor points reach further at no accuracy cost, so the guard's trigger (`Kp ≤ 0` or a reversal on the
-committed predecessor) **under-fires**. **P2-8 (listed, not built):** a guard threshold `-implexGuardKp <ratio>`
+committed predecessor) **under-fires**. **P2-7c on Esmeralda (4e07ef014, first five rows, dense refuse arms):** reference 6.542 / 9.896 / 12.514 /
+14.606 / 16.716 kN; `-flipAlphaIn init` +0.45–0.6 %; `-implexFlipAbsorb on` +0.35 %; **no step-2 refusal on any
+arm**. Implicit twin under `init`: identical to `vanilla` to the digit — **the RC14 price on this column is zero**
+(the ~6 000 gravity-direction points that `init` sets and `vanilla` leaves are not loading and do not enter Q).
+Census pair at defaults: IMPL-EX within 0.1 % of 887fea475's; implicit +0.02–0.3 % against the plain twin — holds
+are almost free on the implicit side, not to the digit. **P2-7d (listed, not built):** a hold-skip commit still
+commits the zero-increment return's `α` (round-off moved) while `α_in_n` is restored; leaving `α_n` untouched on
+a hold-skip commit would remove that residual. Owner's call, with P2-8.
+
+**P2-8 (listed, not built):** a guard threshold `-implexGuardKp <ratio>`
 firing when `Kp / G < ratio` on the committed predecessor (default 0 = today), priced by a sweep {0, 0.05, 0.2} on
 reach vs overlay; owner's call whether it belongs in this PR or the next.
 
