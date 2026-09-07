@@ -482,4 +482,17 @@ benchmark is a real footing or the idealised half-space.
   of 34 560 points on Esmeralda 146458, `h → ∞`, implicit column stiffened 2.5x for tens of
   steps. This is **P2-5 in #807**, filed alongside P2-1..P2-4; see `92_ladruno_sanisand_implex_adr.md`
   and `LEDGER_quirks.md`.
+- 2026-09-07 (WP-92e acceptance, Esmeralda §79 / hold leg 146575) — **Correctness passes on all
+  four monotonic arms (87b9cf846); performance fails on both columns**: dense refuse honest wall
+  0.01774, dense implicit-floor crawl to 0.01886 on budget, loose refuse wall 0.03914, loose
+  implicit-floor no converged step at 0.03915 with 1555 fallbacks (many points delivering the
+  implicit stress under the frozen tangent do not converge). **The implicit twins are at
+  0.035–0.037 with no wall**: on the dense column IMPL-EX now stops at half the implicit depth.
+  P2-6 (trial-time `f = 0`, 708152eac) is under test as the answer. **Hold acceptance on
+  8bfdfbc17 FAILS as framed**: the post-hold tangent jump fell 3.7× → 2.2× and persists ~14
+  steps; suspect the guard's absolute threshold 1e-10 sits below the round-off strain a hold's
+  Newton residual leaves at many points; one-flag test (`-reversalTol 1e-8/1e-7`) queued on
+  both sides. Rule stands: no holds inside a reported push on either material. For this ADR:
+  the free-surface ring is still not where these legs stop — they stop at confined softening
+  points in the shear zone — so ADR 93's own question remains open and un-reached.
 
