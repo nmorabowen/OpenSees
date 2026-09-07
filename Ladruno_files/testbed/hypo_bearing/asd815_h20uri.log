@@ -1,0 +1,1170 @@
+[18:18:32] [control 0] engine C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90\5408bcef-bf62-4967-964e-a179fa61676a\scratchpad\dist_p6\bin\opensees.pyd
+[18:18:32] [control 0] ladrunoBuild() = c945f9a8b5e92783109efcfd25813e6591bbc236
+[18:18:32]     [control 2] consistent Q8 serendipity surcharge over 20 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 42 nodes carry a NEGATIVE weight; per-face weights match the analytic (-A/12, +A/3) to 3.1e-16 of A
+[18:18:32] === leg h20uri_h1.0_asd815: LadrunoBrick20 -formulation uri on ASDPlasticMaterial3D/DruckerPrager_YF, h0 = 1.0 m, 1553 nodes / 4659 DOF, 200 elements
+
+
+Using ASDPlasticMaterial3D - Developed by: Jose Abell (UANDES), Massimo Petracca and Guido Camata (ASDEA Software Technology)
+
+    numArgs = 42
+
+Searching for instance with:
+yf_type = DruckerPrager_YF
+pf_type = DruckerPrager_PF
+el_type = LinearIsotropic3D_EL
+iv_type = BackStress(TensorLinearHardeningFunction):DP_cohesion(ScalarLinearHardeningFunction):
+
+
+Defined internal variables: 
+   BackStress size = 6
+   DP_cohesion size = 1
+
+
+Defined model parameters
+   DP_xi_c
+   DP_eta
+   DP_etabar
+   YoungsModulus
+   PoissonsRatio
+   TensorLinearHardeningParameter
+   ScalarLinearHardeningParameter
+   MassDensity
+   InitialP0
+
+
+Reading internal variables from input
+BackStress = 0 0 0 0 0 0 
+  --->  Setting BackStress = 0 0 0 0 0 0 
+DP_cohesion = 0 
+  --->  Setting DP_cohesion = 0 
+
+
+ Done reading internal variables from input
+
+
+Reading parameters from input
+YoungsModulus = 45000
+  --->  Setting YoungsModulus = 45000
+PoissonsRatio = 0.45
+  --->  Setting PoissonsRatio = 0.45
+DP_xi_c = 0.11547
+  --->  Setting DP_xi_c = 0.11547
+DP_eta = 0.445749
+  --->  Setting DP_eta = 0.445749
+DP_etabar = 0
+  --->  Setting DP_etabar = 0
+TensorLinearHardeningParameter = 0
+  --->  Setting TensorLinearHardeningParameter = 0
+ScalarLinearHardeningParameter = 0
+  --->  Setting ScalarLinearHardeningParameter = 0
+
+
+ Done reading parameters from input
+
+
+Reading Integration Options
+   Setting integration method = Backward_Euler method_int = 8
+   Setting tangent type = Continuum tangent int = 1
+   Setting n_max_iterations = 100
+   Setting strict_convergence = 1
+
+
+Done reading Integration Options
+set_constitutive_integration_method tag = 1 ::: 
+   method = 8
+   tanget_type = 1
+   f_absolute_tol = 1e-06
+   stress_absolute_tol = 1e-06
+   n_max_iterations = 100
+   return_to_yield_surface = 1
+   rk45_niter_max = 110
+   rk45_dT_min = 0.01
+   strict_convergence = 1
+   f_relative_tol = 0
+ASDPlasticMaterial3D
+  Yield Function          : DruckerPrager_YF
+  Plastic flow direction  : DruckerPrager_PF
+  Elasticity              : LinearIsotropic3D_EL
+  # of Internal variables : 2
+
+
+Printing material info
+Index: 0, Value: BackStress(TensorLinearHardeningFunction)
+               : [Trial: 0 0 0 0 0 0, Committed: 0 0 0 0 0 0]
+
+Index: 1, Value: DP_cohesion(ScalarLinearHardeningFunction)
+               : [Trial: 0, Committed: 0]
+
+  # of Parameters         : 9
+Index: 0, Value: DP_xi_c = 0.11547
+Index: 1, Value: DP_eta = 0.445749
+Index: 2, Value: DP_etabar = 0
+Index: 3, Value: YoungsModulus = 45000
+Index: 4, Value: PoissonsRatio = 0.45
+Index: 5, Value: TensorLinearHardeningParameter = 0
+Index: 6, Value: ScalarLinearHardeningParameter = 0
+Index: 7, Value: MassDensity = 0
+Index: 8, Value: InitialP0 = 0
+[18:18:32]     [mapping] alpha=0.148583 rho=0.210128 -> ASD eta=0.445749 xi_c=0.115470; apex I1: UW T=0.777141, ASD T=0.777141 (should match to fp precision) ; E=45000.0000 nu=0.45
+[18:18:32]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.2s]
+[18:18:32]     [control 1] 1-D elastic stress patch: max|szz/-q0-1| = 8.57e-14, max|sxx/-K0q0-1| = 7.26e-14  -> PASS
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[18:18:32]     [tension] s/B 0.00014  q    16.17  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-36,-26.2]
+
+
+Done creating ASDPlasticMaterial3D 
+
+
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 2.498e-16
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.38378e-16
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.36002e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.93889e-16
+[18:18:33]     [tension] s/B 0.00058  q    30.31  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-66.4,-25.9]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.52656e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.13798e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 2.41474e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 3.30291e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 2.91434e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+[18:18:34]     [tension] s/B 0.00150  q    50.66  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-110,-25.6]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 5.96745e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.19109e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.69069e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 5.96745e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 5.96745e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 5.96745e-15
+[18:18:35]     [tension] s/B 0.00250  q    61.23  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-128,-24.3]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 5.96745e-15
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.113254 (max: 0.003, Norm deltaX: 6.26458e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00697172
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 6.46705e-15
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00563097 (max: 0.003, Norm deltaX: 2.34159e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00797172
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+[18:18:37]     [tension] s/B 0.00350  q    69.98  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-142,-22.3]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+[18:18:38]     [tension] s/B 0.00450  q    76.27  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-146,-21.2]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+[18:18:39]     [tension] s/B 0.00550  q    81.52  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-155,-21.6]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 7.79069 (max: 0.003, Norm deltaX: 0.000934479)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0125717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.30729e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.854059 (max: 0.003, Norm deltaX: 0.000129546)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0117985 (max: 0.003, Norm deltaX: 2.93486e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0129717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+[18:18:42]     [tension] s/B 0.00650  q    87.18  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-166,-23.4]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0209007 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0209046 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0210672 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0210639 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.16925 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.169255 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.169409 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.169407 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.309375 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.309378 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.309567 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.309568 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.443713 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.443717 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.443894 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.443893 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.571678 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.571694 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.571883 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.571872 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.721989 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.721993 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.721832 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.72183 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.873887 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.873891 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.874052 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.87405 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.01627 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.01627 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.01633 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.01633 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+[18:18:43]     [tension] s/B 0.00750  q    92.02  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-176,-26.7]
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15346 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15346 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15364 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15364 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.29543 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.29544 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.29566 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.29566 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.4439 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.44391 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.4444 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.44439 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.65268 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.65268 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.65374 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.65374 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00437607 (max: 0.003, Norm deltaX: 4.70199e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.021603 (max: 0.003, Norm deltaX: 6.86474e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0897622 (max: 0.003, Norm deltaX: 1.98579e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+[18:18:45]     [tension] s/B 0.00850  q    96.53  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-185,-18.7]
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.156549 (max: 0.003, Norm deltaX: 2.7153e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0183717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.439115 (max: 0.003, Norm deltaX: 7.84133e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0185717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.541737 (max: 0.003, Norm deltaX: 7.76588e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.690273 (max: 0.003, Norm deltaX: 8.95644e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0189717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.433059 (max: 0.003, Norm deltaX: 7.09307e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0191717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.382792 (max: 0.003, Norm deltaX: 4.59802e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0193717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.266666 (max: 0.003, Norm deltaX: 3.43739e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0195717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.742082 (max: 0.003, Norm deltaX: 9.72764e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0197717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.265461 (max: 0.003, Norm deltaX: 3.62411e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0199717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 4.85651e-07
+[18:18:49]     [tension] s/B 0.00950  q   100.60  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-193,-9.76]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0239161 (max: 0.003, Norm deltaX: 1.20361e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0205717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00402593 (max: 0.003, Norm deltaX: 9.42076e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0207717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.17662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.24681 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.17662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.24681 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.17662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.24681 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.440631 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.440636 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.440716 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.440748 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532015 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532019 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532112 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532141 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 17.0388 (max: 0.003, Norm deltaX: 0.00175074)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532015 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532019 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532112 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.532141 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.35725e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.621043 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.621051 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.62119 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.62121 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.708297 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.708307 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.708254 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.708277 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.793406 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.793417 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.793154 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.793175 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+[18:18:51]     [tension] s/B 0.01025  q   103.50  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-199,-4.64]
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875902 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875914 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875718 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875736 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.725059 (max: 0.003, Norm deltaX: 0.000110017)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0217717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875902 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875914 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875718 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875736 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.5763 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.5763 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.2532 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.2532 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0217717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875902 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875914 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875718 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.875736 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.468982 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.740255 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.860368 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.359467 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.468982 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.740255 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.860368 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.359467 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.468982 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.740255 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.860368 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.359467 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.96372 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.96371 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.92509 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.92512 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.63493 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.63501 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.2471 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.2473 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.66244 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.66358 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.7377 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 18.2455 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.7377 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 18.2456 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.81232 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 120.71 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.81232 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 120.71 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.0711 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 19.8067 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.071 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 19.807 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 32.3031 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 32.303 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.94373 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.94371 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.14024 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.14025 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.43753 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.43764 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.18938 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.18938 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.5503 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.5503 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.29623 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.29619 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.35494 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.355 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.664358 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.664359 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.0487 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 16.6526 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.0487 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 16.6526 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 10.657 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 122.282 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 10.657 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 122.282 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 39.1222 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.2733 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 39.122 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.2733 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.7221 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 30.7219 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.1667 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.1668 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 16.0347 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.03773 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 16.0343 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.03774 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0218717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.69469 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 10.3603 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.96457 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 10.0634 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.44703 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.47612 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.01994 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.4424 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 22.8701 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 22.044 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 22.4621 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.2459 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 13.92 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.0164 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.84494 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.70395 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.10831 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.36931 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.1086 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 13.99 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 25.5961 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.6496 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 14.0963 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 46.067 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 12.5426 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 51.6456 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 8.85709 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 149.972 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 110.533 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 115.465 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 96.3085 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 137.783 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 32.5251 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 182.522 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 34.799 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 46.0406 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 42.3087 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.01825 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.02059 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.3605 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.966 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.81944 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.4624 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.1966 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.35309 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.156 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 4.56202 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 62.4106 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 49.3435 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 64.0242 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 47.8511 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 49.4095 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 48.6452 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.82789 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.89059 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.774755 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.771261 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 54.4856 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 54.5859 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 100.245 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 101.262 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.12511 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.10617 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 63.4366 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 62.4076 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 130.738 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 129.955 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 124.494 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 124.833 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 77.5346 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 86.2795 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.17011 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.33381 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 28.9861 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 29.641 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 164.752 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 164.577 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 130.606 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 129.707 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 254.659 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 275.951 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 256.18 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 276.088 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 265.015 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 261.378 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.610125 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.606056 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 13.6833 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 13.6925 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.3372 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.12317 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 23.3529 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.09726 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.4181 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 15.4427 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 61.3664 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 6.34282 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 61.4257 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 6.12892 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 62.187 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 62.6937 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 160.141 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 9.69555 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 158.736 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 8.6408 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 10.8321 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 11.5419 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 22.8113 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 22.757 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.6697 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.65923 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.04783 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 7.00113 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.59682 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.62957 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.63472 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.763817 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.837309 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.325327 (max: 0.003, Norm deltaX: 5.5745e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0220717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.587424 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.587353 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0221717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.48492e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.35725e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.36218 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.40638 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.719149 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.36218 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.40638 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00987714 (max: 0.003, Norm deltaX: 8.25998e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0224717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 7.74381e-15
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.025881 (max: 0.003, Norm deltaX: 1.05481e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0226717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+[18:18:54]     [tension] s/B 0.01075  q   105.42  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-203,-1.22]
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.421119 (max: 0.003, Norm deltaX: 8.30369e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.19631 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.666165 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.19646 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.974253 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0656582 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.56136 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.190879 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.510257 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.112308 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0231829 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.129389 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.229659 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.275939 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.30982 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15843 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.01137 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.811077 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.345525 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.498429 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.606199 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.258391 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0640417 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.179803 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.211314 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.15039 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 2.8419 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.52532 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 5.07923 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.58414 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 3.36373 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.70724 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.59788 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.30982 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 1.15843 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0267393 (max: 0.003, Norm deltaX: 2.41521e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00112694 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.48492e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00712972 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0116824 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.1232 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.111166 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0250678 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0330472 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0302486 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0193283 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.1232 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.111166 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0191781 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0194774 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0148059 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0149995 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00482952 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0046055 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0113369 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0135335 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0191781 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0194774 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0148059 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0149995 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00790537 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0090761 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0135493 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0128791 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00562166 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00724301 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0120817 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0109866 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0281714 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0279148 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0318038 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0322467 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0137294 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0120258 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0275487 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0281714 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0279148 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0318038 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0322467 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0215267 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0218997 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.025433 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0257819 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235342
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0156907 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0148024 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235342
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+[18:18:58]     [tension] s/B 0.01118  q   107.01  GP seen 1600  tension(mean>=0) 4  NaN 0  I1 [-206,0.75]
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0295571 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0282291 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0336669 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0340465 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0234302 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0244184 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0276087 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0260457 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0338133 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.034561 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.038251 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0390859 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235592
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 8.79563e-07
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000258161 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000679368 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00159759 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00323526 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.12965e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0279213 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0282049 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235842
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00152854 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235842
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00667866 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000401719 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00299415 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00788624 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00868278 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 1.00198e-14
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00370953 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0440356 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0498905 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0526586 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0529546 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00370953 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00371845 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000602887 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 2.89934e-07
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000867206 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000867206 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000867206 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0022719 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236155
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0022719 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236155
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0022719 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236155
+OpenSees > analyze failed, returned: -3 error flag
+[18:18:59]     [diag 3] ds fell to 0.003125 mm at s/B = 0.01122: arming tangent + tension census
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00276785 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000168956 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236123
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00276785 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000168956 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236123
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.00276785 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000168956 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236123
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000861662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000936514 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0016626 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000861662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000936514 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0016626 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000861662 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000936514 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.0016626 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+  () ASDP Integration Info. Tag = 1 max_iter = 1 max_error = 3.15459e-07
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000199767 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000199767 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000199767 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236108
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000470097 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000918285 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236104
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000470097 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000918285 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236104
+OpenSees > analyze failed, returned: -3 error flag
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000470097 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+ASDPlasticMaterial3D::Backward_Euler (tag 1) - scalar Newton exhausted 100 iterations without converging: |Phi| = 0.000918285 >= tol_yf = 1e-06 -- rejecting step (strict_convergence)
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236104
+OpenSees > analyze failed, returned: -3 error flag
+[18:19:00]     MODE = FLOOR   [step collapsed to the 0.0002 mm floor at s/B = 0.01122]   wall = 27.7s  converged steps = 147  nsub = 14  nfail = 89
+[18:19:00]     last s/B = 0.01122  q_end = 107.1060  q_max = 107.1211
+
+      h20uri_h1.0_asd815 mode=FLOOR     verdict=step collapsed to the 0.0002 mm floor at s/B = 0.01122

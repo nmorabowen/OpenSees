@@ -92,3 +92,33 @@ withdrawn. **Fix if the prediction holds:** classify in the elastic metric using
 potential's dilatancy (the PF is available to the integrator even if not to the YF signature), or,
 signature-free, order the returns "flank first; if the flank map fails and p > p_apex, apex
 projection" — the apex projection already adds the volumetric plastic strain a ψ = 0 cone lacks.
+
+## Re-run on PR #815 (build c945f9a8b, 2026-09-07 18:19)
+
+**#815 does NOT remove the ASD-DP wall — it moves it earlier, via a different mechanism.** Staged
+build `c945f9a8b` (this branch merged with #815/#816), verified via `ops.ladrunoBuild()`; 27/27
+tests pass (`test_adr95_dp_branch_response.py` + `test_adr95_dp_corner_fix.py` +
+`test_adr94c_numerics.py`, no skips).
+- `h8bbar` control: **MODE=TARGET, s/B 0.15000, q_max 150.7104 = 1.0850 of exact** — now matches
+  the UW-DP number on the same mesh to 4 figures (was 1.0611/2.2% off pre-#815 — the merged
+  94b/94c changes also touched the flank map/mapping, a secondary finding). 0 GPs tension, 0 NaN
+  throughout (`asd815_h8bbar.log`, `asd_h8bbar_h1.0_asd815.csv`).
+- `h20uri`: **MODE=FLOOR at s/B 0.01122, q_max 107.1211 = 0.7712 of exact** (was 0.01804/0.8815
+  pre-#815) — **walls earlier, not later**, and by a new mechanism: `strict_convergence` rejects
+  the step on scalar-Newton exhaustion (`|Phi| ~ 2e-3 >= tol_yf 1e-6`) for ~89 of the last 147
+  attempts; no NaN anywhere (14 "NaN 0" census lines, all zero). Census at the last converged step:
+  **4 GPs at mean stress ≥ 0 (I1 max +0.75 kPa)** — same four footing-edge GPs as before, same
+  magnitude. No "`APEX state but ... not on its surface`" guard message ever printed — i.e.
+  `check_apex_region` never returns true on this deck, confirming the prediction: with ψ=0 the
+  Euclidean test `p - p_apex >= eta*q` is stricter than the exact elastic-metric one, so these
+  small-q near-apex states are still routed to the flank map, which now fails via Newton exhaustion
+  instead of the old silent stub/NaN path. `--cond` diagnostics armed at `ds=0.003125mm` but never
+  fired (no step converged after arming to sample the tangent). Logs: `asd815_h20uri.log`,
+  `asd_h20uri_h1.0_asd815.csv`.
+⇒ **Prediction confirmed on the misclassification mechanism, refuted on the number**: the wedge is
+real and the apex return still never engages for this deck, but #815 does not preserve the old
+0.018 floor — the new `strict_convergence` Newton-exhaustion rejection (from the same merged
+94b/94c wave) trips earlier than the old silent-stub path did. Net: ASD-DP is still WORSE than the
+repaired UW-DP leg (TARGET 0.15, 0.9757) and now also worse than its own pre-#815 self on this
+metric. Fix path unchanged from the prediction above (elastic-metric classification, or
+flank-first-then-apex ordering).
