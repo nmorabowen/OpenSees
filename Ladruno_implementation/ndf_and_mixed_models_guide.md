@@ -266,7 +266,7 @@ Two structurally important facts:
 | Element family | dofs/node assumed | Behavior when a node's ndf differs |
 |---|---|---|
 | Truss | 1/2/3 by (ndm,ndf), both ends equal | warn + fallback numDOF=2 |
-| ZeroLength | any, both ends equal; scales `2*ndf` — **fork (ADR-96): in 3-D any pair with both ndf >= 3 is accepted**, the first three DOFs are the translational core and the rest ride as passengers (`(3,4)` u-p, `(4,4)`, `(3,6)`); rotational `-dir` refused there | warn + bail only for ndf < 3 or 2-D mismatches |
+| ZeroLength | any, both ends equal; scales `2*ndf` — **fork (ADR-96): in 3-D any pair with both ndf >= 3 is accepted**, the first three DOFs are the translational core and the rest ride as passengers (`(3,4)` u-p, `(4,4)`, `(3,6)`); rotational `-dir` refused there | warn + inert for ndf < 3 or 2-D mismatches (vanilla's bail was a crash at the `element` command — `t1d` NULL in the post-add `update()`; fork makes it inert, ADR-96) |
 | ZeroLengthSection | any, both ends equal; scales `2*ndf` | warn + bail if ends differ |
 | ElasticBeam2d/3d | 3 / 6 | `exit(-1)` |
 | FourNodeQuad (and plane solids) | 2 | silent `return`, no setDomain |

@@ -136,7 +136,7 @@ pore pressure or a beam rotation is never read or written — it rides as a
 passenger. `-dir 4..6` is refused in that mode (message names the element, the
 two ndf values and the direction; element disabled). `-doRayleigh` works
 (element-sized Rayleigh forces). Element responses (`force`, `deformation`,
-`dampingForces`) stay the 6-slot core. The canonical use is the no-tension
+`dampingForces`) are element-sized (`ndf1 + ndf2`, passenger slots identically zero); the material/`deformation` responses stay the 6-slot core. The canonical use is the no-tension
 footing/soil slot: `zeroLength $tag $skinNode $soilNode -mat $ent -dir 3` with
 `uniaxialMaterial ENT`. Not for `ZeroLengthSection` / `ZeroLengthND` /
 `TwoNodeLink`, which keep the equal-ends rule. Test:

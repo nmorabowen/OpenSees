@@ -127,10 +127,12 @@ vanilla `D3N12` element with rotations.
 **D6. Wire format unchanged.** `numDOF` is already sent; `numDOFPassenger` and
 the scatter targets are re-derived in `setDomain` on the receiving side.
 
-**D7. Element responses stay core-sized.** `force`, `deformation`,
-`dampingForces`, `material` responses on a passenger-mode ZeroLength are the
-6-slot core (three per node), as on a `(3,3)` pair; a recorder sees the same
-columns whether the soil node is ndf-3 or ndf-4.
+**D7. `force` is element-sized; the material responses are the core.** The
+`force` / `forces` response (and everything routed through `getResistingForce`)
+is the scattered, element-sized vector — `ndf1 + ndf2` slots, node 2's
+translations at `ndf1 .. ndf1+2`, every non-translational slot identically zero
+(G3 asserts it). `deformation`, `material`, `basicForce` and the per-material
+responses are the 6-slot core, as on a `(3,3)` pair.
 
 **D8. What is not claimed.** No coupling, no mass, no pressure term; no 2-D lane;
 no `ZeroLengthSection` / `ZeroLengthND` / `TwoNodeLink` (they keep their equal-ends
@@ -171,6 +173,17 @@ battery (the adapter's `setID` runs on every rank identically).
   constructors; `setID` is rank-local. Not re-run here (serial battery only).
 
 ## Implementation log
+
+- **Refused elements are now INERT, not half-initialised (found by G3).** Vanilla's
+  own "differing dof at ends" refusal returned from `setDomain()` with `t1d` NULL,
+  and `Domain::addElement()` calls `update()` right after `setDomain()`
+  (`Domain.cpp:493-494`), which dereferences it: an access violation on every
+  such deck, upstream, before this ADR. The passenger-mode rotational refusal
+  inherited the same path. Both now call `ladrunoDisable()` (zero `t1d` of the
+  default 2-slot width, `update()` a no-op) and print the same warning; the
+  element stays in the domain, contributes nothing, and `FE_Element::setID`
+  warns at analysis time as before. `LEDGER_quirks.md` row.
+
 
 - 2026-09-07 — branch `wp/96-contact-passenger-dof` cut from `bc63a388e`.
   Request note citations corrected in the PR (not in the note): the six handler

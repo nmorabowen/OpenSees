@@ -279,7 +279,7 @@ ZeroLength::ZeroLength(int tag,
 		       int doRayleigh)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(1), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -324,7 +324,7 @@ ZeroLength::ZeroLength(int tag,
 		       int direction)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(2),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(2),
   theMatrix(0), theVector(0),
   numMaterials1d(1), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -377,7 +377,7 @@ ZeroLength::ZeroLength(int tag,
 		       Damping *damping)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(n1dMat), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -439,7 +439,7 @@ ZeroLength::ZeroLength(int tag,
 		       int doRayleigh)
  :Element(tag,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
+  dimension(dim), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3), useRayleighDamping(doRayleigh),
   theMatrix(0), theVector(0),
   numMaterials1d(n1dMat), theMaterial1d(0), dir1d(0), t1d(0), d0(0), v0(0),
   theDamping(0), fd(0)
@@ -486,7 +486,7 @@ ZeroLength::ZeroLength(int tag,
 ZeroLength::ZeroLength(void)
   :Element(0,ELE_TAG_ZeroLength),     
   connectedExternalNodes(2),
-  dimension(0), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), /* Ladruno (ADR-96) */ transformation(3,3),
+  dimension(0), numDOF(0), numDOFPassenger(0), passengerOffset2(0), passengerMatrix(0), passengerVector(0), ladrunoDisabled(false), /* Ladruno (ADR-96) */ transformation(3,3),
   theMatrix(0), theVector(0),
   numMaterials1d(0), theMaterial1d(0),
   dir1d(0), t1d(0), d0(0), v0(0),
@@ -626,6 +626,7 @@ ZeroLength::setDomain(Domain *theDomain)
     theMatrix = &ZeroLengthM2;
     theVector = &ZeroLengthV2;
     numDOFPassenger = 0;   // Ladruno (ADR-96): re-decided below on every setDomain
+    ladrunoDisabled = false;   // Ladruno (ADR-96)
     
     // first set the node pointers
     int Nd1 = connectedExternalNodes(0);
@@ -663,6 +664,7 @@ ZeroLength::setDomain(Domain *theDomain)
                    << " joins nodes of ndf " << dofNd1 << " and " << dofNd2
                    << " (passenger mode, ADR-96): only translational -dir 1..3 exist there, got dir "
                    << (*dir1d)(m) + 1 << "; element disabled\n";
+            this->ladrunoDisable();   // Ladruno (ADR-96): inert, not half-initialised
             return;
           }
         }
@@ -674,6 +676,7 @@ ZeroLength::setDomain(Domain *theDomain)
     if ( !passenger && dofNd1 != dofNd2 ) {   // Ladruno (ADR-96): unless passenger
       opserr << "WARNING ZeroLength::setDomain(): nodes " << Nd1 << " and " << Nd2 <<
 	"have differing dof at ends for ZeroLength " << this->getTag() << endln;
+      this->ladrunoDisable();   // Ladruno (ADR-96): was a bare return -> t1d NULL -> access violation in the post-add update()
       return;
     }
 
@@ -859,11 +862,26 @@ ZeroLength::revertToStart()
 }
 
 
+// Ladruno (ADR-96): make a REFUSED element inert instead of half-initialised.
+// numDOF/theMatrix/theVector are already at their 2-slot defaults here; a zero
+// t1d of that width makes every accessor a well-defined zero, and update()
+// returns before touching the nodes (whose DOF counts may not even match).
+void
+ZeroLength::ladrunoDisable(void)
+{
+    ladrunoDisabled = true;
+    if (t1d != 0) delete t1d;
+    t1d = new Matrix(numMaterials1d > 0 ? numMaterials1d : 1, numDOF);
+    t1d->Zero();
+}
+
 int
 ZeroLength::update(void)
 {
     double strain;
     double strainRate;
+    if (ladrunoDisabled)   // Ladruno (ADR-96): refused element is inert
+      return 0;
 
     // get trial displacements and take difference
     const Vector& disp1 = theNodes[0]->getTrialDisp();

@@ -176,6 +176,7 @@ class ZeroLength : public Element
     // Ladruno (ADR-96): passenger-DOF scatter, see numDOFPassenger below
     const Matrix &scatterPassenger(const Matrix &core);
     const Vector &scatterPassenger(const Vector &core);
+    void ladrunoDisable(void);   // Ladruno (ADR-96)
     double computeCurrentStrain1d ( int mat, const Vector& diff ) const;    
 
     // private attributes - a copy for each object of the class
@@ -192,6 +193,13 @@ class ZeroLength : public Element
     int     passengerOffset2;        // = dofNd1: where node 2's translations land
     Matrix *passengerMatrix;         // scatter targets, sized in setDomain
     Vector *passengerVector;
+    // Ladruno (ADR-96): a REFUSED element (vanilla's "differing dof at ends",
+    // or a rotational -dir in passenger mode) used to return from setDomain()
+    // half-initialised -- t1d NULL -- and the post-add update() then
+    // dereferenced it (access violation on every such deck). Now it is left
+    // INERT: zero t1d, update() a no-op, every accessor a zero of the default
+    // 2-slot size. The warning is unchanged.
+    bool ladrunoDisabled;
     Matrix transformation;		// transformation matrix for orientation
     int useRayleighDamping;
 	
