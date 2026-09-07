@@ -14,8 +14,13 @@ way to read, per Gauss point, *which branch the return map actually took* and
 *whether the acoustic tensor is still positive*.
 
 `ladrunoBranch` is that readout.  It is a pure observer: `plastic_integrator`
-only WRITES the bookkeeping, never reads it, and the standing collapse gate
-`tests/test_r3_prandtl_collapse_gate.py` must stay bit-identical.
+only WRITES the bookkeeping, never reads it, so P0's instrumentation left the
+standing collapse gate `tests/test_r3_prandtl_collapse_gate.py` bit-identical.
+
+ADR-95 **P4** then repaired the two-surface return map itself (PR #803), which
+IS a numerical change — see `tests/test_adr95_dp_corner_fix.py` and
+`Ladruno_implementation/_adr95_p4_results.md`.  Two expectations below moved with
+it and say so at the assertion: the cutoff now returns `I1` to `T`.
 
 THE PAYLOAD (8 slots, and the whole point of asserting the width)
 -----------------------------------------------------------------
@@ -203,46 +208,56 @@ def test_tension_leg_takes_the_cutoff_or_corner_branch():
             "the tension cutoff is what ADR-95 H1 is about"
         )
         assert b[4] > 0.0, f"GP {gp}: trial f2 = {b[4]} not positive in tension"
-        assert b[6] >= T_CUT, (
-            f"GP {gp}: I1 = {b[6]} below the cutoff T = {T_CUT} yet the branch "
-            f"is {b[0]}"
+        # ADR-95 P4: the cutoff now RETURNS, so I1 sits ON T (it used to sit at
+        # the trial value, far above).  Compare with a tolerance rather than
+        # `>=` — landing exactly on T means the last bit can fall either way.
+        assert b[6] == pytest.approx(T_CUT, rel=1e-8), (
+            f"GP {gp}: I1 = {b[6]} != the cutoff T = {T_CUT} on branch {b[0]}"
         )
 
 
-def test_tension_cutoff_multiplier_is_structurally_zero_in_vanilla():
-    """SENTINEL for the vanilla defect P0 found while instrumenting the branch.
+def test_tension_cutoff_multiplier_now_returns_stress():
+    """SENTINEL — the P0 sentinel, FLIPPED by ADR-95 P4.
 
-    `plastic_integrator`'s residual assembly reads
+    P0 wrote this test to PIN the vanilla defect it found while instrumenting the
+    branch.  `plastic_integrator`'s residual assembly read
 
         for (i = 0; i < 2; i++) {
             if      (Jact(i) == 1) { R(0) = ...; g(0,0) = ...; }
             else if (Jact(i) == 2) { R(1) = ...; g(1,1) = ...; }
         }
 
-    but `Jact` only ever holds 0 or 1 — the `== 2` arm is DEAD.  So `R(1)` is
-    never assembled, `g` stays lower-triangular with `g(1,1) = 1`, and
-    `gamma(1)` (the tension-cutoff multiplier) comes out EXACTLY zero on every
-    branch, corner included.  With `rho_bar = 0` the stress update
-    `I1 -= 9K*rho_bar*gamma0 + 9K*gamma1` is then identically zero as well: the
-    cutoff SELECTS a different consistent tangent but applies NO stress return,
-    so `I1` stays wherever the trial state put it, arbitrarily far above `T`.
+    but `Jact` only ever holds 0 or 1 — the `== 2` arm was DEAD.  `R(1)` was
+    never assembled, `g` stayed with `g(1,1) = 1` from the det(g) = 1
+    initialisation, and `gamma(1)` came out EXACTLY zero on every branch, corner
+    included.  With `rho_bar = 0` the stress update
+    `I1 -= 9K*rho_bar*gamma0 + 9K*gamma1` was then identically zero too: the
+    cutoff SELECTED a different consistent tangent but applied NO stress return,
+    so `I1` stayed wherever the trial state put it — here 15.0, nearly fourteen
+    times `T = 1.09904`.
 
-    That is exactly the asymmetry ADR-95 H1 is about — the corner is an
-    OPERATOR switch, not a stress-return event — so it is pinned here.  If this
-    test ever fails, someone has repaired the cutoff and H1's mechanism must be
-    re-derived from scratch before any ADR-95 conclusion is carried forward.
+    ADR-95 P4 (PR #803) made that assembly index-driven, so the expectation is
+    inverted: `gamma(1)` is now positive and `I1` is returned TO the cutoff.  The
+    test is kept rather than deleted because it is the cheapest possible detector
+    of a build that has silently lost the fix (a stale `.pyd`, a bad merge, an
+    upstream re-sync), and because the numbers it pins — `gamma1 = (I1_tr - T)/9K`
+    and `I1 = T` — are hand-derivable from the model's own algebra.
+
+    The consequences for ADR-95's H1 are recorded in `_adr95_p4_results.md`; the
+    corner is no longer a pure operator switch.
     """
     tag = _drive_uniform_strain(3.0e-4, 1.0e-4, 1.0e-4)
     b = _branch(tag, 1)
     assert b[0] == 3.0, f"expected the corner branch here, got {b[0]}"
-    assert b[2] == 0.0, (
-        f"gamma1 = {b[2]} != 0 — the DruckerPrager tension-cutoff multiplier is "
-        "no longer structurally zero; ADR-95 H1 must be re-derived"
-    )
     i1_trial = 3.0 * K_EL * (3.0e-4 + 1.0e-4 + 1.0e-4)
-    assert b[6] == pytest.approx(i1_trial, rel=1e-8), (
-        f"I1 = {b[6]} != trial {i1_trial} — the cutoff now returns stress; "
-        "ADR-95 H1 must be re-derived"
+    assert b[2] == pytest.approx((i1_trial - T_CUT) / (9.0 * K_EL), rel=1e-8), (
+        f"gamma1 = {b[2]} — expected (I1_trial - T)/(9K); the ADR-95 P4 fix to "
+        "the DruckerPrager corner return map is NOT in this build"
+    )
+    assert b[2] > 0.0, f"gamma1 = {b[2]} is still structurally zero (pre-P4 build)"
+    assert b[6] == pytest.approx(T_CUT, rel=1e-8), (
+        f"I1 = {b[6]} != T = {T_CUT} (trial was {i1_trial}) — the tension cutoff "
+        "is not returning stress; this build predates ADR-95 P4"
     )
 
 

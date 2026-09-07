@@ -131,7 +131,8 @@ DruckerPrager::DruckerPrager(int tag, int classTag, double bulk, double shear, d
     mIIvol(6,6),
     mIIdev(6,6),
     mState(5),
-    mLadBranchVec(8)   // Ladruno ADR-95
+    mLadBranchVec(8),  // Ladruno ADR-95
+	mLadTangentVec(36) // Ladruno ADR-95 (P4)
 {
 	massDen  =  mDen;
     mKref    =  bulk;
@@ -180,7 +181,8 @@ DruckerPrager ::DruckerPrager  ()
     mIIvol(6,6),
     mIIdev(6,6),
 	mState(5),
-	mLadBranchVec(8)   // Ladruno ADR-95
+	mLadBranchVec(8),  // Ladruno ADR-95
+	mLadTangentVec(36) // Ladruno ADR-95 (P4)
 {
 	massDen  =  0.0;
     mKref    =  0.0;
@@ -278,6 +280,7 @@ void DruckerPrager::initialize( )
 	mLadForcedAccept = 0;
 	mLadI1           = 0.0;
 	mLadBranchVec.Zero();
+	mLadTangentVec.Zero();
 }
 
 
@@ -416,6 +419,12 @@ void DruckerPrager:: plastic_integrator( )
 		// compute yield function value (contravariant norm)
         norm_eta = sqrt(eta(0)*eta(0) + eta(1)*eta(1) + eta(2)*eta(2) + 2*(eta(3)*eta(3) + eta(4)*eta(4) + eta(5)*eta(5)));
 
+		// Ladruno ADR-95 (P4): latch the TRIAL deviatoric norm.  `norm_eta` is
+		// overwritten near the end of this routine with the RETURNED norm (it
+		// feeds mState(1)), but the consistent tangent needs the TRIAL one --
+		// see the derivation block above the Cep assembly.
+		double norm_eta_trial = norm_eta;
+
         // f1_n+1_trial
 		f1 = norm_eta + mrho*Invariant_1 - root23*Kiso(mAlpha1_n1);
 
@@ -513,15 +522,25 @@ void DruckerPrager:: plastic_integrator( )
 
 			// Newton procedure to compute nonlinear gamma1 and gamma2
 			//initialize terms
-			for (int i = 0; i < 2; i++) {
-				if (Jact(i) == 1) {
-					R(0) = norm_eta - (2*mG + two3*mHprime)*gamma(0) + mrho*Invariant_1 
-						   - 9*mK*mrho*mrho_bar*gamma(0) - 9*mK*mrho*gamma(1) - root23*Kiso(alpha1);
-					g(0,0) = -2*mG - two3*(mHprime + Kisoprime(alpha1)) - 9*mK*mrho*mrho_bar;
-				} else if (Jact(i) == 2) {
-					R(1) = Invariant_1 - 9*mK*mrho_bar*gamma(0) - 9*mK*gamma(1) - T(alpha2);
-					g(1,1) = -9*mK + mdelta2*T(alpha2);
-				}
+			// Ladruno ADR-95 (P4): INDEX-driven assembly.  `Jact` carries FLAGS
+			// (0/1), one per surface -- see the fill above and the re-activation
+			// logic below -- so the upstream loop, which switched on the VALUE
+			// (`Jact(i) == 1` / `== 2`), had a dead second arm: `Jact(i)` is
+			// never 2.  At the corner both i = 0 and i = 1 took the `== 1` arm
+			// and wrote ROW 0 twice, leaving R(1) = 0 and g(1,1) at the dummy 1
+			// from the det(g) = 1 initialisation -- hence gamma(1) == 0
+			// identically and I1 never returned to the tension cutoff -- and on
+			// the f2-only set it assembled the f1 residual into row 0, i.e. a
+			// cone return for a pure cutoff step.  The row index is the SURFACE
+			// index, not the loop counter.
+			if (Jact(0) == 1) {
+				R(0) = norm_eta - (2*mG + two3*mHprime)*gamma(0) + mrho*Invariant_1
+					   - 9*mK*mrho*mrho_bar*gamma(0) - 9*mK*mrho*gamma(1) - root23*Kiso(alpha1);
+				g(0,0) = -2*mG - two3*(mHprime + Kisoprime(alpha1)) - 9*mK*mrho*mrho_bar;
+			}
+			if (Jact(1) == 1) {
+				R(1) = Invariant_1 - 9*mK*mrho_bar*gamma(0) - 9*mK*gamma(1) - T(alpha2);
+				g(1,1) = -9*mK + mdelta2*T(alpha2);
 			}
 			if (Jact(0) == 1 && Jact(1) == 1) {
 				g(0,1) = -9*mK*mrho;
@@ -548,15 +567,15 @@ void DruckerPrager:: plastic_integrator( )
 				g(1,0) = 0;
 				g(0,1) = 0;
 				R.Zero();
-				for (int i = 0; i < 2; i++) {
-				if (Jact(i) == 1) {
-					R(0) = norm_eta - (2*mG + two3*mHprime)*gamma(0) + mrho*Invariant_1 
+				// Ladruno ADR-95 (P4): index-driven -- see the block above.
+				if (Jact(0) == 1) {
+					R(0) = norm_eta - (2*mG + two3*mHprime)*gamma(0) + mrho*Invariant_1
 						   - 9*mK*mrho*mrho_bar*gamma(0) - 9*mK*mrho*gamma(1) - root23*Kiso(alpha1);
 					g(0,0) = -2*mG - two3*(mHprime + Kisoprime(alpha1)) - 9*mK*mrho*mrho_bar;
-				} else if (Jact(i) == 2) {
+				}
+				if (Jact(1) == 1) {
 					R(1) = Invariant_1 - 9*mK*mrho_bar*gamma(0) - 9*mK*gamma(1) - T(alpha2);
 					g(1,1) = -9*mK + mdelta2*T(alpha2);
-				}
 				}
 				if (Jact(0) == 1 && Jact(1) == 1) {
 					g(0,1) = -9*mK*mrho;
@@ -674,6 +693,68 @@ void DruckerPrager:: plastic_integrator( )
 			
 		// update Cep
 		// note: Cep is contravariant
+		//
+		// -----------------------------------------------------------------
+		// Ladruno ADR-95 (P4) -- CONSISTENT TANGENT, derivation.
+		//
+		// Return map (n = eta_trial/||eta_trial|| is FROZEN at the trial state;
+		// eta is never updated inside the Newton loop):
+		//
+		//   sig     = sig_tr - 3K*(rb*g0 + g1)*1 - 2G*g0*n
+		//   I1      = I1_tr  - 9K*(rb*g0 + g1)
+		//   ||eta|| = ||eta_tr|| - (2G + (2/3)H')*g0
+		//   a1      = a1_n + sqrt(2/3)*g0 ,   a2 = a2_n + rb*g0 + g1
+		//
+		// with rb = rho_bar, g0 = gamma(0), g1 = gamma(1), T(a2) = To*exp(-d2*a2)
+		// so T'(a2) = -d2*T(a2).  Residuals R0 = f1, R1 = f2 are assembled ONLY
+		// for active surfaces; an inactive row keeps R = 0 and g = 1, so its
+		// dgamma is identically 0 and the 2x2 solve degenerates cleanly to 1x1.
+		//
+		//   g00 = dR0/dg0 = -2G - (2/3)(H' + K'(a1)) - 9K*rho*rb
+		//   g01 = dR0/dg1 = -9K*rho
+		//   g10 = dR1/dg0 = -9K*rb - rb*T'(a2) = rb*(-9K + d2*T(a2))
+		//   g11 = dR1/dg1 = -9K    -    T'(a2) =     -9K + d2*T(a2)
+		//
+		// Strain sensitivity of the residuals at frozen gamma (trial state only):
+		//   dR0/deps = d||eta_tr||/deps + rho*dI1_tr/deps = 2G*n + 3K*rho*1 = b1
+		//   dR1/deps =                         dI1_tr/deps =        3K*1     = b2
+		//   =>  dgamma = -g^{-1} b : deps , i.e.
+		//       temp1 = g^-1(0,0)*b1 + g^-1(0,1)*b2       ( dg0        = -temp1:deps )
+		//       temp2 = rb*temp1 + g^-1(1,0)*b1 + g^-1(1,1)*b2
+		//                                                 ( rb*dg0+dg1 = -temp2:deps )
+		//
+		// and, since dn/deps = (2G/||eta_TRIAL||)*(IIdev - n(x)n),
+		//
+		//   Cep = Ce + 3K*1(x)temp2 + 2G*n(x)temp1
+		//            - (4G^2*g0/||eta_TRIAL||)*(IIdev - n(x)n)
+		//
+		// The first three terms are exactly as upstream wrote them and are
+		// CORRECT.  (The ADR-95 review reported a spurious 27K^2*rho/2G term and
+		// a wrong temp2 factor here; those were SYMPTOMS of the wrong Jacobian
+		// -- g(1,1) stuck at the dummy 1 -- not of these lines.  With g
+		// assembled index-driven they evaluate to the review's own target
+		// values; see the sanity check below.)
+		//
+		// The one wrong factor in this block is the DENOMINATOR of the last
+		// term: upstream divides by the norm of the RETURNED eta (recomputed
+		// just above, for mState(1)), where the radial return requires the
+		// TRIAL norm.  Consequences of the upstream form:
+		//   * on the cone it OVER-SOFTENS: the deviatoric factor
+		//     1 - 2G*g0/||eta_final|| goes NEGATIVE as soon as
+		//     2G*g0 > ||eta_tr||/2 (H' = 0), i.e. the tangent acquires a
+		//     negative-definite deviatoric part on ordinary plastic steps;
+		//   * at the corner of a non-hardening DP the return lands exactly on
+		//     the apex (||eta_final|| = 0) and it is a divide by zero.
+		//
+		// Sanity check -- corner, rb = H = theta = d2 = 0:
+		//   g = [[-2G, -9K*rho],[0, -9K]] , det g = 18GK
+		//   g^-1 = [[-1/2G, rho/2G],[0, -1/9K]] , temp1 = -n , temp2 = -(1/3)*1
+		//   =>  Cep = 2G*(1 - 2G*g0/||eta_tr||)*(IIdev - n(x)n)
+		// the volumetric part cancels EXACTLY (both surfaces pin I1), and at the
+		// apex 2G*g0 = ||eta_tr|| so Cep = 0 -- mathematically correct (the
+		// returned stress is pinned at sig = (T/3)*1) and caught by the NormCep
+		// floor below.
+		// -----------------------------------------------------------------
 		if ((Jact(0) == 1) && (Jact(1) == 0)) {
 			b1 = 2*mG*n + 3*mK*mrho*mI1;
 			b2.Zero();
@@ -688,20 +769,38 @@ void DruckerPrager:: plastic_integrator( )
 		temp1 = g_contra(0,0)*b1 + g_contra(0,1)*b2;  
 		temp2 = mrho_bar*temp1 + g_contra(1,0)*b1 + g_contra(1,1)*b2;
 
+		// Ladruno ADR-95 (P4): TRIAL norm (see the derivation above), guarded --
+		// a purely volumetric trial has ||eta_tr|| = 0 together with gamma(0) = 0,
+		// and upstream's `4*G*G/norm*gamma(0)` evaluates inf*0 = NaN there.
+		// The guard matches the one already used for n at the top of the loop.
+		double devSoft = 0.0;
+		if (norm_eta_trial > 1.0e-13)
+			devSoft = 4*mG*mG/norm_eta_trial*gamma(0);
+
 		NormCep = 0.0;
 		for (int i = 0; i < 6; i++){
 			for (int j = 0; j < 6; j++) {
 				mCep(i,j) = mCe(i,j)
-						  + 3*mK * mI1(i)*temp2(j)  
+						  + 3*mK * mI1(i)*temp2(j)
 						  + 2*mG * n(i)*temp1(j)
-						  - 4*mG*mG/norm_eta*gamma(0) * (mIIdev(i,j) - n(i)*n(j));
+						  - devSoft * (mIIdev(i,j) - n(i)*n(j));
 				NormCep += mCep(i,j)*mCep(i,j);
 			}
 		}
 
 		if ( NormCep < 1e-10){
 			mCep = 1.0e-3 * mCe;
-			opserr << "NormCep = " << NormCep << endln;
+			// Ladruno ADR-95 (P4): throttle this message.  With the corner
+			// return map fixed, a non-hardening DP apex has an exactly ZERO
+			// consistent tangent (see the derivation above), so this floor is
+			// now reached legitimately at every apex GP; unthrottled it floods
+			// the log of a field run with millions of identical lines.
+			static int ladNormCepMsgCount = 0;
+			if (ladNormCepMsgCount < 10) {
+				opserr << "NormCep = " << NormCep << endln;
+				if (++ladNormCepMsgCount == 10)
+					opserr << "DruckerPrager: further NormCep messages suppressed (Ladruno ADR-95)\n";
+			}
 		}
 
 		mState(0) = Invariant_1;
@@ -871,6 +970,19 @@ const Vector &DruckerPrager::getLadrunoBranch(void)
 	return mLadBranchVec;
 }
 
+// Ladruno ADR-95 (P4 verification): the CURRENT consistent tangent mCep, all 36
+// entries row-major in the OpenSees 3D Voigt order (11,22,33,12,23,31) acting on
+// ENGINEERING shear.  Pure observer.  It exists so a test can compare the
+// analytic tangent against a finite difference of the return map at the same
+// trial state -- the property that failed at the corner before ADR-95 P4.
+const Vector &DruckerPrager::getLadrunoTangent(void)
+{
+	for (int i = 0; i < 6; i++)
+		for (int j = 0; j < 6; j++)
+			mLadTangentVec(6*i + j) = mCep(i,j);
+	return mLadTangentVec;
+}
+
 
 Response*
 DruckerPrager::setResponse (const char **argv, int argc, OPS_Stream &output)
@@ -891,6 +1003,9 @@ DruckerPrager::setResponse (const char **argv, int argc, OPS_Stream &output)
 	// Ladruno ADR-95: branch / loss-of-ellipticity diagnostics (read-only).
 	else if (strcmp(argv[0], "ladrunoBranch") == 0)
 		return new MaterialResponse(this, 95, Vector(8));
+	// Ladruno ADR-95 (P4): consistent tangent readout, 36 entries (read-only).
+	else if (strcmp(argv[0], "ladrunoTangent") == 0)
+		return new MaterialResponse(this, 96, Vector(36));
 	else
 		return 0;
 }
@@ -915,6 +1030,10 @@ int DruckerPrager::getResponse (int responseID, Information &matInfo)
 		case 95:   // Ladruno ADR-95: ladrunoBranch
 			if (matInfo.theVector != 0)
 				*(matInfo.theVector) = this->getLadrunoBranch();
+			return 0;
+		case 96:   // Ladruno ADR-95 (P4): ladrunoTangent
+			if (matInfo.theVector != 0)
+				*(matInfo.theVector) = this->getLadrunoTangent();
 			return 0;
 		default:
 			return -1;

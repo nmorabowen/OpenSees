@@ -87,6 +87,12 @@ class DruckerPrager : public NDMaterial
   // Pure observer: it never touches the material state, so behaviour is unchanged.
   const Vector &getLadrunoBranch(void);
 
+  // Ladruno ADR-95 (P4 verification): the 36 entries of the CURRENT consistent
+  // tangent mCep, row-major in the OpenSees 3D Voigt order (11,22,33,12,23,31).
+  // Pure observer -- it exists so a test can compare the analytic tangent with a
+  // finite difference of the return map at the same trial state.
+  const Vector &getLadrunoTangent(void);
+
  protected:
   
   //material parameters
@@ -147,6 +153,7 @@ class DruckerPrager : public NDMaterial
   int    mLadForcedAccept;	// 1 if the `count > 3` forced-accept bailout fired
   double mLadI1;		// I1 of the RETURNED stress (== mState(0))
   Vector mLadBranchVec;		// 8-slot scratch returned by getLadrunoBranch()
+  Vector mLadTangentVec;	// Ladruno ADR-95 (P4): 36-slot scratch for mCep
 
   // Ladruno ADR-95: min over ~200 deterministic unit directions of
   // det(n . D_ep . n) / (2G)^3.  Sampling cost, so it is evaluated on request
