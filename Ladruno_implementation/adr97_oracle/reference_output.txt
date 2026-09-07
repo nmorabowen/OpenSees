@@ -1,0 +1,966 @@
+ADR-97 P0 oracle reference output
+Regenerate with:  python3.12 Ladruno_implementation/adr97_oracle/run_all.py
+Every gate in these scripts is an assert; a clean exit IS the pass.
+==============================================================================
+
+##### cppm_vm.py  (exit 0) #####
+
+==============================================================================
+ADR-97 oracle 1/5 -- VON MISES closest-point return map
+==============================================================================
+Conventions: tension-positive, Voigt [11 22 33 12 23 13], engineering
+shear, VOIGT (doubled-shear) YF/PF derivatives, SQRT_2_over_3 =
+0.816496580928 (truncated literal, ASDPlasticMaterial3DGlobals.h:41)
+Material: E = 70000, nu = 0.3, k0 = 30 (kPa-like), 10 steps per leg.
+
+------------------------------------------------------------------------------
+complex-step Jacobian validation (one-time warrant)
+------------------------------------------------------------------------------
+    Newton [warrant] residual history: 8.229e+01 1.787e+01 2.548e+00 6.904e-02 3.905e-05 1.488e-11
+    Newton [warrant] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.203 over 4 transition(s) (5 iterations); best 3-point order estimate = 2.07
+    complex-step Jacobian vs central difference (VM+AF, converged point): rel_fro = 1.391e-13
+
+------------------------------------------------------------------------------
+VonMises  |  (a) perfect plasticity  |  path = triaxial
+------------------------------------------------------------------------------
+    Newton [(a) perfect plasticity/triaxial step 10] residual history: 1.715e+01 1.859e-14
+    Newton [(a) perfect plasticity/triaxial step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [-9.00000000e-04 -9.00000000e-04  3.00000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 6.00000000e+01  6.00000000e+01  9.00000000e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = 0.000000e+00   (yield residual)
+    dLambda (last step)  = 3.184336665618e-04
+    consistent tangent dsigma/deps (6x6):
+        74170.4374   42496.2293   58333.3333       0.0000       0.0000       0.0000
+        42496.2293   74170.4374   58333.3333       0.0000       0.0000       0.0000
+        58333.3333   58333.3333   58333.3333       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   15837.1041       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   15837.1041       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   15837.1041
+      |C - C^T|_F / |C|_F = 8.520e-16
+    FD check [(a) perfect plasticity/triaxial]: rel_fro(C_consistent, C_cd) = 1.531e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.402e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (a) perfect plasticity  |  path = simple-shear
+------------------------------------------------------------------------------
+    Newton [(a) perfect plasticity/simple-shear step 10] residual history: 1.523e+01 3.972e-15
+    Newton [(a) perfect plasticity/simple-shear step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  4.00000000e-03  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  1.73205081e+01  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = -3.552714e-15   (yield residual)
+    dLambda (last step)  = 2.828427124746e-04
+    consistent tangent dsigma/deps (6x6):
+        80468.1717   47265.9142   47265.9142       0.0000       0.0000       0.0000
+        47265.9142   80468.1717   47265.9142       0.0000       0.0000       0.0000
+        47265.9142   47265.9142   80468.1717       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   16601.1288       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   16601.1288
+      |C - C^T|_F / |C|_F = 1.690e-16
+    FD check [(a) perfect plasticity/simple-shear]: rel_fro(C_consistent, C_cd) = 1.684e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.566e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (a) perfect plasticity  |  path = rotating-normal
+------------------------------------------------------------------------------
+    Newton [(a) perfect plasticity/rotating-normal step 20] residual history: 1.141e+01 3.972e-15
+    Newton [(a) perfect plasticity/rotating-normal step 20] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  3.00000000e-03  3.00000000e-03  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  6.59736795e-01  1.73079389e+01  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = -3.552714e-15   (yield residual)
+    dLambda (last step)  = 2.119063279073e-04
+    consistent tangent dsigma/deps (6x6):
+        82822.9080   46088.5460   46088.5460       0.0000       0.0000       0.0000
+        46088.5460   82822.9080   46088.5460       0.0000       0.0000       0.0000
+        46088.5460   46088.5460   82822.9080       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   18340.5331    -699.0968       0.0000
+            0.0000       0.0000       0.0000    -699.0968      26.6479       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   18367.1810
+      |C - C^T|_F / |C|_F = 1.248e-16
+    FD check [(a) perfect plasticity/rotating-normal]: rel_fro(C_consistent, C_cd) = 2.273e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 2.133e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (b) linear isotropic hardening H = 7000  |  path = triaxial
+------------------------------------------------------------------------------
+    Newton [(b) linear isotropic hardening H = 7000/triaxial step 10] residual history: 1.715e+01 0.000e+00
+    Newton [(b) linear isotropic hardening H = 7000/triaxial step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [-9.00000000e-04 -9.00000000e-04  3.00000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 5.52147239e+01  5.52147239e+01  9.95705521e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 4.435582822086e+01
+    f(sigma, alpha, k)   = 0.000000e+00   (yield residual)
+    dLambda (last step)  = 2.930371164679e-04
+    consistent tangent dsigma/deps (6x6):
+        77801.8588   40296.3007   56901.8405       0.0000       0.0000       0.0000
+        40296.3007   77801.8588   56901.8405       0.0000       0.0000       0.0000
+        56901.8405   56901.8405   61196.3190       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   18752.7790       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   18752.7790       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   18752.7790
+      |C - C^T|_F / |C|_F = 7.998e-17
+    FD check [(b) linear isotropic hardening H = 7000/triaxial]: rel_fro(C_consistent, C_cd) = 9.622e-12   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 8.911e-12
+
+------------------------------------------------------------------------------
+VonMises  |  (b) linear isotropic hardening H = 7000  |  path = simple-shear
+------------------------------------------------------------------------------
+    Newton [(b) linear isotropic hardening H = 7000/simple-shear step 10] residual history: 1.523e+01 7.487e-15
+    Newton [(b) linear isotropic hardening H = 7000/simple-shear step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  4.00000000e-03  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.45280749e+01  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 4.248387196685e+01
+    f(sigma, alpha, k)   = -7.105427e-15   (yield residual)
+    dLambda (last step)  = 2.602847047312e-04
+    consistent tangent dsigma/deps (6x6):
+        83900.5705   45549.7147   45549.7147       0.0000       0.0000       0.0000
+        45549.7147   83900.5705   45549.7147       0.0000       0.0000       0.0000
+        45549.7147   45549.7147   83900.5705       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000    2147.2393       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   19175.4279       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   19175.4279
+      |C - C^T|_F / |C|_F = 0.000e+00
+    FD check [(b) linear isotropic hardening H = 7000/simple-shear]: rel_fro(C_consistent, C_cd) = 1.158e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.092e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (b) linear isotropic hardening H = 7000  |  path = rotating-normal
+------------------------------------------------------------------------------
+    Newton [(b) linear isotropic hardening H = 7000/rotating-normal step 20] residual history: 1.135e+01 4.311e-15
+    Newton [(b) linear isotropic hardening H = 7000/rotating-normal step 20] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  3.00000000e-03  3.00000000e-03  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.76635341e+00  2.73507956e+01  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 4.761466365370e+01
+    f(sigma, alpha, k)   = 0.000000e+00   (yield residual)
+    dLambda (last step)  = 1.939252161576e-04
+    consistent tangent dsigma/deps (6x6):
+        86630.3916   44184.8042   44184.8042       0.0000       0.0000       0.0000
+        44184.8042   86630.3916   44184.8042       0.0000       0.0000       0.0000
+        44184.8042   44184.8042   86630.3916       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   21029.6270   -1909.8295       0.0000
+            0.0000       0.0000       0.0000   -1909.8295    2340.4060       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   21222.7937
+      |C - C^T|_F / |C|_F = 7.765e-17
+    FD check [(b) linear isotropic hardening H = 7000/rotating-normal]: rel_fro(C_consistent, C_cd) = 1.248e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.191e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)  |  path = triaxial
+------------------------------------------------------------------------------
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/triaxial step 10] residual history: 1.715e+01 1.688e-01 8.580e-05 2.213e-11
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/triaxial step 10] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.037 over 3 transition(s) (3 iterations); best 3-point order estimate = 2.00
+    total strain eps (engineering Voigt) = [-9.00000000e-04 -9.00000000e-04  3.00000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 4.96232364e+01  4.96232364e+01  1.10753527e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [-1.03767636e+01 -1.03767636e+01  2.07535273e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = 0.000000e+00   (yield residual)
+    dLambda (last step)  = 2.738167039792e-04
+    AF saturation check: |alpha|_eq = 20.753527 vs alpha_limit = ha/cr = 50.000000  (UNSATURATED)
+    consistent tangent dsigma/deps (6x6):
+        77232.6516   41811.7466   55955.6018       0.0000       0.0000       0.0000
+        41811.7466   77232.6516   55955.6018       0.0000       0.0000       0.0000
+        55955.6018   55955.6018   63088.7964       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   18465.9367       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   18465.9367       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   18465.9367
+      |C - C^T|_F / |C|_F = 1.792e-16
+    FD check [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/triaxial]: rel_fro(C_consistent, C_cd) = 1.190e-10   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.100e-10
+
+------------------------------------------------------------------------------
+VonMises  |  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)  |  path = simple-shear
+------------------------------------------------------------------------------
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/simple-shear step 10] residual history: 1.523e+01 1.515e-01 7.269e-05 1.670e-11
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/simple-shear step 10] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.017 over 3 transition(s) (3 iterations); best 3-point order estimate = 2.00
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  4.00000000e-03  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  4.53906186e+01  0.00000000e+00  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.80701105e+01  0.00000000e+00  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = -3.552714e-15   (yield residual)
+    dLambda (last step)  = 2.054708946252e-04
+    AF saturation check: |alpha|_eq = 32.412572 vs alpha_limit = ha/cr = 50.000000  (UNSATURATED)
+    consistent tangent dsigma/deps (6x6):
+        83913.0041   45543.4979   45543.4979       0.0000       0.0000       0.0000
+        45543.4979   83913.0041   45543.4979       0.0000       0.0000       0.0000
+        45543.4979   45543.4979   83913.0041       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000    7105.0505       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   19732.8715       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   19732.8715
+      |C - C^T|_F / |C|_F = 9.609e-17
+    FD check [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/simple-shear]: rel_fro(C_consistent, C_cd) = 7.050e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 6.655e-11
+
+------------------------------------------------------------------------------
+VonMises  |  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)  |  path = rotating-normal
+------------------------------------------------------------------------------
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/rotating-normal step 20] residual history: 1.135e+01 3.013e-01 3.079e-03 2.384e-07 8.093e-15
+    Newton [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/rotating-normal step 20] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.147 over 3 transition(s) (4 iterations); best 3-point order estimate = 2.07
+    total strain eps (engineering Voigt) = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  3.00000000e-03  3.00000000e-03  0.00000000e+00]
+    final stress sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.37842127e+01  3.77654987e+01  0.00000000e+00]
+    final back stress alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.16973739e+01  2.05711652e+01  0.00000000e+00]
+    final yield stress k = 3.000000000000e+01
+    f(sigma, alpha, k)   = 7.105427e-15   (yield residual)
+    dLambda (last step)  = 1.494229629768e-04
+    AF saturation check: |alpha|_eq = 34.524366 vs alpha_limit = ha/cr = 50.000000  (UNSATURATED)
+    consistent tangent dsigma/deps (6x6):
+        85907.9779   44546.0110   44546.0110       0.0000       0.0000       0.0000
+        44546.0110   85907.9779   44546.0110       0.0000       0.0000       0.0000
+        44546.0110   44546.0110   85907.9779       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   20792.5132   -2097.5890       0.0000
+            0.0000       0.0000       0.0000   -1599.1346    7871.1578       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   21047.0930
+      |C - C^T|_F / |C|_F = 3.768e-03
+    FD check [(c) Armstrong-Frederick ha = 15000, cr = 300 (header convention)/rotating-normal]: rel_fro(C_consistent, C_cd) = 1.841e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.752e-11
+
+------------------------------------------------------------------------------
+closed-form consistent tangent vs Newton-Jacobian tangent  (a)/(b)
+------------------------------------------------------------------------------
+    Newton [x step 10] residual history: 1.715e+01 1.859e-14
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (a) perfect plasticity                           triaxial          max|sigma_cf - sigma_newton| = 7.105e-15   rel_fro(C_cf, C_newton) = 6.585e-16
+    Newton [x step 10] residual history: 1.523e+01 3.972e-15
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (a) perfect plasticity                           simple-shear      max|sigma_cf - sigma_newton| = 0.000e+00   rel_fro(C_cf, C_newton) = 6.356e-16
+    Newton [x step 20] residual history: 1.141e+01 3.972e-15
+    Newton [x step 20] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (a) perfect plasticity                           rotating-normal   max|sigma_cf - sigma_newton| = 0.000e+00   rel_fro(C_cf, C_newton) = 2.361e-16
+    Newton [x step 10] residual history: 1.715e+01 0.000e+00
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (b) linear isotropic hardening H = 7000          triaxial          max|sigma_cf - sigma_newton| = 3.411e-13   rel_fro(C_cf, C_newton) = 7.842e-15
+    Newton [x step 10] residual history: 1.523e+01 7.487e-15
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (b) linear isotropic hardening H = 7000          simple-shear      max|sigma_cf - sigma_newton| = 2.629e-13   rel_fro(C_cf, C_newton) = 5.022e-15
+    Newton [x step 20] residual history: 1.135e+01 4.311e-15
+    Newton [x step 20] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    (b) linear isotropic hardening H = 7000          rotating-normal   max|sigma_cf - sigma_newton| = 1.990e-13   rel_fro(C_cf, C_newton) = 4.318e-15
+
+------------------------------------------------------------------------------
+AF hardening convention contrast (header vs tensor-consistent)
+------------------------------------------------------------------------------
+    Newton [contrast step 20] residual history: 1.135e+01 3.013e-01 3.079e-03 2.384e-07 8.093e-15
+    Newton [contrast step 20] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.147 over 3 transition(s) (4 iterations); best 3-point order estimate = 2.07
+    header  (ha*mdev, engineering/doubled shear)
+          sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.37842127e+01  3.77654987e+01  0.00000000e+00]
+          alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  2.16973739e+01  2.05711652e+01  0.00000000e+00]
+    Newton [contrast step 20] residual history: 1.137e+01 2.108e-01 1.377e-03 4.380e-08 7.612e-15
+    Newton [contrast step 20] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.111 over 3 transition(s) (4 iterations); best 3-point order estimate = 2.06
+    tensor  (ha*mdev/W, tensor shear)
+          sigma = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  1.34865193e+01  2.92286435e+01  0.00000000e+00]
+          alpha = [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  1.18662596e+01  1.19840861e+01  0.00000000e+00]
+
+==============================================================================
+VON MISES REFERENCE BLOCK (values C++ tests pin)
+==============================================================================
+  (a) perfect plasticity | triaxial
+    sigma  = [60. 60. 90.  0.  0.  0.]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 30.0000000000    f = 0.000e+00    dLambda_last = 3.1843366656e-04
+    trace(C) = 254185.520362   |C|_F = 179946.372728   FD rel err = 1.531e-11
+  (a) perfect plasticity | simple-shear
+    sigma  = [ 0.            0.            0.           17.3205080757  0.
+  0.          ]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 30.0000000000    f = -3.553e-15    dLambda_last = 2.8284271247e-04
+    trace(C) = 274606.772532   |C|_F = 182704.610668   FD rel err = 1.684e-11
+  (a) perfect plasticity | rotating-normal
+    sigma  = [ 0.            0.            0.            0.6597367945 17.3079388537
+  0.          ]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 30.0000000000    f = -3.553e-15    dLambda_last = 2.1190632791e-04
+    trace(C) = 285203.085919   |C|_F = 184386.912155   FD rel err = 2.273e-11
+  (b) linear isotropic hardening H = 7000 | triaxial
+    sigma  = [55.2147239264 55.2147239264 99.5705521472  0.            0.
+  0.          ]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 44.3558282209    f = 0.000e+00    dLambda_last = 2.9303711647e-04
+    trace(C) = 273058.373592   |C|_F = 181948.095870   FD rel err = 9.622e-12
+  (b) linear isotropic hardening H = 7000 | simple-shear
+    sigma  = [ 0.            0.            0.           24.5280749163  0.
+  0.          ]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 42.4838719668    f = -7.105e-15    dLambda_last = 2.6028470473e-04
+    trace(C) = 292199.806696   |C|_F = 185220.357925   FD rel err = 1.158e-11
+  (b) linear isotropic hardening H = 7000 | rotating-normal
+    sigma  = [ 0.            0.            0.            2.7663534077 27.3507956089
+  0.          ]
+    alpha  = [0. 0. 0. 0. 0. 0.]
+    k      = 47.6146636537    f = 0.000e+00    dLambda_last = 1.9392521616e-04
+    trace(C) = 304484.001553   |C|_F = 187439.804650   FD rel err = 1.248e-11
+  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention) | triaxial
+    sigma  = [ 49.6232363748  49.6232363748 110.7535272504   0.
+   0.             0.          ]
+    alpha  = [-10.3767636252 -10.3767636252  20.7535272504   0.
+   0.             0.          ]
+    k      = 30.0000000000    f = 0.000e+00    dLambda_last = 2.7381670398e-04
+    trace(C) = 272951.909733   |C|_F = 181530.976498   FD rel err = 1.190e-10
+  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention) | simple-shear
+    sigma  = [ 0.            0.            0.           45.3906185722  0.
+  0.          ]
+    alpha  = [ 0.            0.            0.           28.0701104965  0.
+  0.          ]
+    k      = 30.0000000000    f = -3.553e-15    dLambda_last = 2.0547089463e-04
+    trace(C) = 298309.805739   |C|_F = 185468.844232   FD rel err = 7.050e-11
+  (c) Armstrong-Frederick ha = 15000, cr = 300 (header convention) | rotating-normal
+    sigma  = [ 0.            0.            0.           23.7842127217 37.7654987099
+  0.          ]
+    alpha  = [ 0.            0.            0.           21.6973739054 20.5711652319
+  0.          ]
+    k      = 30.0000000000    f = 7.105e-15    dLambda_last = 1.4942296298e-04
+    trace(C) = 307434.697822   |C|_F = 187058.401509   FD rel err = 1.841e-11
+
+  ALL von Mises FD tangent checks <= 1e-6 and all Newtons quadratic in <= 5 iterations.
+
+
+##### cppm_dp.py  (exit 0) #####
+
+==============================================================================
+ADR-97 oracle 2/5 -- DRUCKER-PRAGER cone + apex closest-point map
+==============================================================================
+Material: E = 30000, nu = 0.25, xi_c = 20, eta = 0.4 (apex at p = +50, TENSION positive).
+K = 20000, G = 12000, so the exact apex-boundary slope K*etabar/G is
+0.667 (associated) or 0.333 (etabar = 0.2) against the header's 0.4.
+
+------------------------------------------------------------------------------
+complex-step Jacobian validation (one-time warrant)
+------------------------------------------------------------------------------
+    Newton [warrant] residual history: 1.042e+01 4.072e-15
+    Newton [warrant] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    complex-step Jacobian vs central difference (DP cone, converged point): rel_fro = 7.843e-14
+    NOTE: from the natural start (sigma_tr, k_n, 0) the DP cone Newton
+    converges in ONE step -- the return is exactly radial, so the
+    residual is affine along the solution ray.  Started away from that
+    ray the quadratic descent is visible:
+    Newton [DP cone, deliberately bad start] residual history: 4.477e+01 2.436e+00 4.562e-02 1.850e-05 2.547e-12
+    Newton [DP cone, deliberately bad start] 2nd-order test: max rho_k+1/(10 rho_k^2) = 0.090 over 3 transition(s) (4 iterations); best 3-point order estimate = 1.96
+
+------------------------------------------------------------------------------
+DruckerPrager  |  cone, associated (etabar = eta = 0.4), perfect  |  path = compress
+------------------------------------------------------------------------------
+    region test: p_tr = -47.452949, q_tr = 41.932358, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [cone, associated (etabar = eta = 0.4), perfect/compress step 10] residual history: 2.951e+00 5.384e-15
+    Newton [cone, associated (etabar = eta = 0.4), perfect/compress step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps = [ 4.00000000e-04  4.00000000e-04 -3.00000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [-2.61416983e+01 -2.61416983e+01 -9.47352065e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    p = -49.0062010347   sqrt(J2) = 39.6024804139   k = 0.0000000000
+    region = cone   f = -3.552714e-15   dLambda_last = 1.9415646030e-04
+    consistent tangent dsigma/deps (6x6):
+        20671.9803   -1994.5134   17751.6859       0.0000       0.0000       0.0000
+        -1994.5134   20671.9803   17751.6859       0.0000       0.0000       0.0000
+        17751.6859   17751.6859   33743.5857       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000   11333.2469       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   11333.2469       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   11333.2469
+      |C - C^T|_F / |C|_F = 2.130e-17
+      rank(C) = 5
+    FD check [cone, associated (etabar = eta = 0.4), perfect/compress]: rel_fro(C_consistent, C_cd) = 1.381e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.158e-11
+
+------------------------------------------------------------------------------
+DruckerPrager  |  cone, NON-associated (etabar = 0.2), perfect  |  path = compress
+------------------------------------------------------------------------------
+    region test: p_tr = -46.808821, q_tr = 42.006860, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.333333): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [cone, NON-associated (etabar = 0.2), perfect/compress step 10] residual history: 3.283e+00 1.986e-15
+    Newton [cone, NON-associated (etabar = 0.2), perfect/compress step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps = [ 4.00000000e-04  4.00000000e-04 -3.00000000e-03  1.50000000e-03  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [-2.66815747e+01 -2.66815747e+01 -8.99603703e+01  1.39585579e+01  0.00000000e+00  0.00000000e+00]
+    p = -47.7745065640   sqrt(J2) = 39.1098026256   k = 0.0000000000
+    region = cone   f = -3.552714e-15   dLambda_last = 2.4142148763e-04
+    consistent tangent dsigma/deps (6x6):
+        23993.9862    1649.1775   15876.9924   -3138.4886       0.0000       0.0000
+         1649.1775   23993.9862   15876.9924   -3138.4886       0.0000       0.0000
+        21587.5026   21587.5026   32608.2120    2497.9631       0.0000       0.0000
+        -4398.1599   -4398.1599    1238.2917    9929.0694       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   11172.4044       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   11172.4044
+      |C - C^T|_F / |C|_F = 1.854e-01
+      rank(C) = 5
+    FD check [cone, NON-associated (etabar = 0.2), perfect/compress]: rel_fro(C_consistent, C_cd) = 1.893e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.678e-11
+
+------------------------------------------------------------------------------
+DruckerPrager  |  cone, NON-associated (etabar = 0.2), linear hardening H = 500  |  path = compress
+------------------------------------------------------------------------------
+    region test: p_tr = -46.749682, q_tr = 42.184275, p_apex = 50.502674
+      EXACT (elastic metric, slope 0.394271): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [cone, NON-associated (etabar = 0.2), linear hardening H = 500/compress step 10] residual history: 3.283e+00 4.534e-15
+    Newton [cone, NON-associated (etabar = 0.2), linear hardening H = 500/compress step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps = [ 4.00000000e-04  4.00000000e-04 -3.00000000e-03  1.50000000e-03  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [-2.64735237e+01 -2.64735237e+01 -9.01380620e+01  1.40436482e+01  0.00000000e+00  0.00000000e+00]
+    p = -47.6950364338   sqrt(J2) = 39.3482130162   k = 0.2701984426
+    region = cone   f = 0.000000e+00   dLambda_last = 2.3633849288e-04
+    consistent tangent dsigma/deps (6x6):
+        24250.3182    1863.8456   15795.0751   -3073.0653       0.0000       0.0000
+         1863.8456   24250.3182   15795.0751   -3073.0653       0.0000       0.0000
+        21385.3537   21385.3537   32680.2029    2446.6816       0.0000       0.0000
+        -4306.2150   -4306.2150    1213.5319    9975.6450       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   11193.2363       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   11193.2363
+      |C - C^T|_F / |C|_F = 1.814e-01
+      rank(C) = 6
+    FD check [cone, NON-associated (etabar = 0.2), linear hardening H = 500/compress]: rel_fro(C_consistent, C_cd) = 2.226e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.975e-11
+
+------------------------------------------------------------------------------
+DruckerPrager  |  apex, associated, perfect  |  path = hydro-tension
+------------------------------------------------------------------------------
+    region test: p_tr = 57.200000, q_tr = 0.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): APEX
+      HEADER (Euclidean, slope 0.400000): APEX
+    Newton [apex, associated, perfect/hydro-tension step 10] residual history: 3.600e-04 5.421e-20
+    Newton [apex, associated, perfect/hydro-tension step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps = [ 1.20000000e-03  1.20000000e-03  1.20000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 5.00000000e+01  5.00000000e+01  5.00000000e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    p = 50.0000000000   sqrt(J2) = 0.0000000000   k = 0.0000000000
+    region = apex   f = 0.000000e+00   dLambda_last = 9.0000000000e-04
+    consistent tangent dsigma/deps (6x6):
+           -0.0000      -0.0000      -0.0000      -0.0000      -0.0000      -0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+           -0.0000      -0.0000      -0.0000      -0.0000      -0.0000      -0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+      |C - C^T|_F / |C|_F = 0.000e+00
+      rank(C) = 0
+    FD check [apex, associated, perfect/hydro-tension]: rel_fro(C_consistent, C_cd) = 0.000e+00   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 0.000e+00
+
+------------------------------------------------------------------------------
+DruckerPrager  |  apex, NON-associated (etabar = 0.2), linear hardening H = 500  |  path = hydro-tension
+------------------------------------------------------------------------------
+    region test: p_tr = 57.623570, q_tr = 0.000000, p_apex = 50.423570
+      EXACT (elastic metric, slope 0.394271): APEX
+      HEADER (Euclidean, slope 0.400000): APEX
+    Newton [apex, NON-associated (etabar = 0.2), linear hardening H = 500/hydro-tension step 10] residual history: 3.600e-04 1.388e-17
+    Newton [apex, NON-associated (etabar = 0.2), linear hardening H = 500/hydro-tension step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    total strain eps = [ 1.20000000e-03  1.20000000e-03  1.20000000e-03  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    final stress sigma = [ 5.06296305e+01  5.06296305e+01  5.06296305e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    p = 50.6296305482   sqrt(J2) = 0.0000000000   k = 0.2518522193
+    region = apex   f = 3.552714e-15   dLambda_last = 1.7484847733e-03
+    consistent tangent dsigma/deps (6x6):
+          572.3914     572.3914     572.3914      -0.0000      -0.0000      -0.0000
+          572.3914     572.3914     572.3914       0.0000       0.0000       0.0000
+          572.3914     572.3914     572.3914       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+           -0.0000      -0.0000      -0.0000      -0.0000      -0.0000      -0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+      |C - C^T|_F / |C|_F = 1.324e-16
+      rank(C) = 1
+    FD check [apex, NON-associated (etabar = 0.2), linear hardening H = 500/hydro-tension]: rel_fro(C_consistent, C_cd) = 1.701e-10   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 4.056e-12
+
+------------------------------------------------------------------------------
+closed form vs Newton-Jacobian (cone and apex)
+------------------------------------------------------------------------------
+    region test: p_tr = -47.452949, q_tr = 41.932358, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [x step 10] residual history: 2.951e+00 5.384e-15
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    cone, associated (etabar = eta = 0.4), perfect           max|dsigma| = 0.000e+00   rel_fro(C_cf, C_newton) = 1.932e-16
+    region test: p_tr = -46.808821, q_tr = 42.006860, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.333333): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [x step 10] residual history: 3.283e+00 1.986e-15
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    cone, NON-associated (etabar = 0.2), perfect             max|dsigma| = 1.776e-15   rel_fro(C_cf, C_newton) = 1.763e-16
+    region test: p_tr = -46.749682, q_tr = 42.184275, p_apex = 50.502674
+      EXACT (elastic metric, slope 0.394271): CONE
+      HEADER (Euclidean, slope 0.400000): CONE
+    Newton [x step 10] residual history: 3.283e+00 4.534e-15
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    cone, NON-associated (etabar = 0.2), linear hardening H  max|dsigma| = 1.776e-15   rel_fro(C_cf, C_newton) = 2.301e-16
+    region test: p_tr = 57.200000, q_tr = 0.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): APEX
+      HEADER (Euclidean, slope 0.400000): APEX
+    Newton [x step 10] residual history: 3.600e-04 5.421e-20
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    apex, associated, perfect                                max|dsigma| = 0.000e+00   rel_fro(C_cf, C_newton) = 0.000e+00
+    region test: p_tr = 57.623570, q_tr = 0.000000, p_apex = 50.423570
+      EXACT (elastic metric, slope 0.394271): APEX
+      HEADER (Euclidean, slope 0.400000): APEX
+    Newton [x step 10] residual history: 3.600e-04 1.388e-17
+    Newton [x step 10] converged in 1 iteration(s); every target residual is already at the 1e-13 round-off floor, so no order test is formed
+    apex, NON-associated (etabar = 0.2), linear hardening H  max|dsigma| = 7.105e-15   rel_fro(C_cf, C_newton) = 1.147e-16
+
+------------------------------------------------------------------------------
+HEADER vs EXACT apex-region test -- states they classify DIFFERENTLY
+------------------------------------------------------------------------------
+    The header's Euclidean slope is eta; the exact elastic-metric
+    slope is (K*etabar + hk/eta)/G.  Any trial state whose
+    (p_tr - p_apex)/q_tr ratio falls BETWEEN the two is misclassified.
+
+    etabar = 0.2: exact slope 0.333333, header slope 0.400000
+    (p_tr - p_apex)/q_tr = 0.360
+    region test: p_tr = 68.000000, q_tr = 50.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.333333): APEX
+      HEADER (Euclidean, slope 0.400000): CONE   <-- DISAGREES with the exact test
+      what the CONE return would give: dLambda = 4.205882e-03, sqrt(J2)_n+1 = -0.470588   <-- INADMISSIBLE (negative sqrt(J2))
+    (p_tr - p_apex)/q_tr = 0.370
+    region test: p_tr = 68.500000, q_tr = 50.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.333333): APEX
+      HEADER (Euclidean, slope 0.400000): CONE   <-- DISAGREES with the exact test
+      what the CONE return would give: dLambda = 4.220588e-03, sqrt(J2)_n+1 = -0.647059   <-- INADMISSIBLE (negative sqrt(J2))
+
+    etabar = 0.4: exact slope 0.666667, header slope 0.400000
+    (p_tr - p_apex)/q_tr = 0.450
+    region test: p_tr = 72.500000, q_tr = 50.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): CONE
+      HEADER (Euclidean, slope 0.400000): APEX   <-- DISAGREES with the exact test
+      what the CONE return would give: dLambda = 3.881579e-03, sqrt(J2)_n+1 = 3.421053
+    (p_tr - p_apex)/q_tr = 0.600
+    region test: p_tr = 80.000000, q_tr = 50.000000, p_apex = 50.000000
+      EXACT (elastic metric, slope 0.666667): CONE
+      HEADER (Euclidean, slope 0.400000): APEX   <-- DISAGREES with the exact test
+      what the CONE return would give: dLambda = 4.078947e-03, sqrt(J2)_n+1 = 1.052632
+
+==============================================================================
+DRUCKER-PRAGER REFERENCE BLOCK (values C++ tests pin)
+==============================================================================
+  cone, associated (etabar = eta = 0.4), perfect
+    region = cone
+    sigma  = [-26.1416983071 -26.1416983071 -94.7352064897   0.
+   0.             0.          ]
+    k = 0.0000000000   f = -3.553e-15   dLambda_last = 1.9415646030e-04
+    trace(C) = 109087.287055   |C|_F = 60390.927743   |C-C^T|_F/|C|_F = 2.130e-17   FD rel err = 1.381e-11
+  cone, NON-associated (etabar = 0.2), perfect
+    region = cone
+    sigma  = [-26.6815746982 -26.6815746982 -89.9603702958  13.9585578524
+   0.             0.          ]
+    k = 0.0000000000   f = -3.553e-15   dLambda_last = 2.4142148763e-04
+    trace(C) = 112870.062651   |C|_F = 63802.420107   |C-C^T|_F/|C|_F = 1.854e-01   FD rel err = 1.893e-11
+  cone, NON-associated (etabar = 0.2), linear hardening H = 500
+    region = cone
+    sigma  = [-26.4735236551 -26.4735236551 -90.1380619914  14.0436481624
+   0.             0.          ]
+    k = 0.2701984426   f = 0.000e+00   dLambda_last = 2.3633849288e-04
+    trace(C) = 113542.956839   |C|_F = 63861.246362   |C-C^T|_F/|C|_F = 1.814e-01   FD rel err = 2.226e-11
+  apex, associated, perfect
+    region = apex
+    sigma  = [50. 50. 50.  0.  0.  0.]
+    k = 0.0000000000   f = 0.000e+00   dLambda_last = 9.0000000000e-04
+    trace(C) = 0.000000   |C|_F = 0.000000   |C-C^T|_F/|C|_F = 0.000e+00   FD rel err = 0.000e+00
+  apex, NON-associated (etabar = 0.2), linear hardening H = 500
+    region = apex
+    sigma  = [50.6296305482 50.6296305482 50.6296305482  0.            0.
+  0.          ]
+    k = 0.2518522193   f = 3.553e-15   dLambda_last = 1.7484847733e-03
+    trace(C) = 1717.174222   |C|_F = 1717.174222   |C-C^T|_F/|C|_F = 1.324e-16   FD rel err = 1.701e-10
+
+
+##### cppm_mc.py  (exit 0) #####
+
+==============================================================================
+ADR-97 oracle 3/5 -- MOHR-COULOMB principal-space return (Clausen)
+==============================================================================
+Material: E = 30000, nu = 0.25, phi = 30 deg, psi = 10 deg (NON-associated), c = 10.
+Apex (tension-positive) = c/tan(phi) = 17.3205080757 on the hydrostatic axis.
+
+------------------------------------------------------------------------------
+warrant: the header's invariant f IS the principal-stress f
+------------------------------------------------------------------------------
+    header invariant f vs principal-stress f over 2000 random states:  max rel diff = 2.132e-14
+    edge directions (from the null space of the two active gradients):
+      line1 (s1 == s2): [-0.30151134 -0.30151134 -0.90453403]
+      line2 (s2 == s3): [-0.22941573 -0.6882472  -0.6882472 ]
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: face (no shear)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-1.00000000e+01 -4.00000000e+01 -1.00000000e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = +341285.546444, p_line2 = +762715.944180
+    principal trial x = [-10.00000000 -40.00000000 -100.00000000]
+    REGION = face
+    principal return y = [-20.48123707 -39.68385478 -96.08472735]
+    returned stress sigma = [-2.04812371e+01 -3.96838548e+01 -9.60847273e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [5.9985457154e-04]
+      f_13(y) = -1.776357e-15
+      f_23(y) = -1.440196e+01
+      f_12(y) = -1.410022e+01
+      f_invariant(sigma) = -1.776357e-15   (header's own expression)
+    consistent tangent dsigma/deps (6x6):
+         7543.3350    4885.8337   12000.0000       0.0000       0.0000       0.0000
+        12858.3375   36214.5844   12000.0000       0.0000       0.0000       0.0000
+        22630.0050   14657.5012   36000.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000    7681.0471       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   11280.1745       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   10080.4654
+      |C - C^T|_F / |C|_F = 2.972e-01
+      rank(C) = 5
+    FD check [face (no shear)]: rel_fro(C_consistent, C_cd) = 2.022e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.810e-11
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: face (sheared, exercises the rotation term)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-1.00000000e+01 -4.00000000e+01 -1.00000000e+02  1.50000000e+01 -8.00000000e+00  5.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = +424627.227727, p_line2 = +693350.812121
+    principal trial x = [-3.76103059 -44.65076010 -101.58820931]
+    REGION = face
+    principal return y = [-20.26118357 -44.15306651 -95.42456686]
+    returned stress sigma = [-2.40159091e+01 -4.18249694e+01 -9.39979385e+01  8.97078830e+00 -7.28499336e+00  4.30465268e+00]
+    dLambda = [9.4432480977e-04]
+      f_13(y) = -1.776357e-15
+      f_23(y) = -1.791891e+01
+      f_12(y) = -1.281788e+01
+      f_invariant(sigma) = -1.776357e-15   (header's own expression)
+    consistent tangent dsigma/deps (6x6):
+        12057.8618    5882.2773   11844.5327   -3964.0979     689.2683    -898.5696
+        11600.1965   32374.3929   12091.1636   -3264.2217    -133.7436     285.1677
+        21233.5659   15762.2776   35943.3285    2714.2651     -20.2011      92.7972
+        -6791.9804   -6092.1042    -113.6174    6709.5964     515.8520     -82.0716
+         1024.6280     201.6161     315.1586     515.8520   10638.5779    -583.4298
+        -1224.7085     -40.9712    -233.3417     -82.0716    -583.4298    9380.3949
+      |C - C^T|_F / |C|_F = 2.816e-01
+      rank(C) = 5
+    FD check [face (sheared, exercises the rotation term)]: rel_fro(C_consistent, C_cd) = 1.414e-10   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.244e-10
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: edge s1 == s2
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-2.50000000e+01 -2.50000000e+01 -1.40000000e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = -164764.404724, p_line2 = +1513370.188119
+      line parameter t = +167.066912 (on the edge)
+    principal trial x = [-25.00000000 -25.00000000 -140.00000000]
+    REGION = line1
+    principal return y = [-33.05206131 -33.05206131 -133.79720008]
+    returned stress sigma = [-3.30520613e+01 -3.30520613e+01 -1.33797200e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [4.7516204096e-04 4.7516204096e-04]
+      f_13(y) = +1.776357e-15
+      f_23(y) = +1.776357e-15
+      f_12(y) = -2.518628e+01
+      f_invariant(sigma) = +8.881784e-15   (header's own expression)
+    consistent tangent dsigma/deps (6x6):
+         8086.3027    8086.3027   12000.0000       0.0000       0.0000       0.0000
+         8086.3027    8086.3027   12000.0000       0.0000       0.0000       0.0000
+        24258.9082   24258.9082   36000.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000   10512.5362       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000   10512.5362
+      |C - C^T|_F / |C|_F = 4.305e-01
+      rank(C) = 3
+    FD check [edge s1 == s2]: rel_fro(C_consistent, C_cd) = 2.869e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 2.269e-11
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: edge s2 == s3
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 1.00000000e+01 -9.50000000e+01 -9.50000000e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = +1375754.245760, p_line2 = -124378.635549
+      line parameter t = +154.921002 (on the edge)
+    principal trial x = [10.00000000 -95.00000000 -95.00000000]
+    REGION = line2
+    principal return y = [-18.22080736 -89.30343823 -89.30343823]
+    returned stress sigma = [-1.82208074e+01 -8.93034382e+01 -8.93034382e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [8.0755640778e-04 8.0755640778e-04]
+      f_13(y) = +1.776357e-15
+      f_23(y) = -5.331197e+01
+      f_12(y) = +1.776357e-15
+      f_invariant(sigma) = +7.207037e-08   (header's own expression)
+    consistent tangent dsigma/deps (6x6):
+         6017.3974    8252.1747    8252.1747       0.0000       0.0000       0.0000
+        18052.1921   24756.5240   24756.5240       0.0000       0.0000       0.0000
+        18052.1921   24756.5240   24756.5240       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000    8123.7292       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000    8123.7292
+      |C - C^T|_F / |C|_F = 3.358e-01
+      rank(C) = 3
+    FD check [edge s2 == s3]: rel_fro(C_consistent, C_cd) = 2.499e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 2.026e-11
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: apex (hydrostatic tension)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 4.50000000e+01  4.50000000e+01  4.50000000e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = -300444.509784, p_line2 = -76201.331436
+      line parameter t = -43.105255 (beyond the apex -> APEX)
+    principal trial x = [45.00000000 45.00000000 45.00000000]
+    REGION = apex
+    principal return y = [17.32050808 17.32050808 17.32050808]
+    returned stress sigma = [ 1.73205081e+01  1.73205081e+01  1.73205081e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [-1.1512210745e-02 6.1988827087e-03 1.3283320090e-02]
+      f_13(y) = +1.776357e-15
+      f_23(y) = +1.776357e-15
+      f_12(y) = +1.776357e-15
+      f_invariant(sigma) = +0.000000e+00   (header's own expression)
+      NOTE: at the apex the three multipliers above are the LEAST-SQUARES
+      decomposition of sigma_tr - sigma_apex onto {D3 m_13, D3 m_23, D3 m_12}.
+      For NON-associated flow (psi < phi) they need NOT all be positive: the
+      cone of return directions no longer contains the hydrostatic direction,
+      which is exactly why the apex region must be defined by the BOUNDARY
+      PLANES (Clausen) and not by an active-set search on dLambda >= 0.
+    consistent tangent dsigma/deps (6x6):
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+      |C - C^T|_F / |C|_F = 0.000e+00
+      rank(C) = 0
+    FD check [apex (hydrostatic tension)]: rel_fro(C_consistent, C_cd) = 1.000e+00   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.865e-12
+
+------------------------------------------------------------------------------
+MohrCoulomb  |  trial: apex (slightly deviatoric)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 4.40000000e+01  4.00000000e+01  3.60000000e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      boundary-plane tests (signed, face side positive): p_line1 = -261916.272041, p_line2 = -30367.805352
+      line parameter t = -33.155381 (beyond the apex -> APEX)
+    principal trial x = [44.00000000 40.00000000 36.00000000]
+    REGION = apex
+    principal return y = [17.32050808 17.32050808 17.32050808]
+    returned stress sigma = [ 1.73205081e+01  1.73205081e+01  1.73205081e+01  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [-8.5437658481e-03 4.8568995592e-03 1.0217165722e-02]
+      f_13(y) = +1.776357e-15
+      f_23(y) = +1.776357e-15
+      f_12(y) = +1.776357e-15
+      f_invariant(sigma) = +0.000000e+00   (header's own expression)
+      NOTE: at the apex the three multipliers above are the LEAST-SQUARES
+      decomposition of sigma_tr - sigma_apex onto {D3 m_13, D3 m_23, D3 m_12}.
+      For NON-associated flow (psi < phi) they need NOT all be positive: the
+      cone of return directions no longer contains the hydrostatic direction,
+      which is exactly why the apex region must be defined by the BOUNDARY
+      PLANES (Clausen) and not by an active-set search on dLambda >= 0.
+    consistent tangent dsigma/deps (6x6):
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+            0.0000       0.0000       0.0000       0.0000       0.0000       0.0000
+      |C - C^T|_F / |C|_F = 0.000e+00
+      rank(C) = 0
+    FD check [apex (slightly deviatoric)]: rel_fro(C_consistent, C_cd) = 1.000e+00   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 6.168e-17
+
+------------------------------------------------------------------------------
+region coverage
+------------------------------------------------------------------------------
+    regions exercised: ['apex', 'face', 'line1', 'line2']
+    all four regions (face, both edges, apex) covered.
+
+------------------------------------------------------------------------------
+associated check: psi == phi must give a SYMMETRIC face tangent
+------------------------------------------------------------------------------
+    associated face tangent asymmetry |C-C^T|_F/|C|_F = 4.420e-17
+    NON-associated (psi = 10 deg) asymmetry            = 2.972e-01
+
+==============================================================================
+MOHR-COULOMB REFERENCE BLOCK (values C++ tests pin)
+==============================================================================
+  face (no shear)
+    region = face   dLambda = [0.0005998546]
+    y      = [-20.4812370658 -39.6838547781 -96.0847273489]
+    sigma  = [-20.4812370658 -39.6838547781 -96.0847273489   0.
+   0.             0.          ]
+    trace(C) = 108799.606336   |C|_F = 64470.321158   rank = 5   FD rel err = 2.022e-11
+  face (sheared, exercises the rotation term)
+    region = face   dLambda = [0.0009443248]
+    y      = [-20.2611835701 -44.1530665087 -95.4245668617]
+    sigma  = [-24.0159091029 -41.8249693505 -93.9979384871   8.9707883037
+  -7.2849933621   4.3046526769]
+    trace(C) = 107104.152393   |C|_F = 63316.126423   rank = 5   FD rel err = 1.414e-10
+  edge s1 == s2
+    region = line1   dLambda = [0.000475162 0.000475162]
+    y      = [ -33.0520613099  -33.0520613099 -133.7972000812]
+    sigma  = [ -33.0520613099  -33.0520613099 -133.7972000812    0.
+    0.              0.          ]
+    trace(C) = 73197.677886   |C|_F = 56952.341951   rank = 3   FD rel err = 2.869e-11
+  edge s2 == s3
+    region = line2   dLambda = [0.0008075564 0.0008075564]
+    y      = [-18.2208073609 -89.303438234  -89.303438234 ]
+    sigma  = [-18.2208073609 -89.303438234  -89.303438234    0.
+   0.             0.          ]
+    trace(C) = 71777.903885   |C|_F = 58375.517160   rank = 3   FD rel err = 2.499e-11
+  apex (hydrostatic tension)
+    region = apex   dLambda = [-0.0115122107  0.0061988827  0.0132833201]
+    y      = [17.3205080757 17.3205080757 17.3205080757]
+    sigma  = [17.3205080757 17.3205080757 17.3205080757  0.            0.
+  0.          ]
+    trace(C) = 0.000000   |C|_F = 0.000000   rank = 0   FD rel err = 1.000e+00
+  apex (slightly deviatoric)
+    region = apex   dLambda = [-0.0085437658  0.0048568996  0.0102171657]
+    y      = [17.3205080757 17.3205080757 17.3205080757]
+    sigma  = [17.3205080757 17.3205080757 17.3205080757  0.            0.
+  0.          ]
+    trace(C) = 0.000000   |C|_F = 0.000000   rank = 0   FD rel err = 1.000e+00
+
+  FD stencil: central difference, h = 1e-8 (relative), applied to the
+  TOTAL strain of the single step; every trial sits well inside its
+  region (see the printed boundary-plane margins), so the stencil does
+  not cross a region boundary.
+
+
+##### path_independence.py  (exit 0) #####
+
+==============================================================================
+ADR-97 oracle 4/5 -- path independence: CPPM vs cutting plane
+==============================================================================
+
+------------------------------------------------------------------------------
+A. von Mises + ARMSTRONG-FREDERICK, 3-leg path, step halving
+------------------------------------------------------------------------------
+    material: E=70000 nu=0.3 k0=30 ha=15000 cr=300 (header AF form)
+    legs: shear_xy -> add shear_yz -> add a triaxial + partial unload
+
+    CPPM (closest point)
+      steps/leg   |sigma(N) - sigma(ref N=640)|_inf     ratio
+              5   4.521651e-01                    
+             10   2.299251e-01                       1.967
+             20   1.141499e-01                       2.014
+             40   5.545263e-02                       2.059
+
+    CUTTING PLANE (mirror of Backward_Euler)
+      steps/leg   |sigma(N) - sigma(ref N=640)|_inf     ratio
+              5   1.955034e+00                    
+             10   9.849945e-01                       1.985
+             20   4.896361e-01                       2.012
+             40   2.384592e-01                       2.053
+
+      the two maps' N=640 limits agree to |dsigma|_inf = 1.505036e-02   (both are consistent)
+      N=  5: |sigma_CPPM - sigma_CP|_inf = 1.725307e+00   |alpha_CPPM - alpha_CP|_inf = 9.173444e-01
+      N= 10: |sigma_CPPM - sigma_CP|_inf = 9.168875e-01   |alpha_CPPM - alpha_CP|_inf = 4.493237e-01
+      N= 20: |sigma_CPPM - sigma_CP|_inf = 4.709448e-01   |alpha_CPPM - alpha_CP|_inf = 2.209819e-01
+      N= 40: |sigma_CPPM - sigma_CP|_inf = 2.383531e-01   |alpha_CPPM - alpha_CP|_inf = 1.092412e-01
+
+------------------------------------------------------------------------------
+B. Drucker-Prager + linear hardening, 3-leg path, step halving
+------------------------------------------------------------------------------
+
+    CPPM (closest point)
+      steps/leg   |sigma(N) - sigma(ref N=640)|_inf     ratio
+              5   2.624660e-01                    
+             10   1.368318e-01                       1.918
+             20   6.903899e-02                       1.982
+             40   3.382939e-02                       2.041
+
+    CUTTING PLANE (mirror of Backward_Euler)
+      steps/leg   |sigma(N) - sigma(ref N=640)|_inf     ratio
+              5   2.624660e-01                    
+             10   1.368318e-01                       1.918
+             20   6.903899e-02                       1.982
+             40   3.382939e-02                       2.041
+
+      the two maps' N=640 limits agree to |dsigma|_inf = 9.947598e-14
+      N=  5: |sigma_CPPM - sigma_CP|_inf = 3.552714e-15   |k_CPPM - k_CP| = 1.110223e-16
+      N= 10: |sigma_CPPM - sigma_CP|_inf = 2.842171e-14   |k_CPPM - k_CP| = 0.000000e+00
+      N= 20: |sigma_CPPM - sigma_CP|_inf = 7.105427e-15   |k_CPPM - k_CP| = 3.330669e-16
+      N= 40: |sigma_CPPM - sigma_CP|_inf = 1.421085e-14   |k_CPPM - k_CP| = 2.775558e-17
+
+------------------------------------------------------------------------------
+C. SAME step, SAME start, DIFFERENT iterate path
+------------------------------------------------------------------------------
+    Start state: 6 CPPM steps along leg 1+2, then ONE more step,
+    solved several ways.  Every variant below satisfies the SAME
+    acceptance test the C++ uses (|Phi| < tol_yf).
+
+    C1  von Mises + Armstrong-Frederick (h NOT constant)
+      CPPM, natural start guess:
+        sigma = [ 0.              0.              0.             21.453945705123
+ 46.080275068116  0.            ]
+        alpha = [ 0.              0.              0.             19.621919865611
+ 28.85692808434   0.            ]
+      CPPM, start = +30% stress, dl = 2e-4   -> max|state diff| = 1.137e-12
+      CPPM, start = -15% stress, dl = 1e-4   -> max|state diff| = 3.553e-15
+      => CPPM per-step state invariance: 1.137e-12  (gate <= 1e-9)
+      CUTTING PLANE, first corrector x 1.0   ( 3 iters, |Phi| = 0.000e+00)
+        sigma = [ 0.              0.              0.             22.657499087516
+ 46.773420398287  0.            ]
+        alpha = [ 0.              0.              0.             18.8199442162
+ 29.883388645509  0.            ]
+      CUTTING PLANE, first corrector x 0.5   ( 4 iters, |Phi| = 0.000e+00)
+        sigma = [ 0.              0.              0.             22.166516230894
+ 46.64019137299   0.            ]
+        alpha = [ 0.              0.              0.             19.157656598487
+ 29.583029718345  0.            ]
+      CUTTING PLANE, first corrector x 0.25  ( 4 iters, |Phi| = 0.000e+00)
+        sigma = [ 0.              0.              0.             22.365095323928
+ 46.663046631818  0.            ]
+        alpha = [ 0.              0.              0.             19.030157220495
+ 29.666629719819  0.            ]
+      CUTTING PLANE, first corrector x 1.5   ( 4 iters, |Phi| = 2.842e-14)
+        sigma = [ 0.              0.              0.             30.920441189512
+ 37.626338325147  0.            ]
+        alpha = [ 0.              0.              0.             13.722753285642
+ 35.567326241328  0.            ]
+      => CUTTING PLANE spread over valid iterate paths: sigma 9.147082e+00, alpha 5.683938e+00
+         (all four commit |Phi| < 1e-10: the acceptance test cannot tell them apart)
+
+    C2  von Mises + LINEAR isotropic hardening (h IS constant)
+      CUTTING PLANE spread: sigma 7.105e-15, k 0.000e+00
+      => with h constant the cutting plane IS path independent, which is
+         exactly why ADR-94 H6 could not see the defect on von Mises.
+
+    C3  Drucker-Prager + linear hardening (h constant here too)
+      CUTTING PLANE spread: sigma 7.105e-15
+      CPPM vs cutting plane on this single step: |dsigma|_inf = 0.000000e+00, |dk| = 0.000000e+00
+
+==============================================================================
+PATH-INDEPENDENCE REFERENCE BLOCK (values C++ tests pin)
+==============================================================================
+  A. VM+AF step halving, |sigma(N) - sigma(640)|_inf:
+     CPPM         : N=5:4.5217e-01  N=10:2.2993e-01  N=20:1.1415e-01  N=40:5.5453e-02
+     cutting plane: N=5:1.9550e+00  N=10:9.8499e-01  N=20:4.8964e-01  N=40:2.3846e-01
+     limits agree to 1.5050e-02
+  B. DP+linear step halving, |sigma(N) - sigma(640)|_inf:
+     CPPM         : N=5:2.6247e-01  N=10:1.3683e-01  N=20:6.9039e-02  N=40:3.3829e-02
+     cutting plane: N=5:2.6247e-01  N=10:1.3683e-01  N=20:6.9039e-02  N=40:3.3829e-02
+     limits agree to 9.9476e-14
+  C1. VM+AF single step: CPPM invariance 1.137e-12 (<= 1e-9);
+      cutting-plane spread sigma 9.147082e+00, alpha 5.683938e+00
+  C2. VM+linear: cutting-plane spread sigma 7.105e-15 (path INdependent -- the ADR-94 blind spot)
+  C3. DP+linear: cutting-plane spread sigma 7.105e-15
+
+
+##### fd_tangent_driver.py  (exit 0) #####
+==============================================================================
+ADR-97 oracle 5/5 -- element-level free-DOF FD tangent check
+==============================================================================
+build: 3622d6214ef4cdeb8cf65a102ee35f6cd9973337
+
+0. SELF-TEST -- ElasticIsotropic: K_asm IS the exact tangent, so the
+   finite difference must reproduce it to round-off.
+  ElasticIsotropic (self-test)                         rel_err(max) = 4.851614e-12   rel_fro = 5.900942e-12   |K_fd|_F = 34571.996
+   -> the rig and the sign convention are verified.
+
+1. NEGATIVE CONTROL -- ASDPlasticMaterial3D VonMises, Backward_Euler,
+   one step to sigma_zz = -240 (deep plastic), the five tangent_type options:
+  Backward_Euler / Continuum                           rel_err(max) = 5.734472e-01   rel_fro = 5.893731e-01   |K_fd|_F = 18537.366
+  Backward_Euler / Secant                              rel_err(max) = 7.993549e-01   rel_fro = 7.300832e-01   |K_fd|_F = 18537.366
+  Backward_Euler / Elastic                             rel_err(max) = 1.025263e+00   rel_fro = 9.171703e-01   |K_fd|_F = 18537.366
+  Backward_Euler / Numerical_Algorithmic_FirstOrder    rel_err(max) = 4.573512e-02   rel_fro = 4.700522e-02   |K_fd|_F = 18537.366
+  Backward_Euler / Numerical_Algorithmic_SecondOrder   rel_err(max) = 4.573508e-02   rel_fro = 4.700521e-02   |K_fd|_F = 18537.366
+
+   eps  = [ 0.0000000000e+00  0.0000000000e+00 -3.6210526316e-03  0.0000000000e+00
+  1.0842021725e-19  1.3552527156e-19]
+   sig  = [-1.96842105e+02 -1.96842105e+02 -2.40000000e+02  0.00000000e+00
+  6.46108853e-16  8.07636066e-16]
+   u*   = [-0.003621052632 -0.003621052632 -0.003621052632 -0.003621052632]
+   K_asm (Continuum) =
+       12782.496985    1904.069005   -1291.555241    1904.069005
+        1904.069005   12782.496985    1904.069005   -1291.555241
+       -1291.555241    1904.069005   12782.496985    1904.069005
+        1904.069005   -1291.555241    1904.069005   12782.496985
+   K_fd  (the consistent tangent of the committed map) =
+        8123.880408    3068.723150    1037.753048    3068.723150
+        3068.723150    8123.880408    3068.723150    1037.753048
+        1037.753048    3068.723150    8123.880408    3068.723150
+        3068.723150    1037.753048    3068.723150    8123.880408
+
+2. THE ADR-97 TARGET -- integration_method Closest_Point with
+   tangent_type Algorithmic (does not exist yet; P1 adds it):
+  Closest_Point / Algorithmic                          NOT AVAILABLE in this build (expected before P1)
+
+3. A SHEARED, 12-FREE-DOF RIG (top face fully free) -- the same
+   measurement where the tangent's shear block is exercised:
+  12-DOF rig, Backward_Euler / Continuum               rel_err(max) = 6.701334e-01   rel_fro = 4.727263e-01   |K_fd|_F = 55759.545
+  12-DOF rig, Backward_Euler / Numerical_Algorithmic_FirstOrder rel_err(max) = 5.344623e-02   rel_fro = 3.770210e-02   |K_fd|_F = 55759.545
+
+==============================================================================
+ELEMENT-LEVEL FD REFERENCE BLOCK (values C++ tests pin)
+==============================================================================
+  elastic self-test rel_err          = 4.852e-12
+  Backward_Euler / Continuum                          rel_err = 0.573447
+  Backward_Euler / Secant                             rel_err = 0.799355
+  Backward_Euler / Elastic                            rel_err = 1.025263
+  Backward_Euler / Numerical_Algorithmic_FirstOrder   rel_err = 0.045735
+  Backward_Euler / Numerical_Algorithmic_SecondOrder  rel_err = 0.045735
+  (ADR-94 M3 quoted 57.3 / 79.9 / 102.5 / 4.6 / 4.6 % against a numpy
+   reference tangent; this driver reproduces them from the binary alone.)
+

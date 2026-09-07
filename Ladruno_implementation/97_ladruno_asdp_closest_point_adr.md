@@ -482,11 +482,11 @@ The remaining 3 (the StiffSoil trio) are **refused at parse time** under
 
 | Gate | Test | Oracle |
 |---|---|---|
-| 1 (VM, DP, apex) | `tests/test_adr97_p1_smooth.py` | `adr97_oracle/vm_radial_return.py`, `dp_flank_apex.py` |
-| 1 (MC, MCTC) | `tests/test_adr97_p2_principal.py` | `adr97_oracle/mc_principal_return.py`, ADR-84 `test_asdplastic_mctc.py` rows |
-| 1 (HB) | `tests/test_adr97_p3_hoekbrown.py` | `adr97_oracle/hb_principal_return.py` |
-| 2 | `tests/test_adr97_p1_smooth.py::test_algorithmic_vs_fd`, `..._p2_principal.py` (same name) | `adr97_oracle/calg_fd_reference.py` + the recorded `Continuum` iteration count from `test_adr94_redblue_blue.py` |
-| 3 | `tests/test_adr97_p1_smooth.py::test_af_step_halving` | `adr97_oracle/af_implicit_update.py` |
+| 1 (VM, DP, apex) | `tests/test_adr97_p1_smooth.py` | `adr97_oracle/cppm_vm.py`, `cppm_dp.py` |
+| 1 (MC, MCTC) | `tests/test_adr97_p2_principal.py` | `adr97_oracle/cppm_mc.py`, ADR-84 `test_asdplastic_mctc.py` rows |
+| 1 (HB) | `tests/test_adr97_p3_hoekbrown.py` | `adr97_oracle/cppm_hb.py` (P3 writes it) |
+| 2 | `tests/test_adr97_p1_smooth.py::test_algorithmic_vs_fd`, `..._p2_principal.py` (same name) | `adr97_oracle/fd_tangent_driver.py` (`fd_check()`; BE/Continuum negative control 0.573) + the recorded `Continuum` iteration count from `test_adr94_redblue_blue.py` |
+| 3 | `tests/test_adr97_p1_smooth.py::test_af_step_halving` | `adr97_oracle/path_independence.py` + `cppm_vm.py` case (c) |
 | 4 | `tests/test_adr97_p4_inertness.py` (fresh-subprocess helper `_run_child`, ADR-94 pattern) | pre-change stress dumps, same binary |
 | 5 | `tests/test_adr97_p5_mutation.py` + the manifest's mutation record | — (scratch build) |
 | 6 | `tests/test_adr97_p6_faillloud.py` | — (stderr assertions; tet or `LadrunoBrick` host only) |
@@ -548,8 +548,27 @@ every material return code by design (ADR-94 B2, pinned).
 
 ## Implementation log
 
-- **2026-09-07** — plan drafted on `wp/97a-plan-oracles`; oracles under
-  `Ladruno_implementation/adr97_oracle/` in the same WP.
+- **2026-09-07** — plan drafted (opus), draft PR #817 on `wp/97a-plan-oracles`. P0 oracles
+  delivered the same day (opus, `adr97_oracle/`, `reference_output.txt` on build `3622d6214`):
+  FD checks 9.6e-12 … 1.7e-10 on every consistent tangent (complex-step Jacobians); the
+  element-level free-DOF driver reproduces ADR-94 M3 from the binary alone (BE/Continuum
+  0.573, Secant 0.799, Elastic 1.025, Numerical_* 0.046); CPPM per-step invariance to the
+  Newton start 1.1e-12 vs a cutting-plane spread of 9.15 (σ) / 5.68 (α) on a ~46 stress for
+  VM+AF — with LINEAR hardening the spread is 7e-15, which is why ADR-94 H6 could not see it.
+- **P0 header findings that P1 must decide on (see `adr97_oracle/README.md` §"Header findings"):**
+  (1) `ArmstrongFrederickPolicy` adds the engineering-shear `mdev` to the stress-like back
+  stress (shear slots grow 2×) and has no 2/3 on `ha` — the oracle pins the HEADER convention;
+  the policy is shared with `Backward_Euler`, so under D1 `Closest_Point` mirrors it and the
+  convention question is recorded, not fixed. (2) `DruckerPrager_YF` has its cohesion IV
+  commented out of `f` while `yf_hardening` still contributes `df/dk = −1`: `Closest_Point`'s
+  uncontracted `df/dq` must be the TRUE derivative of the header's `f` (zero for that IV), so
+  DP-with-cohesion-hardening is perfectly plastic under CP and hardening under BE until the
+  YF is fixed (separate PR; it changes BE). (3) DP/MC apex-region tests are Euclidean, not
+  elastic-metric — quantified misclassifications in the oracle; CP must use the elastic-metric
+  test (its own code path, BE untouched). (4) `MohrCoulomb_PF` converts `MC_c` to radians
+  (inert). (5) MC has no edge/apex algebra; `cppm_mc.py` is the reference. (6) At the MC apex
+  with ψ<φ the Koiter multipliers are not all positive: choose the region by boundary planes,
+  never by a dΛ≥0 active-set search.
 
 ## See also
 
