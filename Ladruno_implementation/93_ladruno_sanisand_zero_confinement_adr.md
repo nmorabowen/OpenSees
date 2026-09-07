@@ -468,4 +468,12 @@ benchmark is a real footing or the idealised half-space.
   reset — the elastic predictor is within tolerance there. ADR 92 P2 now has its four items
   with numbers (written into the ADR); ADR 93's own question (the ring at the floor, no
   plateau) is untouched by all of this and is what the campaign returns to once P2 lands.
+- 2026-09-07 13:50 — **Correction to the hold finding:** the 4 / 21 / 29 % divergence of the
+  census leg is **harness-level, on both materials**: the reads-without-holds IMPL-EX leg
+  (146459) matches the plain leg to the last digit at step 200, and the *implicit* census twin
+  with holds (146458) is perturbed even more (31–73 %). Both material responses read are pure.
+  P2-3 (zero-dt clock) stands on its own mechanism (the `alpha` fallback with zero history),
+  not on that number. TIMs is naming the hold's harness cause. **P2 is live on Esmeralda
+  (87b9cf846, 2 min 40 s incremental); five acceptance legs submitted 13:45** (dense/loose ×
+  floor implicit/refuse, plus the dense implicit twin on the new engine).
 
