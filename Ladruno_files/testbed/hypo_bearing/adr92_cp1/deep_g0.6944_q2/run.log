@@ -1,0 +1,43 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : c4d08f1874060812ef25cfddf49724e7175f2978
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\adr92_cp1\deep_g0.6944_q2
+    date                        : 2026-09-05T23:12:36
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 2.0
+    push integrator             : LadrunoLoadControl -tangentPredictor (ADR-80 P3)
+    wall budget per leg         : 9000 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 2.0 kPa on the free surface outside the footing: 57.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   32.907 ds=0.3200mm t=   24.9s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=62.963 kPa, w2(z=-0.625)=6.2774 m, yield 96 ele / 125.636 m3, t=50s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=135.235 kPa, w2(z=-0.625)=8.1941 m, yield 154 ele / 286.512 m3, t=175s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=259.266 kPa, w2(z=-0.625)=9.9465 m, yield 191 ele / 510.069 m3, t=402s
+    [h1.0_e0.6944]    50 s/B=0.01655 q=  408.520 ds=1.2500mm t=  760.6s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=496.107 kPa, w2(z=-0.625)=11.5680 m, yield 198 ele / 567.544 m3, t=998s
+    [h1.0_e0.6944]    75 s/B=0.03936 q=  932.388 ds=0.6250mm t= 1739.9s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=949.045 kPa, w2(z=-0.625)=12.8435 m, yield 200 ele / 600.000 m3, t=1789s
+    [h1.0_e0.6944]   100 s/B=0.05780 q= 1332.165 ds=1.2500mm t= 2932.0s
+    [h1.0_e0.6944]   125 s/B=0.07218 q= 1635.183 ds=0.6250mm t= 4453.1s
+    [h1.0_e0.6944]   150 s/B=0.07725 q= 1742.168 ds=0.0781mm t= 4888.7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.08: q=1941.786 kPa, w2(z=-0.625)=13.4639 m, yield 200 ele / 600.000 m3, t=5115s
+    [h1.0_e0.6944]   175 s/B=0.08022 q= 1952.845 ds=0.3125mm t= 5117.9s
+    [h1.0_e0.6944]   200 s/B=0.08362 q= 2179.826 ds=0.0781mm t= 5260.1s
+    [h1.0_e0.6944]   225 s/B=0.08475 q= 2277.566 ds=0.0391mm t= 5399.6s
+    [h1.0_e0.6944]   250 s/B=0.08712 q= 2472.174 ds=0.6250mm t= 5512.2s
+    [h1.0_e0.6944]   275 s/B=0.09040 q= 2708.209 ds=0.1562mm t= 5704.1s
+    [h1.0_e0.6944]   300 s/B=0.09111 q= 2755.582 ds=0.0049mm t= 5762.5s
+    [h1.0_e0.6944]   325 s/B=0.09130 q= 2771.502 ds=0.0012mm t= 5852.0s
+    *** INADMISSIBLE: terminated in SEIZURE mode FLOOR -- q_max = 2773.109 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.09130; [h1.0_e0.6944] mode=FLOOR (step collapsed to the DS_MIN floor at s/B = 0.09131 (every ladder rung failed at ds = 0.000153 mm)); ended s/B=0.09131 of target 0.250; plateau=NO / peaked=NO (tail 184.773 % of initial); free-advance=NO (3.1x floor); subdivisions 53/80; 348 steps, 675 failed, 244 relaxed, 5889 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 10, base-foot 3.61e-04
+    width: w2(z=-0.625) = 12.8948 m, w2(z=-1.375) = 12.5088 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+exit=0 00:50
