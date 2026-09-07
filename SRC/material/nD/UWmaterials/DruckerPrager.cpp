@@ -130,7 +130,8 @@ DruckerPrager::DruckerPrager(int tag, int classTag, double bulk, double shear, d
     mI1(6),
     mIIvol(6,6),
     mIIdev(6,6),
-    mState(5)
+    mState(5),
+    mLadBranchVec(8)   // Ladruno ADR-95
 {
 	massDen  =  mDen;
     mKref    =  bulk;
@@ -178,7 +179,8 @@ DruckerPrager ::DruckerPrager  ()
 	mI1(6),
     mIIvol(6,6),
     mIIdev(6,6),
-	mState(5)
+	mState(5),
+	mLadBranchVec(8)   // Ladruno ADR-95
 {
 	massDen  =  0.0;
     mKref    =  0.0;
@@ -266,6 +268,16 @@ void DruckerPrager::initialize( )
     mCe  = mK * mIIvol + 2*mG*mIIdev;
     mCep = mCe;
 	mState.Zero();
+
+	// Ladruno ADR-95: diagnostic bookkeeping only (never read by the algebra).
+	mLadBranch       = 0;
+	mLadGamma0       = 0.0;
+	mLadGamma1       = 0.0;
+	mLadF1Trial      = 0.0;
+	mLadF2Trial      = 0.0;
+	mLadForcedAccept = 0;
+	mLadI1           = 0.0;
+	mLadBranchVec.Zero();
 }
 
 
@@ -409,6 +421,13 @@ void DruckerPrager:: plastic_integrator( )
 
 		// f2_n+1_trial
 		f2 = Invariant_1 - T(mAlpha2_n1);
+
+		// Ladruno ADR-95 (P0 instrumentation): latch the TRIAL yield-function
+		// values now, because the return map below overwrites f1/f2 with their
+		// post-correction values.  Write-only diagnostics; no behaviour change.
+		mLadF1Trial      = f1;
+		mLadF2Trial      = f2;
+		mLadForcedAccept = 0;
 		
 		// update elastic bulk and shear moduli 
  		this->updateElasticParam();
@@ -438,6 +457,13 @@ void DruckerPrager:: plastic_integrator( )
        		mState(2) = Invariant_ep;
         	mState(3) = norm_dev_ep;
 			mState(4) = norm_ep;
+
+			// Ladruno ADR-95: elastic branch.  Set here too, so the reported state
+			// can never go stale from an earlier plastic step.
+			mLadBranch = 0;
+			mLadGamma0 = 0.0;
+			mLadGamma1 = 0.0;
+			mLadI1     = Invariant_1;
 			return;
 		}
 		else {
@@ -587,6 +613,7 @@ void DruckerPrager:: plastic_integrator( )
 				Jact(0) = 1;
 				Jact(1) = 1;
 				count += 100;
+				mLadForcedAccept = 1;   // Ladruno ADR-95: the bailout fired
 			}
 
 			if ( count > 3 ) {
@@ -683,6 +710,14 @@ void DruckerPrager:: plastic_integrator( )
         mState(3) = norm_dev_ep;
 		mState(4) = norm_ep;
 
+		// Ladruno ADR-95: record the FINAL active set (after the whole
+		// while(!okay) multisurface loop), not the initial guess:
+		//   1 = f1 only (cone), 2 = f2 only (tension cutoff), 3 = corner.
+		mLadBranch = (int)Jact(0) + 2*(int)Jact(1);
+		mLadGamma0 = gamma(0);
+		mLadGamma1 = gamma(1);
+		mLadI1     = Invariant_1;   // I1 of the RETURNED stress (== mState(0))
+
 	return;
 }
 
@@ -733,6 +768,110 @@ Vector DruckerPrager::getState()
 }
 
 
+// ---------------------------------------------------------------------------
+// Ladruno ADR-95 (P0 instrumentation) -- read-only diagnostics.
+//
+// ladrunoDetAmin(): minimum over ~200 deterministic unit directions n of
+//   det(A) / (2G)^3,   A_ik = n_j C_ijkl n_l   (the ACOUSTIC TENSOR),
+// built from the material's CURRENT consistent tangent mCep (the operator left
+// by the last plastic_integrator() call -- mCe on the elastic path).  A zero
+// crossing is the Rudnicki-Rice loss-of-ellipticity condition (ADR-95 H2).
+//
+// VOIGT -> 4th-ORDER MAPPING.  This class stores tangents in the OpenSees 3D
+// convention, ordering (11, 22, 33, 12, 23, 31), acting on ENGINEERING shear
+// strain: see initialize(), where mIIdev(3,3) = mIIdev(4,4) = mIIdev(5,5) = 0.5
+// so that sigma_12 = 2G * 0.5 * gamma_12 = G * gamma_12.  With
+//
+//     vidx[i][j] = { {0,3,5}, {3,1,4}, {5,4,2} }
+//
+// the mapping is a PLAIN index substitution, with NO 1/2 anywhere:
+//
+//     C_ijkl = mCep( vidx[i][j], vidx[k][l] )
+//
+// Rows: mCep row a = vidx[i][j] already IS sigma_ij, so no factor.
+// Columns: the stored coefficient multiplies gamma_kl = 2*eps_kl, and the
+// tensorial contraction C_ijkl eps_kl runs over BOTH (k,l) and (l,k) --
+// the two cancel exactly, so C_ij12 = mCep(a,3), not half of it.  (Sanity
+// check, and the reason the unit test pins a closed form: for isotropic
+// elasticity this gives A = (lambda+mu) n(x)n + mu I, hence
+// det(A) = (K + 4G/3) * G^2 for ANY unit n.  Putting a 1/2 on the shear
+// columns instead returns 0.1224 where the closed form is 0.4792 -- the
+// error this comment exists to prevent.)
+//
+// Normalising by (2G)^3 keeps det(A) O(1) in the elastic range.
+double DruckerPrager::ladrunoDetAmin(void)
+{
+	static const int vidx[3][3] = { {0, 3, 5}, {3, 1, 4}, {5, 4, 2} };
+
+	const int    NDIR = 200;
+	const double GA   = 3.14159265358979323846 * (3.0 - sqrt(5.0));  // golden angle
+	double scale = 2.0 * mG;
+	if (!(scale > 0.0))
+		scale = 1.0;
+	const double norm3 = scale * scale * scale;
+
+	double detMin = 0.0;
+	bool   first  = true;
+
+	for (int p = 0; p < NDIR; p++) {
+		// Fibonacci sphere -- deterministic, no RNG, reproducible across runs.
+		double nz  = 1.0 - (2.0 * p + 1.0) / (double)NDIR;
+		double rxy = 1.0 - nz * nz;
+		rxy = (rxy > 0.0) ? sqrt(rxy) : 0.0;
+		double phi = GA * (double)p;
+		double nv[3] = { rxy * cos(phi), rxy * sin(phi), nz };
+
+		double A[3][3];
+		for (int i = 0; i < 3; i++) {
+			for (int k = 0; k < 3; k++) {
+				double a = 0.0;
+				for (int j = 0; j < 3; j++) {
+					for (int l = 0; l < 3; l++)
+						a += nv[j] * nv[l] * mCep(vidx[i][j], vidx[k][l]);
+				}
+				A[i][k] = a;
+			}
+		}
+
+		double det = A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+		           - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+		           + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+		det /= norm3;
+
+		if (first || det < detMin) {
+			detMin = det;
+			first  = false;
+		}
+	}
+
+	return detMin;
+}
+
+// Ladruno ADR-95: the `ladrunoBranch` response payload.
+//   [0] branch of the LAST plastic_integrator() call:
+//       0 elastic, 1 f1 only (cone), 2 f2 only (tension cutoff), 3 corner
+//       -- the FINAL Jact after the while(!okay) loop, not the initial guess
+//   [1] gamma(0)          plastic multiplier of f1 (0 when elastic)
+//   [2] gamma(1)          plastic multiplier of f2 (0 when elastic)
+//   [3] f1 at the TRIAL state
+//   [4] f2 at the TRIAL state
+//   [5] forcedAccept      1 if the `count > 3` bailout fired in that call
+//   [6] I1                first invariant of the RETURNED stress (== state[0])
+//   [7] detAmin           min_n det(n.D_ep.n) / (2G)^3  -- computed HERE only
+const Vector &DruckerPrager::getLadrunoBranch(void)
+{
+	mLadBranchVec(0) = (double)mLadBranch;
+	mLadBranchVec(1) = mLadGamma0;
+	mLadBranchVec(2) = mLadGamma1;
+	mLadBranchVec(3) = mLadF1Trial;
+	mLadBranchVec(4) = mLadF2Trial;
+	mLadBranchVec(5) = (double)mLadForcedAccept;
+	mLadBranchVec(6) = mLadI1;
+	mLadBranchVec(7) = this->ladrunoDetAmin();
+	return mLadBranchVec;
+}
+
+
 Response*
 DruckerPrager::setResponse (const char **argv, int argc, OPS_Stream &output)
 {
@@ -749,6 +888,9 @@ DruckerPrager::setResponse (const char **argv, int argc, OPS_Stream &output)
 		return new MaterialResponse(this, 2, this->getStrain());
 	else if (strcmp(argv[0], "state") == 0)
 		return new MaterialResponse(this, 3, this->getState());
+	// Ladruno ADR-95: branch / loss-of-ellipticity diagnostics (read-only).
+	else if (strcmp(argv[0], "ladrunoBranch") == 0)
+		return new MaterialResponse(this, 95, Vector(8));
 	else
 		return 0;
 }
@@ -769,6 +911,10 @@ int DruckerPrager::getResponse (int responseID, Information &matInfo)
 		case 3:
 			if (matInfo.theVector != 0)
 				*(matInfo.theVector) = getState();
+			return 0;
+		case 95:   // Ladruno ADR-95: ladrunoBranch
+			if (matInfo.theVector != 0)
+				*(matInfo.theVector) = this->getLadrunoBranch();
 			return 0;
 		default:
 			return -1;

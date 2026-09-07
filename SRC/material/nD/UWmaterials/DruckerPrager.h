@@ -81,7 +81,12 @@ class DruckerPrager : public NDMaterial
   int updateParameter(int responseID, Information &eleInformation);
 
   double getRho(void) {return massDen;};
-  
+
+  // Ladruno ADR-95 (P0 instrumentation): read-only branch/ellipticity diagnostics.
+  // Returns the 8-vector documented at DruckerPrager::getLadrunoBranch() in the .cpp.
+  // Pure observer: it never touches the material state, so behaviour is unchanged.
+  const Vector &getLadrunoBranch(void);
+
  protected:
   
   //material parameters
@@ -129,7 +134,25 @@ class DruckerPrager : public NDMaterial
   Matrix mIIdev;		// 4th Order Deviatoric Tensor
   
   Vector mState;		// state vector for output
-  
+
+  // Ladruno ADR-95 (P0 instrumentation): branch bookkeeping written by
+  // plastic_integrator() on EVERY path (elastic included, so the state can
+  // never go stale) and read back through the `ladrunoBranch` response.
+  // None of these members is read by the constitutive algebra.
+  int    mLadBranch;		// 0 elastic, 1 f1 only (cone), 2 f2 only (cutoff), 3 corner
+  double mLadGamma0;		// gamma(0) of the last call (0 when elastic)
+  double mLadGamma1;		// gamma(1) of the last call (0 when elastic)
+  double mLadF1Trial;		// f1 evaluated at the TRIAL state
+  double mLadF2Trial;		// f2 evaluated at the TRIAL state
+  int    mLadForcedAccept;	// 1 if the `count > 3` forced-accept bailout fired
+  double mLadI1;		// I1 of the RETURNED stress (== mState(0))
+  Vector mLadBranchVec;		// 8-slot scratch returned by getLadrunoBranch()
+
+  // Ladruno ADR-95: min over ~200 deterministic unit directions of
+  // det(n . D_ep . n) / (2G)^3.  Sampling cost, so it is evaluated on request
+  // (inside getLadrunoBranch) only -- never per step.
+  double ladrunoDetAmin(void);
+
   //functions
   void initialize();	// initializes variables
   int  updateElasticParam(void); //updated Elastic Parameters based on mean stress 
