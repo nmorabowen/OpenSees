@@ -177,6 +177,11 @@ single-element calibration deck does.
 
 1. stage 0, isotropic or `K0` consolidation to the target confinement, run to equilibrium
 2. `updateMaterialStage -material <tag> -stage 1`
+   — **process-wide, not per material:** `mElastFlag` is a `static` on `ManzariDafalias`
+   (`ManzariDafalias.cpp:59`), so one stage switch through ANY SANISAND tag (command or
+   `parameter`) flips every SANISAND instance in the process at once. A deck cannot hold one
+   layer elastic while another is plastic; stage every SANISAND material together (PM-01 §17.4
+   declares this; TIMs 2026-09-07 no-ask 4).
 3. the deviatoric / cyclic history
 
 Our own test decks were rebuilt around exactly this ordering, and it produces **zero** inflation
