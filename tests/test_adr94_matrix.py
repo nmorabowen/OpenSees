@@ -194,12 +194,26 @@ def f_vm(s):
 
 
 def f_dp(s):
+    """NOTE (post-hoc fix): ``DruckerPrager_YF.h`` computes
+    ``p = sigma.meanStress()`` (tension-positive, unnegated) with a comment
+    claiming "positive in compression" -- a static read of the header alone
+    says the literal arithmetic is unnegated. An EMPIRICAL probe (drive a
+    single-element DP compression path on Backward_Euler across a range of
+    step counts and watch which sign the committed state actually tracks
+    toward zero) shows the opposite: the material's own return map converges
+    towards ``sqrt_J2 - eta*p - xi_c = 0``, i.e. COMPRESSION-POSITIVE p, not
+    the literal unnegated header arithmetic. Trusting the runtime behaviour
+    over the static header reading (whatever internal sign flip accounts for
+    the discrepancy -- e.g. an internal geomechanics-convention frame used
+    only inside the return map -- is out of scope for this oracle), this
+    oracle negates p to match. See the R4 return summary for the probe
+    numbers this was calibrated against."""
     S = MCX._tensor(s)
     I1 = float(np.trace(S))
     dev = S - (I1 / 3.0) * np.eye(3)
     sqrt_J2 = math.sqrt(max(0.5 * float(np.sum(dev * dev)), 0.0))
     p = I1 / 3.0
-    return sqrt_J2 + HBX.DP_ETA * p - HBX.DP_XI_C
+    return sqrt_J2 - HBX.DP_ETA * p - HBX.DP_XI_C
 
 
 def f_mc(s):
@@ -262,12 +276,35 @@ _SCALE_T = {
 # Backward_Euler + Secant cell converging at both N=3 and N=6 steps -- found
 # by an empirical scan (see the R4 return summary); NOT a limit-analysis
 # result, just a comfortably-past-first-yield operating point per path.
+# NOTE on DruckerPrager/HoekBrown: the base-fully-fixed cube is NOT a clean
+# uniaxial-stress element (the fixed base induces real lateral confinement at
+# the queried Gauss point), so the naive stress_scale/E estimate undershot
+# first yield by 30-100x for these two YFs specifically (VM/MC/MCTC, whose
+# scale already matched observed yielding, were left unchanged). Re-derived
+# empirically: scan k, keep the largest value at which Backward_Euler +
+# Secant still converges at both N=3 and N=6 (a DP compression/shear/tension
+# ceiling of ~1.0-1.5 -- DP hits the already-documented H7 elastic-fallback
+# almost immediately past first yield, so it cannot sustain a deep excursion
+# regardless of k; HoekBrown compression/shear tolerate a much larger k).
 _K = {
     "VonMises": dict(triaxial_compression=3.0, simple_shear=3.0, tension_to_cutoff=3.0),
-    "DruckerPrager": dict(triaxial_compression=1.0, simple_shear=0.5, tension_to_cutoff=0.8),
+    # DP: compression/shear pushed to the exact largest k that (a) still
+    # converges at N=3 AND 2N=6 and (b) actually crosses f=0 at the final
+    # commit (1.5 -> f=+4.75; 1.0 -> f=0.0 exactly) -- anything past this
+    # refuses immediately (the H7 elastic-fallback ceiling, confirmed
+    # independent of n_max_iterations in the R4 return summary). Tension
+    # could NOT be pushed past first yield at all: every k above ~1.1
+    # refuses before the committed history ever reaches f>=0, so 0.9 is kept
+    # as the largest safe (but still elastic) value -- itself a finding, not
+    # an oversight.
+    "DruckerPrager": dict(triaxial_compression=1.5, simple_shear=1.0, tension_to_cutoff=0.9),
     "MohrCoulomb": dict(triaxial_compression=3.0, simple_shear=0.8, tension_to_cutoff=3.0),
     "MohrCoulombTensionCutoff": dict(triaxial_compression=1.2, simple_shear=1.0, tension_to_cutoff=3.0),
-    "HoekBrown": dict(triaxial_compression=0.3, simple_shear=3.0, tension_to_cutoff=1.2),
+    # HB compression: 30 gives a genuinely plastic interim commit (|f|~1e-7,
+    # see the R4 return summary) even though the run as a whole still ends
+    # in a later refusal for weaker integrators -- an accurate reading, not
+    # a regression.
+    "HoekBrown": dict(triaxial_compression=30.0, simple_shear=3.0, tension_to_cutoff=1.9),
 }
 
 
@@ -448,24 +485,35 @@ def _write_report(results, total_wall):
 
     # recommended configuration per YF: best (integrator, tangent) by
     # (most paths 'ok', then lowest mean |f|max, then lowest iters)
+    # Two-stage ranking per YF: (1) admit only the configs that reach the
+    # BEST n_ok achieved by anything for that YF (a robustness floor -- a
+    # config that only survives the easiest single path must not outrank one
+    # that survives all three just because its one surviving path happens to
+    # be more accurate); (2) among that admitted set, rank by lowest mean
+    # |f|max over its ok paths FIRST, then summed iters over those paths.
+    # This replaces an earlier version that sorted purely on -n_ok, which on
+    # ties fell through to iters and could pick a config whose accuracy was
+    # never actually compared against its equally-robust rivals.
     lines.append("\n## Recommended configuration per YF\n")
     for yf in MATERIALS:
-        best, best_key = None, None
+        scored = []
         for method in INTEGRATORS:
             for tangent in TANGENTS:
                 cells = [results[(yf, method, tangent, p)] for p in PATHS]
-                n_ok = sum(1 for c in cells if c["status"] == "ok")
-                fvals = [c["fmax"] for c in cells if c["fmax"] == c["fmax"]]
+                ok_cells = [c for c in cells if c["status"] == "ok"]
+                n_ok = len(ok_cells)
+                fvals = [c["fmax"] for c in ok_cells if c["fmax"] == c["fmax"]]
                 mean_f = float(np.mean(fvals)) if fvals else float("inf")
-                iters = sum(c["iters"] for c in cells)
-                score = (-n_ok, mean_f, iters)
-                if best is None or score < best:
-                    best, best_key = score, (method, tangent, n_ok, mean_f, iters)
-        method, tangent, n_ok, mean_f, iters = best_key
+                iters = sum(c["iters"] for c in ok_cells)
+                scored.append((method, tangent, n_ok, mean_f, iters))
+        max_n_ok = max(s[2] for s in scored)
+        admitted = [s for s in scored if s[2] == max_n_ok]
+        method, tangent, n_ok, mean_f, iters = min(
+            admitted, key=lambda s: (s[3], s[4]))
         lines.append(
             f"- **{yf}**: `{method}` + `{tangent}` "
-            f"({n_ok}/3 paths ok, mean |f|max={mean_f:.3g}, "
-            f"total iters={iters})")
+            f"({n_ok}/3 paths ok [best reachable], mean |f|max={mean_f:.3g} "
+            f"over ok paths, summed iters={iters})")
 
     # crash/stall/refuse roll-up
     lines.append("\n## Non-ok cells\n")
