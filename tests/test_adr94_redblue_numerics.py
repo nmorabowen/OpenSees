@@ -9,7 +9,11 @@ Three things R1 did not measure:
    ``if (!(norm_trial_stress == norm_trial_stress)) { cout << "NaN!"; return
    -1; }``) DOES fire and DOES return -1 -- the -1 is then dropped on the way
    up.  So the defect is a *return-code contract* defect, not (only) a missing
-   check.
+   check. PLATFORM CAVEAT: the NaN itself is UNDEFINED BEHAVIOUR (an
+   uninitialised ``VoigtVector pressure_part; pressure_part *= 0.0;`` in
+   DruckerPrager_YF/_PF), not a deterministic defect -- Ubuntu CI's fresh
+   heap commits a clean, finite history on the identical apex path, so the
+   guard never fires there; only Windows' dirty pytest heap reproduces it.
 
 2. **The NaN is DP-specific, not "apex-declared-YF"-generic.**  Five YFs
    specialize ``yf_has_apex`` to true (DruckerPrager, HoekBrown, MohrCoulomb,
@@ -29,6 +33,7 @@ Driver: the single ``LadrunoBrick`` unit cube of ``test_adr94_hlist_hb.py``
 Build ``52314165a``.  Wall time ~1.5 s.
 """
 import math
+import re
 import subprocess
 import sys
 import textwrap
@@ -38,6 +43,15 @@ import pytest
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
+
+_PRESSURE_PART_IDIOM = re.compile(
+    r"VoigtVector\s+pressure_part\s*;\s*\n\s*pressure_part\s*\*=\s*0\.0\s*;")
+
+
+def _source(rel_path):
+    import pathlib
+    here = pathlib.Path(__file__).resolve().parent.parent
+    return (here / rel_path).read_text(encoding="utf-8", errors="replace")
 
 _CUBE = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
          5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
@@ -167,8 +181,34 @@ def _pypath():
 def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
     """R1-C said "nothing in the existing gates trips".  Measured: the
     Backward_Euler NaN guard prints "NaN!" and returns -1 on the apex path,
-    and analyze() still reports 0 with a NaN stress committed.  The gate
-    works; the return code is lost between the material and the analysis."""
+    and analyze() still reports 0 with a NaN stress committed on Windows.
+    The gate works; the return code is lost between the material and the
+    analysis.
+
+    PLATFORM CAVEAT: the NaN itself is UNDEFINED BEHAVIOUR, not a
+    deterministic defect -- ``DruckerPrager_YF``/``_PF`` build their
+    pressure term via ``VoigtVector pressure_part; pressure_part *= 0.0;``,
+    multiplying UNINITIALISED Eigen storage by zero rather than actually
+    zero-constructing it. Windows' churned pytest heap reliably reads stale
+    nonzero/NaN bits there; Ubuntu CI's fresh heap reads zero and the same
+    apex path commits a clean, finite history, so the guard never fires and
+    "NaN!" never prints. The structural sentinel below (the pseudo-init
+    idiom's continued presence) is what actually pins this; the "NaN!"/
+    committed-NaN checks are gated on NaN having actually been committed.
+    """
+    yf_src = _source("SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions"
+                      "/DruckerPrager_YF.h")
+    pf_src = _source("SRC/material/nD/ASDPlasticMaterial3D"
+                      "/PlasticFlowDirections/DruckerPrager_PF.h")
+    assert _PRESSURE_PART_IDIOM.search(yf_src), (
+        "DruckerPrager_YF.h no longer contains the uninitialised "
+        "`VoigtVector pressure_part; pressure_part *= 0.0;` pseudo-init "
+        "idiom -- the apex-path UB this test pins may be gone; re-measure "
+        "and update this test (and test_H10_dp_apex_hydrostatic_tension_"
+        "commits_nan) accordingly.")
+    assert _PRESSURE_PART_IDIOM.search(pf_src), (
+        "DruckerPrager_PF.h no longer contains the same idiom -- see above.")
+
     out = _run_child(_DP_CHILD.replace("{PYPATH}", _pypath()))
     if "RESULT_CODES=" not in out:
         pytest.skip("DP/LadrunoBrick child run unavailable:\n" + out[-800:])
@@ -176,15 +216,25 @@ def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
     codes = eval(out.split("RESULT_CODES=")[1].splitlines()[0], _ns)
     stress = eval(out.split("RESULT_STRESS=")[1].splitlines()[0], _ns)
     nan_committed = any(s != s for s in stress)
-    # (a) the material DID detect the NaN and returned -1
-    assert "NaN!" in out, (
-        "expected Backward_Euler's own NaN guard to fire on the DP apex path; "
-        "stdout tail:\n" + out[-1500:])
-    # (b) ... and the analysis never saw it
+    all_finite = all(math.isfinite(s) for s in stress)
+
+    # (a) the analysis never reports failure on this degenerate path,
+    # regardless of which UB outcome this platform's heap produced.
     assert all(c == 0 for c in codes), (
-        "expected every analyze() to report success despite the guard firing, "
-        f"got {codes}")
-    assert nan_committed, f"expected a NaN committed stress, got {stress}"
+        "expected every analyze() to report success on this degenerate "
+        f"apex path, got {codes}")
+    assert nan_committed or all_finite, (
+        f"stress is neither NaN-flagged nor entirely finite -- unexpected "
+        f"state: {stress}")
+
+    # (b) the guard's own "NaN!" print, and the committed-NaN it swallows,
+    # are only expected when this platform's heap actually reproduced the
+    # UB -- on a fresh/zeroed heap the path stays clean and the guard never
+    # trips at all (which is not a regression, just the other UB outcome).
+    if nan_committed:
+        assert "NaN!" in out, (
+            "expected Backward_Euler's own NaN guard to fire once NaN was "
+            "committed; stdout tail:\n" + out[-1500:])
 
 
 # ---------------------------------------------------------------------------

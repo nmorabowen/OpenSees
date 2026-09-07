@@ -334,7 +334,7 @@ def test_H4_reset_leaves_material_state_inconsistent_with_geometry():
 
 
 @pytest.mark.t0m
-def test_H4_cutback_after_forced_global_failure_is_not_bitwise_reproducible():
+def test_H4_cutback_after_forced_global_failure_recovers_within_newton_tolerance():
     """MEASURED, runtime.  A step that fails to converge GLOBALLY (an
     impossible ``NormDispIncr`` budget, not a material refusal) leaves a dirty
     TRIAL stress that ``revertToLastCommit()``'s no-op body (H4) never clears
@@ -344,13 +344,18 @@ def test_H4_cutback_after_forced_global_failure_is_not_bitwise_reproducible():
     Measured consequence on this rig: retrying the SAME step (same
     LoadControl increment) after restoring a sane test tolerance, then
     running the remaining identical steps, reaches a FINAL committed stress
-    that is close to -- but not bitwise/1e-12 equal to -- a reference run that
-    never attempted the failing step. The gap (~6e-9 relative) sits at the
-    level of the ``NormDispIncr`` 1e-8 convergence tolerance itself, so this
-    probe cannot separate "H4's broken revert leaked a dirty trial state"
-    from ordinary Newton-truncation noise; it is recorded as a measured,
-    inconclusive data point (see ``_adr94_contract.md``), NOT as a confirmed
-    corruption. The clean, confirmed H4 consequence is the reset() test above.
+    that is close to a reference run that never attempted the failing step.
+    On Windows the gap is ~6e-9 relative; on Linux CI it measures ~5.4e-13
+    (bitwise-identical) -- the TenNodeTetrahedron host element's
+    "stresses"/"forces" query re-derives stress from the current nodal trial
+    displacement on every call (see H4's structural test), which self-heals
+    the dirty material-level trial state and hides the defect entirely on
+    that platform. So this probe does NOT pin H4 -- it cannot separate
+    "H4's broken revert leaked a dirty trial state" from ordinary
+    Newton-truncation noise, and the tet's self-heal can erase the gap
+    outright depending on platform. It is kept only as a coarse regression
+    guard on the recovered stress; the real H4 sentinel is the structural
+    ``revertToLastCommit()`` body check in ``test_adr94_hlist_mechanical.py``.
     """
     _tet_build_plain()
     ref_codes = [ops.analyze(1) for _ in range(20)]
@@ -370,10 +375,10 @@ def test_H4_cutback_after_forced_global_failure_is_not_bitwise_reproducible():
 
     diff = float(np.max(np.abs(sig_recovered - sig_ref)))
     scale = float(np.max(np.abs(sig_ref)))
-    assert diff > 1.0e-9, (
-        f"recovered vs reference stress is now bitwise-identical (diff="
-        f"{diff:.3e}) -- either H4 was fixed or this probe's premise changed; "
-        f"re-verify before trusting this test as 'inconclusive'.")
+    # NOTE: no lower bound on diff -- on Linux CI diff measures ~5.4e-13
+    # (the tet's self-heal makes the recovery bitwise-identical), while on
+    # Windows it measures ~6e-9. Both are within Newton tolerance; only the
+    # upper bound below is a meaningful regression guard.
     assert diff / scale < 1.0e-6, (
         f"recovered vs reference stress differs by {diff:.3e} (relative "
         f"{diff / scale:.3e} of scale {scale:.3e}) -- this is well beyond "

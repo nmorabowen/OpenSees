@@ -75,7 +75,9 @@ states are exact and only Newton effort or diagnostics suffer.
   the NaN to the `*= 0.0` pseudo-initialisation. **Both are true and neither alone is the
   fix**: the guard-drop is B2, the uninitialised storage is B4's one-line fix, the dead
   apex site is the reason a proper apex return cannot be reached even for HB, whose apex
-  methods are implemented.
+  methods are implemented. Platform-dependent: Ubuntu CI (fresh heap) commits a clean
+  finite history on the same path; only the dirty Windows pytest heap reproduces the
+  NaN — which is the signature of UB, not of a deterministic defect.
 - **`depsilon_elpl` blast radius.** R1-A said zero (no registered PF/YF reads `depsilon`);
   red-numerics found `ArmstrongFrederickPolicy` reads it and 22/46 specializations carry
   AF. **Red stands**; the static is stale or zero for every AF material under `Continuum`
