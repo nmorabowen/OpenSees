@@ -123,11 +123,21 @@ LadrunoSANISANDPlaneStrain::setTrialStrain(const Vector &strain_from_element)
 	mEpsilon(1) = -1.0 * strain_from_element(1);
 	mEpsilon(3) = -1.0 * strain_from_element(2);
 
-    this->integrate();
-
-	// Ladruno (ADR-86b): see the twin note in LadrunoSANISAND3D::setTrialStrain.
-	// 0 unless this deck asked for a substep cap AND that cap fired.
-	return this->ladrunoUpdateStatus();
+	// Ladruno (ADR-86b + ADR-92 P1): see the twin note in
+	// LadrunoSANISAND3D::setTrialStrain. 0 unless this deck asked for a substep
+	// cap AND that cap fired; with -implex on it is the extrapolated update.
+	//
+	// ADR-92 SCOPE NOTE, and it is deliberate: P1 qualifies -implex on the 3D
+	// wrapper ONLY -- plane strain is a P2 item and has no gate yet. It is routed
+	// here anyway because the operator is dimension-agnostic (mEpsilon, mSigma and
+	// the frozen Ce are 6-vectors in both wrappers, and this wrapper simply reads
+	// three of the six back out), and because the alternative -- leaving this line
+	// calling integrate() -- would make -implex silently INERT on a plane-strain
+	// deck. A flag that claims to have done something it did not do is the exact
+	// defect class this family of files exists to make impossible (see the
+	// -honorTolR / -maxSubsteps inertness warnings in LadrunoSANISAND.cpp).
+	// UNTESTED at P1: P2 owns its gate.
+	return this->ladrunoTrialUpdate();
 }
 
 // unused trial strain functions

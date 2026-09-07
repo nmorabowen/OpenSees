@@ -910,7 +910,7 @@ features:
     pr: 767
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladruno_sanisand.py   # test_vanilla_equivalence (load-bearing gate vs ManzariDafalias, ~1e-12 rel); test_echo_and_defaults (+ subprocess Tcl smoke); test_revert_to_start_preserves_settings; test_db_roundtrip_carries_presidual; test_presidual_is_the_low_p_defect. ADR-86 PR-3 adds five: test_honor_tolr_is_inert_at_1e_4 / _changes_the_answer_when_tolr_is_tight / _warns_when_the_scheme_cannot_honour_it (the mHonorTolRInME seam, wired), and test_pmin_is_inert_at_ordinary_confinement / _is_behavioural_at_low_confinement (the first gates that vary -Pmin on purpose). Both new mechanisms PROVEN by mutation: removing the one wiring line in applyLadrunoConstants fails test_honor_tolr_changes_the_answer AND ONLY THAT TEST (1 of 15); making applyLadrunoConstants ignore mPminInput fails test_pmin_is_behavioural_at_low_confinement plus two incidental catches (test_radial_ramp_with_pr0_never_yields, test_print_states_what_it_ran)
+    pytest: tests/test_ladruno_sanisand.py   # test_vanilla_equivalence (load-bearing gate vs ManzariDafalias, ~1e-12 rel); test_echo_and_defaults (+ subprocess Tcl smoke); test_revert_to_start_preserves_settings; test_db_roundtrip_carries_presidual; test_presidual_is_the_low_p_defect. ADR-86 PR-3 adds five: test_honor_tolr_is_inert_at_1e_4 / _changes_the_answer_when_tolr_is_tight / _warns_when_the_scheme_cannot_honour_it (the mHonorTolRInME seam, wired), and test_pmin_is_inert_at_ordinary_confinement / _is_behavioural_at_low_confinement (the first gates that vary -Pmin on purpose). Both new mechanisms PROVEN by mutation: removing the one wiring line in applyLadrunoConstants fails test_honor_tolr_changes_the_answer AND ONLY THAT TEST (1 of 15); making applyLadrunoConstants ignore mPminInput fails test_pmin_is_behavioural_at_low_confinement plus two incidental catches (test_radial_ramp_with_pr0_never_yields, test_print_states_what_it_ran). ADR-92 P1 (IMPL-EX, Oliver-Huespe-Cante extrapolate-then-correct, PR #798, in review as of 2026-09-06 pending the red/blue B1-B5 fixes) adds tests/test_ladruno_sanisand_implex.py (12 test_ functions, one parametrized x5 -> 16 collected), covering: -implex unset is byte-identical to the recorded ADR-86b sensitivity (test_implex_unset_reproduces_recorded_sensitivity, real regression check, mutation: NOT REACHABLE -- this is the -implex-OFF path, which no ADR-92 mutant can perturb; it survived all 12 by construction and that is the correct answer); -implex on vs off on a zero-free-DOF deck (test_implex_on_matches_off_on_a_zero_free_dof_deck, tautological leak-detector only per its own docstring, mutation: SURVIVED all 12, exactly as that docstring predicts); stage-0 (mElastFlag==0) inertness + LoadControl(0.0) hold (test_stage0_inertness_gravity_and_hold_is_bit_identical, mutation: SURVIVED all 12 -- mElastFlag==0 makes the operator inert by design, so no IMPL-EX mutant reaches it); the p_min clamp firing + the implexDetail ||dsigma||^2 split identity (test_floor_clamp_fires_and_implexDetail_reports_it, mutation: KILLS M8 (the p_min clamp on sigma~ removed) and only M8); frozen-tangent identity on -implexDt strain (test_tangent_identity_frozen_ce_on_strain_dt_source, currently RED and unmarked, precondition on the p_min clamp being idle is unchecked, mutation: NOT A DETECTOR -- it is a strict xfail on this branch, so the gate excludes it from the denominator); parser refusal of unsupported IntScheme 3/5/7/8/9 and of a missing/zero -maxSubsteps (test_implex_refuses_unsupported_schemes x5, test_implex_scheme1_requires_maxsubsteps, test_implex_maxsubsteps_zero_is_also_refused, mutation: SURVIVED all 12 -- parse-time refusals never run an analysis and so cannot notice deleted physics (the SHELLMOD precedent); their scheme-2 twin test_scheme2_without_maxsubsteps_is_refused_under_implex KILLS M11 (that refusal removed)); the D2 sign-change guard on the pseudo-time clock (test_implex_negative_pseudo_dt_is_refused_and_leaves_committed_state_unchanged -- name/docstring still describe the retired dt<0 rule, the test itself does exercise the shipped sign-change guard at :1511, mutation: KILLS M12 (the D2 sign-change guard removed) and M3); -implexControl refusing past tolerance (test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchanged, currently RED and unmarked, mutation: KILLS M7 (un-primed-step exemption removed), M3 and M1, but SURVIVES M5 -- deleting the refusal's LADRUNO_MATERIAL_REFUSED sentinel changes nothing here because mSigma = mSigma_n still stalls Newton; the return-code contract is unpinned); sendSelf/recvSelf roundtrip over the Vector(5)->Vector(22) wire growth (test_implex_db_roundtrip_carries_flags_and_history, currently SKIPPED on every run -- blind by construction on this deck, mutation: NOT A DETECTOR (skipped at baseline); its replacement test_db_roundtrip_on_a_deck_where_on_differs_from_off KILLS M3); getCopy(const char*) history isolation across Gauss points (test_implex_getcopy_does_not_share_history_across_gauss_points, clones are made before any analyze() so the assertion is vacuous, mutation: SURVIVED all 12). The ADR-87 D2 mutation gate for this family RAN 2026-09-06 and PASSED: score 0.750 (9 of 12 semantic IMPL-EX mutants killed), floor 0.60 -- full transcript, per-build md5 provenance and the survivor audit in Ladruno_implementation/_adr92_p1_mutation_gate.md. This is the hand-mutant lane ADR-86 PR-3 used on this same row, not a mutation_gate.py family run: SRC/Ladruno_mutation.h offers only ZERO/SCALE/IDENT at the force/tangent accessors and every ADR-92 mechanism is semantic, so SANISAND stays out of GATED_FAMILIES. THREE MUTANTS SURVIVED and each is a real coverage gap, not a physics-free test: M4 (the -implexControl reduction floor is never armed -- no deck here drives a subdivision ladder, so mImplexDt0 is never consulted at a second smaller |dt|), M5 (that refusal returns 0 instead of the sentinel -- the battery pins the refusal's symptoms, mSigma = mSigma_n and the implexRefusals counter, but not its return-code contract, which is what LadrunoBrick propagates), and M10 (a refused trial no longer re-arms the step -- redundant on every deck here only because StaticAnalysis.cpp:185 reverts, and NOT redundant for a driver that halves its increment without a revert). Owed tests for all three are specified in the gate report section 4; the PlaneStrain lane, -implexAlpha, -implexDt user/pseudo, companion (commit-time) refusal, and subdivision/retry interaction with the frozen factor are not covered by this file at all. See Ladruno_implementation/_adr92_p1_redblue_review.md for the full adversarial review this entry summarizes.
     tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch added to TclModelBuilderNDMaterialCommand.cpp is exercised by test_echo_and_defaults's subprocess smoke, a short Tcl deck run through OpenSees.exe, inside the pytest file above)
     core_files:
       - SRC/classTags.h
@@ -1980,3 +1980,88 @@ features:
       LadrunoDynamicRelaxation rows. See
       Ladruno_implementation/80_ladruno_sp_imposition_strengthening_adr.md and
       80c_s1_extrapolate_verdict_2026-08-04.md.
+
+  - feature: LadrunoShellModifierSection
+    classtag: 33000          # SEC_TAG family; per-registry band (33000 is independently reused as NUMBERER_TAG_LadrunoParallelNumberer / RECORDER_TAGS_EnergyBalanceRecorder / INTEGRATOR_TAGS_ExplicitBathe — no collision, bands are per-registry)
+    tag_symbol: SEC_TAG_LadrunoShellModifier
+    pr: 793
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoShellModifier_section.py
+    tcl: ""
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/section/CMakeLists.txt
+      - SRC/material/section/Makefile
+      - SRC/Makefile
+      - SRC/interpreter/OpenSeesSectionCommands.cpp
+      - SRC/material/section/TclModelBuilderSectionCommand.cpp
+      - SRC/runtime/commands/modeling/section.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ETABS-style shell section stiffness modifiers (ADR 91). A
+      SectionForceDeformation DECORATOR over any order-8 plate section, applying
+      the eight ETABS area modifiers (f11 f22 f12 m11 m22 m12 v13 v23) plus a
+      mass modifier, for cracked-section elastic wall models (ACI 318-25
+      6.6.3.1.1 / ASCE 41). Verb: `section LadrunoShellModifier tag innerSecTag
+      [-f11 v] ... [-mass v]`, all nine optional and defaulting to 1.0, so an
+      unflagged wrap is byte-identical to the inner section.
+      Contract is a CONGRUENCE transform: with s[i]=sqrt(m[i]) and S=diag(s),
+      D' = S.D.S, sigma = S.sigma_inner(S.eps), rho' = massMod*rho. That form is
+      SPD-preserving (Schur product theorem), energy-consistent, and is the exact
+      consistent tangent for an arbitrary nonlinear inner section — so the
+      decorator is transparent to LayeredShell/PlateFiber as well as
+      ElasticMembranePlateSection. Naive diagonal-only scaling was REJECTED: it
+      leaves the Poisson coupling at full value and drives the membrane block
+      indefinite at exactly the cracked-wall modifiers this feature exists for
+      (ADR 91 §4).
+      NO weight modifier, deliberately: ShellMITC4.cpp:1725-1755 derives the
+      self-weight body force from the same getRho() that builds the mass matrix,
+      so a weightMod could only have aliased massMod (ADR 91 §5).
+      G1-G8 (ADR 91 §9) all green: 15/15 against a fresh build of this branch —
+      identity (bare vs wrapped-at-1.0, ShellMITC4 + ASDShellQ4, 1e-13),
+      congruence against an independent numpy S.D.S oracle with all nine
+      modifiers distinct, analytic exact-doubling, SPD under f11=f22=0.01,
+      Ep_mod parity, mass sqrt(2), the four refusals, and LayeredShell
+      nonlinear passthrough.
+      G9/G10 (tests/test_ladrunoShellModifier_frame_equivalence.py, 6 more tests,
+      21 total): a flexure-controlled cantilever (L/d=10) built as a FRAME with
+      A,I scaled 0.35 and as a ShellMITC4 mesh with f11/f22/f12 scaled 0.35
+      softens by exactly 1/0.35 in BOTH, to 8 significant figures, and the
+      shell/frame ratio is identical gross and cracked — the modifier scales
+      through the discretisation gap rather than distorting it (that gap is
+      bilinear membrane locking: −12.6% at 20x2 → −0.5% at 120x24, while the
+      softening ratio is 2.8571 at every density). G10 pins the trap: m11/m22/m12
+      and v13/v23 change in-plane flexure by 0.0000%, so cracking a wall with the
+      "bending" modifiers is a SILENT no-op.
+      ADR-87 D2 MUTATION GATE: family SHELLMOD, gated at the section accessors
+      (getStressResultant / getSectionTangent / getInitialTangent) since the
+      feature has no element of its own. ZERO score 0.762 (16/21 killed, floor
+      0.60) — GATE PASSED. Re-measured after G9/G10 landed; the earlier 0.733
+      was the 15-test suite and no longer described it. All five survivors
+      audited individually and all are legitimately physics-free: the three
+      parse-time refusals (R1/R3/R4), which never run an analysis; the pure-numpy
+      companion assertion documenting why the congruence beats diagonal-only
+      scaling; and g9_shell_is_within_a_few_percent_of_beam_theory, which builds
+      on the BARE ElasticMembranePlateSection with no wrapper in the model at all
+      (it is a mesh/model sanity floor for G9, so SHELLMOD cannot reach it).
+      Binaries for this measurement were the matched pre-ADR-92-merge pair; they
+      differ only in the mutation define and the six new tests touch no ADR-92
+      code, so the number stands for this family. SCALE mode NOT run (ADR-87 D2
+      requires one passing run to attach a new family; ZERO is it) — an honest
+      gap, not a claim.
+      Windows mutant builds via the new Ladruno_scripts/mutation_build.bat; the
+      CI recipe is Ubuntu-only and does not port (preset pins binaryDir).
+      FULL ZONE-A GREEN on this branch: 2143 passed, 34 skipped, 209 deselected,
+      1 xfailed, 0 failed, 0 errors (31m11s), all 15 of this feature's tests
+      included in the zone_a selection. NB the local sweep needed scipy (CMS
+      oracle, ADR-1000) and sympy (hex20 oracle, ADR-72) installed — CI installs
+      both, this machine had neither, and a single collection error aborts the
+      whole run, so no full local Zone-A was possible here before WP-91.
+      Zero vanilla behavior change —
+      every touched upstream file is registration-only.
+      See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.

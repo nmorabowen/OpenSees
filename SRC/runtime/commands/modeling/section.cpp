@@ -83,6 +83,7 @@ extern OPS_Routine OPS_Bidirectional;
 extern OPS_Routine OPS_Elliptical2;
 extern OPS_Routine OPS_ReinforcedConcreteLayeredMembraneSection; // M. J. Nunez - UChile
 extern OPS_Routine OPS_LayeredMembraneSection; // M. J. Nunez - UChile
+extern OPS_Routine OPS_LadrunoShellModifierSection; // N. Mora-Bowen (Ladruno) — ADR 91
 
 // TODO: Make OPS_Routine
 extern void *OPS_ElasticMembraneSection(); // M. J. Nunez - UChile
@@ -299,7 +300,7 @@ TclCommand_addSection(ClientData clientData, Tcl_Interp *interp,
   }
 
   else if (strcmp(argv[1], "Parallel") == 0) {
-    SectionForceDeformation *theSection = 
+    SectionForceDeformation *theSection =
                  (SectionForceDeformation*)OPS_ParallelSection(rt, argc, argv);
 
     if (theSection == nullptr || builder->addTaggedObject<SectionForceDeformation>(*theSection) < 0) {
@@ -308,6 +309,15 @@ TclCommand_addSection(ClientData clientData, Tcl_Interp *interp,
       return TCL_ERROR;
     } else
       return TCL_OK;
+  }
+
+  // Ladruno: ADR 91 — ETABS-style shell section stiffness modifiers
+  else if (strcmp(argv[1], "LadrunoShellModifier") == 0) {
+    void *theMat = OPS_LadrunoShellModifierSection(rt, argc, argv);
+    if (theMat != 0)
+      theSection = (SectionForceDeformation *)theMat;
+    else
+      return TCL_ERROR;
   }
 
   else if (strcmp(argv[1], "Bidirectional") == 0) {

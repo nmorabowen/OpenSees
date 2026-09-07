@@ -1,0 +1,33 @@
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running 8fe4f5630be5097454751f568bd423c281b8bbd0); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 8fe4f5630be5097454751f568bd423c281b8bbd0
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr92-p1-implex\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\adr92_bvp\implex_ctl
+    date                        : 2026-09-06T02:12:02
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : on, control [0.05, 0.01]
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2400 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00007 q=    3.793 ds=0.0200mm t=    1.2s
+    [h1.0_e0.6944]    50 s/B=0.00080 q=   27.227 ds=0.0800mm t=    4.6s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=62.083 kPa, w2(z=-0.625)=6.0587 m, yield 90 ele / 111.427 m3, t=10s
+    [h1.0_e0.6944]    75 s/B=0.00216 q=   64.357 ds=0.1600mm t=    9.8s
+    [h1.0_e0.6944]   100 s/B=0.00416 q=  115.530 ds=0.1600mm t=   16.1s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=138.145 kPa, w2(z=-0.625)=7.9965 m, yield 158 ele / 294.165 m3, t=19s
+    *** INADMISSIBLE: terminated in SEIZURE mode FLOOR -- q_max = 141.702 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.00496; [h1.0_e0.6944] mode=FLOOR (step collapsed to the DS_MIN floor at s/B = 0.00504 (every ladder rung failed at ds = 0.000156 mm)); ended s/B=0.00504 of target 0.250; plateau=NO / peaked=NO (tail -240.031 % of initial); free-advance=yes (800.0x floor); subdivisions 25/80; 110 steps, 75 failed, 0 relaxed, 20 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 3.94e-03
+    width: w2(z=-0.625) = 7.9965 m, w2(z=-1.375) = 7.6546 m, yielding 158 ele / 294.165 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+exit=0 02:12

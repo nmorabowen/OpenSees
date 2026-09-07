@@ -103,15 +103,20 @@ int
 LadrunoSANISAND3D::setTrialStrain(const Vector &strain_from_element)
 {
 	mEpsilon = -1.0 * strain_from_element; // -1.0 is for geotechnical sign convention
-	this->integrate();
 
-	// Ladruno (ADR-86b): the ONE line that differs from ManzariDafalias3D here.
-	// Vanilla returns a hardcoded 0, so a state determination that did not
-	// actually integrate is indistinguishable from one that did -- which is how
-	// a 34-minute ModifiedEuler seizure reached the analysis as "converged"
+	// Ladruno: the ONE line that differs from ManzariDafalias3D here.
+	//
+	// (ADR-86b) Vanilla returns a hardcoded 0, so a state determination that did
+	// not actually integrate is indistinguishable from one that did -- which is
+	// how a 34-minute ModifiedEuler seizure reached the analysis as "converged"
 	// (ADR-90 GATE U). ladrunoUpdateStatus() is 0 unless this deck asked for a
 	// substep cap AND that cap fired, so an uncapped deck is byte-identical.
-	return this->ladrunoUpdateStatus();
+	//
+	// (ADR-92 P1) ladrunoTrialUpdate() IS `integrate(); return
+	// ladrunoUpdateStatus();` in that order whenever -implex is off or the
+	// material is still on elastic stage 0, so this stays byte-identical; with
+	// -implex on past the stage flip it runs the extrapolated update instead.
+	return this->ladrunoTrialUpdate();
 }
 
 // unused trial strain functions

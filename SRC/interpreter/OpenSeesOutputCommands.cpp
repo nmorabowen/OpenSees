@@ -1612,10 +1612,18 @@ int OPS_LadrunoMutation()   // Ladruno
         {"CONTACT",   LADRUNO_MUTATE_CONTACT},
         {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
         {"SANISAND",  LADRUNO_MUTATE_SANISAND},
+        {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
     };
     const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 
-    for (int i = 0; i < 5; i++) {
+    // Ladruno: derive the count from the table. This loop was a hardcoded
+    // `i < 5`, so adding a family to the table above without also bumping the
+    // literal left the new family SILENTLY unreported -- `ladrunoMutation`
+    // would answer "none" for a genuine mutant build, which is precisely the
+    // inverted-truth failure the --expect check exists to prevent. Measured:
+    // the SHELLMOD mutant built correctly and reported none (ADR 91).
+    const int nfams = (int)(sizeof(fams) / sizeof(fams[0]));
+    for (int i = 0; i < nfams; i++) {
         if (fams[i].mode == LADRUNO_MUT_NONE)
             continue;
         if (buf[0] != '\0')

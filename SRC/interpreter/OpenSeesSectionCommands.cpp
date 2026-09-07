@@ -112,6 +112,7 @@ void* OPS_ReinforcedConcreteLayeredMembraneSection();	// M. J. Nunez - UChile
 void* OPS_LayeredMembraneSection();	// M. J. Nunez - UChile
 void* OPS_ElasticMembraneSection();	// M. J. Nunez - UChile
 void* OPS_PipeSection();
+void* OPS_LadrunoShellModifierSection();	// N. Mora-Bowen (Ladruno) — ADR 91
 
 namespace {
     static FiberSection2d* theActiveFiberSection2d = 0;
@@ -306,6 +307,7 @@ namespace {
 	functionMap.insert(std::make_pair("LMS", &OPS_LayeredMembraneSection));
 	functionMap.insert(std::make_pair("ElasticMembraneSection", &OPS_ElasticMembraneSection));
 	functionMap.insert(std::make_pair("Pipe", &OPS_PipeSection));
+	functionMap.insert(std::make_pair("LadrunoShellModifier", &OPS_LadrunoShellModifierSection)); // Ladruno: ADR 91
 
 	return 0;
     }

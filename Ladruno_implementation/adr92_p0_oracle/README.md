@@ -79,6 +79,22 @@ if they tie on accuracy, D1 stands on the zero-vanilla-footprint argument.
 `d sigma~ / d eps` to machine precision. Trivial by construction — measure it anyway, because
 it is the property the C++ must not lose when it reads `G`, `K` off the trial stress.
 
+**GE — does correcting the FLOW DIRECTION fix the corner error?** (LANE E, added
+2026-09-06 on the owner's question.) Non-associated flow means A carries the *previous*
+step's plastic direction, and SANISAND's dilatancy `D` changes sign at phase
+transformation, so across that crossing A's extrapolated volumetric plastic strain has the
+wrong sign. Two variants are measured against A on the G2 protocol at `p0 = 100` and
+`p0 = 5 kPa`: **`implex_T`** (the memo's variant **B**) keeps A's magnitude
+`f*|d_eps_p(n)|` but takes the direction from the model's own
+`R = B n - C (n^2 - I/3) + D I/3` evaluated at the **elastic trial stress** with the
+committed internal state; **`implex_H`** (the memo's variant **C**) takes only the
+volumetric component from there. Reported per increment: the crossing step, `implexError`
+at and around it, its max over the path, the sign of the extrapolated volumetric plastic
+increment against the true one, and the numerical secant `d sigma~ / d eps` against the
+frozen `Ce(p_n)`. Results: `../_adr92_p2_direction_oracle.md`. **Note the name
+collision:** the oracle's form `"B"` is P0's *`dGamma`* variant (G1/G2/G4), which is not
+LANE E's B.
+
 ## 4. Paths
 
 | path | why |

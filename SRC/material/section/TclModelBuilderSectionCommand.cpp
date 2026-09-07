@@ -116,6 +116,7 @@ extern void *OPS_ElasticPlateSection(void);
 extern void *OPS_ReinforcedConcreteLayeredMembraneSection(void); // M. J. Nunez - UChile
 extern void *OPS_LayeredMembraneSection(void); // M. J. Nunez - UChile
 extern void *OPS_ElasticMembraneSection(void); // M. J. Nunez - UChile
+extern void *OPS_LadrunoShellModifierSection(void); // N. Mora-Bowen (Ladruno) — ADR 91
 
 int
 TclCommand_addFiberSection (ClientData clientData, Tcl_Interp *interp, int argc,
@@ -390,10 +391,19 @@ TclModelBuilderSectionCommand (ClientData clientData, Tcl_Interp *interp, int ar
 
     else if (strcmp(argv[1],"ElasticMembranePlateSection") == 0) {
       void *theMat = OPS_ElasticMembranePlateSection();
-      if (theMat != 0) 
+      if (theMat != 0)
 	theSection = (SectionForceDeformation *)theMat;
-      else 
-	return TCL_ERROR;  
+      else
+	return TCL_ERROR;
+    }
+
+    // Ladruno: ADR 91 — ETABS-style shell section stiffness modifiers
+    else if (strcmp(argv[1],"LadrunoShellModifier") == 0) {
+      void *theMat = OPS_LadrunoShellModifierSection();
+      if (theMat != 0)
+	theSection = (SectionForceDeformation *)theMat;
+      else
+	return TCL_ERROR;
     }
 
     else if (strcmp(argv[1],"PlateFiber") == 0) {

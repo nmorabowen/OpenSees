@@ -389,6 +389,8 @@
 #define SEC_TAG_LayeredMembraneSection 7702 // M. J. Nunez - UChile
 #define SEC_TAG_ElasticMembraneSection 7703 // M. J. Nunez - UChile
 
+#define SEC_TAG_LadrunoShellModifier 33000 // N. Mora-Bowen (Ladruno) — ETABS-style shell section stiffness-modifier decorator: an SPD-preserving congruence D'=S*D*S (S=diag(sqrt(f11,f22,f12,m11,m22,m12,v13,v23))) wrapped over ANY order-8 plate/shell SectionForceDeformation, plus an independent mass modifier scaling getRho() only; ADR 91 (see Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md). ladruno private band >=33000. 33000 is independently reused in the NUMBERER_TAG, RECORDER_TAGS and INTEGRATOR_TAGS registries (and elsewhere) — different registries, not a collision.
+
 #define SECTION_INTEGRATION_TAG_WideFlange 1
 #define SECTION_INTEGRATION_TAG_RC 2
 #define SECTION_INTEGRATION_TAG_RCT 3
