@@ -337,4 +337,29 @@ benchmark is a real footing or the idealised half-space.
   zero-increment probe on the P1 test deck (hold after a plastic history; `implexError` on the
   hold must be ≈ 0 if the committed state is consistent) is running now; Esmeralda's census,
   zero-increment hold and stress-correction-off arm follow.
+- 2026-09-07 (fork-side probes; scratchpad only) — **Hypothesis (a) REFUTED on a clean history.**
+  Zero-free-DOF confine-first deck, `stdBrick`, ds 1e-3, 30 plastic steps, zero companion cap
+  hits (max 17 572 substeps under the 20 000 cap): a tiny follow-on increment of 1e-6 / 1e-8 /
+  1e-10 gives `|Δσ|/|σ| ÷ d_eps` = 145 / 152 / 152 for `-implex`, identical for the implicit
+  twin (bit-identical committed state, expected with no free DOFs), and 145 / 146 / 146 with
+  `stressCorrection` off — the linear, on-surface signature over three decades, not the
+  O(1)-constant one. (A first attempt on the free-DOF settlement column was not evidence: a
+  `dt = 0` hold measures no `implexError` by construction, the hold moves nodes to close the
+  committed state's equilibrium gap, and that column hits the companion cap on 19/30 commits
+  even at 20 000 — three quirks rows written.) **Loose Esmeralda leg 146456** ended at s/B
+  0.0397 on budget: clean to 0.0394, then O(1) committed errors by the dozen (0.2–5.6 on ~250
+  of the last 660 rows), Q wandering 2527 → 2462 → 2554 kN over 0.0004 s/B, and the first two
+  companion cap hits at 20 000.
+  **What the arithmetic now says.** On a committed tiny step after a full one, the error is
+  `≈ f·‖Ce:Δε_p(n)‖ / ‖σ‖` with `f = dt_{n+1}/dt_n`. At 3.9e-7 after a 1e-4 step, `f ≈ 4e-3`
+  and a seat-sized `Δε_p(n) ~ 1e-3` give ~2e-3, not 1.11. An O(1) committed error at that
+  step needs either `f ≈ 1` (the committed `dt_n` lost — the `mImplexDtCommit == 0 → f = alpha`
+  fallback fired inside a refusal chain) or `‖Δε_p(n)‖ ~ 0.1–0.5` (a stale `epsPOld`, i.e. the
+  history increment became a history *total*). Both are **bookkeeping under long refusal
+  chains ending in the floor-accept branch** (`|dt| < reductionLimit·|dt0|` accepts whatever
+  the error is) — a path the clean probe never exercised (zero refusals) and the P1 battery
+  covers only for a single refusal (M10). The material at the seat is not implicated; ADR 92
+  P2 is. **Discriminator in Esmeralda's argmax census:** `implexDetail[5]` (= `f`) on rows
+  315 / 1130 / 1142 / 1290: `f ≈ 1` names the clock bookkeeping, `f ≈ 4e-3` names the
+  history term (then `pstrains` differences across the chain give `‖Δε_p(n)‖`).
 
