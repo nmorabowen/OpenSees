@@ -150,7 +150,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     int integrationScheme = 1, int tangentType = 0, int JacoType = 1,
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
-                    int maxSubsteps = 0);   // Ladruno
+                    int maxSubsteps = 0,
+                    double reversalTol = 1.0e-10);   // Ladruno ADR-92 P2-5
 
     // full constructor, classTag defaults to ND_TAG_LadrunoSANISAND.
     // Defaults of the five optional integration args match the base's
@@ -161,7 +162,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     int integrationScheme = 2, int tangentType = 2, int JacoType = 1,
                     double TolF = 1.0e-7, double TolR = 1.0e-7,
                     double Presidual = 0.0, double Pmin = -1.0, int honorTolR = 0,
-                    int maxSubsteps = 0);   // Ladruno
+                    int maxSubsteps = 0,
+                    double reversalTol = 1.0e-10);   // Ladruno ADR-92 P2-5
 
     // specific-type null constructor (used by the wrappers' null constructors)
     LadrunoSANISAND(int classTag);
@@ -185,8 +187,9 @@ class LadrunoSANISAND : public ManzariDafalias
     NDMaterial *getCopy(void);
     NDMaterial *getCopy(const char *type);
 
-    // Base Vector(97) wire format unchanged; one extra Vector(25) follows it
-    // (Vector(4) at ADR-86, 5 at ADR-86b, 22 at ADR-92 P1, 25 at ADR-92 P2).
+    // Base Vector(97) wire format unchanged; one extra Vector(26) follows it
+    // (Vector(4) at ADR-86, 5 at ADR-86b, 22 at ADR-92 P1, 25 at ADR-92 P2,
+    // 26 at ADR-92 P2-5).
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -275,6 +278,20 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          two-name convention as mHonorTolR above: this
                               //          is the request, mMaxSubstepsInME is the
                               //          base-side seam it acts on.
+
+    // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
+    // ManzariDafalias::integrate()'s unconditional loading-reversal reset
+    // (mAlpha_in := mAlpha_n on a sign test with no magnitude guard,
+    // ManzariDafalias.cpp:1002-1013) is undone by
+    // ladrunoGuardReversalNoise(). Measured on Esmeralda 146458: on a
+    // zero-increment step (a `LoadControl 0.0` hold) the Gauss-point strain
+    // increment is round-off (1e-12..1e-16), its sign is noise, and the
+    // "reversal" it triggers commits at 28-54% of 34,560 points, sending the
+    // plastic modulus h ~ 1/|(alpha - alpha_in):n| toward infinity.
+    // Default 1.0e-10 (absolute strain); 0 disables the guard. Applies
+    // unconditionally -- with -implex OFF exactly as with it ON -- because
+    // the defect lives in the base's integrate(), not in ADR-92's own code.
+    double mReversalTol;      // Ladruno ADR-92 P2-5
 
     // =======================================================================
     //  Ladruno (ADR-92 P1): IMPL-EX state.
@@ -380,6 +397,14 @@ class LadrunoSANISAND : public ManzariDafalias
     // undo the implicit return it just ran before handing the element the
     // extrapolated state.
     void ladrunoRestoreTrialFromCommitted(void);   // Ladruno (ADR-92 P1)
+
+    // Ladruno ADR-92 P2-5: undoes ManzariDafalias::integrate()'s
+    // loading-reversal reset when the strain increment that triggered it was
+    // round-off noise, not a real reversal. Call AFTER integrate() (or the
+    // -implexControl probe's own call to it) returns, while mEpsilon /
+    // mEpsilon_n still hold the increment integrate() just read. See the
+    // mReversalTol member comment for the defect this repairs.
+    void ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5
 
     // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
     // definition. `epsRef` is the strain the denominator is scaled by: the P0
