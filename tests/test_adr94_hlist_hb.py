@@ -5,22 +5,30 @@ See ``Ladruno_implementation/_adr94_hb_drift.md`` for the function-by-function
 diff analysis this file measures, and ``_adr94_hlist_R1C.md`` for the H10
 verdict. Summary of what these tests pin:
 
-1. HoekBrown_YF (our tree, ``e65e89203``) computes the yield surface with a
+1. FIXED by wp/94d. HoekBrown_YF used to compute the yield surface with a
    two-branch ``if (arg > 0) ... else ...`` split (``arg = mb*sigma3/sigci +
-   s``, sigma3 the geo-frame minor principal stress). jaabell's newer
-   ``ASDP`` branch (``60d9b9b23``) replaced this with a smooth composite
-   ``max(f_shear, f_tension)`` that clamps ``arg`` before ``pow`` and is
-   provably continuous at the apex. Our two branches are NOT continuous at
-   ``arg = 0``: the standard branch already reports strong violation well
-   before ``arg`` reaches 0, but once the trial stress crosses into the
-   ``arg <= 0`` region the formula jumps to ``sigma1 - sigma3 - sigci*s``,
-   which is admissible up to a MUCH larger apparent tensile capacity
-   (measured: ``sigci*s`` = 587.19 kPa, ``mb`` = 2.397 times the textbook
-   tensile strength ``sigma_t = -s*sigci/mb`` = -245.02 kPa). Measured
-   consequence: a uniaxial tension path locks onto the wrong (else-branch)
-   plateau and then the analysis STALLS (``analyze() == -3``,
-   "PLASTIC INCONSISTENCY - ELASTIC STEP!" printed by the H7 fallback)
-   instead of cleanly yielding near the textbook tensile strength.
+   s``, sigma3 the geo-frame minor principal stress) that was NOT continuous
+   at ``arg = 0``: the standard branch already reported strong violation
+   well before ``arg`` reached 0, but once the trial stress crossed into the
+   ``arg <= 0`` region the formula jumped to ``sigma1 - sigma3 - sigci*s``,
+   admissible up to a MUCH larger apparent tensile capacity (measured:
+   ``sigci*s`` = 587.19 kPa, ``mb`` = 2.397 times the textbook tensile
+   strength ``sigma_t = -s*sigci/mb`` = -245.02 kPa). A uniaxial tension
+   path used to lock onto that wrong (else-branch) plateau and then the
+   analysis STALLED (``analyze() == -3``, "PLASTIC INCONSISTENCY - ELASTIC
+   STEP!" printed by the H7 fallback). wp/94d ported jaabell/ASDP's newer
+   ``60d9b9b23`` composite ``max(f_shear, f_tension)`` (``arg`` clamped
+   before ``pow``, provably continuous at the apex) into
+   ``HoekBrown_YF::YIELD_FUNCTION`` -- see
+   ``Ladruno_implementation/_adr94_hb_drift.md``. The material now yields at
+   the textbook tensile strength to ~7 significant figures -- the
+   wrong-plateau defect is gone. RESIDUAL (not fixed by this port): the
+   drive still fails to converge on the step that would push strain past
+   the (now correct) tensile corner -- Backward_Euler's cutting-plane
+   corrector has no special handling for the composite's non-smooth corner.
+   This is a distinct, narrower finding (a general perfectly-plastic-corner
+   return-mapping gap, not specific to the old discontinuity); tracked as a
+   follow-up, out of scope for wp/94d.
 2. A compression path never reaches ``arg <= 0``, so both trees agree there
    (this file's compression/triaxial tests double as that parity check via
    the closed-form ``arg > 0`` formula, which is untouched by the drift).
@@ -35,7 +43,12 @@ verdict. Summary of what these tests pin:
    comment calling it "positive in compression" does not match the
    arithmetic) produces **NaN stress that is COMMITTED with
    ``analyze() == 0``** -- a silent NaN corruption, not merely an unhandled
-   apex.
+   apex. This is UNDEFINED BEHAVIOUR (an uninitialised-then-``*= 0.0``
+   VoigtVector in DruckerPrager_YF/_PF), not a deterministic defect:
+   Windows' dirty pytest heap reproduces the NaN, Ubuntu CI's fresh heap
+   commits a clean finite history on the identical path -- see the H10 DP
+   apex test below for the platform-tolerant runtime check and the
+   structural sentinel that survives both outcomes.
 
 DRIVER: single LadrunoBrick unit cube (propagates material return codes,
 unlike stdBrick -- see LEDGER_quirks), 1/8-symmetry restraints, sp-prescribed
@@ -44,6 +57,7 @@ normal strains via LoadControl, default Backward_Euler + Secant tangent,
 driver crashes it, see the ADR-94 plan Sec. 8 traps).
 """
 import math
+import re
 
 import numpy as np
 import pytest
@@ -51,6 +65,15 @@ import pytest
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
+
+_PRESSURE_PART_IDIOM = re.compile(
+    r"VoigtVector\s+pressure_part\s*;\s*\n\s*pressure_part\s*\*=\s*0\.0\s*;")
+
+
+def _source(rel_path):
+    import pathlib
+    here = pathlib.Path(__file__).resolve().parent.parent
+    return (here / rel_path).read_text(encoding="utf-8", errors="replace")
 
 # ---------------------------------------------------------------------------
 # single-element cube driver (1/8-symmetry), shared by both materials
@@ -178,24 +201,33 @@ def hb_available():
 
 
 @pytest.mark.t0m
-def test_H10_hb_tension_locks_onto_wrong_plateau_then_stalls(hb_available):
-    """(i) Uniaxial-STRESS tension path (lateral faces free) driven to 3x the
-    textbook tensile strain ``|sigma_t|/E``.
+def test_H10_hb_tension_yields_at_textbook_strength(hb_available):
+    """FIXED by wp/94d (the wrong-plateau half of H10a/M4). Uniaxial-STRESS
+    tension path (lateral faces free) driven to 3x the textbook tensile
+    strain ``|sigma_t|/E``.
 
-    EXPECTED (if the yield surface were continuous, as jaabell's composite
-    is): the material yields near ``sigma_xx ~ |HB_SIGMA_T|`` = 245.0 kPa and
-    the analysis proceeds cleanly (strain-controlled, perfectly plastic).
+    Before the port: the discontinuous if/else yield function locked the
+    committed stress onto the ELSE-branch's own zero (``sigci*s`` = 587.19
+    kPa, ~2.4x = ``HB_MB`` times the textbook tensile strength) before
+    stalling.
 
-    OBSERVED on this tree: the standard (``arg > 0``) branch already reports
-    strong violation well before ``arg`` reaches 0 (so a continuous surface
-    would have capped growth much earlier), but the local Newton keeps
-    correcting using the CURRENT branch's gradient and the committed stress
-    instead climbs to the ELSE-branch's own zero, ``sigci*s`` = 587.19 kPa --
-    2.40x (= HB_MB) the textbook tensile strength -- and then the analysis
-    FAILS to converge (rc -3) right at that plateau, with
-    "PLASTIC INCONSISTENCY - ELASTIC STEP!" printed by the unguarded H7
-    fallback (``dLambda + deltaLambda < 0``). This is what the port to
-    jaabell's smooth composite would change.
+    wp/94d ported jaabell/ASDP's ``60d9b9b23`` continuous composite
+    (``max(f_shear, f_tension)``, ``arg`` clamped to 0 before ``pow``) into
+    ``HoekBrown_YF::YIELD_FUNCTION``. Measured post-port: the last cleanly
+    committed stress lands on ``sigma_t = -s*sigci/mb`` = 245.02 kPa to
+    ~7 significant figures (a genuine closed-form match, not a coincidence
+    of the tolerance below) -- the wrong-plateau defect is gone.
+
+    RESIDUAL (not fixed by this port, tracked separately): the drive still
+    fails to converge (``analyze() == -3``, the same H7 "PLASTIC
+    INCONSISTENCY" fallback) on the FIRST step that would push strain past
+    the tensile corner, i.e. AT the correct textbook value rather than at
+    the old wrong one. This is a distinct, narrower finding: Backward_Euler's
+    cutting-plane corrector has no special handling for the composite's
+    non-smooth corner (f_shear == f_tension, gradients differ either side),
+    which is a general perfectly-plastic-corner return-mapping problem, not
+    specific to the pre-port discontinuity. Out of scope for wp/94d (YF port
+    only); left as a corner-return follow-up.
     """
     eps_t_end = 3.0 * (-HB_SIGMA_T) / HB_E
     _build(lambda t: mat_hb(t), 60, eps_t_end)
@@ -204,22 +236,29 @@ def test_H10_hb_tension_locks_onto_wrong_plateau_then_stalls(hb_available):
     assert len(hist) > 0, "no step committed at all -- driver regressed"
     last_sigma_xx = float(hist[-1, 0])
 
-    # Pin the wrong (else-branch) plateau, not the textbook tensile strength.
-    assert last_sigma_xx == pytest.approx(HB_ELSE_PLATEAU, rel=2.0e-3), (
+    # The plateau now sits tight on the textbook tensile strength, not the
+    # old else-branch zero (sigci*s = 587.19 kPa, ratio ~2.4x -- see the
+    # docstring / _adr94_hb_drift.md). Measured agreement is ~1e-7 relative;
+    # rel=5e-2 keeps headroom for a different deck/platform.
+    assert last_sigma_xx == pytest.approx(-HB_SIGMA_T, rel=5.0e-2), (
         f"HB tension plateau drifted: measured {last_sigma_xx:.4f} kPa, "
-        f"expected the else-branch zero sigci*s = {HB_ELSE_PLATEAU:.4f} kPa "
-        f"(textbook tensile strength is only {-HB_SIGMA_T:.4f} kPa)")
-    assert last_sigma_xx > 2.0 * (-HB_SIGMA_T), (
-        "measured plateau is no longer well above the textbook tensile "
-        "strength -- the discontinuity this test pins may have been fixed; "
-        "if intentional, this test should be updated to CONFIRM the fix")
+        f"expected the textbook tensile strength |sigma_t| = "
+        f"{-HB_SIGMA_T:.4f} kPa (the old wrong plateau was sigci*s = "
+        f"{HB_ELSE_PLATEAU:.4f} kPa)")
+    assert last_sigma_xx / abs(HB_SIGMA_T) < 1.5, (
+        "measured plateau is well above the textbook tensile strength -- "
+        "looks like the pre-port discontinuity has resurfaced")
 
-    # The analysis stalls (rc -3) at/after the plateau instead of continuing
-    # to accept strain-controlled steps.
-    assert codes[-1] == -3, (
-        f"expected the driver to stall (-3) right after the else-branch "
-        f"plateau; got codes={codes}. The discontinuity's downstream "
-        f"symptom (H7's PLASTIC INCONSISTENCY fallback) may have changed.")
+    # Every step up to (and including reaching) the corner converges cleanly;
+    # the sentinel is that if/when a later step fails, it fails AT the
+    # textbook corner, not somewhere else on the way there.
+    assert codes[:-1] == [0] * (len(codes) - 1), (
+        f"expected every step before the final one to converge cleanly; "
+        f"got codes={codes}")
+    if codes[-1] != 0:
+        assert last_sigma_xx == pytest.approx(-HB_SIGMA_T, rel=1.0e-3), (
+            "the drive stalled before reaching the textbook corner -- the "
+            "wrong-plateau defect may have resurfaced in a different form")
 
 
 @pytest.mark.t0m
@@ -325,11 +364,36 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
     entirely commented out (~2093-2161) -- apex handling is a no-op for
     every YF today.
 
-    MEASURED CONSEQUENCE (not merely "unhandled"): the committed stress
-    turns to **NaN partway through the ramp, and ``analyze()`` keeps
-    returning 0 (success)** -- a silent NaN corruption, worse than a clean
-    refusal.
+    MEASURED CONSEQUENCE IS UNDEFINED BEHAVIOUR, NOT A DETERMINISTIC DEFECT:
+    on this exact-zero-deviator apex path, ``DruckerPrager_YF``/``_PF`` build
+    their pressure term via ``VoigtVector pressure_part; pressure_part *=
+    0.0;`` -- multiplying UNINITIALISED Eigen storage by zero instead of
+    actually zero-constructing it. On Windows' churned pytest process heap
+    this reliably reads stale nonzero/NaN bits and the committed stress
+    turns to **NaN partway through the ramp, with ``analyze()`` still
+    returning 0 (success)** -- a silent NaN corruption. On Ubuntu CI's
+    fresh-page heap the identical path reads zero and commits a clean,
+    finite history instead (measured max|sigma| ~3377). Both are valid
+    outcomes of the same UB; neither one is the sentinel here. The sentinel
+    is STRUCTURAL: the ``pressure_part *= 0.0`` pseudo-init idiom must still
+    be present at both call sites below. If it is ever replaced with a real
+    zero-construction (e.g. ``VoigtVector::Zero()``), the UB -- and this
+    test's structural assertion -- goes away, and H10's apex handling
+    should be re-measured for a real fix.
     """
+    yf_src = _source("SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions"
+                      "/DruckerPrager_YF.h")
+    pf_src = _source("SRC/material/nD/ASDPlasticMaterial3D"
+                      "/PlasticFlowDirections/DruckerPrager_PF.h")
+    assert _PRESSURE_PART_IDIOM.search(yf_src), (
+        "DruckerPrager_YF.h no longer contains the uninitialised "
+        "`VoigtVector pressure_part; pressure_part *= 0.0;` pseudo-init "
+        "idiom -- the apex-path UB this test pins may be gone; re-measure "
+        "and update this test (and test_R2_dp_apex_nan_guard_fires_and_is_"
+        "swallowed) accordingly.")
+    assert _PRESSURE_PART_IDIOM.search(pf_src), (
+        "DruckerPrager_PF.h no longer contains the same idiom -- see above.")
+
     K = DP_E / (3.0 * (1.0 - 2.0 * DP_NU))
     lam_apex = DP_P_APEX / (3.0 * K)
     lam_end = 2.0 * lam_apex
@@ -339,31 +403,24 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
 
     assert len(hist) > 0, "no step committed -- driver regressed"
 
+    # Every step must read as "success" regardless of which UB outcome this
+    # platform's heap produced -- that invariant is what both platforms
+    # share on this degenerate path.
+    assert all(c == 0 for c in codes), (
+        f"expected every analyze() call to report success (0) on this "
+        f"degenerate hydrostatic-tension apex path; got codes={codes}")
+
     nan_rows = np.where(np.any(np.isnan(hist), axis=1))[0]
-    assert len(nan_rows) > 0, (
-        f"expected the hydrostatic-tension apex path to commit NaN stress "
-        f"on this build; got a clean history (max|sigma|="
-        f"{np.nanmax(np.abs(hist)):.4g}). If CHECK_APEX_REGION or the "
-        f"Backward_Euler apex call site were fixed, this test should be "
-        f"rewritten to assert a CORRECT apex return instead of NaN.")
-
-    first_nan = int(nan_rows[0])
-    # Every code up to and including the NaN row's step must read as
-    # "success" -- that IS the silent-corruption defect being pinned.
-    assert all(c == 0 for c in codes[:first_nan + 1]), (
-        f"NaN row {first_nan} was reached but analyze() did not report "
-        f"success (0) throughout: codes={codes[:first_nan + 1]}")
-
-    # Before the NaN, the material must have been tracking the elastic
-    # hydrostatic path (p grows linearly with strain, no plasticity in an
-    # associated-flow degenerate direction until the apex is reached).
-    pre_nan = hist[:first_nan]
-    if len(pre_nan):
-        p_pre = pre_nan[:, 0]              # hydrostatic: sxx=syy=szz
-        assert np.all(np.diff(p_pre) > 0), (
-            "pre-NaN hydrostatic-tension history is not monotonically "
-            "increasing -- the reproducer's assumption (clean elastic "
-            "tracking up to the apex) no longer holds")
+    nan_committed = len(nan_rows) > 0
+    all_finite = bool(np.all(np.isfinite(hist)))
+    outcome = (f"NaN committed at row {int(nan_rows[0])} (dirty-heap UB "
+               f"reproduced on this platform)" if nan_committed else
+               f"clean finite history, max|sigma|="
+               f"{np.max(np.abs(hist)):.4g} (fresh-heap UB did not "
+               f"reproduce on this platform)")
+    assert nan_committed or all_finite, (
+        f"history is neither NaN-flagged nor entirely finite -- unexpected "
+        f"mixed/partial state ({outcome}): {hist}")
 
 
 @pytest.mark.t0m

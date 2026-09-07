@@ -5903,6 +5903,7 @@ a material-level flag a recorder reads. Returning a sentinel from
 ### Eigen `*= 0.0` pseudo-initialisation recurs in the YF/PF headers — the ADR-84 constructor trap, four more times (ADR-94 B4)
 - **Bites:** `VoigtVector pressure_part; pressure_part *= 0.0;` in `DruckerPrager_YF.h:64-65` and `DruckerPrager_PF.h:68-69`; an uninitialised `VoigtVector zero;` returned by `NullHardeningTensorPolicy`; AF's saturation-branch `derivative`. `EIGEN_INITIALIZE_MATRICES_BY_ZERO` is defined nowhere in the tree, so stale non-finite heap bits survive and DP is the only YF that NaNs at its apex.
 - **Rule:** `setZero()` or `VoigtVector::Zero()`, never `*= 0`. Grep the idiom before trusting any new Eigen-backed component.
+- **Platform-dependent:** Ubuntu CI (fresh heap) commits a clean finite history on the same path; only the dirty Windows pytest heap reproduces the NaN — which is the signature of UB, not of a deterministic defect.
 
 ### `f_absolute_tol` is absolute in stress units — the unit system decides whether `strict_convergence` refuses (ADR-94 M5)
 - **Bites:** the same Mohr-Coulomb problem completes 20/20 in kPa at the default `1e-6` and is refused on step 1 in Pa. `|Phi|` scales with σy (VM), c·cosφ (MC), σci·s^a (HB, ~5 MPa at 50 MPa rock), four decades across the catalogue before units. Tightening to `1e-10` refuses both.

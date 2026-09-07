@@ -115,7 +115,7 @@ GmshRecorder hex20 output format.
 | 1.2 | Beam localAxes | response id 30 on the 10 beam classes | — |
 | 1.3 | DDM integrators | LadrunoHHT + LadrunoGeneralizedAlpha (header promotions only) | — |
 | 1.4 | Robust statics | LadrunoArcLength (Ramm + STABILIZE), DynamicRelaxation, IndirectControl, StabilizedUnbalance test | — |
-| 1.5 | ASDPlastic geomaterials | Hoek–Brown (rock) + StiffSoil shear/cap components for jaabell's ASDPlasticMaterial3D framework (10 new YF/PF/EL/hardening headers + regenerated registries, +2.9k lines, `test_HoekBrown.cpp`). His framework — coordinate directly; found unledgered by the audit | — |
+| 1.5 | ASDPlastic geomaterials | Hoek–Brown (rock) + StiffSoil shear/cap components for jaabell's ASDPlasticMaterial3D framework (10 new YF/PF/EL/hardening headers + regenerated registries, +2.9k lines, `test_HoekBrown.cpp`). His framework — coordinate directly; found unledgered by the audit. `HoekBrown_YF.h` is now realigned with `jaabell/ASDP` `60d9b9b23` (composite tension yield surface ported wp/94d, ADR-94 H10a/M4); `HoekBrown_PF.h`/`_Utils.h`/`_ParameterTypes.h` and the StiffSoil family remain unreconciled with his tree | — |
 
 ### Wave 2 — core method infrastructure (the fork's flagship)
 | # | Package | Content | Deps |
