@@ -90,7 +90,7 @@ PF / EL:
 
 ## Findings
 
-1. **CONFIRMED defect — `VonMises_YF::df_dsigma_ij` under-weights shear
+1. **REVISED (see "Convention adjudication" below) -- NOT a gradient bug** — `VonMises_YF::df_dsigma_ij` under-weights shear
    components by a factor of 2.** `operator()` computes
    `f = sqrt(Q) - ...` with `Q = tensor_dot_stress_like(dev,dev) = sum(normal^2) + 2*sum(shear^2)`
    (the "stress-like" dot product doubles shear cross-terms to recover a true
@@ -107,7 +107,7 @@ PF / EL:
    (both sides are wrong in the same way) — associativity is preserved, but
    both the yield normal and the flow direction are wrong off the pure-normal
    axis.
-2. **CONFIRMED defect — `DruckerPrager_YF::df_dsigma_ij` over-weights normal
+2. **CONFIRMED defect, convention-independent (see adjudication below)** — `DruckerPrager_YF::df_dsigma_ij` over-weights normal
    components by a factor of 2 (mirror image of #1).** Here `sqrt_J2 =
    sqrt(0.5*Q)`, so the true gradient is `d(sqrt_J2)/d(normal_i) =
    normal_i/(2*sqrt_J2)` vs. `d(sqrt_J2)/d(shear_i) = shear_i/sqrt_J2`. The
@@ -191,3 +191,52 @@ tests/test_adr94_components.py -v`).
   captured `-I` list (mirrors CMake's own glob) for reuse by any future
   standalone ASDPlasticMaterial3D header harness.
 - `tests/test_adr94_components.py` — the Zone-A CI pin described above.
+
+## Convention adjudication (coordinator-requested followup)
+
+`tensor_dot_stress_like`/`tensor_dot_strain_like` (`typedefs.h`) both double
+shear cross-terms (`v12*v12*2 + ...`) to recover a true tensor double
+contraction from raw (undoubled) Voigt storage; `tensor_dot_energy_like` is
+a plain `.dot()`. A scalar function of a symmetric tensor has two legitimate
+per-component shear derivatives: **tensor** (∂f/∂σ12, unambiguous, no
+symmetric-partner doubling) and **Voigt** (∂f/∂v12 = 2·tensor, since v12
+drives both σ12 and σ21). My central difference perturbs the single stored
+`v12`, so it measures the **Voigt** derivative unconditionally — this part of
+the original write-up was correct as a measurement, but "off by 2 = bug" was
+not adjudicated against consumption. Diagonal (normal) slots have NO such
+ambiguity (tensor = Voigt always) — any normal-component mismatch is a real,
+convention-independent bug.
+
+**Second FD mode** added to `fd_components.cpp` (`max_rel_err_smooth_tensor`
+= analytic vs. Voigt-FD-with-shear-halved): VonMises_YF now matches the
+**tensor** convention to 1.3e-8 (FD noise) — its "35% bug" is a legitimate
+convention choice, not an error. DruckerPrager_YF matches **neither**
+(0.971 vs both) — its normal-slot error is real and convention-independent,
+confirmed. MohrCoulomb/HoekBrown/StiffSoilCap/StiffSoilShear/MCTC match
+**Voigt** to ~1e-6 and tensor to ~0.65-0.71 — they use the Voigt convention.
+
+**Per-site consumption table** (`ASDPlasticMaterial3D.h`, grepped every
+`n`/`m` contraction):
+
+| Site (function, lines) | Contraction on `n^T·E·m` | Convention it requires for `n` |
+|---|---|---|
+| `ComputeTangentStiffness` (438-482) L462,476 | `n.transpose()*Eelastic*m` (plain) | Voigt |
+| `compute_local_stress` (483-585) L546 | `n.transpose()*Eelastic*m` (plain) | Voigt |
+| `Forward_Euler` (1386-1561) L1454 | `n.transpose()*Eelastic*depsilon_elpl` (plain) | Voigt |
+| `Forward_Euler_Subincrement` (1562-1721) L1636 | `n.transpose()*Eelastic*m` (plain) | Voigt |
+| `Backward_Euler` (2034-2354) L2275 | `tensor_dot_stress_like(n, Eelastic*m)` (doubled) | **Tensor** (old plain form is commented out immediately above, L2274) |
+| `Backward_Euler_LineSearch` (2359-2631) L2606 | `n.transpose()*Eelastic*m` (plain) | Voigt |
+| all integrators: `TrialPlastic_Strain += dLambda*m`, `TrialStress -= dLambda*Eelastic*m` | plain accumulation / matrix-vector | `m` must be Voigt/engineering (`Eelastic`'s shear diagonal is `mu` not `2*mu` — confirmed `LinearIsotropic3D_EL.h:59-61` — so it expects an engineering-shear strain input; OpenSees' own strain Voigt convention is engineering, per `hex8_tangent.py`'s docstring) |
+
+**Verdict, revised per family:**
+- **VonMises**: `df_dsigma_ij`/`VonMises_PF` are self-consistently **Tensor**-convention — not a gradient bug. But this is REAL and consequential in two ways: (1) 5 of 6 sites above (everything except the current `Backward_Euler`) pair `n` against `Eelastic*m` with a plain contraction that only recovers the correct scalar for Voigt-convention `n` — for VM's Tensor `n` they under-count shear's contribution to the plastic modulus/consistent tangent (only `Backward_Euler` L2275 is paired correctly for VM); (2) `m` is consumed everywhere as a direct strain-Voigt accumulator/matrix operand expecting Voigt/engineering convention, but VM's `m` is Tensor-convention — under-counts the plastic shear strain increment and its stress correction by 2x in **every** integrator, VM only.
+- **MohrCoulomb/HoekBrown/StiffSoilCap/StiffSoilShear/MohrCoulombTensionCutoff**: Voigt-convention `n`/`m` — correctly consumed by the 5 plain-dot sites and by the `m`-accumulation logic. **The current `Backward_Euler`'s L2275 doubled contraction is therefore backwards for this family** — it over-counts shear's contribution to the plastic modulus for MC/HB/StiffSoil/MCTC, the opposite failure mode from VM. This one line cannot be correct for both conventions at once.
+- **DruckerPrager**: independent of the above — a genuine, convention-blind 2x error confined to the normal (diagonal) `df_dsigma_ij` components (matches neither Tensor nor Voigt FD). Stands as reported.
+
+**Runtime probe**: attempted a simple-shear `stdBrick`+VM cube (lateral load,
+zero normal load, `Backward_Euler`+`Continuum`) per the coordinator's ask;
+the rig did not reach a clean converged plastic state within the time
+available (Newton stalled partway into the load ramp on this loading path —
+a separate, unexplained convergence issue, not investigated further here).
+The analytic FD-vs-both-conventions comparison above is exact and does not
+depend on this probe; it is the decisive evidence.

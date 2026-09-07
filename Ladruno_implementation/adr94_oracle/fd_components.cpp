@@ -113,10 +113,22 @@ struct YFResult
     int n_points = 0;
     int n_nonfinite_f = 0;
     int n_nonfinite_df = 0;
-    double max_rel_err_smooth = 0.0;   // random + Lode-edge points only
+    // "voigt" = analytic vs the RAW central difference (perturbing the six
+    // independent Voigt slots this object actually stores -- unambiguous
+    // ground truth for d f(v)/dv_i).
+    double max_rel_err_smooth = 0.0;
     VoigtVector worst_point_smooth;
-    double max_rel_err_singular = 0.0; // apex/hydrostatic + J2->0 points
+    double max_rel_err_singular = 0.0;
     VoigtVector worst_point_singular;
+    // "tensor" = analytic vs the SAME central difference with its three
+    // shear slots (indices 3,4,5 = xy,yz,xz) halved. This is not a separate
+    // measurement -- it is the fixed identity d/dv12 = d/ds12 + d/ds21 =
+    // 2*(tensor derivative) for any scalar function of a symmetric tensor,
+    // so tensor_fd = voigt_fd with shear halved, always. Comparing analytic
+    // against BOTH tells us which convention df_dsigma_ij actually returns
+    // (coordinator-requested convention adjudication, ADR-94 R3a followup).
+    double max_rel_err_smooth_tensor = 0.0;
+    VoigtVector worst_point_smooth_tensor;
     double h_used = 0.0;
 };
 
@@ -152,12 +164,21 @@ YFResult check_yf(const std::string& name, const YF& yf, const IVS& ivs, const P
             continue;
         }
 
+        VoigtVector fd_tensor = fd;
+        fd_tensor(3) *= 0.5; fd_tensor(4) *= 0.5; fd_tensor(5) *= 0.5;
+
         double num = (analytic - fd).norm();
         double den = std::max(fd.norm(), 1e-8);
         double rel = num / den;
+
+        double num_t = (analytic - fd_tensor).norm();
+        double den_t = std::max(fd_tensor.norm(), 1e-8);
+        double rel_t = num_t / den_t;
+
         if (ts.category == "smooth")
         {
             if (rel > r.max_rel_err_smooth) { r.max_rel_err_smooth = rel; r.worst_point_smooth = sigma; }
+            if (rel_t > r.max_rel_err_smooth_tensor) { r.max_rel_err_smooth_tensor = rel_t; r.worst_point_smooth_tensor = sigma; }
         }
         else
         {
@@ -166,6 +187,7 @@ YFResult check_yf(const std::string& name, const YF& yf, const IVS& ivs, const P
     }
     return r;
 }
+
 
 // ---------------------------------------------------------------------
 // PF checker: finiteness (+ optional equality to a reference normal)
@@ -239,6 +261,7 @@ static void print_yf(const YFResult& r)
 {
     cout << left << setw(30) << r.name
          << " max_rel_err(smooth)=" << scientific << setprecision(3) << r.max_rel_err_smooth
+         << "  vs_tensor(smooth)=" << scientific << setprecision(3) << r.max_rel_err_smooth_tensor
          << "  max_rel_err(singular)=" << r.max_rel_err_singular
          << "  nonfinite(f)=" << r.n_nonfinite_f
          << "  nonfinite(df)=" << r.n_nonfinite_df
