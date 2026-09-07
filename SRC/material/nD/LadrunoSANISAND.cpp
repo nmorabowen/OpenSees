@@ -1093,6 +1093,13 @@ LadrunoSANISAND::getCopy(const char *type)
         // this class's file scope), so it is copied here, on the same rule as
         // the IMPL-EX option set just above.
         clone->mReversalTol = mReversalTol;                                           // Ladruno ADR-92 P2-5
+        // Ladruno ADR-92 P2-5b: same rule as mReversalTol just above (the deck's
+        // request); mDEpsNormCommit is 0.0 on "this" (the prototype is never
+        // stepped), so this is a no-op that leaves the fresh Gauss point at 0.0,
+        // exactly the "fresh integration point starts with no history" rule the
+        // d_eps_p comment above states.
+        clone->mReversalRel     = mReversalRel;                                      // Ladruno ADR-92 P2-5b
+        clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1102,6 +1109,8 @@ LadrunoSANISAND::getCopy(const char *type)
                        mPresidualInput, mPminInput, mHonorTolR, mMaxSubsteps);        // Ladruno
         clone->setLadrunoImplexOptions(mImplexOpt, false);                            // Ladruno (ADR-92 P1)
         clone->mReversalTol = mReversalTol;                                           // Ladruno ADR-92 P2-5
+        clone->mReversalRel     = mReversalRel;                                      // Ladruno ADR-92 P2-5b
+        clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1322,6 +1331,12 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // Ladruno ADR-92 P2-5
     mReversalTol = ladrunoData(25);
 
+    // Ladruno ADR-92 P2-5b: set AFTER ladrunoImplexInitState() (called above,
+    // inside the opt block) zeroed mDEpsNormCommit -- same ordering the other
+    // history fields (mImplexDt etc.) already use.
+    mReversalRel    = ladrunoData(27);
+    mDEpsNormCommit = ladrunoData(28);
+
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
     this->applyLadrunoConstants();                                                    // Ladruno
@@ -1539,6 +1554,12 @@ LadrunoSANISAND::ladrunoImplexInitState(void)
     mImplexErrorVol   = 0.0;
     mImplexClampFired = false;
     mImplexClampCount = 0;
+
+    // Ladruno ADR-92 P2-5b: revertToStart puts the material back at step 0, so
+    // the relative reversal-noise threshold's reference goes with it -- a
+    // scale carried over from a discarded load path is exactly as misleading
+    // as d_eps_p(n) would be (see the comment just above).
+    mDEpsNormCommit = 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1881,7 +1902,7 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 }
 
 // ---------------------------------------------------------------------------
-//  Ladruno ADR-92 P2-5: the loading-reversal noise guard.
+//  Ladruno ADR-92 P2-5 / P2-5b: the loading-reversal noise guard.
 //
 //  ManzariDafalias::integrate() (ManzariDafalias.cpp:1002-1013) always
 //  resolves mAlpha_in from the SIGN of
@@ -1907,10 +1928,30 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  ladrunoImplexTrial() (W6) skips integrate() entirely on such a step and is
 //  therefore affected less; the implicit path is affected in full.
 //
+//  P2-5B: A FIXED ABSOLUTE THRESHOLD CANNOT WORK ALONE. Esmeralda's R3
+//  footing census (1600 GPs, LoadControl 0.0 hold) measured the per-point
+//  strain increment at median ~4e-9, max 6.4e-8 (IMPL-EX) / 1.4e-6
+//  (implicit) -- Newton-tolerance scale, not machine round-off -- so
+//  reversalTol's default 1e-10 caught only a fraction of them (resets at
+//  42% IMPL-EX / 9.5% implicit of the points), and even 1e-7 still left the
+//  implicit arm at 2.2%. The noise floor tracks the SOLVER tolerance, which
+//  varies with depth and confinement, so no single absolute number can
+//  bound it everywhere: a bare -reversalTol 1e-7 was separately measured to
+//  fire the guard ~10k point-calls on an ORDINARY 1e-4 m step of a 34k-point
+//  deck (deep points whose genuine increment is itself tiny) -- harmless by
+//  itself, but the wrong knob. mReversalRel adds a SECOND threshold scaled
+//  off mDEpsNormCommit, the norm of the last COMMITTED strain increment: a
+//  hold's increment is <= 1e-2 of a real step's, a genuine reversal step is
+//  ~1x it, a halved retry is 0.5x, so reversalRel = 0.05 separates a hold
+//  from either with margin while reversalTol stays at its tiny absolute
+//  default (round-off only). The combined predicate is
+//
+//      ||d_eps|| < max(reversalTol, reversalRel * mDEpsNormCommit)
+//
 //  Call this AFTER integrate() (or the -implexControl probe's own call to
 //  it, ladrunoImplexTrial()) returns, while mEpsilon / mEpsilon_n still hold
-//  the increment integrate() just read. If its norm is below mReversalTol,
-//  the reset is undone -- mAlpha_in is put back on the COMMITTED
+//  the increment integrate() just read. If its norm is below the combined
+//  threshold, the reset is undone -- mAlpha_in is put back on the COMMITTED
 //  mAlpha_in_n, exactly what the no-reversal branch above would have done.
 //  This is safe unconditionally: on the no-reversal branch mAlpha_in already
 //  equals mAlpha_in_n, so the assignment is a no-op; on the reversal branch
@@ -1918,27 +1959,45 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  an increment (sigma~ = sigma_n to machine precision either way), so there
 //  is nothing else to put back.
 //
-//  GetNorm_Cov, not GetNorm_Contr: mEpsilon is a strain (covariant,
-//  engineering-shear-component) quantity, not a stress -- see the base's own
-//  comments at ManzariDafalias.cpp:5279-5299 ("computes covariant
-//  (strain-like) norm" vs "contravariant (stress-like) norm").
+//  GetNorm_Cov, not GetNorm_Contr, for BOTH the trial increment and
+//  mDEpsNormCommit: mEpsilon is a strain (covariant, engineering-shear-
+//  component) quantity, not a stress -- see the base's own comments at
+//  ManzariDafalias.cpp:5279-5299 ("computes covariant (strain-like) norm" vs
+//  "contravariant (stress-like) norm"). Mixing norm conventions between the
+//  two sides of the comparison would scale the ratio by the engineering-
+//  shear factor wherever shear dominates the increment, which is exactly
+//  the kind of silent unit mismatch this guard exists to avoid elsewhere.
 //
-//  mReversalTol == 0 disables the guard outright (the deck's own opt-out).
+//  reversalTol == 0 AND reversalRel == 0 disables the guard outright (the
+//  deck's own opt-out); reversalRel == 0 alone recovers P2-5's pure
+//  absolute test exactly.
+//
+//  RETURN VALUE (P2-5b): true when this call classified the increment as
+//  noise (whether or not it actually changed mAlpha_in -- see the no-op
+//  case above) and therefore undid the reset. ladrunoImplexCommit() reads
+//  this to gate the P2-2 reversal/softening detection at commit with the
+//  SAME criterion (see the note there); the two trial-time call sites
+//  discard it.
 // ---------------------------------------------------------------------------
-void
+bool
 LadrunoSANISAND::ladrunoGuardReversalNoise(void)
 {
-    if (mReversalTol <= 0.0)
-        return;
+    if (mReversalTol <= 0.0 && mReversalRel <= 0.0)
+        return false;
 
     Vector dEps(6);
     dEps = mEpsilon;
     dEps.addVector(1.0, mEpsilon_n, -1.0);
 
-    if (this->GetNorm_Cov(dEps) < mReversalTol) {
+    const double relPart   = mReversalRel * mDEpsNormCommit;   // Ladruno ADR-92 P2-5b
+    const double threshold = (relPart > mReversalTol) ? relPart : mReversalTol;
+
+    if (this->GetNorm_Cov(dEps) < threshold) {
         mAlpha_in = mAlpha_in_n;
         LadrunoImplexGlobals::instance().noteReversalNoiseGuard();
+        return true;
     }
+    return false;
 }
 
 // Ce(p_n) into all three tangent slots.
@@ -2617,7 +2676,27 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     this->integrate();
     // Ladruno ADR-92 P2-5: BEFORE ManzariDafalias::commitState() (below) bakes
     // a noise-triggered "reversal" into mAlpha_in_n for good.
-    this->ladrunoGuardReversalNoise();
+    //
+    // Ladruno ADR-92 P2-5b: the return value is kept -- it says whether THIS
+    // commit's own increment was itself classified as noise, which is read
+    // below to gate the P2-2 reversal/softening detection with the same
+    // criterion (Esmeralda 146580: without this, a noise-sized commit still
+    // read Kp / alpha_in as a genuine signal even though the alpha_in RESET
+    // itself was correctly suppressed, so the guard armed f = 0 for the next
+    // step anyway -- the tangent jump after a hold was carried by the P2-2
+    // guard, not by alpha_in).
+    const bool reversalNoiseGuardFired = this->ladrunoGuardReversalNoise();
+
+    // Ladruno ADR-92 P2-5b: the norm of the strain increment THIS commit is
+    // about to bake in, captured NOW while mEpsilon / mEpsilon_n still hold
+    // the trial / OLD-committed pair (same convention as the guard call
+    // above -- ManzariDafalias::commitState() below overwrites mEpsilon_n).
+    // Used after implexHold is known (P2-3), further down, to update
+    // mDEpsNormCommit hold-safely.
+    Vector dEpsThisCommit(6);
+    dEpsThisCommit = mEpsilon;
+    dEpsThisCommit.addVector(1.0, mEpsilon_n, -1.0);
+    const double dEpsNormThisCommit = this->GetNorm_Cov(dEpsThisCommit);
 
     // Ladruno ADR-92 fix (red/blue B3, contract item 3): the commit-time
     // companion refusal used to EARLY-RETURN here. It was dead code twice over --
@@ -2716,6 +2795,11 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     const bool implexHold = (mImplexDt == 0.0);   // Ladruno ADR-92 P2-3
     if (implexHold) {
         LadrunoImplexGlobals::instance().noteHoldPreserved();
+        // Ladruno ADR-92 P2-5b: mDEpsNormCommit stays at its PRE-hold value
+        // too -- same reasoning as mImplexDtCommit / mImplexDEpsP just above:
+        // storing a hold's (near-)zero increment as the reference would make
+        // the NEXT step's relative threshold collapse toward zero, silently
+        // re-arming the absolute-only failure mode P2-5b exists to fix.
     } else {
         // W3: the one new history variable, d_eps_p(n+1) = eps_p(n+1) - eps_p(n).
         // After the base commit, mEpsilon_n / mEpsilonE_n are the NEW committed pair.
@@ -2724,6 +2808,10 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
         mImplexDEpsP.addVector(1.0, epsPOld,     -1.0);
 
         mImplexDtCommit = mImplexDt;
+
+        // Ladruno ADR-92 P2-5b: the committed reference the NEXT step's
+        // relative reversal-noise threshold reads.
+        mDEpsNormCommit = dEpsNormThisCommit;
     }
 
     // Ladruno ADR-92 P2-2: ARM the guard for the next step from the state this
@@ -2739,21 +2827,39 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // Evaluated only when -implexGuard is on, so a deck that turns it off pays
     // nothing for the extra GetStateDependent() call. Ladruno ADR-92 P2-2b:
     // AND only when guardPrimed -- see the note at its declaration above.
-    mImplexGuardReversal  = false;
-    mImplexGuardSoftening = false;
-    if (mImplexOpt.guard && guardPrimed) {
-        Vector dAlphaIn(6);
-        dAlphaIn = mAlpha_in_n;
-        dAlphaIn.addVector(1.0, alphaInOld, -1.0);
-        // Contravariant, because alpha_in is a stress-RATIO tensor (the same norm
-        // the error measure uses on stress). Any positive-definite norm answers
-        // "did it move", since the base's commit assigns mAlpha_in_n = mAlpha_in
-        // exactly; the convention is picked to be right rather than merely
-        // sufficient.
-        mImplexGuardReversal  = (this->GetNorm_Contr(dAlphaIn) > 0.0);
-        mImplexGuardSoftening = (this->ladrunoImplexCommittedKp() <= 0.0);
+    //
+    // Ladruno ADR-92 P2-5b: AND only when this commit's own increment was NOT
+    // itself classified as noise (reversalNoiseGuardFired) and was not a
+    // literal hold (implexHold). Esmeralda 146580: -reversalTol 1e-7 cut the
+    // alpha_in resets 1702 -> 290 but the post-hold tangent jump stayed
+    // ~1.9x, because dAlphaIn / Kp at commit read the SAME noise the alpha_in
+    // restore just suppressed -- Kp on a near-zero increment (or a literal
+    // zero one) is not a measurement of the branch d_eps_p(n) belongs to, any
+    // more than d_eps_p(n) itself is (P2-2b) or the clock is (P2-3). On such
+    // a commit, LEAVE mImplexGuardReversal / mImplexGuardSoftening /
+    // mImplexGuardArmed exactly as the PREVIOUS commit set them -- not reset
+    // to false, so a genuine flag armed the step before a hold SURVIVES the
+    // hold, and not recomputed from noise either.
+    const bool guardSkipThisCommit = reversalNoiseGuardFired || implexHold;   // Ladruno ADR-92 P2-5b
+    if (!guardSkipThisCommit) {
+        mImplexGuardReversal  = false;
+        mImplexGuardSoftening = false;
+        if (mImplexOpt.guard && guardPrimed) {
+            Vector dAlphaIn(6);
+            dAlphaIn = mAlpha_in_n;
+            dAlphaIn.addVector(1.0, alphaInOld, -1.0);
+            // Contravariant, because alpha_in is a stress-RATIO tensor (the same norm
+            // the error measure uses on stress). Any positive-definite norm answers
+            // "did it move", since the base's commit assigns mAlpha_in_n = mAlpha_in
+            // exactly; the convention is picked to be right rather than merely
+            // sufficient.
+            mImplexGuardReversal  = (this->GetNorm_Contr(dAlphaIn) > 0.0);
+            mImplexGuardSoftening = (this->ladrunoImplexCommittedKp() <= 0.0);
+        }
+        mImplexGuardArmed = (mImplexGuardReversal || mImplexGuardSoftening);
     }
-    mImplexGuardArmed = (mImplexGuardReversal || mImplexGuardSoftening);
+    // else: mImplexGuardReversal / mImplexGuardSoftening / mImplexGuardArmed
+    // are left untouched -- see the P2-5b note above.
 
     mImplexStepArmed = true;
     mImplexTrialDone = false;
@@ -2789,8 +2895,30 @@ LadrunoSANISAND::commitState(void)
 {
     // mImplexTrialDone is false with -implex off AND on stage 0, so gravity and
     // the LoadControl 0.0 hold take the base path verbatim.
-    if (!mImplexTrialDone)
+    if (!mImplexTrialDone) {
+        // Ladruno ADR-92 P2-5b: mDEpsNormCommit is read by
+        // ladrunoGuardReversalNoise()'s relative threshold with -implex OFF
+        // exactly as with it ON (the guard is not an -implex option -- see
+        // the parser comment), so it has to be maintained on THIS, the plain
+        // implicit commit path, too -- not only inside ladrunoImplexCommit().
+        // Captured while mEpsilon / mEpsilon_n still hold the trial /
+        // OLD-committed pair, i.e. BEFORE ManzariDafalias::commitState()
+        // below overwrites mEpsilon_n.
+        //
+        // Hold-safe on ops_Dt == 0.0, composing with the same intent P2-3
+        // uses for mImplexDtCommit: mImplexDt itself is NOT tracked on this
+        // path (ladrunoImplexArmStep() is reached only through
+        // ladrunoImplexTrial(), which this path never calls), but ops_Dt is
+        // the same pseudo-time source DT_PSEUDO reads and is a domain-wide
+        // signal available regardless of -implex.
+        if (ops_Dt != 0.0) {
+            Vector dEpsCommit(6);
+            dEpsCommit = mEpsilon;
+            dEpsCommit.addVector(1.0, mEpsilon_n, -1.0);
+            mDEpsNormCommit = this->GetNorm_Cov(dEpsCommit);
+        }
         return ManzariDafalias::commitState();
+    }
 
     return this->ladrunoImplexCommit();
 }
@@ -3178,6 +3306,15 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
       << (mReversalTol == 0.0 ? "  (DISABLED)"
                               : "  (undoes integrate()'s loading-reversal reset on a"
                                 " round-off strain increment; see `implexGuards`[3])") << endln;
+    // Ladruno ADR-92 P2-5b: the relative half of the same guard, echoed on the
+    // same unconditional rule.
+    s << "  reversalRel = " << mReversalRel;
+    if (mReversalRel == 0.0)
+        s << "  (relative part DISABLED; reversalTol's absolute test only)" << endln;
+    else
+        s << "  (2nd threshold = reversalRel * ||last committed d_eps|| = "
+          << (mReversalRel * mDEpsNormCommit)
+          << "; see `implexGuards`[3])" << endln;
     // Ladruno (ADR-86b): the substep cap and the state it left behind.
     s << "  maxSubsteps = " << mMaxSubsteps
       << (mMaxSubsteps == 0 ? "  (UNCAPPED = vanilla; ModifiedEuler is bounded only by"

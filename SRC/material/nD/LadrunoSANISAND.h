@@ -452,7 +452,12 @@ class LadrunoSANISAND : public ManzariDafalias
     // mEpsilon_n still hold the increment integrate() just read. See the
     // mReversalTol / mReversalRel member comments for the defect this repairs
     // and the relative threshold P2-5b added.
-    void ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b
+    //
+    // Returns true when this call classified mEpsilon - mEpsilon_n as noise
+    // (below the combined threshold) and therefore undid the reset -- read by
+    // ladrunoImplexCommit() to gate the P2-2 reversal/softening detection at
+    // commit with the SAME criterion; the trial-time call sites discard it.
+    bool ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b
 
     // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
     // definition. `epsRef` is the strain the denominator is scaled by: the P0
