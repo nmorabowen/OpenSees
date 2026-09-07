@@ -5920,3 +5920,45 @@ a material-level flag a recorder reads. Returning a sentinel from
 ### `TenNodeTetrahedron::eleResponse` self-heals from nodal trial displacement on every query
 - **Bites:** "stresses"/"forces"/"material" responses always re-derive strain from the CURRENT nodal trial displacement and re-run the material, so a material-level Trial-state corruption (e.g. ASDP's no-op `revertToLastCommit`) is invisible through any eleResponse path after a domain-level revert; `ops.reset()` then reports a third stress value that is neither zero nor the pre-reset commit.
 - **Rule:** to observe raw material Trial/Commit state after a revert, use a source-level structural pin or a recorder that reads the material directly; do not conclude "fixed" from a tet eleResponse.
+
+## `FE_Element::setID()` is greedy: it copies EVERY equation of every DOF_Group (ADR-96)
+
+`SRC/analysis/fe_ele/FE_Element.cpp` `setID()` walks `myDOF_Groups`, copies each
+group's full `getID()` into `myID` and returns `-3` the moment it runs past `numDOF`
+— leaving a half-filled map behind. A handler-level adapter with a fixed
+per-node slot count (the contact `LadrunoContactFE`, `3·(1+n_ps)`) therefore
+cannot connect an ndf-4 (`LadrunoUP`) or ndf-6 node through the base method: the
+pressure/rotation equation lands in a translation slot. `numDOF` and `theModel`
+are **private** in `FE_Element`, so an override must size itself from
+`myID.Size()` and reach the groups through `Node::getDOF_GroupPtr()`. Fix pattern:
+`LadrunoContactFE::setID()` (ADR-96). Domain elements do not hit this because
+`FE_Element(ele)` sizes `numDOF` from `ele->getNumDOF()` — which is why a
+mixed-ndf `ZeroLength` has to REPORT the element size (`dofNd1 + dofNd2`) and
+scatter its core, not just relax its count check.
+
+## `ZeroLength::numDOF` is the element size everywhere, not a "count check" (ADR-96)
+
+`setDomain()` dispatches `numDOF`/`elemType` on `(dimension, ndf)` pairs and
+every accessor, the `t1d` transformation, `d0`/`v0`, `commitSensitivity` and the
+responses loop to `numDOF` or `numDOF/2`. Three sites subtract whole nodal
+vectors (`disp2 - disp1` in `setDomain`, `update`, `getResponse`), which throws
+on a (3,4) pair before any count check is reached. "Relax the count check" is
+therefore not a one-line change; the passenger scatter (ADR-96 D4) is the
+minimal one that keeps the vanilla path byte-identical.
+
+## The serial `MumpsSolver` is never compiled in this fork (TIMs F5, 2026-09-07)
+
+`CMakeLists.txt` defines `_MUMPS` only for the parallel targets (`OpenSeesSP`,
+`OpenSeesMP`, `OpenSeesPyMP`: lines ~996/1217/1292/1408); the serial `OpenSees` /
+`OpenSeesPy` targets get no MUMPS at all — ADR-75 P1b kept MUMPS as the CLUSTER
+solver and made PARDISO the desktop one (`CMakeLists.txt:588-594`). Measured on
+the F4 build: `system Mumps -stats` on `OpenSees.exe` and the pyd both answer
+"unknown system type". So the "silent serial `MumpsSolver.cpp` path" the TIMs
+note cites (`MumpsSolver.cpp:150-200`, no `printStats`, both parsers construct it
+2-arg and `commands.cpp:4341-4345` warns `-stats` is ignored) is real in the
+source but UNREACHABLE in any shipped serial binary. Wiring `-stats` there would
+be dead, unverifiable code; MUMPS statistics on the desktop come from a one-rank
+`mpiexec -n 1 OpenSeesMP` / `openseesmp` run (rank 0 prints them,
+`MumpsParallelSolver.cpp:295-319`) — which needs the packaged `dist\openseesmp`
+runtime (a no-arg `build.bat`), not the 4-target build. Linking MUMPS into the
+serial targets is an ADR-75 policy reversal for the owner, not a "small" WP.

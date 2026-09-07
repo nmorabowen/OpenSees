@@ -173,12 +173,25 @@ class ZeroLength : public Element
     void   checkDirection (  ID& dir ) const;
     
     void   setTran1d ( Etype e, int n );
+    // Ladruno (ADR-96): passenger-DOF scatter, see numDOFPassenger below
+    const Matrix &scatterPassenger(const Matrix &core);
+    const Vector &scatterPassenger(const Vector &core);
     double computeCurrentStrain1d ( int mat, const Vector& diff ) const;    
 
     // private attributes - a copy for each object of the class
     ID  connectedExternalNodes;         // contains the tags of the end nodes
     int dimension;                      // = 1, 2, or 3 dimensions
     int numDOF;	                        // number of dof for ZeroLength
+    // Ladruno (ADR-96): passenger DOFs. In 3-D, when the two nodes' ndf differ
+    // or are not one of the vanilla (3,3)/(6,6) pairs and both are >= 3, the
+    // element keeps its 6-slot translational core (numDOF = 6, D3N6) and
+    // scatters it into an element of dofNd1 + dofNd2 slots. Each node's first
+    // three DOFs are the translations; the rest (a u-p pressure, rotations)
+    // are never read or written. 0 == not in passenger mode (vanilla path).
+    int     numDOFPassenger;
+    int     passengerOffset2;        // = dofNd1: where node 2's translations land
+    Matrix *passengerMatrix;         // scatter targets, sized in setDomain
+    Vector *passengerVector;
     Matrix transformation;		// transformation matrix for orientation
     int useRayleighDamping;
 	

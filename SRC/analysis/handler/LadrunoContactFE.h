@@ -230,6 +230,14 @@ class LadrunoContactFE : public FE_Element
                      double muc = 0.0, bool ntsCoDeclared = false);
     ~LadrunoContactFE();
 
+    // Ladruno (ADR-96, passenger DOFs): fill myID from each node's FIRST ndm
+    // equations (the translations, first by the fork's ndf convention) instead
+    // of FE_Element::setID's greedy copy of the whole DOF_Group, which on an
+    // ndf-4 (u-p) or ndf-6 (beam/shell) node overflowed the ndm-per-node layout
+    // and returned -3 with a half-filled map. The extra DOFs are never read,
+    // written or coupled. EMPTY mode has no connectivity and returns 0.
+    int setID(void);
+
     // self-owned buffers (base buffers are unavailable when myEle == 0)
     const Vector &getResidual(Integrator *theIntegrator);
     const Matrix &getTangent(Integrator *theIntegrator);
