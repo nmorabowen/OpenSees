@@ -102,6 +102,19 @@ GPs beside the footing edge, which only quadratic elements resolve) is implement
 the *defect* is per-implementation: UW's dead corner branch (fixed here), ASD's stub apex return
 (open, ADR-94). Record: `_adr95_asd_crosscheck_results.md`.
 
+**Re-run on PR #815 (live apex return + DP gradient fix; build c945f9a8b, merged into this branch):**
+the linear control now reads **150.71 kPa = 1.0850, identical to UW-DP to the printed digit** — the
+2.2 % offset above was #815's gradient bug, so the two implementations are now the same cone. The
+quadratic leg **still walls: FLOOR at s/B 0.01122**, the same station as UW pre-fix (0.01114), at the
+first 4 GPs with mean stress ≥ 0 (I1 max +0.75). The #815 apex guard never printed; what the log
+shows is 435 flank-map refusals ("scalar Newton exhausted 100 iterations … rejecting step") that
+begin at s/B 0.0065 as the footing-edge GPs approach the apex and become terminal when they cross
+it. That is the pre-registered prediction (`_adr95_asd_crosscheck_results.md`, 16:35): the Euclidean
+classification `p − p_apex ≥ η·q` sends over-apex states with small nonzero q to the flank map,
+which at ψ = 0 cannot move p and cannot close f. Fix candidates: classify in the elastic metric
+(K, G, η̄ of the potential; at η̄ = 0 it is `p ≥ p_apex`), or order the returns flank-first with
+apex projection as the fallback when the flank map fails beyond the apex.
+
 ## 4. The defect, precisely (source review)
 
 `DruckerPrager.cpp` (upstream, fmckenna 2011): residual/Jacobian assembly switches on the *value*
