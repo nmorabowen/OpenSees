@@ -3,6 +3,9 @@
 ```
 VERDICT  ADR-95 P0 (instrumentation) — DONE, and it already moves H1 and H2.
 build      ladrunoBuild()  cf239c9df18ba3d6e201fbcbaf87a4a9e88e404d
+           that is HEAD at BUILD time; the P0 edits were still uncommitted,
+           and landed as 56310fd39 on wp/95-prandtl-bezier-root-cause.  Any
+           later probe rebuilt after that commit will stamp 56310fd39.
 binaries   dist/bin/OpenSees.exe   2026-09-07 00:25:40  (fresh)
            dist/bin/opensees.pyd   2026-09-06 23:59:21  STALE — copy BLOCKED
            the fresh .pyd is build/build/Release/OpenSeesPy.dll (00:25:46) and a
