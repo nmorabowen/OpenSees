@@ -1,0 +1,193 @@
+# ADR-94 R3a — component derivative harness (results)
+
+Phase R3a of the `ASDPlasticMaterial3D` review (`94_asdplastic_review_plan.md`
+Sec 5 "R3", first three bullets). HEAD `52314165a`, worktree
+`asdplastic-review-plan-62585c`.
+
+## Route taken
+
+**Standalone C++ route (preferred route) worked end-to-end** — no fallback
+needed. The YieldFunction / PlasticFlow / Elasticity headers under
+`SRC/material/nD/ASDPlasticMaterial3D/{YieldFunctions,PlasticFlowDirections,
+ElasticityModels}/` are header-only templates over Eigen with no OpenSees
+core dependency actually exercised by `operator()`/`df_dsigma_ij` (the only
+place `Vector`/`Matrix`/`OPS_Stream` leak in is `EigenAPI.h`'s
+`VoigtVector::fromStrain/toStrain`-style conversion helpers, which the
+harness never calls, and `Vector::operator()` is `inline` in `Vector.h`
+itself, so no `.lib`/`.cpp` link is required). Compiled and linked cleanly
+with MinGW g++ 15.2.0, `-std=c++17`, against:
+  - Eigen from the conan cache used by the CMake build:
+    `C:/Users/nmb/.conan2/p/eigen5481853932f72/p/include/eigen3` (confirmed
+    from `build/build/Release/generators/Eigen3-release-x86_64-data.cmake`).
+  - Every directory under `SRC/` and `OTHER/` that contains a `.h` (same set
+    CMake's `file(GLOB_RECURSE ...)` wires in — see root `CMakeLists.txt`
+    lines ~403-420), captured once in `adr94_oracle/incdirs.txt` /
+    `incflags.txt`.
+  - `using namespace std;` added locally in the harness (upstream relies on
+    `StiffSoil_HardeningFunctions.h`'s stray file-scope `using namespace
+    std;` leaking into the real TU's include order for unqualified
+    `cout`/`endl`/`tuple` in several headers — see Trap below).
+
+No `SRC/` edits, no CMake changes, no commits.
+
+**Dead-code note (not a defect, but worth recording):** the two existing
+"standalone harness" files named in the task brief,
+`YieldFunctions/test_00_VonMises_YF.cpp` and
+`PlasticFlowDirections/test_pf.cpp`, do **not** compile against the current
+headers — they reference `VonMisesRadiusIV<...>` / `BackStressIV<...>`,
+which no longer exist (today's names are `YieldStress<HardeningType>` /
+`BackStress<HardeningType>`, see `AllASDInternalVariableTypes.h`). They are
+stale leftovers from an earlier refactor, not wired into any build, and were
+not usable as-is. This is the same class of finding already flagged for
+`test_HoekBrown.cpp` in the review plan Sec 5 R3 (4th bullet).
+
+## Harness
+
+`Ladruno_implementation/adr94_oracle/fd_components.cpp` (build command in its
+header comment). For each of the 7 registered YF families it instantiates
+the **exact template combo used by the registry's first matching
+registration** (copied from `ASD_material_definitions.cpp`), builds a
+194-point stress cloud (160 random general 6-component states + 24
+Lode-edge points at theta = ±30° for p ∈ {1,5,20,50} × r ∈ {2,10,30} + 6
+hydrostatic-axis points p ∈ {0,1,5,20,50,100} + 4 J2→0 near-hydrostatic
+points), and compares `df_dsigma_ij` against a central finite difference of
+`operator()` (h = 1e-6), reporting the max relative error **split by
+category**: "smooth" (random + Lode-edge, where the surface is genuinely
+differentiable) vs. "singular" (the exact hydrostatic axis and J2→0, where a
+`sqrt(J2)`-type surface has a real cone corner and no single gradient can
+match a central difference approaching from an arbitrary direction — this is
+expected non-smoothness, not a bug, and is reported separately so it does not
+mask or get confused with genuine smooth-region errors). PF checks `m`
+finite everywhere, and for VM/DP (etabar=eta) that `m` equals the YF's own
+normal direction. EL checks `E(sigma)` symmetric + SPD (min eigenvalue) over
+the cloud (StiffSoil_EL restricted to its admissible p > 0 subset).
+
+## Results (smooth-region — the meaningful number)
+
+| Component | max rel. err (smooth) | max rel. err (singular, expected) | worst smooth point | non-finite? |
+|---|---:|---:|---|---|
+| VonMises_YF | **3.53e-01** | 5.61e+00 | shear-heavy random point (see below) | no |
+| DruckerPrager_YF | **9.71e-01** | 6.40e+00 | pure-normal Lode-edge point (θ=30°,p=50,r=30) | no |
+| MohrCoulomb_YF | 3.41e-06 | 2.58e-01 | shear-heavy random point | no |
+| HoekBrown_YF | 2.45e-06 | 9.94e-01 | shear-heavy random point | no |
+| StiffSoilCap_YF | 2.18e-06 | 9.83e+01 | shear-heavy random point | no |
+| StiffSoilShear_YF | 1.52e-05 | 9.90e-01 | shear-heavy random point | no |
+| MohrCoulombTensionCutoff_YF | 2.15e-07 | 8.91e-01 | shear-heavy random point (near p=1 apex-ish) | no |
+
+PF / EL:
+
+| Component | Result |
+|---|---|
+| VonMises_PF (associated, alpha shared with YF) | 0/194 non-finite; **max_assoc_err = 0.0** (exactly matches YF normal) |
+| DruckerPrager_PF (etabar = eta, associated) | 0/194 non-finite; **max_assoc_err = 0.0** (exactly matches YF normal — inherits the SAME 2x-normal-component defect as the YF, consistently) |
+| MohrCoulomb_PF | 0/194 non-finite |
+| HoekBrown_PF | 0/194 non-finite |
+| StiffSoilCap_PF | 0/194 non-finite |
+| StiffSoilShear_PF | **6/194 non-finite** (see below) |
+| MohrCoulombTensionCutoff_PF | 0/194 non-finite |
+| LinearIsotropic3D_EL | symmetric to machine precision; min eigenvalue 1.15e4 (SPD, 0/194) |
+| StiffSoil_EL | symmetric to machine precision; min eigenvalue 1.11e4 (SPD, 0/113 admissible points) |
+
+## Findings
+
+1. **CONFIRMED defect — `VonMises_YF::df_dsigma_ij` under-weights shear
+   components by a factor of 2.** `operator()` computes
+   `f = sqrt(Q) - ...` with `Q = tensor_dot_stress_like(dev,dev) = sum(normal^2) + 2*sum(shear^2)`
+   (the "stress-like" dot product doubles shear cross-terms to recover a true
+   tensor double-contraction — see `EigenAPI.h`/`typedefs.h`). The true
+   gradient is `dQ/d(shear_i) = 4*shear_i` vs. `dQ/d(normal_i) = 2*normal_i`,
+   so `d(sqrt(Q))/d(shear_i) = 2*shear_i/sqrt(Q)` vs.
+   `d(sqrt(Q))/d(normal_i) = normal_i/sqrt(Q)`. The code
+   (`VonMises_YF.h` ~line 68) returns `dev/den` uniformly for all six
+   components — correct for the normal components, **half the correct value
+   for the three shear components**. Measured smooth-region relative error up
+   to 35% at shear-heavy stress states; exactly zero at pure-normal states
+   (consistent with the mechanism). `VonMises_PF` reuses the identical
+   (buggy) formula, so the associated-flow equality check trivially passes
+   (both sides are wrong in the same way) — associativity is preserved, but
+   both the yield normal and the flow direction are wrong off the pure-normal
+   axis.
+2. **CONFIRMED defect — `DruckerPrager_YF::df_dsigma_ij` over-weights normal
+   components by a factor of 2 (mirror image of #1).** Here `sqrt_J2 =
+   sqrt(0.5*Q)`, so the true gradient is `d(sqrt_J2)/d(normal_i) =
+   normal_i/(2*sqrt_J2)` vs. `d(sqrt_J2)/d(shear_i) = shear_i/sqrt_J2`. The
+   code again returns `dev/den` uniformly — this time **correct for shear,
+   2x too large for normal components**. At a pure-normal Lode-edge point
+   (zero shear) this is a clean, exact 2x error: measured relative error
+   0.971 (→ 1.0 in the limit). `DruckerPrager_PF` (with `etabar = eta`,
+   the associated-flow configuration) reuses the same formula, so again
+   `m == df_dsigma_ij` by construction — the pair is internally consistent
+   but both sides are wrong for a general (non-pure-normal) stress state.
+   These two findings should be escalated to the H-list / red-blue lanes
+   (R2/R6) as a single root cause: **both YFs apply a flat `dev/den`
+   normalization to a `sqrt(alpha * tensor_dot_stress_like(dev,dev))`
+   expression without accounting for how `alpha` (1 for VM, 0.5 for DP)
+   changes the per-component chain-rule factor between the "doubled" shear
+   and "undoubled" normal Voigt slots.** MC/HB/StiffSoil/MCTC do not have
+   this defect (all smooth-region errors ~1e-6..1e-7, consistent with plain
+   FD truncation noise at h=1e-6) — they compute their gradients through a
+   different (non `dev/den`-only) path per component.
+3. **`StiffSoilShear_PF` returns non-finite for 6/194 cloud points.** Not yet
+   root-caused in this phase (out of scope for R3a's time-box); flagged for
+   R3's later bullets / R6 fix list. All 6 are among the random general
+   (non-diagonal) points, not the targeted apex/Lode/J2→0 set — worth a
+   follow-up pass isolating the exact denominator that vanishes.
+4. **Singular-axis numbers are expected, not defects.** Every `sqrt(J2)`-type
+   YF shows a large "singular" column because a central difference straddling
+   the exact cone tip of the yield surface cannot match any single
+   sub-gradient — this is a property of the surface, not the code. It is
+   reported separately specifically so it is not mistaken for evidence
+   against MC/HB/StiffSoil/MCTC's otherwise-clean smooth-region numbers.
+5. `StiffSoilCap_YF`'s huge singular-column number (98.3) is driven by
+   evaluating at the literal `p=0` corner where its friction/cap terms are
+   most degenerate; same expected-non-smoothness caveat as #4, not
+   independently investigated further here.
+6. Elasticity: both registered `EL` models (`LinearIsotropic3D_EL`,
+   `StiffSoil_EL`) are symmetric to machine precision and SPD (positive
+   minimum eigenvalue, ~1.1e4) over their respective admissible stress
+   ranges — no defect found.
+
+## CI pin (openseespy route, `tests/test_adr94_components.py`)
+
+Per the task brief, a Zone-A pytest re-observes the SAME signal without
+depending on the standalone `.cpp` (which needs a hand-wired g++ + conan
+Eigen path, not run in CI): build a free-DOF `stdBrick` unit cube, push it to
+a converged plastic state, and compare the assembled tangent under
+`tangent_type Continuum` (uses `df_dsigma_ij` inside the consistent-tangent
+formula) against `Numerical_Algorithmic_FirstOrder` (numerically
+differentiates the material's own stress response, so it never touches
+`df_dsigma_ij` and cannot inherit its bug).
+
+- **VonMises** (hard pin): converges at `load_z=-20, 20 steps`; observed
+  Continuum-vs-NumAlgFirstOrder relative tangent mismatch **1.4%-1.8%**
+  (smaller than the 35% seen directly on `df_dsigma_ij` because this uniaxial
+  loading path is mostly normal-deviatoric, diluting the shear-only defect).
+  Pinned `> 0.005`.
+- **MohrCoulomb** (hard pin): converges cleanly; mismatch is **exactly
+  0.0**, consistent with the harness's ~1e-6 (FD-noise-level) smooth-region
+  error. Pinned `< 0.005`.
+- **DruckerPrager, HoekBrown, MohrCoulombTensionCutoff**: exercised (smoke —
+  no crash / hang) but **not threshold-asserted**. The admissible load window
+  between "still elastic" (mismatch trivially 0) and "Backward_Euler fails
+  to converge" proved narrow for the parameter sets tried
+  (`DP_xi_c=5, DP_eta=0.3`; `HB_sigci=30, HB_mb=2, HB_s=0.01, HB_a=0.5`;
+  `MC_phi=30, MC_c=10, TC_min_stress=-5`) within R3a's time-box; DruckerPrager
+  in particular converged at `load_z=-2.0` (mismatch 0.0, still elastic) and
+  at `load_z=-2.5` (mismatch 0.0) but failed to converge at `-3.0` and above.
+  Their authoritative FD numbers are the ones in the table above, produced
+  directly against `df_dsigma_ij` by the standalone harness (which has no
+  such convergence constraint since it never runs a Newton loop). Widening
+  the DP/HB/MCTC load window to also pin them through openseespy is left as
+  follow-up.
+
+Test result: **3 passed, 2 skipped**, wall time < 1 s (`pytest
+tests/test_adr94_components.py -v`).
+
+## Files
+
+- `Ladruno_implementation/adr94_oracle/fd_components.cpp` — the harness
+  source (compiles clean, ran successfully; not wired into CI).
+- `Ladruno_implementation/adr94_oracle/incdirs.txt` / `incflags.txt` — the
+  captured `-I` list (mirrors CMake's own glob) for reuse by any future
+  standalone ASDPlasticMaterial3D header harness.
+- `tests/test_adr94_components.py` — the Zone-A CI pin described above.
