@@ -476,4 +476,10 @@ benchmark is a real footing or the idealised half-space.
   not on that number. TIMs is naming the hold's harness cause. **P2 is live on Esmeralda
   (87b9cf846, 2 min 40 s incremental); five acceptance legs submitted 13:45** (dense/loose ×
   floor implicit/refuse, plus the dense implicit twin on the new engine).
+- 2026-09-07 (later) — **A hold is a MODEL event, not a harness artifact — on the implicit
+  side.** Vanilla `ManzariDafalias::integrate()` resets `α_in := α_n` on loading reversal with
+  no magnitude guard, so a hold's round-off strain increment fires the reset directly: 28–54 %
+  of 34 560 points on Esmeralda 146458, `h → ∞`, implicit column stiffened 2.5x for tens of
+  steps. This is **P2-5 in #807**, filed alongside P2-1..P2-4; see `92_ladruno_sanisand_implex_adr.md`
+  and `LEDGER_quirks.md`.
 
