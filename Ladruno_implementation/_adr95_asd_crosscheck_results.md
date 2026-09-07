@@ -68,3 +68,27 @@ Per instructions, no C++ edit/rebuild was performed; no other staged dist
 (`dist_fixed`, `dist_bin_p0` = build `cf239c9d...`) carries the wp/94a fix
 either. Re-running this script against a binary built past `a493b15c9` is
 the natural next step and should reach the corner/tension regime cleanly.
+
+## PR #815 (wp/94c) read against this deck — PREDICTION written before the re-run (2026-09-07 16:35)
+
+#815 makes the apex site live: `check_apex_region` = `(p − p_apex) ≥ η·q` (Euclidean normal-cone
+test in the (p, √J2) plane), `apex_stress` = hydrostatic p_apex = ξ_c/η, projection
+dε^p = C⁻¹(σ_trial − σ_apex) guarded by |f(σ_apex)| ≤ tol. Its own comment states the caveat: the
+exact test lives in the ELASTIC metric, `(p − p_apex) ≥ (K·η̄/G)·q`, and the Euclidean one coincides
+with it only when K·η̄/G = η.
+
+**On this deck η̄ = 0 (ψ = 0) and ν = 0.45 (K/G ≈ 9.7).** The exact condition degenerates to
+`p ≥ p_apex`: with zero dilatancy the flank return cannot move p at all (the same fact that made
+UW's over-cutoff state persist), so EVERY trial state beyond the apex belongs to the apex return.
+The Euclidean test instead sends any such state with q > η·(p − p_apex) to the flank map, which
+then cannot close f. The #815 guard only catches an apex whose own f is off-surface; a
+misclassified flank return is not caught. The footing-edge GPs arrive at p ≈ p_apex with small but
+nonzero q, i.e. exactly in the misclassified wedge.
+
+**Prediction:** the ASD-DP `h20uri` leg on a #815 build still walls at s/B ≈ 0.018 with a healthy
+tangent and ~4 GPs at mean stress ≥ 0; the linear control still plateaus (never reaches the apex).
+If instead it plateaus, the Euclidean wedge is narrower than argued here and the prediction is
+withdrawn. **Fix if the prediction holds:** classify in the elastic metric using K, G and the
+potential's dilatancy (the PF is available to the integrator even if not to the YF signature), or,
+signature-free, order the returns "flank first; if the flank map fails and p > p_apex, apex
+projection" — the apex projection already adds the volumetric plastic strain a ψ = 0 cone lacks.
