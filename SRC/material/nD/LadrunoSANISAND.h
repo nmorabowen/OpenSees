@@ -405,6 +405,17 @@ class LadrunoSANISAND : public ManzariDafalias
     bool   mImplexClampFired; // the p_min clamp acted on the LAST extrapolation
     long   mImplexClampCount; // how often it has acted at this integration point
 
+    // Ladruno ADR-92 P2-7: has the elastic (0) -> plastic (nonzero) stage flip
+    // ALREADY run its zero-increment drift-absorbing companion return? Guards
+    // updateParameter()'s W5 hook against re-absorbing on a redundant repeat
+    // call (`updateMaterialStage 1` issued again while already at stage 1),
+    // which would otherwise re-run integrate()+commitState() on an unchanged
+    // committed state every time. NOT touched by ladrunoImplexInitState() --
+    // its lifetime is the plastic stage itself, not a single step -- so it is
+    // set false in the constructors/initialize() below and reset false only
+    // when the stage goes back to 0 (see updateParameter()).
+    bool   mImplexStageFlipAbsorbed;   // Ladruno ADR-92 P2-7
+
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
     // base.
