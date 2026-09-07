@@ -493,6 +493,12 @@ are almost free on the implicit side, not to the digit. **P2-7d (listed, not bui
 commits the zero-increment return's `α` (round-off moved) while `α_in_n` is restored; leaving `α_n` untouched on
 a hold-skip commit would remove that residual. Owner's call, with P2-8.
 
+**P2-7c fork probe (4e07ef014, R3 footing, 1600 GPs): PASS.** Flip work reaches every element (spot-checked
+across the 200-element mesh; `init` gives `alpha_in == alpha` at 1288/1600 after step 1, the remainder having yielded
+during the step); `-implexFlipAbsorb on`: `implexGuards[5]` +1600 at the flip and step-1 max error **0.052** (from
+0.239); defaults: 0 at the flip and 0.239 unchanged (exempt). Price of `init` is deck-dependent: the implicit first
+step is ~7 % *softer* on this deck (3.09 vs 3.31 max stress increment) and identical to the digit on Esmeralda's.
+
 **P2-8 (listed, not built):** a guard threshold `-implexGuardKp <ratio>`
 firing when `Kp / G < ratio` on the committed predecessor (default 0 = today), priced by a sweep {0, 0.05, 0.2} on
 reach vs overlay; owner's call whether it belongs in this PR or the next.
