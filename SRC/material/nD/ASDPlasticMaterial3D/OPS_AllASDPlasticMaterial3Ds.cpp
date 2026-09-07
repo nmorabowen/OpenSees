@@ -379,7 +379,8 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                     opserr << "nDMaterial ASDPlasticMaterial3D - unknown internal variable '"
                            << iv_name << "' inside Begin_Internal_Variables." << endln;
                     opserr << "   Defined internal variables for this model:" << endln;
-                    for_each_in_tuple(instance->getInternalVariablesNames(), [](auto & nm)
+                    auto iv_names_tuple = instance->getInternalVariablesNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+                    for_each_in_tuple(iv_names_tuple, [](auto & nm)
                     {
                         opserr << "      " << nm << endln;
                     });
@@ -429,7 +430,8 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                     opserr << "nDMaterial ASDPlasticMaterial3D - unknown model parameter '"
                            << param_name << "' inside Begin_Model_Parameters." << endln;
                     opserr << "   Valid parameters for this model:" << endln;
-                    for_each_in_tuple(instance->getParameterNames(), [](auto & name)
+                    auto param_names_tuple = instance->getParameterNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+                    for_each_in_tuple(param_names_tuple, [](auto & name)
                     {
                         opserr << "      " << name << endln;
                     });
@@ -634,7 +636,8 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     {
         std::string missing;
         int n_missing = 0;
-        for_each_in_tuple(instance->getParameterNames(),
+        auto required_names_tuple = instance->getParameterNames(); // Ladruno (ADR-94 wp/94a): GCC cannot bind a temporary to for_each_in_tuple's non-const reference
+        for_each_in_tuple(required_names_tuple,
             [&missing, &n_missing, &assigned_parameters](auto & name)
         {
             std::string n(name);
