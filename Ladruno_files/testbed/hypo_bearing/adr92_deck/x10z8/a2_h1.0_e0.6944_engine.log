@@ -1,0 +1,865 @@
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), p_min = 0.101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut) [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.044659 (max: 0.015696, Norm deltaX: 1.02139e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00222183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.134011 (max: 0.015696, Norm deltaX: 1.92279e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00222183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0609353 (max: 0.015696, Norm deltaX: 2.38842e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00226183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0335777 (max: 0.015696, Norm deltaX: 2.2994e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00226183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.148427 (max: 0.015696, Norm deltaX: 4.21788e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00236183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.020547 (max: 0.015696, Norm deltaX: 8.21952e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00320183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.129439 (max: 0.015696, Norm deltaX: 5.8645e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00320183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.106117 (max: 0.015696, Norm deltaX: 4.6535e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00336183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0837562 (max: 0.015696, Norm deltaX: 8.78102e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00336183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0970785 (max: 0.015696, Norm deltaX: 1.22992e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00352183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0385848 (max: 0.015696, Norm deltaX: 1.33424e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00352183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0196421 (max: 0.015696, Norm deltaX: 3.35132e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00368183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0163527 (max: 0.015696, Norm deltaX: 2.44387e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00384183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.125858 (max: 0.015696, Norm deltaX: 7.96475e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00384183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0186655 (max: 0.015696, Norm deltaX: 3.09856e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00400183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0191941 (max: 0.015696, Norm deltaX: 3.46659e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00400183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0453397 (max: 0.015696, Norm deltaX: 8.17084e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00432183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0474705 (max: 0.015696, Norm deltaX: 8.64069e-07)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00464183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0575219 (max: 0.015696, Norm deltaX: 1.25848e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00496183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0610432 (max: 0.015696, Norm deltaX: 1.43977e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00528183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0654386 (max: 0.015696, Norm deltaX: 1.52494e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00560183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0660721 (max: 0.015696, Norm deltaX: 1.45445e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00592183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.168852 (max: 0.015696, Norm deltaX: 3.69513e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00656183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.19056 (max: 0.015696, Norm deltaX: 4.0737e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00720183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.223266 (max: 0.015696, Norm deltaX: 4.59452e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00784183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.229109 (max: 0.015696, Norm deltaX: 4.65295e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00848183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.199057 (max: 0.015696, Norm deltaX: 4.37075e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00912183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.21511 (max: 0.015696, Norm deltaX: 4.76795e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00976183
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.355639 (max: 0.015696, Norm deltaX: 8.48336e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110418
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.667279 (max: 0.015696, Norm deltaX: 1.1422e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0123218
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0165083 (max: 0.015696, Norm deltaX: 3.26913e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0123218
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.709224 (max: 0.015696, Norm deltaX: 1.21988e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0705433 (max: 0.015696, Norm deltaX: 5.38962e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.719841 (max: 0.015696, Norm deltaX: 1.24177e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148818
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.266477 (max: 0.015696, Norm deltaX: 7.26479e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148818
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.746714 (max: 0.015696, Norm deltaX: 1.31621e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161618
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.74427 (max: 0.015696, Norm deltaX: 4.32187e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161618
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.82672 (max: 0.015696, Norm deltaX: 1.38004e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174418
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.260573 (max: 0.015696, Norm deltaX: 5.90195e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174418
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.64445 (max: 0.015696, Norm deltaX: 2.77105e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0200018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.00646 (max: 0.015696, Norm deltaX: 8.48168e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0200018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.59378 (max: 0.015696, Norm deltaX: 2.9609e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225618
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 9.24794 (max: 0.015696, Norm deltaX: 0.000747538)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225618
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.71804 (max: 0.015696, Norm deltaX: 2.77656e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0251218
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 3.65652 (max: 0.015696, Norm deltaX: 6.97661e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0251218
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.75828 (max: 0.015696, Norm deltaX: 3.1814e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0276818
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 9.20713 (max: 0.015696, Norm deltaX: 0.00072261)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0276818
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.83334 (max: 0.015696, Norm deltaX: 3.77344e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0302418
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.10535 (max: 0.015696, Norm deltaX: 2.25277e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0302418
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.64538 (max: 0.015696, Norm deltaX: 2.80246e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0328018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.53696 (max: 0.015696, Norm deltaX: 1.30842e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0328018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.788872, dT = 2.22838e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING LadrunoBrick::update - element 63: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.810252, dT = 2.33434e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0378018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.788872, dT = 2.22838e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING LadrunoBrick::update - element 63: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.810252, dT = 2.33434e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0378018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.511506, dT = 1.0976e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.51553, dT = 1.12034e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.787144, dT = 7.10096e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.790829, dT = 7.27934e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.812903, dT = 1.20333e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING LadrunoBrick::update - element 63: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.814221, dT = 1.20322e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that PROPAGATES a material failure cuts the step. Today that is LadrunoBrick; under Brick / BrickUP / QuadUP / stdBrick the return code is discarded and THIS RUN IS INVALID.
+WARNING ManzariDafalias: further ModifiedEuler() substep-cap warnings suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0378018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.07671 (max: 0.015696, Norm deltaX: 3.94599e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 63: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.06715 (max: 0.015696, Norm deltaX: 1.7426e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0340518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.40373 (max: 0.015696, Norm deltaX: 0.00010339)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0340518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.24745 (max: 0.015696, Norm deltaX: 1.48305e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.581041 (max: 0.015696, Norm deltaX: 0.000398782)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.402395 (max: 0.15696, Norm deltaX: 1.25582e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.593225 (max: 0.015696, Norm deltaX: 8.52402e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0346768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0161274 (max: 0.015696, Norm deltaX: 3.12144e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0346768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.590662 (max: 0.015696, Norm deltaX: 8.98709e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.209407 (max: 0.015696, Norm deltaX: 3.57153e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0353018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100947 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100947 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100942 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100942 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100941 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100941 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100938 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100939 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100937 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100937 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias: further ModifiedEuler() low-p clamp warnings suppressed (budget 10 per process).
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.562181 (max: 0.015696, Norm deltaX: 8.85783e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0359268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.504742 (max: 0.015696, Norm deltaX: 9.3143e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0365518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.525261 (max: 0.015696, Norm deltaX: 8.39647e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0371768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.516373 (max: 0.015696, Norm deltaX: 8.98891e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0378018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.11849 (max: 0.015696, Norm deltaX: 1.99802e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.511414 (max: 0.015696, Norm deltaX: 7.28434e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.547322 (max: 0.15696, Norm deltaX: 2.46961e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.708231 (max: 0.015696, Norm deltaX: 1.05395e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0384268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0198107 (max: 0.015696, Norm deltaX: 4.58276e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0384268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.564181 (max: 0.015696, Norm deltaX: 9.30642e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.498986 (max: 0.015696, Norm deltaX: 1.94525e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.270117 (max: 0.15696, Norm deltaX: 5.50939e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.37859 (max: 0.015696, Norm deltaX: 3.97796e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0387393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.382262 (max: 0.015696, Norm deltaX: 6.42357e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0387393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.310559 (max: 0.015696, Norm deltaX: 3.68057e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.160669 (max: 0.015696, Norm deltaX: 3.80284e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0390518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.251993 (max: 0.015696, Norm deltaX: 3.44405e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0393643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0719218 (max: 0.015696, Norm deltaX: 2.86048e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0393643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.255452 (max: 0.015696, Norm deltaX: 3.77656e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0396768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.166211 (max: 0.015696, Norm deltaX: 3.37011e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0396768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.238421 (max: 0.015696, Norm deltaX: 3.37985e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0399893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.15714 (max: 0.015696, Norm deltaX: 2.67575e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0399893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.242741 (max: 0.015696, Norm deltaX: 3.4887e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0403018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.122262 (max: 0.015696, Norm deltaX: 2.05274e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0403018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.489326 (max: 0.015696, Norm deltaX: 6.97051e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0409268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.270887 (max: 0.015696, Norm deltaX: 4.26916e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0409268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.204238 (max: 0.15696, Norm deltaX: 5.71383e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0409268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.240893 (max: 0.015696, Norm deltaX: 3.53515e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0406143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0482146 (max: 0.015696, Norm deltaX: 9.43985e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0406143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.239014 (max: 0.015696, Norm deltaX: 3.49035e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0409268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.107028 (max: 0.015696, Norm deltaX: 2.79654e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0409268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.248773 (max: 0.015696, Norm deltaX: 3.49328e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0412393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0711323 (max: 0.015696, Norm deltaX: 1.96993e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0412393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.246232 (max: 0.015696, Norm deltaX: 3.72633e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0415518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.125717 (max: 0.015696, Norm deltaX: 2.28581e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0415518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.243853 (max: 0.015696, Norm deltaX: 3.46768e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0418643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.2667 (max: 0.015696, Norm deltaX: 6.9175e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0418643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.232384 (max: 0.015696, Norm deltaX: 3.32496e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0421768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.260416 (max: 0.015696, Norm deltaX: 6.80881e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0421768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.433528 (max: 0.015696, Norm deltaX: 7.6625e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0428018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.304536 (max: 0.015696, Norm deltaX: 5.44636e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0428018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.292699 (max: 0.15696, Norm deltaX: 2.15718e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0428018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.248112 (max: 0.015696, Norm deltaX: 3.156e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0424893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.21186 (max: 0.015696, Norm deltaX: 6.09237e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0424893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.24191 (max: 0.015696, Norm deltaX: 3.53967e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0428018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.178777 (max: 0.015696, Norm deltaX: 2.84628e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0428018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.241293 (max: 0.015696, Norm deltaX: 3.44695e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0431143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.57403 (max: 0.015696, Norm deltaX: 2.16404e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0431143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.251579 (max: 0.015696, Norm deltaX: 3.53859e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0434268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.14738 (max: 0.015696, Norm deltaX: 3.51626e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0434268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.27773 (max: 0.015696, Norm deltaX: 3.97433e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0437393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.377961 (max: 0.015696, Norm deltaX: 0.00012448)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0437393
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.281718 (max: 0.015696, Norm deltaX: 3.59912e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0440518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.295188 (max: 0.015696, Norm deltaX: 6.31734e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0440518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.532991 (max: 0.015696, Norm deltaX: 8.98881e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0446768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING LadrunoBrick::update - element 28: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick: further trial-strain refusal reports suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0446768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.54562 (max: 0.015696, Norm deltaX: 7.52231e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0453018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.236881 (max: 0.015696, Norm deltaX: 3.1009e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0453018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.55282 (max: 0.015696, Norm deltaX: 7.54962e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0459268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 6.98392 (max: 0.015696, Norm deltaX: 0.00507036)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0459268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.538999 (max: 0.015696, Norm deltaX: 7.43547e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0465518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.455438 (max: 0.015696, Norm deltaX: 0.000146599)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0465518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.544981 (max: 0.015696, Norm deltaX: 7.43206e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0471768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.250642 (max: 0.015696, Norm deltaX: 3.98738e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0471768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.157466 (max: 0.15696, Norm deltaX: 1.91224e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0471768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.277136 (max: 0.015696, Norm deltaX: 3.66177e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0468643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.132069 (max: 0.015696, Norm deltaX: 2.82948e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0468643
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.286399 (max: 0.015696, Norm deltaX: 3.59041e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0471768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.266045 (max: 0.015696, Norm deltaX: 0.000100976)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0471768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.284321 (max: 0.015696, Norm deltaX: 3.78189e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0474893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.181397 (max: 0.015696, Norm deltaX: 0.000118543)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0474893
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.282521 (max: 0.015696, Norm deltaX: 3.75503e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0478018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.110072 (max: 0.015696, Norm deltaX: 1.51818e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0478018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.278178 (max: 0.015696, Norm deltaX: 3.69924e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0481143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.138172 (max: 0.015696, Norm deltaX: 6.08852e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0481143
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.290121 (max: 0.015696, Norm deltaX: 4.55274e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0484268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.126162 (max: 0.015696, Norm deltaX: 4.5236e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0484268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.579275 (max: 0.015696, Norm deltaX: 8.29744e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0490518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 5.45559 (max: 0.015696, Norm deltaX: 0.000216304)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0490518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.554975 (max: 0.015696, Norm deltaX: 8.03763e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0496768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.716024 (max: 0.015696, Norm deltaX: 0.0003806)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0496768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.547599 (max: 0.015696, Norm deltaX: 7.92734e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0503018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.46354 (max: 0.015696, Norm deltaX: 0.000150951)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0503018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.504406 (max: 0.015696, Norm deltaX: 9.04525e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0509268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.969092 (max: 0.015696, Norm deltaX: 3.85514e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0509268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.574132 (max: 0.015696, Norm deltaX: 8.24435e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0515518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.329251 (max: 0.015696, Norm deltaX: 0.000106778)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0515518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.581268 (max: 0.015696, Norm deltaX: 8.36706e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0521768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 3.66209 (max: 0.015696, Norm deltaX: 0.00014641)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0521768
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.1955 (max: 0.015696, Norm deltaX: 1.9112e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0534268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.464277 (max: 0.015696, Norm deltaX: 4.68827e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0534268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.294855 (max: 0.15696, Norm deltaX: 2.70236e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0534268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.606501 (max: 0.015696, Norm deltaX: 8.30255e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0528018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.501556 (max: 0.015696, Norm deltaX: 1.41086e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0528018
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.611305 (max: 0.015696, Norm deltaX: 8.63817e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0534268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.232185 (max: 0.015696, Norm deltaX: 3.99797e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0534268
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.600204 (max: 0.015696, Norm deltaX: 8.59815e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0540518
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.59113 (max: 0.015696, Norm deltaX: 3.11046e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0540518
+OpenSees > analyze failed, returned: -3 error flag

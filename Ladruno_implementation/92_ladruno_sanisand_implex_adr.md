@@ -2,7 +2,7 @@
 title: "ADR 92 — IMPL-EX integration for LadrunoSANISAND: a stress update that cannot seize, and a tangent that cannot lose ellipticity"
 project: Ladruno
 type: ADR
-status: "PROPOSED — P0 COMPLETE (D1 = A confirmed, D3 REVERSED, floor-clamp item added); C++ GATED on #792 T8 (CP1)"
+status: "ACCEPTED — P0 complete, CP1 measured, D0 DISCHARGED 2026-09-05; P1 (C++) OPEN on the CP1 ladder warrant"
 priority: high
 owner: nmora
 orchestrator: "Opus 5 session `wp/92-sanisand-implex` (owns the context end to end)"
@@ -285,8 +285,8 @@ given the campaign to re-derive.
 |---|---|---|
 | **P0** *(COMPLETE)* | Single-Gauss-point IMPL-EX oracle in numpy on the D-L cell's 23 constants, driven by the act's Level-0 drained triaxial path. Measures: first-order convergence of the IMPL-EX/implicit difference under increment halving; the error at the act's `1e-4 m` increment; behaviour as `p' -> p_min`; **D1 vs the `dGamma` form, head to head**. Plus the §2 disclosure text. | The convergence exponent is measured (not asserted), D1 is decided on numbers, and the error at the campaign's increment is known. Artefact `_adr92_p0_oracle_results.md`. |
 | **CP1** | Owner checkpoint. Reads P0 **and** #792 T8 together. | Is IMPL-EX unblocking, or an optimisation? Phasing and risk budget are set here. |
-| **P1** | `-implex` on `LadrunoSANISAND3D`: extrapolated stress **(incremental, clamped at `p_min`)**, frozen `Ce(p_n)`, companion at `commitState` **(scheme 1 + `-maxSubsteps`)**, `implexError` / `avgImplexError`, `getCopy` / `sendSelf` / `recvSelf`, stage-0 inertness. **The P0 oracle is the reference: `implex_A` on the binary's own paths to 1e-8.** | `-implex` unset is **byte-identical** on every existing SANISAND deck; tangent identity to machine precision; Zone-A green. |
-| **P2** | `-implexControl` through `LADRUNO_MATERIAL_REFUSED`; `LadrunoSANISANDPlaneStrain` (the 2D act needs it on the strip); the cyclic/reversal test. | Error-driven refusal provably triggers subdivision and the committed state is intact across it. |
+| **P1** | `-implex` on `LadrunoSANISAND3D`: extrapolated stress **(incremental, clamped at `p_min`)**, frozen `Ce(p_n)`, companion at `commitState` **(scheme 1 + `-maxSubsteps`)**, `implexError` / `avgImplexError`, `getCopy` / `sendSelf` / `recvSelf`, stage-0 inertness, **and `-implexControl`** — moved up from P2 because P0 measured A unusable from `d eps = 5e-4` at `p0 = 5 kPa`, and the corner is where this campaign lives, so the control is not optional there. **The P0 oracle is the reference: `implex_A` on the binary's own paths to 1e-8.** | `-implex` unset is **byte-identical** on every existing SANISAND deck; tangent identity to machine precision; Zone-A green. |
+| **P2** | `LadrunoSANISANDPlaneStrain` (the 2D act needs it on the strip); the cyclic/reversal test. **`-implexControl` moved up into P1** (P0 measured A unusable from `d eps = 5e-4` at `p0 = 5 kPa`, and the corner is where this campaign lives). | Reversal test green; the plane-strain lane carries the flags. |
 | **P3** | Esmeralda: the corner patch; the coarse bare `D-L` leg against job 146299's wall at `s/B = 0.0206`; the `U-L` coupled row inside `LadrunoUP`; **the symmetric-solver measurement of §2.3**. | A WP1 plateau, or a named reason there is none — plus `implexError` reported beside every verdict. |
 | **CP2** | Close-out. | Ledgers, banner row if shipped, ADR status. |
 
@@ -304,6 +304,12 @@ tests 4, 5 -> P3. Added by this ADR:
    step; the oracle without the clamp reaches `−1.37 kPa` and is the negative control.
 1c. **Oracle parity.** `implex_A` in the C++ reproduces the P0 oracle's `implex_A` on the
    recorded binary paths to `1e-8` — the same G0 discipline, one level up.
+7. **The BVP gate — the one that can refute the cost case.** On the CP1 deck
+   (`h1.0_e0.6944`, `Q = 10`, cap 1000), with `-implex -implexControl`, measure the ladder
+   decomposition CP1 measured without it. **Prediction: steps past rung 1 fall from 61 % to
+   near zero and the failed-rung share of iterations falls from 89 % to single digits.** If
+   the ladder still fires at CP1's rate, IMPL-EX's cost case is refuted at BVP level and P1
+   closes as a correctness-only feature. Report the same table either way.
 2. **Stage-0 inertness.** Gravity and the `LoadControl 0.0` re-equilibration are bit-identical
    with `-implex` on and off.
 3. **`dt` guards.** A `dt = 0` step and a halved step both extrapolate by the right factor;
