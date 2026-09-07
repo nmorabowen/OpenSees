@@ -96,6 +96,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexFloor implicit\|accept\|refuse` | what a Gauss point commits when `-implexControl` hits the reduction floor with nothing left to cut | `implicit` | ADR-92 P2-1; see §11 |
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
+| `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
 
 ## 2. What the nine words mean
 
@@ -385,6 +386,18 @@ sign, so a hold's round-off noise fires the reset directly — 28–54 % of 34 5
 2.5x for tens of steps. This is P2-5, tracked in `LEDGER_quirks.md` and the ADR 92 P2 table; the fix
 is a subclass magnitude guard, `-reversalTol` (default 1e-10 on `‖Δε‖`), counted in `implexGuards[3]`.
 Built in #807, pending acceptance.
+
+**P2-5b supersedes the threshold, not the mechanism.** Measured on the fork's R3 footing (1600
+GPs, `708152eac`): a hold's per-point strain increment is Newton-tolerance-scale noise (median
+4e-9, max 6.4e-8 IMPL-EX / 1.4e-6 implicit), so a fixed `-reversalTol` cannot clear it — at 1e-10
+`alpha_in` still reset at 42 % / 9.5 % of points on a hold, and even 1e-7 leaves 2.2 % resetting on
+the implicit arm. The guard is now relative to the last committed increment, `‖Δε‖ <
+max(reversalTol, reversalRel·‖Δε_lastCommitted‖)`, with `-reversalRel` defaulting to `0.05` — a
+hold's increment is `<= 1e-2` of the previous step, a genuine reversal is `~1×`, a halved retry is
+`0.5×`, so `0.05` separates a hold from real motion with margin on both sides. The pre-hold
+reference is kept across a zero-increment commit so a run of holds does not drift the baseline.
+Still building; no holds inside a reported push on either material until the hold acceptance
+passes (hold probe `alpha_in` changed = 0 on both arms).
 
 ### `stressCorrection` now works — P2-4
 
