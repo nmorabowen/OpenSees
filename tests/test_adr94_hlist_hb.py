@@ -385,14 +385,15 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
                       "/DruckerPrager_YF.h")
     pf_src = _source("SRC/material/nD/ASDPlasticMaterial3D"
                       "/PlasticFlowDirections/DruckerPrager_PF.h")
-    assert _PRESSURE_PART_IDIOM.search(yf_src), (
-        "DruckerPrager_YF.h no longer contains the uninitialised "
-        "`VoigtVector pressure_part; pressure_part *= 0.0;` pseudo-init "
-        "idiom -- the apex-path UB this test pins may be gone; re-measure "
-        "and update this test (and test_R2_dp_apex_nan_guard_fires_and_is_"
-        "swallowed) accordingly.")
-    assert _PRESSURE_PART_IDIOM.search(pf_src), (
-        "DruckerPrager_PF.h no longer contains the same idiom -- see above.")
+    # FIXED by wp/94a (ADR-94 B4): the pseudo-init idiom is GONE from both
+    # files -- `VoigtVector pressure_part = VoigtVector::Zero();`.  The
+    # grep-gate is inverted: it now fails if the idiom ever comes back.
+    assert not _PRESSURE_PART_IDIOM.search(yf_src), (
+        "DruckerPrager_YF.h has the uninitialised `VoigtVector pressure_part; "
+        "pressure_part *= 0.0;` pseudo-init idiom AGAIN -- wp/94a's Eigen-init "
+        "fix has been reverted; NaN*0 == NaN and the apex path can commit NaN.")
+    assert not _PRESSURE_PART_IDIOM.search(pf_src), (
+        "DruckerPrager_PF.h has the same idiom again -- see above.")
 
     K = DP_E / (3.0 * (1.0 - 2.0 * DP_NU))
     lam_apex = DP_P_APEX / (3.0 * K)
@@ -403,24 +404,32 @@ def test_H10_dp_apex_hydrostatic_tension_commits_nan(dp_available):
 
     assert len(hist) > 0, "no step committed -- driver regressed"
 
-    # Every step must read as "success" regardless of which UB outcome this
-    # platform's heap produced -- that invariant is what both platforms
-    # share on this degenerate path.
-    assert all(c == 0 for c in codes), (
-        f"expected every analyze() call to report success (0) on this "
-        f"degenerate hydrostatic-tension apex path; got codes={codes}")
+    # FIXED by wp/94a.  Both halves of B4 are closed, so the weak "NaN or
+    # finite, but always rc=0" invariant is replaced by the strong one:
+    #   (a) NO committed state is ever non-finite (Eigen-init fix), and
+    #   (b) the material is ALLOWED to refuse at the apex -- the NaN and
+    #       singular-tangent guards now return LADRUNO_MATERIAL_REFUSED, which
+    #       LadrunoBrick propagates, so a non-zero analyze() code is the
+    #       CORRECT outcome rather than the silent rc=0 commit pinned before.
+    # MEASURED on 229842f7f: codes = twenty 0s then -3, 20 finite rows, last
+    # committed state at the apex pressure p = xi_c/eta = 3333.33 kPa with an
+    # exactly zero deviator.
+    assert np.all(np.isfinite(hist)), (
+        f"a NON-FINITE stress was COMMITTED on the DP apex path -- wp/94a's "
+        f"Eigen-init fix (VoigtVector::Zero) has regressed. codes={codes}, "
+        f"hist={hist}")
 
-    nan_rows = np.where(np.any(np.isnan(hist), axis=1))[0]
-    nan_committed = len(nan_rows) > 0
-    all_finite = bool(np.all(np.isfinite(hist)))
-    outcome = (f"NaN committed at row {int(nan_rows[0])} (dirty-heap UB "
-               f"reproduced on this platform)" if nan_committed else
-               f"clean finite history, max|sigma|="
-               f"{np.max(np.abs(hist)):.4g} (fresh-heap UB did not "
-               f"reproduce on this platform)")
-    assert nan_committed or all_finite, (
-        f"history is neither NaN-flagged nor entirely finite -- unexpected "
-        f"mixed/partial state ({outcome}): {hist}")
+    bad = [c for c in codes if c not in (0, -3)]
+    assert not bad, (
+        f"unexpected analyze() codes on the DP apex path: {codes} "
+        f"(0 = step taken, -3 = global Newton gave up after the material "
+        f"refused with LADRUNO_MATERIAL_REFUSED)")
+
+    assert any(c != 0 for c in codes), (
+        f"every step on the hydrostatic-TENSION apex path reported success "
+        f"({codes}) -- the path runs past the DP cone's tip, so the material "
+        f"must eventually refuse; wp/94a's sentinel widening may have "
+        f"regressed.")
 
 
 @pytest.mark.t0m

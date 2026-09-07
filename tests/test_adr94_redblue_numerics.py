@@ -200,14 +200,16 @@ def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
                       "/DruckerPrager_YF.h")
     pf_src = _source("SRC/material/nD/ASDPlasticMaterial3D"
                       "/PlasticFlowDirections/DruckerPrager_PF.h")
-    assert _PRESSURE_PART_IDIOM.search(yf_src), (
-        "DruckerPrager_YF.h no longer contains the uninitialised "
-        "`VoigtVector pressure_part; pressure_part *= 0.0;` pseudo-init "
-        "idiom -- the apex-path UB this test pins may be gone; re-measure "
-        "and update this test (and test_H10_dp_apex_hydrostatic_tension_"
-        "commits_nan) accordingly.")
-    assert _PRESSURE_PART_IDIOM.search(pf_src), (
-        "DruckerPrager_PF.h no longer contains the same idiom -- see above.")
+    # FIXED by wp/94a (ADR-94 B4 + B2).  Both halves of Q5 are closed: the
+    # pseudo-init idiom is gone (the NaN is no longer manufactured), and the
+    # guards that DO fire return LADRUNO_MATERIAL_REFUSED instead of a bare -1
+    # (so a hex host no longer swallows them).  Grep-gate inverted.
+    assert not _PRESSURE_PART_IDIOM.search(yf_src), (
+        "DruckerPrager_YF.h has the uninitialised `VoigtVector pressure_part; "
+        "pressure_part *= 0.0;` idiom AGAIN -- wp/94a's Eigen-init fix was "
+        "reverted.")
+    assert not _PRESSURE_PART_IDIOM.search(pf_src), (
+        "DruckerPrager_PF.h has the same idiom again -- see above.")
 
     out = _run_child(_DP_CHILD.replace("{PYPATH}", _pypath()))
     if "RESULT_CODES=" not in out:
@@ -218,23 +220,18 @@ def test_R2_dp_apex_nan_guard_fires_and_is_swallowed():
     nan_committed = any(s != s for s in stress)
     all_finite = all(math.isfinite(s) for s in stress)
 
-    # (a) the analysis never reports failure on this degenerate path,
-    # regardless of which UB outcome this platform's heap produced.
-    assert all(c == 0 for c in codes), (
-        "expected every analyze() to report success on this degenerate "
-        f"apex path, got {codes}")
-    assert nan_committed or all_finite, (
-        f"stress is neither NaN-flagged nor entirely finite -- unexpected "
-        f"state: {stress}")
+    # (a) FIXED: no committed state is non-finite any more, on any heap.
+    assert all_finite and not nan_committed, (
+        f"a non-finite stress was COMMITTED on the DP apex path -- wp/94a's "
+        f"Eigen-init fix has regressed; stress={stress}, codes={codes}")
 
-    # (b) the guard's own "NaN!" print, and the committed-NaN it swallows,
-    # are only expected when this platform's heap actually reproduced the
-    # UB -- on a fresh/zeroed heap the path stays clean and the guard never
-    # trips at all (which is not a regression, just the other UB outcome).
-    if nan_committed:
-        assert "NaN!" in out, (
-            "expected Backward_Euler's own NaN guard to fire once NaN was "
-            "committed; stdout tail:\n" + out[-1500:])
+    # (b) FIXED: the material is now allowed to refuse here and LadrunoBrick
+    # propagates the sentinel, so a non-zero code is correct rather than the
+    # swallowed rc=0 this test used to pin.  Only 0 and -3 are legal.
+    bad = [c for c in codes if c not in (0, -3)]
+    assert not bad, (
+        f"unexpected analyze() codes on the DP apex path: {codes} (0 = step "
+        f"taken, -3 = global Newton gave up after the material refused)")
 
 
 # ---------------------------------------------------------------------------

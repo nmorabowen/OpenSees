@@ -62,11 +62,15 @@ public:
         if (abs(den) > sqrt(0.5*tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             dev_part = dev_part / den;
         else
-            dev_part *= 0.0;  // Zero out if denominator too small
+            dev_part.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0.0`; NaN*0 == NaN
             
         // Add pressure-dependent part: etabar * dp/dsigma = etabar/3 * I
-        VoigtVector pressure_part;
-        pressure_part *= 0.0;  // Initialize to zero
+        // Ladruno (ADR-94 wp/94a): ADR-94 B4 -- `VoigtVector x; x *= 0.0;` multiplies
+        // UNINITIALISED Eigen storage by zero, which does not clear heap garbage that
+        // decodes as NaN. This is where the Drucker-Prager hydrostatic-tension NaN was
+        // born (and then committed with analyze() == 0). Same fix as the ADR-84 P0
+        // constructor precedent in ASDPlasticMaterial3D.h.
+        VoigtVector pressure_part = VoigtVector::Zero();
         pressure_part(0) = etabar / 3.0;  // sigma_xx component
         pressure_part(1) = etabar / 3.0;  // sigma_yy component  
         pressure_part(2) = etabar / 3.0;  // sigma_zz component
