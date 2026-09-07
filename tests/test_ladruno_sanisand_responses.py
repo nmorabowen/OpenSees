@@ -35,10 +35,12 @@ _ROOT23 = math.sqrt(2.0 / 3.0)
 _SMALL = 1.0e-10           # ManzariDafalias::small, the psi p-floor
 _M = _PARAMS[9]            # yield-cone size m
 _IDENT_TOL = 1.0e-12       # identity checks, relative
-# Measured max of |f| / (sqrt(2/3) m p') over the 40 plastic steps, both
-# p_r legs: see the PR.  A decade above it; a return map that stops
+# Measured max of |f| / (sqrt(2/3) m p') over the 40 plastic steps:
+# 1.07e-5 (p_r = 0) and 4.1e-6 (p_r = 1.01) on the F4 build -- i.e. the
+# 1e-7 absolute `mTolF` drift tolerance against a cone of ~1e-2 kPa at this
+# deck's ~2.5 kPa mean stress.  A decade above it; a return map that stops
 # correcting drift is what this would catch.
-_ON_SURFACE_REL = 1.0e-6
+_ON_SURFACE_REL = 1.0e-4
 
 
 def _read():
