@@ -5951,3 +5951,59 @@ a material-level flag a recorder reads. Returning a sentinel from
 - **Rule:** a `if constexpr (trait)` block whose body is commented out is worse than no trait -- it type-checks the declaration without exercising it. Before reviving one, audit every implementation of the trait; expect at least one to be a stub and at least one to be silently wrong.
 - **The integrator must not trust the YF's geometry.** wp/94c's revived site evaluates `f(sigma_apex)` and only commits the projection when `|f| <= tol`; otherwise it falls through to the generic return map (or refuses under `strict_convergence`). That is what makes a wrong `apex_stress` a performance problem instead of a fabricated stress.
 - **What it still cannot check:** a MISCLASSIFICATION. `check_apex_region` is a Euclidean normal-cone test in `(p, sqrt(J2))`, while the exact condition is in the ELASTIC metric (`p - p_apex >= (K*etabar/G)*q` for DP), and the YF signature cannot see `K` or `G`. `f(sigma_apex) = 0` by construction, so the gate cannot catch a state that should have returned to the flank. Keep apex-region tests conservative, and prefer the degenerate case (`sqrt(J2) -> 0`, where there is no flank direction at all) when in doubt.
+## `FE_Element::setID()` is greedy: it copies EVERY equation of every DOF_Group (ADR-96)
+
+`SRC/analysis/fe_ele/FE_Element.cpp` `setID()` walks `myDOF_Groups`, copies each
+group's full `getID()` into `myID` and returns `-3` the moment it runs past `numDOF`
+— leaving a half-filled map behind. A handler-level adapter with a fixed
+per-node slot count (the contact `LadrunoContactFE`, `3·(1+n_ps)`) therefore
+cannot connect an ndf-4 (`LadrunoUP`) or ndf-6 node through the base method: the
+pressure/rotation equation lands in a translation slot. `numDOF` and `theModel`
+are **private** in `FE_Element`, so an override must size itself from
+`myID.Size()` and reach the groups through `Node::getDOF_GroupPtr()`. Fix pattern:
+`LadrunoContactFE::setID()` (ADR-96). Domain elements do not hit this because
+`FE_Element(ele)` sizes `numDOF` from `ele->getNumDOF()` — which is why a
+mixed-ndf `ZeroLength` has to REPORT the element size (`dofNd1 + dofNd2`) and
+scatter its core, not just relax its count check.
+
+## `ZeroLength::numDOF` is the element size everywhere, not a "count check" (ADR-96)
+
+`setDomain()` dispatches `numDOF`/`elemType` on `(dimension, ndf)` pairs and
+every accessor, the `t1d` transformation, `d0`/`v0`, `commitSensitivity` and the
+responses loop to `numDOF` or `numDOF/2`. Three sites subtract whole nodal
+vectors (`disp2 - disp1` in `setDomain`, `update`, `getResponse`), which throws
+on a (3,4) pair before any count check is reached. "Relax the count check" is
+therefore not a one-line change; the passenger scatter (ADR-96 D4) is the
+minimal one that keeps the vanilla path byte-identical.
+
+## Vanilla `ZeroLength`'s "differing dof at ends" refusal CRASHED at the `element` command (ADR-96)
+
+`ZeroLength::setDomain()` refused a mixed-ndf pair with a warning and a bare
+`return`, leaving `t1d` NULL. `Domain::addElement()` calls `element->update()`
+right after `element->setDomain()` (`Domain.cpp:493-494`), and
+`ZeroLength::update()` dereferences `t1d` through `computeCurrentStrain1d()`:
+access violation, upstream, on every such deck — measured on a `(2,3)` pair
+while building ADR-96's G3 gate (the guide's "warn + bail" row was wrong: it
+was warn + crash). The passenger-mode rotational-`-dir` refusal inherited the
+same path. Both now call `ladrunoDisable()` (a zero `t1d` of the default 2-slot
+width, `update()` a no-op); the warning text is unchanged and the element stays
+in the domain contributing nothing. `tests/test_adr96_passenger_dof.py`
+(`test_g3_rotational_dir_is_refused_on_a_passenger_pair`,
+`test_g3_ndf_2_pair_is_still_refused_as_vanilla`) are the regression guards.
+
+## The serial `MumpsSolver` is never compiled in this fork (TIMs F5, 2026-09-07)
+
+`CMakeLists.txt` defines `_MUMPS` only for the parallel targets (`OpenSeesSP`,
+`OpenSeesMP`, `OpenSeesPyMP`: lines ~996/1217/1292/1408); the serial `OpenSees` /
+`OpenSeesPy` targets get no MUMPS at all — ADR-75 P1b kept MUMPS as the CLUSTER
+solver and made PARDISO the desktop one (`CMakeLists.txt:588-594`). Measured on
+the F4 build: `system Mumps -stats` on `OpenSees.exe` and the pyd both answer
+"unknown system type". So the "silent serial `MumpsSolver.cpp` path" the TIMs
+note cites (`MumpsSolver.cpp:150-200`, no `printStats`, both parsers construct it
+2-arg and `commands.cpp:4341-4345` warns `-stats` is ignored) is real in the
+source but UNREACHABLE in any shipped serial binary. Wiring `-stats` there would
+be dead, unverifiable code; MUMPS statistics on the desktop come from a one-rank
+`mpiexec -n 1 OpenSeesMP` / `openseesmp` run (rank 0 prints them,
+`MumpsParallelSolver.cpp:295-319`) — which needs the packaged `dist\openseesmp`
+runtime (a no-arg `build.bat`), not the 4-target build. Linking MUMPS into the
+serial targets is an ADR-75 policy reversal for the owner, not a "small" WP.

@@ -97,9 +97,9 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     softScale(softScale_ > 0.0 ? softScale_ : 0.0)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
-    // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
-    // its DOF_Group contributes exactly 3 ⇒ exact ndof match). The B-operator below
-    // assumes this layout. The handler guards ndf==3 on every node of the pair.
+    // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (the ADR-96 setID
+    // override takes each node's FIRST 3 equations, so ndf >= 3 is exact). The B-operator below
+    // assumes this layout. The handler guards ndf >= 3 on every node of the pair (ADR-96).
     if (slaveNode != 0) {
         DOF_Group *dg = slaveNode->getDOF_GroupPtr();
         if (dg != 0) myDOF_Groups(0) = dg->getTag();
@@ -326,6 +326,56 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
 
 LadrunoContactFE::~LadrunoContactFE()
 {
+}
+
+// Ladruno (ADR-96, passenger DOFs). See the header. Layout per mode is the one
+// the constructors declare; `per = ndm` slots per node.
+int
+LadrunoContactFE::setID(void)
+{
+    Node *nodes[8]; int nn = 0;
+    switch (mode) {
+    case EMPTY:
+        return 0;
+    case RIGID_PLANE:
+        nodes[nn++] = theSlave; break;
+    case SEGMENT:
+        nodes[nn++] = theSlave;
+        for (int i = 0; i < nps; i++) nodes[nn++] = segNode[i];
+        break;
+    case MORTAR:
+        for (int i = 0; i < npsS; i++) nodes[nn++] = mortarSlave[i];
+        for (int i = 0; i < npsM; i++) nodes[nn++] = mortarMaster[i];
+        break;
+    case EDGE_EDGE:
+        for (int i = 0; i < 4; i++) nodes[nn++] = edgeNode[i];
+        break;
+    default:
+        return FE_Element::setID();
+    }
+    const int per  = ndm;
+    const int ndof = myID.Size();
+    if (nn != myDOF_Groups.Size() || per * nn != ndof) {
+        opserr << "FATAL LadrunoContactFE::setID() - layout mismatch: " << nn << " nodes x "
+               << per << " != ndof " << ndof << " (" << myDOF_Groups.Size() << " DOF_Groups)\n";
+        return -3;
+    }
+    int current = 0;
+    for (int i = 0; i < nn; i++) {
+        DOF_Group *dg = (nodes[i] != 0) ? nodes[i]->getDOF_GroupPtr() : 0;
+        if (dg == 0) {
+            opserr << "WARNING LadrunoContactFE::setID() - 0 DOF_Group pointer\n";
+            return -2;
+        }
+        const ID &eq = dg->getID();
+        if (eq.Size() < per) {
+            opserr << "FATAL LadrunoContactFE::setID() - node " << nodes[i]->getTag()
+                   << " has " << eq.Size() << " equations < ndm=" << per << "\n";
+            return -3;
+        }
+        for (int j = 0; j < per; j++) myID(current++) = eq(j);
+    }
+    return 0;
 }
 
 // ADR-85 T2 (D5) -- live re-resolution of the far-neighbour nodes through theDomain,

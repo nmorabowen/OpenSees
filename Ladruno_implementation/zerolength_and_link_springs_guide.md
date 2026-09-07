@@ -123,6 +123,25 @@ selects the translation/rotation axis ([ZeroLength.cpp:1927-1930](#)).
 geometry carries no orientation information — the local frame comes *entirely*
 from `-orient` (defaulting to global x/y).**
 
+
+#### Mixed-ndf pairs — the fork's passenger mode (ADR-96)
+
+Vanilla refuses two nodes of differing ndf (*"differing dof at ends"*, warn and
+return: the element is silently absent). The fork accepts, **in 3-D only**, any
+pair with both ndf >= 3 that is not a vanilla `(3,3)`/`(6,6)` pair — `(3,4)`,
+`(4,3)`, `(4,4)`, `(3,6)`, `(6,4)`: the element keeps its 6-slot translational
+core (`-dir 1..3`, `t1d` unchanged) and scatters it into a `dofNd1 + dofNd2`
+element. Each node's **first three DOFs** are the translations; a `LadrunoUP`
+pore pressure or a beam rotation is never read or written — it rides as a
+passenger. `-dir 4..6` is refused in that mode (message names the element, the
+two ndf values and the direction; element disabled). `-doRayleigh` works
+(element-sized Rayleigh forces). Element responses (`force`, `deformation`,
+`dampingForces`) are element-sized (`ndf1 + ndf2`, passenger slots identically zero); the material/`deformation` responses stay the 6-slot core. The canonical use is the no-tension
+footing/soil slot: `zeroLength $tag $skinNode $soilNode -mat $ent -dir 3` with
+`uniaxialMaterial ENT`. Not for `ZeroLengthSection` / `ZeroLengthND` /
+`TwoNodeLink`, which keep the equal-ends rule. Test:
+`tests/test_adr96_passenger_dof.py`.
+
 #### Stiffness assembly
 
 `setTran1d()` builds the strain-displacement row vector `t1d(mat, dof)`
