@@ -459,3 +459,25 @@ decision.
   SANISAND's memory (§33). Fork-side scoping found six corrections, a live overlapping work
   package (#792) and an ADR-number collision; renumbered 91 -> 92, D0-D7 taken, P0 opened,
   C++ gated on #792 T8. Written on `wp/92-sanisand-implex` cut from `ladruno` at `3f003d110`.
+
+## P2 (owed) — what the Esmeralda census and the fork-side probes found, 2026-09-07
+
+Evidence: `_adr93_seat_replay.md` (gate met, error reproduced), ADR 93 Log 2026-09-06/07,
+`LEDGER_quirks.md` rows of 2026-09-07. Four defects/limits, each with acceptance data.
+
+| # | item | mechanism | fix shape | acceptance | status |
+|---|---|---|---|---|---|
+| P2-1 | **The floor branch commits an O(1) error** | `-implexControl`'s "nothing left to cut ⇒ accept" commits whatever error remains; the committed state is then out of equilibrium by O(1); the next linear solve closes the gap with a ds-independent strain (ring: 2–9× per ds, relaxing over ~15 rows, growing on repeats); the control refuses to the floor again ⇒ self-sustaining loop | at the floor, that Gauss point delivers the **implicit** stress for the step under the frozen `Ce` (SPD kept, +1–2 iterations, no O(1) commit possible); alternative: refuse at the floor (honest wall) | Esmeralda loose 146456 rows 1101–1135: the strain-per-ds excursions must vanish; dense 146457 must walk past 0.0178 or stop honestly | built in #807 (87b9cf846), acceptance pending Esmeralda |
+| P2-2 | **Extrapolation at a softening / reversal point** | at `Kp ≤ 0` (post-peak dense) with an `α_in` reset between steps, the previous plastic increment is the wrong thing to extrapolate: seat 4095/8, error 0.46 reproduced; alpha 0.5 → 0.22, direction variant → no change, **f = 0 → 0.029 (under tol)** | `f = 0` on a step whose committed predecessor showed `Kp ≤ 0` or an `α_in` reset (elastic predictor there); report the count as a new `implexRefusals`-style census | the seat row's error under tol without refusal; the P0 oracle rows unchanged elsewhere (byte-identity where `Kp > 0`) | built in #807 (87b9cf846), acceptance pending Esmeralda |
+| P2-3 | **A zero-dt hold corrupts the next step** | a zero-increment commit stores `dt_n = 0` ⇒ next `f = alpha` with a zero history; the census leg's curve ran 4 / 21 / 29 % above the plain leg after a hold (RED-1 F9 was wrongly downgraded) | on a zero-increment commit keep the previous `dt_n` and `Δε_p(n)` | a hold inside a push is byte-inert on the following steps; guide warning until then | built in #807 (87b9cf846), acceptance pending Esmeralda |
+| P2-4 | **`setParameter stressCorrection` is a no-op** | `ManzariDafalias::updateParameter` reads `theInt` (`:897`, `:864`), interpreters set `theDouble` | `LadrunoSANISAND::updateParameter` override accepting `theDouble`; zero vanilla footprint | a positive control: the first-step `Q` moves when the flag is set | built in #807 (87b9cf846), acceptance pending Esmeralda |
+
+Not in P2: ADR 93's own question (the free-surface ring at the pressure floor, no plateau) —
+untouched by all four; the campaign returns to it once P2-1/2 land.
+
+**Default decision:** `-implexFloor` defaults to `implicit`, not `refuse` or the pre-P2 `accept`,
+because the implicit return at the floor passes the state the control is refusing at — it is
+admissible by construction — so `refuse` would stop IMPL-EX exactly where the implicit material
+itself is still walking forward, and `implicit` closes the self-sustaining gap-closing loop P2-1
+measured without paying for an extra return map (the companion is already computed for the error
+comparison). `accept` remains available only to reproduce pre-P2 behaviour or isolate the loop.
