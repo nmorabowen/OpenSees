@@ -34,18 +34,25 @@ def _read(path):
 
 
 def test_F1_getInitialTangent_writes_shared_static_stiffness():
-    """getInitialTangent() is documented/used as a plain getter but its body
-    assigns the class-static ``Stiffness`` (the same static H1 showed is
+    """FIXED by wp/94b.  ``getInitialTangent()`` used to be a "getter" that
+    assigned the class-static ``Stiffness`` (the same static H1 showed is
     shared across every GP/element/tag of one YF x PF x EL combo) before
-    copying to its own return buffer. If this assignment is removed (made a
-    local variable), this regex goes red -- that is the fix."""
+    copying to its own return buffer, so any ``-initial`` algorithm or
+    diagnostic call silently overwrote the tangent every other instance's
+    later ``getTangent()`` would read.  It now computes into a local and
+    copies THAT; no member state is touched."""
     src = _read(_MAIN_H)
     m = re.search(r"getInitialTangent\(\s*\)\s*\{(.*?)\n    \}", src, re.S)
     assert m, "could not locate getInitialTangent() body"
     body = m.group(1)
-    assert "Stiffness = Eelastic;" in body, (
-        "getInitialTangent() no longer mutates the shared static Stiffness "
-        "-- F1 (getter-with-side-effect) may be fixed; update red1_cpp.md")
+    live = "\n".join(ln for ln in body.splitlines()
+                     if ln.strip() and not ln.strip().startswith("//"))
+    assert "Stiffness" not in live, (
+        "getInitialTangent() mutates Stiffness again -- F1 "
+        "(getter-with-side-effect) is back:\n" + live)
+    assert "copyToMatrixReference(Eelastic, return_matrix);" in live, (
+        "getInitialTangent() no longer copies its LOCAL elastic tangent to the "
+        "return buffer; re-check the F1 fix")
 
 
 def test_F3_sendSelf_recvSelf_report_success_while_doing_nothing():
@@ -84,19 +91,29 @@ def test_F4_domain_reverttostart_discards_element_return_code():
 
 
 def test_F2_yf_and_pf_functors_return_class_static_buffers():
-    """DruckerPrager_YF::df_dsigma_ij/apex_stress both return a reference to
-    one private `static VoigtVector vv_out` scoped to the YF's own template
-    parameters (not to the owning ASDPlasticMaterial3D<E,Y,P,tag> combo) --
-    a strictly wider sharing key than the Stiffness static R1-A pinned for
-    H1. Every PlasticFlowDirections/*.h header follows the same pattern
-    (grep-verified in the analysis; only DruckerPrager_YF is regex-pinned
-    here for speed)."""
+    """FIXED by wp/94b.  Every YF/PF functor used to return its VoigtVector
+    results through a private ``static VoigtVector vv_out`` scoped to the
+    FUNCTOR's own template parameters -- a strictly wider sharing key than
+    ``Stiffness`` (H1), since two unrelated ``ASDPlasticMaterial3D<E,Y,P,tag>``
+    combos that merely reuse the same YF or PF type shared one buffer.  They
+    are per-instance ``mutable`` members now.  Checked across the whole
+    YieldFunctions/ + PlasticFlowDirections/ tree, not just DruckerPrager."""
+    for sub in ("YieldFunctions", "PlasticFlowDirections"):
+        d = os.path.join(_SRC_DIR, sub)
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".h"):
+                continue
+            src = _read(os.path.join(d, fn))
+            assert not re.search(r"static\s+VoigtVector\s+(vv_out|result)\s*;",
+                                 src), (
+                f"{sub}/{fn} declares a static return buffer again -- F2 is back")
+    # the DruckerPrager buffer specifically is still written by both the
+    # deviatoric-direction getter and apex_stress, i.e. the fix moved the
+    # buffer, it did not delete the code paths.
     src = _read(_DP_YF)
-    assert re.search(r"static\s+VoigtVector\s+vv_out\s*;", src), (
-        "DruckerPrager_YF no longer declares a static vv_out buffer -- "
-        "F2 may be fixed (or moved to an instance member); update red1_cpp.md")
-    # both the deviatoric-direction getter and apex handling write into it
+    assert re.search(r"mutable\s+VoigtVector\s+vv_out\s*=", src), (
+        "DruckerPrager_YF's vv_out is no longer a per-instance member")
     assignments = re.findall(r"vv_out\s*=", src)
-    assert len(assignments) >= 2, (
-        f"expected >=2 writes into the shared vv_out (df_dsigma_ij + "
+    assert len(assignments) >= 3, (
+        f"expected the declaration plus >=2 writes into vv_out (df_dsigma_ij + "
         f"apex_stress), found {len(assignments)}")

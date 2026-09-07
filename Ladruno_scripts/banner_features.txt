@@ -71,4 +71,4 @@ MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)
 LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
 LadrunoLoadControl — -tangentPredictor for prescribed-disp paths
 LadrunoShellModifier — ETABS-style shell stiffness modifiers
-ASDPlasticMaterial3D — fail-loud contract + loud parser (ADR-94)
+ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)

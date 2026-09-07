@@ -254,60 +254,74 @@ def test_H1_oracle_matches_opensees_elastic_stiffness():
 
 @pytest.mark.t0m
 def test_H1_one_static_tangent_is_shared_by_every_element(vm_available):
-    """CONFIRMED (blocker).  Two disconnected cubes of the SAME ASDP
-    specialization, one plastic one elastic, are assembled with ONE tangent.
+    """FIXED by wp/94b.  Two disconnected cubes of the SAME ASDP
+    specialization, one plastic one elastic, are each assembled with their OWN
+    tangent.
 
-    Measured on ``52314165a``: the two elements' stand-alone tangents differ by
-    13.6%, yet inside the combined model the two diagonal blocks are equal to
-    round-off, and the plastic element's block is 13.2% away from its own
-    correct tangent.  Assemble the block sum of the two singles and you get a
-    DIFFERENT matrix from the two-element model -- which is the whole claim.
-
-    A fix (per-instance ``Stiffness``) makes ``blocks_identical`` false and
-    turns this test red.
+    Measured on ``52314165a`` before the fix: the two elements' stand-alone
+    tangents differ by 13.6%, yet inside the combined model the two diagonal
+    blocks were equal to round-off and the plastic element's block was 13.2%
+    away from its own correct tangent -- every GP, element and material tag of
+    one ``<E,Y,P,tag>`` specialization shared one class-static ``Stiffness``.
+    wp/94b made ``Stiffness`` (and ``dsigma``, ``depsilon_elpl``,
+    ``intersection_*``) ordinary members, so the assembled block of each
+    element is now that element's own tangent.
     """
     _, K_pl = _cubes_K([(1, 0.0)], [(1, LOAD_PL)])
     _, K_el = _cubes_K([(2, 3.0)], [(2, LOAD_EL)])
-    assert _rel(K_pl, K_el) > 0.1, "the two states must be genuinely different"
+    # Non-vacuity guard.  The gap between the two stand-alone tangents was 13.6%
+    # before wp/94c and is 0.82% after it: correcting the von Mises shear-slot
+    # convention (ADR-94 B5) raised `n:(E:m)` -- the shear terms were previously
+    # under-counted -- so the rank-one plastic reduction of the continuum tangent
+    # is smaller, and the plastic cube's tangent sits closer to the elastic one.
+    # This bound only has to keep the test from being vacuous; the discriminating
+    # assertions below compare each assembled block against its own stand-alone
+    # tangent at 1e-9, seven orders below this gap.
+    assert _rel(K_pl, K_el) > 5.0e-3, "the two states must be genuinely different"
 
     _, K_both = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_PL), (2, LOAD_EL)])
     n = NDOF_CUBE
     blk_pl, blk_el = K_both[:n, :n], K_both[n:, n:]
 
-    # DEFECT: both elements got the same 6x6 tangent.
-    assert _rel(blk_pl, blk_el) < 1e-9, "H1 fixed? the blocks now differ"
-    # DEFECT: the plastic element's block is NOT its own tangent...
-    assert _rel(blk_pl, K_pl) > 0.1
-    # ...it is the ELASTIC element's, i.e. the last one integrated.
-    assert _rel(blk_el, K_el) < 1e-9
+    # FIXED: the two blocks are as different as the two states are ...
+    assert _rel(blk_pl, blk_el) > 5.0e-3, (
+        "the two assembled blocks are identical again -- the shared static "
+        "tangent (ADR-94 M1) is back")
+    # ... and each element got its own.
+    assert _rel(blk_pl, K_pl) < 1e-9, (
+        "the plastic element's assembled block is not its own tangent")
+    assert _rel(blk_el, K_el) < 1e-9, (
+        "the elastic element's assembled block is not its own tangent")
 
 
 @pytest.mark.t0m
 def test_H1_shared_tangent_follows_the_last_element_integrated(vm_available):
-    """CONFIRMED (blocker).  WHICH tangent everybody gets is decided by domain
-    iteration order, not by the element: swap which cube is plastic and the
-    wrong block swaps with it.
+    """FIXED by wp/94b.  The assembly no longer depends on integration order.
 
-    Together with the previous test this is the ADR-75b blocker: the result of
-    an assembly depends on the order Gauss points were integrated in, so the
-    material can never be safe under threaded assembly.
+    Before the fix, WHICH tangent everybody got was decided by domain iteration
+    order, not by the element: swapping which cube was plastic swapped which
+    block was wrong.  That is the ADR-75b threading blocker this test named --
+    an assembly whose result depends on the order Gauss points were visited in
+    can never be threaded.  With per-instance state, swapping the two loads
+    simply swaps the two blocks.
     """
     n = NDOF_CUBE
-    # element 1 plastic, element 2 elastic -> everyone gets ELEMENT 2's tangent
+    # element 1 plastic, element 2 elastic
     _, K_a = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_PL), (2, LOAD_EL)])
-    # element 1 elastic, element 2 plastic -> everyone gets ELEMENT 2's again
+    # the other way round
     _, K_b = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_EL), (2, LOAD_PL)])
 
     _, K_el_alone = _cubes_K([(2, 3.0)], [(2, LOAD_EL)])
     _, K_pl_alone = _cubes_K([(1, 0.0)], [(1, LOAD_PL)])
 
-    # case a: the shared tangent is the ELASTIC one (element 2 ran last)
+    # case a: block 1 is the plastic tangent, block 2 the elastic one
+    assert _rel(K_a[:n, :n], K_pl_alone) < 1e-9
     assert _rel(K_a[n:, n:], K_el_alone) < 1e-9
-    # case b: the shared tangent is now the PLASTIC one, and it is imposed on
-    # the ELASTIC element (block 1) as well
-    assert _rel(K_b[:n, :n], K_b[n:, n:]) < 1e-9
-    assert _rel(K_b[:n, :n], K_el_alone) > 0.1
-    assert _rel(K_b[:n, :n], K_pl_alone) < 0.05
+    # case b: exactly the same two blocks, swapped -- nothing leaked from the
+    # last-integrated element into the other one.
+    assert _rel(K_b[:n, :n], K_el_alone) < 1e-9
+    assert _rel(K_b[n:, n:], K_pl_alone) < 1e-9
+    assert _rel(K_a[:n, :n], K_b[n:, n:]) < 1e-12
 
 
 # ===========================================================================
@@ -345,14 +359,20 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
     return map.  Measured vs ``hex8_K(vm_consistent_tangent)`` at
     ``dEps_zz = -3.6e-3``:
 
-        Continuum                          57.3%   3 global Newton iters
-        Secant  (the DEFAULT)              79.9%  16
-        Elastic                           102.5%  23
-        Numerical_Algorithmic_FirstOrder   31.0%   4
-        Numerical_Algorithmic_SecondOrder  31.0%   4
+                                       52314165a   wp/94c
+        Continuum                          57.3%      57.3%    3 Newton iters
+        Secant  (the DEFAULT)              79.9%      79.9%   16
+        Elastic                           102.5%     102.5%   23
+        Numerical_Algorithmic_FirstOrder   31.0%       4.6%    4
+        Numerical_Algorithmic_SecondOrder  31.0%       4.6%    4
 
-    The numerical pair are closest yet still 31% out because they differentiate
-    ``compute_local_stress()`` -- a THIRD map that is not the one committed.
+    The numerical pair are closest, and wp/94c (ADR-94 B5) took them from 31%
+    to 4.6%: correcting the von Mises shear-slot convention moved
+    ``compute_local_stress()`` -- the THIRD map they differentiate -- much
+    closer to the map ``Backward_Euler`` actually commits.  They are still not
+    the consistent tangent (which would land near 1e-12 here) and the
+    analytical three are unmoved, so H6's finding stands; only its margin
+    shrank.
     The operational consequence is the iteration count: the shipped default
     costs 5.3x the iterations of ``Continuum`` on this step.
     """
@@ -368,11 +388,14 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
         errs[tg] = _rel(_sparse_K(4), K_ref)
         iters[tg] = it
 
-    assert min(errs.values()) > 0.25, "a consistent tangent appeared: %r" % errs
+    # Threshold lowered from 0.25 to 0.02 by wp/94c: the numerical pair improved
+    # from 31% to 4.6% (measured 0.04574 on 3622d6214).  A genuine consistent
+    # tangent would land near 1e-12, so 2% still says "none of the five is it".
+    assert min(errs.values()) > 0.02, "a consistent tangent appeared: %r" % errs
     assert errs["Continuum"] > 0.4
     assert errs["Secant"] > 0.6
     assert errs["Elastic"] > 0.9
-    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.25
+    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.02
     # the DEFAULT (Secant) is the expensive one
     assert iters["Secant"] >= 4 * iters["Continuum"]
 

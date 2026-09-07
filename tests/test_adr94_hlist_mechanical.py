@@ -162,21 +162,26 @@ def mc_available():
 
 
 # ===========================================================================
-# H4 -- revertToLastCommit() is a commented-out no-op; revertToStart() -> -1
+# H4 -- revertToLastCommit()/revertToStart() -- FIXED by wp/94b
 # ===========================================================================
 @pytest.mark.t0m
 def test_H4_revert_to_last_commit_is_noop(mc_available):
-    """CONFIRMED.  ``revertToLastCommit()`` (735-748) has every statement
-    commented out and returns 0 (success) without touching Trial*/Commit*.
-    ``StaticAnalysis::analyze()`` calls ``Domain::revertToLastCommit()``
-    itself whenever a step fails to converge -- so a failed step SHOULD leave
-    the material's trial stress equal to its last commit.  It does not: the
-    dirty trial stress from the failed iteration survives untouched.
+    """FIXED by wp/94b.  ``revertToLastCommit()`` used to have every statement
+    commented out and return 0 (success) without touching Trial*/Commit*, so
+    the dirty trial state of a globally failed step survived
+    ``Domain::revertToLastCommit()``.  Its body is live now: Trial <- Commit
+    for stress/strain/plastic strain, ``iv_storage.revert_all()``, and
+    ``Stiffness`` <- the elastic tangent at the committed stress (no committed
+    tangent is stored anywhere).
 
-    ``revertToStart()`` (780-783 area) is a distinct, separate defect: it
-    prints "not implemented" and returns -1, but ``OPS_resetModel()``
-    (``OpenSeesCommands.cpp``) never reads that return code, so
-    ``ops.reset()`` reports success while the reset silently did nothing.
+    ``revertToStart()`` was a separate defect -- it printed "not implemented"
+    and returned -1, which ``Domain::revertToStart()`` and ``OPS_resetModel()``
+    both discard, so ``ops.reset()`` reported success while the material kept
+    its committed state.  It is implemented too, and returns 0.
+
+    The name is kept so the ADR-94 register stays greppable.  The runtime
+    consequences (a bitwise-identical replay after a failed step, and a real
+    ``ops.reset()``) are pinned in ``test_adr94b_statics.py``.
     """
     _tet_build(lambda t: mat_mc(t), nsteps=20, utop=-0.02)
     assert ops.analyze(1) == 0, "step 1 (healthy) must converge"
@@ -215,11 +220,13 @@ def test_H4_revert_to_last_commit_is_noop(mc_available):
     body = body_m.group(1)
     live = "\n".join(ln for ln in body.splitlines()
                       if ln.strip() and not ln.strip().startswith("//"))
-    assert re.fullmatch(r"\s*return 0;\s*", live), (
-        f"revertToLastCommit() now has live statements beyond 'return 0' "
-        f"({live!r}) -- it may have been implemented; update H4 to "
-        f"REFUTED/fixed (and see if the element-recompute caveat above can "
-        f"finally be replaced with a real runtime pin).")
+    for stmt in ("TrialStress = CommitStress;",
+                 "TrialStrain = CommitStrain;",
+                 "TrialPlastic_Strain = CommitPlastic_Strain;",
+                 "iv_storage.revert_all();"):
+        assert stmt in live, (
+            f"revertToLastCommit() no longer contains the live statement "
+            f"{stmt!r} -- H4's no-op body may be back:\n{live}")
 
     # revertToStart(): ops.reset() must not raise, and must not report the
     # underlying material failure to the caller (the "not implemented" line
@@ -254,11 +261,10 @@ def test_H4_revert_to_last_commit_is_noop(mc_available):
         f"child process did not reach ops.reset() (stdout={proc.stdout!r}, "
         f"stderr={proc.stderr!r})")
     combined = proc.stdout + proc.stderr
-    assert "not implemented" in combined, (
-        "expected ASDPlasticMaterial3D::revertToStart()'s "
-        "'not implemented' line to appear in the child process's real "
-        "stdout/stderr; if it is gone, revertToStart() may have been "
-        f"implemented -- re-verify H4 before trusting this test "
+    assert "not implemented" not in combined, (
+        "ASDPlasticMaterial3D::revertToStart()'s 'not implemented' line is "
+        "back in the child process's real stdout/stderr -- the wp/94b "
+        f"implementation may have been reverted "
         f"(stdout={proc.stdout!r}, stderr={proc.stderr!r})")
 
 
@@ -566,34 +572,31 @@ def test_H13_unknown_model_parameter_is_silently_ignored(mc_available):
 
 
 # ===========================================================================
-# H14 -- getCopy() omits ``first_step`` from its explicit member copy list
+# H14 -- getCopy() copies ``first_step`` -- FIXED by wp/94b
 # ===========================================================================
 @pytest.mark.t0m
 def test_H14_getcopy_does_not_preserve_first_step(mc_available):
-    """CONFIRMED (structural).  ``getCopy()`` (780-801) explicitly copies
+    """FIXED by wp/94b (structural).  ``getCopy()`` explicitly copies
     TrialStress/TrialStrain/.../CommitStrain/iv_storage/parameters_storage/
-    stress_set_externally onto the new instance, but never assigns
-    ``first_step`` -- the new object gets ``first_step = true`` from its own
-    constructor regardless of the source's state. Because every host element
-    calls ``getCopy()`` exactly once, on the still-pristine tag-registered
-    prototype, at CONSTRUCTION time (before any analysis step), the bug is
-    latent under normal model-build order: it would only bite a getCopy()
-    call made on an ALREADY-advanced instance (state re-partitioning,
-    lazy per-GP construction after stepping has begun), which this run does
-    not exercise. This test pins the missing field mechanically so a fix
-    (or an explicit decision to leave it) is visible in a diff, and
-    separately pins that InitialP0 does seed CommitStress on every copy's own
-    first step in the ordinary (non-buggy) sequence.
+    stress_set_externally onto the new instance but used never to assign
+    ``first_step``, so the new object got ``first_step = true`` from its own
+    constructor regardless of the source's state.  The defect was latent under
+    normal model-build order (every host element calls ``getCopy()`` exactly
+    once, on the still-pristine tag-registered prototype, at CONSTRUCTION
+    time), and would only bite a ``getCopy()`` on an ALREADY-advanced instance
+    -- state re-partitioning, or lazy per-GP construction after stepping has
+    begun.  wp/94b copies it (along with the wp/94b initial-IV snapshot).
+    This test pins the field mechanically, and separately pins that InitialP0
+    still seeds CommitStress on every copy's own first step.
     """
     src = _asdp_source()
     m = re.search(r"NDMaterial \*getCopy\(void\)\s*\{.*?\n    \}\n",
                   src, re.S)
     assert m, "could not locate getCopy(void) body -- source layout changed"
     body = m.group(0)
-    assert "first_step" not in body, (
-        "getCopy(void) now assigns 'first_step' onto the new instance -- "
-        "the H14 structural defect appears to be fixed; update the verdict "
-        "to REFUTED/fixed.")
+    assert "newmaterial->first_step = this->first_step;" in body, (
+        "getCopy(void) no longer assigns 'first_step' onto the new instance "
+        "-- the H14/F6 defect is back.")
 
     # non-buggy-path sanity: InitialP0 seeds CommitStress on first step for
     # TWO independently constructed elements sharing the same material tag.

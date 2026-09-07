@@ -203,7 +203,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
-"        • ASDPlasticMaterial3D — fail-loud contract + loud parser (ADR-94)\n"
+"        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
 "\n";
     // FEATURES-END
 

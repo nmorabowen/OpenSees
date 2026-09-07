@@ -133,16 +133,25 @@ public:
   
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
+    // Ladruno (ADR-94 wp/94c, M5): a Rankine cut-off is scaled by its own
+    // threshold stress.
+    YF_STRENGTH_SCALE
+    {
+        (void) internal_variables_storage;
+        double tc = GET_PARAMETER_VALUE(TC_min_stress);
+        return tc < 0 ? -tc : tc;
+    }
+
     using parameters_t = std::tuple<MC_ds, TC_min_stress>;
 
 private:
 
 
-    static VoigtVector vv_out; //For returning VoigtVector's
+    mutable VoigtVector vv_out = VoigtVector(0., 0., 0., 0., 0., 0.);  // Ladruno (ADR-94 wp/94b, F2): was a class-static return buffer, shared by every material that reuses this functor type
 };
 
-template <class NO_HARDENING>
-VoigtVector TensionCutoff_YF<NO_HARDENING>::vv_out;
+// Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
+// the return buffer is a per-instance member now.
 
 //Declares this YF as featuring an apex
 template<class NO_HARDENING>

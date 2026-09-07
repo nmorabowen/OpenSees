@@ -450,6 +450,27 @@ EIGEN_STRONG_INLINE double tensor_dot_energy_like(const VoigtVector& sigma, cons
     return the_dot_product;
 }
 
+// Ladruno (ADR-94 wp/94c): true tensor double contraction a_ij*b_ij of two
+// ENGINEERING-strain-like Voigt vectors.  Their shear slots store gamma = 2*eps,
+// so the off-diagonal contribution is 2*(gamma_a/2)*(gamma_b/2) = 0.5*gamma_a*gamma_b.
+// `tensor_dot_strain_like` above is a verbatim copy of the stress-like dot and
+// DOUBLES the shear terms instead -- correct only for tensor-shear storage.  Every
+// strain-like Voigt quantity in ASDPlasticMaterial3D (the flow direction m, the
+// plastic strain increment, depsilon) is engineering, so equivalent-plastic-strain
+// measures must use this helper.  The pre-existing helpers are left untouched.
+EIGEN_STRONG_INLINE double tensor_dot_engineering_strain_like(const VoigtVector& e1, const VoigtVector& e2)
+{
+    double the_dot_product =
+        e1.v11() * e2.v11() +
+        e1.v22() * e2.v22() +
+        e1.v33() * e2.v33()
+        + 0.5 * (e1.v12() * e2.v12() +
+                 e1.v23() * e2.v23() +
+                 e1.v13() * e2.v13());
+
+    return the_dot_product;
+}
+
 
 
 EIGEN_STRONG_INLINE VoigtVector kronecker_delta()
