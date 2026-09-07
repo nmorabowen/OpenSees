@@ -421,4 +421,31 @@ benchmark is a real footing or the idealised half-space.
   the regime the loop needs. A local reproduction would need a multi-element free-surface
   deck (the `adr92_bvp_fix` R3 deck with a seeded floor-accept), not a single element.
   Esmeralda's ring ratios stand as the evidence for the loop.
+- 2026-09-07 (census 146457, dense q10, wall at s/B 0.01784) — **The seed is named.** Step 331
+  (s/B 0.01758, ds 3.9e-7): argmax at **element 4095 GP 8** (1.39, 1.11, −0.39 m: second row
+  under the surface, just outboard of the edge), `p = 57 kPa`, err 0.53, `f = 0.5` exact,
+  clamp never fired, **240 substeps**, e 0.6268. A confined point, ordinary strain, right clock,
+  no floor: a hard companion return that moved O(1) from the extrapolation on a 0.4 µm step.
+  Then 76 rows with err 0.1–1.12 to the wall and the argmax **hops**: 40 distinct GPs in 30
+  elements through the top two rows and both sides of the mid-plane, p 2.7–242 kPa, all with
+  clamp 0 and `f` exact — the loop (d) as a *field* event in the shear zone. Holds at s/B
+  0.0001 / 0.005 / 0.017 / wall: max `implexDetail[0]` 6.9e-3 / 2.6e-4 / 9.3e-5 / 1.8e-5,
+  median 0 over 34 560 points — **no committed-state inconsistency once the loop relaxes**.
+  **Reading of the seed (hypothesis (e), being replayed in the oracle now):** with `f = 0.5`
+  and ordinary Δε, an error of 0.53 needs the previous accepted tiny step's plastic increment
+  to be ~`|σ|/G`, which is what a return does where the **plastic modulus is near zero** — a
+  dense point at or past peak. There the IMPL-EX premise (the plastic increment is smooth in
+  the step) fails intrinsically: the extrapolation term `f·Ce:Δε_p(n)` is O(σ) however small
+  ds. Not a bookkeeping defect; a limit of extrapolating the plastic-strain increment at a
+  limit state, and the seed of the loop. If the replay confirms `Kp → 0` at 4095/8, ADR 92 P2
+  needs a guard at the *operator* (cap the extrapolation term relative to `Ce:Δε`, or fall
+  back to the implicit return where `Kp` is below a floor), in addition to the floor-branch
+  fix for the loop.
+  **Second finding, for the guide and P2 (RED-1 F9 was wrongly downgraded):** a zero-dt hold
+  commits `dt_n = 0`, so the next step's `f` falls back to `alpha` with a zero history — and
+  the census leg's curve runs **4 % / 21 % / 29 %** above the same cell's plain leg at s/B
+  0.004 / 0.008 / 0.0175, diverging after the 0.005 hold (Q_max 2664 vs 2019–2194). **A hold
+  is not free under `-implex`.** Fix: on a zero-increment commit keep the previous `dt_n` and
+  history (one line); until then, no holds inside an IMPL-EX push, and any census taken by a
+  hold must be on a leg whose curve is not reported.
 
