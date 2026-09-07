@@ -182,7 +182,20 @@ class Sanisand:
 
     def __init__(self, consts=None, scheme=1, Pmin=0.0101, Presidual=0.0,
                  TolF=1e-10, TolR=1e-10, honor_tolR=False, elast_flag=1,
-                 stress_correction=True):
+                 stress_correction=True, substep_stress_ref=0.5, Presidual_e=0.0,
+                 D_factor=True):
+        # ADR-93 P0 seams. All three default to the C++ as shipped:
+        #   substep_stress_ref -- candidate I.1. ModifiedEuler's error norm is
+        #     `err = e if |sigma| < 0.5 else e/(2|sigma|)`, i.e. EXACTLY
+        #     `e / (2 max(|sigma|, 0.5))` -- below the switch the divisor is 1.0.
+        #     The hardcoded 0.5 is a unit-bearing stress reference; this names it.
+        #     `None` selects the verbatim two-branch form, for the identity check.
+        #   Presidual_e -- candidate II.1. A residual pressure in the ELASTIC moduli
+        #     only. It is a NEW number, not a split of an existing one:
+        #     `GetElasticModuli` (ManzariDafalias.cpp:4830-4900, all three overloads)
+        #     floors `p` at `m_Pmin` and NEVER adds `m_Presidual`.
+        #   D_factor -- candidate II.2 / D5a: the dilatancy sigmoid below
+        #     `p = 0.05 P_atm`. False removes it.
         c = dict(CONSTS)
         if consts:
             c.update(consts)
@@ -191,6 +204,9 @@ class Sanisand:
         self.scheme = scheme
         self.m_Pmin = Pmin
         self.m_Presidual = Presidual
+        self.m_Presidual_e = Presidual_e
+        self.mSubstepStressRef = substep_stress_ref
+        self.mUseDFactor = D_factor
         self.mTolF = TolF
         self.mTolR = TolR
         self.mHonorTolRInME = honor_tolR
@@ -257,7 +273,10 @@ class Sanisand:
 
     # ---- kernel
     def elastic_moduli(self, sigma, e):
-        pn = ONE3 * trace(sigma)
+        # ADR-93 II.1: `m_Presidual_e` is 0.0 by default, and at 0.0 this is the
+        # vanilla expression character for character (`+ 0.0` on a finite double is
+        # the identity). ManzariDafalias.cpp:4834-4835 / 4876-4877 / 4896-4897.
+        pn = ONE3 * trace(sigma) + self.m_Presidual_e
         if pn <= self.m_Pmin:
             pn = self.m_Pmin
         eG = self.m_e_init                      # mUseCurrentVoidRatioInG is false
@@ -319,7 +338,10 @@ class Sanisand:
         h = 1.0e10 if abs(aain) < SMALL else b0 / aain
         A = self.m_A0 * (1 + macauley(dd_contr(fabric, n)))
         D = A * dd_contr(d, n)
-        if p < 0.05 * self.m_P_atm:
+        if self.mUseDFactor and p < 0.05 * self.m_P_atm:
+            # ADR-93 II.2 / D5a: `p` here already carries m_Presidual, so the sigmoid's
+            # floor at p -> 0 is 1/(1+exp(7.6349 - 7.2713*p_r)) -- 0.4278 at the vanilla
+            # p_r = 1.01, 4.83e-4 at the fork default p_r = 0. Factor 886.
             D *= 1.0 / (1.0 + math.exp(7.6349 - 7.2713 * 101.0 / self.m_P_atm * p))
         B = 1.0 + 1.5 * (1 - self.m_c) / self.m_c * gc * cos3t
         C = 3.0 * math.sqrt(1.5) * (1 - self.m_c) / self.m_c * gc
@@ -587,7 +609,13 @@ class Sanisand:
 
             sNorm = norm_contr(nStress)
             e_ = norm_contr(dS2 - dS1)
-            err = e_ if sNorm < 0.5 else e_ / (2 * sNorm)
+            # ManzariDafalias.cpp:1746-1753. ADR-93 I.1: the two branches are the one
+            # expression `e_ / (2 max(|sigma|, sigma_ref))` with sigma_ref = 0.5 -- for
+            # |sigma| < 0.5 the divisor is exactly 1.0, so this is bit-identical.
+            if self.mSubstepStressRef is None:
+                err = e_ if sNorm < 0.5 else e_ / (2 * sNorm)
+            else:
+                err = e_ / (2 * max(sNorm, self.mSubstepStressRef))
 
             if err > TolE:
                 q = max(0.8 * math.sqrt(TolE / err), 0.1)
