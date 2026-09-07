@@ -301,3 +301,29 @@ benchmark is a real footing or the idealised half-space.
   step.** One thing the run did settle: §1 row 1 above, and the II.1 rewording that follows from
   it. Open for ADR 92: the IMPL-EX legs replay ~100× worse than their implicit twins (2.4e-3 /
   6.8e-3 against 2.8e-5 / 2.5e-5) on fitted states, unexplained.
+- 2026-09-07 (endpoints + the first NAMED O(1) event under the fork idiom; Esmeralda jobs
+  146451/146455 dense, 146453/146456 loose, implicit twin 146438): the dense fork-idiom arm
+  walked at 1e-4 m to **s/B 0.0176** (Q 2019 kN half-model, tangent still rising) and there
+  the control refused at iteration 1–2 on every halving; with the floor at 1.95e-7 and budget
+  200 it crept to 0.0185 on 900 accepted steps of ~1e-6 m. **Step 315 (s/B 0.017577,
+  ds 3.9e-7 m) is a COMMITTED row with `implex_err_max = 1.111`** over every SANISAND point,
+  then 1.7e-2, 1.5e-2 on rows 327–328, 8e-8 elsewhere: at a 0.4 µm increment the companion
+  moved one Gauss point O(1) away from `σ_n` (the extrapolation term is negligible at
+  f ≈ 4e-3). Not a step-size effect: under a frozen `Ce` the global step is linear, iterate 1
+  *is* the converged trial, and as ds → 0 both `σ~` and the companion's input tend to `σ_n` —
+  so an O(1) discrepancy means the companion moves the **committed state itself** on a
+  near-zero increment. The instrumented ring point had 3e-5 on that row; the seat is elsewhere
+  and unnamed. Three fork-side candidates, none a step-size question: (a) the committed state
+  is off the surface as the companion sees it and the default-ON `Stress_Correction` fires on a
+  zero increment (also fits the replay's 100× reproducibility gap and the un-primed stage-flip
+  mechanism), (b) the `p_min` projection pasting a pressure into a point far below the floor,
+  (c) a companion force-accept at `dT_min`. **Decisive census, no fork change:** the argmax
+  point at commit on rows with error > tol (element, GP, `implexDetail` 0–5, stress, and the
+  `alpha` / `fabric` / `alpha_in` / `state` responses), a zero-increment hold at the wall read
+  over every point ((a) fires on a zero increment, (b)/(c) do not), and a third arm with
+  `setParameter stressCorrection` off, labelled a model change. Queued on Esmeralda. If (a):
+  the fix is ADR 92 P2 (commit the companion's corrected state consistently), not this ADR.
+  The loose leg's stop at 0.0297 was a harness artefact (growth tries charged to the budget),
+  rerun without growth in flight. Whether the implicit twin passes 0.0176 (at 0.0174,
+  subdividing) decides whose wall it is.
+
