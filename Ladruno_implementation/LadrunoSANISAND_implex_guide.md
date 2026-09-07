@@ -373,6 +373,15 @@ switched off on a step nobody asked to change; ADR 93's census measured a curve 
 that actually moved, which is the only step either can honestly describe. A hold is clock-safe
 under P2: it increments `implexGuards[2]` and changes nothing else.
 
+The IMPL-EX side of P2-3 was the smaller half. Widening the ADR 93 census (2026-09-06/07) to the
+**implicit** column found it was worse: vanilla `ManzariDafalias::integrate()` (`:1005-1013`) resets
+`α_in := α_n` on loading reversal with no magnitude guard on the strain increment that decides the
+sign, so a hold's round-off noise fires the reset directly — 28–54 % of 34 560 points on Esmeralda
+146458 — with no P2-3-style fallback to catch it, sending `h → ∞` and stiffening the implicit column
+2.5x for tens of steps. This is P2-5, tracked in `LEDGER_quirks.md` and the ADR 92 P2 table; the fix
+is a subclass magnitude guard, `-reversalTol` (default 1e-10 on `‖Δε‖`), counted in `implexGuards[3]`.
+Built in #807, pending acceptance.
+
 ### `stressCorrection` now works — P2-4
 
 `setParameter -val 0 -ele $eleTag stressCorrection` (the idiomatic element-forwarded route) and
