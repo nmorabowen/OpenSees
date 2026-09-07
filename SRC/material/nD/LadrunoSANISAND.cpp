@@ -2478,6 +2478,27 @@ LadrunoSANISAND::setParameter(const char **argv, int argc, Parameter &param)
             param.setValue(mImplexOpt.dtUser);
             return param.addObject(LadrunoSanisandImplexDtParamID, this);
         }
+        // Ladruno ADR-92 P2-4: claim `stressCorrection` (the base's id 9) HERE,
+        // WITHOUT the base's `atoi(argv[1]) == getTag()` guard, so the ELEMENT
+        // route reaches it.
+        //
+        // The base's own registration needs argc >= 2 with the material tag in
+        // argv[1] (ManzariDafalias.cpp:820-825). An element selector --
+        // `setParameter -val 0 -ele $eleTag stressCorrection`, which is how every
+        // other setParameter call in this fork's test suite is written -- hands
+        // the material argv = {"stressCorrection"}, argc = 1 (Brick::setParameter
+        // forwards the remaining args verbatim to every material point), so the
+        // base returns -1 and no parameter is ever created. That is the SECOND
+        // half of the 2026-09-07 quirk: even a deck that knew about the theInt /
+        // theDouble mismatch could not reach the flag by the idiomatic route.
+        // Both routes work now -- the tag-guarded form still falls through to
+        // the base below when argv[1] carries a tag, and lands on the same id 9,
+        // which updateParameter() claims either way.
+        if (strcmp(argv[0], "stressCorrection") == 0 ||
+            strcmp(argv[0], "StressCorrection") == 0) {
+            param.setValue(mStressCorrectionInUse ? 1.0 : 0.0);
+            return param.addObject(9, this);
+        }
     }
     return ManzariDafalias::setParameter(argv, argc, param);
 }

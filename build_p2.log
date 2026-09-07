@@ -1,0 +1,72 @@
+=== Using Python: C:\Users\nmb\AppData\Local\Programs\Python\Python312\python.exe ===
+=== Loading toolchain ===
+=== Using MSVC: C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat ===
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.34
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+  [fortran] compiler\latest has no ifx.exe - falling back to C:\Program Files (x86)\Intel\oneAPI\compiler\2025.1
+
+=== Toolchain loaded ===
+  [OK]      cl.exe
+  [OK]      ifx.exe
+  [OK]      mpiexec.exe
+  [OK]      cmake.exe
+  [OK]      ninja.exe
+  [OK]      conan.exe
+
+MKL_ROOT=C:\Program Files (x86)\Intel\oneAPI\mkl\latest
+I_MPI_ROOT=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..
+
+
+=== Step 1: Building MUMPS 5.5.1 (one-time, ~15-20 min
+
+MUMPS source archive not found. Downloading from upstream:
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0 11  4.03M  11 461.3k   0      0 242.5k      0   00:17   00:01   00:16 444.1k100  4.03M 100  4.03M   0      0  1.64M      0   00:02   00:02         444.1k100  4.03M 100  4.03M   0      0  1.64M      0   00:02   00:02         444.1k100  4.03M 100  4.03M   0      0  1.64M      0   00:02   00:02         444.1k
+Cloning scivision/mumps build system...
+Cloning into 'C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-92e-implex-p2\mumps-src'...
+Note: switching to '47d6eb8f97ac78936eeefa6f697854ed106004e8'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+-- The C compiler identification is MSVC 19.44.35228.0
+-- The Fortran compiler identification is IntelLLVM 2025.1.1 with MSVC-like command-line
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting Fortran compiler ABI info
+-- Detecting Fortran compiler ABI info - done
+-- Check for working Fortran compiler: C:/Program Files (x86)/Intel/oneAPI/compiler/2025.1/bin/ifx.exe - skipped
+-- MUMPS 5.5.1.5  CMake 4.3.3  Toolchain 
+-- checking that C and Fortran compilers can link
+-- checking that C and Fortran compilers can link - OK
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - not found
+-- Found Threads: TRUE
+-- Performing Test LAPACK_s_FOUND
+-- Performing Test LAPACK_s_FOUND - Success
+-- Performing Test LAPACK_d_FOUND
+-- Performing Test LAPACK_d_FOUND - Success
+-- Found LAPACK: C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_intel_lp64.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_sequential.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_core.lib  found components: MKL
