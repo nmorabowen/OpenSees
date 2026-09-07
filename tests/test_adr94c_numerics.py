@@ -291,8 +291,11 @@ def test_C3_dp_hydrostatic_compression_is_untouched_by_the_apex(dp_available):
     last = np.array(hist[-1], dtype=float)
     assert np.all(np.isfinite(last))
     p = float(last[:3].mean())
-    assert abs(p - 3.0 * K * ev / 3.0) <= 1e-9 * abs(p), (
-        f"hydrostatic compression is no longer elastic: p={p}")
+    # eps_v = 3*ev on the unit cube (each face is prescribed ev), so the elastic
+    # answer is p = K*eps_v = 3*K*ev.  f = eta*p - xi_c < 0 there, i.e. elastic.
+    p_elastic = 3.0 * K * ev
+    assert abs(p - p_elastic) <= 1e-9 * abs(p_elastic), (
+        f"hydrostatic compression is no longer elastic: p={p} != {p_elastic}")
 
 
 # ===========================================================================
@@ -345,12 +348,14 @@ def test_C4_f_relative_tol_default_is_inert():
 
 @pytest.mark.t0m
 def test_C4_f_relative_tol_makes_the_verdict_unit_independent():
-    """ADR-94 M5, the fix.  The SAME physical problem in kPa and in Pa (E and c
-    x1000, strains identical) with ``strict_convergence 1``.
+    """ADR-94 M5, the fix.  The SAME physical problem in two unit systems (E and
+    c scaled by ``UNIT_GAP``, strains identical) with ``strict_convergence 1``.
 
     With ``f_relative_tol`` OFF the fork's one fail-loud switch renders a
-    verdict on the UNIT SYSTEM -- kPa completes 20/20, Pa is refused on step 1
-    (pinned in ``test_adr94_redblue_numerics``).  With it ON, both complete.
+    verdict on the UNIT SYSTEM: the reference-unit run completes 20/20 and the
+    x1e9 run is refused on step 1 (pinned in ``test_adr94_redblue_numerics``,
+    which owns the ``UNIT_GAP`` constant this test reuses).  With it ON, both
+    complete, and their stresses differ by exactly the unit factor.
     """
     ez = 0.01
     try:
@@ -358,16 +363,16 @@ def test_C4_f_relative_tol_makes_the_verdict_unit_independent():
     except Exception as exc:                                  # pragma: no cover
         pytest.skip(f"MohrCoulomb_YF / LadrunoBrick unavailable: {exc}")
     codes_kpa, hist_kpa = R._drive(20)
-    R._build(lambda t: _mat_mc_rel(t, 1000.0, rtol=F_REL), 20, 0.0, 0.0, ez)
+    R._build(lambda t: _mat_mc_rel(t, R.UNIT_GAP, rtol=F_REL), 20, 0.0, 0.0, ez)
     codes_pa, hist_pa = R._drive(20)
 
     assert codes_kpa == [0] * 20, f"kPa run with f_relative_tol: {codes_kpa}"
     assert codes_pa == [0] * 20, (
-        f"the Pa run (identical physics, stresses x1000) is STILL refused with "
+        f"the x{R.UNIT_GAP:.0e} run (identical physics) is STILL refused with "
         f"f_relative_tol = {F_REL}: {codes_pa}")
 
     # and the two runs are the same physics: stresses differ by exactly x1000
-    a = np.array(hist_kpa[-1]) * 1000.0
+    a = np.array(hist_kpa[-1]) * R.UNIT_GAP
     b = np.array(hist_pa[-1])
     assert float(np.max(np.abs(a - b))) <= 1e-6 * float(np.max(np.abs(b))), (
         f"kPa x1000 != Pa: {a} vs {b}")

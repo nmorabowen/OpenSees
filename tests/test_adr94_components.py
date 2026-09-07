@@ -251,10 +251,28 @@ LOAD = {
 # assembled tangent matches to floating-point precision, consistent with the
 # FD harness's ~1e-6 relative error on MohrCoulomb_YF (FD truncation noise,
 # not a defect).
-HARD_PINS = ("VonMises", "MohrCoulomb")
+#
+# wp/94c UPDATE (ADR-94 B4/B5) -- corrected by measurement, not by argument:
+#
+#   * VonMises: 0.0197 on 3622d6214 vs ~0.014-0.018 on 52314165a.  The
+#     shear-slot convention IS fixed (the standalone FD harness went 3.53e-01 ->
+#     1.13e-08 on `df_dsigma_ij` itself) and this number did NOT shrink.  So the
+#     openseespy-level Continuum-vs-Numerical gap is NOT the B5 fingerprint the
+#     comment above claimed; it is ADR-94 M3/H6 -- `Continuum` is the
+#     dLambda -> 0 limit of the consistent tangent while `Numerical_*`
+#     differentiates `compute_local_stress`, so the two disagree by O(step) no
+#     matter how exact the gradients are.  The pin stays; its reason changes.
+#   * DruckerPrager: 0.000000 on 3622d6214, and it is PROMOTED to a hard pin.
+#     Pre-94c its analytical gradient carried a 0.971 relative error on the three
+#     normal slots (`d sqrt(J2)/d v` is r/(2 sqrt(J2)) there, not r/sqrt(J2)), so
+#     the analytical tangent described a different surface from the one the
+#     return map iterated on.  With the gradient fixed the two tangent operators
+#     agree exactly, and that agreement is the direct CI gate on ADR-94 B4.
+HARD_PINS = ("VonMises", "MohrCoulomb", "DruckerPrager")
 EXPECTED = {
-    "VonMises": 0.005,     # observed ~0.014-0.018; must stay clearly nonzero
-    "MohrCoulomb": 0.005,  # observed 0.0; must stay at FD-noise level
+    "VonMises": 0.005,        # observed 0.0197 (M3/H6, not B5); clearly nonzero
+    "MohrCoulomb": 0.005,     # observed 0.0; FD-noise level
+    "DruckerPrager": 0.005,   # observed 0.0 post-wp/94c; was a real gradient bug
 }
 
 
@@ -292,7 +310,12 @@ def test_component_tangent_pin(name):
     err = _rel(K_cont, K_num)
     assert np.isfinite(err)
 
-    if name == "VonMises":
+    if name == "DruckerPrager":
+        assert err < EXPECTED[name], (
+            f"{name}: Continuum-vs-NumAlgFirstOrder mismatch grew to "
+            f"{err:.4f} (expected < {EXPECTED[name]}) -- the ADR-94 B4 "
+            f"Drucker-Prager gradient fix (wp/94c) may have regressed")
+    elif name == "VonMises":
         assert err > EXPECTED[name], (
             f"{name}: Continuum-vs-NumAlgFirstOrder mismatch shrank to "
             f"{err:.4f} (was > {EXPECTED[name]}); df_dsigma_ij may have "

@@ -269,14 +269,22 @@ def test_H1_one_static_tangent_is_shared_by_every_element(vm_available):
     """
     _, K_pl = _cubes_K([(1, 0.0)], [(1, LOAD_PL)])
     _, K_el = _cubes_K([(2, 3.0)], [(2, LOAD_EL)])
-    assert _rel(K_pl, K_el) > 0.1, "the two states must be genuinely different"
+    # Non-vacuity guard.  The gap between the two stand-alone tangents was 13.6%
+    # before wp/94c and is 0.82% after it: correcting the von Mises shear-slot
+    # convention (ADR-94 B5) raised `n:(E:m)` -- the shear terms were previously
+    # under-counted -- so the rank-one plastic reduction of the continuum tangent
+    # is smaller, and the plastic cube's tangent sits closer to the elastic one.
+    # This bound only has to keep the test from being vacuous; the discriminating
+    # assertions below compare each assembled block against its own stand-alone
+    # tangent at 1e-9, seven orders below this gap.
+    assert _rel(K_pl, K_el) > 5.0e-3, "the two states must be genuinely different"
 
     _, K_both = _cubes_K([(1, 0.0), (2, 3.0)], [(1, LOAD_PL), (2, LOAD_EL)])
     n = NDOF_CUBE
     blk_pl, blk_el = K_both[:n, :n], K_both[n:, n:]
 
     # FIXED: the two blocks are as different as the two states are ...
-    assert _rel(blk_pl, blk_el) > 0.1, (
+    assert _rel(blk_pl, blk_el) > 5.0e-3, (
         "the two assembled blocks are identical again -- the shared static "
         "tangent (ADR-94 M1) is back")
     # ... and each element got its own.
@@ -351,14 +359,20 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
     return map.  Measured vs ``hex8_K(vm_consistent_tangent)`` at
     ``dEps_zz = -3.6e-3``:
 
-        Continuum                          57.3%   3 global Newton iters
-        Secant  (the DEFAULT)              79.9%  16
-        Elastic                           102.5%  23
-        Numerical_Algorithmic_FirstOrder   31.0%   4
-        Numerical_Algorithmic_SecondOrder  31.0%   4
+                                       52314165a   wp/94c
+        Continuum                          57.3%      57.3%    3 Newton iters
+        Secant  (the DEFAULT)              79.9%      79.9%   16
+        Elastic                           102.5%     102.5%   23
+        Numerical_Algorithmic_FirstOrder   31.0%       4.6%    4
+        Numerical_Algorithmic_SecondOrder  31.0%       4.6%    4
 
-    The numerical pair are closest yet still 31% out because they differentiate
-    ``compute_local_stress()`` -- a THIRD map that is not the one committed.
+    The numerical pair are closest, and wp/94c (ADR-94 B5) took them from 31%
+    to 4.6%: correcting the von Mises shear-slot convention moved
+    ``compute_local_stress()`` -- the THIRD map they differentiate -- much
+    closer to the map ``Backward_Euler`` actually commits.  They are still not
+    the consistent tangent (which would land near 1e-12 here) and the
+    analytical three are unmoved, so H6's finding stands; only its margin
+    shrank.
     The operational consequence is the iteration count: the shipped default
     costs 5.3x the iterations of ``Continuum`` on this step.
     """
@@ -374,11 +388,14 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
         errs[tg] = _rel(_sparse_K(4), K_ref)
         iters[tg] = it
 
-    assert min(errs.values()) > 0.25, "a consistent tangent appeared: %r" % errs
+    # Threshold lowered from 0.25 to 0.02 by wp/94c: the numerical pair improved
+    # from 31% to 4.6% (measured 0.04574 on 3622d6214).  A genuine consistent
+    # tangent would land near 1e-12, so 2% still says "none of the five is it".
+    assert min(errs.values()) > 0.02, "a consistent tangent appeared: %r" % errs
     assert errs["Continuum"] > 0.4
     assert errs["Secant"] > 0.6
     assert errs["Elastic"] > 0.9
-    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.25
+    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.02
     # the DEFAULT (Secant) is the expensive one
     assert iters["Secant"] >= 4 * iters["Continuum"]
 
