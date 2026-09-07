@@ -2,7 +2,7 @@
 title: "ADR 92 / CP1 — the surcharge legs (owner decision B): results"
 project: Ladruno
 type: results
-status: "MEASURED — no plateau, no peak; blocker is WALL CLOCK (survives the ADR-80 predictor fix, +7.6 % only); decision B's own effect on the clamp is UNMEASURABLE with the shipped diagnostic"
+status: "MEASURED — no plateau, no peak; blocker is WALL CLOCK at 40 min (survives the ADR-80 predictor fix, +7.6 % only) and becomes step SEIZURE at 2.5 h (§10); decision B's own effect on the clamp is UNMEASURABLE with the shipped diagnostic"
 priority: high
 owner: nmora
 related:
@@ -11,7 +11,7 @@ related:
   - "[[_adr90_tau0_qu_band]]"
   - "[[86_ladruno_sanisand_handoff]]"
 tags: [adr, sanisand, surcharge, gate-u, cp1, measurement]
-updated: 2026-09-05
+updated: 2026-09-06
 ---
 
 # ADR 92 / CP1 — decision B measured
@@ -253,6 +253,44 @@ as §10.
    small, contained change. Owed a `LEDGER_quirks` row either way — the throttle silently
    caps a *measurement*, not just a diagnostic.
 
+## 10. The deep legs — measured
+
+All four legs of §8 completed (`--predictor`, `--wall 9000`, cap 1000, four concurrent,
+engine `c4d08f1874060812ef25cfddf49724e7175f2978`), in
+`adr92_cp1/deep_{g0.6944,d0.60}_q{2,10}`. Every one is `partial: false`, so these are
+whole runs, not checkpoint salvage.
+
+| leg | `Q` | mode | `s/B` end | steps | subdiv | tail % | `q` at end (kPa) | wall s |
+|---|---|---|---|---|---|---|---|---|
+| `e0.6944` | 2 | FLOOR | 0.09131 | 348 | 53/80 | 184.8 | 2773.1 | 5889 |
+| `e0.6944` | 10 | FLOOR | **0.16192** | 396 | 55/80 | **70.3** | 4395.7 | 8254 |
+| `e0.60` | 2 | FLOOR | 0.04064 | 337 | 54/80 | 249.8 | 2580.4 | 2807 |
+| `e0.60` | 10 | FLOOR | 0.07715 | 561 | **78/80** | 233.4 | 4943.1 | 7270 |
+
+**No plateau and no peak on any leg** — `plateau: false`, `peaked: false`, and
+`s_peak_over_B` sits within one step of `s_end_over_B` on all four, so the curve is still
+rising where each run stops. **The blocker has moved again, and away from §2's verdict:
+every leg terminated `FLOOR`, not `WALL`** — the step collapsed to the `DS_MIN` floor with
+every ladder rung failing at `ds = 0.000153 mm` — while the wall clock consumed only
+31–92 % of its 9000 s budget. The subdivision budget, spent 6–23 of 80 at §2, is now
+**53–78 of 80**, and the dense `Q = 10` leg came within two subdivisions of exhausting it
+(1246 failed rungs, 490 relaxations, against 683/241 on its `Q = 2` twin); the ending step
+sits 1.5–3.1× above its floor on three of the four. **Tails steepen with depth rather than
+flattening**: against §2's shallow numbers, `e0.6944` `Q` = 2 goes 49 → 185 %, `e0.60`
+`Q` = 2 goes 162 → 250 %, `e0.60` `Q` = 10 goes 110 → 233 %. The single exception is
+`e0.6944` `Q` = 10 — 45 → 70 %, the deepest leg (`s/B = 0.162`, 65 % of the `0.25` target)
+and also the only one whose log reports a true `CLAMPING 0` rather than the saturated 10.
+Every tail remains one to two orders of magnitude off the WP1 bar (≤ 2 %), so **§5's "MUST
+NOT say" list stands unamended: no leg is admissible and the `q` column above is where each
+run seized, not where the soil failed.**
+
+**These legs are superseded as BVP evidence.** They were measured on the pre-P1 engine, with
+no IMPL-EX arm at all; the current BVP evidence for ADR-92 is the P1 gate-1 rerun on the fixed
+binary (`_adr92_p1_bvp_gate_rerun.md`, on `ladruno`), which runs this same
+`h1.0_e0.6944 --surcharge 10` deck with the IMPL-EX arms and a `--maxsubsteps` cap sized to
+it. Read §10 as the closing measurement of the CP1 *surcharge* question — decision B does
+buy depth, and the seizure is what it buys depth into — not as a live capacity estimate.
+
 ## Log
 
 - 2026-09-05 — Owner took decision **B (small surcharge)** at CP1 and asked for the run.
@@ -261,3 +299,8 @@ as §10.
   scatter floor. The owner then asked whether ADR-90's integrator finding should be applied
   first: it should have been checked, was, and is a **null result** on this deck (§7) — the
   deep run was stopped, the A/B measured, and it relaunched with `--predictor`.
+- 2026-09-06 — The four deep legs completed and are written up as **§10**. All four
+  terminate in step **seizure** (`FLOOR`) with 31–92 % of the wall budget unspent, so the
+  §2/§6 "the blocker is wall clock" verdict is superseded on its own deck: the subdivision
+  budget is now the near-exhausted resource (53–78 of 80). Still no plateau, still no peak.
+  Data rescued in `1703609be`; superseded as BVP evidence by `_adr92_p1_bvp_gate_rerun.md`.
