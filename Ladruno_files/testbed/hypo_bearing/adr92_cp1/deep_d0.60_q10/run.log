@@ -1,0 +1,51 @@
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : c4d08f1874060812ef25cfddf49724e7175f2978
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\agent-aeef311decf9449d1\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\ladruno-sanisand-implex-adr-31cfcf\Ladruno_files\testbed\hypo_bearing\adr92_cp1\deep_d0.60_q10
+    date                        : 2026-09-05T23:12:32
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 10.0
+    push integrator             : LadrunoLoadControl -tangentPredictor (ADR-80 P3)
+    wall budget per leg         : 9000 s
+
+--- leg h1.0_e0.60 (e_init = 0.6) ---
+    surcharge 10.0 kPa on the free surface outside the footing: 285.0000 kN, base reaction identity 4.44e-16
+    [h1.0_e0.60]    25 s/B=0.00106 q=   47.008 ds=0.3200mm t=   20.4s
+    [h1.0_e0.60] CHECKPOINT s/B=0.002: q=91.899 kPa, w2(z=-0.625)=5.6299 m, yield 96 ele / 135.649 m3, t=44s
+    [h1.0_e0.60] CHECKPOINT s/B=0.005: q=207.400 kPa, w2(z=-0.625)=7.6221 m, yield 156 ele / 297.431 m3, t=144s
+    [h1.0_e0.60] CHECKPOINT s/B=0.01: q=420.289 kPa, w2(z=-0.625)=9.5859 m, yield 194 ele / 516.950 m3, t=356s
+    [h1.0_e0.60]    50 s/B=0.01780 q=  758.808 ds=2.5000mm t=  765.8s
+    [h1.0_e0.60] CHECKPOINT s/B=0.02: q=875.529 kPa, w2(z=-0.625)=11.7799 m, yield 198 ele / 567.544 m3, t=924s
+    [h1.0_e0.60]    75 s/B=0.03436 q= 1574.487 ds=0.6250mm t= 1867.2s
+    [h1.0_e0.60] CHECKPOINT s/B=0.04: q=1892.142 kPa, w2(z=-0.625)=13.9284 m, yield 200 ele / 600.000 m3, t=2349s
+    [h1.0_e0.60]   100 s/B=0.04061 q= 1909.313 ds=0.6250mm t= 2369.8s
+    [h1.0_e0.60]   125 s/B=0.04514 q= 2168.428 ds=0.1562mm t= 3084.8s
+    [h1.0_e0.60]   150 s/B=0.04842 q= 2354.970 ds=0.3125mm t= 3458.8s
+    [h1.0_e0.60]   175 s/B=0.05108 q= 2527.490 ds=0.1562mm t= 4001.0s
+    [h1.0_e0.60]   200 s/B=0.05327 q= 2665.957 ds=0.1562mm t= 4175.0s
+    [h1.0_e0.60]   225 s/B=0.05475 q= 2795.538 ds=0.0781mm t= 4369.7s
+    [h1.0_e0.60]   250 s/B=0.05596 q= 2899.639 ds=0.0781mm t= 4553.9s
+    [h1.0_e0.60]   275 s/B=0.05710 q= 2998.399 ds=0.1562mm t= 4719.8s
+    [h1.0_e0.60]   300 s/B=0.06014 q= 3253.376 ds=0.1562mm t= 4951.2s
+    [h1.0_e0.60]   325 s/B=0.06296 q= 3471.687 ds=0.1562mm t= 5157.5s
+    [h1.0_e0.60]   350 s/B=0.06577 q= 3706.275 ds=0.3125mm t= 5371.7s
+    [h1.0_e0.60]   375 s/B=0.06936 q= 4001.078 ds=0.0781mm t= 5729.4s
+    [h1.0_e0.60]   400 s/B=0.07042 q= 4107.244 ds=0.0781mm t= 5932.5s
+    [h1.0_e0.60]   425 s/B=0.07300 q= 4374.602 ds=0.6250mm t= 6128.8s
+    [h1.0_e0.60]   450 s/B=0.07518 q= 4601.444 ds=0.0391mm t= 6415.1s
+    [h1.0_e0.60]   475 s/B=0.07604 q= 4745.371 ds=0.0391mm t= 6629.7s
+    [h1.0_e0.60]   500 s/B=0.07659 q= 4840.167 ds=0.0781mm t= 6763.4s
+    [h1.0_e0.60]   525 s/B=0.07689 q= 4887.688 ds=0.0195mm t= 6966.2s
+    [h1.0_e0.60]   550 s/B=0.07710 q= 4928.108 ds=0.0195mm t= 7126.9s
+    *** INADMISSIBLE: terminated in SEIZURE mode FLOOR -- q_max = 4943.122 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.07715; [h1.0_e0.60] mode=FLOOR (step collapsed to the DS_MIN floor at s/B = 0.07715 (every ladder rung failed at ds = 0.000153 mm)); ended s/B=0.07715 of target 0.250; plateau=NO / peaked=NO (tail 233.440 % of initial); free-advance=NO (1.5x floor); subdivisions 78/80; 561 steps, 1246 failed, 490 relaxed, 7270 s
+    controls: resultant 4.44e-16, patch 1.77e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 10, base-foot 2.47e-04
+    width: w2(z=-0.625) = 16.3121 m, w2(z=-1.375) = 16.6908 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+exit=0 01:13

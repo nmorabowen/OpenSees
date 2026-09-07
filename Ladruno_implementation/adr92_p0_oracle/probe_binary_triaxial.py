@@ -40,7 +40,9 @@ PRESIDUAL = 0.0
 HONOR_TOLR = 0
 
 
-def build(p0: float, e_init: float, scheme: int, tan_type: int, tol: float) -> None:
+def build(p0: float, e_init: float, scheme: int, tan_type: int, tol: float,
+          implex: bool = False, implex_control=None, max_substeps: int = 0,
+          implex_dt=None) -> None:
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in enumerate(
@@ -57,9 +59,18 @@ def build(p0: float, e_init: float, scheme: int, tan_type: int, tol: float) -> N
     vals = dict(CONSTS)
     vals["e_init"] = e_init
     args = [vals[k] for k in ORDER]
-    ops.nDMaterial("LadrunoSANISAND", 1, *args,
-                   scheme, tan_type, 1, tol, tol,
-                   "-Presidual", PRESIDUAL, "-Pmin", PMIN, "-honorTolR", HONOR_TOLR)
+    flags = ["-Presidual", PRESIDUAL, "-Pmin", PMIN, "-honorTolR", HONOR_TOLR]
+    if max_substeps:
+        flags += ["-maxSubsteps", int(max_substeps)]
+    if implex:
+        # ADR-92 P1 gate 2 (oracle parity). D3: the companion is scheme 1 and needs a
+        # substep cap, so -maxSubsteps is required alongside -implex on that scheme.
+        flags += ["-implex"]
+        if implex_dt:
+            flags += ["-implexDt"] + list(implex_dt)
+        if implex_control:
+            flags += ["-implexControl", float(implex_control[0]), float(implex_control[1])]
+    ops.nDMaterial("LadrunoSANISAND", 1, *args, scheme, tan_type, 1, tol, tol, *flags)
     ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1, "-formulation", "bbar")
 
     q4 = -p0 / 4.0
@@ -145,22 +156,35 @@ def main() -> None:
     ap.add_argument("--tol", type=float, default=1.0e-10)
     ap.add_argument("--nstep", type=int, default=400)
     ap.add_argument("--ez-max", type=float, default=0.20)
+    ap.add_argument("--implex", action="store_true",
+                    help="ADR-92 P1: run the material with -implex (needs a P1 binary)")
+    ap.add_argument("--implex-control", nargs=2, type=float, default=None,
+                    metavar=("TOL", "REDLIMIT"))
+    ap.add_argument("--implex-dt", nargs="+", default=None,
+                    help="e.g. `user 1.0` or `strain`; gate 3 must NOT run on the default pseudo")
+    ap.add_argument("--max-substeps", type=int, default=0,
+                    help="-maxSubsteps N; REQUIRED with -implex on scheme 1 (D3)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
     build_hash = ops.ladrunoBuild()
     out = a.out or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "data",
-        f"tx_p{a.p0:g}_e{a.e_init:g}_s{a.scheme}_n{a.nstep}.csv")
+        f"tx_p{a.p0:g}_e{a.e_init:g}_s{a.scheme}_n{a.nstep}"
+        + ("_implex" if a.implex else "") + ".csv")
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
     meta = dict(build=build_hash, pyd=ops.__file__, python=sys.version.split()[0],
                 p0=a.p0, e_init=a.e_init, scheme=a.scheme, tan_type=a.tan_type,
                 tol=a.tol, nstep=a.nstep, ez_max=a.ez_max,
                 Pmin=PMIN, Presidual=PRESIDUAL, honorTolR=HONOR_TOLR,
+                implex=a.implex, implex_control=a.implex_control,
+                implex_dt=a.implex_dt, max_substeps=a.max_substeps,
                 consts={k: (a.e_init if k == "e_init" else CONSTS[k]) for k in ORDER})
 
-    build(a.p0, a.e_init, a.scheme, a.tan_type, a.tol)
+    build(a.p0, a.e_init, a.scheme, a.tan_type, a.tol,
+          implex=a.implex, implex_control=a.implex_control,
+          max_substeps=a.max_substeps, implex_dt=a.implex_dt)
     consolidate()
     done = push(a.nstep, a.ez_max, out, meta)
 
