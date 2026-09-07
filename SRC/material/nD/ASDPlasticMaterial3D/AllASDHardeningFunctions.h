@@ -135,6 +135,7 @@ struct ArmstrongFrederickPolicy {
         {
             cout << "Saturation!" << endl;
             derivative.setZero();  // Ladruno (ADR-94 wp/94a): was `*= 0` on uninitialised storage
+        }
         else
         {
             derivative =   ha * mdev - cr * mdev_eq * alpha_dev;
