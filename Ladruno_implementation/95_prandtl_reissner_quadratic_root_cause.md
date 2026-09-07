@@ -120,7 +120,16 @@ P0 sentinel flipped to require I1 returned to T. The f1-only branch is **not** b
 its tangent denominator was wrong too: gate fastest leg 1.0849417 → 1.0849561 (+1.3e-5), mode
 BUDGET → TARGET, 1390 s → 181 s; linear control 1.7e-6 relative, 2628 s → 487 s. Both inside the gate
 band (1.0517–1.1167). Only the fastest gate leg was re-checked by the fix agent; the full slow tier
-(three resolutions plus the associated control) on the merged build is __GATE_FULL__. **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
+(three resolutions plus the associated control) on the merged build `feb358fda`: **all three
+non-associated resolutions PASS inside their ±3 % bands and every identity test passes (10/11); the
+associated control FAILS its old assertion by plateauing at 1.6026 of the non-associated exact.**
+That assertion encoded the defect: the gate had recorded the associated leg "hardening past its
+own exact answer" on a step floor — dilatant flow drives I1 up faster, so it reached the dead
+cutoff branch *earlier*. On the repaired material it reaches its own, higher collapse load, which is
+the physics (ψ = φ is the strong upper solution). The control's purpose — that the two flow rules
+answer *differently*, so the non-associated agreement is a measurement — is intact and is what the
+revised assertion checks (`ASSOC_MIN_SEPARATION = 0.20` above the band top; measured separation
+0.58). Gate rerun after the revision: __GATE_RERUN__. **Upstream OpenSees master still carries both defects** (dead arms at 495/530,
 final-norm divide at 670) — an upstream PR candidate under the campaign's authorship rules.
 
 ## 5. Element technology (H4) — measured, secondary, unchanged

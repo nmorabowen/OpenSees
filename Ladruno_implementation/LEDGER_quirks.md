@@ -5942,3 +5942,15 @@ a material-level flag a recorder reads. Returning a sentinel from
 ### `TenNodeTetrahedron::eleResponse` self-heals from nodal trial displacement on every query
 - **Bites:** "stresses"/"forces"/"material" responses always re-derive strain from the CURRENT nodal trial displacement and re-run the material, so a material-level Trial-state corruption (e.g. ASDP's no-op `revertToLastCommit`) is invisible through any eleResponse path after a domain-level revert; `ops.reset()` then reports a third stress value that is neither zero nor the pre-reset commit.
 - **Rule:** to observe raw material Trial/Commit state after a revert, use a source-level structural pin or a recorder that reads the material directly; do not conclude "fixed" from a tet eleResponse.
+
+## ADR-95: a "control that must fail" can be a bug in disguise (2026-09-07)
+
+The R3 Prandtl gate's associated-flow control asserted that the ψ = φ leg must NOT produce a
+capacity, because it had only ever been observed seizing on the step floor while hardening. That
+ending was the vanilla UW `DruckerPrager` dead tension-cutoff/corner branch (ADR-95, PR #803):
+dilatant flow reaches I1 = T earlier, so the associated leg hit the defect first. On the repaired
+material it plateaus at 1.6026 of the non-associated exact (h0 = 0.5). Rule: a control whose
+expected outcome is "the solver fails" must state WHY it fails and be re-checked whenever the
+material or solver changes; assert the discrimination you need (here: distinct answers), not the
+failure mode you happened to observe.
+
