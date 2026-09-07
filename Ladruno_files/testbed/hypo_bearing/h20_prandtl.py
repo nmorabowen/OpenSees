@@ -95,7 +95,10 @@ import numpy as np
 
 _WT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
-_BIN = os.path.join(_WT, "dist", "bin")
+# ADR95_DIST overrides the worktree-relative dist/bin -- e.g. to point a probe
+# run in a worktree with no build of its own (this campaign's P1 harness) at
+# the main checkout's binary instead.  Absent, behaviour is unchanged.
+_BIN = os.environ.get("ADR95_DIST") or os.path.join(_WT, "dist", "bin")
 os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
 os.environ["PATH"] = _BIN + os.pathsep + os.environ.get("PATH", "")
 if hasattr(os, "add_dll_directory") and os.path.isdir(_BIN):
