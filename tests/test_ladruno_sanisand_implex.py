@@ -144,7 +144,7 @@ assertions describe exactly the `accept` mode's contract, and P2's new
 default (`implicit`) would otherwise silently change what floor behaviour
 that test is exercising out from under it.
 
-Collected count after this lane: 28 `def test_...` functions, 32 collected
+Collected count after this lane: 29 `def test_...` functions, 33 collected
 items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
 every other function is a single collected item) -- up from the P1 file's
 21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
@@ -241,6 +241,29 @@ which the test documents as a weaker, deck-specific finding (this
 particular monotone triaxial hold never trips the BASE's own reversal
 branch at any Gauss point, so the guard's assignment is a no-op even when
 live) rather than overclaiming it as proof of the repair.
+
+THIRD RUN, P2-6 (2026-09-07, `ladrunoBuild() == 708152eac`). One new test,
+`test_trial_guard_accepts_f0_before_refusing`. `implexGuards` grows
+`Vector(4)` -> `Vector(5)`, new slot [4] = trial-time f=0 fallbacks --
+every existing `len(guards_before) == 4` assertion in this file (the floor-
+fallback, hold-clock, and hold/alpha_in tests) is updated to `== 5`.
+
+THE DECK NEEDED A REVERSAL, NOT A BIGGER SAME-DIRECTION STEP -- worth
+recording since it cost one wrong guess. `-implexTrialGuard`'s whole
+point is retrying a refused trial with a pure elastic predictor (`f = 0`)
+before refusing; the FIRST deck tried here reused this file's own "10x
+nominal, same direction" shape (`test_floor_fallback_...`'s), on the
+reasoning that a bigger step would push the error further past tol.
+Measured (via the `-implexAlpha 1.0` vs `0.0` probe technique this
+test's own `_probe_trial_guard_reference_errors` uses): on THAT shape the
+elastic guess was slightly WORSE than the full extrapolation (0.264 vs
+0.255) -- the established plastic direction is still the right one for a
+bigger step in the SAME direction, so there was nothing for the fallback
+to rescue. A REVERSAL (half the nominal magnitude, opposite sign) flips
+this: the established `d_eps_p(n)` now points the wrong way, so the
+elastic guess is ~19x BETTER (0.0018 vs 0.034) -- exactly P2-6's own
+motivating case (Esmeralda 146569, a leg crawling through refusals near a
+turning point). `_TRIAL_GUARD_TOL = 0.01` sits cleanly between the two.
 """
 import math
 import os
@@ -1105,10 +1128,21 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     the control slot itself moving, that refuses the UN-PRIMED step (the
     afb95c40c regression), or that never lifts the exemption once the
     material IS primed (a "-implexControl silently inert forever" mutant).
+
+    PINNED TO `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2,
+    2026-09-07, binary 708152eac). P2-6's trial-time f=0 fallback DEFAULTS
+    on and runs BEFORE any -implexControl refusal, retrying the trial with
+    a pure elastic predictor -- on this deck's big (10x-nominal) step that
+    retry ALSO clears tol, so the step that this test is built to prove
+    gets refused is, with the default, RESCUED instead (`rc == 0`). This
+    test's own claim is about the refusal/un-primed-exemption mechanism,
+    orthogonal to P2-6's rescue; isolated the same way `-implexFloor
+    accept` and `-implexGuard off` are pinned onto sibling tests elsewhere
+    in this file.
     """
     tag = 8213
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 0.02, 0.01)
+            '-implexControl', 0.02, 0.01, '-implexTrialGuard', 'off')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)   # NOT _establish_plastic_history: this test needs
                           # the material UN-PRIMED for its first plastic step
@@ -1844,13 +1878,21 @@ def test_implexcontrol_floor_accepts_once_reduction_limit_is_reached():
     and this assertion would most likely fail for a reason that has nothing
     to do with the M4 mutant this test exists to kill. Pinning the mode
     keeps this test's claim exactly what it always was.
+
+    ALSO PINNED TO `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2,
+    2026-09-07, binary 708152eac): P2-6's trial-time f=0 fallback defaults
+    on and runs BEFORE every -implexControl refusal in this ladder,
+    including the very FIRST attempt (ds = 1.0) -- measured: with the
+    default, that first attempt is RESCUED (`rc == 0`) instead of refused,
+    so the ladder never even reaches the reduction-floor rung this test is
+    built to isolate. Same isolation rule as the `-implexFloor` pin above.
     """
     tag = 8320
     tol = 1.0e-9
     reduction_limit = 0.3
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexControl', tol, reduction_limit,
-            '-implexFloor', 'accept')
+            '-implexFloor', 'accept', '-implexTrialGuard', 'off')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)
 
@@ -2165,12 +2207,21 @@ def _drive_floor_ladder(tag, floor_mode, tol=1.0e-9, reduction_limit=0.3,
     floor branch (never a genuinely small error) can ever end the ladder,
     under any of the three -implexFloor modes.
 
+    `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2, 2026-09-07,
+    binary 708152eac): P2-6's trial-time f=0 fallback defaults on and
+    would otherwise rescue the very FIRST attempt in this ladder before
+    -implexFloor ever gets a chance to matter (measured, matching the same
+    finding on the M4 survivor test) -- this function's whole purpose is
+    to isolate -implexFloor, so P2-6's own orthogonal rescue is disabled
+    here, the same way it is pinned on every other pre-P2-6 refusal test
+    in this file.
+
     Returns a list of (ds, rc, implexDetail) for every rung attempted, in
     order, stopping at the first accepted (rc == 0) attempt if any.
     """
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
             '-implexControl', tol, reduction_limit,
-            '-implexFloor', floor_mode)
+            '-implexFloor', floor_mode, '-implexTrialGuard', 'off')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)
 
@@ -2275,8 +2326,8 @@ def test_floor_fallback_delivers_implicit_stress_and_counts():
         'accept mode', detail_a, tol)
 
     guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    assert len(guards_before) == 4, (
-        'implexGuards did not return the documented 4-component vector',
+    assert len(guards_before) == 5, (
+        'implexGuards did not return the documented 5-component vector',
         guards_before)
     hist_implicit = _drive_floor_ladder(8332, 'implicit', tol, reduction_limit)
     guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
@@ -2608,8 +2659,8 @@ def test_hold_keeps_clock_and_history():
     """
     detail_hold, stress_hold, guards_before, guards_after = _drive_hold_sequence(
         8360, with_hold=True)
-    assert guards_before is not None and len(guards_before) == 4, (
-        'implexGuards did not return the documented 4-component vector',
+    assert guards_before is not None and len(guards_before) == 5, (
+        'implexGuards did not return the documented 5-component vector',
         guards_before)
     assert guards_after[2] - guards_before[2] >= 1, (
         'implexGuards[2] (hold-preserved commits) did not increment across '
@@ -2783,8 +2834,8 @@ def test_hold_does_not_reset_alpha_in_on_the_implicit_path():
     alpha_in_before = _read_all_alpha_in()
     alpha_before = _read_all_alpha()
     guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    assert len(guards_before) == 4, (
-        'implexGuards did not return the documented 4-component vector on '
+    assert len(guards_before) == 5, (
+        'implexGuards did not return the documented 5-component vector on '
         'a PURELY IMPLICIT deck (no -implex token) -- P2-5 is supposed to '
         'be readable here regardless', guards_before)
 
@@ -2922,3 +2973,169 @@ def test_guard_ignores_the_unprimed_first_commit():
         'first commit from arming the reversal/softening guard, so this '
         'step must NOT read f = 0 the way it did before 8bfdfbc17',
         detail2)
+
+
+# ===========================================================================
+#  ADR-92 P2-6 (WP-92e lane B2, 2026-09-07, binary 708152eac)
+# ===========================================================================
+
+_TRIAL_GUARD_TOL = 0.01
+_TRIAL_GUARD_REDUCTION = 0.01
+_TRIAL_GUARD_FACTOR = -0.5   # a REVERSAL, half the nominal per-step magnitude
+                             # -- see the test docstring for why a same-
+                             # direction bigger step does NOT show f = 0
+                             # beating the full extrapolation on this deck.
+
+
+def _drive_trial_guard_reversal(tag, trial_guard):
+    """Establish plastic history, then ONE reversal step (opposite sign to
+    `_establish_plastic_history`'s own load, half its per-step magnitude,
+    `LoadControl(1.0)` against the established `1.0 / _PROBE_N_HISTORY`
+    history steps, so the dt ratio itself is also unremarkable -- the
+    error gap this test needs comes from the DIRECTION reversal, not from
+    an oversized dt) under `-implexControl` at `_TRIAL_GUARD_TOL`.
+
+    Returns a dict of every response this test's assertions need, read
+    both immediately before and immediately after the one `analyze()` call.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', _TRIAL_GUARD_TOL, _TRIAL_GUARD_REDUCTION,
+            '-implexTrialGuard', trial_guard)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _TRIAL_GUARD_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0)
+
+    refusals_before = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    stress_before = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    rc = ops.analyze(1)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    refusals_after = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    stress_after = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return dict(rc=rc, detail=detail,
+               refusals_before=refusals_before, refusals_after=refusals_after,
+               guards_before=guards_before, guards_after=guards_after,
+               stress_before=stress_before, stress_after=stress_after)
+
+
+def _probe_trial_guard_reference_errors(tag_full, tag_f0):
+    """Independent measurement of the two errors `-implexTrialGuard` is
+    choosing between on the SAME history + reversal step
+    `_drive_trial_guard_reversal` drives, via `-implexAlpha` (1.0 = the
+    ordinary full extrapolation; 0.0 = the same pure elastic predictor,
+    `sigma~ = sigma_n + Ce:d_eps`, the trial-time fallback itself
+    recomputes) with `-implexControl` set to a tolerance neither probe
+    ever reaches (`1e6`), so BOTH commit normally and their
+    `implexDetail[0]` is directly readable -- unlike a genuinely refused
+    attempt on `LadrunoBrick`, which reverts before ever calling
+    `commitState()` (see `test_floor_fallback_delivers_implicit_stress_
+    and_counts`'s own note on why THAT read is stale).
+
+    NOT claimed to bit-match the live mechanism's own internal fallback
+    number (measured: it does not -- 0.001827 here vs 0.003206 on the
+    actual accepted step in `test_trial_guard_accepts_f0_before_refusing`,
+    same deck/history/step). These are independent reference numbers
+    confirming the SIGN and rough SCALE of the gap (f = 0 substantially
+    better than full-f on a reversal, by roughly an order of magnitude),
+    not a claimed numerical identity with the shipped code path.
+    """
+    def _run(tag, alpha):
+        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                '-implexControl', 1.0e6, _TRIAL_GUARD_REDUCTION,
+                '-implexAlpha', alpha)
+        _build_free_dof_triaxial(tag, opts, p0=50.0)
+        _establish_plastic_history(tag)
+        dq = _TRIAL_GUARD_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+        ops.timeSeries('Linear', 3)
+        ops.pattern('Plain', 3, 3)
+        for j, (x, y) in enumerate(_XY):
+            ops.load(4 + j + 1, 0.0, 0.0, -dq)
+        ops.integrator('LoadControl', 1.0)
+        assert ops.analyze(1) == 0, 'the reference probe failed to converge'
+        return list(ops.eleResponse(1, 'material', 1, 'implexDetail'))[0]
+
+    err_full = _run(tag_full, 1.0)
+    err_f0 = _run(tag_f0, 0.0)
+    return err_full, err_f0
+
+
+def test_trial_guard_accepts_f0_before_refusing():
+    """ADR-92 P2-6: `-implexTrialGuard on` (the default) retries a trial
+    whose FULL extrapolation error is past `-implexControl`'s tolerance,
+    BEFORE refusing it and before the reduction floor, with a pure elastic
+    predictor (`f = 0`, the same `sigma~ = sigma_n + Ce:d_eps` P2-2's
+    guard delivers), re-measured against the SAME companion return already
+    computed -- and delivers it (no refusal) if THAT error clears tol.
+    `-implexTrialGuard off` reproduces the pre-P2-6 behaviour: refuse
+    immediately, with no such retry.
+
+    THE DECK: a REVERSAL (`_TRIAL_GUARD_FACTOR = -0.5`), not a bigger
+    same-direction step. Measured first (see
+    `_probe_trial_guard_reference_errors`'s own docstring and this
+    file's earlier `test_floor_fallback_...`'s "10x nominal, same
+    direction" shape): on a bigger SAME-direction step the full
+    extrapolation (which carries the established plastic direction
+    forward) is actually a BETTER predictor than a pure elastic guess, so
+    `-implexTrialGuard` would have nothing to rescue there. A reversal is
+    exactly the opposite: the established `d_eps_p(n)` now points the
+    WRONG way, so extrapolating it is worse than assuming no plastic flow
+    at all -- probed independently (`_probe_trial_guard_reference_errors`,
+    called below): full-f error 0.034149, f = 0 error 0.0018271, at
+    `_TRIAL_GUARD_TOL = 0.01` sitting cleanly between them.
+
+    Kills a mutant that drops the P2-6 retry entirely (`-implexTrialGuard
+    on` would refuse exactly like `off`), that fires it regardless of the
+    flag (`off` would also accept), or that fails to zero `implexDetail[5]`
+    / count `implexGuards[4]` on the accepted step.
+    """
+    off = _drive_trial_guard_reversal(8395, 'off')
+    assert off['rc'] != 0, (
+        'the reversal step, under -implexTrialGuard off, was NOT refused -- '
+        'the deck needs re-deriving (the full-f error is supposed to sit '
+        'above _TRIAL_GUARD_TOL here), not this test\'s premise', off)
+    assert off['refusals_after'][2] - off['refusals_before'][2] >= 1, (
+        'implexRefusals[2] (-implexControl-specific) did not increment '
+        'across the refused step', off['refusals_before'], off['refusals_after'])
+    assert off['stress_after'] == off['stress_before'], (
+        'the committed stress moved across a refused step', off)
+    assert off['guards_after'][4] == off['guards_before'][4], (
+        'implexGuards[4] (trial-time f=0 fallbacks) moved with '
+        '-implexTrialGuard off -- it must not fire when the flag is '
+        'disabled', off['guards_before'], off['guards_after'])
+
+    on = _drive_trial_guard_reversal(8396, 'on')
+    assert on['rc'] == 0, (
+        'the SAME reversal step, under -implexTrialGuard on (the default), '
+        'was NOT accepted -- the trial-time f=0 fallback is supposed to '
+        'rescue it', on)
+    assert on['detail'][5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the accepted step -- '
+        'the trial-time fallback is supposed to deliver the pure elastic '
+        'predictor', on['detail'])
+    assert on['detail'][0] <= _TRIAL_GUARD_TOL, (
+        'the accepted step\'s implexError is not <= tol -- that is the '
+        'fallback\'s own accept condition', on['detail'], _TRIAL_GUARD_TOL)
+    assert on['guards_after'][4] - on['guards_before'][4] >= 1, (
+        'implexGuards[4] (trial-time f=0 fallbacks) did not increment '
+        'across the accepted step', on['guards_before'], on['guards_after'])
+    assert on['refusals_after'][2] == on['refusals_before'][2], (
+        'implexRefusals[2] moved on the ACCEPTED step -- the fallback is '
+        'supposed to avoid the refusal entirely, not refuse-then-recover',
+        on['refusals_before'], on['refusals_after'])
+
+    err_full, err_f0 = _probe_trial_guard_reference_errors(8397, 8398)
+    assert err_f0 < _TRIAL_GUARD_TOL < err_full, (
+        'the two independently-probed reference errors (full-f %r, f=0 '
+        '%r) do not straddle _TRIAL_GUARD_TOL (%r) the way this deck is '
+        'supposed to -- re-derive the deck/tol/factor rather than trust '
+        'the mechanism assertions above blindly'
+        % (err_full, err_f0, _TRIAL_GUARD_TOL), err_full, err_f0)
