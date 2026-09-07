@@ -5,22 +5,30 @@ See ``Ladruno_implementation/_adr94_hb_drift.md`` for the function-by-function
 diff analysis this file measures, and ``_adr94_hlist_R1C.md`` for the H10
 verdict. Summary of what these tests pin:
 
-1. HoekBrown_YF (our tree, ``e65e89203``) computes the yield surface with a
+1. FIXED by wp/94d. HoekBrown_YF used to compute the yield surface with a
    two-branch ``if (arg > 0) ... else ...`` split (``arg = mb*sigma3/sigci +
-   s``, sigma3 the geo-frame minor principal stress). jaabell's newer
-   ``ASDP`` branch (``60d9b9b23``) replaced this with a smooth composite
-   ``max(f_shear, f_tension)`` that clamps ``arg`` before ``pow`` and is
-   provably continuous at the apex. Our two branches are NOT continuous at
-   ``arg = 0``: the standard branch already reports strong violation well
-   before ``arg`` reaches 0, but once the trial stress crosses into the
-   ``arg <= 0`` region the formula jumps to ``sigma1 - sigma3 - sigci*s``,
-   which is admissible up to a MUCH larger apparent tensile capacity
-   (measured: ``sigci*s`` = 587.19 kPa, ``mb`` = 2.397 times the textbook
-   tensile strength ``sigma_t = -s*sigci/mb`` = -245.02 kPa). Measured
-   consequence: a uniaxial tension path locks onto the wrong (else-branch)
-   plateau and then the analysis STALLS (``analyze() == -3``,
-   "PLASTIC INCONSISTENCY - ELASTIC STEP!" printed by the H7 fallback)
-   instead of cleanly yielding near the textbook tensile strength.
+   s``, sigma3 the geo-frame minor principal stress) that was NOT continuous
+   at ``arg = 0``: the standard branch already reported strong violation
+   well before ``arg`` reached 0, but once the trial stress crossed into the
+   ``arg <= 0`` region the formula jumped to ``sigma1 - sigma3 - sigci*s``,
+   admissible up to a MUCH larger apparent tensile capacity (measured:
+   ``sigci*s`` = 587.19 kPa, ``mb`` = 2.397 times the textbook tensile
+   strength ``sigma_t = -s*sigci/mb`` = -245.02 kPa). A uniaxial tension
+   path used to lock onto that wrong (else-branch) plateau and then the
+   analysis STALLED (``analyze() == -3``, "PLASTIC INCONSISTENCY - ELASTIC
+   STEP!" printed by the H7 fallback). wp/94d ported jaabell/ASDP's newer
+   ``60d9b9b23`` composite ``max(f_shear, f_tension)`` (``arg`` clamped
+   before ``pow``, provably continuous at the apex) into
+   ``HoekBrown_YF::YIELD_FUNCTION`` -- see
+   ``Ladruno_implementation/_adr94_hb_drift.md``. The material now yields at
+   the textbook tensile strength to ~7 significant figures -- the
+   wrong-plateau defect is gone. RESIDUAL (not fixed by this port): the
+   drive still fails to converge on the step that would push strain past
+   the (now correct) tensile corner -- Backward_Euler's cutting-plane
+   corrector has no special handling for the composite's non-smooth corner.
+   This is a distinct, narrower finding (a general perfectly-plastic-corner
+   return-mapping gap, not specific to the old discontinuity); tracked as a
+   follow-up, out of scope for wp/94d.
 2. A compression path never reaches ``arg <= 0``, so both trees agree there
    (this file's compression/triaxial tests double as that parity check via
    the closed-form ``arg > 0`` formula, which is untouched by the drift).
@@ -193,32 +201,33 @@ def hb_available():
 
 
 @pytest.mark.t0m
-def test_H10_hb_tension_locks_onto_wrong_plateau_then_stalls(hb_available):
-    """(i) Uniaxial-STRESS tension path (lateral faces free) driven to 3x the
-    textbook tensile strain ``|sigma_t|/E``.
+def test_H10_hb_tension_yields_at_textbook_strength(hb_available):
+    """FIXED by wp/94d (the wrong-plateau half of H10a/M4). Uniaxial-STRESS
+    tension path (lateral faces free) driven to 3x the textbook tensile
+    strain ``|sigma_t|/E``.
 
-    EXPECTED (if the yield surface were continuous, as jaabell's composite
-    is): the material yields near ``sigma_xx ~ |HB_SIGMA_T|`` = 245.0 kPa and
-    the analysis proceeds cleanly (strain-controlled, perfectly plastic).
+    Before the port: the discontinuous if/else yield function locked the
+    committed stress onto the ELSE-branch's own zero (``sigci*s`` = 587.19
+    kPa, ~2.4x = ``HB_MB`` times the textbook tensile strength) before
+    stalling.
 
-    OBSERVED on this tree: the standard (``arg > 0``) branch already reports
-    strong violation well before ``arg`` reaches 0 (so a continuous surface
-    would have capped growth much earlier), but the local Newton keeps
-    correcting using the CURRENT branch's gradient and the committed stress
-    instead climbs to roughly the ELSE-branch's own zero, ``sigci*s`` =
-    587.19 kPa -- about 2.4x (~= HB_MB) the textbook tensile strength -- and
-    then the analysis FAILS to converge (rc -3) right at that plateau, with
-    "PLASTIC INCONSISTENCY - ELASTIC STEP!" printed by the unguarded H7
-    fallback (``dLambda + deltaLambda < 0``). This is what the port to
-    jaabell's smooth composite would change.
+    wp/94d ported jaabell/ASDP's ``60d9b9b23`` continuous composite
+    (``max(f_shear, f_tension)``, ``arg`` clamped to 0 before ``pow``) into
+    ``HoekBrown_YF::YIELD_FUNCTION``. Measured post-port: the last cleanly
+    committed stress lands on ``sigma_t = -s*sigci/mb`` = 245.02 kPa to
+    ~7 significant figures (a genuine closed-form match, not a coincidence
+    of the tolerance below) -- the wrong-plateau defect is gone.
 
-    MEASURED PLATFORM SPREAD: Windows measures the plateau at 587.18 kPa
-    (matching ``sigci*s`` tightly); Ubuntu CI measures 575.79 kPa -- close
-    but not tight, evidently floating-point-path-dependent in exactly which
-    Newton iteration the else-branch locks in. The tolerance below is
-    loosened to accommodate that spread; the ``> 2.0x textbook`` check is the
-    part of the sentinel that actually distinguishes "still on the wrong
-    branch" from "the composite port landed and it now yields near 245 kPa".
+    RESIDUAL (not fixed by this port, tracked separately): the drive still
+    fails to converge (``analyze() == -3``, the same H7 "PLASTIC
+    INCONSISTENCY" fallback) on the FIRST step that would push strain past
+    the tensile corner, i.e. AT the correct textbook value rather than at
+    the old wrong one. This is a distinct, narrower finding: Backward_Euler's
+    cutting-plane corrector has no special handling for the composite's
+    non-smooth corner (f_shear == f_tension, gradients differ either side),
+    which is a general perfectly-plastic-corner return-mapping problem, not
+    specific to the pre-port discontinuity. Out of scope for wp/94d (YF port
+    only); left as a corner-return follow-up.
     """
     eps_t_end = 3.0 * (-HB_SIGMA_T) / HB_E
     _build(lambda t: mat_hb(t), 60, eps_t_end)
@@ -227,28 +236,29 @@ def test_H10_hb_tension_locks_onto_wrong_plateau_then_stalls(hb_available):
     assert len(hist) > 0, "no step committed at all -- driver regressed"
     last_sigma_xx = float(hist[-1, 0])
 
-    # Pin the wrong (else-branch) plateau, not the textbook tensile strength.
-    # rel=5e-2 accommodates the measured Windows (587.18) vs Linux (575.79)
-    # platform spread around sigci*s.
-    assert last_sigma_xx == pytest.approx(HB_ELSE_PLATEAU, rel=5.0e-2), (
+    # The plateau now sits tight on the textbook tensile strength, not the
+    # old else-branch zero (sigci*s = 587.19 kPa, ratio ~2.4x -- see the
+    # docstring / _adr94_hb_drift.md). Measured agreement is ~1e-7 relative;
+    # rel=5e-2 keeps headroom for a different deck/platform.
+    assert last_sigma_xx == pytest.approx(-HB_SIGMA_T, rel=5.0e-2), (
         f"HB tension plateau drifted: measured {last_sigma_xx:.4f} kPa, "
-        f"expected roughly the else-branch zero sigci*s = "
-        f"{HB_ELSE_PLATEAU:.4f} kPa (textbook tensile strength is only "
-        f"{-HB_SIGMA_T:.4f} kPa)")
-    # The real sentinel: the plateau must still sit well above the textbook
-    # tensile strength -- this is what flips red once the composite port
-    # lands (expected new plateau ~245 kPa, ratio ~1.0).
-    assert last_sigma_xx / abs(HB_SIGMA_T) > 2.0, (
-        "measured plateau is no longer well above the textbook tensile "
-        "strength -- the discontinuity this test pins may have been fixed; "
-        "if intentional, this test should be updated to CONFIRM the fix")
+        f"expected the textbook tensile strength |sigma_t| = "
+        f"{-HB_SIGMA_T:.4f} kPa (the old wrong plateau was sigci*s = "
+        f"{HB_ELSE_PLATEAU:.4f} kPa)")
+    assert last_sigma_xx / abs(HB_SIGMA_T) < 1.5, (
+        "measured plateau is well above the textbook tensile strength -- "
+        "looks like the pre-port discontinuity has resurfaced")
 
-    # The analysis stalls (rc -3) at/after the plateau instead of continuing
-    # to accept strain-controlled steps.
-    assert codes[-1] == -3, (
-        f"expected the driver to stall (-3) right after the else-branch "
-        f"plateau; got codes={codes}. The discontinuity's downstream "
-        f"symptom (H7's PLASTIC INCONSISTENCY fallback) may have changed.")
+    # Every step up to (and including reaching) the corner converges cleanly;
+    # the sentinel is that if/when a later step fails, it fails AT the
+    # textbook corner, not somewhere else on the way there.
+    assert codes[:-1] == [0] * (len(codes) - 1), (
+        f"expected every step before the final one to converge cleanly; "
+        f"got codes={codes}")
+    if codes[-1] != 0:
+        assert last_sigma_xx == pytest.approx(-HB_SIGMA_T, rel=1.0e-3), (
+            "the drive stalled before reaching the textbook corner -- the "
+            "wrong-plateau defect may have resurfaced in a different form")
 
 
 @pytest.mark.t0m
