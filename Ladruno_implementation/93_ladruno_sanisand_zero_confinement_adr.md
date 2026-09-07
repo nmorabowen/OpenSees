@@ -391,4 +391,24 @@ benchmark is a real footing or the idealised half-space.
   is in equilibrium (the extrapolated one, with the implicit one as history — the alternative
   IMPL-EX commit choice the ADR rejected at D-level and should now re-argue), or cap the
   gap by re-solving on the committed stress before the step. None built tonight.
+- 2026-09-07 (Esmeralda ring-point ratio `‖Δε‖/ds`, rows across the chains) — **(d) is the LOOP,
+  not the SEED.** Dense 146455: steady 1e-4 rows 0.67; chain rows 299–314 down to 3.9e-7:
+  0.58 → 0.36, i.e. strain scales with ds all the way down (no 250×); the 1.11 row 315 itself
+  0.74 (ordinary); rows 316–328 after it 0.95 → 1.47 → 0.44, a 2–4× excursion relaxing over
+  ~15 rows. Loose 146456: steady 0.77; the first O(1) row 1101 0.79 (ordinary); after it
+  0.41 → 1.50 → 0.27; after the 1130/1131 pair 4.79, 3.29, 3.86, 6.18, 7.12 — 6–9× and
+  *rising* while the committed errors stay 0.2–0.6. So at a non-seat neighbour the strain per
+  ds jumps after every bad commit and relaxes over a dozen rows, growing with each repeat: the
+  gap-closing loop, supported. But the seed rows carry ordinary strain — whatever produced the
+  first O(1) commit did not arrive as strain at the ring; it is a state event at the seat
+  itself, unnamed until the census (146457) reports.
+  **P2 shape this fixes on the fork (to be argued in ADR 92, not here):** the loop is fed by
+  the **floor-accept branch committing an O(1) error** ("nothing left to cut ⇒ accept"). Three
+  alternatives, cheapest first: (A) the floor branch refuses instead — an honest wall at
+  0.0176 rather than a creeping garbage curve; (B) at the floor, that Gauss point delivers the
+  IMPLICIT stress for the step while keeping the frozen `Ce` (SPD operator preserved, one or
+  two extra Newton iterations, no O(1) commit ever); (C) as (B) with the consistent tangent at
+  that point only (loses SPD locally). (B) is the candidate: it turns the floor from
+  "accept the extrapolation" into "fall back to the implicit return at this point", which is
+  what the control was asking for. The seed remains a separate question.
 
