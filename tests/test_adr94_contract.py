@@ -307,23 +307,20 @@ def _tet_stress():
 
 @pytest.mark.t0m
 def test_H4_reset_leaves_material_state_inconsistent_with_geometry():
-    """CONFIRMED, runtime -- the R1-B rig could not observe this because it
-    only checked the "not implemented" print, not a numeric consequence.
+    """FIXED by wp/94b.  ``ops.reset()`` is a real reset now.
 
-    ``Domain::revertToStart()`` correctly resets nodal trial/committed
-    displacements to zero (``ops.reset()`` reports success), but
-    ``ASDPlasticMaterial3D::revertToStart()`` is a documented no-op (prints
-    "not implemented", returns -1, ignored by ``OPS_resetModel()``) -- the
-    material's own Commit/TrialStress and Commit/TrialStrain survive
-    untouched. Querying the element's stress IMMEDIATELY after reset (no
-    ``analyze()`` call) exercises ``TenNodeTetrahedron``'s self-healing
-    "stresses" response (H4's caveat): it recomputes strain from the just-
-    zeroed nodal displacement and feeds that into the STALE material, whose
-    ``CommitStrain``/``CommitStress`` still encode the pre-reset plastic
-    state. The result is neither (a) ~zero, which a fully-reset model would
-    report, nor (b) the pre-reset committed stress unchanged -- it is a THIRD,
-    inconsistent value, proving geometry and material disagree about "reset"
-    having happened.
+    Before the fix: ``Domain::revertToStart()`` correctly zeroed nodal
+    trial/committed displacements, but ``ASDPlasticMaterial3D::revertToStart()``
+    was a no-op (printed "not implemented", returned -1, discarded by both
+    ``Domain::revertToStart()`` and ``OPS_resetModel()``), so the material's
+    own Commit/Trial stress and strain survived.  Querying the element's stress
+    immediately after ``reset()`` then exercised ``TenNodeTetrahedron``'s
+    self-healing "stresses" response against the STALE material and produced a
+    THIRD, inconsistent number -- neither zero nor the pre-reset value.
+    wp/94b restores stress, strain, plastic strain, the internal variables
+    (from a snapshot taken on the instance's first ``setTrialStrain``), the
+    ``first_step`` / ``stress_set_externally`` flags and the tangent, so the
+    queried stress after ``reset()`` is zero.
     """
     _tet_build_plain()
     for _ in range(10):
@@ -334,40 +331,31 @@ def test_H4_reset_leaves_material_state_inconsistent_with_geometry():
     ops.reset()
     sig_at_reset = _tet_stress()
 
-    tol = 1.0e-6 * np.max(np.abs(sig_before))
-    assert np.max(np.abs(sig_at_reset)) > tol, (
-        f"post-reset queried stress is ~zero ({sig_at_reset}) -- "
-        f"revertToStart() may have been implemented; re-verify H4.")
-    assert np.max(np.abs(sig_at_reset - sig_before)) > tol, (
-        f"post-reset queried stress ({sig_at_reset}) is unchanged from the "
-        f"pre-reset committed stress ({sig_before}) -- the self-heal query "
-        f"path may have changed; re-verify H4's caveat before trusting this "
-        f"test.")
+    tol = 1.0e-9 * np.max(np.abs(sig_before))
+    assert np.max(np.abs(sig_at_reset)) < tol, (
+        f"post-reset queried stress is {sig_at_reset}, not ~zero (pre-reset "
+        f"was {sig_before}) -- revertToStart() is not restoring the material; "
+        f"the wp/94b fix may have been reverted.")
 
 
 @pytest.mark.t0m
 def test_H4_cutback_after_forced_global_failure_recovers_within_newton_tolerance():
-    """MEASURED, runtime.  A step that fails to converge GLOBALLY (an
-    impossible ``NormDispIncr`` budget, not a material refusal) leaves a dirty
-    TRIAL stress that ``revertToLastCommit()``'s no-op body (H4) never clears
-    -- ``StaticAnalysis::analyze()`` calls ``Domain::revertToLastCommit()``
-    itself, and H4 already pins that this is a no-op at the material level.
+    """FIXED by wp/94b.  A step that fails to converge GLOBALLY (an impossible
+    ``NormDispIncr`` budget, not a material refusal) used to leave a dirty
+    TRIAL stress that ``revertToLastCommit()``'s commented-out body never
+    cleared, even though ``StaticAnalysis::analyze()`` calls
+    ``Domain::revertToLastCommit()`` on the way out.
 
-    Measured consequence on this rig: retrying the SAME step (same
-    LoadControl increment) after restoring a sane test tolerance, then
-    running the remaining identical steps, reaches a FINAL committed stress
-    that is close to a reference run that never attempted the failing step.
-    On Windows the gap is ~6e-9 relative; on Linux CI it measures ~5.4e-13
-    (bitwise-identical) -- the TenNodeTetrahedron host element's
-    "stresses"/"forces" query re-derives stress from the current nodal trial
-    displacement on every call (see H4's structural test), which self-heals
-    the dirty material-level trial state and hides the defect entirely on
-    that platform. So this probe does NOT pin H4 -- it cannot separate
-    "H4's broken revert leaked a dirty trial state" from ordinary
-    Newton-truncation noise, and the tet's self-heal can erase the gap
-    outright depending on platform. It is kept only as a coarse regression
-    guard on the recovered stress; the real H4 sentinel is the structural
-    ``revertToLastCommit()`` body check in ``test_adr94_hlist_mechanical.py``.
+    Before the fix this probe was INCONCLUSIVE: the recovered stress differed
+    from a never-failed reference by ~6e-9 relative on Windows and ~5.4e-13 on
+    Linux CI (where the TenNodeTetrahedron's self-healing "stresses" query
+    erased the gap outright), which could not be separated from ordinary
+    Newton-truncation noise.  With the revert implemented, the retry restarts
+    from exactly the committed state, so the recovery is identical to
+    floating-point round-off (measured ~1.9e-21 relative on Windows -- a
+    single-ULP-level difference from operation reordering, ~10^11 tighter
+    than the pre-fix ~6e-9 noise floor) rather than exactly bitwise; the
+    tolerance below is a real gate, not the old coarse guard.
     """
     _tet_build_plain()
     ref_codes = [ops.analyze(1) for _ in range(20)]
@@ -387,16 +375,12 @@ def test_H4_cutback_after_forced_global_failure_recovers_within_newton_tolerance
 
     diff = float(np.max(np.abs(sig_recovered - sig_ref)))
     scale = float(np.max(np.abs(sig_ref)))
-    # NOTE: no lower bound on diff -- on Linux CI diff measures ~5.4e-13
-    # (the tet's self-heal makes the recovery bitwise-identical), while on
-    # Windows it measures ~6e-9. Both are within Newton tolerance; only the
-    # upper bound below is a meaningful regression guard.
-    assert diff / scale < 1.0e-6, (
+    assert diff / scale < 1e-9, (
         f"recovered vs reference stress differs by {diff:.3e} (relative "
-        f"{diff / scale:.3e} of scale {scale:.3e}) -- this is well beyond "
-        f"ordinary Newton-tolerance noise; H4's broken revert may be "
-        f"corrupting the cutback recovery more than previously measured -- "
-        f"escalate this finding instead of treating it as inconclusive.")
+        f"{diff / scale:.3e} of scale {scale:.3e}); with wp/94b's revert the "
+        f"retry must restart from (numerically) the committed state -- this "
+        f"is ~10^9 tighter than the pre-fix ~6e-9 noise floor, so a failure "
+        f"here means the revert is incomplete again.")
 
 
 # ===========================================================================
