@@ -4346,10 +4346,16 @@ protected:
     // (ADR-94 H1) and no threaded element loop (ADR-75b) could ever be deterministic.
     // The per-tag INT_OPT_*/GLOBAL_* maps above stay static: they are keyed by material
     // tag and shared by design.
-    VoigtVector dsigma;
-    VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
-    VoigtVector intersection_stress;
-    VoigtVector intersection_strain;
+    // The four scratch buffers are `mutable` because `compute_local_stress()` --
+    // the const helper the numerical-tangent probe calls -- writes them. It used to
+    // write the class-STATIC copies, i.e. it scribbled on every other instance's
+    // scratch state; `mutable` keeps that behaviour byte-identical while confining
+    // the damage to the probing instance. `Stiffness` is deliberately NOT mutable:
+    // no const method may set the tangent.
+    mutable VoigtVector dsigma;
+    mutable VoigtVector depsilon_elpl;    //Elastoplastic strain increment : For a strain increment that causes first yield, the step is divided into an elastic one (until yield) and an elastoplastic one.
+    mutable VoigtVector intersection_stress;
+    mutable VoigtVector intersection_strain;
     VoigtMatrix Stiffness;
 
 
