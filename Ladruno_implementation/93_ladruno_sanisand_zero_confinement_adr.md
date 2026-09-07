@@ -326,4 +326,15 @@ benchmark is a real footing or the idealised half-space.
   The loose leg's stop at 0.0297 was a harness artefact (growth tries charged to the budget),
   rerun without growth in flight. Whether the implicit twin passes 0.0176 (at 0.0174,
   subdividing) decides whose wall it is.
+- 2026-09-07 05:30 — **Whose wall: IMPL-EX's.** The implicit DisplacementControl twin of the dense
+  q10 cell (146438, same everything, no `-implex`) walked through 0.0176 without noticing, at
+  s/B 0.01823 and 2107 kN, tangent still rising, steady at 5e-5 m per step. The state where the
+  control refuses every step and commits the 1.11 error at 0.4 µm is one the implicit return
+  handles routinely. So the step-315 event is a property of the **committed state under
+  IMPL-EX**, not of the material at that state — which moves it out of this ADR and into ADR 92
+  P2, and promotes candidate (a) (off-surface committed state + default-ON stress correction).
+  Loose IMPL-EX leg 146456 shows the same signature deeper (s/B 0.0396, 2497 kN). A fork-side
+  zero-increment probe on the P1 test deck (hold after a plastic history; `implexError` on the
+  hold must be ≈ 0 if the committed state is consistent) is running now; Esmeralda's census,
+  zero-increment hold and stress-correction-off arm follow.
 
