@@ -299,8 +299,10 @@ channel is documented as non-discriminating here rather than silently
 dropped; part (c) instead confirms the guard does not eat a GENUINE,
 full-magnitude reversal.
 """
+import contextlib
 import math
 import os
+import re
 import subprocess
 import tempfile
 import warnings
@@ -2360,8 +2362,8 @@ def test_floor_fallback_delivers_implicit_stress_and_counts():
         'accept mode', detail_a, tol)
 
     guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    assert len(guards_before) == 5, (
-        'implexGuards did not return the documented 5-component vector',
+    assert len(guards_before) == 6, (
+        'implexGuards did not return the documented 6-component vector',
         guards_before)
     hist_implicit = _drive_floor_ladder(8332, 'implicit', tol, reduction_limit)
     guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
@@ -2410,8 +2412,8 @@ def test_floor_fallback_delivers_implicit_stress_and_counts():
     # formerly-reserved slot as the reversal-noise-guard count, which fires
     # on ANY near-zero strain increment regardless of -implexFloor, and this
     # ladder's shrinking ds legitimately produces some (measured: +176 on
-    # this run). See test_hold_does_not_reset_alpha_in_on_the_implicit_path
-    # for the dedicated P2-5 coverage.
+    # this run). See test_hold_leaves_alpha_in_and_guard_flags_unchanged
+    # for the dedicated P2-5/5b/5c coverage.
 
 
 # ---------------------------------------------------------------------------
@@ -2693,8 +2695,8 @@ def test_hold_keeps_clock_and_history():
     """
     detail_hold, stress_hold, guards_before, guards_after = _drive_hold_sequence(
         8360, with_hold=True)
-    assert guards_before is not None and len(guards_before) == 5, (
-        'implexGuards did not return the documented 5-component vector',
+    assert guards_before is not None and len(guards_before) == 6, (
+        'implexGuards did not return the documented 6-component vector',
         guards_before)
     assert guards_after[2] - guards_before[2] >= 1, (
         'implexGuards[2] (hold-preserved commits) did not increment across '
@@ -2827,138 +2829,122 @@ def _read_all_alpha(ele=1, ngp=8):
     return [list(ops.eleResponse(ele, 'material', gp, 'alpha')) for gp in range(1, ngp + 1)]
 
 
-def test_hold_does_not_reset_alpha_in_on_the_implicit_path():
-    """ADR-92 P2-5: `ManzariDafalias::integrate()` unconditionally resolves
-    `mAlpha_in` from the SIGN of `(alpha_n - alpha_in_n):(Ce:(eps - eps_n))`
-    with no magnitude guard, so on a `LoadControl(0.0)` hold that sign is
-    noise. `LadrunoSANISAND::ladrunoGuardReversalNoise()` undoes the reset
-    when `||eps - eps_n||` (`GetNorm_Cov`) falls below `-reversalTol`
-    (default `1e-10`). NOT an IMPL-EX option -- no `-implex` gate -- so this
-    is tested on a PURELY IMPLICIT deck (no `-implex` token at all): plastic
-    history on the free-DOF triaxial rig (`_build_free_dof_triaxial` +
-    `_establish_plastic_history`, p0 = 50 kPa, comfortably off the p_min
-    floor), then a hold, `alpha_in` read at every one of the element's 8
-    Gauss points before and after.
+def _drive_hold_p25c(tag, implex_on):
+    """Establish plastic history, take ONE ordinary nominal step (the
+    "pre-hold" step, whose own `implexGuards[1]` delta is captured), then a
+    `LoadControl(0.0)` hold (`alpha_in`/`implexGuards` read before and
+    after), then ONE more ordinary nominal step (the "post-hold" step,
+    whose own `implexGuards[1]` delta is captured too) -- on EITHER an
+    `-implex` deck or a purely implicit one (`implex_on=False`, no
+    `-implex` token anywhere).
 
-    `implexGuards` IS READABLE ON THE IMPLICIT DECK. `setResponse()`
-    registers `implexGuards` unconditionally (`LadrunoSANISAND.cpp:2864`,
-    no `-implex`/`mImplexOpt` gate anywhere in that branch) -- confirmed by
-    reading it below without ever passing `-implex`. The coordinator's
-    "skip that part if so" caveat does not apply on this build.
-
-    MEASURED ON THIS DECK (8bfdfbc17): the hold's own strain increment is
-    NOT exactly zero at every Gauss point (Newton's own residual tolerance,
-    not literal round-off) -- `implexGuards[3]` increments by 8 (one per
-    Gauss point) at the DEFAULT `reversalTol`, and by 0 under `-reversalTol
-    0` on the identical deck/history/hold, so the guard is DEMONSTRABLY
-    live at the default and DEMONSTRABLY off at 0 -- not a vacuous "both
-    read 0" case. `alpha_in` itself reads bit-identical across the hold at
-    EVERY Gauss point under BOTH settings on this deck -- see the second
-    half of this test for why that is a documented, not a stronger, claim.
-
-    Kills a mutant that drops `ladrunoGuardReversalNoise()`'s call sites (no
-    `implexGuards[3]` movement at the default tol) or that ignores
-    `-reversalTol 0` (the counter would still move there).
+    Returns a dict with everything `test_hold_leaves_alpha_in_and_guard_
+    flags_unchanged` needs: `alpha_in` before/after the hold at all 8 Gauss
+    points, `implexGuards` before/after the hold, and the two `guards[1]`
+    deltas (pre-hold step, post-hold step) to compare against each other.
     """
-    tag_default = 8380
-    m_opts = ()   # IMPLICIT: no -implex token anywhere
-    _build_free_dof_triaxial(tag_default, m_opts, p0=50.0)
-    _establish_plastic_history(tag_default)
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
 
-    alpha_in_before = _read_all_alpha_in()
-    alpha_before = _read_all_alpha()
-    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    assert len(guards_before) == 5, (
-        'implexGuards did not return the documented 5-component vector on '
-        'a PURELY IMPLICIT deck (no -implex token) -- P2-5 is supposed to '
-        'be readable here regardless', guards_before)
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 8)
+    ops.pattern('Plain', 8, 8)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
 
-    ops.integrator('LoadControl', 0.0)
-    rc_hold = ops.analyze(1)
-    assert rc_hold == 0, ('the LoadControl(0.0) hold failed to converge', rc_hold)
+    guards_before_pre = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert ops.analyze(1) == 0, 'the pre-hold nominal step failed to converge'
+    guards_after_pre = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta1_pre = guards_after_pre[1] - guards_before_pre[1]
 
-    alpha_in_after = _read_all_alpha_in()
-    alpha_after = _read_all_alpha()
-    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-
-    assert guards_after[3] - guards_before[3] >= 1, (
-        'implexGuards[3] (reversal-noise guards) did not increment across '
-        'the hold at the DEFAULT -reversalTol (1e-10) -- either the guard '
-        'is not live on the implicit path, or this deck\'s hold produced a '
-        'strain increment that never falls under the threshold at any of '
-        'the 8 Gauss points', guards_before, guards_after)
-
-    diffs_ai = [max(abs(x - y) for x, y in zip(b, a))
-               for b, a in zip(alpha_in_before, alpha_in_after)]
-    diffs_a = [max(abs(x - y) for x, y in zip(b, a))
-              for b, a in zip(alpha_before, alpha_after)]
-    assert max(diffs_ai) == 0.0, (
-        'alpha_in moved at at least one Gauss point across a LoadControl(0.0) '
-        'hold at the DEFAULT -reversalTol -- P2-5 is supposed to leave it '
-        'bit-identical there', diffs_ai, alpha_in_before, alpha_in_after)
-    # `alpha` (`getAlpha()` -> `mAlpha`, the TRIAL backstress ratio, NOT the
-    # committed `mAlpha_n`) is read for diagnostic completeness only, per
-    # the coordinator's brief -- it is NOT asserted bit-identical. Measured:
-    # it DOES move by ~6e-4 across this hold at every Gauss point, because
-    # the hold's own Newton solve on this genuinely free-DOF deck converges
-    # to a state that is close to, but not bit-identical to, the last
-    # commit (max component-wise diff on the committed `strain` response is
-    # ~6.2e-7, not literal round-off) -- a real, if tiny, trial update, not
-    # a P2-5 violation. P2-5's own promise is about `mAlpha_in`, the
-    # COMMITTED quantity `integrate()`'s reversal branch resets -- not
-    # about `mAlpha` moving with a genuine (if small) trial strain change.
-    assert max(diffs_a) > 0.0, (
-        'alpha (mAlpha, the TRIAL backstress ratio) read bit-identical '
-        'across the hold at every Gauss point -- this deck\'s hold is '
-        'apparently producing an EXACTLY zero strain increment after all '
-        '(contradicting the implexGuards[3] evidence above that it is not); '
-        're-derive this test\'s premise rather than trust this run\'s '
-        'numbers blindly', diffs_a)
-
-    # -- the negative control: -reversalTol 0 -reversalRel 0 (full disable, ADR-92
-    # P2-5b) on the SAME deck/history/hold --
-    tag_tol0 = 8381
-    _build_free_dof_triaxial(tag_tol0, ('-reversalTol', 0.0, '-reversalRel', 0.0), p0=50.0)
-    _establish_plastic_history(tag_tol0)
-
-    alpha_in_before0 = _read_all_alpha_in()
-    guards_before0 = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ai_before_hold = _read_all_alpha_in()
+    guards_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
 
     ops.integrator('LoadControl', 0.0)
-    rc_hold0 = ops.analyze(1)
-    assert rc_hold0 == 0, ('the fully-disabled (-reversalTol 0 -reversalRel 0) '
-                           "twin's hold failed to converge", rc_hold0)
+    assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
 
-    alpha_in_after0 = _read_all_alpha_in()
-    guards_after0 = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ai_after_hold = _read_all_alpha_in()
+    guards_after_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
 
-    assert guards_after0[3] == guards_before0[3], (
-        'implexGuards[3] moved with -reversalTol 0 -reversalRel 0 -- the guard is '
-        'supposed to be fully DISABLED there (mReversalTol <= 0.0 AND '
-        'mReversalRel <= 0.0 both hold), not merely quieter', guards_before0, guards_after0)
+    guards_before_post = guards_after_hold
+    assert ops.analyze(1) == 0, 'the post-hold nominal step failed to converge'
+    guards_after_post = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta1_post = guards_after_post[1] - guards_before_post[1]
 
-    diffs_ai0 = [max(abs(x - y) for x, y in zip(b, a))
-                for b, a in zip(alpha_in_before0, alpha_in_after0)]
-    # DOCUMENTED FINDING, not a stronger claim than the evidence supports.
-    # -reversalTol 0 did NOT change alpha_in at any Gauss point either on
-    # this deck. That is consistent with the source's own comment on
-    # ladrunoGuardReversalNoise() -- "safe unconditionally: on the
-    # no-reversal branch mAlpha_in already equals mAlpha_in_n, so the
-    # assignment is a no-op" -- i.e. the counter (checked above) proves the
-    # MAGNITUDE check fires at the default tol and not at 0, but this
-    # deck's monotone triaxial hold never actually trips the BASE's
-    # reversal branch at any of the 8 points in the first place, so there
-    # is nothing for the guard to have protected here even when it is
-    # live. A deck that reaches a genuine reversal DURING a hold is
-    # Esmeralda-BVP-scale (28-54% of 34,560 points on job 146458) and out
-    # of this lane's budget to construct from a Python material-point rig;
-    # the counter-based evidence above is the strongest claim this deck
-    # can support, and this assertion documents rather than overclaims it.
-    assert max(diffs_ai0) == 0.0, (
-        'alpha_in moved under -reversalTol 0 where the module docstring '
-        'said it would not -- this deck now DOES exercise a genuine '
-        'reversal during the hold; strengthen the test\'s claim above '
-        'rather than leaving this stale', diffs_ai0)
+    return dict(
+        ai_before_hold=ai_before_hold, ai_after_hold=ai_after_hold,
+        guards_before_hold=guards_before_hold, guards_after_hold=guards_after_hold,
+        delta1_pre=delta1_pre, delta1_post=delta1_post,
+    )
+
+
+def test_hold_leaves_alpha_in_and_guard_flags_unchanged():
+    """ADR-92 P2-5c: `ladrunoGuardReversalNoise()` now checks `ops_Dt ==
+    0.0` FIRST, unconditionally -- ahead of, and independent of,
+    `-reversalTol`/`-reversalRel` -- because a hold is a GLOBAL fact the
+    domain reports (the pseudo-time increment), not something to infer
+    from a strain norm that can itself undershoot at points whose own last
+    committed increment was tiny (P2-5b's own residual gap, measured on
+    Esmeralda 146585: 136/1600 IMPL-EX and 88/1600 implicit points still
+    reset `mAlpha_in` on a hold after P2-5b). On `ops_Dt == 0.0` the reset
+    is unconditionally undone and NO P2-2 guard flag is (re)computed at
+    commit either (`ladrunoImplexCommit()`'s `reversalNoiseGuardFired`
+    gate), on BOTH the implicit and IMPL-EX paths -- so unlike the P2-5 /
+    P2-5b tests this superseded (module docstring, "FIRST"/"FOURTH RUN"),
+    a literal `LoadControl(0.0)` hold now shows the protection directly,
+    with no deterministic-perturbation workaround needed: the predicate is
+    `dt == 0`, not a strain magnitude a Newton solve might not land
+    exactly on.
+
+    Checked on BOTH `implex_on=True` and `implex_on=False` (a purely
+    implicit deck, no `-implex` token -- P2-5c's fix lives in
+    `ladrunoGuardReversalNoise()`, called from both `commitState()`'s plain
+    path and `ladrunoImplexCommit()`):
+
+      * `alpha_in` bit-identical at every one of the 8 Gauss points across
+        the hold.
+      * `implexGuards[5]` (the new hold-skip-commit census, once per point
+        per hold, not per Newton iteration) increments by EXACTLY 8 across
+        the hold -- the element's own Gauss-point count, not merely
+        "at least one".
+      * `implexGuards[1]` (the P2-2 f=0 guard count) moves by the SAME
+        amount on the step BEFORE the hold as on the step AFTER it (both
+        0 on this deck, which never arms the P2-2 guard at all under
+        ordinary monotone loading) -- the hold introduces no NEW guard
+        activity relative to an ordinary step either side of it.
+
+    Kills a mutant that reverts P2-5c to the P2-5b strain-based test (the
+    literal hold could then fail to protect a point whose own history was
+    tiny -- not reproducible on THIS deck, but `implexGuards[5]` failing to
+    hit exactly 8, or `alpha_in` moving, is the direct signature), that
+    drops the `implexGuards[5]` count, or that lets a hold-commit
+    recompute the P2-2 flags after all.
+    """
+    for implex_on, tag in ((True, 8380), (False, 8381)):
+        d = _drive_hold_p25c(tag, implex_on)
+
+        diffs_ai = [max(abs(x - y) for x, y in zip(b, a))
+                   for b, a in zip(d['ai_before_hold'], d['ai_after_hold'])]
+        assert max(diffs_ai) == 0.0, (
+            'alpha_in moved at at least one Gauss point across the '
+            'LoadControl(0.0) hold (implex_on=%r)' % implex_on,
+            diffs_ai, d['ai_before_hold'], d['ai_after_hold'])
+
+        delta5 = d['guards_after_hold'][5] - d['guards_before_hold'][5]
+        assert delta5 == 8.0, (
+            'implexGuards[5] (hold-skip commits) did not increment by '
+            'EXACTLY 8 (this element\'s Gauss-point count) across the hold '
+            '(implex_on=%r)' % implex_on, delta5,
+            d['guards_before_hold'], d['guards_after_hold'])
+
+        assert d['delta1_post'] == d['delta1_pre'], (
+            'implexGuards[1] (P2-2 f=0 guard) moved by a DIFFERENT amount '
+            'on the step after the hold than on the step before it '
+            '(implex_on=%r) -- the hold is supposed to introduce no new '
+            'guard-flag activity relative to an ordinary step either side '
+            'of it', implex_on, d['delta1_pre'], d['delta1_post'])
 
 
 def test_guard_ignores_the_unprimed_first_commit():
@@ -3458,3 +3444,189 @@ def test_reversal_guard_is_relative_to_the_last_increment():
         'full-magnitude reversal at the DEFAULT -reversalRel/-reversalTol '
         '-- the relative threshold is supposed to leave a REAL reversal '
         'alone, not eat it along with the noise', diffs_ai_rev)
+
+
+# ===========================================================================
+#  Esmeralda-reported regression check (WP-92e lane B2, 2026-09-07,
+#  binary d30c66582) -- explicit default words vs no words at all
+# ===========================================================================
+
+@contextlib.contextmanager
+def _capture_native_stderr():
+    """Redirect OS-level file descriptor 2 (native `opserr` writes go
+    straight to the C stderr fd, not through Python's `sys.stderr`, so
+    `capsys`/`redirect_stderr` cannot see them) into a temp file for the
+    duration of the `with` block, then restore it. Yields the open temp
+    file, already seek(0)'d and ready to `.read()` once the block exits.
+    """
+    fd = 2
+    saved_fd = os.dup(fd)
+    tmp = tempfile.TemporaryFile(mode='w+b')
+    os.dup2(tmp.fileno(), fd)
+    try:
+        yield tmp
+    finally:
+        os.dup2(saved_fd, fd)
+        os.close(saved_fd)
+        tmp.seek(0)
+
+
+def _echo_guard_floor_line(tag, opts, p0=50.0):
+    """Build the free-DOF triaxial deck with stderr captured, and return the
+    ONE echo line naming `-implexFloor`/`-implexGuard`/`-implexTrialGuard`
+    (`setLadrunoImplexOptions`'s "ADR-92 P2 --" line), with the material
+    tag number blanked out so lines from different tags compare equal.
+    """
+    with _capture_native_stderr() as buf:
+        _build_free_dof_triaxial(tag, opts, p0=p0)
+    text = buf.read().decode('utf-8', errors='replace')
+    buf.close()
+    lines = [l for l in text.splitlines() if 'ADR-92 P2 --' in l and 'implexFloor' in l]
+    assert len(lines) == 1, (
+        'expected exactly one "ADR-92 P2 --" echo line naming -implexFloor '
+        'per construction, got a different count -- the capture or the '
+        'source\'s own echo format changed', tag, lines, text)
+    return re.sub(r'tag \d+:', 'tag N:', lines[0])
+
+
+_EDW_FACTOR = 4.0   # per-step load = _EDW_FACTOR * the nominal per-step dq --
+                    # measured (2026-09-07) to converge cleanly for all 8
+                    # steps on this deck (p0 = 50 kPa) while genuinely
+                    # engaging -implexTrialGuard (implexGuards[4] += 3 per
+                    # step) and the P2-5c reversal-noise guard -- NOT the
+                    # "boring" nominal magnitude, where -implexControl never
+                    # refuses anything and every one of these three flags is
+                    # mechanically inert regardless of value or word order.
+
+
+def _drive_explicit_default_words(tag, extra_opts):
+    opts = ('-implex', '-implexControl', 0.1, 0.01, '-maxSubsteps', 20000) + tuple(extra_opts)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+    dq = _EDW_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    stresses = []
+    for step in range(8):
+        assert ops.analyze(1) == 0, f'plastic step {step + 1} failed to converge'
+        stresses.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    guards = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return stresses, guards
+
+
+def test_explicit_default_words_are_byte_identical():
+    """Esmeralda reports a regression on d5bd259f6: legs constructed with
+    the EXPLICIT words `-implexGuard on -implexTrialGuard on -implexFloor
+    implicit` run 17-20% softer from step 2 than the same deck with no
+    explicit words at all -- which should be byte-identical, since `on` /
+    `on` / `implicit` ARE the compiled-in defaults (`setLadrunoImplexOptions`
+    only ever branches on the OPTION VALUES it parsed into `LadrunoImplex
+    Options`, never on whether a token was physically present in the deck
+    string, so there should be no code path that can tell the two decks
+    apart). Three variants on the free-DOF triaxial rig, `-implex
+    -implexControl 0.1 0.01 -maxSubsteps 20000`, `_EDW_FACTOR = 4.0` (see
+    that constant's own comment for why the nominal per-step magnitude is
+    the WRONG deck here -- it never exercises any of the three flags at
+    all, so a bug specific to their VALUE or ORDER would be invisible):
+
+      1. no explicit words.
+      2. the explicit words appended AFTER `-maxSubsteps` (the coordinator's
+         own reported shape).
+      3. the explicit words placed BEFORE `-implexControl` instead (token
+         order swapped, in case the parser's `seenFlag`/dispatch state is
+         itself order-sensitive).
+
+    Asserts the committed stress at EVERY one of 8 plastic steps, and the
+    final `implexGuards` census, are bit-identical across all three; also
+    captures the ONE construction-time echo line naming all three flags
+    (`setLadrunoImplexOptions`'s "ADR-92 P2 --" line, via a real OS-level
+    fd redirect since `opserr` writes straight to the native stderr
+    descriptor) and asserts it reads identically (tag number blanked) in
+    all three.
+
+    MEASURED ON THIS DECK (d30c66582, 2026-09-07): NOT REPRODUCED. All
+    three variants commit bit-identical stress at every one of the 8
+    steps, `implexGuards` matches exactly (deltas verified: `[4]` +3/step,
+    `[3]` moving too, both identical run-to-run), and the echo line is
+    character-for-character identical (tag blanked) across all three. This
+    is a genuine negative result, not a vacuous one -- `_EDW_FACTOR`
+    was deliberately chosen so `-implexTrialGuard` and the reversal-noise
+    guard are ACTIVELY firing on every run (confirmed via the `implexGuards`
+    deltas below), not idle, so a bug that only manifests when these flags
+    do something would have had the opportunity to show up here and did
+    not. Per the coordinator's brief: since SRC is not to be touched from
+    this lane regardless of outcome, this test is left as a STANDING
+    regression guard (it would need to fail, not merely differ from a
+    hand-derived expectation, to catch a future reintroduction) rather than
+    an xfail -- if Esmeralda's field discrepancy is confirmed elsewhere, it
+    is not reproducible from a single material point at all and needs a
+    genuine multi-element/BVP repro, which is out of this lane's scope
+    (a Python material-point rig, not a mesh).
+    """
+    tag_a, tag_b, tag_c = 8900, 8901, 8902
+    explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
+                      '-implexFloor', 'implicit')
+
+    stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
+    stresses_b, guards_b = _drive_explicit_default_words(tag_b, explicit_words)
+    # variant c: the explicit words BEFORE -implexControl instead of after
+    # -maxSubsteps -- _drive_explicit_default_words always appends its
+    # extra_opts at the END, so build variant c directly here to control
+    # the token order precisely.
+    opts_c = ('-implex',) + explicit_words + ('-implexControl', 0.1, 0.01,
+                                              '-maxSubsteps', 20000)
+    _build_free_dof_triaxial(tag_c, opts_c, p0=50.0)
+    _confine_only(tag_c)
+    dq = _EDW_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    stresses_c = []
+    for step in range(8):
+        assert ops.analyze(1) == 0, f'variant c: plastic step {step + 1} failed to converge'
+        stresses_c.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    guards_c = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    for step, (sa, sb, sc) in enumerate(zip(stresses_a, stresses_b, stresses_c)):
+        assert sa == sb, (
+            'variant b (explicit words AFTER -maxSubsteps) diverged from '
+            'variant a (no explicit words) at step %d' % (step + 1),
+            step, sa, sb)
+        assert sa == sc, (
+            'variant c (explicit words BEFORE -implexControl) diverged from '
+            'variant a (no explicit words) at step %d' % (step + 1),
+            step, sa, sc)
+
+    # implexGuards is process-wide, so compare DELTAS from each variant's
+    # own baseline (all three start from 0 new activity relative to
+    # whatever ran earlier in the same pytest process) -- since a/b/c ran
+    # back to back with nothing else in between, and each drives the
+    # IDENTICAL mechanical history, their raw deltas are directly
+    # comparable as consecutive equal-sized increments.
+    delta_ab = [b - a for a, b in zip(guards_a, guards_b)]
+    delta_bc = [c - b for b, c in zip(guards_b, guards_c)]
+    assert delta_ab == delta_bc, (
+        'implexGuards moved by a DIFFERENT amount from variant a->b than '
+        'from variant b->c -- the three decks are not driving the material '
+        'through the identical sequence of guard events',
+        guards_a, guards_b, guards_c, delta_ab, delta_bc)
+    assert guards_b[4] > guards_a[4], (
+        'implexGuards[4] (-implexTrialGuard fallbacks) did not increase at '
+        'all across this deck\'s 8 steps -- the deck is not actually '
+        'exercising the flag this test is about; the bit-identity result '
+        'above would be vacuous', guards_a, guards_b)
+
+    line_a = _echo_guard_floor_line(8910, ())
+    line_b = _echo_guard_floor_line(8911, explicit_words)
+    line_c = _echo_guard_floor_line(8912, explicit_words)   # order doesn't reach the echo text itself
+    assert line_a == line_b == line_c, (
+        'the "ADR-92 P2 --" construction-time echo line (naming -implexFloor'
+        '/-implexGuard/-implexTrialGuard) differs between the no-words and '
+        'explicit-words decks -- the flags are being PARSED to a different '
+        'internal state despite reading the same on/on/implicit values',
+        line_a, line_b, line_c)
