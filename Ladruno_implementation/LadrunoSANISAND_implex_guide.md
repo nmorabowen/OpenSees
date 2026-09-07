@@ -73,7 +73,8 @@ nDMaterial LadrunoSANISAND $tag  <23 constants>  \
     -Presidual $pr -Pmin $pmin -honorTolR $h -maxSubsteps $N \
     -implex  <-implexControl $tol $reductionLimit>  <-implexAlpha $a> \
     <-implexDt pseudo|strain|user <$dt>>  \
-    <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>
+    <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>  \
+    <-flipAlphaIn init|vanilla>  <-implexFlipAbsorb on|off>
 ```
 
 ```python
@@ -98,6 +99,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
 | `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
+| `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
 
 ## 2. What the nine words mean
 
@@ -418,6 +420,22 @@ run, and the implicit twin's first-step stiffness returns to the pre-P2 number t
 `ManzariDafalias` exactly; `-flipAlphaIn init` (opt-in) forces `α_in := α` unconditionally at
 every point at the flip on both the implicit and IMPL-EX paths — a declared modelling variant,
 not a defect fix. Every P2-7 curve names which flag it used.
+
+**The zero-increment companion return at the flip is opt-in, default off (`-implexFlipAbsorb`,
+P2-7c).** The first cut of P2-7 had this absorption run unconditionally under `-implex`: at the
+flip, the Gauss point's first plastic trial also ran a zero-increment companion return to absorb
+the drift-correction jump immediately rather than carry it into the first real step. That
+unconditionally changed the *committed* state at the flip, and only when `-implex` was on — which
+fails ADR-92 gate 5 (on a zero-free-DOF deck, `-implex` ON and OFF must commit the same state).
+Absorbing at the flip is a modelling choice, not a defect fix (the guard-scope fix above is the
+defect fix), so it does not ship as default. `-implexFlipAbsorb off` (default) leaves the flip
+byte-identical to pre-P2-7 behaviour, and the un-primed first step's committed error (0.24 on the
+R3 probe) remains, exempt, as the price of not absorbing. `-implexFlipAbsorb on` runs the
+zero-increment companion return as before, counted in `implexGuards[5]`, and brings that error to
+~0.05 at the cost of an ON/OFF difference at the flip. **The flip-handled marker itself is now
+serialized** (carried through `sendSelf`/`recvSelf` and both `getCopy` forms, per the ADR-86
+six-override rule), so a database-restored or MPI instance sees the marker already set and does
+not redo the flip's init/absorb work on a redundant `updateMaterialStage` re-assert.
 
 ### `stressCorrection` now works — P2-4
 
