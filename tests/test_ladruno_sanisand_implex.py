@@ -367,11 +367,38 @@ cannot be honoured without running the rebuilt binary -- re-verify and
 unpin (or explain why not) in the NEXT round, against the new hash, not
 here.
 
+INTERIM: RUN AGAINST 887fea475 (the FIRST P2-7 redesign, `init` default),
+NOT COMMITTED. That run's own three new tests passed after switching
+their deck away from `sani._build` (its `_LAT = 0.25` hits the file's
+OWN known "Outside Bounding" M_c-inflation defect, degenerate under the
+flip's companion-absorb -- `_build_p27_k0` at `_P27_LAT = 0.1` avoids
+it). It ALSO found four PRE-EXISTING tests broken by the flip's `-implex`
+-only zero-increment companion-absorb, independent of the `init`/
+`vanilla` choice -- all C++-side, not fixed here: (1)
+`test_implex_on_matches_off_on_a_zero_free_dof_deck` ("THE MOST IMPORTANT
+TEST"), gate 5's ON == OFF byte-identity, broken because the absorb runs
+under `-implex` only, with nothing symmetric on the OFF path; (2)
+`test_implex_db_roundtrip_carries_flags_and_history`, because
+`mStageFlipHandled` (the guard against a REPEAT flip-handling call) is
+explicitly NOT sent over `sendSelf`/`recvSelf` -- a restored material's
+own defensive re-`updateMaterialStage(...,1)` call (this codebase's
+OWN established idiom, since `mElastFlag` is a process-wide static
+construction resets) then re-fires the flip and clobbers the correctly-
+restored `alpha_in` with the CURRENT one (measured:
+`[-0.60569,...] -> [-0.62953,...]` after one redundant re-assert,
+propagating to a 0.00588 reldiff); (3)
+`test_guard_zeroes_f_after_reversal` and (4)
+`test_setparameter_stresscorrection_takes_effect`, both likely
+downstream of the same absorb changing every -implex trajectory through
+a flip, not separately root-caused. The interface changed again
+(P2-7(c), default flipped to `vanilla`) before any of this could be
+addressed -- superseded, not resolved.
+
 DO NOT RUN THIS FILE until told the new build hash -- the currently
-loaded `dist/bin/opensees.pyd` predates `-flipAlphaIn` entirely and would
-fail every one of the three new tests at construction (`nDMaterial`
-itself would refuse the unknown token) for a reason that has nothing to
-do with their own claims.
+loaded `dist/bin/opensees.pyd` (887fea475) predates the `vanilla`-default
+redesign, and the tests above are now written against the NEW default,
+untested against any binary that ships it, for a reason that has nothing
+to do with their own claims.
 """
 import math
 import os
@@ -3631,18 +3658,25 @@ def test_explicit_default_words_are_byte_identical(capfd):
     genuine multi-element/BVP repro, which is out of this lane's scope
     (a Python material-point rig, not a mesh).
 
-    `-flipAlphaIn init` ADDED to `explicit_words` (P2-7 redesign, WP-92e
-    lane B2, 2026-09-07) -- NOT YET RE-RUN against a binary that ships the
-    token; the "MEASURED ON THIS DECK (d30c66582...)" paragraph above
-    describes the run BEFORE this addition. `sani._build` is not this
-    test's deck (`_build_free_dof_triaxial` + `_confine_only`, isotropic,
-    is), so the flip's own alpha_in-init effect is vacuous here (alpha is
-    already 0) -- this addition only extends the WORD/ORDER byte-identity
+    `-flipAlphaIn vanilla` ADDED to `explicit_words` (P2-7(c) redesign,
+    WP-92e lane B2, 2026-09-07) -- NOT YET RE-RUN against a binary that
+    ships the token; the "MEASURED ON THIS DECK (d30c66582...)" paragraph
+    above describes the run BEFORE this addition. `vanilla`, not `init`:
+    `-flipAlphaIn`'s DEFAULT is `vanilla` (Esmeralda showed `init`'s
+    "fix" was actually a modelling change -- the implicit twin's own
+    number moved off vanilla's to the digit -- so `vanilla` is the
+    default and `init` the opt-in), and this test's whole point is
+    "explicit words matching the DEFAULT must be byte-identical to
+    omitting them" -- using `init` here would test a DIFFERENT (non-
+    default) claim entirely. `sani._build` is not this test's deck
+    (`_build_free_dof_triaxial` + `_confine_only`, isotropic, is), so the
+    flip's own alpha_in effect is vacuous here (alpha is already 0)
+    either way -- this addition only extends the WORD/ORDER byte-identity
     claim to the new token, not a physics claim about it.
     """
     tag_a, tag_b, tag_c = 8900, 8901, 8902
     explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
-                      '-implexFloor', 'implicit', '-flipAlphaIn', 'init')
+                      '-implexFloor', 'implicit', '-flipAlphaIn', 'vanilla')
 
     stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
     stresses_b, guards_b = _drive_explicit_default_words(tag_b, explicit_words)
@@ -3737,36 +3771,109 @@ def test_explicit_default_words_are_byte_identical(capfd):
 #  an `alpha_in == alpha` check there would read `0 == 0` under a mutant
 #  that drops the write entirely, which is exactly the "isotropic deck
 #  makes the fix unfalsifiable" trap the redesigned ADR text itself calls
-#  out. `sani._build`'s single continuous ramp (`_LAT = 0.25` lateral vs
-#  `1.0` axial, BOTH active from the very first elastic-stage step) is
-#  reused instead: by the end of the 5-step elastic leg the committed
-#  stress -- and therefore `alpha = dev(sigma)/p` -- is already
-#  anisotropic, a K0-like state, so `alpha_in == alpha` at the flip is a
-#  claim with real content.
+#  out. `sani._build`'s OWN single continuous ramp is NOT reused, though:
+#  ITS `_LAT = 0.25` measurably hits the file's own KNOWN, documented
+#  "Outside Bounding" defect (`test_ladruno_sanisand.py`'s own docstring --
+#  the stage-switch stress ratio, eta = 1.817-2.138 depending on the exact
+#  deck, exceeds the calibrated M_c = 1.3309, so `ManzariDafalias::
+#  Elastic2Plastic` inflates M_c by 50-77% before the plastic leg starts).
+#  MEASURED on 887fea475: this defect alone was enough to make
+#  `test_flip_absorbs_drift_under_implex`'s own "first real push" error
+#  read exactly 0.0 (an M_c-inflation degenerate case, not a P2-7 defect).
+#  A custom `_build_p27_k0` deck (SAME zero-free-DOF stdBrick shape and
+#  magnitude sani._build uses, `_P27_LAT = 0.1` instead of `0.25`) is used
+#  instead -- measured eta = 1.176, comfortably under M_c, no "Outside
+#  Bounding" warning, while alpha stays genuinely nonzero (non-vacuous).
 # ===========================================================================
 
-def test_flip_initialises_alpha_in_at_every_point():
-    """ADR-92 P2-7: at `updateMaterialStage 1`, `alpha_in := alpha_n` at
-    EVERY Gauss point, on both the purely implicit deck (no `-implex`
-    token) and the `-implex` deck, under the DEFAULT `-flipAlphaIn init`.
-    `-flipAlphaIn vanilla` leaves `alpha_in` at zero (the elastic stage's
-    own placeholder) instead, on both paths.
+_P27_LAT = 0.1           # lateral extension / axial compression -- see the
+                         # block comment above for why NOT sani._build's own
+                         # 0.25 (measured "Outside Bounding" there; at 0.1,
+                         # eta = 1.176 stays comfortably under M_c = 1.3309)
+_P27_E_AX = sani._E_AX   # 3.0e-4, sani._build's own magnitude, reused
+_P27_N_EL = sani._N_EL   # 5, sani._build's own elastic-stage step count
 
-    See the section block comment above for why `sani._build`'s K0-like
+
+def _build_p27_k0(tag, opts):
+    """A zero-free-DOF stdBrick, K0-like anisotropic elastic ramp (lateral
+    extension `_P27_LAT` x axial compression, ONE continuous Linear series
+    from t = 0 -- the same shape `sani._build` uses, at a SAFE lat ratio;
+    see the section block comment above for why `sani._build` itself
+    cannot be reused here). The SAME `LoadControl(1.0 / _P27_N_EL)`
+    magnitude is used for both the elastic leg (run by the caller,
+    `_p27_elastic_leg`) and any push steps taken afterward, so there is no
+    discontinuity in per-step magnitude across the flip.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, _P27_LAT * _P27_E_AX)
+            if y == 1.:
+                ops.sp(n, 2, _P27_LAT * _P27_E_AX)
+            if k == 1:
+                ops.sp(n, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    ops.analysis('Static')
+
+
+def _p27_elastic_leg(tag):
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'elastic-stage step {step + 1} failed'
+
+def test_flip_initialises_alpha_in_at_every_point():
+    """ADR-92 P2-7(c): at `updateMaterialStage 1`, `alpha_in := alpha_n` at
+    EVERY Gauss point, on both the purely implicit deck (no `-implex`
+    token) and the `-implex` deck, under EXPLICIT `-flipAlphaIn init`.
+
+    DEFAULT FLIPPED (WP-92e lane B2, 2026-09-07, before any P2-7c binary):
+    the coordinator reports Esmeralda showed vanilla's own flip
+    initialisation is deterministic on a real deck and returns the
+    implicit twin to its OLD number to the digit, so `init` is now an
+    OPT-IN modelling choice, not a default fix -- `-flipAlphaIn` DEFAULTS
+    to `vanilla`. Under the (now) DEFAULT, `alpha_in` is the elastic
+    stage's OWN value (unchanged by the flip -- the elastic_integrator
+    branch never touches `mAlpha_in`, so it stays at the zero placeholder
+    every constructor leaves it at) at every point, on both paths.
+
+    See the section block comment above for why `_build_p27_k0`'s K0-like
     ramp is used instead of an isotropic confine-first deck, and why a
     non-vacuity check (Gauss point 1's `alpha` is genuinely nonzero at the
     flip) comes first.
 
-    Kills a mutant that drops the flip's `alpha_in` write entirely (init
-    would then read identically to vanilla -- zero -- everywhere), that
-    only writes Gauss point 1 (every OTHER point would still read the old
-    placeholder), or that reaches only one of the two paths (the other
-    deck's read would still show the pre-fix value).
+    Kills a mutant that drops the flip's `alpha_in` write entirely under
+    explicit `init` (it would then read identically to the DEFAULT --
+    zero -- everywhere), that only writes Gauss point 1 (every OTHER
+    point would still read the old placeholder), that reaches only one of
+    the two paths (the other deck's read would still show the pre-fix
+    value), or that flips the default back to `init` silently (the
+    DEFAULT-flag loop below would then also read `alpha_in == alpha`).
     """
     for implex_on, tag in ((False, 8420), (True, 8421)):
-        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
-        sani._build('LadrunoSANISAND', tag, opts)
-        sani._elastic_leg(tag)
+        opts = ('-flipAlphaIn', 'init')
+        if implex_on:
+            opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) + opts
+        _build_p27_k0(tag, opts)
+        _p27_elastic_leg(tag)
 
         # the flip itself -- read BEFORE any push into the plastic stage.
         ops.updateMaterialStage('-material', tag, '-stage', 1)
@@ -3776,8 +3883,8 @@ def test_flip_initialises_alpha_in_at_every_point():
 
         assert _vnorm(alpha[0]) > 0.0, (
             'the elastic-stage stress is isotropic (alpha == 0) at Gauss '
-            'point 1 right after the flip (implex_on=%r) -- sani._build\'s '
-            'own K0-like ramp (_LAT = 0.25 lateral, active from the first '
+            'point 1 right after the flip (implex_on=%r) -- _build_p27_k0\'s '
+            'own K0-like ramp (_P27_LAT = 0.1 lateral, active from the first '
             'elastic step) is supposed to leave a genuinely anisotropic '
             'stress there; a zero here makes the alpha_in == alpha check '
             'below vacuous' % implex_on, alpha[0])
@@ -3785,27 +3892,25 @@ def test_flip_initialises_alpha_in_at_every_point():
         for gp in range(8):
             assert alpha[gp] == alpha_in[gp], (
                 'alpha_in does not equal alpha at Gauss point %d right '
-                'after updateMaterialStage 1, under the DEFAULT '
+                'after updateMaterialStage 1, under EXPLICIT '
                 '-flipAlphaIn init (implex_on=%r) -- the flip is supposed '
                 'to set alpha_in := alpha_n deterministically at every '
                 'Gauss point' % (gp + 1, implex_on), alpha[gp], alpha_in[gp])
 
-    # -- -flipAlphaIn vanilla: alpha_in stays at its elastic-stage value --
+    # -- the DEFAULT (now vanilla): alpha_in stays at its elastic-stage value --
     for implex_on, tag in ((False, 8422), (True, 8423)):
-        opts = ('-flipAlphaIn', 'vanilla')
-        if implex_on:
-            opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) + opts
-        sani._build('LadrunoSANISAND', tag, opts)
-        sani._elastic_leg(tag)
+        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+        _build_p27_k0(tag, opts)
+        _p27_elastic_leg(tag)
         ops.updateMaterialStage('-material', tag, '-stage', 1)
 
         alpha_in_vanilla = _read_all_alpha_in(ngp=8)
         for gp in range(8):
             assert all(v == 0.0 for v in alpha_in_vanilla[gp]), (
                 'alpha_in is NOT the elastic-stage placeholder (zero) at '
-                'Gauss point %d under -flipAlphaIn vanilla (implex_on=%r) '
-                '-- vanilla is supposed to reproduce the OLD behaviour, '
-                'leaving alpha_in untouched by the flip'
+                'Gauss point %d under the DEFAULT -flipAlphaIn (implex_on=%r) '
+                '-- the default is supposed to be vanilla, reproducing the '
+                'OLD behaviour and leaving alpha_in untouched by the flip'
                 % (gp + 1, implex_on), alpha_in_vanilla[gp])
 
 
@@ -3813,85 +3918,152 @@ def _read_all_implex_error(ele=1, ngp=8):
     return [ops.eleResponse(ele, 'material', gp, 'implexDetail')[0] for gp in range(1, ngp + 1)]
 
 
-def _flip_and_first_push_error(tag, flip_mode):
-    """`sani._build` (K0-like ramp) + `-implex`, elastic leg, the flip
-    (`implexGuards[5]` delta captured across it), then ONE real plastic
-    push step (`sani._build`'s own `_analysis()` per-step magnitude,
-    `1.0 / sani._NTOT`) -- returns `(delta5_at_flip, max_implexError_
-    across_all_8_GPs_after_that_first_push)`.
+def _build_p27_k0_2elem(tag, opts):
+    """TWO independent unit-cube `stdBrick` elements, SAME material tag,
+    the SAME K0-like ramp (`_P27_LAT`/`_P27_E_AX`/`_P27_N_EL`) replicated
+    on both -- 16 Gauss points total (8 per element), each its OWN
+    per-Gauss-point `getCopy()` clone.
+
+    P2-7c moved the flip-handled tracking to a PER-INSTANCE flag
+    (`mStageFlipHandled` on each clone), so a SINGLE-element deck (8
+    instances) cannot distinguish "every instance flips" from "only the
+    first clone flips, the rest silently miss it" -- both would show SOME
+    nonzero `implexGuards[5]` delta at the flip, just a different one (8
+    vs some smaller number). Node numbering is offset by 8 per element so
+    the two cubes share nothing.
     """
-    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE]
-    if flip_mode is not None:
-        opts += ['-flipAlphaIn', flip_mode]
-    sani._build('LadrunoSANISAND', tag, tuple(opts))
-    sani._elastic_leg(tag)
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for e in range(2):
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                ops.node(8 * e + 4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    for e in range(2):
+        base = 8 * e
+        ops.element('stdBrick', e + 1, base + 1, base + 2, base + 3, base + 4,
+                   base + 5, base + 6, base + 7, base + 8, tag)
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                ops.fix(base + 4 * k + j + 1, 1 if x == 0. else 0,
+                        1 if y == 0. else 0, 1 if k == 0 else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for e in range(2):
+        base = 8 * e
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                n = base + 4 * k + j + 1
+                if x == 1.:
+                    ops.sp(n, 1, _P27_LAT * _P27_E_AX)
+                if y == 1.:
+                    ops.sp(n, 2, _P27_LAT * _P27_E_AX)
+                if k == 1:
+                    ops.sp(n, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    ops.analysis('Static')
 
-    guards_before_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+def _flip_and_first_push_error(tag, flip_mode):
+    """`_build_p27_k0` (K0-like ramp, ONE element) + `-implex`, elastic
+    leg, the flip, then ONE real plastic push step (SAME per-step
+    magnitude as the elastic leg, `1.0 / _P27_N_EL`) -- returns
+    `max_implexError` across all 8 Gauss points after that first push.
+    `flip_mode` is REQUIRED (`'init'` or `'vanilla'`, no default) --
+    P2-7c's `-flipAlphaIn` default is `vanilla`, so this helper does not
+    guess.
+    """
+    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE, '-flipAlphaIn', flip_mode]
+    _build_p27_k0(tag, tuple(opts))
+    _p27_elastic_leg(tag)
+
     ops.updateMaterialStage('-material', tag, '-stage', 1)
-    guards_after_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    delta5 = guards_after_flip[5] - guards_before_flip[5]
-
-    ops.integrator('LoadControl', 1.0 / sani._NTOT)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
     assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
-    max_err = max(_read_all_implex_error(ngp=8))
-    return delta5, max_err
+    return max(_read_all_implex_error(ngp=8))
 
 
 def test_flip_absorbs_drift_under_implex():
-    """ADR-92 P2-7: under `-implex`, the flip runs a zero-increment
+    """ADR-92 P2-7(c): under `-implex`, the flip runs a zero-increment
     companion return, committed hold-style, at every Gauss point --
+    REGARDLESS of the `-flipAlphaIn` choice (the companion absorb and the
+    alpha_in initialisation are independent knobs; only the absorb is
+    checked here, on the DEFAULT `-flipAlphaIn`, now `vanilla`).
     `implexGuards[5]` (the SAME hold-skip-commit slot P2-5c's literal
-    holds use) increments by EXACTLY the Gauss-point count (8) across the
-    flip, on the DEFAULT `-flipAlphaIn init`.
+    holds use) increments by EXACTLY 16 across the flip -- TWO elements
+    (8 Gauss points each), because P2-7c's flip-handled tracking is PER
+    INSTANCE (see `_build_p27_k0_2elem`'s own docstring for why a
+    single-element deck cannot tell "every instance flips" from "only
+    the first one does").
 
-    The companion absorb PLUS the deterministic `alpha_in` write together
-    are supposed to leave the FIRST REAL plastic push step's extrapolation
-    error far smaller than under `-flipAlphaIn vanilla` (the old,
-    noise-initialised `alpha_in`, still driving an un-corrected O(0.2)-
-    scale gap into that first step per the ADR's own P2-7 measurement) --
-    checked as `max(implexError)` across all 8 Gauss points on both
-    variants, asserting the vanilla:init ratio exceeds 2.
+    Separately (single-element, BOTH `-flipAlphaIn` modes EXPLICIT, since
+    there is no default to lean on for this comparison): the deterministic
+    `alpha_in` write under `init` is supposed to leave the FIRST REAL
+    plastic push step's extrapolation error far smaller than under
+    `vanilla` (the old, noise-initialised `alpha_in`, still driving an
+    un-corrected O(0.2)-scale gap into that first step per the ADR's own
+    P2-7 measurement) -- checked as `max(implexError)` across all 8 Gauss
+    points on both variants, asserting the vanilla:init ratio exceeds 2.
 
     Kills a mutant that drops the flip's companion-absorb call
     (`implexGuards[5]` would not move at the flip at all, only at literal
-    holds elsewhere) or that makes `-flipAlphaIn` cosmetic (the ratio
-    would collapse toward 1).
+    holds elsewhere), that only flips ONE instance per element (the delta
+    would read 8 or some other count short of 16, not 16), or that makes
+    `-flipAlphaIn` cosmetic (the ratio would collapse toward 1).
     """
-    tag_init = 8430
-    delta5_init, err_init = _flip_and_first_push_error(tag_init, None)   # default = init
-    assert delta5_init == 8.0, (
+    tag_2elem = 8432
+    opts_2elem = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # DEFAULT -flipAlphaIn (vanilla)
+    _build_p27_k0_2elem(tag_2elem, opts_2elem)
+    ops.updateMaterialStage('-material', tag_2elem, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'2-element elastic-stage step {step + 1} failed'
+
+    guards_before_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ops.updateMaterialStage('-material', tag_2elem, '-stage', 1)
+    guards_after_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta5 = guards_after_flip[5] - guards_before_flip[5]
+    assert delta5 == 16.0, (
         'implexGuards[5] (hold-skip commits) did not increase by EXACTLY '
-        '8 (this element\'s Gauss-point count) across the flip, under the '
-        'DEFAULT -flipAlphaIn init -- the flip is supposed to run a '
-        'zero-increment companion return, committed hold-style, at every '
-        'point', delta5_init)
+        '16 (TWO elements x 8 Gauss points each) across the flip on the '
+        '2-element deck -- the flip\'s companion-absorb is supposed to run '
+        'at EVERY per-Gauss-point instance, not just the first element\'s',
+        delta5, guards_before_flip, guards_after_flip)
+
+    tag_init = 8430
+    err_init = _flip_and_first_push_error(tag_init, 'init')
 
     tag_vanilla = 8431
-    _delta5_vanilla, err_vanilla = _flip_and_first_push_error(tag_vanilla, 'vanilla')
+    err_vanilla = _flip_and_first_push_error(tag_vanilla, 'vanilla')
 
     assert err_init > 0.0, (
-        'the DEFAULT (-flipAlphaIn init) first-push max implexError read '
+        'the EXPLICIT -flipAlphaIn init first-push max implexError read '
         'exactly zero -- cannot form the ratio this test needs', err_init)
     ratio = err_vanilla / err_init
     assert ratio > 2.0, (
-        'the -flipAlphaIn vanilla first-push max implexError is not more '
-        'than 2x the DEFAULT (init) one -- the flip\'s deterministic '
-        'alpha_in write plus the zero-increment companion absorb are '
-        'supposed to leave the first REAL plastic step\'s extrapolation '
-        'error far smaller than the old (noise-initialised) behaviour',
-        err_init, err_vanilla, ratio)
+        'the EXPLICIT -flipAlphaIn vanilla first-push max implexError is '
+        'not more than 2x the EXPLICIT init one -- the flip\'s '
+        'deterministic alpha_in write plus the zero-increment companion '
+        'absorb are supposed to leave the first REAL plastic step\'s '
+        'extrapolation error far smaller than the old (noise-initialised) '
+        'behaviour', err_init, err_vanilla, ratio)
 
 
 def test_guard_only_on_primed_states():
-    """ADR-92 P2-7: the reversal-noise guard (P2-5/5b/5c) applies ONLY to
-    PRIMED states (after the first plastic commit since the flip). A hold
-    placed BEFORE the first plastic commit -- right after the flip, on the
-    DEFAULT `-flipAlphaIn init` -- must not change `alpha_in` (init
-    already equalised it to `alpha` at the flip, so there is nothing left
-    for the hold to disturb), and the FIRST REAL plastic push step
-    afterward must read its ordinary dt ratio for `f`
-    (`implexDetail[5]`), NOT `0.0` -- i.e. the un-primed pre-priming hold
-    must not have armed the P2-2 guard flag.
+    """ADR-92 P2-7(c): the reversal-noise guard (P2-5/5b/5c) applies ONLY
+    to PRIMED states (after the first plastic commit since the flip). A
+    hold placed BEFORE the first plastic commit -- right after the flip,
+    on EXPLICIT `-flipAlphaIn init` (the point of this test is the
+    already-equalised state right after the flip, independent of what the
+    DEFAULT is) -- must not change `alpha_in` (init already equalised it
+    to `alpha` at the flip, so there is nothing left for the hold to
+    disturb), and the FIRST REAL plastic push step afterward must read its
+    ordinary dt ratio for `f` (`implexDetail[5]`), NOT `0.0` -- i.e. the
+    un-primed pre-priming hold must not have armed the P2-2 guard flag.
 
     Kills a mutant that lets an UN-PRIMED hold arm the guard anyway (the
     first real push step would read `f = 0` instead of its ratio) or that
@@ -3899,9 +4071,9 @@ def test_guard_only_on_primed_states():
     would then not be the LAST word on `alpha_in` before priming).
     """
     tag = 8440
-    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # default: init, guard on
-    sani._build('LadrunoSANISAND', tag, opts)
-    sani._elastic_leg(tag)
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-flipAlphaIn', 'init')
+    _build_p27_k0(tag, opts)
+    _p27_elastic_leg(tag)
     ops.updateMaterialStage('-material', tag, '-stage', 1)   # the flip
 
     alpha_in_after_flip = _read_all_alpha_in(ngp=8)
@@ -3919,7 +4091,7 @@ def test_guard_only_on_primed_states():
             % (gp + 1), alpha_in_after_flip[gp], alpha_in_after_hold[gp])
 
     # the first REAL plastic push step.
-    ops.integrator('LoadControl', 1.0 / sani._NTOT)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
     assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
     detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
     assert detail[5] != 0.0, (
