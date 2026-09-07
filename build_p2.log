@@ -70,3 +70,4 @@ Turn off this advice by setting config variable advice.detachedHead to false
 -- Performing Test LAPACK_d_FOUND
 -- Performing Test LAPACK_d_FOUND - Success
 -- Found LAPACK: C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_intel_lp64.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_sequential.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_core.lib  found components: MKL
+-- Found MPI_C: C:/Program Files (x86)/Intel/oneAPI/mpi/latest/lib/impi.lib (found version "3.1")

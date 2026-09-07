@@ -2217,12 +2217,17 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                 mDGamma    = dGammaImplicit;
                 mVoidRatio = m_e_init - (1 + m_e_init) * this->GetTrace(mEpsilon);
 
-                // The clamp belongs to the extrapolation that is no longer being
-                // delivered; the companion's stress is admissible by
-                // construction. Say so, so implexDetail[3] describes what left
-                // this function.
-                mImplexClampFired = false;
-
+                // mImplexClampFired / mImplexClampCount are DELIBERATELY left
+                // alone. Both describe the EXTRAPOLATION -- which was still
+                // computed on this pass, and still clamped if it crossed the
+                // floor -- and implexDetail[3] and [4] have to stay consistent
+                // with each other: zeroing the flag while the count had already
+                // been incremented would make the pair contradict itself at
+                // exactly the points ADR 93's census reads them to separate the
+                // floor mechanism from the others. What is DELIVERED here is the
+                // companion's stress, which is admissible by construction and
+                // never needed a clamp.
+                //
                 // mImplexError is DELIBERATELY left at the value just measured:
                 // it is the error that TRIGGERED the fallback and it is the
                 // number the census reads. What is delivered is the implicit
