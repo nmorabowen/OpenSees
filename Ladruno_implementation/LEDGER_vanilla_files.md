@@ -25,6 +25,35 @@ and re-verify.
 - PR numbers are on the fork: `github.com/nmorabowen/OpenSees` (branch `ladruno`).
 - When you touch a new vanilla file, **add the row in the same PR**.
 
+## Deleted vanilla files — how to resolve the next upstream sync
+
+Four upstream files are **deleted**, not modified (the `DELETED` rows below).
+When someone next merges `OpenSees/OpenSees` into `ladruno` and upstream has
+touched one of them, git raises a **modify/delete conflict**. It is not a
+warning that we did something wrong:
+
+> **Resolution is always `git rm` — keep them deleted.** Restoring one puts
+> `makeWIN.bat` back in the repo root, which is exactly the failure this fork
+> spent a PR removing (agents build through it and then test a stale or
+> differently-linked binary). Deliberate divergence, recorded here.
+
+Low blast radius, measured 2026-09-08: `makeWIN.bat`, `makeMac.sh` and
+`conanfile2.py` have **2 upstream commits each, ever**;
+`OpenSeesAWS-Ubuntu22.04.sh` about the same. Last sync from `OpenSees/OpenSees`
+was 2026-04-26. So this is one conflict, once, if ever.
+
+This costs nothing in the other direction: the upstream PR campaign builds every
+package as a *fresh branch off `jaabell/ladruño`* with files copied in
+(`upstream_pr_campaign.md` — "our git history is not portable. No
+cherry-picking"), so a deletion on `ladruno` can never reach a port branch.
+
+**Deliberately NOT deleted**, though they are also unused build systems:
+`Win32/` (204 upstream commits), `Win64/` (418, last touched 2026-02-19),
+`MAKES/` (83), `Makefile`, `Dockerfile`, `docker/`. The first three are actively
+maintained upstream, so deleting them would mean a real conflict on *every*
+future sync — and unlike `makeWIN.bat` in the root, nobody reaches for a Visual
+Studio solution file by accident.
+
 ## Ledger
 
 | Vanilla file | Why touched | PR |
