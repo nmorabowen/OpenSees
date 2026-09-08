@@ -38,6 +38,19 @@
 template <typename T>
 struct yf_has_apex : std::false_type {};
 
+// Ladruno (ADR-94 wp/94f): opt-in trait for yield functions whose apex is a CONE
+// VERTEX in the (p, sqrt(J2)) half-plane, so that `Backward_Euler` may classify
+// the apex region in the ELASTIC metric (`cp_apex_region`, shared with
+// `Closest_Point`) instead of trusting the yield function's own EUCLIDEAN
+// `check_apex_region`.  The two coincide only when K*etabar/G == eta; at zero
+// dilatancy the exact test degenerates to p >= p_apex and the Euclidean one is
+// strictly too narrow, which is what walled the ADR-95 Prandtl footing deck.  A
+// yield function that does NOT specialize this keeps its own Euclidean answer and
+// is byte-identical.  Specializing it REQUIRES yf_has_cp_derivatives (the elastic
+// metric test forms the plastic modulus from df/dq).
+template <typename T>
+struct yf_apex_elastic_metric : std::false_type {};
+
 // Ladruno (ADR-84 P0): opt-in trait for YFs that implement their own exact
 // return for stress states where the generic scalar-Newton return map is
 // invalid (multi-surface corners, cutoff planes, apex cones). A YF that
