@@ -1232,17 +1232,22 @@ PATH-INDEPENDENCE REFERENCE BLOCK (values C++ tests pin)
 
 
 ##### fd_tangent_driver.py  (exit 0) #####
-PRESERVED VERBATIM from the P0 run against build
-3622d6214ef4cdeb8cf65a102ee35f6cd9973337.  NOT re-run for the cppm_hb.py addition:
-that worktree's binary is gone, and the only build reachable now
-(0e5163e430983924fc5197c22b1db5b3f2a9c1fd) is a different tree -- it moves the
-ADR-94 M3 negative control from 0.573447 to 0.222832, which must not be pinned
-here by accident.  Re-run this one oracle against the P1 build when P1 lands.
-(Its banner still reads 5/5 -- the five-oracle numbering it was recorded under.)
+RE-RUN 2026-09-07 against the ADR-97 P3 build
+6e937fabb6bd4183a994bb8227ff69c328084992 (`wp/97d-cp-hoekbrown`), which is
+what the note this replaces asked for: the P0 record was preserved verbatim
+from build 3622d6214 because that worktree's binary was gone, and the
+cppm_hb.py author could not re-run it either.  Every `Backward_Euler` number
+below is IDENTICAL to the preserved P0 record (0.573447 / 0.799355 /
+1.025263 / 0.045735 / 0.045735, self-test 4.852e-12, 12-DOF 0.670133 /
+0.053446) -- which is an independent confirmation of ADR-97 D1 across P0 to
+P3.  Section 2 is no longer "NOT AVAILABLE": `Closest_Point` /
+`Algorithmic` now reports 1.510428e-11, the value P1 pins.
+(The banner reads 6/6 -- cppm_hb.py made it six oracles.)
+
 ==============================================================================
-ADR-97 oracle 5/5 -- element-level free-DOF FD tangent check
+ADR-97 oracle 6/6 -- element-level free-DOF FD tangent check
 ==============================================================================
-build: 3622d6214ef4cdeb8cf65a102ee35f6cd9973337
+build: 6e937fabb6bd4183a994bb8227ff69c328084992
 
 0. SELF-TEST -- ElasticIsotropic: K_asm IS the exact tangent, so the
    finite difference must reproduce it to round-off.
@@ -1275,7 +1280,8 @@ build: 3622d6214ef4cdeb8cf65a102ee35f6cd9973337
 
 2. THE ADR-97 TARGET -- integration_method Closest_Point with
    tangent_type Algorithmic (does not exist yet; P1 adds it):
-  Closest_Point / Algorithmic                          NOT AVAILABLE in this build (expected before P1)
+  Closest_Point / Algorithmic                          rel_err(max) = 1.510428e-11   rel_fro = 1.484143e-11   |K_fd|_F = 18537.366
+  gate: rel_err <= 1e-6  ->  PASS
 
 3. A SHEARED, 12-FREE-DOF RIG (top face fully free) -- the same
    measurement where the tangent's shear block is exercised:
