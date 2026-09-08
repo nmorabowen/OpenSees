@@ -60,6 +60,7 @@ enum struct ASDPlasticMaterial3D_Constitutive_Integration_Method : int
     Full_Backward_Euler,
     Forward_Euler_Subincrement,
     Backward_Euler_LineSearch,
+    Closest_Point,   // Ladruno (ADR-97 wp/97b): fully implicit closest-point return map
 };
 
 enum struct ASDPlasticMaterial3D_Tangent_Operator_Type : int

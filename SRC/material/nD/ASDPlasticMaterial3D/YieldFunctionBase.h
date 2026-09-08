@@ -45,6 +45,14 @@ struct yf_has_apex : std::false_type {};
 template <typename T>
 struct yf_has_special_return : std::false_type {};
 
+// Ladruno (ADR-97 wp/97b): opt-in trait for yield functions that supply the
+// UNCONTRACTED closest-point Jacobian block df/dq (YIELD_FUNCTION_IV_DERIVATIVE
+// below).  `integration_method Closest_Point` is REFUSED at parse time for a YF
+// that does not specialize this to true_type -- never silently approximated.
+// See ADR-97 D3 (family-by-family) and the base default in YieldFunctionBase.
+template <typename T>
+struct yf_has_cp_derivatives : std::false_type {};
+
 
 
 // Helper template to check if a class has a parameters_t type alias
@@ -131,6 +139,25 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
         VoigtMatrix& stiffness_return, \
         int& return_quality) const
 
+// Ladruno (ADR-97 wp/97b): df/dq -- the derivative of f with respect to ONE
+// internal variable, UNCONTRACTED (the shipped YIELD_FUNCTION_HARDENING only
+// ever exposes the scalar contraction -(df/dq).h, which the closest-point
+// Jacobian's J_fq block cannot use).  `iv` selects the variable; the YF matches
+// it against its own template parameters with `if constexpr` and writes
+// `iv.size()` doubles into `out`.  Convention: the derivative with respect to the
+// STORED slot (shear slots doubled relative to the tensor derivative), matching
+// df_dsigma_ij and the framework's plain-dot contractions (ADR-94 wp/94c B5).
+// It must be the TRUE derivative of THIS YF's f: DruckerPrager_YF has its
+// cohesion IV commented out of f, so its df/dq for that IV is ZERO under
+// Closest_Point even though yf_hardening still contributes -1 times its rate
+// (ADR-97 P0 header finding 2 -- recorded, not fixed here: fixing the YF would
+// change Backward_Euler, which D1 keeps byte-identical).
+#define YIELD_FUNCTION_IV_DERIVATIVE template <typename IVType, typename IVStorageType, typename ParameterStorageType> \
+    void df_dq(const IVType& iv, const VoigtVector& sigma, \
+        const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        double* out) const
+
 #define GET_INTERNAL_VARIABLE_HARDENING(type) \
     internal_variables_storage.template get<type> ().hardening_function(depsilon, m, sigma, parameters_storage)
 
@@ -172,6 +199,18 @@ public:
         (void) internal_variables_storage;
         (void) parameters_storage;
         return 0.0;
+    }
+
+    // Ladruno (ADR-97 wp/97b): default -- this YF declares no closest-point
+    // IV derivative.  Inert (zero), and unreachable in practice: the parser
+    // refuses `integration_method Closest_Point` unless yf_has_cp_derivatives.
+    YIELD_FUNCTION_IV_DERIVATIVE
+    {
+        (void) sigma;
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        const int n = iv.size();
+        for (int i = 0; i < n; ++i) out[i] = 0.0;
     }
 
     inline const char* getName() const { return static_cast<T*>(this)->NAME; }
