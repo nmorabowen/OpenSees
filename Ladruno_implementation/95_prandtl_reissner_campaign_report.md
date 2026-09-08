@@ -163,6 +163,25 @@ for the plain push to s/B 0.15 on an idle box: 31 s (linear hex), 8 min (H20 uri
 attempts around the corner points), 8–12 min (tets, zero failed attempts), 5 min (SANISAND IMPL-EX),
 while SANISAND implicit costs fifty times more per attempt and stops at s/B 0.008.
 
+### Wall times
+
+Plain push to s/B 0.15 on an idle box, no diagnostics (the snapshot re-runs); the campaign legs with
+per-Gauss-point sampling took 40–60 min each, all of it diagnostics.
+
+| leg | element / material | DOF | steps | failed attempts | wall | per attempt |
+|---|---|---|---|---|---|---|
+| B1 | LadrunoBrick -bbar, UW-DP repaired | 1 386 | 310 | 0 | 31 s | 0.10 s |
+| C1 | LadrunoBrick -bbar, ASD-DP (#815) | 1 386 | 310 | 0 | 37 s | 0.12 s |
+| B2 | LadrunoBrick20 -uri, UW-DP repaired | 4 659 | 1 521 | 1 051 | 481 s | 0.19 s |
+| D1 | LadrunoBrick20 -uri, SANISAND IMPL-EX | 4 659 | 1 515 | 0 | 296 s | 0.20 s |
+| B4 | BezierTet10 std, UW-DP repaired | 7 749 | 1 515 | 0 | 466 s | 0.31 s |
+| B5 | BezierTet10 -bbar, UW-DP repaired | 7 749 | 1 515 | 0 | 533 s | 0.35 s |
+| B3 | TenNodeTetrahedron, UW-DP repaired | 7 749 | 1 515 | 0 | 727 s | 0.48 s |
+| D2 | LadrunoBrick -bbar, SANISAND implicit (stopped at s/B 0.008) | 1 386 | 60 | 65 | 1 236 s | 9.9 s |
+| A1 | LadrunoBrick20 -uri, UW-DP pre-fix (floor at 0.011) | 4 659 | 286 | 302 | 176 s | 0.30 s |
+| A2/A3 | tet10 / BezierTet10 std, pre-fix (floor at 0.0016) | 7 749 | 79 / 33 | 71 / 36 | 152 / 40 s | 1.0 / 0.6 s |
+| C2 | LadrunoBrick20 -uri, ASD-DP #815 (floor at 0.011) | 4 659 | 160 | 93 | 24 s | 0.09 s |
+
 ## 8. FEM fields
 
 ![deformed meshes coloured by plastic mobilisation](../Ladruno_files/testbed/hypo_bearing/adr95_deformed_mob.png)
