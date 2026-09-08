@@ -372,9 +372,53 @@ Three legitimate answers; **pick one and disclose it**, do not leave it implicit
 sees the console. The gravity state is no warning at all: the shallowest Gauss point sat at
 1.56–6.25 kPa, 15–60x the floor, on every mesh, before the push ever started.
 
+## 8. IMPL-EX tokens (ADR 92)
+
+None of this family exists in `nd.py` today — the `LadrunoSANISAND` dataclass has no `implex`
+field at all yet (grepping `nd.py` for `implex` returns zero hits). This section is a spelling
+and default reference for when it is added; semantics live in `LadrunoSANISAND_implex_guide.md`,
+and the full adoption note for the newest member (`-implexFactor`) is
+`ladruno_apegmsh_adoption_guide_2026-09-08.md`.
+
+**Ordering:** every token below is a `-flag`, so the ordering rule in §1 above applies unchanged
+— all 18 positionals and the 5-argument tail must precede every one of them. Among themselves the
+parser does not care what order they appear in (verified against
+`SRC/material/nD/LadrunoSANISAND.cpp`), but `-implex*` options other than `-implex` itself are
+refused if `-implex` is not present somewhere on the line.
+
+| token | default | one line |
+|---|---|---|
+| `-implex` | off | turns on the extrapolated stress path; every other `-implex*` token is refused without it |
+| `-implexControl $tol $reductionLimit` | off (`tol=0.1`, `reductionLimit=0.01` if given bare) | refuses a step whose extrapolation error exceeds `$tol`; required by `-implexFactor control\|controlIter` |
+| `-implexAlpha $a` | `1.0` | scales the extrapolated plastic-strain increment (`1.0` = standard IMPL-EX, `0.0` = elastic predictor) |
+| `-implexDt pseudo\|strain\|user <$dt>` | `pseudo` | source for `dt_{n+1}` in the clock ratio `f` |
+| `-implexFloor implicit\|accept\|refuse` | `implicit` | what a Gauss point commits when `-implexControl` hits the reduction floor with nothing left to cut (ADR-92 P2-1) |
+| `-implexGuard on\|off` | `on` | forces `f = 0` on a step whose committed predecessor showed a loading reversal or `Kp <= 0` (ADR-92 P2-2) |
+| `-implexTrialGuard on\|off` | `on` | on a trial past `-implexControl`'s tolerance (floor not reached), retries at `f = 0` before refusing (ADR-92 P2-6) |
+| `-reversalTol $tol` / `-reversalRel $rel` | `tol=1e-10`, `rel=0.05` | magnitude guard on the loading-reversal `alpha_in` reset (ADR-92 P2-5/P2-5b) |
+| `-flipAlphaIn init\|vanilla` | `vanilla` | at the elastic-to-plastic stage flip, whether `alpha_in` is decided by the sign test (`vanilla`) or forced unconditionally (`init`, ADR-92 P2-7) |
+| `-implexFlipAbsorb on\|off` | `off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (ADR-92 P2-7c) |
+| `-implexFactor fixed\|control\|controlIter` | `fixed` | how `f` is chosen: `fixed` = the clock ratio (gate-passed, byte-identical to pre-P2-9); `control` = first-trial closed-form minimiser, **REFUTED** by the fork's R3 gate; `controlIter` = per-trial recompute, **passes** R3 at a wall-time/Newton-churn cost, not shipped as default (ADR-92 P2-9). Requires `-implexControl`. See §12 of the implex guide and the 2026-09-08 adoption note above. |
+
+### P2-9 (`-implexFactor`) — the one new token since this guide was last touched
+
+Adding `implex_factor` to the emitter is not a one-field change: `LadrunoSANISAND` in `nd.py` has
+no `implex` or `implex_control` field to validate against yet, so those two land first (or
+alongside). Once they exist, `implex_factor: Literal["fixed", "control", "controlIter"] | None =
+None` follows the same pattern as every other flag in this file — `None` omits the token (fork
+default `fixed`, byte-identical), and both control values require `implex_control` to be set,
+mirroring the fork's own construction-time refusal (`LadrunoSANISAND.cpp:1982-1989`). Do not
+default an apeGmsh convenience wrapper to `control` — it is measured worse than `fixed` on the R3
+gate (depth 0.052 vs the 0.076 bar, overlay 11.1% vs the 2% bar,
+`_adr92_p2_9_r3_results.md`) — and treat `controlIter` as an opt-in for the TIMs campaign, not a
+general recommendation, since its own Esmeralda dense-refuse arm is still owed.
+
 ## Log
 
 - 2026-08-27 — Written after PR #767 and PR #768 merged.
 - 2026-09-05 — ADR-86b: `-maxSubsteps`, the `TanType` default move (0 → 2), section 6
   (convergence-test guidance) and section 7 (the `-Presidual` decision). All four come from
   ADR-90 GATE U (`_adr90_tau0_qu_band.md`).
+- 2026-09-07 — Section 8: full `-implex*` token family (ADR 92 P1/P2/P2-9), added after PR #822
+  merged (`179da6ffb`). No prior IMPL-EX coverage existed in this file; `nd.py` still declares no
+  `implex` field on `LadrunoSANISAND` as of this writing.
