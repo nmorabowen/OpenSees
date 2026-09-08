@@ -44,10 +44,14 @@ Hoek–Brown meridian is a curve, not a plane.
 
 `Backward_Euler` and every YF/PF path it executes are untouched (ADR-97 D1).
 
-**Build.** `d0de2d7c8` — the last commit that changes anything under `SRC/`;
-everything after it is tests and docs. `ops.ladrunoBuild()` on
-`dist/bin/opensees.pyd` reports `d0de2d7c8969b4850a8505a9c74ccf32b07ce123`, and
-`git diff d0de2d7c8 HEAD -- SRC` is empty.
+**Build.** `d0de2d7c8` is the last commit that changes anything under `SRC/`;
+everything after it is tests and docs. The gates were first measured on that
+binary and re-measured, identically, on the post-mutation-revert rebuild, whose
+`ops.ladrunoBuild()` stamps `6e937fabb6bd4183a994bb8227ff69c328084992` —
+`git diff d0de2d7c8 6e937fabb -- SRC` is empty. Note that `ladrunoBuild()`
+alone could NOT have told the mutated binary from the restored one (the mutation
+was never committed, so both stamp the same hash); the restore was verified by
+BEHAVIOUR — 32/32 on the restored build against 11 failures on the mutated one.
 
 ## 2. Support count — 23 of 46
 
