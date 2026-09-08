@@ -19,7 +19,9 @@ Covered here:
   refused (ADR-97 D2 — a consistent tangent is defined only relative to a
   specific committed map);
 * `integration_method Closest_Point` on a family P1 has not converted
-  (MohrCoulomb) is refused, naming the ADR phase that will deliver it;
+  (a MIXED MohrCoulomb_YF x VonMises_PF pairing, HoekBrown) is refused,
+  naming the ADR phase that will deliver it -- MohrCoulomb x MohrCoulomb
+  itself is SHIPPED by ADR-97 P2 and the assertion was inverted there;
 * unknown tokens are still rejected (the ADR-94 contract);
 * the ADR-94 B4 reproducer — Drucker-Prager driven into hydrostatic TENSION,
   past its apex — never commits a NaN under `Closest_Point`.
@@ -45,6 +47,39 @@ def _mat_mc(tag, opts=None):
     args = ["ASDPlasticMaterial3D", tag,
             "MohrCoulomb_YF", "MohrCoulomb_PF", "LinearIsotropic3D_EL", M.IV,
             "Begin_Model_Parameters", *MC_PARAMS, "End_Model_Parameters",
+            "Begin_Internal_Variables",
+            "BackStress", 0., 0., 0., 0., 0., 0.,
+            "End_Internal_Variables"]
+    if opts is not None:
+        args += ["Begin_Integration_Options", *opts, "End_Integration_Options"]
+    ops.nDMaterial(*args)
+
+
+# Ladruno (ADR-97 wp/97c): the family gate is now about MIXED pairings, not about
+# MohrCoulomb itself.  `MohrCoulomb_YF` x `VonMises_PF` and HoekBrown are two
+# specializations the generator really registers and that P2 must still refuse.
+def _mat_mc_mixed(tag, opts=None):
+    args = ["ASDPlasticMaterial3D", tag,
+            "MohrCoulomb_YF", "VonMises_PF", "LinearIsotropic3D_EL",
+            "BackStress(TensorLinearHardeningFunction):",
+            "Begin_Model_Parameters", *MC_PARAMS,
+            "TensorLinearHardeningParameter", 0.0, "End_Model_Parameters",
+            "Begin_Internal_Variables",
+            "BackStress", 0., 0., 0., 0., 0., 0.,
+            "End_Internal_Variables"]
+    if opts is not None:
+        args += ["Begin_Integration_Options", *opts, "End_Integration_Options"]
+    ops.nDMaterial(*args)
+
+
+def _mat_hb(tag, opts=None):
+    args = ["ASDPlasticMaterial3D", tag,
+            "HoekBrown_YF", "HoekBrown_PF", "LinearIsotropic3D_EL", M.IV,
+            "Begin_Model_Parameters",
+            "YoungsModulus", M.E, "PoissonsRatio", M.NU,
+            "HB_sigma_ci", 50.0, "HB_mb", 5.0, "HB_s", 0.05, "HB_a", 0.5,
+            "HB_mb_psi", 1.0, "HB_ds", 0.0, "MassDensity", 0.0,
+            "End_Model_Parameters",
             "Begin_Internal_Variables",
             "BackStress", 0., 0., 0., 0., 0., 0.,
             "End_Internal_Variables"]
@@ -106,13 +141,32 @@ def test_closest_point_is_refused_for_unconverted_families(mc_available):
     """ADR-97 D3: the closest-point map is added family by family.  A
     specialization whose yield function, plastic flow direction or hardening law
     has not opted in must be refused at parse time -- NOT silently run on the
-    inert zero / finite-difference defaults, which is the ADR-94 M3 failure
-    mode.  MohrCoulomb is ADR-97 P2."""
+    inert zero / finite-difference defaults, which is the ADR-94 M3 failure mode.
+
+    Ladruno (ADR-97 wp/97c): this test used to assert that MohrCoulomb ITSELF was
+    refused.  P2 ships it (a principal-stress-space multi-surface return; see
+    tests/test_adr97_p2_principal.py), so the MohrCoulomb half of the assertion
+    is INVERTED here -- deliberately, and recorded in the ADR-97 P2 report.  What
+    the family gate must still refuse is a MIXED pairing: `MohrCoulomb_YF` with a
+    non-Mohr-Coulomb plastic flow direction is covered by NO oracle (the
+    principal-space return assumes both the surface and the potential are
+    piecewise linear, and P1's smooth 6D map cannot use MohrCoulomb's Lode-angle
+    gradient), so it stays refused.  `HoekBrown` is P3 and also stays refused."""
     assert S._constructible(lambda t: _mat_mc(t)), "control MC deck must build"
-    assert not S._constructible(
+    assert S._constructible(
         lambda t: _mat_mc(t, opts=["integration_method", "Closest_Point"])), (
-        "integration_method Closest_Point was accepted for MohrCoulomb -- the "
-        "ADR-97 D3 family gate is gone")
+        "integration_method Closest_Point is refused for MohrCoulomb x "
+        "MohrCoulomb -- ADR-97 P2 ships it")
+    assert not S._constructible(
+        lambda t: _mat_mc_mixed(t, opts=["integration_method",
+                                         "Closest_Point"])), (
+        "integration_method Closest_Point was accepted for the MIXED pairing "
+        "MohrCoulomb_YF x VonMises_PF, which no oracle covers -- the ADR-97 D3 "
+        "family gate is gone")
+    assert not S._constructible(
+        lambda t: _mat_hb(t, opts=["integration_method", "Closest_Point"])), (
+        "integration_method Closest_Point was accepted for HoekBrown, which is "
+        "ADR-97 P3 -- the ADR-97 D3 family gate is gone")
 
 
 def test_unknown_tokens_are_still_rejected(cp_available):
