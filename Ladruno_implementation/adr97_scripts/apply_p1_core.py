@@ -1023,6 +1023,55 @@ pedit(
     instance->set_constitutive_integration_method(method, tangent,""")
 
 
+# ---------------------------------------------------------------------------
+# 7. apex region test: the degenerate hydrostatic trial state
+# ---------------------------------------------------------------------------
+edit(
+    "ASDPlasticMaterial3D.h",
+    "a trial state ON the hydrostatic axis",
+    """    bool cp_apex_region(const VoigtVector& depsilon, const VoigtVector& sigma_tr,
+                        const VoigtMatrix& Eelastic, double f_tr)""",
+    """    bool cp_apex_region(const VoigtVector& depsilon, const VoigtVector& sigma_tr,
+                        const VoigtMatrix& Eelastic, double f_tr, double tol_f)""")
+
+edit(
+    "ASDPlasticMaterial3D.h",
+    "degenerates to 0 < 0",
+    """        const double den = n0.dot(Em0) - H0;
+        if (!(den > MACHINE_EPSILON)) return false;
+        const double dl0 = f_tr / den;
+        VoigtVector dev_tr  = sigma_tr.deviator();
+        VoigtVector dev_Em0 = Em0.deviator();
+        VoigtVector dev_ret = dev_tr - dl0 * dev_Em0;
+        return tensor_dot_stress_like(dev_ret, dev_tr) < 0.0;""",
+    """        VoigtVector dev_tr = sigma_tr.deviator();
+        double q2_tr = tensor_dot_stress_like(dev_tr, dev_tr);
+        if (!(q2_tr > 0.0)) q2_tr = 0.0;
+        const double q_tr = std::sqrt(q2_tr);
+        // A trial state ON the hydrostatic axis and outside the surface can only
+        // return to the vertex.  The flip test below is a SIGN test on
+        // dot(dev_ret, dev_tr), which degenerates to 0 < 0 -- i.e. says CONE --
+        // when the trial deviator vanishes; the cone Newton then has no flow
+        // direction at all and exhausts its iterations.  That degenerate state
+        // is not exotic: it is exactly ADR-94 B4's hydrostatic-tension
+        // reproducer, the one that used to commit NaN.  `tol_f` is the yield
+        // tolerance, so this comparison is in stress units and unit consistent
+        // (ADR-94 M5).
+        if (q_tr <= tol_f) return true;
+        const double den = n0.dot(Em0) - H0;
+        if (!(den > MACHINE_EPSILON)) return false;
+        const double dl0 = f_tr / den;
+        VoigtVector dev_Em0 = Em0.deviator();
+        VoigtVector dev_ret = dev_tr - dl0 * dev_Em0;
+        return tensor_dot_stress_like(dev_ret, dev_tr) < 0.0;""")
+
+edit(
+    "ASDPlasticMaterial3D.h",
+    "cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr, tol_f)",
+    """            if (cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr))""",
+    """            if (cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr, tol_f))""")
+
+
 def main():
     # the CRTP fix is a plain textual substitution, applied to every occurrence
     fixed = 0

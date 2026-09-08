@@ -2494,7 +2494,7 @@ private:
     // deviatoric part (G/q)*r exactly, so this reduces to q_tr - G*dl0 < 0 -- the
     // oracle's exact test, with K*etabar and G entering through E.
     bool cp_apex_region(const VoigtVector& depsilon, const VoigtVector& sigma_tr,
-                        const VoigtMatrix& Eelastic, double f_tr)
+                        const VoigtMatrix& Eelastic, double f_tr, double tol_f)
     {
         using namespace ASDPlasticMaterial3DGlobals;
         VoigtVector m0 = pf(depsilon, sigma_tr, iv_storage, parameters_storage);
@@ -2513,10 +2513,23 @@ private:
             const int nq = internal_variable.size();
             for (int i = 0; i < nq; ++i) H0 += d[i] * h(i);
         });
+        VoigtVector dev_tr = sigma_tr.deviator();
+        double q2_tr = tensor_dot_stress_like(dev_tr, dev_tr);
+        if (!(q2_tr > 0.0)) q2_tr = 0.0;
+        const double q_tr = std::sqrt(q2_tr);
+        // A trial state ON the hydrostatic axis and outside the surface can only
+        // return to the vertex.  The flip test below is a SIGN test on
+        // dot(dev_ret, dev_tr), which degenerates to 0 < 0 -- i.e. says CONE --
+        // when the trial deviator vanishes; the cone Newton then has no flow
+        // direction at all and exhausts its iterations.  That degenerate state
+        // is not exotic: it is exactly ADR-94 B4's hydrostatic-tension
+        // reproducer, the one that used to commit NaN.  `tol_f` is the yield
+        // tolerance, so this comparison is in stress units and unit consistent
+        // (ADR-94 M5).
+        if (q_tr <= tol_f) return true;
         const double den = n0.dot(Em0) - H0;
         if (!(den > MACHINE_EPSILON)) return false;
         const double dl0 = f_tr / den;
-        VoigtVector dev_tr  = sigma_tr.deviator();
         VoigtVector dev_Em0 = Em0.deviator();
         VoigtVector dev_ret = dev_tr - dl0 * dev_Em0;
         return tensor_dot_stress_like(dev_ret, dev_tr) < 0.0;
@@ -2783,7 +2796,7 @@ private:
 
         if constexpr (yf_has_apex<YieldFunctionType>::value)
         {
-            if (cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr))
+            if (cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr, tol_f))
             {
                 int rc = -1;
                 if (cp_apex_return(depsilon, sigma_tr, Eelastic, tol_f, tol_s, max_iter, rc))
