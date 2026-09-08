@@ -37,6 +37,30 @@ failed twice on Linux), so `==` is enforced on win32 and a 1e-6 RELATIVE bound
 (the fork's cross-platform float-pin floor) everywhere else.  Regenerate the
 baseline on Windows only, deliberately, and say so in the commit.
 
+ADR-97 wp/97e (P4) baseline regeneration, 2026-09-07: re-pointing
+`Numerical_Algorithmic_FirstOrder/SecondOrder` at the actual committed map
+(see `ASDPlasticMaterial3D::numerical_tangent_of_committed_map()`) changed
+`cube/vm/BE/Numerical_Algorithmic_FirstOrder/plastic` by up to 5.428e-09
+absolute in 40 of its 60 committed-stress components -- EXPECTED, not a
+regression, and the ONLY entry of the 23 that moved (every other deck,
+including all 4 other `cube/vm/BE/*` tangent types, re-verified bit-identical
+against the same binary). Root cause: `cube/*` decks are LOAD-CONTROLLED with
+free DOFs (`test_adr94_hlist_numerics._cube_build`), not fully prescribed --
+the tangent this option returns feeds the outer Newton's stiffness matrix at
+EVERY outer iteration (`Backward_Euler` calls `ComputeTangentStiffness()` at
+the tail of every `setTrialStrainIncr()`, not just the converged one), so a
+tangent that is now materially different (FD of `Backward_Euler` itself,
+instead of FD of the unrelated `compute_local_stress()` map) changes the
+outer Newton's convergence PATH and therefore its converged point within the
+`NormDispIncr` tolerance ball (`1e-12` here) -- the same order of magnitude
+as the cross-platform compiler-noise floor measured above. This is exactly
+what the WP intends (a materially better tangent) and does not touch
+`Backward_Euler`'s own residual: the paired `.../elastic` leg of the SAME
+deck is untouched (0 of 60 components changed) because an elastic trial's
+map is exactly linear, so old and new FD agree exactly there, with no
+path-dependence to expose. `Backward_Euler`'s own source is confirmed
+untouched by `grep -n compute_local_stress` inside its body (ADR-97 D1).
+
 Zone-A, 5.9 s for the whole file: a fresh-interpreter deck costs ~0.2 s, so
 BOTH the representative slice and the full 23-deck sweep run on every push.
 """

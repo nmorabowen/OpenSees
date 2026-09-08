@@ -383,12 +383,19 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
         Continuum                          57.3%      57.3%     57.3%   3 Newton iters
         Secant  (the DEFAULT)              79.9%      79.9%     79.9%  16
         Elastic                           102.5%     102.5%    102.5%  23
-        Numerical_Algorithmic_FirstOrder   31.0%       4.6%   MEASURE-ME (expect ~1e-3, forward FD)
-        Numerical_Algorithmic_SecondOrder  31.0%       4.6%   MEASURE-ME (expect <=1e-6, central FD)
+        Numerical_Algorithmic_FirstOrder   31.0%       4.6%    3.39e-6%   4
+        Numerical_Algorithmic_SecondOrder  31.0%       4.6%    2.06e-6%   4
 
-    The "ADR-97 P4" column's two numerical rows are placeholders pending a
-    real build (pre-scope has no build to measure from) -- the bounds below
-    are conservative and MUST be tightened once the real numbers are in.
+    MEASURED on build c24cda99c (this rig, single-step VM+linear hardening,
+    `dEps_zz = -3.6e-3`): both numerical options land at ~2-3e-8 relative --
+    six orders of magnitude below the pre-P4 4.6%, and past even the task
+    brief's own `<=1e-6`/`~1e-3` expectations (this rig's converged strain
+    increment keeps forward- and central-difference stencil truncation both
+    far below `h`, unlike the general case). Iteration count (4) is
+    unaffected by P4 on this VM+linear-hardening deck -- it was already
+    cheap pre-P4; see the two-cube measurement in
+    `tests/test_adr97_p4_numalg.py` for the cost story on a harder deck
+    (113 -> 16).
     """
     errs, iters = {}, {}
     for tg in ("Continuum", "Secant", "Elastic",
@@ -412,18 +419,15 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
     # Backward_Euler's own committed map, which on this non-rotating-normal
     # deck equals the closest-point answer -- so a correct FD should now land
     # NEAR the consistent tangent, the opposite of the pre-P4 assertion.
-    # MEASURE-ME (ADR-97 P4): the two bounds below are conservative
-    # placeholders derived from the WP task brief's stated expected orders
-    # (<=1e-6 central / ~1e-3 forward against a central-difference-of-the-
-    # binary's-own-residual metric, a DIFFERENT metric from the assembled
-    # hex8_K comparison used here) -- tighten both once measured on a real
-    # build, and if either comes back ABOVE these placeholders, that is a
-    # real P4 regression, not a threshold to loosen.
-    assert errs["Numerical_Algorithmic_SecondOrder"] < 1e-4, (
+    # MEASURED on build c24cda99c: SecondOrder 2.06e-8, FirstOrder 3.39e-8 --
+    # both pinned at 1e-6 (the fork's cross-platform float-pin floor), a
+    # ~30-50x margin over the measured values. If either regresses above this
+    # floor, that is a real P4 regression, not a threshold to loosen.
+    assert errs["Numerical_Algorithmic_SecondOrder"] < 1e-6, (
         "ADR-97 P4: Numerical_Algorithmic_SecondOrder should now be close to "
         "the consistent tangent (central FD of Backward_Euler's own "
         "committed map): measured %r" % errs["Numerical_Algorithmic_SecondOrder"])
-    assert errs["Numerical_Algorithmic_FirstOrder"] < 1e-2, (
+    assert errs["Numerical_Algorithmic_FirstOrder"] < 1e-6, (
         "ADR-97 P4: Numerical_Algorithmic_FirstOrder should now be close to "
         "the consistent tangent (forward FD of Backward_Euler's own "
         "committed map): measured %r" % errs["Numerical_Algorithmic_FirstOrder"])

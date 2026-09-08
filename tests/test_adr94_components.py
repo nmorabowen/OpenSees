@@ -270,29 +270,29 @@ LOAD = {
 #     return map iterated on.  With the gradient fixed the two tangent operators
 #     agree exactly, and that agreement is the direct CI gate on ADR-94 B4.
 #
-# ADR-97 P4 UPDATE (wp/97e): the root cause of the VonMises row above --
-# `Numerical_Algorithmic_FirstOrder` differentiating `compute_local_stress`,
-# a map neither `Backward_Euler` nor `Continuum`'s own linearization has
-# anything to do with -- is exactly what this WP fixes
+# ADR-97 P4 UPDATE (wp/97e, build c24cda99c): the root cause of the VonMises
+# row above -- `Numerical_Algorithmic_FirstOrder` differentiating
+# `compute_local_stress`, a map neither `Backward_Euler` nor `Continuum`'s own
+# linearization has anything to do with -- is exactly what this WP fixes
 # (`numerical_tangent_of_committed_map()` now differentiates `Backward_Euler`
 # ITSELF). `Continuum` is STILL only the `dLambda -> 0` limit of the
 # consistent tangent, so on a load path where the cutting plane takes more
 # than one Newton iteration (VonMises here uses `nsteps=20`, i.e. small but
 # not infinitesimal steps) a nonzero Continuum-vs-Numerical gap is still
-# expected -- but its ROOT CAUSE and likely MAGNITUDE both changed, so
-# 0.0197 (measured pre-P4) can no longer be trusted as the post-P4 number.
-# MEASURE-ME (ADR-97 P4): re-measure `err` for VonMises on a real build and
-# replace the placeholder below; until then VonMises is a SOFT pin (direction
-# only: still nonzero) rather than a hard numeric floor, to avoid asserting a
-# number nobody has actually observed post-repoint. DruckerPrager and
-# MohrCoulomb are believed unaffected in direction (both already agree to
-# floating-point/FD-noise precision, which a repoint of a THIRD map's
-# differentiation target cannot make worse) but were not indepedently
-# re-measured either -- re-verify both when the VonMises number is measured.
-HARD_PINS = ("MohrCoulomb", "DruckerPrager")
-SOFT_PINS = ("VonMises",)  # ADR-97 P4: direction-only pin, see comment above
+# expected, and its ROOT CAUSE and MAGNITUDE both changed: MEASURED on build
+# c24cda99c, `err` = 0.2196 (was 0.0197 pre-P4) -- an order of magnitude
+# LARGER, not smaller, because `Numerical_Algorithmic_FirstOrder` now tracks
+# the actual (larger, since dLambda is not infinitesimal here) gap between
+# `Continuum`'s zero-dLambda limit and `Backward_Euler`'s real multi-iteration
+# cutting plane, rather than the old third map's coincidentally-smaller
+# disagreement. Promoted back to a HARD (lower-bound, "must still disagree")
+# pin at 0.1 -- a ~2x margin below the measured 0.2196. DruckerPrager and
+# MohrCoulomb are unaffected (both still agree to floating-point/FD-noise
+# precision, which a repoint of a THIRD map's differentiation target cannot
+# make worse) -- re-verified on the same build, unchanged from wp/94c.
+HARD_PINS = ("VonMises", "MohrCoulomb", "DruckerPrager")
 EXPECTED = {
-    "VonMises": 0.005,        # PRE-P4 number (0.0197); MEASURE-ME (ADR-97 P4)
+    "VonMises": 0.1,          # MEASURED 0.2196 (ADR-97 P4, build c24cda99c)
     "MohrCoulomb": 0.005,     # observed 0.0; FD-noise level; unaffected by P4
     "DruckerPrager": 0.005,   # observed 0.0 post-wp/94c; unaffected by P4
 }
@@ -303,17 +303,16 @@ EXPECTED = {
 def test_component_tangent_pin(name):
     """Pin whether Continuum and Numerical_Algorithmic_FirstOrder agree.
 
-    ADR-97 P4 (wp/97e): VonMises is now a SOFT pin (direction only -- still
-    expected to disagree, since Continuum remains only the dLambda -> 0 limit
-    of the consistent tangent, ADR-94 M3/H6) rather than the hard 0.0197
-    floor pinned before the repoint; that floor was measured against the OLD
-    behaviour (Numerical_* differentiating compute_local_stress) and is not
-    trustworthy post-repoint. MohrCoulomb/DruckerPrager MUST still agree to
-    FD noise -- unaffected by P4, since they were already exact.
-
-    MEASURE-ME (ADR-97 P4): once a real build gives a VonMises number, move
-    it from SOFT_PINS back to HARD_PINS with the freshly measured EXPECTED
-    value and a comment citing the ADR-97 P4 build that produced it.
+    ADR-97 P4 (wp/97e): VonMises MUST still disagree beyond FD noise --
+    `Continuum` remains only the dLambda -> 0 limit of the consistent
+    tangent (ADR-94 M3/H6), unaffected by which map `Numerical_Algorithmic_*`
+    differentiates. The floor is now 0.1 (was 0.0197 pre-P4): the repoint
+    made `Numerical_Algorithmic_FirstOrder` track `Backward_Euler`'s real
+    cutting-plane answer instead of an unrelated third map, and the gap to
+    `Continuum` at this load path's non-infinitesimal dLambda is measurably
+    LARGER as a result (measured 0.2196, build c24cda99c). MohrCoulomb/
+    DruckerPrager MUST still agree to FD noise -- unaffected by P4, since
+    they were already exact.
     """
     mat_fn = MATS[name]
     if not _available(mat_fn):
@@ -322,17 +321,6 @@ def test_component_tangent_pin(name):
     load_z, nsteps = LOAD[name]
     K_cont = _cube_tangent(mat_fn, "Continuum", load_z, nsteps=nsteps)
     K_num = _cube_tangent(mat_fn, "Numerical_Algorithmic_FirstOrder", load_z, nsteps=nsteps)
-
-    if name in SOFT_PINS:
-        if K_cont is None or K_num is None:
-            pytest.skip(f"{name}: analysis did not converge; ADR-97 P4 "
-                        f"soft pin has nothing to measure")
-        err = _rel(K_cont, K_num)
-        assert np.isfinite(err), f"{name}: non-finite Continuum-vs-Numerical tangent"
-        print(f"ADR-97 P4 MEASURE-ME: {name} Continuum-vs-NumAlgFirstOrder "
-              f"err = {err:.6f} (pre-P4 was 0.0197; use this to promote back "
-              f"to HARD_PINS with a measured EXPECTED value)")
-        return
 
     if name not in HARD_PINS:
         if K_cont is None or K_num is None:
@@ -355,6 +343,13 @@ def test_component_tangent_pin(name):
             f"{err:.4f} (expected < {EXPECTED[name]}) -- the ADR-94 B4 "
             f"Drucker-Prager gradient fix (wp/94c) may have regressed, or "
             f"ADR-97 P4's repoint changed this pairing unexpectedly")
+    elif name == "VonMises":
+        assert err > EXPECTED[name], (
+            f"{name}: Continuum-vs-NumAlgFirstOrder mismatch shrank to "
+            f"{err:.4f} (was > {EXPECTED[name]}, measured 0.2196 on ADR-97 "
+            f"P4 build c24cda99c) -- Continuum may have stopped being just "
+            f"the dLambda -> 0 limit; revisit ADR-94 M3/H6"
+        )
     else:
         assert err < EXPECTED[name], (
             f"{name}: Continuum-vs-NumAlgFirstOrder mismatch grew to "
