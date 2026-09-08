@@ -223,6 +223,19 @@ public:
         return sc < 0 ? -sc : sc;
     }
 
+    // Ladruno (ADR-97 wp/97c): the principal-space face constants.  Both are
+    // read from the SAME MC_phi / MC_c parameters this functor's own `f` uses,
+    // so the closest-point map returns to exactly the surface `f` measures.
+    CP_PRINCIPAL_MC_FACE_PARAMS
+    {
+        (void) internal_variables_storage;
+        const double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        const double c   = GET_PARAMETER_VALUE(MC_c);
+        sin_phi = std::sin(phi);
+        k_coh   = c * std::cos(phi);
+        return true;
+    }
+
     APEX_STRESS
     {
         double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
@@ -251,5 +264,12 @@ private:
 //Declares this YF as featuring an apex
 template<class NO_HARDENING>
 struct yf_has_apex<MohrCoulomb_YF<NO_HARDENING>> : std::true_type {};
+
+// Ladruno (ADR-97 wp/97c): principal-stress-space closest-point family 1
+// (plain Mohr-Coulomb).  Paired only with MohrCoulomb_PF, which carries the
+// same marker.
+template<class NO_HARDENING>
+struct yf_cp_principal_family<MohrCoulomb_YF<NO_HARDENING>>
+    : std::integral_constant<int, 1> {};
 
 #endif

@@ -53,6 +53,35 @@ struct yf_has_special_return : std::false_type {};
 template <typename T>
 struct yf_has_cp_derivatives : std::false_type {};
 
+// Ladruno (ADR-97 wp/97c): which PRINCIPAL-STRESS-SPACE closest-point family this
+// yield function belongs to (0 = none, 1 = Mohr-Coulomb, 2 = Mohr-Coulomb with a
+// Rankine tension cutoff).  `pf_cp_principal_family` in PlasticFlowBase.h is the
+// twin; ASDPlasticMaterial3D takes the principal path ONLY when the two markers
+// are equal and non-zero.  That equality test is the point of the design: the
+// generator registers cross pairings such as MohrCoulomb_YF x VonMises_PF and
+// VonMises_YF x MohrCoulomb_PF, for which NEITHER map is verified -- the
+// principal return assumes both the surface AND the flow potential are the
+// piecewise-linear Mohr-Coulomb ones, and the smooth 6D map of P1 cannot use
+// MohrCoulomb's Lode-angle gradient (it swaps in a Drucker-Prager substitution
+// for |theta| >= 29 deg and otherwise central-differences f).  Those pairings
+// stay REFUSED at parse time, naming ADR-97 P2.
+template <typename T>
+struct yf_cp_principal_family : std::integral_constant<int, 0> {};
+
+// Ladruno (ADR-97 wp/97c): the Mohr-Coulomb face constants this yield function
+// contributes to the principal-space return:
+//     f = a . s - k_coh,   a_ij = [ (1+sin phi)/2 , 0 , -(1-sin phi)/2 ]
+//     k_coh = c cos(phi),  apex = (k_coh / sin phi) * [1,1,1]
+// with s the principal stresses sorted DESCENDING and tension positive.  The P0
+// oracle (`adr97_oracle/cppm_mc.py`) verifies numerically, over 2000 random
+// states, that this IS the header's own invariant expression
+// A(theta) sqrt(J2) + I1 sin(phi)/3 - c cos(phi) to 1e-14 relative.  Returning
+// false means "not a Mohr-Coulomb surface" and is the base default.
+#define CP_PRINCIPAL_MC_FACE_PARAMS template <typename IVStorageType, typename ParameterStorageType> \
+    bool cp_mc_face_params(const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        double& sin_phi, double& k_coh) const
+
 
 
 // Helper template to check if a class has a parameters_t type alias
@@ -211,6 +240,19 @@ public:
         (void) parameters_storage;
         const int n = iv.size();
         for (int i = 0; i < n; ++i) out[i] = 0.0;
+    }
+
+    // Ladruno (ADR-97 wp/97c): default -- this yield function is not a
+    // Mohr-Coulomb surface.  Unreachable in practice (the material only calls it
+    // when yf_cp_principal_family != 0), but a false here refuses the step
+    // loudly rather than returning to a fabricated surface.
+    CP_PRINCIPAL_MC_FACE_PARAMS
+    {
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        sin_phi = 0.0;
+        k_coh   = 0.0;
+        return false;
     }
 
     inline const char* getName() const { return static_cast<T*>(this)->NAME; }

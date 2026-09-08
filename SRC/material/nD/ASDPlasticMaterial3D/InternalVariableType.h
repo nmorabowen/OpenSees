@@ -85,6 +85,14 @@ struct InternalVariableType {
         return hardening_has_cp_derivatives<HardeningType>::value;
     }
 
+    // Ladruno (ADR-97 wp/97c): does this internal variable's hardening law leave
+    // it FIXED (h == 0)?  Required by the principal-space Mohr-Coulomb return,
+    // which projects onto a surface it assumes does not move.
+    static constexpr bool hardening_is_perfectly_plastic()
+    {
+        return hardening_is_inert<HardeningType>::value;
+    }
+
     using parameters_t = typename HardeningType::parameters_t;
 
 

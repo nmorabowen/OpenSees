@@ -344,6 +344,12 @@ template <> struct hardening_policy_has_cp_derivatives<NullHardeningScalarPolicy
 template <> struct hardening_policy_has_cp_derivatives<NullHardeningTensorPolicy>      : std::true_type {};
 template <> struct hardening_policy_has_cp_derivatives<ArmstrongFrederickPolicy>       : std::true_type {};
 
+// Ladruno (ADR-97 wp/97c): the two Null policies return h == 0 identically, so
+// the internal variable never moves.  Nothing else in this file qualifies: both
+// Linear laws and ArmstrongFrederick have a live h.
+template <> struct hardening_policy_is_inert<NullHardeningScalarPolicy> : std::true_type {};
+template <> struct hardening_policy_is_inert<NullHardeningTensorPolicy> : std::true_type {};
+
 
 
 // Ladruno (HB/StiffSoil integration, ledger row 337): StiffSoil shear/cap hardening IVs

@@ -32,6 +32,16 @@
 template <typename Policy>
 struct hardening_policy_has_cp_derivatives : std::false_type {};
 
+// Ladruno (ADR-97 wp/97c): is this hardening policy INERT -- h identically zero,
+// so the internal variable never moves?  The principal-stress-space Mohr-Coulomb
+// return map added in P2 is a closed-form projection onto a FIXED surface: it has
+// no q-row, so it is only valid for a perfectly plastic specialization.  Folded
+// over the IV tuple at compile time, it is what keeps a hypothetical
+// MohrCoulomb_YF<ArmstrongFrederick...> out of the principal path and refused at
+// parse time (ADR-97 P2) instead of silently returning to the wrong surface.
+template <typename Policy>
+struct hardening_policy_is_inert : std::false_type {};
+
 // Function wrapper base class
 template <typename EvolvingVariableType, class HardeningPolicy>
 struct HardeningFunction {
@@ -66,6 +76,14 @@ struct hardening_has_cp_derivatives : std::false_type {};
 template <typename EVT, class Policy>
 struct hardening_has_cp_derivatives<HardeningFunction<EVT, Policy>>
     : hardening_policy_has_cp_derivatives<Policy> {};
+
+// Ladruno (ADR-97 wp/97c): the same lift, for the inert-hardening trait.
+template <typename T>
+struct hardening_is_inert : std::false_type {};
+
+template <typename EVT, typename Policy>
+struct hardening_is_inert<HardeningFunction<EVT, Policy>>
+    : hardening_policy_is_inert<Policy> {};
 
 
 template <typename EvolvingVariableType, class HardeningPolicy>
