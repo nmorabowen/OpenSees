@@ -177,6 +177,17 @@ integration does lose rank when a patch goes fully plastic, but the wall arrived
 flat σ_min and was removed by the material fix alone, so rank loss is not the cause. It remains the
 candidate for any residual quadratic-vs-linear difference in plateau quality.
 
+## 5b. The mechanism at the plateau (velocity field vs Prandtl)
+
+`_adr95_mechanism_results.md`, figures `adr95_mechanism*.png`: incremental deviatoric strain between
+s/B 0.14 and 0.15 on all five repaired-material legs, with the analytical wedge / log-spiral fan /
+passive wedge for φ_ps = 27.47° overlaid (outcrop 3.73 B from each edge). Every leg collapses by a
+shear mechanism of the Prandtl extent; none localises (ridge 2–3 elements thick, no fan on a mesh
+with one to two elements across it). The b-bar elements are exactly isochoric; the standard tets
+carry 3 % and the H20 uri 9.5 % spurious volumetric increment — H4's plastic rank loss made
+visible, on the same leg that needed 1034 failed attempts and plateaus lowest. Deformed meshes
+and yield fields for all twelve legs: `adr95_deformed*.png`, `deformed_snapshot.py`.
+
 ## 6. Rules that held, and one that was added
 
 - No walled number was quoted as a capacity; the identification rested on **states** at matched

@@ -1,0 +1,28 @@
+[mech] leg B1: build=c945f9a8b5e92783109efcfd25813e6591bbc236 dist=fixed mat=uwdp elem=h8bbar mesh=hex
+[00:45:42]     [control 2] consistent Q4 (= tributary) surcharge over 20 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 0 nodes carry a NEGATIVE weight; per-face weights match the analytic (A/4) to 0.0e+00 of A
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+[00:45:42]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.1s]
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+    [B1] step 20 s/B=0.00520 q=93.843 ds=1mm wall=1s
+    [B1] step 40 s/B=0.01520 q=133.759 ds=1mm wall=2s
+    [B1] step 60 s/B=0.02520 q=147.784 ds=1mm wall=3s
+    [B1] step 80 s/B=0.03520 q=149.966 ds=1mm wall=5s
+    [B1] step 100 s/B=0.04520 q=150.432 ds=1mm wall=7s
+    [B1] step 120 s/B=0.05520 q=150.571 ds=1mm wall=9s
+    [B1] step 140 s/B=0.06520 q=150.632 ds=1mm wall=11s
+    [B1] step 160 s/B=0.07520 q=150.654 ds=1mm wall=13s
+    [B1] step 180 s/B=0.08520 q=150.667 ds=1mm wall=15s
+    [B1] step 200 s/B=0.09520 q=150.677 ds=1mm wall=17s
+    [B1] step 220 s/B=0.10520 q=150.686 ds=1mm wall=19s
+    [B1] step 240 s/B=0.11520 q=150.692 ds=1mm wall=21s
+    [B1] step 260 s/B=0.12520 q=150.696 ds=1mm wall=23s
+    [B1] step 280 s/B=0.13520 q=150.701 ds=1mm wall=25s
+    [mech] leg B1: captured s/B>=0.14 at s/B=0.140000 q=150.703
+    [B1] step 300 s/B=0.14500 q=150.705 ds=1mm wall=27s
+    [mech] leg B1: captured s/B>=0.15 at s/B=0.150000 q=150.707
+[mech] leg B1 MODE=TARGET  [reached the target settlement]
+[mech] leg B1: wall=29s steps=310 nsub=0 nfail=0 captured=[0.14, 0.15]
+[mech] wrote mech_B1.npz
