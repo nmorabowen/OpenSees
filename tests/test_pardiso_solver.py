@@ -13,7 +13,7 @@ engaged so the tangent actually changes between iterations).
   test_modified_newton_reuse          the phase-22-skip path under an unchanged A
   test_krylov_matches_direct          -krylov CGS answers == direct (P1e)
   test_krylov_refused_on_indefinite   -krylov + -matrixType 2 warns, runs direct
-  test_stats_prints_once_per_pattern  -stats fires once, labels the mtype (P1d)
+  test_stats_prints_labelled_block    -stats prints the MUMPS-shaped block (P1k)
   test_profiler_brackets_present      the phase-split profiler brackets report
   test_bad_options_degrade_not_null   parse failure degrades, never ProfileSPD
 
@@ -199,21 +199,26 @@ def test_krylov_refused_on_indefinite(capfd):
         f"refused -krylov {got} vs plain -matrixType 2 {ref}")
 
 
-def test_stats_prints_once_per_pattern(capfd):
-    """P1d: -stats reports the peak-memory counters ONCE per sparsity pattern
-    (not per Newton iteration — pattern-determined counters reprinted every
-    solve would be noise), labelled with the storage actually in use."""
+def test_stats_prints_labelled_block(capfd):
+    """P1k: -stats reports the MUMPS-shaped labelled block (n/nnz(A)/
+    matrixType/threads header + iparm(15..19) lines) after every numeric
+    factorization. This 5-step plastic run refactorizes on (at least) every
+    step where the tangent changed, so at least NSTEPS blocks are expected —
+    superseding P1d's original "once per sparsity pattern" latch, which TIMs
+    PM-01 D26 needs gone (a Newton run refactorizes the SAME pattern
+    repeatedly and every one of those needs its own memory/fill number).
+    See tests/test_pardiso_stats.py for the full block-format assertions."""
     _run(["Pardiso", "-stats"])
     text = _drain(capfd)
-    assert text.count("PARDISO stats:") == 1, text
-    assert "TOTAL PEAK" in text
-    assert "unsymmetric, full CSR" in text
+    assert text.count("PARDISO stats:") >= 1, text
+    assert "matrixType=" in text and "threads=" in text
+    assert "fact memory KB iparm(17)" in text
 
     _run(["Pardiso", "-matrixType", 2, "-stats"])
     text = capfd.readouterr()
     text = text.out + text.err
-    assert text.count("PARDISO stats:") == 1, text
-    assert "symmetric, upper-triangle CSR" in text
+    assert text.count("PARDISO stats:") >= 1, text
+    assert "matrixType=-2" in text, text
 
 
 def test_profiler_brackets_present(tmp_path, capfd):
