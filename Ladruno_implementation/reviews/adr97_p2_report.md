@@ -46,9 +46,12 @@ and the Koiter tangent is constant on each region.
 
 `Backward_Euler` and every YF/PF path it executes are untouched (ADR-97 D1).
 
-**Build.** `1072c27ae` — the last commit that changes anything under `SRC/`
-before the mutation gate. `ops.ladrunoBuild()` on `dist/bin/opensees.pyd`
-reports `1072c27ae7048d776da8154ef66c8bbdee84b36d`.
+**Build.** `1072c27ae` is the last commit that changes anything under `SRC/`;
+everything after it is tests and docs, so the binary every number below was
+measured on is current for the source. The gates were first run on that binary
+and re-run identically on the post-mutation-revert rebuild, whose
+`ops.ladrunoBuild()` stamps `06913de30` — `git diff 06913de30 HEAD -- SRC` is
+empty, and so is `git diff 1072c27ae HEAD -- SRC`.
 
 ## 2. Support count — 22 of 46, not the plan's 31
 
