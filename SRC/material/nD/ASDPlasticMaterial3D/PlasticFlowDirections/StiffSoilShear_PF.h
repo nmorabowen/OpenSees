@@ -226,7 +226,19 @@ public:
 
         vv_out = computeNumericalFlowDirection(sigma, ds);
         double norm = std::sqrt(tensor_dot_stress_like(vv_out, vv_out));
-        vv_out /= norm;
+        // Ladruno (ADR-97 P5): at an exactly (or near-exactly) hydrostatic
+        // trial stress computeMobilizedDilatancy() returns psi_m == 0
+        // (sigma1 == sigma3 under triple-degenerate principal stresses),
+        // which makes plasticPotential's central difference identically
+        // zero along all six Voigt directions -- norm == 0.0 exactly, and
+        // vv_out /= norm was the indeterminate 0/0 (NaN in every slot).
+        // The shear flow direction is genuinely undefined at the isotropic
+        // point; fall back to no shear flow (tr(m) == 0) instead of NaN.
+        if (norm > 1e-12) {
+            vv_out /= norm;
+        } else {
+            vv_out.setZero();
+        }
         return vv_out;
 
         // return vv_out;

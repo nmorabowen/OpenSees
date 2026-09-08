@@ -83,7 +83,8 @@ _TET = {1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0), 4: (0, 0, 1),
 _TET_TOP = (4, 8, 9, 10)
 
 
-def mat_mc(tag, method=None, strict=None, niter=None, ftol=None, p0=None):
+def mat_mc(tag, method=None, strict=None, niter=None, ftol=None, p0=None,
+           experimental=None):
     opts = []
     if method is not None:
         opts += ["integration_method", method]
@@ -93,6 +94,11 @@ def mat_mc(tag, method=None, strict=None, niter=None, ftol=None, p0=None):
         opts += ["n_max_iterations", int(niter)]
     if ftol is not None:
         opts += ["f_absolute_tol", float(ftol)]
+    if experimental is not None:
+        # Ladruno (ADR-97 wp/97f, D5): the four explicit integrators this
+        # module drives (NON_BE_METHODS) now require an opt-in or the
+        # material refuses to construct at all.
+        opts += ["experimental_integrator", int(experimental)]
     model_params = ["YoungsModulus", M.E, "PoissonsRatio", M.NU,
                     "MC_phi", M.PHI, "MC_c", M.C, "MC_psi", M.PSI, "MC_ds", 0.0,
                     "MassDensity", 0.0]
@@ -312,7 +318,8 @@ def test_H5_strict_convergence_does_not_gate_other_integrators(mc_available,
     The test name is kept so the H5 row stays traceable; it now asserts the
     opposite of what it originally pinned.
     """
-    _tet_build(lambda t: mat_mc(t, method=method, strict=1, niter=100),
+    _tet_build(lambda t: mat_mc(t, method=method, strict=1, niter=100,
+                                experimental=True),
                nsteps=20, utop=-0.02)
     codes, hist = [], []
     for _ in range(20):
@@ -376,6 +383,7 @@ def test_H9_explicit_drift_check_is_dead_code(mc_available):
         "End_Internal_Variables",
         "Begin_Integration_Options",
         "integration_method", method,
+        "experimental_integrator", 1,  # Ladruno (ADR-97 wp/97f, D5)
         "f_absolute_tol", 1.0e-8,
         "n_max_iterations", 200,
         "return_to_yield_surface", "Disabled",

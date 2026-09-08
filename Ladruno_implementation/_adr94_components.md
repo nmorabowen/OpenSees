@@ -146,11 +146,17 @@ PF / EL:
    this defect (all smooth-region errors ~1e-6..1e-7, consistent with plain
    FD truncation noise at h=1e-6) — they compute their gradients through a
    different (non `dev/den`-only) path per component.
-3. **`StiffSoilShear_PF` returns non-finite for 6/194 cloud points.** Not yet
-   root-caused in this phase (out of scope for R3a's time-box); flagged for
-   R3's later bullets / R6 fix list. All 6 are among the random general
-   (non-diagonal) points, not the targeted apex/Lode/J2→0 set — worth a
-   follow-up pass isolating the exact denominator that vanishes.
+3. **`StiffSoilShear_PF` returns non-finite for 6/194 cloud points.** Root-caused
+   in ADR-97 P5 (`Ladruno_implementation/reviews/adr97_p5_report.md`): the 6
+   points are exactly the six **hydrostatic-axis** points in the cloud
+   (`sigma = (p,p,p,0,0,0)` for `p` in `{0,1,5,20,50,100}`) — NOT "random
+   general (non-diagonal) points" as this bullet originally said.  At an
+   exactly hydrostatic trial stress `computeMobilizedDilatancy()` returns
+   `psi_m = 0` exactly, which collapses the central-difference numerator of
+   `PLASTIC_FLOW_DIRECTION`'s flow-direction gradient to the exact zero vector
+   on all six Voigt axes, and the unguarded `vv_out /= norm` at `norm == 0.0`
+   is the indeterminate `0/0`. Fixed by a zero-guard on the normalization
+   (`StiffSoilShear_PF.h`); the cloud now reads 0/194 non-finite.
 4. **Singular-axis numbers are expected, not defects.** Every `sqrt(J2)`-type
    YF shows a large "singular" column because a central difference straddling
    the exact cone tip of the yield surface cannot match any single

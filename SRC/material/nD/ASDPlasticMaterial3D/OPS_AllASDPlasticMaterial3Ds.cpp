@@ -88,6 +88,8 @@ void print_usage(void)
        "    n_max_iterations (int value)\\ \n"
        "    return_to_yield_surface (0 or 1)\\ \n"
        "    strict_convergence (0 or 1, default 0) : 1 = Backward_Euler fails loud on non-convergence\\ \n" // Ladruno (ADR-84 P2a)
+       "    experimental_integrator (0 or 1, default 0) : 1 = opt in to the four\n"
+       "        EXPLICIT integrators below (ADR-97 D5); without it they are REFUSED\\ \n"
        "    integration_method (string) : Backward_Euler | Closest_Point (ADR-97) |\n"
        "        Forward_Euler | Forward_Euler_Subincrement |\n"
        "        Modified_Euler_Error_Control | Runge_Kutta_45_Error_Control\n"
@@ -330,7 +332,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     // verbatim when one is not recognised so the user can see the spelling.
     static const char* const ASDP_VALID_INTEGRATION_OPTIONS =
         "f_absolute_tol, f_relative_tol, stress_absolute_tol, n_max_iterations, strict_convergence, "
-        "rk45_dT_min, rk45_niter_max, return_to_yield_surface, integration_method, "
+        "rk45_dT_min, rk45_niter_max, experimental_integrator, return_to_yield_surface, integration_method, "
         "tangent_type, End_Integration_Options";
 
     cout << "\n\nDefined internal variables: \n";
@@ -359,6 +361,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     int strict_convergence = 0; // Ladruno (ADR-84 P2a): opt-in fail-loud on Backward_Euler non-convergence
     double rk45_dT_min = 1e-2;
     int rk45_niter_max = 110;
+    int experimental_integrator = 0; // Ladruno (ADR-97 wp/97f, D5): opt-in gate for the four explicit integrators
 
     // Loop over input arguments
     while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -517,6 +520,14 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                     cout << "   Setting rk45_niter_max = " << rk45_niter_max << endl;
                     option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
+
+                if (std::strcmp(param_name, "experimental_integrator") == 0) // Ladruno (ADR-97 wp/97f, D5)
+                {
+                    OPS_GetInt(&get_one_value, &experimental_integrator);
+                    cout << "   Setting experimental_integrator = " << experimental_integrator << endl;
+                    option_recognised = true;
+                }
+
                 if (std::strcmp(param_name, "return_to_yield_surface") == 0)
                 {
                     // OPS_GetInt(&get_one_value, &return_to_yield_surface);
@@ -733,6 +744,31 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
             asdp_parse_rejected = true;
             return false;
         }
+    }
+
+    // Ladruno (ADR-97 wp/97f, D5): the explicit integrators are gated, not
+    // rewritten (ADR-94 M2/M8 catalogued real defects -- empty drift checks,
+    // an error controller that accepts unconditionally at rk45_dT_min -- but
+    // rewriting four integrators is a different ADR). Without opting in, only
+    // the implicit pair Backward_Euler/Closest_Point may be selected. Resolved
+    // AFTER the whole option loop, like the Algorithmic/Closest_Point check
+    // below, so token order does not matter.
+    if (experimental_integrator == 0
+            && (method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control))
+    {
+        opserr << "nDMaterial ASDPlasticMaterial3D - integration_method is an"
+               << " EXPLICIT integrator with no active drift correction beyond"
+               << " return_to_yield_surface and an error controller that accepts"
+               << " unconditionally at rk45_dT_min (ADR-94 M2/M8); it is REFUSED"
+               << " by default (ADR-97 D5)." << endln;
+        opserr << "   The supported implicit pair is Backward_Euler and"
+               << " Closest_Point. Set 'experimental_integrator 1' inside"
+               << " Begin_Integration_Options to opt in anyway." << endln;
+        asdp_parse_rejected = true;
+        return false;
     }
 
     // Ladruno (ADR-97 wp/97b, D2): a consistent tangent is defined only relative

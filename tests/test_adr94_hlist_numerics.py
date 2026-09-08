@@ -81,8 +81,12 @@ FREE = [14, 17, 20, 23]
 
 
 def mat_vm(tag, tangent="Continuum", method="Backward_Euler",
-           hiso=H_VM, niter=100, strict=None):
+           hiso=H_VM, niter=100, strict=None, experimental=None):
     extra = ["strict_convergence", int(strict)] if strict is not None else []
+    if experimental is not None:
+        # Ladruno (ADR-97 wp/97f, D5): the four explicit integrators this
+        # module's gate-4 decks drive now require an opt-in.
+        extra += ["experimental_integrator", int(experimental)]
     ops.nDMaterial(
         "ASDPlasticMaterial3D", tag,
         "VonMises_YF", "VonMises_PF", "LinearIsotropic3D_EL", IV_VM,
