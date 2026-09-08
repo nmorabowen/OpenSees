@@ -14,7 +14,7 @@ and says so in its own comment.  The exact test lives in the ELASTIC metric::
 At ``etabar = 0`` -- non-associated, zero dilatancy, which is the ADR-95
 Prandtl-Reissner footing deck -- the exact test degenerates to ``p >= p_apex``,
 because a non-dilatant flank return CANNOT MOVE p AT ALL.  Every over-apex trial
-state with ``q > eta*(p - p_apex)`` was therefore routed to the flank map, which
+state with ``eta*q > (p - p_apex) > 0`` was therefore routed to the flank map, which
 has no admissible solution (``f = q + eta*p - xi_c >= eta*p - xi_c > 0`` for
 every ``q >= 0``), so its scalar Newton exhausted and, under
 ``strict_convergence``, the step was REFUSED.  Measured on the ADR-95 deck: 435
@@ -220,16 +220,22 @@ def dp_available():
 # ===========================================================================
 def test_94f_zero_dilatancy_over_apex_wedge_is_accepted(dp_available):
     """Trial state beyond the apex with SMALL BUT NONZERO shear, chosen so the
-    EUCLIDEAN test says CONE (``q > eta*(p - p_apex)``) while the exact
+    EUCLIDEAN test says CONE (``eta*q > p - p_apex``) while the exact
     elastic-metric test at ``etabar = 0`` says APEX (``p > p_apex``).
 
     With zero dilatancy the flank map cannot move p, so no flank return exists:
     ``f = q + eta*p - xi_c >= eta*p_tr - xi_c > 0`` for every q >= 0.  The apex
     is the ONLY admissible answer, and pre-94f the step was refused instead.
     """
-    p_tr = 1.5 * P_APEX
-    q_tr = 3.0 * ETA * (p_tr - P_APEX)          # squarely inside the wedge
-    assert q_tr > ETA * (p_tr - P_APEX), "test does not exercise the wedge"
+    p_tr = 2.0 * P_APEX
+    q_tr = 3.0 * (p_tr - P_APEX) / ETA          # squarely inside the wedge
+    # the Euclidean test says CONE ...
+    assert (p_tr - P_APEX) < ETA * q_tr, "test does not exercise the wedge"
+    # ... and it keeps saying CONE for every INCREMENT taken from the apex
+    # itself, so the misclassification is not a one-step accident.
+    assert (p_tr / 10.0) < ETA * (q_tr / 10.0), "wedge closes after step 1"
+    # ... while the exact elastic-metric test at etabar = 0 says APEX.
+    assert p_tr > P_APEX
 
     ex, ey, ez = _normal_strains(p_tr, q_tr)
     res = _run(0.0, ex, ey, ez, nsteps=10, strict=1)
@@ -258,8 +264,8 @@ def test_94f_zero_dilatancy_over_apex_wedge_is_accepted(dp_available):
 #    the committed state may not be inadmissible
 # ===========================================================================
 def test_94f_associated_dilatancy_still_commits_an_admissible_state(dp_available):
-    p_tr = 1.5 * P_APEX
-    q_tr = 3.0 * ETA * (p_tr - P_APEX)
+    p_tr = 2.0 * P_APEX
+    q_tr = 3.0 * (p_tr - P_APEX) / ETA
     ex, ey, ez = _normal_strains(p_tr, q_tr)
     res = _run(ETA, ex, ey, ez, nsteps=10, strict=1)
 
