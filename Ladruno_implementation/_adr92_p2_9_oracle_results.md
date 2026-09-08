@@ -2,7 +2,7 @@
 title: "ADR 92 / P2-9 — control-informed extrapolation factor: the oracle lane"
 project: Ladruno
 type: measurement
-status: "ORACLE LANE COMPLETE — variant D implemented and measured; one refuted premise, one PASS with a 60x margin; C++ lane NOT started"
+status: "ORACLE LANE COMPLETE — variant D implemented and measured; GD PASS, seat PASS with a 60x margin, one NEW risk row (freeze-on-a-bad-predictor); C++ lane NOT started"
 priority: high
 owner: nmora
 related:
@@ -176,13 +176,19 @@ iterate, so the factor it commits was formed on the **converged** `Δε`.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1.0e-4 | 200 | 2.441e-3 | **1.103e+0** | **2.473e-3** | 2.213e-3 | 2.748e-3 | 1.831e-1 | 2.037e-3 | 0.0000 | 0.9942 | 176 | 1 |
 | 2.0e-4 | 100 | 1.438e-2 | 2.920e+0 | 1.423e-2 | 1.051e-2 | 1.104e-2 | 2.546e-1 | 5.911e-3 | 0.0000 | 0.9876 | 86 | 1 |
+| 5.0e-4 | 40 | 8.558e-1 | 1.037e+1 | 3.118e+0 | 7.070e-2 | 1.255e+0 | 1.726e-1 | 7.260e-1 | 0.7223 | 0.8393 | 2 | 3 |
+| 1.0e-3 | 20 | 6.757e-1 | 1.081e+1 | 2.895e-1 | 9.997e-1 | 1.986e+1 | 4.636e-1 | 2.379e-1 | 0.6524 | 0.7476 | 0 | 2 |
+| 2.0e-3 | 10 | 3.142e+2 | 3.142e+2 | 3.142e+2 | 2.237e+1 | 2.09e-8 | 5.41e-17 | 3.47e-17 | 0.3333 | 0.0646 | 2 | 1 |
+| 5.0e-3 | 4 | 1.904e+2 | 1.904e+2 | 1.904e+2 | 2.142e+2 | 6.96e-8 | 1.21e-16 | 1.38e-16 | 0.5000 | 0.5000 | 1 | 0 |
+| 1.0e-2 | 2 | 8.722e+1 | 8.722e+1 | 8.722e+1 | 8.918e+1 | 2.22e-7 | 1.62e-16 | 1.42e-16 | 0.0000 | 0.0000 | 1 | 0 |
 
-> [!warning] The T2 rows at `dεz ≥ 5e-4` were **still running when this memo was written**
-> and are not reported. That is the regime the P0 memo already calls "unusable from
-> `5e-4` at `p0 = 5`" (hundreds of substeps per step), and the `Dr` arm re-probes the
-> companion at every secant iterate on top of it. The two rows above are the campaign's
-> own increments (`1e-4` = h 1.0 m nominal, `2e-4` = h 0.5 m nominal) and carry the
-> verdict; re-run `--gate GD` with a longer budget to complete the block.
+`GD verdict: PASS (GD.1 True, GD.2 True, GD.3 True)`.
+
+From `dεz = 5e-4` down the T2 block is past the material's own breakdown — the P0 memo
+already calls IMPL-EX "unusable from `5e-4` at `p0 = 5`", `TOT impl` is `O(1)`, the run
+prints `!! CONTAMINATED RUN`, and the near-zero `implexError` on the last three rows is the
+run having stopped moving, not accuracy. Read only the top two rows, which are the
+campaign's own increments (`1e-4` = h 1.0 m nominal, `2e-4` = h 0.5 m nominal).
 
 Same story at the corner, sharper: frozen-on-a-bad-predictor `D` is **450x** worse than A
 (`1.103e+0` vs `2.441e-3`) with `f*` mean **0.0000** and `f* = 0` on 176/200 steps;
@@ -202,9 +208,9 @@ exactly one thing — the bad predictor — and every symptom goes with it: `f*`
 `ieDr mean` is **1.0–2.1x better than A** on every resolved row (5.150e-4 vs 5.186e-4;
 2.053e-3 vs 2.314e-3; 1.095e-2 vs 1.540e-2; 3.132e-2 vs 6.453e-2).
 
-The last two rows of each block (`dεz ≥ 5e-3`) are past the driver's own breakdown —
-`TOT impl` is `O(1)` there and the run prints `!! CONTAMINATED RUN` — so read them as
-breakdown, not as data.
+The coarse rows of each block (`dεz ≥ 2e-3` at T1, `≥ 5e-4` at T2) are past the driver's
+own breakdown — `TOT impl` is `O(1)` there and the run prints `!! CONTAMINATED RUN` — so
+read them as breakdown, not as data.
 
 ## 5. The seat (ADR-93 step 331 → 332): the registered prediction
 

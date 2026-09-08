@@ -4497,24 +4497,28 @@ def _drive_p29_monotone(tag, extra_opts):
     return detail, guards_before, guards_after
 
 
-def test_implexfactor_control_backs_off_on_a_reversal():
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_backs_off_on_a_reversal(mode):
     """ADR-92 P2-9 (a): on a step whose committed `d_eps_p(n)` points the
-    WRONG WAY, `-implexFactor control` must report `implexDetail[5]` at or
-    near zero, while `-implexFactor fixed` reports the full clock ratio on
-    the identical step.
+    WRONG WAY, `-implexFactor control|controlIter` must report
+    `implexDetail[5]` at or near zero, while `-implexFactor fixed` reports
+    the full clock ratio on the identical step.
 
     `A:B < 0` there by construction (`B = Ce:d_eps_p(n)` is the compressive
     history; `A ~ Ce:d_eps_p(n+1)` on a step that travels the other way), so
     the clamp's LOWER end binds and `f*` is 0 -- or, if the reversal step
     unloads elastically and there is no new plastic increment at all, `A ~ 0`
     and `f*` is a negligible fraction of `f_max`.  Both are "the operator
-    backed off"; neither is the clock ratio.
+    backed off"; neither is the clock ratio.  `controlIter` recomputes `f*`
+    at every trial instead of freezing it at the first, but the reversal is
+    the same wrong-way `d_eps_p(n)` at every trial of this step, so the same
+    near-zero clamp is expected on both modes.
 
-    Kills a mutant that parses `-implexFactor control` and then never uses
-    `f*` (both arms would read the clock ratio), one that forgets to clamp at
-    0 (a negative `f` would AMPLIFY the wrong increment), and one that wires
-    `f*` to the P2-2 guard's trigger instead of to the companion (the guard
-    is OFF here and has not fired on this step anyway).
+    Kills a mutant that parses `-implexFactor control`/`controlIter` and then
+    never uses `f*` (both arms would read the clock ratio), one that forgets
+    to clamp at 0 (a negative `f` would AMPLIFY the wrong increment), and one
+    that wires `f*` to the P2-2 guard's trigger instead of to the companion
+    (the guard is OFF here and has not fired on this step anyway).
     """
     d_fixed, _, _ = _drive_p29_reversal(8450, _P29_CTL + ('-implexFactor', 'fixed'))
     f_max = float(_PROBE_N_HISTORY)   # dt_{n+1}/dt_n = 1.0 / (1/_PROBE_N_HISTORY)
@@ -4524,18 +4528,18 @@ def test_implexfactor_control_backs_off_on_a_reversal():
         'against is not the one this test believes it is', d_fixed, f_max)
 
     d_ctl, g_before, g_after = _drive_p29_reversal(
-        8451, _P29_CTL + ('-implexFactor', 'control'))
+        8451, _P29_CTL + ('-implexFactor', mode))
 
     assert d_ctl[5] >= 0.0, (
-        'implexDetail[5] went NEGATIVE under -implexFactor control -- f* is '
+        'implexDetail[5] went NEGATIVE under -implexFactor %s -- f* is '
         'clamped into [0, f_max] and a negative f amplifies exactly the '
-        'plastic increment the operator has decided is wrong', d_ctl)
+        'plastic increment the operator has decided is wrong' % mode, d_ctl)
     assert d_ctl[5] <= 0.05 * f_max, (
-        'implexDetail[5] under -implexFactor control is %r on a step whose '
+        'implexDetail[5] under -implexFactor %s is %r on a step whose '
         'committed plastic increment points the WRONG WAY -- f* = '
         'clamp((A:B)/(B:B), 0, f_max) has A:B < 0 there, so this must be at '
         'or near 0, not the %r the fixed arm reads'
-        % (d_ctl[5], f_max), d_ctl, d_fixed)
+        % (mode, d_ctl[5], f_max), d_ctl, d_fixed)
 
     assert g_after[6] - g_before[6] >= 1, (
         'implexGuards[6] (the P2-9 "backed off" census: f* < 0.5*f_max) did '
@@ -4543,11 +4547,19 @@ def test_implexfactor_control_backs_off_on_a_reversal():
         'itself shows the operator backing off', g_before, g_after, d_ctl)
 
 
-def test_implexfactor_control_holds_fmax_on_a_monotone_history():
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_holds_fmax_on_a_monotone_history(mode):
     """ADR-92 P2-9 (b): where the committed history points the RIGHT way,
-    `f*` runs into its upper clamp and `-implexFactor control` reports
-    exactly `f_max` -- the same number `-implexFactor fixed` reports.  The
-    "backed off" census must NOT move.
+    `f*` runs into its upper clamp and `-implexFactor control|controlIter`
+    reports exactly `f_max` -- the same number `-implexFactor fixed`
+    reports.  The "backed off" census must NOT move.
+
+    `controlIter` recomputes `f*` at every Newton trial of the step rather
+    than freezing it at the first; on this deck the ratio `(A:B)/(B:B)` stays
+    near 2 at every trial (the step's own committed `d_eps_p(n)` does not
+    change trial to trial, and the doubled load keeps the numerator above the
+    clamp throughout convergence), so the clamp still binds to `f_max = 1.0`
+    on the CONVERGED trial's report.
 
     Kills a mutant that clamps `f*` to something other than the clock ratio
     (e.g. to 1.0, or to `alpha`), one that always backs off, and one that
@@ -4562,13 +4574,13 @@ def test_implexfactor_control_holds_fmax_on_a_monotone_history():
         'second monotone continuation step', d_fixed)
 
     d_ctl, g_before, g_after = _drive_p29_monotone(
-        8453, _P29_CTL + ('-implexFactor', 'control'))
+        8453, _P29_CTL + ('-implexFactor', mode))
     assert d_ctl[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
-        'implexDetail[5] under -implexFactor control is %r, not the f_max = '
+        'implexDetail[5] under -implexFactor %s is %r, not the f_max = '
         '%r the upper clamp is supposed to deliver on a monotone, '
         'ACCELERATING history (the step carries twice the previous load, so '
         '(A:B)/(B:B) is near 2 and the clamp must bind)'
-        % (d_ctl[5], f_max), d_ctl, d_fixed)
+        % (mode, d_ctl[5], f_max), d_ctl, d_fixed)
     assert g_after[6] == g_before[6], (
         'implexGuards[6] (the P2-9 "backed off" census) incremented on a '
         'step where f* reached its upper clamp -- the counter is for '
@@ -4615,13 +4627,16 @@ def test_implexfactor_fixed_is_byte_identical_to_omitting_it():
         'arithmetic at all', plain, fixed)
 
 
-def test_implexfactor_control_without_implexcontrol_is_refused():
-    """ADR-92 P2-9 (d): `-implexFactor control` chooses `f*` by aiming at the
-    COMPANION stress `sigma_impl`, and the companion exists at the trial only
-    under `-implexControl`.  Without it there is nothing to aim at, so the
-    request is REFUSED at construction rather than silently downgraded to
-    `fixed` -- the "a flag claims to have done something it did not do"
-    defect this material's option handling exists to make impossible.
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_without_implexcontrol_is_refused(mode):
+    """ADR-92 P2-9 (d): `-implexFactor control|controlIter` chooses `f*` by
+    aiming at the COMPANION stress `sigma_impl`, and the companion exists at
+    the trial only under `-implexControl`.  Without it there is nothing to
+    aim at, so the request is REFUSED at construction rather than silently
+    downgraded to `fixed` -- the "a flag claims to have done something it did
+    not do" defect this material's option handling exists to make
+    impossible.  Both control modes are refused identically -- the check is
+    on `factorMode != FACTOR_FIXED`, not on which control mode was asked for.
 
     The refusal lives in `setLadrunoImplexOptions()` and is NOT gated on
     `verbose`, on the RED-1 F5 rule, so a `getCopy`/`recvSelf` clone is
@@ -4634,19 +4649,19 @@ def test_implexfactor_control_without_implexcontrol_is_refused():
     with pytest.raises(Exception):
         ops.nDMaterial('LadrunoSANISAND', 8456, *_PARAMS,
                        '-implex', '-maxSubsteps', _CAP_ADEQUATE,
-                       '-implexFactor', 'control')
+                       '-implexFactor', mode)
 
     ops.wipe()
     with pytest.raises(Exception):
         ops.nDMaterial('LadrunoSANISAND', 8457, *_PARAMS,
-                       '-implexFactor', 'control')          # no -implex at all
+                       '-implexFactor', mode)                # no -implex at all
 
     ops.wipe()
     with pytest.raises(Exception):
         ops.nDMaterial('LadrunoSANISAND', 8458, *_PARAMS,
                        '-implex', '-maxSubsteps', _CAP_ADEQUATE,
                        '-implexControl', 0.1, 0.01,
-                       '-implexFactor', 'graded')            # not fixed|control
+                       '-implexFactor', 'graded')            # not fixed|control|controlIter
 
     # ... and the accepted form still builds, so the refusals above are not
     # simply "this material rejects -implexFactor".
@@ -4654,4 +4669,4 @@ def test_implexfactor_control_without_implexcontrol_is_refused():
     ops.nDMaterial('LadrunoSANISAND', 8459, *_PARAMS,
                    '-implex', '-maxSubsteps', _CAP_ADEQUATE,
                    '-implexControl', 0.1, 0.01,
-                   '-implexFactor', 'control')
+                   '-implexFactor', mode)
