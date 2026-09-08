@@ -28,6 +28,15 @@ Two halves:
    only checked agreement would pass on an integrator that silently WAS
    `Backward_Euler`.
 
+Cross-platform note (Zone-A run 34174010743, the first Linux run of this file):
+the baseline was dumped on Windows/MSVC.  GCC/Linux reproduces every deck to
+5.8e-09 worst absolute (VM at Newton tolerance) and 2e-20 (DP, FP noise) -- a
+compiler/libm difference, not a code path.  A byte-identity gate is only
+meaningful on the platform that produced the baseline (ADR-94 lesson: 1e-9 pins
+failed twice on Linux), so `==` is enforced on win32 and a 1e-6 RELATIVE bound
+(the fork's cross-platform float-pin floor) everywhere else.  Regenerate the
+baseline on Windows only, deliberately, and say so in the commit.
+
 Zone-A, 5.9 s for the whole file: a fresh-interpreter deck costs ~0.2 s, so
 BOTH the representative slice and the full 23-deck sweep run on every push.
 """
@@ -103,12 +112,23 @@ def _assert_identical(deck, ref, got):
     assert len(got["stress"]) == len(ref["stress"]), (
         "deck %r: %d committed steps, was %d"
         % (deck, len(got["stress"]), len(ref["stress"])))
-    nbit, worst = 0, 0.0
+    nbit, worst, scale = 0, 0.0, 0.0
     for a, b in zip(ref["stress"], got["stress"]):
         for x, y in zip(a, b):
+            scale = max(scale, abs(x))
             if x != y:
                 nbit += 1
                 worst = max(worst, abs(x - y))
+    if sys.platform != "win32":
+        # Not the baseline's platform: MSVC vs GCC/libm differ at 1e-9 absolute
+        # (measured, see the module docstring).  Enforce the fork's
+        # cross-platform floor instead of bit equality.
+        assert worst <= 1e-6 * max(scale, 1.0), (
+            "deck %r: committed stress differs from the Windows baseline by "
+            "%.3e (scale %.3e) on %s -- beyond the 1e-6 cross-platform floor, "
+            "so this is a code-path change, not compiler noise."
+            % (deck, worst, scale, sys.platform))
+        return
     assert nbit == 0, (
         "deck %r: %d of %d committed stress components changed (worst |d| = "
         "%.3e). ADR-97 D1 says Backward_Euler is byte-identical -- either a"
