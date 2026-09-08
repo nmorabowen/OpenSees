@@ -188,6 +188,37 @@ carry 3 % and the H20 uri 9.5 % spurious volumetric increment — H4's plastic r
 visible, on the same leg that needed 1034 failed attempts and plateaus lowest. Deformed meshes
 and yield fields for all twelve legs: `adr95_deformed*.png`, `deformed_snapshot.py`.
 
+
+## 5c. Wall times
+
+Plain push to s/B 0.15 on an idle box (the `deformed_snapshot.py` re-runs: no tangent, branch or
+condition sampling; ladder budget 200; PARDISO threaded). The campaign legs that carried the
+per-Gauss-point census and the tangent SVD at every station took 40–60 min each; that cost was the
+diagnostics, not the solve.
+
+| leg | element / material | DOF | steps | failed attempts | wall | per attempt |
+|---|---|---|---|---|---|---|
+| B1 | LadrunoBrick -bbar, UW-DP repaired | 1 386 | 310 | 0 | 31 s | 0.10 s |
+| C1 | LadrunoBrick -bbar, ASD-DP (#815) | 1 386 | 310 | 0 | 37 s | 0.12 s |
+| B2 | LadrunoBrick20 -uri, UW-DP repaired | 4 659 | 1 521 | 1 051 | 481 s | 0.19 s |
+| D1 | LadrunoBrick20 -uri, SANISAND IMPL-EX | 4 659 | 1 515 | 0 | 296 s | 0.20 s |
+| B4 | BezierTet10 std, UW-DP repaired | 7 749 | 1 515 | 0 | 466 s | 0.31 s |
+| B5 | BezierTet10 -bbar, UW-DP repaired | 7 749 | 1 515 | 0 | 533 s | 0.35 s |
+| B3 | TenNodeTetrahedron, UW-DP repaired | 7 749 | 1 515 | 0 | 727 s | 0.48 s |
+| D2 | LadrunoBrick -bbar, SANISAND implicit (stopped at s/B 0.008) | 1 386 | 60 | 65 | 1 236 s | 9.9 s |
+| A1 | LadrunoBrick20 -uri, UW-DP pre-fix (floor at 0.011) | 4 659 | 286 | 302 | 176 s | 0.30 s |
+| A2/A3 | tet10 / BezierTet10 std, pre-fix (floor at 0.0016) | 7 749 | 79 / 33 | 71 / 36 | 152 / 40 s | 1.0 / 0.6 s |
+| C2 | LadrunoBrick20 -uri, ASD-DP #815 (floor at 0.011) | 4 659 | 160 | 93 | 24 s | 0.09 s |
+
+Reading: per-attempt cost scales with DOF as expected (0.1 s at 1 386, 0.2 s at 4 659, 0.3–0.5 s at
+7 749), and the Bézier tets are cheaper per attempt than the Lagrange tet on the same mesh. The
+H20 uri is the expensive Drucker–Prager leg for a different reason — 1 051 failed attempts, the
+ladder halving and recovering around the corner Gauss points, 40 % of its wall — while every tet
+ran its 1 515 steps with zero failures. SANISAND IMPL-EX costs the same per attempt as
+Drucker–Prager; SANISAND implicit costs fifty times more per attempt and still fails half of
+them, which is the whole SANISAND cost story on this deck. The linear b-bar hex to target in 31 s
+remains the right gate element for CI.
+
 ## 6. Rules that held, and one that was added
 
 - No walled number was quoted as a capacity; the identification rested on **states** at matched
