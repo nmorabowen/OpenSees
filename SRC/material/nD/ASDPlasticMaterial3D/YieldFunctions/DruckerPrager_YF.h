@@ -256,4 +256,15 @@ struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> 
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
+// Ladruno (ADR-94 wp/94f): ...and now Backward_Euler agrees with Closest_Point.
+// The Euclidean `check_apex_region` above is kept (it is part of the yield
+// function's own interface and is still consulted first), but the integrator
+// UNIONS it with the elastic-metric classification: `(p - p_apex) >= eta*q` is
+// only the exact test when K*etabar/G == eta, and on a zero-dilatancy deck
+// (etabar = 0, the ADR-95 Prandtl footing) the exact test is just p >= p_apex,
+// so every over-apex state with small shear was routed to a flank map that
+// cannot move p and therefore cannot close f.
+template<class AlphaHardeningType, class CohesionHardeningType>
+struct yf_apex_elastic_metric<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
+
 #endif

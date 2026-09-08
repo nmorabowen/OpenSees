@@ -1,0 +1,46 @@
+# filtered log: harness lines + every ASDPlasticMaterial3D / NaN / refusal message
+# full raw log (with the per-step ASDP integration-info and Newton-norm chatter) not committed
+[03:06:52] [control 0] engine C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90\5408bcef-bf62-4967-964e-a179fa61676a\scratchpad\dist_94f\bin\opensees.pyd
+[03:06:52] [control 0] ladrunoBuild() = ff47275fd4a463d13a721a2138b48024a72463f2
+[03:06:52]     [control 2] consistent Q4 (= tributary) surcharge over 20 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 0 nodes carry a NEGATIVE weight; per-face weights match the analytic (A/4) to 0.0e+00 of A
+[03:06:52] === leg h8bbar_h1.0_94f: LadrunoBrick -formulation bbar on ASDPlasticMaterial3D/DruckerPrager_YF, h0 = 1.0 m, 462 nodes / 1386 DOF, 200 elements
+Using ASDPlasticMaterial3D - Developed by: Jose Abell (UANDES), Massimo Petracca and Guido Camata (ASDEA Software Technology)
+ASDPlasticMaterial3D
+[03:06:52]     [mapping] alpha=0.148583 rho=0.210128 -> ASD eta=0.445749 xi_c=0.115470; apex I1: UW T=0.777141, ASD T=0.777141 (should match to fp precision) ; E=45000.0000 nu=0.45
+[03:06:52]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.2s]
+[03:06:52]     [control 1] 1-D elastic stress patch: max|szz/-q0-1| = 1.51e-14, max|sxx/-K0q0-1| = 1.09e-14  -> PASS
+Done creating ASDPlasticMaterial3D 
+[03:06:52]     [tension] s/B 0.00140  q    56.04  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-91,-25.3]
+[03:06:53]     [tension] s/B 0.00520  q    93.84  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-156,-27.6]
+[03:06:54]     [tension] s/B 0.01020  q   119.34  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-202,-29.2]
+[03:06:56]     [tension] s/B 0.01520  q   133.76  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-230,-32.5]
+[03:06:57]     [tension] s/B 0.02020  q   143.13  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-249,-33.5]
+[03:06:58]     [tension] s/B 0.02520  q   147.79  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-258,-34]
+[03:07:00]     [tension] s/B 0.03020  q   149.29  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-261,-34.2]
+[03:07:02]     [tension] s/B 0.03520  q   149.97  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-262,-34.3]
+[03:07:03]     [tension] s/B 0.04020  q   150.27  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.3]
+[03:07:05]     [tension] s/B 0.04520  q   150.43  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.3]
+[03:07:07]     [tension] s/B 0.05020  q   150.52  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.3]
+[03:07:09]     [tension] s/B 0.05520  q   150.57  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:11]     [tension] s/B 0.06020  q   150.61  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:13]     [tension] s/B 0.06520  q   150.63  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:14]     [tension] s/B 0.07020  q   150.65  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:16]     [tension] s/B 0.07520  q   150.66  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:18]     [tension] s/B 0.08020  q   150.66  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:20]     [tension] s/B 0.08520  q   150.67  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:21]     [tension] s/B 0.09020  q   150.67  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:23]     [tension] s/B 0.09520  q   150.68  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:25]     [tension] s/B 0.10020  q   150.68  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:27]     [tension] s/B 0.10520  q   150.69  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:29]     [tension] s/B 0.11020  q   150.69  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:30]     [tension] s/B 0.11520  q   150.70  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:32]     [tension] s/B 0.12020  q   150.70  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:34]     [tension] s/B 0.12520  q   150.70  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:36]     [tension] s/B 0.13020  q   150.70  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:37]     [tension] s/B 0.13520  q   150.70  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:39]     [tension] s/B 0.14020  q   150.71  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:41]     [tension] s/B 0.14520  q   150.71  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:43]     [tension] s/B 0.15000  q   150.71  GP seen 1600  tension(mean>=0) 0  NaN 0  I1 [-263,-34.4]
+[03:07:43]     MODE = TARGET   [reached the target settlement]   wall = 51.0s  converged steps = 310  nsub = 0  nfail = 0
+[03:07:43]     last s/B = 0.15000  q_end = 150.7099  q_max = 150.7104
+         h8bbar_h1.0_94f mode=TARGET    verdict=reached the target settlement

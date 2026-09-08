@@ -4464,6 +4464,136 @@ private:
         return 0;
     }
 
+    // Ladruno (ADR-94 wp/94f): the one-shot APEX projection, factored out of
+    // `Backward_Euler` so it can be reached from TWO places -- the predictor
+    // classification (as before) and the flank-failure fallback below.  The body
+    // is the wp/94c projection VERBATIM; only the trial stress it projects and
+    // the diagnostic prefix are parameters now.
+    //
+    //     sigma   = sigma_apex
+    //     d eps^p = inv(E) : (sigma_trial - sigma_apex)
+    //     dlambda = <m_apex, d eps^p>_e / <m_apex, m_apex>_e   (>= 0)
+    //
+    // Returns  1 : apex return taken; TrialStress / TrialPlastic_Strain / the
+    //              internal variables / Stiffness are all set, caller returns 0.
+    //          0 : the yield function's own apex is not on its own surface, so
+    //              nothing was written; caller falls through.
+    //         -1 : same as 0, but strict_convergence says refuse loudly.
+    //
+    // The caller owns the state it hands in: at the fallback site TrialStress,
+    // TrialPlastic_Strain and the IVs must be reset to the elastic predictor
+    // BEFORE calling, because the failed flank iteration has already moved them.
+    int be_apex_project(const VoigtVector & depsilon,
+                        const VoigtVector & sigma_trial,
+                        const VoigtMatrix & Eelastic,
+                        double tol_yf, bool be_strict, const char* origin)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+
+        // Copy out of the YF's return buffer immediately: `apex_stress`
+        // and `df_dsigma_ij` share one mutable member per functor.
+        const VoigtVector sigma_apex = yf.apex_stress(iv_storage, parameters_storage);
+
+        // The apex the YF names must actually BE on its own surface.  This
+        // is what makes the classification safe: a yield function whose
+        // apex geometry is wrong (or whose region test misfires) falls
+        // through to the generic return map instead of committing a
+        // fabricated stress.  NaN-safe: !(x <= tol) is true for NaN.
+        const double f_apex = yf(sigma_apex, iv_storage, parameters_storage);
+        const double f_apex_abs = (f_apex < 0) ? -f_apex : f_apex;
+        if (!(f_apex_abs <= tol_yf))
+        {
+            if (be_strict)
+            {
+                opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                       << ") - " << origin << ": the trial stress classifies as an APEX state but the "
+                       << "yield function's own apex is not on its surface: |f(sigma_apex)| = "
+                       << f_apex_abs << " > tol = " << tol_yf
+                       << " -- rejecting step (strict_convergence)" << endln;
+                return -1;
+            }
+            return 0;   // fall through to the generic return map
+        }
+
+        // d eps^p = inv(E) * (sigma_trial - sigma_apex)
+        const VoigtVector rhs = sigma_trial - sigma_apex;
+        VoigtVector dep = VoigtVector::Zero();
+        {
+            Eigen::Matrix<double, 6, 6> E_eig;
+            Eigen::Matrix<double, 6, 1> rhs_eig;
+            for (int i = 0; i < 6; ++i)
+            {
+                rhs_eig(i) = rhs(i);
+                for (int j = 0; j < 6; ++j) E_eig(i, j) = Eelastic(i, j);
+            }
+            Eigen::Matrix<double, 6, 1> dep_eig;
+            auto chol = E_eig.selfadjointView<Eigen::Lower>().llt();
+            if (chol.info() == Eigen::Success) dep_eig = chol.solve(rhs_eig);
+            else                               dep_eig = E_eig.ldlt().solve(rhs_eig);
+            for (int i = 0; i < 6; ++i) dep(i) = dep_eig(i);
+        }
+
+        // Plastic multiplier: least-squares projection of dep onto the
+        // apex flow direction.  Both are ENGINEERING-strain-like Voigt
+        // vectors, so the inner product is the engineering contraction
+        // (ADR-94 wp/94c, B5) -- not the stress-like one the dead code
+        // used.
+        const VoigtVector m_apex = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
+        const double m_dot_m = tensor_dot_engineering_strain_like(m_apex, m_apex);
+        double dLambda_apex = 0.0;
+        if (m_dot_m > MACHINE_EPSILON)
+        {
+            dLambda_apex = tensor_dot_engineering_strain_like(m_apex, dep) / m_dot_m;
+            if (dLambda_apex < 0.0) dLambda_apex = 0.0;   // keep lambda >= 0
+        }
+
+        TrialStress          = sigma_apex;
+        TrialPlastic_Strain  = TrialPlastic_Strain + dep;
+
+        // Internal variables: ONE hardening evaluation, at the apex.
+        // Every yield function that opts into `yf_has_apex` today is
+        // perfectly plastic (Null hardening), so this term is exactly
+        // zero for them and the IVs are unchanged; it is written this
+        // way so a hardening Drucker-Prager does not silently freeze.
+        iv_storage.apply([&](auto & internal_variable)
+        {
+            auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
+            internal_variable.trial_value += dLambda_apex * h;
+        });
+
+        // Tangent.  The honest continuum operator at a perfectly plastic
+        // apex is ZERO: the stress is pinned at sigma_apex, so no strain
+        // increment that stays in the apex region changes it.  That is
+        // rank-deficient by construction and will make an element whose
+        // every Gauss point sits at the apex singular -- which is the
+        // true state of affairs, and why it is only produced for the
+        // tangent types the user opts into.  Secant (the DEFAULT) blends
+        // it with the elastic operator, exactly as the special_return
+        // path above does, and stays invertible.
+        {
+            VoigtMatrix apex_stiff = VoigtMatrix::Zero();
+            using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
+            switch (INT_OPT_tangent_operator_type[ASDP_TAG])
+            {
+            case TOT::Elastic:
+                Stiffness = Eelastic;
+                break;
+            case TOT::Continuum:
+            case TOT::Algorithmic:
+            case TOT::Numerical_Algorithmic_FirstOrder:
+            case TOT::Numerical_Algorithmic_SecondOrder:
+                Stiffness = apex_stiff;
+                break;
+            case TOT::Secant:
+            default:
+                Stiffness = VoigtMatrix((apex_stiff + Eelastic) / 2.0);
+                break;
+            }
+        }
+
+        return 1;
+    }
+
     int Backward_Euler(const VoigtVector & strain_incr)
     {
         using namespace ASDPlasticMaterial3DGlobals;
@@ -4524,127 +4654,50 @@ private:
         }
 
 
+        // Ladruno (ADR-94 wp/94f): the elastic predictor is needed AGAIN at the
+        // flank-failure fallback below, and the Newton loop overwrites TrialStress
+        // in place, so keep a copy.
+        const VoigtVector be_sigma_trial_elastic = TrialStress;
+
         // Deal with the APEX if needed
         // -------- APEX return (one-shot projection) -------------------------------
         // Ladruno (ADR-94 wp/94c, B4): REVIVED.  The whole body below was commented
         // out, so `check_apex_region` was called and its answer discarded for every
         // yield function that declares `yf_has_apex` -- Drucker-Prager then ran the
         // flank return map past sqrt(J2) = 0 and committed NaN on hydrostatic
-        // tension.  The projection is the classic one-shot vertex return:
-        //     sigma   = sigma_apex
-        //     d eps^p = C : (sigma_trial - sigma_apex),  C = inv(E) at commit
-        // with the plastic multiplier recovered as the least-squares projection of
-        // d eps^p onto the apex flow direction so hardening internal variables
-        // (evaluated ONCE, at the apex state) still advance; for the perfectly
-        // plastic opt-ins that term is identically zero.
+        // tension.  The projection itself now lives in `be_apex_project` above.
+        //
+        // Ladruno (ADR-94 wp/94f): LAYER (a) -- ELASTIC-METRIC classification.
+        // `check_apex_region` is EUCLIDEAN, `(p - p_apex) >= eta*q`, and says so in
+        // its own comment; the exact test is `(p - p_apex) >= (K*etabar/G)*q`, which
+        // at etabar = 0 (zero dilatancy -- the ADR-95 Prandtl footing deck) collapses
+        // to `p >= p_apex`, because a non-dilatant flank return cannot change the
+        // mean stress AT ALL.  The Euclidean test is then strictly too narrow: every
+        // over-apex state with q > eta*(p - p_apex) is routed to the flank map, whose
+        // scalar Newton cannot close f and exhausts (measured: 435 refusals, floor at
+        // s/B 0.01122).  `cp_apex_region` -- written for ADR-97's `Closest_Point`,
+        // reused verbatim here -- is the same test done family-agnostically inside the
+        // integrator, where E (hence K and G) and the plastic flow direction (hence
+        // etabar) are both in scope: take the linearised cone step and ask whether the
+        // returned deviator has FLIPPED sign.  It is applied ONLY to yield functions
+        // that opt in via `yf_apex_elastic_metric` (today: Drucker-Prager, whose apex
+        // is a cone vertex in the (p, sqrt(J2)) half-plane); every other yield
+        // function keeps its own Euclidean answer and is byte-identical here.
         if constexpr (yf_has_apex<YieldFunctionType>::value)
         {
-            if (yf.check_apex_region(TrialStress, iv_storage, parameters_storage))
+            bool be_in_apex = yf.check_apex_region(TrialStress, iv_storage, parameters_storage);
+            if constexpr (yf_apex_elastic_metric<YieldFunctionType>::value)
             {
-                // Copy out of the YF's return buffer immediately: `apex_stress`
-                // and `df_dsigma_ij` share one mutable member per functor.
-                const VoigtVector sigma_apex = yf.apex_stress(iv_storage, parameters_storage);
-
-                // The apex the YF names must actually BE on its own surface.  This
-                // is what makes the classification safe: a yield function whose
-                // apex geometry is wrong (or whose region test misfires) falls
-                // through to the generic return map instead of committing a
-                // fabricated stress.  NaN-safe: !(x <= tol) is true for NaN.
-                const double f_apex = yf(sigma_apex, iv_storage, parameters_storage);
-                const double f_apex_abs = (f_apex < 0) ? -f_apex : f_apex;
-                if (!(f_apex_abs <= tol_yf))
-                {
-                    if (be_strict)
-                    {
-                        opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
-                               << ") - the trial stress classifies as an APEX state but the "
-                               << "yield function's own apex is not on its surface: |f(sigma_apex)| = "
-                               << f_apex_abs << " > tol = " << tol_yf
-                               << " -- rejecting step (strict_convergence)" << endln;
-                        return LADRUNO_MATERIAL_REFUSED;
-                    }
-                    // fall through to the generic return map
-                }
-                else
-                {
-                    // d eps^p = inv(E) * (sigma_trial - sigma_apex)
-                    const VoigtVector rhs = TrialStress - sigma_apex;
-                    VoigtVector dep = VoigtVector::Zero();
-                    {
-                        Eigen::Matrix<double, 6, 6> E_eig;
-                        Eigen::Matrix<double, 6, 1> rhs_eig;
-                        for (int i = 0; i < 6; ++i)
-                        {
-                            rhs_eig(i) = rhs(i);
-                            for (int j = 0; j < 6; ++j) E_eig(i, j) = Eelastic(i, j);
-                        }
-                        Eigen::Matrix<double, 6, 1> dep_eig;
-                        auto chol = E_eig.selfadjointView<Eigen::Lower>().llt();
-                        if (chol.info() == Eigen::Success) dep_eig = chol.solve(rhs_eig);
-                        else                               dep_eig = E_eig.ldlt().solve(rhs_eig);
-                        for (int i = 0; i < 6; ++i) dep(i) = dep_eig(i);
-                    }
-
-                    // Plastic multiplier: least-squares projection of dep onto the
-                    // apex flow direction.  Both are ENGINEERING-strain-like Voigt
-                    // vectors, so the inner product is the engineering contraction
-                    // (ADR-94 wp/94c, B5) -- not the stress-like one the dead code
-                    // used.
-                    const VoigtVector m_apex = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
-                    const double m_dot_m = tensor_dot_engineering_strain_like(m_apex, m_apex);
-                    double dLambda_apex = 0.0;
-                    if (m_dot_m > MACHINE_EPSILON)
-                    {
-                        dLambda_apex = tensor_dot_engineering_strain_like(m_apex, dep) / m_dot_m;
-                        if (dLambda_apex < 0.0) dLambda_apex = 0.0;   // keep lambda >= 0
-                    }
-
-                    TrialStress          = sigma_apex;
-                    TrialPlastic_Strain  = TrialPlastic_Strain + dep;
-
-                    // Internal variables: ONE hardening evaluation, at the apex.
-                    // Every yield function that opts into `yf_has_apex` today is
-                    // perfectly plastic (Null hardening), so this term is exactly
-                    // zero for them and the IVs are unchanged; it is written this
-                    // way so a hardening Drucker-Prager does not silently freeze.
-                    iv_storage.apply([&](auto & internal_variable)
-                    {
-                        auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
-                        internal_variable.trial_value += dLambda_apex * h;
-                    });
-
-                    // Tangent.  The honest continuum operator at a perfectly plastic
-                    // apex is ZERO: the stress is pinned at sigma_apex, so no strain
-                    // increment that stays in the apex region changes it.  That is
-                    // rank-deficient by construction and will make an element whose
-                    // every Gauss point sits at the apex singular -- which is the
-                    // true state of affairs, and why it is only produced for the
-                    // tangent types the user opts into.  Secant (the DEFAULT) blends
-                    // it with the elastic operator, exactly as the special_return
-                    // path above does, and stays invertible.
-                    {
-                        VoigtMatrix apex_stiff = VoigtMatrix::Zero();
-                        using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
-                        switch (INT_OPT_tangent_operator_type[ASDP_TAG])
-                        {
-                        case TOT::Elastic:
-                            Stiffness = Eelastic;
-                            break;
-                        case TOT::Continuum:
-                        case TOT::Algorithmic:
-                        case TOT::Numerical_Algorithmic_FirstOrder:
-                        case TOT::Numerical_Algorithmic_SecondOrder:
-                            Stiffness = apex_stiff;
-                            break;
-                        case TOT::Secant:
-                        default:
-                            Stiffness = VoigtMatrix((apex_stiff + Eelastic) / 2.0);
-                            break;
-                        }
-                    }
-
-                    return 0;
-                }
+                if (!be_in_apex)
+                    be_in_apex = cp_apex_region(depsilon, TrialStress, Eelastic, yf_val_end, tol_yf);
+            }
+            if (be_in_apex)
+            {
+                const int apex_rc = be_apex_project(depsilon, TrialStress, Eelastic,
+                                                    tol_yf, be_strict, "predictor-classified apex");
+                if (apex_rc > 0)  return 0;
+                if (apex_rc < 0)  return LADRUNO_MATERIAL_REFUSED;
+                // apex_rc == 0: fall through to the generic return map
             }
         }
 
@@ -4731,6 +4784,14 @@ private:
 
         bool be_converged = false; // Ladruno (ADR-84 P2a): only read when strict_convergence is on
 
+        // Ladruno (ADR-94 wp/94f): a HARD failure inside the flank Newton (singular
+        // local tangent, NaN, or -- under strict_convergence -- the plastic
+        // inconsistency branch) no longer returns on the spot.  It breaks out so the
+        // apex fallback below gets its chance; if the fallback declines, the very
+        // same refusal is issued, so the flag-off / no-apex behaviour is unchanged.
+        bool be_flank_failed = false;
+        const char* be_flank_reason = nullptr;
+
         // cout << "BE - Plastic! Begin iterations----------" << endl << endl;
 
         for (int iter = 0; iter < max_iter; ++iter)
@@ -4781,7 +4842,9 @@ private:
                 cout << "  =>  n = " << n.transpose() << endl;
                 cout << "  =>  m = " << m.transpose() << endl;
                 cout << "  =>  H = " << H << endl;
-                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
+                be_flank_failed = true;  // Ladruno (ADR-94 wp/94f): apex fallback first, then refuse
+                be_flank_reason = "singular local tangent (|H - n:E:m| < eps)";
+                break;                   // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
 
             const double deltaLambda = - Phi / dPhi_dLambda;
@@ -4805,11 +4868,12 @@ private:
                 // before the be_strict exhaustion check below, so it was an
                 // eighth silent-accept site inside the DEFAULT integrator.
                 if (be_strict) {
-                    opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
-                           << ") - plastic inconsistency (dLambda + deltaLambda < 0): the"
-                           << " elastic predictor would be committed uncorrected"
-                           << " -- rejecting step (strict_convergence)" << endln;
-                    return LADRUNO_MATERIAL_REFUSED;
+                    // Ladruno (ADR-94 wp/94f): message deferred to the refusal site
+                    // below, so a rescued step does not print a refusal it did not make.
+                    be_flank_failed = true;
+                    be_flank_reason = "plastic inconsistency (dLambda + deltaLambda < 0): the"
+                                      " elastic predictor would be committed uncorrected";
+                    break;
                 }
                 Stiffness = Eelastic;
                 return 0;
@@ -4834,7 +4898,9 @@ private:
             const double norm_trial_stress = TrialStress.transpose() * TrialStress;
             if (!(norm_trial_stress == norm_trial_stress)) { // NaN chec
                cout << "NaN!" << endl;
-                return LADRUNO_MATERIAL_REFUSED;  // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
+                be_flank_failed = true;  // Ladruno (ADR-94 wp/94f): apex fallback first, then refuse
+                be_flank_reason = "the flank return produced a NaN stress";
+                break;                   // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
             }
         }
         // cout << "BE - END iterations----------" << endl << endl;
@@ -4846,20 +4912,77 @@ private:
         // |Phi| >= tol_yf fails loud so the element reports the failure upward.
         // (The last Newton update may have converged without being checked -- the
         // check runs at the top of the next iteration -- so re-evaluate yf here.)
-        if (be_strict && !be_converged)
+        double be_Phi_final = 0.0;
+        bool   be_exhausted = false;   // Ladruno (ADR-94 wp/94f)
+        if (be_strict && !be_converged && !be_flank_failed)
         {
-            const double Phi_final = std::abs(yf(TrialStress, iv_storage, parameters_storage));
-            if (Phi_final >= tol_yf)
+            be_Phi_final = std::abs(yf(TrialStress, iv_storage, parameters_storage));
+            be_exhausted = (be_Phi_final >= tol_yf);
+        }
+
+        // Ladruno (ADR-94 wp/94f): LAYER (b) -- FLANK-FIRST APEX FALLBACK.
+        // This block fires at EXACTLY the sites that would otherwise return
+        // LADRUNO_MATERIAL_REFUSED (Newton exhaustion under strict_convergence, a
+        // singular local tangent, a NaN stress, the strict plastic-inconsistency
+        // branch) and only for yield functions that declare an apex.  A trial state
+        // whose MEAN STRESS is already beyond the apex has no admissible flank
+        // return -- with zero dilatancy the flank map cannot move p at all -- so the
+        // apex projection, not a refusal, is the right answer.  Every other outcome
+        // is unchanged: if the trial is not beyond the apex, or the yield function's
+        // own apex fails the |f(sigma_apex)| <= tol_yf guard, the same refusal is
+        // issued with the same sentinel.  Yield functions that opt in through
+        // `yf_has_apex` today: DruckerPrager, MohrCoulomb<NO_HARDENING>,
+        // HoekBrown<NO_HARDENING>, TensionCutoff<NO_HARDENING>; for the latter three
+        // this can only convert a refusal into an admissible vertex state.
+        if constexpr (yf_has_apex<YieldFunctionType>::value)
+        {
+            if (be_flank_failed || be_exhausted)
             {
-                opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
-                       << ") - scalar Newton exhausted " << max_iter
-                       << " iterations without converging: |Phi| = " << Phi_final
-                       << " >= tol_yf = " << tol_yf
-                       << " -- rejecting step (strict_convergence)" << endln;
-                // Ladruno (ADR-84 -> ADR-86b): was a bare -1; same rationale as the
-                // special_return fallback above. See LadrunoMaterialStatus.h.
-                return LADRUNO_MATERIAL_REFUSED;
+                // Rewind to the elastic predictor: the failed iteration has already
+                // moved the stress, the plastic strain and the internal variables.
+                iv_storage.revert_all();
+                TrialStress         = be_sigma_trial_elastic;
+                TrialPlastic_Strain = CommitPlastic_Strain;
+
+                const VoigtVector sigma_apex_probe = yf.apex_stress(iv_storage, parameters_storage);
+                const double p_apex  = sigma_apex_probe.meanStress();
+                const double p_trial = be_sigma_trial_elastic.meanStress();
+
+                if (p_trial > p_apex)
+                {
+                    const int apex_rc = be_apex_project(depsilon, be_sigma_trial_elastic, Eelastic,
+                                                        tol_yf, be_strict, "flank-first apex fallback");
+                    if (apex_rc > 0)
+                    {
+                        if (ladruno_strict_rejects("Backward_Euler (apex fallback)", TrialStress))
+                            return LADRUNO_MATERIAL_REFUSED;
+                        return 0;
+                    }
+                    // apex_rc <= 0: the yield function's own apex is not on its own
+                    // surface -- refuse below, exactly as before the fallback existed.
+                }
             }
+        }
+
+        if (be_flank_failed)
+        {
+            opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                   << ") - " << (be_flank_reason ? be_flank_reason : "flank return map failed")
+                   << " -- rejecting step" << endln;
+            // Ladruno (ADR-94 wp/94a): was a bare -1, dropped by every hex host
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+
+        if (be_exhausted)
+        {
+            opserr << "ASDPlasticMaterial3D::Backward_Euler (tag " << ASDP_TAG
+                   << ") - scalar Newton exhausted " << max_iter
+                   << " iterations without converging: |Phi| = " << be_Phi_final
+                   << " >= tol_yf = " << tol_yf
+                   << " -- rejecting step (strict_convergence)" << endln;
+            // Ladruno (ADR-84 -> ADR-86b): was a bare -1; same rationale as the
+            // special_return fallback above. See LadrunoMaterialStatus.h.
+            return LADRUNO_MATERIAL_REFUSED;
         }
 
         // Ladruno (ADR-94 wp/94a)
