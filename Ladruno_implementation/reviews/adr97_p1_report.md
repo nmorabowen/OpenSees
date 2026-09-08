@@ -124,8 +124,11 @@ contrast above is the same statement made measurable from the binary.
 
 * **23 decks / 282 committed-stress rows BYTE-IDENTICAL** against the
   pre-change binary `3622d6214`, each re-run in a FRESH SUBPROCESS
-  (`Ladruno_implementation/adr97_oracle/baselines/`). 5 representative decks run
-  on every push; the full sweep is `@pytest.mark.slow` (4 min 10 s).
+  (`Ladruno_implementation/adr97_oracle/baselines/`). Comparison is `==` on the
+  doubles, not `allclose`. The whole file runs in **6.0 s** — a child costs
+  0.2 s — so both the representative slice and the full sweep run on every push
+  (it was written as `@pytest.mark.slow` on the assumption that 23 interpreter
+  starts would cost minutes; measuring was cheaper than assuming).
 * CP ≡ BE on **non-rotating-normal** perfectly plastic decks:
   0.0 (VM simple shear), 1.6e-33 (VM triaxial), 3.8e-17 (DP compression) —
   the two maps are the same point when the flow direction does not rotate.
@@ -134,7 +137,13 @@ contrast above is the same statement made measurable from the binary.
 
 ### Gate 5 — mutation
 
-See §5.
+Dropping the `dl · dm/dσ` term of `Xi` from the Jacobian on a scratch build
+turns `Algorithmic` into **exactly** `Continuum`: the free-DOF finite-difference
+error goes 1.51e-11 → **0.573447** (4 DOF) and 2.15e-10 → **0.670133** (12 DOF),
+both matching the P0 oracle's `Backward_Euler`/`Continuum` values to every digit
+printed. 4 tests killed, 39 survivors — every survivor a case the mutation
+provably cannot reach (the residual is untouched, so the committed stress stays
+exact). Full record: [[reviews/adr97_p1_mutation]].
 
 ### Gate 6 — fail-loud (`tests/test_adr97_p6_failloud.py`)
 
