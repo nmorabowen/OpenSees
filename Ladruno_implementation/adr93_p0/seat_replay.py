@@ -13,7 +13,7 @@ zero-increment wall census (`census_wall_ele4095.csv`, s/B 0.017842) -- an INFER
 that enters ONLY the error denominator (`P_atm |eps|` is ~1.7 % of `den`).
 
     python3.12 seat_replay.py            # everything
-    python3.12 seat_replay.py --only gate|diag|probe|repro|prevent
+    python3.12 seat_replay.py --only gate|diag|probe|repro|prevent|p29
 
 numpy only, python3.12, no binary.
 """
@@ -201,9 +201,178 @@ def fmt(x, p=4):
 
 # ------------------------------------------------------------------ main
 
+# ------------------------------------------------------- 6. ADR-92 P2-9: f*
+
+def f_star(A, B, f_max):
+    """`f* = clamp((A:B)/(B:B), 0, f_max)` -- the P2-9 operator, verbatim.
+
+    `dd_contr` is the CONTRAVARIANT double contraction (shear counted twice); both
+    operands are stress-like, and `norm_contr(A - f B)**2 == dd_contr(A-fB, A-fB)`, so
+    `f*` minimises exactly the quantity `implex_err` measures.  Returns (f, A:B, B:B).
+    """
+    BB = dd_contr(B, B)
+    if BB <= 0.0:                     # no plastic history: the term is 0 for every f
+        return 0.0, 0.0, 0.0
+    AB = dd_contr(A, B)
+    f = AB / BB
+    return (0.0 if f < 0.0 else (f_max if f > f_max else f)), AB, BB
+
+
+def p29_seat(st331, st332, eps331, eps332, deps, dep_n, dep_332, Ce, sig_n):
+    """The registered P2-9 row: the seat's own step, `f = 1` -> `f*`."""
+    print("\n" + "-" * 78)
+    print("6. ADR-92 P2-9 -- the control-informed factor f* AT THE SEAT")
+    print("-" * 78)
+    sig_impl = st332["sig"]
+    f_max = st332["f"]
+    A = sig_n + Ce @ deps - sig_impl
+    B = Ce @ dep_n
+    fs, AB, BB = f_star(A, B, f_max)
+    den = den_of(sig_impl, eps332)
+    e_today = implex_err(sig_n + Ce @ (deps - f_max * dep_n), sig_impl, eps332)
+    e_zero = implex_err(sig_n + Ce @ deps, sig_impl, eps332)
+    e_star = implex_err(sig_n + Ce @ (deps - fs * dep_n), sig_impl, eps332)
+    cos = AB / (norm_contr(A) * norm_contr(B))
+    print(f"  the companion IS sigma_impl: under -implexControl the binary computes it "
+          f"at the trial,\n  so A and B are both available BEFORE the element sees a "
+          f"stress.")
+    print(f"    |A| = |sigma_n + Ce:d_eps - sigma_impl| = {norm_contr(A):9.4f} kPa"
+          f"   ( = |Ce:d_eps_p(n+1)|, the identity of section 4 )")
+    print(f"    |B| = |Ce:d_eps_p(n)|                   = {norm_contr(B):9.4f} kPa"
+          f"   ( {norm_contr(B)/norm_contr(A):.1f}x |A| -- the stale history )")
+    print(f"    A:B {AB:+.4e}   B:B {BB:.4e}   cos(A,B) {cos:+.4f}")
+    print(f"    f_max (today's f, = alpha dt_(n+1)/dt_n) {f_max:.4f}"
+          f"   ->   f* = clamp(A:B/B:B, 0, f_max) = {fs:.6f}")
+    print(f"    {'arm':<34}{'f':>10}{'err':>10}{'x binary':>10}")
+    for lab, f_, e_ in (("(0) as shipped (f = f_max)", f_max, e_today),
+                        ("(v) P2-9  f = f*", fs, e_star),
+                        ("floor: no extrapolation (f = 0)", 0.0, e_zero)):
+        print(f"    {lab:<34}{f_:>10.6f}{e_:>10.4f}{e_/st332['err']:>10.3f}")
+    print(f"    binary's committed err at step 332: {st332['err']:.4f}")
+    print(f"    PREDICTION (plan section 2): err 0.46 -> <= 0.05, refuted if > 0.1"
+          f"   ==>  {e_star:.4f}  "
+          f"{'PASS' if e_star <= 0.05 else ('REFUTED' if e_star > 0.1 else 'PARTIAL')}")
+    print(f"  NOTE. f* is the minimiser of |A - f B| over [0, f_max] and BOTH 0 and "
+          f"f_max lie\n  in that interval, so err(f*) <= min(err(0), err(f_max)) is an "
+          f"IDENTITY at one point,\n  not a measurement. What is measured is the margin:"
+          f" {e_star:.4f} vs the f = 0 floor {e_zero:.4f}\n  "
+          f"(= sin of the angle between A and B: {math.sqrt(max(0.0,1-cos*cos)):.4f}).")
+    return fs, e_star, e_today, e_zero
+
+
+def p29_ladder(st331, eps331, deps, Ce, sig_n, sig_impl, eps332, f_max, err_bin):
+    """f* ALONG THE SEAT PATH -- the history magnitude swept over four decades.
+
+    The seat's own `d_eps_p(n)` is not dumped anywhere; section 4 CALIBRATES it by the
+    error it produced.  This sweeps the same one-parameter family (the same state, the
+    same direction `u`, the strain magnitude `t`) so `f*` is read across the whole range
+    from "the history matches the step" to "the history is 20x the step" -- the seat.
+    """
+    print("\n" + "-" * 78)
+    print("7. f* ALONG THE SEAT PATH (history magnitude swept; the seat is marked)")
+    print("-" * 78)
+    u = deps / norm_contr(to_contra(deps))
+    t332 = norm_contr(to_contra(deps))
+    A = sig_n + Ce @ deps - sig_impl
+    print(f"    {'|d_eps(n)|':>12}{'/step332':>9}{'|B|':>10}{'cos(A,B)':>10}"
+          f"{'f_max':>7}{'f*':>10}{'err D':>9}{'err f_max':>10}{'err f=0':>9}"
+          f"{'sub':>5}")
+    rows, backoff = [], 0
+    ts = [t332 * m for m in (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 16.0, 20.0, 24.0)]
+    for t in ts:
+        try:
+            g = run_implicit(st331, eps331, t * u)
+        except (Abandoned, OverflowError):
+            print(f"    {norm_contr(to_contra(t*u)):>12.4e}  ABANDONED")
+            continue
+        B = Ce @ g["deps_p"]
+        fs, AB, BB = f_star(A, B, f_max)
+        cos = AB / (norm_contr(A) * norm_contr(B)) if BB > 0 else float("nan")
+        eD = implex_err(sig_n + Ce @ (deps - fs * g["deps_p"]), sig_impl, eps332)
+        eF = implex_err(sig_n + Ce @ (deps - f_max * g["deps_p"]), sig_impl, eps332)
+        e0 = implex_err(sig_n + Ce @ deps, sig_impl, eps332)
+        mark = "  <- the seat (calibrated)" if abs(eF - err_bin) / err_bin < 0.02 else ""
+        if fs < 0.5 * f_max:
+            backoff += 1
+        rows.append((t, fs, eD, eF, e0))
+        print(f"    {norm_contr(to_contra(t*u)):>12.4e}{t/t332:>9.2f}"
+              f"{norm_contr(B):>10.4f}{cos:>10.4f}{f_max:>7.2f}{fs:>10.6f}"
+              f"{eD:>9.4f}{eF:>10.4f}{e0:>9.4f}{g['substeps']:>5}" + mark)
+    n = len(rows)
+    print(f"    f* < 0.5 f_max on {backoff}/{n} rows = {100.0*backoff/max(n,1):.0f} % "
+          f"(the census slot the plan asks for: the operator 'backed off')")
+    print(f"    max err over the sweep:  D {max(r[2] for r in rows):.4f}"
+          f"   f_max {max(r[3] for r in rows):.4f}   f=0 {max(r[4] for r in rows):.4f}")
+    return rows
+
+
+def p29_forward(st331, eps331, deps, nstep=40):
+    """A genuine MULTI-STEP path from the seat state: forms A and D, step by step.
+
+    The census dumps only two committed rows at the seat, so a multi-step `f*` table has
+    to be generated: continue from the row-331 committed state along the step-332 strain
+    direction at the step's own magnitude, once with today's `f` (form A) and once with
+    `f*` (form D).  ONE trial per step -- the plan's "frozen at the first d_eps" and
+    "the converged d_eps" coincide here, so this isolates the operator from the
+    predictor question that GD.4 raises.
+    """
+    print("\n" + "-" * 78)
+    print(f"8. MULTI-STEP continuation from the seat state ({nstep} steps along the "
+          f"step-332 direction)")
+    print("-" * 78)
+    eps0 = eps331.copy()
+
+    def run(form):
+        mm = seeded(st331, eps331)
+        ix = Implex(mm, form=form, alpha=1.0)
+        errs, fh = [], []
+        for k in range(1, nstep + 1):
+            et = eps0 + k * deps
+            ix.extrapolate(et)
+            try:
+                ix.commit(et)
+            except (Abandoned, OverflowError):
+                break
+            errs.append(ix.errors[-1])
+            fh.append(ix.hist[-1]["f_used"])
+        return errs, fh, ix
+
+    eA, fA, ixA = run("A")
+    eD, fD, ixD = run("D")
+    # f = 0: no extrapolation at all
+    mm = seeded(st331, eps331)
+    ix0 = Implex(mm, form="A", alpha=0.0)
+    e0 = []
+    for k in range(1, nstep + 1):
+        et = eps0 + k * deps
+        ix0.extrapolate(et)
+        try:
+            ix0.commit(et)
+        except (Abandoned, OverflowError):
+            break
+        e0.append(ix0.errors[-1])
+    n = min(len(eA), len(eD), len(e0))
+    print(f"    {'step':>6}{'f_max':>8}{'f*':>10}{'err D':>11}{'err f_max':>11}"
+          f"{'err f=0':>11}")
+    for k in range(n):
+        if k < 12 or k % 5 == 0 or k == n - 1:
+            print(f"    {331+k+1:>6}{1.0:>8.2f}{fD[k]:>10.6f}{eD[k]:>11.4e}"
+                  f"{eA[k]:>11.4e}{e0[k]:>11.4e}")
+    back = sum(1 for h in ixD.f_hist if h["BB"] > 0.0 and h["f_star"] < 0.5 * h["f_max"])
+    npl = sum(1 for h in ixD.f_hist if h["BB"] > 0.0)
+    print(f"    steps {n}   plastic (B:B > 0) {npl}   f* < 0.5 f_max on {back} "
+          f"= {100.0*back/max(npl,1):.0f} %   f* = 0 on {ixD.d_zero}   "
+          f"companion refusals {ixD.d_probe_fail}")
+    print(f"    mean err   D {float(np.mean(eD[:n])):.4e}   f_max "
+          f"{float(np.mean(eA[:n])):.4e}   f=0 {float(np.mean(e0[:n])):.4e}")
+    print(f"    max  err   D {max(eD[:n]):.4e}   f_max {max(eA[:n]):.4e}   "
+          f"f=0 {max(e0[:n]):.4e}")
+    return eA, eD, e0, ixD
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="all")
+    ap.add_argument("--only", default="all",
+                    choices=["all", "gate", "diag", "probe", "repro", "prevent", "p29"])
     a = ap.parse_args()
     only = a.only
 
@@ -231,7 +400,7 @@ def main():
           f"= {100*MATERIAL['P_atm']*norm_contr(eps331)/den_of(st331['sig'], eps331):.2f} % of den")
 
     deps = None
-    if only in ("all", "gate", "probe", "repro", "prevent"):
+    if only in ("all", "gate", "probe", "repro", "prevent", "p29"):
         print("\n" + "-" * 78)
         print("1. REPRODUCTION GATE -- invert d_eps for step 332 from state 331")
         print("-" * 78)
@@ -314,7 +483,7 @@ def main():
         print("  (Ce is the FROZEN committed operator; |sig_n| = "
               f"{norm_contr(sig_n):.3f} kPa, G = {Ce[3,3]:.1f} kPa)")
 
-    if only in ("all", "repro", "prevent") and deps is not None:
+    if only in ("all", "repro", "prevent", "p29") and deps is not None:
         print("\n" + "-" * 78)
         print("4. REPRODUCE the committed error of step 332 (f = 1 exact)")
         print("-" * 78)
@@ -406,6 +575,14 @@ def main():
                 print(f"  (iv) history+dt from step 329 ({lab}): ABANDONED -- {exc}")
         print(f"  floor: with NO extrapolation term at all (f = 0) the error is "
               f"{implex_err(sig_n + Ce @ deps, st332['sig'], eps332):.4f}")
+
+    # ---------------------------------------------------------------- ADR-92 P2-9
+    if only in ("all", "p29") and deps is not None:
+        dep_n, t_cal, u, Ce, sig_n, dep_332 = globals()["_CAL"]
+        p29_seat(st331, st332, eps331, eps332, deps, dep_n, dep_332, Ce, sig_n)
+        p29_ladder(st331, eps331, deps, Ce, sig_n, st332["sig"], eps332,
+                   st332["f"], st332["err"])
+        p29_forward(st331, eps331, deps)
 
 
 if __name__ == "__main__":
