@@ -1,4 +1,4 @@
-"""ADR-97 P0 oracle 5/5 -- ELEMENT-LEVEL free-DOF finite-difference tangent check
+"""ADR-97 P0 oracle 6/6 -- ELEMENT-LEVEL free-DOF finite-difference tangent check
 for the fork itself.  Model-independent: it never consults a numpy oracle, only
 the binary's own assembled residual.
 
@@ -246,7 +246,7 @@ def try_material(**kw):
 # ---------------------------------------------------------------------------
 def main():
     print("=" * 78)
-    print("ADR-97 oracle 5/5 -- element-level free-DOF FD tangent check")
+    print("ADR-97 oracle 6/6 -- element-level free-DOF FD tangent check")
     print("=" * 78)
     print("build:", ops.ladrunoBuild())
     print()

@@ -2,7 +2,7 @@
 
     python3.12 Ladruno_implementation/adr97_oracle/run_all.py
 
-The first four oracles are pure numpy.  ``fd_tangent_driver.py`` needs the built
+The first five oracles are pure numpy.  ``fd_tangent_driver.py`` needs the built
 OpenSeesPy module; give it a PYTHONPATH, e.g.::
 
     LADRUNO_OPENSEES_QUIET=1 \\
@@ -20,8 +20,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["cppm_vm.py", "cppm_dp.py", "cppm_mc.py", "path_independence.py",
-           "fd_tangent_driver.py"]
+SCRIPTS = ["cppm_vm.py", "cppm_dp.py", "cppm_mc.py", "cppm_hb.py",
+           "path_independence.py", "fd_tangent_driver.py"]
 OUT = os.path.join(HERE, "reference_output.txt")
 
 

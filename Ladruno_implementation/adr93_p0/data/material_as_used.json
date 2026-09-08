@@ -1,0 +1,70 @@
+{
+ "provenance": "declared.material_common + declared.column.flags of the SIBLING leg D-L-dl-vt-dense-q10-grow-implex; the four -sp- legs had not written run.json when this P0 ran (still in flight).",
+ "build": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+ "material_common": {
+  "G0": 264.32,
+  "nu": 0.3129,
+  "e_init": 0.6271,
+  "Mc": 1.3309,
+  "c": 0.71,
+  "lambda_c": 0.027,
+  "e0": 0.83,
+  "ksi": 0.45,
+  "Patm": 101.0,
+  "m": 0.005,
+  "h0": 1.3,
+  "ch": 0.968,
+  "nb": 3.5,
+  "A0": 0.05,
+  "nd": 5.75,
+  "zmax": 12.5,
+  "cz": 1100.0,
+  "Den": 2.0,
+  "IntScheme": 1,
+  "TanType": 2,
+  "TanType_superseded": 0,
+  "TanType_declaration": "WHAT IT SELECTS.  `ManzariDafalias3D::getTangent()` returns `mCe` for 0, `mCep` for 1 and `mCep_Consistent` for anything else (SRC/material/nD/UWmaterials/ManzariDafalias3D.cpp:134-142).  `mCe` is the ELASTIC tangent, so AT TanType 0 `algorithm Newton` IS MODIFIED NEWTON.  The parser default is 0 (SRC/.../LadrunoSANISAND.cpp:117, copied deliberately from `OPS_ManzariDafaliasMaterial` so a renamed deck behaves identically) while the material's own null and parallel constructors default to 2 (ManzariDafalias.cpp:365, :426).  This sheet declared 0 explicitly from the first leg, which made the harness HONEST about what it did and did not make it RIGHT: every D-V, D-L, U-V and U-L leg run before 2026-09-06 gave Newton the elastic tangent.  ADR 90 section 1.2.2 (fork, 2026-09-05) reports it as a fork-wide deck defect, invisible on the zero-free-DOF material-point decks every fork SANISAND test uses and worth about 7x on a boundary-value problem; section 5.1 measures the extreme case, an h0 = 0.25 leg advancing 11 steps to s/B = 1.6e-4 in 350 s at the parser default. MEASURED HERE 2026-09-06 on cell D-V, coarse mesh, build e95a1c74f7e15d7de8655eeeb004d7f34d81d512, host nmbMain, driver Tries/response-curve-matrix/model/harness/drive.py, strict ladder, ds pinned at 1e-4 m both ways, 900 s of push each, evidence labs/ape/response-curve-matrix/level3/D-V-s19-a-tan0-disp/coarse/out/ and .../D-V-s19-b-tan2-disp/coarse/out/.  At the declared NormDispIncr 1e-5 the tangent is worth, on this drained push: MEDIAN ITERATIONS PER STEP 10 -> 7, MAXIMUM 29 -> 8, WALL 28.81 -> 19.64 s a step (1.47x), REACH in a fixed budget s/B 0.00200 -> 0.00273 (37 % further), and the FIRST STEP moves from the line-search rung to plain Newton -- leg a's step 1 needed 25 failed Newton iterations and then NewtonLineSearch, leg b's took 8 iterations of plain Newton.  Every row of leg b is on rung 0; neither leg subdivided. NOT the 7x ADR 90 reports, and the direction is the same: 1.47x on wall and 1.43x on iterations at 21 058 DOF on the coarse mesh.  The ~7x is a boundary-value figure from a different deck, mesh and lane and is not reproduced here; nothing in this act should quote it as ours. AND THE CURVE DOES NOT MOVE.  Q at matched settlement, leg b against leg a, is +0.12 to +0.28 % over rows 3 to 30 and -0.55 % on row 1 (the row the step-size tripwire already says is an elastic predictor).  That is well inside this act's own solver-configuration floor -- Esmeralda's UmfPack against this desktop's Pardiso reads 2.8 % on D-L at matched settlement -- and inside ADR 90 section 5.3's 0.52 % across a complete configuration change.  So the consistent tangent is FREE: the same answer, sooner. AND IT IS NOT FREE ON D-L, WHICH IS THE OTHER HALF OF THIS DECLARATION. Cell D-L is `LadrunoSANISAND` with `-Presidual 0.0`, so the stress-free ring beside the footing edge has no strength AND, for SANISAND, no stiffness: the assembled tangent there is locally ABSENT.  `mCe` is nonsingular everywhere by construction, so at TanType 0 modified Newton keeps producing a correction at a point where the true tangent has none and limps on until the residual itself stops falling; `mCep_Consistent` reports the absence as soon as the ring's Gauss points reach it.  MEASURED 2026-09-06, evidence labs/ape/response-curve-matrix/level3/D-L-s19-dl-strict-tan2/coarse/out/ against cluster job 146299 (.../D-L-dl-strict-ds1e-4/, build a71cdb197, node14): the two legs are THE SAME PROBLEM \u2014 Q at exactly matched settlement agrees to -0.12 to -0.24 % over 140 rows, across two machines, two builds and two tangents \u2014 and the TanType 2 leg meets its FIRST Newton failure at s/B = 0.00927 and its first subdivision at 0.00933, against the TanType 0 leg's 0.01533.  The 0.0206 that leg is recorded as walling at is where its SUBDIVISION BUDGET ran out, not where it stopped converging. THE DECLARATION IS STILL 2, and the reason is the one this act applies to the relaxed ladder rung: a state reached by a correction that is not a Newton step for the problem is not an equilibrium the leg claimed.  But the cost is real and is declared with it \u2014 a D-L leg that wants REACH may take `--tantype 0` and MUST say so in its own note, because its rows past s/B 0.00933 were carried by a tangent the problem does not have.  The clean comparison is still missing: a desktop TanType 0 D-L leg at build e95a1c74f carried past 0.0153, and a TanType 2 + `NormUnbalance` 1e-5 W D-L leg, neither of which has run. SCOPE.  This is a DRAINED measurement.  The undrained row's own S7b paragraph records `TanType` 0, 1 and 2 as indistinguishable, and that was measured on ONE STEP -- the undrained FIRST push step -- where the binding constraint is the near-incompressible u-p coupling and not the tangent; see `push.push_increment_declaration`, which now carries that caveat.  The undrained row has NOT been re-measured at TanType 2 over a push.  It takes the amended declaration because the tangent is a solver choice and cannot move a converged answer, and the first undrained leg run under it should say in its own note whether the cost moved. REACHABLE IN ONE WORD: `drive.py --tantype 0` restores the old declaration exactly, and `--tantype 1` gives the continuum elastoplastic tangent, which nothing in this act has measured.  Refused on D-MC and D-DP, whose materials have no such parameter.\n",
+  "JacoType": 1,
+  "TolF": 1e-10,
+  "TolR": 1e-10,
+  "_implex": {
+   "enabled": true,
+   "max_substeps": 20000,
+   "control": {
+    "tol": 0.1,
+    "reduction_limit": 0.01
+   },
+   "alpha": null,
+   "dt": [
+    "strain"
+   ],
+   "dt_source": "strain (declared by --implex-dt; the guide sect. 5 prescribes strain or user under DisplacementControl, whose ops_Dt is d(lambda) and can change sign)",
+   "stage_rule": "IMPL-EX IS INERT AT STAGE 0, and this harness's S1-S4 are stage 0. `mElastFlag` \u2014 a STATIC, flipped for every SANISAND instance at once by `updateMaterialStage` \u2014 gates `integrate()`'s elastic branch, and while it is 0 the extrapolated path is unreachable.  So gravity (S1), the plastic admission's `LoadControl 0.0` re-equilibration (S2), the consolidation hold (S3) and the reference state (S4) are BIT-IDENTICAL with the flag on or off, and IMPL-EX's own history \u2014 `d_eps_p(n)` and the `dt` bookkeeping \u2014 initialises at the flip to `updateMaterialStage 1`, not before it.  The four S4 gates therefore read the same on an --implex leg as on an implicit one, and any difference between the two is a difference in the PUSH.\nTHE FIRST PLASTIC STEP AFTER THE FLIP IS EXEMT FROM `-implexControl` REFUSAL, by the fork's own design and not by our leniency. `d_eps_p(n) = eps_p(n) - eps_p(n-1)` is identically zero on that one step (there is no committed plastic history yet), so `sigma~ = sigma_n + Ce:d_eps` is a pure elastic predictor with no extrapolation to be wrong about.  The `implexError` measured there is the companion's own DRIFT-CORRECTION JUMP from wherever the elastic stage left the stress to the first plastic return; it does not shrink with `d_eps`, and refusing on it means refusing forever.  The fork measured exactly that before the fix (`_adr92_p1_bvp_gate_rerun.md`): the registered arm refused step 1 of every stage at `implexError` 0.13-0.30 against `tol = 0.05`, before any real extrapolation had happened.  The error is still COMPUTED and REPORTED on that step through `implexError` / `implexDetail` / `avgImplexError`; only the refusal is suppressed, and only there.  Every later step in the stage is primed and refused normally.  Read beside this act's own step-size tripwire, which reports eta after step 1 against M_c for the same reason: the first row of a push is not a stiffness and is not an error either.\n",
+   "reading_hazard": "AN --implex CURVE SATISFIES EQUILIBRIUM WITH THE EXTRAPOLATED STRESS, NOT THE IMPLICIT ONE.  A limit point, a plateau or a capacity read off one is NOT EVIDENCE OF ANYTHING ON ITS OWN.  The guide's section 8 states the discipline and this sheet adopts it whole:\n\n  1. CONFIRM ON THE IMPLICIT MATERIAL, and only over the OVERLAP \u2014 up to\n     the last settlement the implicit solver itself reaches.  Two arms\n     disagreeing at depths beyond where the implicit run reaches proves\n     nothing either way, in either direction.  Every --implex leg of this\n     act therefore has an implicit twin submitted beside it, identical in\n     every other word, and neither is read alone.\n  2. PRINT `implexError` BESIDE EVERY VERDICT.  `curve.csv` carries\n     `implex_err_max` on every row of an --implex curve \u2014 the true maximum\n     over every SANISAND Gauss point at that row's commit, not a sample,\n     because the point about to be wrong is the one under the footing edge\n     \u2014 `run.json` carries `implex_err_max`, `implex_err_avg` and the\n     four-way refusal ledger, and the run log prints all three immediately\n     above the WP1 verdict line.\n  3. NO WIDTH IS A WIDTH.  IMPL-EX is a regularizer with the structure of\n     an artificial viscosity and ITS PARAMETER IS THE STEP SIZE, which has\n     no length in it.  Any band, shear-band width or post-peak branch read\n     off an --implex leg is regularized by `dt`; mesh dependence is NOT\n     removed.  S8g's band plates must not be extracted from one without\n     this sentence attached.\n\nThis is the same lesson `2026-09-05 \u2014 Relaxation and Memory` already cost this act once, from the other direction: a solver that finds an exact equilibrium on a wrong path is the most dangerous instrument the campaign owns.  Dynamic relaxation loaded SANISAND's memory inside a hold; IMPL-EX solves an exactly-satisfied equilibrium of a stress that is not the material's.  Neither is refused here; both are declared, twinned and read against an implicit control.\n",
+   "guide": "Ladruno_implementation/LadrunoSANISAND_implex_guide.md @ c162833ed",
+   "adr": "Ladruno_implementation/92_ladruno_sanisand_implex_adr.md"
+  }
+ },
+ "column_flags": {
+  "-Presidual": 1.01,
+  "-Pmin": 0.0101,
+  "-honorTolR": 0
+ },
+ "e_init_by_leg": {
+  "dense": 0.6271,
+  "gorini": 0.6944
+ },
+ "material_flags_ADR92": {
+  "enabled": true,
+  "max_substeps": 20000,
+  "control": {
+   "tol": 0.1,
+   "reduction_limit": 0.01
+  },
+  "alpha": null,
+  "dt": [
+   "strain"
+  ]
+ },
+ "surcharge_kPa": 10.0
+}

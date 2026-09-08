@@ -6,7 +6,7 @@ Every gate in these scripts is an assert; a clean exit IS the pass.
 ##### cppm_vm.py  (exit 0) #####
 
 ==============================================================================
-ADR-97 oracle 1/5 -- VON MISES closest-point return map
+ADR-97 oracle 1/6 -- VON MISES closest-point return map
 ==============================================================================
 Conventions: tension-positive, Voigt [11 22 33 12 23 13], engineering
 shear, VOIGT (doubled-shear) YF/PF derivatives, SQRT_2_over_3 =
@@ -314,7 +314,7 @@ VON MISES REFERENCE BLOCK (values C++ tests pin)
 ##### cppm_dp.py  (exit 0) #####
 
 ==============================================================================
-ADR-97 oracle 2/5 -- DRUCKER-PRAGER cone + apex closest-point map
+ADR-97 oracle 2/6 -- DRUCKER-PRAGER cone + apex closest-point map
 ==============================================================================
 Material: E = 30000, nu = 0.25, xi_c = 20, eta = 0.4 (apex at p = +50, TENSION positive).
 K = 20000, G = 12000, so the exact apex-boundary slope K*etabar/G is
@@ -550,7 +550,7 @@ DRUCKER-PRAGER REFERENCE BLOCK (values C++ tests pin)
 ##### cppm_mc.py  (exit 0) #####
 
 ==============================================================================
-ADR-97 oracle 3/5 -- MOHR-COULOMB principal-space return (Clausen)
+ADR-97 oracle 3/6 -- MOHR-COULOMB principal-space return (Clausen)
 ==============================================================================
 Material: E = 30000, nu = 0.25, phi = 30 deg, psi = 10 deg (NON-associated), c = 10.
 Apex (tension-positive) = c/tan(phi) = 17.3205080757 on the hydrostatic axis.
@@ -787,10 +787,333 @@ MOHR-COULOMB REFERENCE BLOCK (values C++ tests pin)
   not cross a region boundary.
 
 
+##### cppm_hb.py  (exit 0) #####
+
+==============================================================================
+ADR-97 oracle 4/6 -- HOEK-BROWN principal-space return (Clausen & Damkilde 2008)
+==============================================================================
+Material (identical to tests/test_adr94_hlist_hb.py): sigma_ci = 50000.0 kPa, mi = 10, GSI = 60, D = 0, E = 50000000.0 kPa, nu = 0.25,
+HB_mb_psi = mb (the deck's associated setting)
+  -> mb = 2.396510364418   s = 0.011743628457   a = 0.502840500848
+  -> tensile strength T = s*sigma_ci/mb = 245.0151818950 kPa (APEX_STRESS = T*[1,1,1], tension-positive)
+  -> YF_STRENGTH_SCALE = sigma_ci*s^a = 5350.4268083793 kPa
+
+------------------------------------------------------------------------------
+the max(f_shear, f_tension) regime switch, and the apex region
+------------------------------------------------------------------------------
+    (a) ON the surface f_shear is ALWAYS the active branch (except at the apex,
+        where both vanish): tension-branch points 0 / 4000, min(f_shear - f_tension)
+        = 1.004212e-04.  So the plane y1 = T carries NO face -- no tension return.
+    (b) OUTSIDE the domain the tension branch wins exactly on {y1>T and y3>T},
+        i.e. on the header's own CHECK_APEX_REGION set: mismatches = 0 / 4000.
+    (c) INSIDE the domain the tension branch is often the max (y = [0,-500,-1000]:
+        f_shear = -4350.427, f_tension = -245.015), so the composite's KINK lies
+        strictly inside: it moves f's value and gradient where nothing yields, and
+        the header's central-difference df/dsigma takes a chord across it.
+    (d) the SHEAR/TENSION CORNER is the apex itself, and a return onto the tension
+        plane is never right.  Trial x_tr = [645. 265. 255.] (f_tension IS its max):
+        Rankine return along D3*e1 -> y = [245.015182 131.671727 121.671727],
+        f_shear = +123.343455 kPa INADMISSIBLE (2.31% of strength_scale);
+        the closest point is y = [244.881187 131.82023  122.399734] (face).
+    (e) cost of the header's EUCLIDEAN CHECK_APEX_REGION on that same trial: it
+        says APEX (all principals >= T = 245.015182) but the exact elastic-metric
+        test C3*(x-apex) = [ 7.8498481811e-06 -1.6501518189e-06 -1.9001518189e-06] has negative
+        entries -> NOT apex.  APEX_STRESS would commit T*[1,1,1], i.e. |dsigma|_inf =
+        122.615448 kPa (2.292% of strength_scale) of silently lost strength --
+        admissible but wrong.  D3*(octant) is a strict SUBSET of the octant, so the
+        header always OVER-claims the apex, never under-claims.
+
+------------------------------------------------------------------------------
+g vs f: HoekBrown_PF::g is evaluated in the un-negated frame
+------------------------------------------------------------------------------
+    probe stress (compressive) = [-2.00000000e+03 -6.00000000e+03 -2.50000000e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    mb_psi =  2.396510: header dg/dsigma (its own central difference) = [ 0.99999999  0.         -0.99999999  0.          0.          0.        ], trace = +0.000e+00
+    mb_psi =  1.198255: header dg/dsigma (its own central difference) = [ 0.99999999  0.         -0.99999999  0.          0.          0.        ], trace = +0.000e+00
+    mb_psi =  0.000000: header dg/dsigma (its own central difference) = [ 0.99999999  0.         -0.99999999  0.          0.          0.        ], trace = +0.000e+00
+    -> IDENTICAL for every mb_psi and TRACELESS: in compression the shipped g always
+       falls into its `else` branch (Tresca), so HB_mb_psi has NO EFFECT on the flow
+       and the flow is NON-DILATANT.
+    principal-space flow there: intended m = [ 4.65044  0.      -1.     ] (trace +3.6504), header m =
+    [ 1.  0. -1.] (trace +0.0000); angle = 32.8643 deg -- and this is with mb_psi == mb,
+    i.e. exactly where the deck asks for ASSOCIATED flow.  Consequence on the return:
+      flow=intended  region=face  y = [ -3642.773683  -6441.62224  -25123.715278]  dLambda = [7.947674e-06]  plastic vol. strain = +2.208111e-05
+      flow=header    region=face  y = [ -3278.269703  -6000.       -23721.730297]  dLambda = [3.195674e-05]  plastic vol. strain = -6.776264e-21
+    at the APEX every header flow direction has NEGATIVE trace: trace(D3 m_ij) =
+    [-7.78e+08 -7.78e+08 -7.78e+08 -7.78e+08 -7.78e+08 -7.78e+08].  Is the hydrostatic direction (1,1,1) in that cone? False
+    (intended-flow cone? True).  So under the shipped g a trial past the tensile
+    corner has NO return to the apex at all -- the mechanism behind the residual
+    recorded in tests/test_adr94_hlist_hb.py (drive fails on the corner-crossing step).
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: face (no shear)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-2.00000000e+03 -6.00000000e+03 -2.50000000e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      face-return margins (the exact boundary functions): y1-y2 = +2798.848557, y2-y3 = +18682.093038
+    Newton [HB face] residual history: 3.123e+03 6.122e+01 1.182e-02 1.136e-09 1.701e-12
+    Newton [HB face] 2nd-order test: max rho_k+1/(30 rho_k^2) = 0.001 over 3 transition(s) (4 iterations); best 3-point order estimate = 2.18
+    principal trial  x = [-2000.00000000 -6000.00000000 -25000.00000000]
+    REGION = face   (Newton iterations = 4)
+    principal return y = [-3642.77368314 -6441.62224030 -25123.71527804]
+    returned stress sigma = [-3.64277368e+03 -6.44162224e+03 -2.51237153e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [7.9476740563e-06]
+      f_composite = +0.000000e+00   f_shear = +0.000000e+00   f_tension = -3.887789e+03   (active branch: f_shear)   |f| via the header's 6D form = 0.000e+00
+      KKT: max(f,0) = 0.000e+00   min multiplier = +7.947674e-06   direction residual = 1.012e-15
+      explicit Xi-form vs Jacobian-form dy/dx: rel_fro = 3.013e-17   |dm/dy|_F (the curvature term) = 3.552826e-04
+    consistent tangent dsigma/deps (6x6):
+          4132010.30     4936007.80    15612020.89           0.00           0.00           0.00
+          4936007.80    55896445.36    18649773.66           0.00           0.00           0.00
+         15612020.89    18649773.66    58987073.74           0.00           0.00           0.00
+                0.00           0.00           0.00    13994242.79           0.00           0.00
+                0.00           0.00           0.00           0.00    19665361.09           0.00
+                0.00           0.00           0.00           0.00           0.00    18679079.65
+      |C - C^T|_F / |C|_F = 6.285e-17
+      rank(C) = 5   |C|_F = 93724389.087370
+    FD check [face (no shear)]: rel_fro(C_consistent, C_cd) = 8.034e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 6.275e-11
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: face (sheared, exercises the rotation term)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-2.00000000e+03 -6.00000000e+03 -2.50000000e+04  1.50000000e+03 -8.00000000e+02  5.00000000e+02]
+      face-return margins (the exact boundary functions): y1-y2 = +3371.585527, y2-y3 = +18172.305224
+    Newton [HB face] residual history: 4.136e+03 1.054e+02 3.467e-02 9.588e-09 7.772e-12
+    Newton [HB face] 2nd-order test: max rho_k+1/(30 rho_k^2) = 0.001 over 3 transition(s) (4 iterations); best 3-point order estimate = 2.19
+    principal trial  x = [-1497.90005735 -6454.67581202 -25047.42413064]
+    REGION = face   (Newton iterations = 4)
+    principal return y = [-3665.46385136 -7037.04937865 -25209.35460315]
+    returned stress sigma = [-4.01031376e+03 -6.73841863e+03 -2.51631354e+04  1.02624159e+03 -7.86305089e+02  4.75429357e+02]
+    dLambda = [1.0511077353e-05]
+      f_composite = -1.091394e-11   f_shear = -1.091394e-11   f_tension = -3.910479e+03   (active branch: f_shear)   |f| via the header's 6D form = 3.638e-12
+      KKT: max(f,0) = 0.000e+00   min multiplier = +1.051108e-05   direction residual = 7.217e-16
+      explicit Xi-form vs Jacobian-form dy/dx: rel_fro = 1.754e-16   |dm/dy|_F (the curvature term) = 3.522007e-04
+    consistent tangent dsigma/deps (6x6):
+          9661876.56     4566405.08    15856698.67    -8251769.42      313089.84     -694904.55
+          4566405.08    51154168.53    18290610.06    -7208115.36       86167.44      -53254.84
+         15856698.67    18290610.06    58768434.91     -901283.58       31289.33      -76721.78
+         -8251769.42    -7208115.36     -901283.58    13224198.54      108612.38       56894.85
+           313089.84       86167.44       31289.33      108612.38    19424360.57     -372073.86
+          -694904.55      -53254.84      -76721.78       56894.85     -372073.86    18402605.97
+      |C - C^T|_F / |C|_F = 2.122e-16
+      rank(C) = 5   |C|_F = 92258129.787798
+    FD check [face (sheared, exercises the rotation term)]: rel_fro(C_consistent, C_cd) = 9.314e-10   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 7.161e-10
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: edge y1 == y2
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-4.00000000e+03 -4.00000000e+03 -3.00000000e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      face-return margins (the exact boundary functions): y1-y2 = -755.049293, y2-y3 = +25777.220984
+    Newton [HB line1] residual history: 2.491e+03 2.563e+01 4.795e-04 4.408e-12
+    Newton [HB line1] 2nd-order test: max rho_k+1/(30 rho_k^2) = 0.001 over 2 transition(s) (3 iterations); best 3-point order estimate = 2.38
+    principal trial  x = [-4000.00000000 -4000.00000000 -30000.00000000]
+    REGION = line1   (Newton iterations = 3)
+    principal return y = [-5028.76235271 -5028.76235271 -30069.03296983]
+    returned stress sigma = [-5.02876235e+03 -5.02876235e+03 -3.00690330e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [4.4534820653e-06 4.4534820653e-06]
+      f_composite = -3.637979e-12   f_shear = -3.637979e-12   f_tension = -5.273778e+03   (active branch: f_shear)   |f| via the header's 6D form = 3.638e-12
+      KKT: max(f,0) = 0.000e+00   min multiplier = +4.453482e-06   direction residual = 6.208e-16
+    consistent tangent dsigma/deps (6x6):
+          5161012.63     5161012.63    17483046.10           0.00           0.00           0.00
+          5161012.63     5161012.63    17483046.10           0.00           0.00           0.00
+         17483046.10    17483046.10    59224211.02           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00    19261746.63           0.00
+                0.00           0.00           0.00           0.00           0.00    19261746.63
+      |C - C^T|_F / |C|_F = 1.013e-16
+      rank(C) = 3   |C|_F = 74690754.088209
+    FD check [edge y1 == y2]: rel_fro(C_consistent, C_cd) = 3.108e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 1.935e-11
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: edge y2 == y3
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [-2.00000000e+03 -2.00000000e+04 -2.00000000e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      face-return margins (the exact boundary functions): y1-y2 = +17720.378913, y2-y3 = -63.947968
+    Newton [HB line2] residual history: 6.934e+02 3.022e+00 4.933e-05 4.068e-12
+    Newton [HB line2] 2nd-order test: max rho_k+1/(30 rho_k^2) = 0.001 over 2 transition(s) (3 iterations); best 3-point order estimate = 2.03
+    principal trial  x = [-2000.00000000 -20000.00000000 -20000.00000000]
+    REGION = line2   (Newton iterations = 3)
+    principal return y = [-2395.10149703 -20077.29377355 -20077.29377355]
+    returned stress sigma = [-2.39510150e+03 -2.00772938e+04 -2.00772938e+04  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [8.1610088186e-07 8.1610088186e-07]
+      f_composite = +3.637979e-12   f_shear = +3.637979e-12   f_tension = -2.640117e+03   (active branch: f_shear)   |f| via the header's 6D form = 3.638e-12
+      KKT: max(f,0) = 3.638e-12   min multiplier = +8.161009e-07   direction residual = 3.560e-15
+    consistent tangent dsigma/deps (6x6):
+          1976270.18     8631906.06     8631906.06           0.00           0.00           0.00
+          8631906.06    37702234.86    37702234.86           0.00           0.00           0.00
+          8631906.06    37702234.86    37702234.86           0.00           0.00           0.00
+                0.00           0.00           0.00    19646880.31           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00    19646880.31
+      |C - C^T|_F / |C|_F = 2.661e-16
+      rank(C) = 3   |C|_F = 82217873.464377
+    FD check [edge y2 == y3]: rel_fro(C_consistent, C_cd) = 6.034e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 4.134e-11
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: apex (hydrostatic tension)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 4.00000000e+02  4.00000000e+02  4.00000000e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      apex cone test C3*(x-apex) = [1.54984818105e-06 1.54984818105e-06 1.54984818105e-06]  -> APEX
+    principal trial  x = [400.00000000 400.00000000 400.00000000]
+    REGION = apex   (Newton iterations = 0)
+    principal return y = [245.01518189 245.01518189 245.01518189]
+    returned stress sigma = [ 2.45015182e+02  2.45015182e+02  2.45015182e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [1.5498481811e-06 1.5498481811e-06 1.5498481811e-06]
+      f_composite = +0.000000e+00   f_shear = +0.000000e+00   f_tension = +0.000000e+00   (active branch: f_shear)   |f| via the header's 6D form = 0.000e+00
+      KKT: max(f,0) = 0.000e+00   min multiplier = +5.140271e+01   direction residual = 4.492e-16
+    consistent tangent dsigma/deps (6x6):
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+      |C - C^T|_F / |C|_F = 0.000e+00
+      rank(C) = 0   |C|_F = 0.000000
+    FD check [apex (hydrostatic tension)]: rel_fro(C_consistent, C_cd) = 1.000e+00   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 2.292e-15
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: apex (deviatoric, still in the cone)
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 5.00000000e+02  4.50000000e+02  4.00000000e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      apex cone test C3*(x-apex) = [3.29984818105e-06 2.04984818105e-06 7.99848181050e-07]  -> APEX
+    principal trial  x = [500.00000000 450.00000000 400.00000000]
+    REGION = apex   (Newton iterations = 0)
+    principal return y = [245.01518189 245.01518189 245.01518189]
+    returned stress sigma = [ 2.45015182e+02  2.45015182e+02  2.45015182e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [3.2998481811e-06 2.0498481811e-06 7.9984818105e-07]
+      f_composite = +0.000000e+00   f_shear = +0.000000e+00   f_tension = +0.000000e+00   (active branch: f_shear)   |f| via the header's 6D form = 0.000e+00
+      KKT: max(f,0) = 0.000e+00   min multiplier = +2.652812e+01   direction residual = 5.148e-16
+    consistent tangent dsigma/deps (6x6):
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+                0.00           0.00           0.00           0.00           0.00           0.00
+      |C - C^T|_F / |C|_F = 0.000e+00
+      rank(C) = 0   |C|_F = 0.000000
+    FD check [apex (deviatoric, still in the cone)]: rel_fro(C_consistent, C_cd) = 1.000e+00   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 6.577e-17
+
+------------------------------------------------------------------------------
+HoekBrown  |  trial: header says APEX, elastic metric says otherwise
+------------------------------------------------------------------------------
+    trial stress sigma_tr = [ 6.45000000e+02  2.65000000e+02  2.55000000e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+      face-return margins (the exact boundary functions): y1-y2 = +113.060957, y2-y3 = +9.420496
+    Newton [HB face] residual history: 5.601e+02 4.707e+01 3.054e+00 1.854e-02 7.004e-07 5.859e-14
+    Newton [HB face] 2nd-order test: max rho_k+1/(30 rho_k^2) = 0.363 over 4 transition(s) (5 iterations); best 3-point order estimate = 2.00
+    principal trial  x = [645.00000000 265.00000000 255.00000000]
+    REGION = face   (Newton iterations = 5)
+    principal return y = [244.88118683 131.82023030 122.39973437]
+    returned stress sigma = [ 2.44881187e+02  1.31820230e+02  1.22399734e+02  0.00000000e+00  0.00000000e+00  0.00000000e+00]
+    dLambda = [1.4487601822e-08]
+      f_composite = +1.739409e-11   f_shear = +1.739409e-11   f_tension = -1.339951e-01   (active branch: f_shear)   |f| via the header's 6D form = 1.739e-11
+      KKT: max(f,0) = 1.739e-11   min multiplier = +1.448760e-08   direction residual = 1.929e-16
+      explicit Xi-form vs Jacobian-form dy/dx: rel_fro = 5.843e-16   |dm/dy|_F (the curvature term) = 1.705370e+03
+    consistent tangent dsigma/deps (6x6):
+              250.16       28870.83      115233.17           0.00           0.00           0.00
+            28870.83    53331936.56    13298875.39           0.00           0.00           0.00
+           115233.17    13298875.39    53080268.39           0.00           0.00           0.00
+                0.00           0.00           0.00     5950576.66           0.00           0.00
+                0.00           0.00           0.00           0.00    18840991.85           0.00
+                0.00           0.00           0.00           0.00           0.00     6281100.13
+      |C - C^T|_F / |C|_F = 6.045e-16
+      rank(C) = 5   |C|_F = 80283269.129658
+      stencil sweep -- the FD gap here is TRUNCATION, not a wrong tangent (error ~ h^2 until round-off):
+        h=1e-07: 9.91e-04  h=1e-08: 1.11e-05  h=1e-09: 1.11e-07  h=1e-10: 1.11e-09  h=1e-11: 1.20e-10  h=1e-12: 1.19e-09
+    FD check [header says APEX, elastic metric says otherwise]: rel_fro(C_consistent, C_cd) = 1.109e-09   (stencil h = 1e-10 relative)   |C - C_cd|_F/|E|_F = 7.418e-10
+
+------------------------------------------------------------------------------
+near-apex conditioning: why the natural variable and the unit m
+------------------------------------------------------------------------------
+    (1) unknowns [y1,y2,y3,dl], start = elastic predictor clipped into arg > 0:
+        iter 0: |R| = 2.593e+03   y1 =   191.510914   arg = +2.5645e-03
+        iter 1: |R| = 4.095e+02   y1 =   291.865671   arg = -2.2456e-03   <- LEFT the surface's domain
+        the next Jacobian is SINGULAR (f is constant once arg is clamped) and the
+        Newton dies.  No start guess fixes this: df/dy1 = 1 + a*mb*arg^(a-1) -> inf,
+        so the first step is unbounded.
+    (2) unknowns [w,y2,y3,dl] with arg = w^(2/a) (this oracle): feasible for ANY real
+        w, and it converges -- 5 iterations, |f| = 1.739e-11, arg = 6.422411e-06.
+    (3) the unit flow direction: worst-case Newton count over 400+ random trials plus
+        every FD stencil point is 6 with m as-is and 5 with m/|m| -- |m| = 4.606e+02 here
+        against 3.908e+00 on an ordinary face point.
+
+------------------------------------------------------------------------------
+region-selection scan: 400 random trial states, KKT-verified
+------------------------------------------------------------------------------
+    regions: {'line1': 70, 'face': 129, 'apex': 17, 'line2': 3}
+    Newton iterations: {0: 17, 3: 19, 4: 97, 5: 76, 6: 9, 7: 1} -- <= 5 except for returns landing
+        within ~1 kPa of the apex, where the curvature term is 7 orders larger
+    max |f(returned)| = 1.082e-10, attained 4.683e-03 kPa below the apex where
+        f's own round-off floor is 1.158e-08; the gate is |f| <= max(1e-10, f_floor(y))
+        and the worst |f|/gate over the scan is 0.382
+    max return-direction residual = 1.672e-14, min Koiter multiplier = +0.000e+00
+        (the domain is convex, so a zero residual with non-negative multipliers
+        PROVES the region -- no trial is misclassified)
+    trials where the header's Euclidean CHECK_APEX_REGION disagrees with the exact
+        elastic-metric apex region: 32
+
+------------------------------------------------------------------------------
+non-associated companion: mb_psi = mb/2 (frame-consistent g)
+------------------------------------------------------------------------------
+    associated  mb_psi = mb  : |C-C^T|_F/|C|_F = 6.285e-17
+    non-assoc   mb_psi = mb/2: |C-C^T|_F/|C|_F = 7.437e-02
+    FD check [non-associated face]: rel_fro(C_consistent, C_cd) = 7.992e-11   (stencil h = 1e-08 relative)   |C - C_cd|_F/|E|_F = 6.356e-11
+
+==============================================================================
+HOEK-BROWN REFERENCE BLOCK (values the C++ tests pin)
+==============================================================================
+  face (no shear)
+    region = face   Newton iterations = 4   |f| = 0.000e+00   dLambda = [7.9476740563e-06]
+    y       = [ -3642.7736831411  -6441.6222402965 -25123.715278045 ]
+    sigma   = [ -3642.7736831411  -6441.6222402965 -25123.715278045       0.
+      0.                0.          ]
+    |C|_F = 93724389.087370   trace(C) = 171354212.929369   rank = 5   FD rel err = 8.034e-11
+  face (sheared, exercises the rotation term)
+    region = face   Newton iterations = 4   |f| = 1.091e-11   dLambda = [1.0511077353e-05]
+    y       = [ -3665.4638513614  -7037.0493786459 -25209.3546031455]
+    sigma   = [ -4010.3137595367  -6738.4186262415 -25163.1354473746   1026.241589823
+   -786.3050893248    475.4293567847]
+    |C|_F = 92258129.787798   trace(C) = 170635645.081975   rank = 5   FD rel err = 9.314e-10
+  edge y1 == y2
+    region = line1   Newton iterations = 3   |f| = 3.638e-12   dLambda = [4.4534820653e-06 4.4534820653e-06]
+    y       = [ -5028.7623527102  -5028.7623527102 -30069.0329698299]
+    sigma   = [ -5028.7623527102  -5028.7623527102 -30069.0329698299      0.
+      0.                0.          ]
+    |C|_F = 74690754.088209   trace(C) = 108069729.531259   rank = 3   FD rel err = 3.108e-11
+  edge y2 == y3
+    region = line2   Newton iterations = 3   |f| = 3.638e-12   dLambda = [8.1610088186e-07 8.1610088186e-07]
+    y       = [ -2395.1014970301 -20077.2937735526 -20077.2937735526]
+    sigma   = [ -2395.1014970301 -20077.2937735526 -20077.2937735526      0.
+      0.                0.          ]
+    |C|_F = 82217873.464377   trace(C) = 116674500.501043   rank = 3   FD rel err = 6.034e-11
+  apex (hydrostatic tension)
+    region = apex   Newton iterations = 0   |f| = 0.000e+00   dLambda = [1.5498481811e-06 1.5498481811e-06 1.5498481811e-06]
+    y       = [245.015181895 245.015181895 245.015181895]
+    sigma   = [245.015181895 245.015181895 245.015181895   0.            0.
+   0.         ]
+    |C|_F = 0.000000   trace(C) = 0.000000   rank = 0   FD rel err = 1.000e+00
+  apex (deviatoric, still in the cone)
+    region = apex   Newton iterations = 0   |f| = 0.000e+00   dLambda = [3.2998481811e-06 2.0498481811e-06 7.9984818105e-07]
+    y       = [245.015181895 245.015181895 245.015181895]
+    sigma   = [245.015181895 245.015181895 245.015181895   0.            0.
+   0.         ]
+    |C|_F = 0.000000   trace(C) = 0.000000   rank = 0   FD rel err = 1.000e+00
+  header says APEX, elastic metric says otherwise
+    region = face   Newton iterations = 5   |f| = 1.739e-11   dLambda = [1.4487601822e-08]
+    y       = [244.8811868264 131.8202302997 122.3997343726]
+    sigma   = [244.8811868264 131.8202302997 122.3997343726   0.
+   0.             0.          ]
+    |C|_F = 80283269.129658   trace(C) = 137485123.746157   rank = 5   FD rel err = 1.109e-09
+
+  scan regions: {'line1': 70, 'face': 129, 'apex': 17, 'line2': 3}
+  FD stencil: central difference, h = 1e-8 relative (1e-10 for the
+  near-apex trial) on the TOTAL strain of one step from a zero
+  committed state; every trial sits well inside its region -- see the
+  printed boundary margins.
+
+
 ##### path_independence.py  (exit 0) #####
 
 ==============================================================================
-ADR-97 oracle 4/5 -- path independence: CPPM vs cutting plane
+ADR-97 oracle 5/6 -- path independence: CPPM vs cutting plane
 ==============================================================================
 
 ------------------------------------------------------------------------------
@@ -909,6 +1232,13 @@ PATH-INDEPENDENCE REFERENCE BLOCK (values C++ tests pin)
 
 
 ##### fd_tangent_driver.py  (exit 0) #####
+PRESERVED VERBATIM from the P0 run against build
+3622d6214ef4cdeb8cf65a102ee35f6cd9973337.  NOT re-run for the cppm_hb.py addition:
+that worktree's binary is gone, and the only build reachable now
+(0e5163e430983924fc5197c22b1db5b3f2a9c1fd) is a different tree -- it moves the
+ADR-94 M3 negative control from 0.573447 to 0.222832, which must not be pinned
+here by accident.  Re-run this one oracle against the P1 build when P1 lands.
+(Its banner still reads 5/5 -- the five-oracle numbering it was recorded under.)
 ==============================================================================
 ADR-97 oracle 5/5 -- element-level free-DOF FD tangent check
 ==============================================================================

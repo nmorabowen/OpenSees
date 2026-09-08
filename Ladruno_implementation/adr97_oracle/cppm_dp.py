@@ -1,4 +1,4 @@
-"""ADR-97 P0 oracle 2/5 -- Drucker-Prager CONE + APEX closest-point return maps
+"""ADR-97 P0 oracle 2/6 -- Drucker-Prager CONE + APEX closest-point return maps
 with consistent tangents (associated and NON-associated).
 
 MIRRORS
@@ -279,7 +279,7 @@ HYDRO_TENSION = [np.array([1.2e-3, 1.2e-3, 1.2e-3, 0., 0., 0.])]
 
 
 def main():
-    banner("ADR-97 oracle 2/5 -- DRUCKER-PRAGER cone + apex closest-point map")
+    banner("ADR-97 oracle 2/6 -- DRUCKER-PRAGER cone + apex closest-point map")
     print("Material: E = 30000, nu = 0.25, xi_c = 20, eta = 0.4 "
           "(apex at p = +50, TENSION positive).")
     print("K = 20000, G = 12000, so the exact apex-boundary slope K*etabar/G is")
