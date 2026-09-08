@@ -687,6 +687,15 @@ should not be quoted outside the R3 deck). Reach for it when:
 - refusal churn (not overlay accuracy) is the binding cost, and
 - ~3x wall time is affordable for the run.
 
+**Know what you are spending.** Measured on Esmeralda's dense column, iterations per committed
+step (cumulative Newton count, failed attempts included) run **2.2 for `fixed`, 17.2 for
+`controlIter`, 52.4 for the implicit twin** — the same ~8x also holds on the loose column
+(2.1 -> 17.0). IMPL-EX exists to buy cheap steps from a frozen operator, and recomputing `f*`
+per trial spends most of that: `controlIter` keeps roughly a 3x per-step edge over implicit
+where `fixed` keeps ~24x. Wall time rises only 2.9x rather than 8x because the refusals it
+removes were wasted work. If your run is already iteration-bound rather than refusal-bound,
+this trade is against you — measure before switching.
+
 It is **not** a fix for the p = 0 confinement ring (ADR 93, `93_ladruno_sanisand_zero_confinement_adr.md`)
 — that wall is the material's, not the extrapolation factor's, and `controlIter` does not touch
 it. It requires `-implexControl` (the companion computation this factor is built on) and is

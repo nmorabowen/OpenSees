@@ -85,8 +85,32 @@ Measured dense refuse wall (146607) = **0.01755**.
 ### Cost, measured
 
 - **Wall time:** ~2.9x on this deck -- 1 933 s -> 5 620 s (`5620 / 1933 = 2.907`).
-- **Iterations/step:** 17.2 for 146607 (146599's per-step iteration count is not in this
-  table's columns).
+- **Iterations/step: ~8x that of `fixed`, and ~1/3 of the implicit twin.** Supplied by TIMs
+  2026-09-08 (ESMERALDA.md 115 addendum) from each leg's `curve.csv` `cum_iter` -- the
+  harness's cumulative Newton iteration count, **failed attempts included**, divided by
+  committed steps:
+
+  | leg | mode | it/step | steps | end s/B |
+  |---|---|---|---|---|
+  | 146599 dense, `4e07ef014` | fixed f, refuse | 2.2 | 320 | 0.0169 |
+  | 146607 dense, `179da6ffb` | controlIter, refuse | 17.2 | 276 | 0.0176 |
+  | 146456 loose, `c162833ed` | fixed f | 2.1 | 1760 | 0.0398 |
+  | 146609 loose, `179da6ffb` | controlIter, refuse | 17.0 | 1157 | 0.0392 |
+  | 146452 dense implicit twin | (vanilla) | 52.4 | 607 | 0.0540 |
+
+  The ~8x holds on **both** columns (dense 2.2 -> 17.2, loose 2.1 -> 17.0), which is the
+  per-trial recomputation spending the step's linearity exactly as section 1 of the plan
+  priced it. **Read the two cost numbers together:** iterations rise ~8x but wall only 2.9x,
+  because the refusal churn `controlIter` removes (42 545 -> 102 refusals, 248 -> 11 failed
+  attempts) was work the `fixed` leg threw away. The wall ratio therefore understates the
+  per-step cost and overstates nothing -- the useful fraction of the work simply went up.
+
+  **The framing that matters for IMPL-EX as a whole:** 2.2 -> 17.2 -> 52.4 puts `controlIter`
+  between fixed-f IMPL-EX and the implicit twin, nearer the twin than to `fixed`. IMPL-EX
+  exists to buy cheap steps from a frozen operator; `controlIter` spends most of that
+  advantage to buy back accuracy and robustness, keeping roughly a 3x per-step edge on
+  implicit rather than the ~24x `fixed` holds. That is the honest reason it is an opt-in
+  and not a default.
 - **Explicit correction of the R3 figure:** the fork R3 leg (`_adr92_p2_9_r3_results.md`)
   measured `controlIter` at ~13x the wall time of `fixed` on its own deck. That figure **does
   NOT generalise** to Esmeralda's dense-refuse deck: the measured multiplier here is **2.9x**
