@@ -28,8 +28,8 @@ Two halves:
    only checked agreement would pass on an integrator that silently WAS
    `Backward_Euler`.
 
-Zone-A: the fast half is ~15 s; the full 23-deck sweep is `@pytest.mark.slow`
-(measured 4 min 10 s on the reference box) and runs under `--runslow`.
+Zone-A, 5.9 s for the whole file: a fresh-interpreter deck costs ~0.2 s, so
+BOTH the representative slice and the full 23-deck sweep run on every push.
 """
 import json
 import os
@@ -76,8 +76,17 @@ def _run_child(deck, tmp_path):
     out = os.path.join(str(tmp_path), "hist.json")
     env = dict(os.environ)
     env.setdefault("LADRUNO_OPENSEES_QUIET", "1")
+    # `stdin=subprocess.DEVNULL` is LOAD-BEARING on Windows: with the inherited
+    # stdin, Popen tries to DuplicateHandle whatever pytest's fd-level capture
+    # left there and raises `OSError: [WinError 6] The handle is invalid`
+    # intermittently -- the same trap `_testbed/subprocess_run.py` documents,
+    # and it looks exactly like the child crashing.  `errors="replace"` for the
+    # same reason: an `opserr` line with a non-ASCII byte otherwise raises
+    # UnicodeDecodeError inside the capture on a cp1252 console.
     p = subprocess.run([sys.executable, DUMPER, "--one", deck, out],
-                       cwd=HERE, env=env, capture_output=True, text=True)
+                       cwd=HERE, env=env, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, encoding="utf-8",
+                       errors="replace")
     if not os.path.exists(out):
         pytest.fail("child process produced no history for %r:\n%s"
                     % (deck, (p.stdout + p.stderr)[-2000:]))
@@ -114,10 +123,13 @@ def test_gate4_backward_euler_is_byte_identical_fast(baseline, tmp_path, deck):
     _assert_identical(deck, baseline[deck], _run_child(deck, tmp_path))
 
 
-@pytest.mark.slow
 def test_gate4_backward_euler_is_byte_identical_full(baseline, tmp_path):
-    """All 23 decks / 282 committed-stress rows.  Measured 4 min 10 s (23 fresh
-    interpreters, each constructing the material catalogue)."""
+    """All 23 decks / 282 committed-stress rows, one fresh interpreter each.
+
+    Measured 5.9 s for the whole file -- a child costs ~0.2 s, so there is no
+    reason to hide this behind `--runslow`.  (It was written as `@slow` on the
+    assumption that 23 interpreter starts would be minutes; measuring is
+    cheaper than assuming.)"""
     changed = []
     for deck, ref in sorted(baseline.items()):
         got = _run_child(deck, tmp_path)

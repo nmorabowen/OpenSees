@@ -478,31 +478,57 @@ def test_gate1_dp_closest_point_matches_the_oracle(cp_dp_available, case):
     assert f <= 1e-6, f
 
 
-def test_gate1_dp_cohesion_hardening_is_perfectly_plastic_under_cp(cp_dp_available):
-    """ADR-97 P0 header finding 2, made observable.
+def test_gate1_dp_cohesion_hardening_moves_the_iv_but_not_the_surface(
+        cp_dp_available):
+    """ADR-97 P0 header finding 2, made observable -- and sharpened.
 
     `DruckerPrager_YF` has its cohesion internal variable COMMENTED OUT of its
     own `f` (line 26) while `yf_hardening` still contributes ``df/dk = -1``
-    times that IV's rate -- a hardening term matching no term of `f`.
-    `Closest_Point`'s uncontracted `df/dq` must be the TRUE derivative of the
-    `f` it solves, so under `Closest_Point` a Drucker-Prager with cohesion
-    hardening is PERFECTLY PLASTIC (the cohesion IV still evolves, it just does
-    not move the surface), while `Backward_Euler` hardens.
+    times that IV's rate: a hardening term matching no term of `f`.
 
-    This test PINS that divergence.  It turns red the day the yield function is
+    The finding as ADR-97 P0 stated it was that `Closest_Point` would be
+    perfectly plastic here (its `df/dq` must be the TRUE derivative of the `f`
+    it solves, hence zero) while `Backward_Euler` "hardens".  MEASURED, the
+    second half is wrong and the defect is WORSE than stated: the cohesion
+    hardening is inert on the committed stress under BOTH integrators.  It
+    cannot be otherwise -- both maps drive the SAME `f` to zero, and `f` does
+    not read the internal variable, so the root is the same wherever the
+    plastic modulus puts the iterates.  Under `Backward_Euler` the phantom
+    modulus only changes the local Newton's STEP SIZE, and what survives is the
+    cutting plane's iterate-path residue (~5e-9 here); under `Closest_Point` the
+    consistency row carries no `df/dq` term at all and the two answers are
+    identical to the last bit.
+
+    So `ScalarLinearHardeningParameter` on a Drucker-Prager is a no-op for the
+    stress on both integrators, while the internal variable itself grows -- it
+    is written, recorded, and read by nothing.  What DOES differ is the tangent:
+    `Backward_Euler`'s `Continuum`/`Secant` operators divide by
+    ``n:E:m - H`` with that phantom `H`, so a hardening slope the surface never
+    sees still perturbs the assembled stiffness.
+
+    This test pins all three facts.  It turns red the day the yield function is
     fixed -- which is the point: fixing it changes `Backward_Euler`, which
     ADR-97 D1 keeps byte-identical, so it is a separate PR.
     """
     soft = drive(lambda t: mat_dp(t, hiso=0.0), DP_COMPRESS, nstep=10)
-    hard = drive(lambda t: mat_dp(t, hiso=500.0), DP_COMPRESS, nstep=10)
+    hard = drive(lambda t: mat_dp(t, hiso=500.0), DP_COMPRESS, nstep=10,
+                 want=("stresses", "DP_cohesion"))
     assert all(c == 0 for c in soft["codes"] + hard["codes"])
     d_cp = _rel(hard["sigma"][-1], soft["sigma"][-1])
     print("DP cohesion hardening under Closest_Point: rel difference vs H=0 "
-          "= %.3e (expected ~0)" % d_cp)
-    assert d_cp < 1e-9, (
+          "= %.3e (expected exactly 0)" % d_cp)
+    assert d_cp < 1e-12, (
         "Closest_Point's df/dq for the DruckerPrager cohesion IV is no longer "
         "zero -- either the yield function was fixed (good, but ADR-97 D1 and "
         "this pin both need updating) or df_dq drifted")
+
+    # ... and yet the internal variable itself HAS advanced
+    k_end = float(hard["DP_cohesion"][-1][0])
+    print("DP cohesion IV after the same path: k = %.6f (written, read by "
+          "nothing)" % k_end)
+    assert k_end > 1e-3, (
+        "the DruckerPrager cohesion internal variable stopped evolving; if the "
+        "yield function was fixed to read it, this whole test is obsolete")
 
     be_soft = drive(lambda t: mat_dp(t, hiso=0.0, method="Backward_Euler",
                                      tangent="Secant"), DP_COMPRESS, nstep=10)
@@ -510,10 +536,14 @@ def test_gate1_dp_cohesion_hardening_is_perfectly_plastic_under_cp(cp_dp_availab
                                      tangent="Secant"), DP_COMPRESS, nstep=10)
     d_be = _rel(be_hard["sigma"][-1], be_soft["sigma"][-1])
     print("DP cohesion hardening under Backward_Euler: rel difference vs H=0 "
-          "= %.3e (expected > 0)" % d_be)
-    assert d_be > 1e-4, (
-        "Backward_Euler no longer hardens on the Drucker-Prager cohesion IV; "
-        "the ADR-97 P0 finding 2 divergence is gone")
+          "= %.3e (the cutting plane's iterate-path residue, not hardening)"
+          % d_be)
+    assert d_be < 1e-6, (
+        "Backward_Euler's committed stress now responds to a cohesion "
+        "hardening slope its own yield function does not read")
+    assert d_be > d_cp, (
+        "the cutting plane's iterate-path residue vanished -- Backward_Euler "
+        "may no longer be a cutting plane")
 
 
 # ===========================================================================
