@@ -116,20 +116,81 @@ def _build_zln(sig_y):
     ops.analysis('Static')
 
 
+# The material's condensed tangent, read straight off the assembled system
+# via printA under `system FullGeneral` -- but printA('-ret') re-forms the
+# tangent by calling ZeroLengthND::getTangentStiff() AFTER the step has
+# already committed (see SRC/element/zeroLength/ZeroLengthND.cpp:377), which
+# re-runs DruckerPrager::plastic_integrator() (SRC/material/nD/UWmaterials/
+# DruckerPrager.cpp:446) from a trial strain sitting EXACTLY on the yield
+# surface. That integrator tests `f1 <= fTOL` with upstream's `fTOL = 0.0`,
+# so on a post-commit reformation f1 is pure roundoff (+-1e-15-ish) and the
+# elastic/plastic branch it takes is a coin flip: a *relative* 1e-12 nudge to
+# sig_y is enough to flip it, and reading only the LAST step's tangent makes
+# this test's pass/fail a knife edge that has nothing to do with the mirror-
+# assembly defect it exists to guard. See LEDGER_quirks.md for the general
+# form of this trap (any post-commit tangent read on a DruckerPrager model).
+# The fix: sample every converged step and take the MAX asymmetry over the
+# whole ramp (measured: 30/30 steps converge, max asym/scale = 0.292818,
+# nonzero on 9 of those 30 steps) -- one elastic-branch roundoff step no
+# longer hides the defect. Do NOT change fTOL: it is vanilla upstream, has a
+# wide blast radius, and is not the defect being guarded here.
+_ZLN_MATERIAL_FREE_IDX = (0, 1, 3)  # DruckerPragerPlaneStrain's condensed
+# rows/cols out of the material's full 6x6 mCep -- see
+# DruckerPragerPlaneStrain::getTangent() (SRC/material/nD/UWmaterials/
+# DruckerPragerPlaneStrain.cpp:127-140), which condenses mCep the same way.
+
+
+def _condensed_material_tangent():
+    """The material's own consistent tangent, condensed to the free DOFs.
+
+    Reads DruckerPrager::getLadrunoTangent() (SRC/material/nD/UWmaterials/
+    DruckerPrager.cpp:978, exposed as the 'ladrunoTangent' material response)
+    through the element, and condenses the flattened 6x6 mCep down to the
+    3 DOFs DruckerPragerPlaneStrain actually carries (sigma_xx, sigma_yy,
+    sigma_xy -> indices 0, 1, 3). Comparing this against the assembled K is
+    a DETERMINISTIC guard against the mirror-assembly bug: it does not care
+    which branch (elastic/plastic) the post-commit re-formation lands in --
+    a symmetrizing assembly would read wrong (mismatch vs. this material
+    readout) on EVERY step, not just the plastic ones.
+    """
+    flat = np.asarray(ops.eleResponse(1, 'material', 'ladrunoTangent'), dtype=float)
+    M = flat.reshape(6, 6)   # row-major, i*6 + j (see getLadrunoTangent)
+    idx = _ZLN_MATERIAL_FREE_IDX
+    return M[np.ix_(idx, idx)]
+
+
 def _zln_ramp(sig_y):
-    """Run the ramp; return (steps converged, asymmetry of the final free-DOF K)."""
+    """Run the ramp; return (steps converged, MAX asymmetry over all steps).
+
+    Sampled after every converged analyze(1), not just the final step -- see
+    the knife-edge comment above _condensed_material_tangent for why the
+    final step alone is not a reliable read.
+    """
     _build_zln(sig_y)
     done = 0
+    max_asym = 0.0
     for _ in range(_ZLN_NSTEPS):
         if ops.analyze(1) != 0:
             break
         done += 1
-    flat = np.asarray(ops.printA('-ret'), dtype=float)
-    n = int(round(len(flat) ** 0.5))
-    K = flat.reshape(n, n).T   # printA('-ret') is column-major
-    asym = np.max(np.abs(K - K.T))
-    scale = np.max(np.abs(K)) or 1.0
-    return done, asym / scale
+        flat = np.asarray(ops.printA('-ret'), dtype=float)
+        n = int(round(len(flat) ** 0.5))
+        K = flat.reshape(n, n).T   # printA('-ret') is column-major
+        asym = np.max(np.abs(K - K.T))
+        scale = np.max(np.abs(K)) or 1.0
+        max_asym = max(max_asym, asym / scale)
+
+        # Deterministic mirror-assembly guard (branch-independent): the
+        # assembled K must match the material's own condensed tangent
+        # exactly, on every step, elastic or plastic.
+        Mc = _condensed_material_tangent()
+        mirror_diff = np.max(np.abs(K - Mc))
+        assert mirror_diff < 1.0e-10 * (np.max(np.abs(K)) or 1.0), (
+            'assembled K disagrees with the material tangent it was built '
+            'from -- looks like the ZeroLengthND mirror-assembly bug is '
+            'back', mirror_diff)
+
+    return done, max_asym
 
 
 def test_zerolengthnd_unsym_tangent():
@@ -140,10 +201,11 @@ def test_zerolengthnd_unsym_tangent():
     non-associated DruckerPrager corner region by pure stress control (no
     surrounding elastic mesh to regularize the path) can lose Newton
     convergence well past first yield. That is a property of this stress
-    path, not of the fix under test -- the asymmetry fingerprint only needs
-    ENOUGH converged steps to have crossed the yield surface at least once,
-    which a >= 60% completion comfortably guarantees here (calibrated: the
-    ramp reaches ~66% before losing convergence).
+    path, not of the fix under test. In practice, with the ADR-95 corner fix
+    (#803) in place, this deck now converges 30/30 steps every time; the
+    >= 50% guard below is kept as a loose sanity floor (not a calibrated
+    expectation) in case a future change to the stress path or the material
+    reintroduces lost convergence.
     """
     done_p, asym_p = _zln_ramp(_SIG_Y)
     done_e, asym_e = _zln_ramp(_SIG_Y_ELASTIC)
@@ -157,10 +219,11 @@ def test_zerolengthnd_unsym_tangent():
 
     assert asym_e < 1.0e-10, (
         'never-yielding run must keep an exactly symmetric assembled '
-        'tangent', asym_e)
+        'tangent at every step', asym_e)
     assert asym_p > 1.0e-8, (
-        'yielded run must expose the unsymmetric consistent tangent -- '
-        'this is exactly 0 under the pre-fix mirror-assembly bug', asym_p)
+        'yielded run must expose the unsymmetric consistent tangent on at '
+        'least one step -- this is exactly 0 under the pre-fix '
+        'mirror-assembly bug', asym_p)
 
 
 def test_zerolengthnd_initial_stiff_matches_elastic_and_is_symmetric():

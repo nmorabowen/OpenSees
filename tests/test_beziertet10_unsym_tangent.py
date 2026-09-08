@@ -153,20 +153,32 @@ def _max_rel_asym():
 
 
 def _run(ele_type, sig_y, bbar=False, probe=True):
-    """Full ramp; returns (loaded-corner displacement, max relative asymmetry).
+    """Full ramp; returns (loaded-corner displacement, max relative asymmetry
+    over ALL converged steps -- not just the final one).
+
+    Sampling every step avoids the same post-commit knife edge documented in
+    test_upstream_symmetrize_fixes.py::_zln_ramp: a post-commit re-formation
+    of a DruckerPrager tangent can land on the elastic branch by roundoff
+    alone (fTOL = 0.0 upstream), so reading only the last step is a coin
+    flip. Multi-GP BezierTet10 makes this unlikely in practice (some Gauss
+    point is normally still plastic), but sampling the max over the ramp
+    removes the luck instead of relying on it.
 
     probe=False skips the stiffness probe (TenNodeTetrahedron registers no
     'stiffness' response — the control only needs to converge).
     """
     _build(ele_type, sig_y=sig_y, bbar=bbar)
+    worst = 0.0
     for step in range(_NSTEPS):
         assert ops.analyze(1) == 0, (
             f'{ele_type} (bbar={bbar}, sigY={sig_y}) failed to converge at '
             f'step {step + 1}/{_NSTEPS} — the mixed elastic/plastic tangent '
             f'regime is exactly where the symmetrized-B\'DB defect bites'
         )
+        if probe:
+            worst = max(worst, _max_rel_asym())
     ux = ops.nodeDisp(7, 1)
-    return ux, (_max_rel_asym() if probe else None)
+    return ux, (worst if probe else None)
 
 
 # ---- the regression ------------------------------------------------------
