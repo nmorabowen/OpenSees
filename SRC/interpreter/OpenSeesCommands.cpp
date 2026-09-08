@@ -4879,12 +4879,18 @@ void* OPS_ParallelDisplacementControl() {
 
 // Ladruno ADR-75 P1b: `system Pardiso`.
 //
-// Threading is deliberately NOT an option here: MKL takes its thread count from
-// MKL_NUM_THREADS / OMP_NUM_THREADS (set before the process starts), which is
-// the documented mechanism and keeps this free of <mkl_service.h>. Note the
-// solver itself threads only the FACTOR/SOLVE — assembly and element state
-// determination stay single-threaded (ADR-75 Lane 3 is the axis for those), so
-// expect a win only on solve-bound models (the 3D-solid lane).
+// Threading is deliberately NOT a SETTABLE option here: MKL takes its thread
+// count from MKL_NUM_THREADS / OMP_NUM_THREADS (set before the process
+// starts), which is the documented mechanism, so no flag on this command sets
+// it. `-stats`/`-pardisoStats` DOES read it back for the log (via
+// mkl_get_max_threads(), in PARDISOGenLinSolver.cpp — the same call
+// ProfilerRunMeta.h already uses for the profiler's run header) — reporting
+// what MKL resolved is not the same commitment as exposing a control lever,
+// and TIMs PM-01 D26 wants the thread count sitting next to the factorization
+// memory/fill number it is a log for. Note the solver itself threads only the
+// FACTOR/SOLVE — assembly and element state determination stay single-
+// threaded (ADR-75 Lane 3 is the axis for those), so expect a win only on
+// solve-bound models (the 3D-solid lane).
 //
 // Ladruno ADR-75 P1d: `-matrixType 0|1|2` selects the factorization mode, using
 // the SAME numbering as `system Mumps -matrixType`:
@@ -4907,12 +4913,14 @@ void* OPS_ParallelDisplacementControl() {
 void* OPS_PARDISOGenLinSolver() {
 #ifdef _PARDISO
     int matType = 0;      // Ladruno ADR-75 P1d: unsymmetric unless asked
-    int statsFlag = 0;    // Ladruno ADR-75 P1d: -stats dumps PARDISO memory
+    int statsFlag = 0;    // Ladruno ADR-75 P1k: -stats/-pardisoStats dumps
+                          // PARDISO's fill/memory/flop counters after every
+                          // numeric factorization (see setStats() in the header)
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
 
     // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
-    // bare flags (-symmetric/-spd/-stats) take no value, so a "> 1" bound would
-    // silently drop a trailing one.
+    // bare flags (-symmetric/-spd/-stats/-pardisoStats) take no value, so a
+    // "> 1" bound would silently drop a trailing one.
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetString();
         int num = 1;
@@ -4943,8 +4951,11 @@ void* OPS_PARDISOGenLinSolver() {
             matType = 2;
         } else if (strcmp(opt, "-spd") == 0) {
             matType = 1;
-        } else if (strcmp(opt, "-stats") == 0) {
-            statsFlag = 1;      // bare flag — consumes no value
+        } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-pardisoStats") == 0) {
+            // Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
+            // `-stats`, matching the `-stats`/`-mumpsStats` pair `system Mumps`
+            // already offers below — a bare flag, consuming no value.
+            statsFlag = 1;
         } else if (strcmp(opt, "-krylov") == 0) {
             // Ladruno ADR-75 P1e: takes an INT (Intel's L, eps_CGS = 10^-L).
             // Deliberately value-taking rather than a bare flag with a default:
