@@ -291,6 +291,23 @@ public:
         return sc < 0 ? -sc : sc;
     }
 
+    // Ladruno (ADR-97 wp/97d): the principal-space surface constants.  All four
+    // are read from the SAME HB_sigci / HB_mb / HB_s / HB_a parameters this
+    // functor's own `f` uses, so the closest-point map returns to exactly the
+    // surface `f` measures.  Note what is NOT exported: HB_ds, the perturbation
+    // of the central-difference gradient above -- Closest_Point never uses that
+    // gradient (it differences the COMPOSITE max(), which adds spurious gradient
+    // across the branch, ADR-94 M5).
+    CP_PRINCIPAL_HB_FACE_PARAMS
+    {
+        (void) internal_variables_storage;
+        sigma_ci = GET_PARAMETER_VALUE(HB_sigci);
+        mb       = GET_PARAMETER_VALUE(HB_mb);
+        s_hb     = GET_PARAMETER_VALUE(HB_s);
+        a_hb     = GET_PARAMETER_VALUE(HB_a);
+        return true;
+    }
+
     using parameters_t = std::tuple<HB_sigci, HB_mb, HB_s, HB_a, HB_ds>;
 
 private:
@@ -304,5 +321,15 @@ private:
 // Ladruno (ADR-94 wp/94d): kept live (see CHECK_APEX_REGION marker above).
 template<class NO_HARDENING>
 struct yf_has_apex<HoekBrown_YF<NO_HARDENING>> : std::true_type {};
+
+// Ladruno (ADR-97 wp/97d): principal-stress-space closest-point family 3
+// (Hoek-Brown, a CURVED surface).  Paired only with HoekBrown_PF, which carries
+// the same marker; every mixed pairing the generator registers (HoekBrown_YF x
+// {VonMises_PF, DruckerPrager_PF, MohrCoulomb_PF} and {VonMises_YF,
+// DruckerPrager_YF, MohrCoulomb_YF} x HoekBrown_PF) stays REFUSED, because no
+// oracle covers those maps.
+template<class NO_HARDENING>
+struct yf_cp_principal_family<HoekBrown_YF<NO_HARDENING>>
+    : std::integral_constant<int, 3> {};
 
 #endif

@@ -77,6 +77,22 @@ struct pf_cp_principal_family : std::integral_constant<int, 0> {};
         const ParameterStorageType& parameters_storage, \
         double& sin_phi, double& sin_psi) const
 
+// Ladruno (ADR-97 wp/97d): the HOEK-BROWN potential constants the principal-space
+// return needs.  `Closest_Point` builds a FRAME-CONSISTENT potential from them,
+//     g_ij = y_i - y_j - sigma_ci * (s - mb_psi*y_i/sigma_ci)^a
+// in its own code path -- it does NOT call this functor's `g`, which is
+// evaluated in the un-negated frame and therefore collapses to a Tresca
+// potential with HB_mb_psi inert (ADR-97 P0 header finding 5, quantified in
+// adr97_oracle/cppm_hb.py).  The shipped `g` stays untouched so Backward_Euler
+// remains byte-identical (ADR-97 D1); the difference is pinned by a test.
+// sigma_ci / s / a are read back for a consistency check against the yield
+// function's own (they share ONE parameter object per type -- utuple_storage
+// de-duplicates parameters by type).
+#define CP_PRINCIPAL_HB_FLOW_PARAMS template <typename StorageType, typename ParameterStorageType> \
+    bool cp_hb_flow_params(const StorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        double& sigma_ci, double& mb_psi, double& s_hb, double& a_hb) const
+
 // Ladruno (ADR-97 wp/97b): dm/dsigma, the 6x6 derivative of the flow direction
 // with respect to the STORED stress slots -- the `dl * dm/ds` term of the
 // algorithmic elastic modulus Xi = (E^-1 + dl*dm/ds)^-1.  ADR-94 M3 measured
@@ -187,6 +203,19 @@ public:
         (void) parameters_storage;
         sin_phi = 0.0;
         sin_psi = 0.0;
+        return false;
+    }
+
+    // Ladruno (ADR-97 wp/97d): default -- this flow direction is not a
+    // Hoek-Brown potential.
+    CP_PRINCIPAL_HB_FLOW_PARAMS
+    {
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        sigma_ci = 0.0;
+        mb_psi   = 0.0;
+        s_hb     = 0.0;
+        a_hb     = 0.0;
         return false;
     }
 
