@@ -68,8 +68,12 @@ def _build_one(name):
             lambda g=t: cube(lambda t2, g=g: N.mat_vm(t2, g), -10.0, 10))
     for meth in ("Forward_Euler", "Forward_Euler_Subincrement",
                  "Modified_Euler_Error_Control", "Runge_Kutta_45_Error_Control"):
+        # Ladruno (ADR-97 wp/97f, D5): these four are gated behind
+        # experimental_integrator now; the baseline itself is untouched
+        # (D5 is a parse-time gate, not a behavior change).
         table["cube/vm/%s/Continuum" % meth] = (
-            lambda m=meth: cube(lambda t2, m=m: N.mat_vm(t2, "Continuum", method=m),
+            lambda m=meth: cube(lambda t2, m=m: N.mat_vm(t2, "Continuum", method=m,
+                                                          experimental=1),
                                 N.P_PLASTIC, 6))
     return table[name]()
 

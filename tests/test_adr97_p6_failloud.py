@@ -424,7 +424,8 @@ def _child_script(tests_dir, method, experimental):
         '    ops.nDMaterial(',
         '        "ASDPlasticMaterial3D", 1,',
         '        "VonMises_YF", "VonMises_PF", "LinearIsotropic3D_EL",',
-        '        "BackStress(TensorLinearHardeningFunction):",',
+        '        "BackStress(TensorLinearHardeningFunction):'
+        'YieldStress(ScalarLinearHardeningFunction):",',
         '        "Begin_Model_Parameters",',
         '        "YoungsModulus", 70000.0, "PoissonsRatio", 0.3,',
         '        "ScalarLinearHardeningParameter", 0.0,',
