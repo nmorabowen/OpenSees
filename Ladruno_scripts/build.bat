@@ -21,6 +21,13 @@ REM    Ladruno_scripts\build.bat rebuild      -> wipe build/, rebuild
 REM    Ladruno_scripts\build.bat <target>     -> rebuild only that target
 REM                                              (OpenSees, OpenSeesSP, OpenSeesMP,
 REM                                               OpenSeesPy, OpenSeesPyMP)
+REM    Ladruno_scripts\build.bat installer    -> build everything, then wrap dist\
+REM                                              into Ladruno_files\*_setup.exe
+REM    Ladruno_scripts\build.bat clean installer  -> the full release recipe
+REM
+REM  `installer` is REFUSED alongside explicit targets: build.bat only refreshes
+REM  dist\ for the targets it built, so a partial build would be packaged into a
+REM  plausible-looking but MIXED setup.exe. Package from a full build only.
 REM
 REM  Incremental rebuilds after source edits in OpenSees\: just re-run this
 REM  script. CMake + Ninja handle dependency tracking.
@@ -101,26 +108,53 @@ set "IMPI_BIN=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
 set "IMPI_LIBFABRIC=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\opt\mpi\libfabric\bin"
 
 REM ----- Argument parsing --------------------------------------------------
-set "MODE=%1"
-if /i "%MODE%"=="clean" (
+REM Ladruno: scan the WHOLE arg list. Recognized verbs (clean / rebuild /
+REM installer) are pulled out; every other token is a build target.
+REM   - Was `set MODE=%1` (first arg only), which silently dropped extra targets
+REM     -- `build.bat OpenSeesPy OpenSeesPyMP` built only OpenSeesPy.
+REM   - `installer` chains build_inno_installer.ps1 after a successful build so
+REM     the whole release is one command.
+set "MODE="
+set "WANT_CLEAN="
+set "WANT_REBUILD="
+set "WANT_INSTALLER="
+for %%A in (%*) do (
+    if /i "%%~A"=="clean" (
+        set "WANT_CLEAN=1"
+    ) else if /i "%%~A"=="rebuild" (
+        set "WANT_REBUILD=1"
+    ) else if /i "%%~A"=="installer" (
+        set "WANT_INSTALLER=1"
+    ) else (
+        if defined MODE (set "MODE=!MODE! %%~A") else (set "MODE=%%~A")
+    )
+)
+
+REM A partial build must never be packaged. build.bat refreshes dist\ only for
+REM the targets it built, so `build.bat OpenSees installer` would wrap a stale
+REM opensees.pyd -- and a 4-of-5 build drops dist\openseesmp entirely -- into a
+REM setup.exe that looks fine and ships a MIXED install. Refuse loudly.
+if defined WANT_INSTALLER if defined MODE (
+    echo ERROR: `installer` cannot be combined with explicit targets.
+    echo        Requested targets: %MODE%
+    echo        Packaging requires a FULL build so dist\ is coherent. Use:
+    echo            Ladruno_scripts\build.bat installer
+    echo            Ladruno_scripts\build.bat clean installer
+    exit /b 1
+)
+
+if defined WANT_CLEAN (
     echo Wiping build/, install/, dist/ ...
     rmdir /s /q "%BUILD%"   2>nul
     rmdir /s /q "%INSTALL%" 2>nul
     rmdir /s /q "%DIST%"    2>nul
-    set "MODE="
-) else if /i "%MODE%"=="rebuild" (
+) else if defined WANT_REBUILD (
     echo Wiping build/ ...
     rmdir /s /q "%BUILD%" 2>nul
-    set "MODE="
-) else (
-    REM Ladruno: honor MULTIPLE target args. Was `set MODE=%1` (first arg only), which
-    REM silently dropped extra targets -- `build.bat OpenSeesPy OpenSeesPyMP` built only
-    REM OpenSeesPy. Use the whole arg list as the target set.
-    set "MODE=%*"
 )
 
 set "TARGETS=OpenSees OpenSeesSP OpenSeesMP OpenSeesPy OpenSeesPyMP"
-if not "%MODE%"=="" set "TARGETS=%MODE%"
+if defined MODE set "TARGETS=%MODE%"
 
 REM ----- Load toolchain ----------------------------------------------------
 REM setup_env.bat (vcvars64 + 3x oneAPI vars.bat) is the slow part of a build.
@@ -440,4 +474,15 @@ echo   In Python:  sys.path.insert(0, r"%DIST%\bin"); import opensees
 echo   MPI Python:  set PATH=%DIST%\openseesmp;%%PATH%%
 echo                %DIST%\openseesmp\mpiexec -n 4 python driver.py   (import openseesmp)
 echo.
+
+REM ----- Step 6 (optional): wrap dist\ into the Inno Setup installer --------
+REM Only reached on a FULL build (guarded at argument-parsing time).
+if defined WANT_INSTALLER (
+    echo === Step 6: Building the Inno Setup installer ===
+    powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\build_inno_installer.ps1"
+    if errorlevel 1 (
+        echo ERROR: installer build failed.
+        exit /b 1
+    )
+)
 endlocal

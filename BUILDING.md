@@ -12,6 +12,18 @@ call Ladruno_scripts\setup_env.bat
 Ladruno_scripts\build.bat clean
 ```
 
+Add `installer` to also produce the shareable `setup.exe`:
+
+```cmd
+Ladruno_scripts\build.bat clean installer
+```
+
+`Ladruno_scripts/` is the fork's **only** build system — see
+[Ladruno_scripts/README.md](Ladruno_scripts/README.md). The build tree is
+`build\build\Release` (Conan `cmake_layout`), not `build\Release`; driving
+CMake by hand at the wrong path configures a second cache and leaves you
+testing a stale binary.
+
 About 10–15 min later, four binaries land in `dist\bin\`:
 
 | Binary | What it is |
@@ -101,9 +113,15 @@ Build a packaged installer that any Windows user can run — see *Packaging for 
 
 ## Packaging for distribution
 
-Two parallel installer formats, both drawing from the same `dist/` and writing to `Ladruno_files/`.
+One installer format: the Inno Setup wizard, drawing from `dist/` and writing to
+`Ladruno_files/`. The simplest route is to let `build.bat` chain it:
 
-### Wizard installer (`setup.exe`) — recommended for non-developers
+```cmd
+Ladruno_scripts\build.bat installer         :: full build, then package
+Ladruno_scripts\build.bat clean installer   :: the full release recipe
+```
+
+Or run the packaging step on its own against an existing `dist/`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Ladruno_scripts\build_inno_installer.ps1
@@ -111,20 +129,15 @@ powershell -ExecutionPolicy Bypass -File Ladruno_scripts\build_inno_installer.ps
 
 Produces `Ladruno_files\Ladruno_OpenSees_<version>_setup.exe`: a single self-contained Inno Setup wizard with a venv-picker page, optional PATH entry, and a `.pth`-writing helper. Default install location is `Program Files\Ladruno\OpenSees` (UAC-elevated). Requires Inno Setup 6 installed locally.
 
-### PowerShell installer (`install.ps1` + `.zip`) — fallback for CI / power users
+> **Package from a full build only.** `build.bat` refreshes `dist/` only for the
+> targets it built, so packaging after `build.bat OpenSees` ships a stale
+> `opensees.pyd` — and a 4-of-5 build drops `dist/openseesmp` entirely — inside a
+> `setup.exe` that looks perfectly normal. `build.bat installer` refuses explicit
+> targets for exactly this reason.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File Ladruno_scripts\make_installer.ps1
-```
-
-Produces `Ladruno_files\install.ps1` and `Ladruno_OpenSees_<version>.zip`. Distribute both files together. Receivers run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 `
-    -InstallPath C:\Tools\Ladruno -VenvPath C:\Tools\Ladruno\venv -AddToPath -Yes
-```
-
-The `-Yes` flag suppresses prompts — useful for unattended/silent installs.
+The older zip + `install.ps1` packager (`make_installer.ps1`) was **removed**: it
+had produced no shipped artifact since the Inno wizard landed, and having two
+peer-looking packagers next to each other was a standing source of confusion.
 
 ## Troubleshooting
 

@@ -213,6 +213,11 @@ Output: `Ladruno_files\Ladruno_OpenSees_<version>_setup.exe` — a single self-c
 
 The PS2EXE-based attempt is already in place but the .exe form's parameter binding is flaky. Don't spend time fixing it; replace with the Inno Setup path described above. Keep `Ladruno_scripts/make_installer.ps1` and the generated `install.ps1` as a fallback for power users who want a scriptable installer.
 
+> **Superseded.** The Inno wizard shipped and became the only distributed
+> format; `make_installer.ps1` never produced a shipped artifact afterwards and
+> was **deleted**. The fallback described in this paragraph no longer exists —
+> package with `Ladruno_scripts\build.bat installer`.
+
 Existing artifacts to reuse:
 - `Ladruno_scripts/banner_ASCII.txt` — single source of truth for the splash art
 - `Ladruno_scripts/wire_pyenv.ps1` — already-tested venv-wiring logic; port the meaningful bits into `installer.iss`

@@ -306,6 +306,13 @@ MUMPS seeded from an existing build to skip the ~20 min step. **`build.bat` buil
 all 5 targets only when invoked with NO args** — passing target names restricts
 to just those.
 
+`build.bat installer` does the full build and then runs
+`build_inno_installer.ps1`, so `Ladruno_scripts\build.bat clean installer` is the
+whole release in one command. It **refuses** to run alongside explicit targets:
+`dist\` is refreshed only for the targets built, and a 4-of-5 build drops
+`dist\openseesmp` entirely, so packaging a partial build yields a normal-looking
+`setup.exe` carrying a mixed install.
+
 ---
 
 ## 7. Where a new subsystem's sources live — two sanctioned patterns
@@ -532,6 +539,21 @@ and a stray interactive Python prompt — because `for %%C in (...) do (` and th
 perfect (two changed characters); nothing in it hints at the real damage. `git`
 also warns `LF will be replaced by CRLF the next time Git touches it`, which is
 easy to dismiss as routine noise — on a `.bat` it is the actual error message.
+
+**Any whole-file rewrite does this, not just `sed -i`.** A Python round-trip that
+reads with universal newlines and writes with `newline=''` converts CRLF to LF
+just as silently (hit 2026-09-08 while adding the `installer` verb to
+`build.bat`; symptoms that time were `'ocal' is not recognized` — `setlocal`
+minus its first two bytes — and `'M' is not recognized` for every `REM`).
+
+**Git Bash's `cat -A` and `sed` will tell you the file is already LF when it is
+not.** MSYS text-mode mounts strip the CRs on read, so `sed -n '1,5p' x.bat |
+cat -A` prints clean `$` line ends on a perfectly good CRLF file. Checking that
+way "confirms" a wrong diagnosis. `file` reads the bytes and does not lie:
+
+```bash
+file Ladruno_scripts/build.bat   # must say "with CRLF line terminators"
+```
 
 **Rule:** edit `.bat` files with the Edit tool (it preserves existing endings) or
 a CRLF-aware editor, never `sed -i`/`tr`. To repair one:
