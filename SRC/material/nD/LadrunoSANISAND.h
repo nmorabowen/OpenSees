@@ -137,7 +137,13 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     // there is nothing to choose and f = f_max stands. REQUIRES
     // -implexControl: without a companion there is no sigma_impl at the trial,
     // and the request is refused rather than silently ignored.
-    enum FactorMode { FACTOR_FIXED = 0, FACTOR_CONTROL = 1 };   // Ladruno ADR-92 P2-9
+    // FACTOR_CONTROL_ITER is the plan's priced alternative: f* recomputed at
+    // EVERY trial of the step from that iterate's d_eps (the first iterate is
+    // the elastic predictor, whose companion plastic increment is biased small
+    // -- measured on the R3 arm, see _adr92_p2_9_r3_results.md). Costs step
+    // linearity: the delivered operator is still Ce but the stress is no
+    // longer affine in d_eps within the step.
+    enum FactorMode { FACTOR_FIXED = 0, FACTOR_CONTROL = 1, FACTOR_CONTROL_ITER = 2 };   // Ladruno ADR-92 P2-9
 
     bool   enabled;          // -implex
     bool   control;          // -implexControl
@@ -179,7 +185,7 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     // -- under `fixed` no P2-9 arithmetic is reachable at all, so the operator
     // is byte-identical to the pre-P2-9 build. `control` is an -implex option
     // AND an -implexControl option: it is refused without either.
-    int    factorMode;       // -implexFactor {fixed|control}          Ladruno ADR-92 P2-9
+    int    factorMode;       // -implexFactor {fixed|control|controlIter}  Ladruno ADR-92 P2-9
 
     // errorTol default: measured 2026-09-06 (_adr92_p1_bvp_gate_rerun.md sweep)
     // -- 0.05 fails on reach, 0.1 is the tightest tolerance that beats the
@@ -435,7 +441,11 @@ class LadrunoSANISAND : public ManzariDafalias
     // step and so recomputes f* against the new f_max. Transient and
     // reconstructible from the arm, so it is NOT sent on the wire -- same rule
     // as mImplexStepArmed and mPrimed. Inert unless factorMode == CONTROL.
+    // Under FACTOR_CONTROL_ITER the pending flag marks only the FIRST pass (which
+    // records f_max into mImplexCtlFMax and counts the census); every later
+    // pass recomputes f* against that stored f_max.
     bool   mImplexCtlFPending;   // Ladruno ADR-92 P2-9
+    double mImplexCtlFMax;       // Ladruno ADR-92 P2-9: f_max of the current step (control modes)
     bool   mImplexStepArmed;  // true until the first trial call after a commit/revert
     bool   mImplexTrialDone;  // the last trial pass was an EXTRAPOLATED one, so
                               // commitState() owes a companion return. False on

@@ -177,7 +177,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexAlpha a?> <-implexDt pseudo|strain|user <dt?>>"     // Ladruno (ADR-92)
                << " <-implexFloor implicit|accept|refuse> <-implexGuard on|off>" // Ladruno ADR-92 P2
                << " <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>"      // Ladruno ADR-92 P2-6/P2-7c
-               << " <-implexFactor fixed|control>"                              // Ladruno ADR-92 P2-9
+               << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla>"                                // Ladruno ADR-92 P2-7c
                << endln;
@@ -450,7 +450,7 @@ OPS_LadrunoSANISAND(void)
             const char *rawMode = OPS_GetString();
             if (rawMode == 0) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
-                       << ": -implexFactor wants fixed|control" << endln;
+                       << ": -implexFactor wants fixed|control|controlIter" << endln;
                 return 0;
             }
             char modeTok[32];
@@ -462,9 +462,11 @@ OPS_LadrunoSANISAND(void)
                 implexOpt.factorMode = LadrunoImplexOptions::FACTOR_FIXED;
             else if (strcmp(modeTok, "control") == 0)
                 implexOpt.factorMode = LadrunoImplexOptions::FACTOR_CONTROL;
+            else if (strcmp(modeTok, "controlIter") == 0 || strcmp(modeTok, "controliter") == 0)
+                implexOpt.factorMode = LadrunoImplexOptions::FACTOR_CONTROL_ITER;   // the priced alternative
             else {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
-                       << ": -implexFactor wants fixed|control, got '" << modeTok
+                       << ": -implexFactor wants fixed|control|controlIter, got '" << modeTok
                        << "'. fixed (the DEFAULT) takes f = alpha*dt_{n+1}/dt_n, the"
                           " clock ratio, with the P2-2 guard knocking it to zero on a"
                           " bad committed predecessor -- byte-identical to every build"
@@ -1837,6 +1839,7 @@ LadrunoSANISAND::ladrunoImplexInitState(void)
     mImplexDt0        = 0.0;
     mImplexFactor     = 0.0;
     mImplexCtlFPending = false;   // Ladruno ADR-92 P2-9: armed by ladrunoImplexArmStep()
+    mImplexCtlFMax     = 0.0;     // Ladruno ADR-92 P2-9
     mImplexStepArmed  = true;
     mImplexTrialDone  = false;
     // Ladruno ADR-92 P2-2: the guard is COMMITTED-state derived, so it starts
@@ -1976,7 +1979,7 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
     // `verbose`), on the P2-7c/RED-1 F5 rule: getCopy(const char*) and recvSelf
     // pass verbose == false, and a per-Gauss-point clone must be refused
     // exactly as the deck was.
-    if (opt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL && !opt.control) {
+    if (opt.factorMode != LadrunoImplexOptions::FACTOR_FIXED && !opt.control) {
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                << ": -implexFactor control REQUIRES -implexControl. The"
                   " control-informed factor f* = clamp((A:B)/(B:B), 0, f_max) is chosen"
@@ -2061,7 +2064,11 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
                      : "OFF (a trial past tol refuses immediately, the pre-P2-6"
                        " behaviour)")
                << ", -implexFactor "                                   // Ladruno ADR-92 P2-9
-               << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
+               << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL_ITER
+                     ? "controlIter (f* = clamp((A:B)/(B:B), 0, f_max) recomputed at EVERY"
+                       " trial of the step -- the plan's priced alternative; step linearity"
+                       " is spent; the P2-2 guard still wins outright)"
+                     : mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
                      ? "control (f* = clamp((A:B)/(B:B), 0, f_max) at the FIRST trial of"
                        " each step, frozen for the step -- the clock ratio becomes an"
                        " upper bound and the companion picks the degree; the P2-2 guard"
@@ -2252,7 +2259,7 @@ LadrunoSANISAND::ladrunoImplexArmStep(void)
     // refusal, the reduction floor, the P2-6 trial guard, implexDetail[5])
     // reads mImplexFactor, i.e. the f ACTUALLY used, so none of that machinery
     // can be short-circuited by this flag.
-    mImplexCtlFPending = (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL);
+    mImplexCtlFPending = (mImplexOpt.factorMode != LadrunoImplexOptions::FACTOR_FIXED);
 
     mImplexStepArmed = false;
 }
@@ -2774,12 +2781,18 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // That is the property that removed the ladder, and P2-9 does not spend it.
     // A retry at a smaller dt reverts first, which re-arms the step, so the
     // retry recomputes f* against its own f_max.
-    if (mImplexCtlFPending) {
-        mImplexCtlFPending = false;
-
-        // f_max: the clock ratio as ladrunoImplexArmStep() left it -- already 0
-        // if the P2-2 guard fired, which is how that guard keeps precedence.
-        const double fMax = (mImplexFactor > 0.0) ? mImplexFactor : 0.0;
+    const bool ctlFirstPass = mImplexCtlFPending;
+    if (mImplexCtlFPending ||
+        mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL_ITER) {
+        if (mImplexCtlFPending) {
+            mImplexCtlFPending = false;
+            // f_max: the clock ratio as ladrunoImplexArmStep() left it -- already 0
+            // if the P2-2 guard fired, which is how that guard keeps precedence.
+            // Stored, because under controlIter the later passes find mImplexFactor
+            // already overwritten with the previous pass's f*.
+            mImplexCtlFMax = (mImplexFactor > 0.0) ? mImplexFactor : 0.0;
+        }
+        const double fMax = mImplexCtlFMax;
 
         Vector dEpsTot(6);
         dEpsTot = mEpsilon;
@@ -2802,7 +2815,7 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
             // "Backed off": the companion asked for less than half the clock
             // ratio. Not counted when fMax == 0 -- there was no choice to make
             // there, and P2-2's own slot 1 has already recorded it.
-            if (fMax > 0.0 && fStar < 0.5 * fMax)
+            if (ctlFirstPass && fMax > 0.0 && fStar < 0.5 * fMax)   // once per step in both control modes
                 LadrunoImplexGlobals::instance().noteControlFactorBackoff();
 
             mImplexFactor = fStar;
@@ -4104,7 +4117,10 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
           << ")" << endln;
         // Ladruno ADR-92 P2-9
         s << "              -implexFactor = "
-          << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
+          << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL_ITER
+                ? "controlIter (f* recomputed at EVERY trial of the step from that"
+                  " iterate's d_eps -- the priced alternative, costs step linearity)"
+                : mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
                 ? "control (f* = clamp((A:B)/(B:B), 0, f_max) with"
                   " A = sigma_n + Ce:d_eps - sigma_impl and B = Ce:d_eps_p(n), chosen at"
                   " the FIRST trial of the step and frozen for it; the clock ratio is"
