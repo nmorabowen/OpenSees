@@ -483,17 +483,23 @@ interpreter writes). Both routes land on the same base flag now.
 
 ## 12. ADR-92 P2-9 — the control-informed extrapolation factor (`-implexFactor`)
 
-**Status: implemented and measured, not shipped as default.** `-implexFactor fixed` is
-the default and is byte-identical to every build before P2-9. Two opt-in control modes
-exist; both require `-implexControl`. `control` (f* frozen at the first trial of the
-step) was run through the plan's Fork R3 registered arm and **REFUTED**: depth 0.052 <
-the 0.076 bar and overlay 11.1 % mean deviation, both worse than `fixed` on the same
-deck (`_adr92_p2_9_r3_results.md`, Leg 1). `controlIter` (f* recomputed at every Newton
-trial from that trial's own `d_eps`) **PASSES** the same bars — depth 0.115, overlay
-1.70 % — but costs materially more wall time and Newton churn (see below) and its
-Esmeralda dense-refuse arm is still owed before it can be considered for shipping. Both
-modes are documented here as measured findings, not as recommended settings; `fixed`
-remains the thing to reach for.
+**Status: CLOSED 2026-09-08 — measured, not shipped as default.** `-implexFactor fixed` is
+the default and is byte-identical to every build before P2-9; that does not change here.
+Two opt-in control modes exist; both require `-implexControl`. `control` (f* frozen at the
+first trial of the step) was run through the plan's Fork R3 registered arm and
+**REFUTED**: depth 0.052 < the 0.076 bar and overlay 11.1 % mean deviation, both worse
+than `fixed` on the same deck (`_adr92_p2_9_r3_results.md`, Leg 1). `controlIter` (f*
+recomputed at every Newton trial from that trial's own `d_eps`) **PASSES** the same
+bars — depth 0.115, overlay 1.70 % — but costs materially more wall time and Newton churn
+(see below). Its Esmeralda dense-refuse arm has now been measured
+(`_adr92_p2_9_esmeralda_results.md`): honest wall **0.01755**, above the plan's
+refutation bar (0.0169) but 0.85 % short of its ship bar (0.0177). Per the pre-registered
+decision rule's otherwise branch, **`controlIter` does not ship as default** — it is
+recorded here as a graded guard with its measured gain (reach +3.9 %, refusal churn down
+~400x) against its measured cost (~2.9x wall time on this deck; the R3 registered arm's
+~13x figure does not generalise). Both control modes are documented as measured findings,
+not as recommended settings; `fixed` remains the default and the thing to reach for. See
+"When to reach for `controlIter`" below for the practical guidance.
 
 ### The operator
 
@@ -610,7 +616,7 @@ was chosen still overwrites `f` with `0` and `implexDetail[5]` still reports `0`
   widened 32 → 33) on the same rule as the rest of `mImplexOpt`. The per-step arm for the `f*`
   computation is transient and is **not** sent, like `mImplexStepArmed` itself.
 
-### R3 verdict — `control` REFUTED, `controlIter` PASSES, Esmeralda owed
+### R3 verdict — `control` REFUTED, `controlIter` PASSES R3
 
 The plan's Fork R3 registered arm (`_adr92_p2_9_r3_results.md`) is the decisive measurement, run on
 the same hypoplastic-bearing BVP deck as the P1/P2 `tol0.1` legs:
@@ -637,6 +643,52 @@ converges), which is why its overlay and depth both clear the bars — in fact i
 beats every arm measured in this campaign, including plain `fixed`. The cost is real: ~13x the wall
 time and two orders of magnitude more Newton non-convergence stalls per comparable step count, plus
 more (not fewer) material refusals per converged step than `control`. `controlIter` is therefore the
-first `-implexFactor` mode to independently clear both R3 bars, but it is not shipped as default —
-the Esmeralda dense-refuse arm (the TIMs-owed arm at build hash with `-implexFactor controlIter`) is
-the outstanding gate before any shipping decision.
+first `-implexFactor` mode to independently clear both R3 bars, but R3 was not the final gate —
+the Esmeralda dense-refuse arm was.
+
+### Esmeralda verdict — CLOSED, otherwise branch, not shipped
+
+TIMs' Esmeralda dense/loose-refuse arm (`_adr92_p2_9_esmeralda_results.md`, engine `179da6ffb`,
+PR #822) is the decision rule's actual gate (`_adr92_p2_9_control_informed_f_plan.md` §2: "ships
+if the dense refuse wall reaches >= 0.0177 ... otherwise the ADR records the factor as a graded
+guard"). Measured dense honest wall on `controlIter` (leg 146607, control 0.1/0.01): **0.01755**.
+That clears the refutation bar (`< 0.0169`) but misses the ship bar (`>= 0.0177`) by 0.85 %, so
+neither branch of the rule's `if` fires and the **otherwise branch is decisive**:
+
+- **P2-9 does not ship as a default.** `-implexFactor fixed` remains the default — already the
+  code state, so this closeout is documentation only, no code change owed.
+- **`controlIter` is recorded as a graded guard with its measured gain**, not promoted to
+  default: reach +3.9 % over the P2-7c fixed-f wall (0.01689 -> 0.01755), overlay
+  comparable-to-better (+0.28 % mean vs +0.31 %), and a collapse in refusal churn (refusals
+  42 545 -> 102, failed attempts 248 -> 11) at a measured cost of ~2.9x wall time on this deck
+  (1 933 s -> 5 620 s at 17.2 it/step) — the R3 registered arm's ~13x figure does **not**
+  generalise to this deck.
+- `control` (frozen f*) remains **REFUTED** and is not a candidate in any form.
+- The loose arm ends at 0.03921, unchanged at 0.039 to the third figure exactly as
+  pre-registered — a PASS, not a finding. A companion tol-0.01 dense variant (146608) reaches
+  further (0.01932) by spending its full subdivision budget rather than refusing honestly, but
+  sits +1.44 % HIGH against the twin (stiffer, not closer) — a finding, not a candidate
+  configuration.
+- **P2-8's fixed threshold (`-implexGuardKp`, listed, not built) remains the documented
+  fallback** if a future measurement wants a graded guard without `controlIter`'s cost.
+
+### When to reach for `controlIter`
+
+`controlIter` is not a default and not a general recommendation, but it is a real, measured
+tool for one specific situation: a **deep, dense push toward a softening seat** where the P2-2
+guard's committed-predecessor threshold is under-firing and refusals are dominating wall time.
+On Esmeralda it bought a few percent more reach at comparable-or-better overlay accuracy while
+cutting refusals by roughly two orders of magnitude, for a wall-time premium of roughly 3x on a
+production-scale deck (not the smaller R3 deck's ~13x — that figure does not generalise, and
+should not be quoted outside the R3 deck). Reach for it when:
+
+- the deck is a dense, quasi-static push through a shear zone approaching a softening or
+  reversal point (the seat P2-2/P2-9 both target), and
+- refusal churn (not overlay accuracy) is the binding cost, and
+- ~3x wall time is affordable for the run.
+
+It is **not** a fix for the p = 0 confinement ring (ADR 93, `93_ladruno_sanisand_zero_confinement_adr.md`)
+— that wall is the material's, not the extrapolation factor's, and `controlIter` does not touch
+it. It requires `-implexControl` (the companion computation this factor is built on) and is
+refused without it. `-implexFactor fixed` (the clock-ratio default, unchanged since before
+P2-9) remains what every deck should reach for unless the situation above applies.
