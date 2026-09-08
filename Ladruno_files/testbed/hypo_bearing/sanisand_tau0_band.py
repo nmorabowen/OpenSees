@@ -562,6 +562,26 @@ def _implex_globals(implex):
     return err_avg, refusals
 
 
+def _implex_guards(implex):
+    """Read the process-wide `implexGuards` census (ADR-92 P2), same idiom as
+    `_implex_globals` above -- element 1 / Gauss point 1 sees the same
+    process-wide `LadrunoImplexGlobals` counters as every other yielding
+    point, and the read is non-destructive.  Returns the CUMULATIVE
+    (floor_fallbacks, guards_fired, holds_preserved, reserved, ctl_backoffs)
+    5-tuple -- `implexGuards` is a 7-slot vector as of ADR-92 P2-9
+    (`LadrunoSANISAND.cpp`'s `LadrunoSanisandImplexGuardsResponseID`); this
+    driver only records slot [6] (the control-informed factor backing off
+    below 0.5*f_max), skipping the P2-5/P2-6 slots [4]/[5] it never tracked.
+    Same never-reset-between-legs caveat as `implexRefusals` applies."""
+    if not implex:
+        return (0.0, 0.0, 0.0, 0.0, 0.0)
+    try:
+        g = ops.eleResponse(1, "material", 1, "implexGuards")
+        return (float(g[0]), float(g[1]), float(g[2]), float(g[3]), float(g[6]))
+    except Exception:
+        return (0.0, 0.0, 0.0, 0.0, 0.0)
+
+
 def _implex_err_max(fld, n_hex, implex):
     """Max over YIELDING elements of `implexDetail[0]` (ADR-92 P1 review B4
     item 3).  `implexDetail` is genuinely per-Gauss-point (each integration
@@ -622,6 +642,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             max_substeps=MAX_SUBSTEPS,
             test_type=PUSH_TEST, verbose=True, surcharge=0.0,
             predictor=False, implex=False, implex_control=None,
+            implex_factor="fixed",  # Ladruno ADR-92 P2-9
             xlim=None, zbot=None, build=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
@@ -677,7 +698,15 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                    "-honorTolR", 0, "-maxSubsteps", int(max_substeps),
                    *(("-implex",) if implex else ()),
                    *(("-implexControl", float(implex_control[0]), float(implex_control[1]))
-                     if (implex and implex_control) else ()))
+                     if (implex and implex_control) else ()),
+                   # Ladruno ADR-92 P2-9: default "fixed" is a no-op (byte-identical
+                   # to every existing leg's material command); "control" or
+                   # "controlIter" adds the flag verbatim, and only under -implex
+                   # -implex-control (the C++ side refuses -implexFactor
+                   # control/controlIter without -implexControl).
+                   *(("-implexFactor", implex_factor)
+                     if (implex and implex_control and implex_factor in ("control", "controlIter"))
+                     else ()))
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -819,9 +848,12 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     fh.write(f"# ADR90 WP-A2 tau=0 band, build {build} "
              f"(expected {EXPECTED_BUILD}), leg {tag}\n")
     w.writerow(["s_m", "s_over_B", "q_foot_kPa", "q_base_kPa", "ds_mm",
-                "relaxed", "wall_s", "implex_err_avg", "implex_refusals"])
+                "relaxed", "wall_s", "implex_err_avg", "implex_refusals",
+                "guard_floor", "guard_f0", "guard_hold", "guard_res",
+                "guard_ctlf"])  # Ladruno ADR-92 P2-9
 
     rows, ds, good = [], DS_BASE, 0
+    guard_prev = _implex_guards(implex)
     nfail = nrelax = nsub = 0
     mode, verdict = "TARGET", "reached the target settlement"
     checkpoints, cp_left = [], [c for c in CHECKPOINTS if c <= sfrac + 1e-12]
@@ -879,8 +911,13 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         qb = -(sum(ops.nodeReaction(t, 3) for t in base) - r0_base) / area
         s = uz0 - ops.getTime()
         implex_err_avg, implex_refusals_cum = _implex_globals(implex)
+        guard_cum = _implex_guards(implex)
+        guard_delta = tuple(c - p for c, p in zip(guard_cum, guard_prev))
+        guard_prev = guard_cum
         rows.append((s, s / r3.B_FOOT, qf, qb, ds * 1000.0, relaxed,
-                     time.time() - t0, implex_err_avg, float(implex_refusals_cum)))
+                     time.time() - t0, implex_err_avg, float(implex_refusals_cum),
+                     guard_delta[0], guard_delta[1], guard_delta[2], guard_delta[3],
+                     guard_delta[4]))  # Ladruno ADR-92 P2-9: guard_ctlf
         w.writerow([f"{v:.9g}" for v in rows[-1]])
         fh.flush()
         if verbose and len(rows) % 25 == 0:
@@ -1038,6 +1075,8 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     n_outside = txt.count("Outside Bounding")
     n_clamp = txt.count("CLAMPING")
     _, n_material_refused = _implex_globals(implex)
+    (n_guard_floor, n_guard_f0, n_guard_hold,
+     n_guard_res, n_guard_ctlf) = _implex_guards(implex)  # Ladruno ADR-92 P2-9
 
     res = dict(
         tag=tag, h0=h0, e_name=ename, e_init=e_init,
@@ -1076,6 +1115,9 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         attempts=len(rows) + nsub, wall_overlap_note="",
         budget_used_frac=nsub / float(SUBDIV_BUDGET),
         n_material_refused=n_material_refused,
+        n_guard_floor=n_guard_floor, n_guard_f0=n_guard_f0,
+        n_guard_hold=n_guard_hold, n_guard_res=n_guard_res,
+        n_guard_ctlf=n_guard_ctlf, implex_factor=implex_factor,  # Ladruno ADR-92 P2-9
         implex_err_max_at_checkpoints=dict(implex_err_max_cp),
         n_yield_ele=n_yield, vol_yield=v_yield, epsq_max=epsq_max,
         wall_s=wall, wall_grav_s=t_grav, csv=csv_path, field=field_path,
@@ -1123,6 +1165,14 @@ def main(argv=None):
     ap.add_argument("--implex-control", nargs=2, type=float, default=None,
                     metavar=("TOL", "REDLIMIT"),
                     help="`-implexControl TOL REDLIMIT`; P0 made this mandatory at the corner")
+    ap.add_argument("--implex-factor", default="fixed",
+                    choices=("fixed", "control", "controlIter"),
+                    help="ADR-92 P2-9: `-implexFactor fixed|control|controlIter`; fixed "
+                         "(default) leaves the material command byte-identical to every "
+                         "prior leg, control appends `-implexFactor control`, controlIter "
+                         "appends `-implexFactor controlIter` (recomputes f* at every "
+                         "trial of the step, not just the first iterate; both require "
+                         "--implex --implex-control)")
     ap.add_argument("--predictor", action="store_true",
                     help="drive the push with `LadrunoLoadControl -tangentPredictor` "
                          "(ADR-80 P3) instead of stock LoadControl; default OFF so the "
@@ -1160,7 +1210,7 @@ def main(argv=None):
           f"{args.xlim if args.xlim is not None else 'R3 30.0'}, "
           f"{args.zbot if args.zbot is not None else 'R3 20.0'}")
     print(f"    IMPL-EX                     : "
-          f"{('on, control ' + str(args.implex_control)) if args.implex else 'off'}")
+          f"{('on, control ' + str(args.implex_control) + ', factor ' + args.implex_factor) if args.implex else 'off'}")
     print(f"    push integrator             : "
           f"{'LadrunoLoadControl -tangentPredictor (ADR-80 P3)' if args.predictor else 'LoadControl (stock)'}")
     print(f"    wall budget per leg         : {args.wall:.0f} s")
@@ -1179,6 +1229,7 @@ def main(argv=None):
                         max_substeps=args.maxsubsteps,
                         surcharge=args.surcharge, predictor=args.predictor,
                         implex=args.implex, implex_control=args.implex_control,
+                        implex_factor=args.implex_factor,  # Ladruno ADR-92 P2-9
                         xlim=args.xlim, zbot=args.zbot, build=build)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)

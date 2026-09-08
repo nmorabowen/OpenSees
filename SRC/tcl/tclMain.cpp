@@ -197,7 +197,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • Modal frequency domain — FRF sweep, steady-state, random PSD\n"
 "        • LadrunoUP — Biot u-p saturated-porous element family\n"
 "        • LadrunoPorousOverlay — staggered u-p overlay pattern\n"
-"        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov)\n"
+"        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)\n"
 "        • system Mumps — distributed MUMPS (-BLR, -stats, half-storage)\n"
 "        • MohrCoulombTensionCutoff — MC + Rankine composite (ASDPlastic)\n"
 "        • LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance\n"
