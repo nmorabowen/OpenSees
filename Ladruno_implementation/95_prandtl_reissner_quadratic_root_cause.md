@@ -115,6 +115,16 @@ which at ψ = 0 cannot move p and cannot close f. Fix candidates: classify in th
 (K, G, η̄ of the potential; at η̄ = 0 it is `p ≥ p_apex`), or order the returns flank-first with
 apex projection as the fallback when the flank map fails beyond the apex.
 
+**FIXED 2026-09-08 (ADR-94 wp/94f, PR #832, merged `67474aeb7`).** Both were shipped: the apex
+region test now runs in the elastic metric (reusing ADR-97's closest-point apex utility, gated by a
+trait specialised for `DruckerPrager_YF` only), with a flank-first apex fallback behind it at the
+four sites that previously refused. Re-measured on this deck: ASD `h20uri` **TARGET at s/B 0.15,
+0.9758 of exact against the repaired UW-DP 0.9757**, zero flank refusals (was 435), and the linear
+control unchanged at 1.0850. The elastic-metric classification alone does the work here; the
+fallback never fires. `Backward_Euler` stays byte-identical on all 23 ADR-97 baseline decks.
+**Consequence for §0:** all three of the fork's constitutive models now cross the footing-edge
+tensile spot without a wall; only SANISAND's low-pressure cost remains, and it is floored.
+
 ## 3c. SANISAND on the same deck — same zone, different failure class
 
 `LadrunoSANISAND` (ADR-92 CP1 parameters and staging, `-maxSubsteps 1000` — the deck's default of 0
