@@ -8,8 +8,12 @@ tags: [implementation, material, review, verdict]
 
 # ADR 97 verdict — `ASDPlasticMaterial3D` closest-point return map
 
-Build at closeout: `7e93e4381` (`ops.ladrunoBuild()` verified; HEAD `5e89b8a12` is
-SRC-identical to it, `git diff 7e93e4381 HEAD -- SRC` empty). Plan:
+Build at closeout: `7e93e4381` for every measurement in §1-§4 below (HEAD
+`5e89b8a12` — the merge of P4 with P6 — is SRC-identical to it,
+`git diff 7e93e4381 HEAD -- SRC` empty); the banner line (§ deliverable 2) and
+the final full-battery re-run were verified on the subsequent build
+`33c670bf5` (banner-only source change, `ops.ladrunoBuild()` verified on both).
+Plan:
 [[97_ladruno_asdp_closest_point_adr]]. Stack: #817 (`wp/97a-plan-oracles`, P0) →
 #819 (`wp/97b-cp-smooth`, P1) → #824 (`wp/97c-cp-principal`, P2) → #825
 (`wp/97d-cp-hoekbrown`, P3) → #827 (`wp/97f-explicit-gate`, P5) → #829
@@ -111,7 +115,7 @@ One row per gate per WP. "Test" is the file that carries the assertion;
 | P4 | 4 — BE inertness | 22/23 decks byte-identical; the one documented exception is analyzed in §0 | `tests/test_adr97_p4_inertness.py` | pre-change dumps | same run |
 | P4 | 5 — mutation | revert to `compute_local_stress()` FD → error returns to 4.574e-2 (historical 4.6%); 4 of 6 tests + H6 killed, 2 refusal-propagation tests correctly survive | scratch build, [[reviews/adr97_p4_mutation]] | — | — |
 | P4 | 6 — fail-loud (refusal propagation) | `Backward_Euler` P2a exhaustion deck refuses identically under `Secant`/`Numerical_Algorithmic_SecondOrder`; `Closest_Point` P1 starved-VM reproducer still refuses under `Numerical_Algorithmic_SecondOrder` | same file | — | same run |
-| P4 | 7 — portability | **as of this document, run 34188231854 is IN PROGRESS — see the caveat below** | — | — | 34188231854 (pending) |
+| P4 | 7 — portability | green (resolved after the in-progress check during drafting; re-confirmed) | — | — | **34188231854 (success)** |
 | P5 (#827) | 6 — D5 gate | 4 explicit integrators gated behind `experimental_integrator`, checked both directions + typo rejection + `Algorithmic` cross-refusal on an opted-in explicit method | `tests/test_adr94_hlist_mechanical.py`, `test_adr94a_fail_loud.py`, `test_adr97_p6_failloud.py` (appended) | — | [34184110377](https://github.com/nmorabowen/OpenSees/actions/runs/34184110377) |
 | P5 | M9 fix | `StiffSoilShear` `cot(phi)` NaN at `phi==0` fixed algebraically (~1e-14 rel. match for `phi!=0`); PF 0/0 at hydrostatic axis fixed with a zero-guard; both regression-tested (finite at step 1) | `tests/test_adr97_p5_stiffsoil.py` | standalone g++ probe, ADR-94 R3a re-run | same run |
 | P5 | 4 — BE inertness (incl. explicit decks) | 23/282 byte-identical, including the 4 explicit-integrator decks now opted in via the gate-4 dumper | `tests/test_adr97_p4_inertness.py` | pre-change dumps | same run |
@@ -123,10 +127,10 @@ One row per gate per WP. "Test" is the file that carries the assertion;
 self-hosted Zone-B / full-suite jobs on several of these runs stay `queued`
 indefinitely on this fork's current runner capacity (documented behavior, not a
 failure) — the table above reports the Zone-A (Ubuntu) job's conclusion only,
-per the orchestrator's instruction. **P4 (#829, run 34188231854) was still
-`in_progress` at the time this section was drafted; re-check
-`gh run view 34188231854 --json status,conclusion` before flipping this PR to
-ready, and re-dispatch if it does not resolve green.**
+per the orchestrator's instruction. P4 (#829, run 34188231854) was still
+`in_progress` at the time this table was first drafted; re-checked after the
+P7 build/battery — **Zone-A (Ubuntu) resolved `success`** — so all seven
+branches in the stack are green.
 
 ## §2 Mutation-gate record
 
@@ -239,8 +243,10 @@ scoped by the report/test that found it.
   reuses an existing family marker incorrectly would be silently accepted or
   refused for the wrong reason; the `static_assert` pre-flight (§ "found while
   implementing" entries across P2/P3) is the safety net, not a runtime check.
-- **P4's Zone-A run (#829, 34188231854) was in progress when this document was
-  drafted** — see §1's caveat. Confirm green before merging.
+- **All seven Zone-A (Ubuntu) runs are green as of this writing** (§1). P4's
+  run (#829, 34188231854) was in progress when the manifest table was first
+  drafted and resolved `success` on re-check; no branch in the stack has an
+  outstanding required-check failure at closeout time.
 
 ## §6 Merge guide
 
@@ -332,8 +338,8 @@ sections (cross-referenced, not duplicated in full there).
 
 ## §8 Test totals
 
-Full explicit-list battery on the closeout build (`7e93e4381`, HEAD
-`5e89b8a12`, SRC-identical): `test_adr84_p2a_strict_convergence.py`,
+Full explicit-list battery, run once on `7e93e4381` and re-confirmed identical
+on the post-banner build `33c670bf5`: `test_adr84_p2a_strict_convergence.py`,
 `test_adr84_p3_confined_corner.py`, `test_adr94_components.py`,
 `test_adr94_contract.py`, `test_adr94_hlist_hb.py`,
 `test_adr94_hlist_mechanical.py`, `test_adr94_hlist_numerics.py`,
