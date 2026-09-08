@@ -2,7 +2,7 @@
 title: "ADR 92 / P2-9 — control-informed extrapolation factor: plan"
 project: Ladruno
 type: plan
-status: "MEASURED 2026-09-08 — `control` REFUTED (fork R3), `controlIter` PASSES R3, Esmeralda dense-refuse arm owed"
+status: "CLOSED 2026-09-08 — `control` REFUTED (fork R3); `controlIter` PASSES R3 but the Esmeralda dense refuse wall (0.01755) misses the ship bar (0.0177) by 0.85%: decision rule's otherwise branch applies, P2-9 does not ship as default, `controlIter` recorded as a graded guard, `fixed` stays default, P2-8 stays the fallback"
 priority: high
 owner: nmora
 related:
@@ -12,6 +12,7 @@ related:
   - "[[LadrunoSANISAND_implex_guide]]"
   - "[[_adr92_p2_9_oracle_results]]"
   - "[[_adr92_p2_9_r3_results]]"
+  - "[[_adr92_p2_9_esmeralda_results]]"
 tags: [adr, sanisand, implex, p2, plan, measurement]
 updated: 2026-09-08
 ---
@@ -69,15 +70,26 @@ guard (P2-2) remains the fallback there. The loose wall at s/B 0.039 is the mate
 | G0 oracle rows (`adr92_p0_oracle`) | byte-identical when `B·B = 0` (elastic) and where `A ∥ B` | any G0 row changes without a plastic history | **PASS.** `--gate G0`/`--gate G2` byte-identical before/after the variant-D commit (3 seeds, 4.2e-14…3.9e-13); GD.2 (a real elastic-unloading path) `max\|σ_A − σ_D\| = 0.0`. See `_adr92_p2_9_oracle_results.md` §3/GD.2 |
 | Seat replay (`_adr93_seat_replay`, step 331) | error 0.46 → ≤ 0.05 (the `f = 0` value was 0.029; `f*` lands at or below it) | error > 0.1 | **PASS, by ~60x.** `f* = 0.058515` → error 0.00082 (`cos(A,B) = 0.9996`). New finding not in this table: `f*` **frozen** on a bad first iterate is 100–450x worse than today's `f` on the G2 sweep; recomputed on the converged `d_eps` it is 1.0–2.1x better. See `_adr92_p2_9_oracle_results.md` §5/GD.4 |
 | Fork R3 registered arm (`adr92_bvp_fix/ctl`, tol 0.1) | depth ≥ P2's 0.076, refusals/step ↓, overlay ≤ 2 % | depth < 0.076 or overlay > 5 % | **`control` (Leg 1, `a6a53948e`): REFUTED.** depth 0.0521 < 0.076, overlay 11.12 % > 5 %, `n_guard_ctlf` 196,549 over 366 steps; refusals/step DID fall (17.97 → 2.31) but the curve drifted double digits before seizing. **`controlIter` (Leg 2, `9e73060a9`): PASS.** depth 0.1149 ≥ 0.076, overlay 1.70 % ≤ 2 % (best of any arm this campaign); cost: refusals/step rose to 7.39, wall 1858.4 s (~13x Leg 1's 141.6 s), Newton max-iter stalls 1 → 89. See `_adr92_p2_9_r3_results.md` |
-| Esmeralda dense refuse arm (TIMs, q10, fork push, control 0.1/0.01, cap 20000) | honest wall **≥ 0.0177** (the accidental engine's) on the twin within 0.3 % | wall < 0.0169 (P2-7c's) | **owed** — not yet run; per §4 below, run on HEAD (`aeb1da492`) with `-implexFactor controlIter` (the only mode that cleared R3) |
-| Esmeralda loose arm | wall unchanged at 0.039 (material) | — (a change there would be a *finding*, not a pass) | **owed** — not yet run, same handoff as the dense arm |
+| Esmeralda dense refuse arm (TIMs, q10, fork push, control 0.1/0.01, cap 20000) | honest wall **≥ 0.0177** (the accidental engine's) on the twin within 0.3 % | wall < 0.0169 (P2-7c's) | **MEASURED 0.01755** (leg 146607, `-implexFactor controlIter`) — above the refutation bar (0.0169) but 0.85 % short of the ship bar (0.0177); neither branch of the `if` fires, so the rule's **otherwise** branch applies. See `_adr92_p2_9_esmeralda_results.md` |
+| Esmeralda loose arm | wall unchanged at 0.039 (material) | — (a change there would be a *finding*, not a pass) | **MEASURED 0.03921** (leg 146609) — unchanged at 0.039 to the third figure, exactly as pre-registered. **PASS, not a finding.** See `_adr92_p2_9_esmeralda_results.md` |
 
 Decision rule: P2-9 ships if the dense refuse wall reaches ≥ 0.0177 on the twin and no
 oracle row regresses; otherwise the ADR records the factor as a graded guard with its measured
-gain and P2-8's fixed threshold is the fallback. **As measured so far:** `control` (frozen f*) is
-REFUTED by the fork R3 arm and is not a shipping candidate; `controlIter` (per-trial f*) is the
-only mode to clear R3, at a measured wall-time/Newton-churn cost, and the Esmeralda dense-refuse
-arm on `controlIter` is now the decision rule's outstanding input.
+gain and P2-8's fixed threshold is the fallback. **Final resolution (2026-09-08):** the measured
+dense refuse wall (0.01755) sits strictly between the refutation bar (< 0.0169) and the ship bar
+(≥ 0.0177), so the **otherwise branch is decisive**. `control` (frozen f*) remains REFUTED by the
+fork R3 arm and is not a shipping candidate in any form. `controlIter` (per-trial f*) is the only
+mode that clears R3, and on Esmeralda it delivers a real, measured gain — reach +3.9 % over
+P2-7c's fixed-f wall (0.01689 → 0.01755), overlay comparable-to-better (+0.28 % mean vs +0.31 %),
+and a collapse in refusal churn (refusals 42 545 → 102, failed attempts 248 → 11) — at a measured
+cost of ~2.9x wall time on this deck (1 933 s → 5 620 s at 17.2 it/step; the R3 leg's "~13x wall"
+figure does NOT generalise). **P2-9 does not ship as a default.** `-implexFactor fixed` remains
+the default (already the code state — no code change is owed by this wave). `controlIter` is
+recorded as a graded guard with its measured gain, staying an explicit opt-in for the TIMs
+campaign. P2-8's fixed threshold (`-implexGuardKp`, listed, not built) remains the documented
+fallback. See `_adr92_p2_9_esmeralda_results.md` for the full table, the tol-0.01 finding
+(146608: reaches 0.01932 but sits +1.44 % HIGH against the twin — stiffer, not closer, a finding
+not a candidate configuration), and the arithmetic.
 
 ## 3. Lanes
 
@@ -122,3 +134,14 @@ reads `implexDetail[5]` per point, no change needed there; `implexGuards` is now
   `-implexFactor controlIter` **PASSES** (depth 0.1149 ≥ 0.076, overlay 1.70 % ≤ 2 %) at
   ~13x Leg 1's wall time and a jump from 1 to 89 Newton max-iteration stall markers.
   `_adr92_p2_9_r3_results.md`.
+- 2026-09-08 — TIMs Esmeralda dense/loose-refuse arm reported (engine `179da6ffb`, PR #822):
+  dense honest wall **0.01755** (leg 146607) — above refutation (0.0169) but 0.85 % short of
+  ship (0.0177); loose wall 0.03921 (leg 146609), unchanged at 0.039 to the third figure,
+  PASS not a finding. Tol-0.01 dense variant (146608) reaches 0.01932 but sits +1.44 % HIGH
+  against the twin — a finding, not a candidate. `_adr92_p2_9_esmeralda_results.md`.
+- 2026-09-08 — **CLOSED.** Neither branch of the decision rule's `if` fires (0.01755 is
+  between the two bars), so the otherwise branch is decisive: P2-9 does not ship as default,
+  no code change is owed (`fixed` was already the default), `controlIter` is recorded as a
+  graded guard with its measured gain (+3.9 % reach, comparable-to-better overlay, refusals
+  42 545 → 102) against its measured cost (~2.9x wall time on this deck — the R3 leg's ~13x
+  figure does not generalise), and P2-8's fixed threshold remains the documented fallback.
