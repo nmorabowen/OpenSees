@@ -306,6 +306,13 @@ MUMPS seeded from an existing build to skip the ~20 min step. **`build.bat` buil
 all 5 targets only when invoked with NO args** — passing target names restricts
 to just those.
 
+`build.bat installer` does the full build and then runs
+`build_inno_installer.ps1`, so `Ladruno_scripts\build.bat clean installer` is the
+whole release in one command. It **refuses** to run alongside explicit targets:
+`dist\` is refreshed only for the targets built, and a 4-of-5 build drops
+`dist\openseesmp` entirely, so packaging a partial build yields a normal-looking
+`setup.exe` carrying a mixed install.
+
 ---
 
 ## 7. Where a new subsystem's sources live — two sanctioned patterns
@@ -515,6 +522,58 @@ reported failure having never run a check. Escape inner parens as `^( ^)` (this
 is trap #5 in the family of batch traps in #1). Both defects had to be fixed
 before a single CMS numerical check had ever executed in this build tree.
 
+## 10b. An unescaped `)` in an `echo` silently disables the guard around it
+
+`cmd.exe` ends a parenthesized block at the first unescaped `)` — including one
+that is *inside a quoted-looking string* in an `echo`. There are no quotes in
+batch. `build.bat` carried this for a long time:
+
+```bat
+if not exist "%MUMPS_INSTALL%\lib\dmumps.lib" (
+    echo === Step 1: Building MUMPS 5.5.1 (one-time, ~15-20 min) ===
+    ...configure / build / install MUMPS...
+) else (
+    echo MUMPS already installed
+)
+```
+
+The `)` in `(one-time, ~15-20 min)` closes the `if` block on that line. Net
+effect: **the whole MUMPS configure/build/install ran unconditionally, and the
+`else` arm ran too.** MUMPS was rebuilt on every single build, and seeding
+`mumps-install/` from another checkout (§6) silently did nothing at all.
+
+**Why it hides.** The banner line it lives on never prints, so there is no
+"Step 1" in the log to contradict you — the step just happens. On a warm build
+tree the damage is only a re-configure plus a no-op ninja pass, so it reads as
+normal build noise; it costs the full 15-20 min only in a *fresh* worktree,
+which is exactly where you'd have seeded `mumps-install` to avoid it.
+
+**`REM` is NOT exempt — this is the part that catches people twice.** cmd scans
+the block for the closing paren *before* it decides what is a comment, so a bare
+`)` in a comment ends the block exactly like one in an `echo`. While fixing the
+MUMPS banner in PR #831 the fix itself was written as:
+
+```bat
+    REM ... the `)` in `(one-time, ...)` closes this `if not exist (` block ...
+```
+
+— which re-broke the very block it was documenting, and cost a build to find,
+because the failure is mute: `build.bat` produced no log at all. Keep comments
+inside a parenthesized block **paren-free**; do not rely on escaping them.
+
+**This file has been bitten at least three times.** `build.bat` already carries
+two fixed instances in its own comments: a `"(mpiexec -n 4)"` echo inside a
+`for`-body that closed the loop and died with `--- was unexpected at this time`
+*after a fully successful build*, and a CMS guard that had to be flattened to a
+`goto` because an `if(...)` wrapper nested the same hazard one level deeper.
+Treat any paren inside a block as a defect until proven escaped.
+
+**Rule:** escape both parens in any `echo` inside a block — `^(` and `^)` — and
+write comments in blocks without parens at all. Verify a guard actually guards
+by running the block in isolation with a condition you know is false; **both
+arms firing is the signature**, and a guard that never prints its own banner is
+the tell. Fixed 2026-09-08 (PR #831).
+
 ## 11. Never `sed -i` a `.bat` file — it strips CRLF and cmd silently miscompiles
 
 `sed -i` (Git Bash) rewrites the whole file with **LF-only** line endings. `cmd.exe`
@@ -532,6 +591,21 @@ and a stray interactive Python prompt — because `for %%C in (...) do (` and th
 perfect (two changed characters); nothing in it hints at the real damage. `git`
 also warns `LF will be replaced by CRLF the next time Git touches it`, which is
 easy to dismiss as routine noise — on a `.bat` it is the actual error message.
+
+**Any whole-file rewrite does this, not just `sed -i`.** A Python round-trip that
+reads with universal newlines and writes with `newline=''` converts CRLF to LF
+just as silently (hit 2026-09-08 while adding the `installer` verb to
+`build.bat`; symptoms that time were `'ocal' is not recognized` — `setlocal`
+minus its first two bytes — and `'M' is not recognized` for every `REM`).
+
+**Git Bash's `cat -A` and `sed` will tell you the file is already LF when it is
+not.** MSYS text-mode mounts strip the CRs on read, so `sed -n '1,5p' x.bat |
+cat -A` prints clean `$` line ends on a perfectly good CRLF file. Checking that
+way "confirms" a wrong diagnosis. `file` reads the bytes and does not lie:
+
+```bash
+file Ladruno_scripts/build.bat   # must say "with CRLF line terminators"
+```
 
 **Rule:** edit `.bat` files with the Edit tool (it preserves existing endings) or
 a CRLF-aware editor, never `sed -i`/`tr`. To repair one:

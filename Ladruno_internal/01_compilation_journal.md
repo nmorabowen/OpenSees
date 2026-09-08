@@ -70,15 +70,20 @@ After `build.bat` succeeds, all four artifacts plus their runtime DLLs and Tcl i
 To package `dist/` into something shareable:
 
 ```
-powershell -ExecutionPolicy Bypass -File Ladruno_scripts\make_installer.ps1
+Ladruno_scripts\build.bat installer
 ```
 
-Outputs to `Ladruno_files/`:
+That runs a full build and then `build_inno_installer.ps1`, writing
+`Ladruno_files\Ladruno_OpenSees_<YYYYMMDD>_setup.exe` — a self-contained Inno
+Setup wizard (venv picker, optional PATH entry, `.pth` helper). To package an
+existing `dist/` without rebuilding, invoke `build_inno_installer.ps1` directly.
 
-- `Ladruno_OpenSees_<YYYYMMDD>.zip` — the binaries (zip of `dist/`)
-- `install.ps1` — self-contained end-user installer with the LADRUNO ASCII banner embedded. Run with `powershell -ExecutionPolicy Bypass -File install.ps1`. Prompts for install location (default `%LOCALAPPDATA%\Ladruno\OpenSees`), expands the zip, optionally adds `bin/` to user PATH.
+Receivers need Python 3.12 for OpenSeesPy and Intel oneAPI for the MPI variants —
+those aren't bundled.
 
-Distribute both files together. Receivers need Python 3.11 for OpenSeesPy and Intel oneAPI for the MPI variants — those aren't bundled.
+> *Historical:* an earlier zip + `install.ps1` packager (`make_installer.ps1`)
+> is referenced by entries below. It was removed once the Inno wizard became the
+> only shipped format; those entries are kept as a record, not as instructions.
 
 ## Python virtualenv (developer workflow)
 

@@ -127,4 +127,4 @@ Write-Host ""
 Write-Host "Built: $produced ($mb MB)" -ForegroundColor Green
 Write-Host ""
 Write-Host "Distribute this single .exe to recipients." -ForegroundColor Yellow
-Write-Host "For automation / power users, install.ps1 + .zip in $out remain available."
+Write-Host "This is the only distributed format; make_installer.ps1 (zip + install.ps1) was removed."

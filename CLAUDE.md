@@ -4,6 +4,51 @@ This is a fork of OpenSees (`github.com/nmorabowen/OpenSees`, default branch
 `ladruno`). On top of upstream we add fork-only features. We move fast, so we
 keep a **build-control** record of everything that diverges from upstream.
 
+## Building — there is exactly ONE way (REQUIRED)
+
+From a fresh `cmd.exe` at the fork root:
+
+```cmd
+call Ladruno_scripts\setup_env.bat
+Ladruno_scripts\build.bat               :: all 5 targets -> dist\
+Ladruno_scripts\build.bat installer     :: ...and wrap dist\ into the setup.exe
+Ladruno_scripts\build.bat clean installer   :: the full release recipe
+```
+
+`Ladruno_scripts/` is the **only** build system in this fork. The upstream
+recipes (`makeWIN.bat`, `makeMac.sh`, `OpenSeesAWS-Ubuntu22.04.sh`,
+`conanfile2.py`) and the legacy zip packager (`make_installer.ps1`) were
+**deleted** — they had drifted (wrong MUMPS path, lp64-vs-ilp64 MKL, no
+`dist/`, no installer) and agents kept reaching for them because they sat in
+the repo root. If a doc still cites one, that doc is stale: fix it.
+
+Four rules that cost real time when broken:
+
+1. **The build tree is `build\build\Release`**, not `build\Release` — Conan's
+   `cmake_layout` nests it. A hand-rolled `cmake --build build/Release …`
+   configures a *second, different* cache; you then "build" successfully and
+   test a stale binary. Always go through `build.bat`.
+   (`Ladruno_internal/02_esmeralda_linux_build_guide.md` legitimately uses
+   `build/Release` — different machine, different layout. Not a contradiction.)
+2. **Naming targets skips the rest.** `build.bat OpenSees` leaves
+   `dist\bin\opensees.pyd` stale, so pytest tests an old binary while Tcl tests
+   the new one. Check mtimes, or just build everything.
+3. **Packaging requires a full build.** A 4-of-5 build drops `dist\openseesmp`
+   entirely and the installer then ships a MIXED install, silently.
+   `build.bat installer` refuses explicit targets for this reason.
+4. **Build in a worktree, never the shared main checkout** — its branch moves
+   under you, and commits/builds leak onto another agent's branch.
+
+Artifacts: `dist\bin\` (`OpenSees.exe`, `OpenSeesSP.exe`, `OpenSeesMP.exe`,
+`opensees.pyd`) + `dist\openseesmp\` (`openseesmp.pyd` with its own Intel MPI
+runtime). The installer lands in
+`Ladruno_files\Ladruno_OpenSees_<version>_setup.exe`.
+
+Details: [BUILDING.md](BUILDING.md) (what/how),
+[Ladruno_scripts/README.md](Ladruno_scripts/README.md) (which script does
+what), [Ladruno_internal/BUILD_GOTCHAS.md](Ladruno_internal/BUILD_GOTCHAS.md)
+(why it broke last time).
+
 ## Build-control ledgers — keep them current (REQUIRED)
 
 Three ledgers live in `Ladruno_implementation/`. Updating them is part of the
