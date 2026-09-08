@@ -1,4 +1,4 @@
-"""ADR-97 P0 oracle 1/5 -- von Mises CLOSEST-POINT return map + consistent tangent.
+"""ADR-97 P0 oracle 1/6 -- von Mises CLOSEST-POINT return map + consistent tangent.
 
 MIRRORS
 -------
@@ -224,7 +224,7 @@ def report(mat, case, path_name, legs):
 
 
 def main():
-    banner("ADR-97 oracle 1/5 -- VON MISES closest-point return map")
+    banner("ADR-97 oracle 1/6 -- VON MISES closest-point return map")
     print("Conventions: tension-positive, Voigt [11 22 33 12 23 13], engineering")
     print("shear, VOIGT (doubled-shear) YF/PF derivatives, SQRT_2_over_3 =")
     print(f"{SQRT_2_over_3!r} (truncated literal, ASDPlasticMaterial3DGlobals.h:41)")
