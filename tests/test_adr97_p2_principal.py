@@ -47,7 +47,7 @@ the gate-4 block for the argument and the numbers.
 GATE 6 — fail-loud: the MIXED pairings the generator registers
 (`MohrCoulomb_YF` x `VonMises_PF` / `DruckerPrager_PF` / `HoekBrown_PF`,
 `VonMises_YF` / `DruckerPrager_YF` x `MohrCoulomb_PF`) are covered by no oracle
-and must STILL be refused; so must HoekBrown and StiffSoil; and a hydrostatic
+and must STILL be refused; so must StiffSoil (HoekBrown ships in wp/97d); and a hydrostatic
 trial with a vanishing deviator must exercise the degenerate-eigenvalue branch
 without producing a NaN.
 
@@ -876,10 +876,15 @@ REFUSED_MIXED = [
       "ScalarLinearHardeningParameter", 0.0,
       "DP_xi_c", 20.0, "DP_eta", 0.4, "DP_etabar", 0.4],
      ["DP_cohesion", 0.0]),
+    # Ladruno (ADR-97 wp/97d): the parameter is `HB_sigci`, not `HB_sigma_ci`;
+    # with the old spelling this row was refused for a MISSING PARAMETER, never
+    # for the family gate.  Corrected -- it still refuses, now for the right
+    # reason (see tests/test_adr97_p3_hoekbrown.py, which checks every
+    # HoekBrown pairing in BOTH directions).
     ("MohrCoulomb_YF x HoekBrown_PF",
      "MohrCoulomb_YF", "HoekBrown_PF", IV_NULL,
-     ["HB_sigma_ci", 50.0, "HB_mb", 5.0, "HB_s", 0.05, "HB_a", 0.5,
-      "HB_mb_psi", 1.0, "HB_ds", 0.0], []),
+     ["HB_sigci", 50000.0, "HB_mb_psi", 2.396510364418,
+      "HB_s", 0.011743628457, "HB_a", 0.502840500848, "HB_ds", 0.0], []),
 ]
 
 
@@ -904,19 +909,23 @@ def test_gate6_mixed_pairings_are_still_refused(label, yf, pf, iv, extra_p,
     ops.wipe()
 
 
-def test_gate6_hoekbrown_and_stiffsoil_still_refused():
-    """P3 and P5 respectively -- the refusal must not have widened by accident."""
+def test_gate6_hoekbrown_is_now_accepted_and_stiffsoil_is_not():
+    """Ladruno (ADR-97 wp/97d): P3 ships HoekBrown_YF x HoekBrown_PF, so the
+    HoekBrown half of this test is INVERTED.  It also had `HB_sigma_ci` for
+    `HB_sigci`, which made it pass on a MISSING PARAMETER rather than on the
+    family gate -- corrected here.  StiffSoil (P5) has no runtime row: it needs
+    StiffSoil_EL and its own parameter set, and is covered by the compile-time
+    support matrix instead."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for k, (x, y, z) in enumerate(NODES):
         ops.node(k + 1, float(x), float(y), float(z))
-    with pytest.raises(Exception):
-        _mat_pair(1, "HoekBrown_YF", "HoekBrown_PF", IV_NULL,
-                  ["YoungsModulus", MC_E, "PoissonsRatio", MC_NU,
-                   "HB_sigma_ci", 50.0, "HB_mb", 5.0, "HB_s", 0.05,
-                   "HB_a", 0.5, "HB_mb_psi", 1.0, "HB_ds", 0.0,
-                   "MassDensity", 0.0], BS0)
-        ops.element("LadrunoBrick", 1, *range(1, 9), 1)
+    HB = ["YoungsModulus", 5.0e7, "PoissonsRatio", 0.25,
+          "HB_sigci", 50000.0, "HB_mb", 2.396510364418,
+          "HB_s", 0.011743628457, "HB_a", 0.502840500848,
+          "HB_mb_psi", 2.396510364418, "HB_ds", 0.0, "MassDensity", 0.0]
+    _mat_pair(1, "HoekBrown_YF", "HoekBrown_PF", IV_NULL, HB, BS0)
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1)
     ops.wipe()
 
 

@@ -6129,6 +6129,88 @@ Models running `tangent_type Algorithmic` need `system UmfPack`; `ProfileSPD` is
 wrong, PARDISO's symmetric `-matrixType` (ADR-75 P1d) must not be selected, and
 `FullGeneral` crashes a fully prescribed material-point rig (`FullGenLinSOE`
 N = 0).
+## ASDPlasticMaterial3D — Hoek-Brown (ADR-97 P3)
+
+### `HoekBrown_PF::g` is evaluated in the WRONG SIGN FRAME and is a Tresca potential
+
+`HoekBrown_YF` negates to the geomechanics frame (`sigma_geo = -sigma`) before
+calling `principalStresses()`. `HoekBrown_PF::g` does NOT, then destructures the
+ascending tuple as `[sigma3, sigma2, sigma1]` and feeds `sigma3` — the tree's most
+COMPRESSIVE principal, not the geo-frame minor — into
+`arg = mb_psi*sigma3/sigma_ci + s`. On any compressive state that `arg` is negative,
+so `g` always takes its `else` branch, `sigma1 - sigma3 - sigma_ci*s`, which is a
+**Tresca** potential. Measured by the ADR-97 P0 oracle (`adr97_oracle/cppm_hb.py`):
+
+* the header's own central-difference `dg/dsigma` at `[-2000,-6000,-25000]` is
+  `[1,0,-1,0,0,0]` for `HB_mb_psi = mb`, `mb/2` **and** `0` — the parameter has
+  **no effect at all** and the flow is exactly non-dilatant (trace 0);
+* it is **32.86 deg** off the frame-consistent normal at `mb_psi == mb`, i.e. exactly
+  where the deck is asking for ASSOCIATED flow;
+* at the apex all six of its flow directions have negative trace, so the hydrostatic
+  direction is not in its return cone and a trial pushed past the tensile corner has
+  **no return to the apex at all** — this is the mechanism behind the residual
+  recorded in `tests/test_adr94_hlist_hb.py` ("the drive still fails to converge on
+  the step that would push strain past the tensile corner").
+
+Fixing `g` changes `Backward_Euler`, which ADR-97 D1 keeps byte-identical, so
+ADR-97 P3 did NOT fix it: `Closest_Point` builds a frame-consistent Hoek-Brown
+potential in its own code path, and the difference is pinned in BOTH directions by
+`tests/test_adr97_p3_hoekbrown.py::test_gate4_cp_and_be_disagree_by_the_measured_potential_gap`
+(plastic volumetric strain **+2.208e-05** under the intended potential vs
+**+2.1e-13** under the shipped one; a 5.9e-02 relative stress gap, 26.2 % of the
+strength scale). That test turns RED the day `g` is fixed, which is its purpose.
+
+### The Hoek-Brown yield tolerance must be scaled by the GRADIENT, not by sigma_ci
+
+`|df/dy1| = 1 + a*mb*arg^(a-1)` **diverges** at the apex (`arg -> 0`), so a last-ulp
+error in the returned `y1` carries `eps*|y1|*|df/dy1|` into `f`: an ABSOLUTE 1e-10
+admissibility gate is unattainable within ~1e-2 kPa of the vertex. The P0 oracle
+measures `max|f| = 1.08e-10` against its own round-off floor of `1.16e-08` there.
+This is the Hoek-Brown instance of ADR-94 M5's `f_relative_tol` lesson, and it is
+sharper: scaling by `sigma_ci` (or by `strength_scale`) is not enough on its own,
+because the offending factor is the gradient's own conditioning.
+
+### The Newton must run in the surface's OWN variable, not in `y1`
+
+The Hoek-Brown surface exists only for `arg = s - mb*y1/sigma_ci >= 0`. With `y1` as
+the Newton unknown the first step from the elastic predictor OVERSHOOTS (measured
+`arg = -2.2456e-03` at iteration 1 on the oracle's own near-apex trial) and the next
+Jacobian is singular. Substituting `arg = (w^2)^(1/a)` — so
+`y1 = T - (sigma_ci/mb)(w^2)^(1/a)` and `f = y1 - y3 - sigma_ci*w^2` — is
+polynomial-smooth and feasible for ANY real `w`: no clipping, no line search, no
+feasibility guard. Write `(w*w)^(1/a)` rather than `w^(2/a)`: the latter is NaN for a
+negative iterate, and the two agree for `w > 0`.
+
+Related: NORMALIZE the flow direction in the residual (multiplier rescaled by `|m|`,
+the returned stress is invariant). `|m| ~ arg^(a-1)` blows up exactly where the
+near-apex returns land — 460.6 there against 3.9 on an ordinary face point — and the
+worst-case Newton count over the oracle's 400-trial scan is **6** un-normalized and
+**5** normalized.
+
+### `HB_sigma_ci` is not a parameter; it is `HB_sigci`
+
+ADR-97 P1 and P2 both wrote `HB_sigma_ci` in their Hoek-Brown refusal tests. Under
+the ADR-94 contract a missing model parameter is an ERROR, so those decks were
+rejected for the wrong reason and the refusal assertions never exercised the family
+gate at all. A refusal test that is not ALSO checked in the positive direction (the
+same deck must CONSTRUCT under an integrator that does support it) cannot tell the
+two apart. Every gate-6 row in `tests/test_adr97_p3_hoekbrown.py` is checked both
+ways for exactly this reason.
+
+### `AllASDInternalVariableTypes.h` and `AllASDHardeningFunctions.h` have NO include guard
+
+Including either directly in a translation unit that also includes
+`ASDPlasticMaterial3D.h` (which pulls both in) is a redefinition storm. Relevant to
+any standalone syntax-check / pre-flight translation unit.
+
+### `#define private public` breaks GCC 15's libstdc++ if it precedes `<sstream>`
+
+`std::basic_stringbuf::__xfer_bufptrs` is declared `private` and re-declared later;
+flipping the keyword makes the second declaration disagree with the first, which
+GCC 15 reports as a hard `-Wtemplate-body` ERROR (not a warning). The ADR-97 P2
+pre-flight idiom still works — include the standard library and Eigen FIRST, then
+`#define private public`, then the project's own headers.
+
 ## ASDPlasticMaterial3D — Mohr-Coulomb principal-space return (ADR-97 P2)
 
 **`Backward_Euler` reproduces the exact Mohr-Coulomb return ONLY through the

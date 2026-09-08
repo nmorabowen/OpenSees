@@ -124,6 +124,23 @@ public:
 
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
+    // Ladruno (ADR-97 wp/97d): the principal-space potential constants.  See the
+    // macro's comment in PlasticFlowBase.h: `Closest_Point` builds a
+    // FRAME-CONSISTENT Hoek-Brown potential from these and does NOT call `g`
+    // above, whose `arg` is built from the tree's most COMPRESSIVE principal and
+    // is therefore negative on every compressive state -- making `g` a Tresca
+    // potential with HB_mb_psi inert.  `g` is left exactly as shipped so
+    // Backward_Euler stays byte-identical (ADR-97 D1).
+    CP_PRINCIPAL_HB_FLOW_PARAMS
+    {
+        (void) internal_variables_storage;
+        sigma_ci = GET_PARAMETER_VALUE(HB_sigci);
+        mb_psi   = GET_PARAMETER_VALUE(HB_mb_psi);
+        s_hb     = GET_PARAMETER_VALUE(HB_s);
+        a_hb     = GET_PARAMETER_VALUE(HB_a);
+        return true;
+    }
+
     using parameters_t = std::tuple<HB_sigci, HB_mb_psi, HB_s, HB_a, HB_ds>;
 
 private:
@@ -132,5 +149,11 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97d): principal-stress-space closest-point family 3
+// (Hoek-Brown).  Matched against yf_cp_principal_family in HoekBrown_YF.h.
+template<class NO_HARDENING>
+struct pf_cp_principal_family<HoekBrown_PF<NO_HARDENING>>
+    : std::integral_constant<int, 3> {};
 
 #endif

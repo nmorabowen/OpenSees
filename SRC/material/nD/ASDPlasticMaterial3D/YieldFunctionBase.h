@@ -82,6 +82,20 @@ struct yf_cp_principal_family : std::integral_constant<int, 0> {};
         const ParameterStorageType& parameters_storage, \
         double& sin_phi, double& k_coh) const
 
+// Ladruno (ADR-97 wp/97d): the HOEK-BROWN surface constants this yield function
+// contributes to the principal-space return:
+//     f_ij = y_i - y_j - sigma_ci * (s - mb*y_i/sigma_ci)^a
+// with y the principal stresses sorted DESCENDING and TENSION POSITIVE (the
+// header stores tension positive and negates internally, so its compression-
+// positive (sigma_1, sigma_3) pair is this (y_i, y_j) one).  The rock-mass
+// tensile strength / apex is T = s*sigma_ci/mb, tension positive -- the same
+// value APEX_STRESS returns.  Returning false means "not a Hoek-Brown surface"
+// and is the base default.
+#define CP_PRINCIPAL_HB_FACE_PARAMS template <typename IVStorageType, typename ParameterStorageType> \
+    bool cp_hb_face_params(const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        double& sigma_ci, double& mb, double& s_hb, double& a_hb) const
+
 
 
 // Helper template to check if a class has a parameters_t type alias
@@ -252,6 +266,21 @@ public:
         (void) parameters_storage;
         sin_phi = 0.0;
         k_coh   = 0.0;
+        return false;
+    }
+
+    // Ladruno (ADR-97 wp/97d): default -- this yield function is not a
+    // Hoek-Brown surface.  Unreachable in practice (the material only calls it
+    // when yf_cp_principal_family == 3), but a false here refuses the step
+    // loudly rather than returning to a fabricated surface.
+    CP_PRINCIPAL_HB_FACE_PARAMS
+    {
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        sigma_ci = 0.0;
+        mb       = 0.0;
+        s_hb     = 0.0;
+        a_hb     = 0.0;
         return false;
     }
 

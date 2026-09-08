@@ -578,7 +578,9 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                         // (flank + apex) with Null, Linear scalar/tensor and
                         // ArmstrongFrederick hardening; P2 adds the principal-
                         // stress-space MohrCoulomb and MohrCoulombTensionCutoff
-                        // returns for MATCHED YF/PF pairs only.
+                        // returns for MATCHED YF/PF pairs only; P3 adds the
+                        // curved-surface HoekBrown return on the same rule
+                        // (Ladruno ADR-97 wp/97d).
                         // A specialization whose YF, PF or hardening law has not
                         // opted in is refused HERE rather than silently
                         // approximated with the inert zero/finite-difference
@@ -603,8 +605,10 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                                    << " DruckerPrager_PF, VonMises_YF or"
                                    << " DruckerPrager_YF with MohrCoulomb_PF,"
                                    << " HoekBrown_PF with anything) is verified by no"
-                                   << " oracle and stays refused. HoekBrown is P3,"
-                                   << " StiffSoil P5. Use Backward_Euler."
+                                   << " oracle and stays refused. P3 adds the"
+                                   << " Hoek-Brown family under the SAME matched-pair"
+                                   << " rule (HoekBrown_YF x HoekBrown_PF only)."
+                                   << " StiffSoil is P5. Use Backward_Euler."   // Ladruno (ADR-97 wp/97d)
                                    << endln;
                             asdp_parse_rejected = true;
                             return false;
