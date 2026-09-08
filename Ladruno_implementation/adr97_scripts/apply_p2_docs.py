@@ -228,6 +228,33 @@ with a central difference of its own reaction (the same two-rig scheme, since
 `setNodeDisp` does not trigger `Domain::update`).
 """)
 
+QUIRKS2 = ("**A `template class` explicit instantiation is the WRONG shape for a",
+           """
+**A `template class` explicit instantiation is the WRONG shape for a
+`g++ -fsyntax-only` pre-flight of `ASDPlasticMaterial3D`.** It instantiates
+EVERY member of the specialization, including members the real build never
+touches because their only call site sits under an `if constexpr` -- e.g.
+`cp_apex_return`, which calls `yf.apex_stress()` and therefore fails to compile
+for any yield function without an apex (`VonMises_YF`,
+`MohrCoulombTensionCutoff_YF`). The result is a page of errors about code that is
+correct and unreachable. Instantiate the MEMBERS instead:
+
+    #define private public
+    #include ".../AllASDPlasticMaterial3Ds.h"
+    typedef ASDPlasticMaterial3D<LinearIsotropic3D_EL, ...> MCMC_t;
+    template int MCMC_t::Closest_Point(const VoigtVector&);
+    static_assert(MCMC_t::supportsClosestPoint(), "...");
+
+`if constexpr` then discards the unreachable branches exactly as it does in the
+real build, and the `static_assert`s turn the support matrix itself into a
+compile-time gate (P2 pins all six mixed pairings that way, so a widened family
+trait fails at pre-flight instead of at run time). The include set comes from
+`adr97_scripts/mk_incs.py` and the build tree's `build/build/Release/build.ninja`
+-- note the doubled `build/build`, which `mk_incs.py`'s own usage line does not
+say.
+"""
+)
+
 LOG = ("**2026-09-07 — P2 (`wp/97c-cp-principal`",
        """
 - **2026-09-07 — P2 (`wp/97c-cp-principal`, PR [#824](https://github.com/nmorabowen/OpenSees/pull/824), build `1072c27ae`).** `integration_method Closest_Point` + `tangent_type Algorithmic` SHIPPED for the **Mohr-Coulomb family** through a PRINCIPAL-STRESS-SPACE multi-surface closest-point return (Clausen, Damkilde & Andersen 2006/2007): on the sorted sextant the surface is one PLANE, two corner LINES and a vertex, so every return is a closed-form linear projection in the elastic metric — no Newton at all, and `cp_iterations` reads 1 on a plastic step and 0 on an elastic one. Region selection is Clausen's BOUNDARY-PLANE test, whose signs are taken analytically (`sgn_L = sign(n_L·ℓ_other)`) rather than from the oracle's dimensional reference point — verified identical over 60 (φ,ψ,c) combinations and 13094 trial states, **0 mismatches**; the edge directions come from a cross product instead of an SVD (2.2e-16) and `Rs⁻¹` is built as the Voigt image of `Qᵀ·Q` instead of a numerical inverse (2.4e-15). **MohrCoulombTensionCutoff reuses ADR-84's `special_return` verbatim** and only falls back to the plain-MC return when that hook declines, re-checking the COMPOSITE `f`. **Measured:** gate 1a — all six P0 oracle trial states (face, sheared face, both corner lines, two apex states) to **1.5e-16 / 9.1e-16 / 0.0 / 8.0e-16 / 0.0 / 0.0** relative with committed `|f| <= 5.9e-14`; gate 1b — worst committed `f` **1.2e-14 / 1.8e-15 / 2.0e-14** on triaxial, simple-shear and rotating-principal-direction paths (the rotation checked at **20.70°**); gate 1c — MCTC hydrostatic tension `24.7·I` and the Rankine face return both **BIT-IDENTICAL to `Backward_Euler` (gap 0.0)**, which is the check that ADR-84's geometry is reused rather than re-derived, and the confined-compression fall-through admissible on BOTH branches (`f_MC` 2.8e-14 on a scale of 94, `f_TC` −217); gate 2 — `Algorithmic` vs a central difference of the binary's own assembled internal force **2.88e-11** (degenerate edge, l'Hôpital branch) and **8.40e-9 / 1.08e-8** (face, separations 0.19 / 0.27) on a NEW free-node rig, with the shipped `Backward_Euler`/`Continuum` and `/Secant` failing to converge on that same rig (`analyze -> -3`), and global-Newton **16 vs 62 / 50** (MC oedometric) and **22 vs 74** (ADR-84 MCTC); gate 4 — the 23-deck / 282-row `Backward_Euler` baseline still byte-identical, CP step-size independent (N = 1/4/10/40 all 1e-16) and CP ≡ BE at the apex to **2.1e-16**; gate 6 — 12 refusal tests, including all six MIXED YF/PF pairings, `MC_phi == 0`, and three hydrostatic-plus-vanishing-deviator trials that commit a finite vertex instead of NaN. **Support 20 → 22 of 46, not the plan's 31:** `MohrCoulomb_YF` is registered in 7 specializations and `MohrCoulomb_PF` in 6, and in only ONE are both of the family; the principal map assumes BOTH the surface and the potential are piecewise linear and the smooth 6D map cannot use MC's Lode-angle gradient, so the six mixed pairings stay refused, enforced by matching compile-time family markers plus an all-IVs-inert fold. **Found while implementing:** (1) `Backward_Euler` reproduces the exact return ONLY through its own finite difference — `MC_ds = 1e-4` gives **2.1e-14**, `MC_ds = 0` (the shipped ANALYTIC Lode-angle branch, which every deck in this repo uses) gives **2.9e-1** and is step-size dependent; pinned in both directions, NOT fixed, because it changes `Backward_Euler` (D1); (2) an oedometric MC deck at `nu = 0.25`, `phi = 30` NEVER yields, because `K0 = nu/(1-nu) = 1/3` coincides exactly with the compression meridian — a silently vacuous tangent gate; (3) `yf_tolerance()` is not a usable admissibility tolerance for a stress reassembled from a spectral decomposition (round-off 6e-10 relative refused a valid MCTC step, amplified because an edge return lands on a Lode-angle corner) — replaced by an EXACT principal-space check plus a stress-relative composite-`f` guard; (4) neither `fd_tangent_driver` rig can reach a Mohr-Coulomb FACE state. All four are in [[LEDGER_quirks]]. **gate 5 (mutation, [[reviews/adr97_p2_mutation]]).** Full report: [[reviews/adr97_p2_report]].""")
@@ -259,6 +286,8 @@ def main():
         n += 1
     qpath = os.path.join(IMPL, "LEDGER_quirks.md")
     if append_block(qpath, QUIRKS[0], QUIRKS[1]):
+        n += 1
+    if append_block(qpath, QUIRKS2[0], QUIRKS2[1]):
         n += 1
 
     # the ADR implementation log: insert before "## See also"

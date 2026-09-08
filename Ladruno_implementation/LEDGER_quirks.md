@@ -6124,3 +6124,25 @@ free. Seven prescribed nodes mean no limit point at any stress level, so any
 state can be reached, and the 3x3 assembled block at the free node is compared
 with a central difference of its own reaction (the same two-rig scheme, since
 `setNodeDisp` does not trigger `Domain::update`).
+**A `template class` explicit instantiation is the WRONG shape for a
+`g++ -fsyntax-only` pre-flight of `ASDPlasticMaterial3D`.** It instantiates
+EVERY member of the specialization, including members the real build never
+touches because their only call site sits under an `if constexpr` -- e.g.
+`cp_apex_return`, which calls `yf.apex_stress()` and therefore fails to compile
+for any yield function without an apex (`VonMises_YF`,
+`MohrCoulombTensionCutoff_YF`). The result is a page of errors about code that is
+correct and unreachable. Instantiate the MEMBERS instead:
+
+    #define private public
+    #include ".../AllASDPlasticMaterial3Ds.h"
+    typedef ASDPlasticMaterial3D<LinearIsotropic3D_EL, ...> MCMC_t;
+    template int MCMC_t::Closest_Point(const VoigtVector&);
+    static_assert(MCMC_t::supportsClosestPoint(), "...");
+
+`if constexpr` then discards the unreachable branches exactly as it does in the
+real build, and the `static_assert`s turn the support matrix itself into a
+compile-time gate (P2 pins all six mixed pairings that way, so a widened family
+trait fails at pre-flight instead of at run time). The include set comes from
+`adr97_scripts/mk_incs.py` and the build tree's `build/build/Release/build.ninja`
+-- note the doubled `build/build`, which `mk_incs.py`'s own usage line does not
+say.

@@ -240,7 +240,7 @@ See [[reviews/adr97_p2_mutation]].
 
 ## 4. Found while implementing
 
-Four things worth the next agent's time; all four are in [[LEDGER_quirks]].
+Five things worth the next agent's time; all five are in [[LEDGER_quirks]].
 
 1. **The oedometric deck at `nu = 0.25` with `phi = 30` never yields.** The
    elastic `K0 = nu/(1-nu) = 1/3` coincides EXACTLY with the Mohr-Coulomb
@@ -261,7 +261,16 @@ Four things worth the next agent's time; all four are in [[LEDGER_quirks]].
    catches a coding error) and the header's composite `f` at a tolerance
    relative to `max(strength_scale, |sigma_ret|)`.
 3. **The shipped analytic Lode-angle gradient is wrong** (gate 4 above).
-4. **A load-driven rig cannot reach a Mohr-Coulomb FACE state.** Both of
+4. **A `template class` explicit instantiation is the wrong shape for a
+   `g++ -fsyntax-only` pre-flight of this material.** It instantiates every
+   member, including ones whose only call site is inside an `if constexpr` --
+   `cp_apex_return` calls `yf.apex_stress()` and cannot compile for a yield
+   function without an apex, which is most of them. Instantiate the MEMBERS
+   (`template int MCMC_t::Closest_Point(const VoigtVector&);` behind a
+   `#define private public`) and add `static_assert`s on the support matrix, so
+   a widened family trait fails at pre-flight rather than at run time. P2 pins
+   all six mixed pairings that way.
+5. **A load-driven rig cannot reach a Mohr-Coulomb FACE state.** Both of
    `fd_tangent_driver`'s rigs put `s1 == s2` (the oedometric one by construction,
    the 12-DOF one because a lateral load takes it past its limit point first),
    so a face-region tangent measurement needs a kinematically over-determined
