@@ -106,13 +106,25 @@ def _max_rel_asym():
 
 
 def _run(sig_y, bbar=False):
+    """Full ramp; returns the MAX relative asymmetry over all converged steps.
+
+    Sampling every step (not just the final one) avoids the same post-commit
+    knife edge documented in test_upstream_symmetrize_fixes.py::_zln_ramp:
+    a post-commit re-formation of a DruckerPrager tangent can land on the
+    elastic branch by roundoff alone (fTOL = 0.0 upstream), so reading only
+    the last step is a coin flip. Multi-GP BezierTri6 makes this unlikely in
+    practice (some Gauss point is normally still plastic), but sampling the
+    max over the ramp removes the luck instead of relying on it.
+    """
     _build(sig_y, bbar=bbar)
+    worst = 0.0
     for step in range(_NSTEPS):
         assert ops.analyze(1) == 0, (
             f'BezierTri6 (bbar={bbar}, sigY={sig_y}) failed to converge at '
             f'step {step + 1}/{_NSTEPS}'
         )
-    return _max_rel_asym()
+        worst = max(worst, _max_rel_asym())
+    return worst
 
 
 @pytest.mark.parametrize('bbar', [False, True], ids=['std', 'bbar'])
