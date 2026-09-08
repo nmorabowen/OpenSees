@@ -322,3 +322,55 @@ def test_database_roundtrip():
         build, probe_nodes=[1], ndf=6,
         probe_fn=lambda: [ops.eleResponse(1, "kr")[0], ops.eleResponse(1, "tiedDOFs")[0]],
     )
+
+
+# ----------------------------------------- 14. u-p slaves: ambiguous ndf refused without -dof
+# TIMs 2026-09-07 no-ask finding 1. With the DEFAULT component list the element ties
+# components 1..ndm+nrot on every slave and only checks that the node HAS that DOF
+# index, so an ndf-4 u-p slave had its pressure DOF (index 3) tied to theta_x of the
+# master, silently. The parser now refuses a slave whose ndf is neither ndm nor
+# ndm+nrot when -dof is omitted; an explicit -dof keeps working.
+def _up_slaves(with_dof):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0, "-ndf", 6)                   # master
+    for i, c in enumerate([(1.0, 1.0, 0.0), (-1.0, 1.0, 0.0), (-1.0, -1.0, 0.0), (1.0, -1.0, 0.0)]):
+        ops.node(2 + i, *c, "-ndf", 4)                       # u-p slaves
+    args = ["LadrunoKinematicCoupling", 1, 1, 4, 2, 3, 4, 5]
+    if with_dof:
+        args += ["-dof", 1, 2, 3]
+    args += ["-k", 1.0e7]
+    try:
+        ops.element(*args)
+        return True
+    except Exception:
+        return False
+
+
+def test_up_slave_without_dof_is_refused(capfd):
+    created = _up_slaves(with_dof=False)
+    text = "".join(capfd.readouterr())
+    assert "REFUSED" in text and "ndf = 4" in text and "-dof" in text, text
+    # whether the binding raises or returns, the element must NOT exist
+    assert (not created) or (1 not in ops.getEleTags())
+
+
+def test_up_slave_with_explicit_dof_is_accepted():
+    assert _up_slaves(with_dof=True)
+    assert 1 in ops.getEleTags()
+    # 4 slaves x 3 translational components tied, nothing on the pressure DOF
+    assert ops.eleResponse(1, "tiedDOFs")[0] == pytest.approx(12.0)
+    # and the tie is mechanically live: a master translation moves every slave
+    _prescribe_ref([0.01, 0.0, 0.0, 0.0, 0.0, 0.0])
+    for n in range(2, 6):
+        ops.fix(n, 0, 0, 0, 1)                                # pin p; translations follow R
+    _solve_static()
+    for n in range(2, 6):
+        assert ops.nodeDisp(n, 1) == pytest.approx(0.01, abs=1e-9)
+        assert ops.nodeDisp(n, 4) == 0.0
+
+
+def test_ndf3_and_ndf6_slaves_default_still_accepted():
+    for ndf in (3, 6):
+        _face(slave_ndf=ndf)                                  # default component list
+        assert 1 in ops.getEleTags()

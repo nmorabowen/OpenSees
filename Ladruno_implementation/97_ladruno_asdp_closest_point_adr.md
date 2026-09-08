@@ -371,6 +371,28 @@ reach it. Note also a pre-existing mismatch to fix here: `HoekBrown_PF::g` uses
 an `if (arg > 0) else` branch while the YF uses the composite `max` — the two
 disagree in the tension regime.
 
+**P0 measured all of this** (`adr97_oracle/cppm_hb.py`, README HB block); four
+results change what P3 has to build. (i) The `g`/`f` mismatch is *not* confined
+to tension: `HoekBrown_PF::g` never negates to the compression frame, so its
+branch `arg` is built from the most COMPRESSIVE principal, is negative on every
+compressive state, and `g` collapses to a **Tresca** potential — non-dilatant,
+independent of `HB_mb_psi`, 32.86° off the normal even at `mb_psi = mb`. At the
+apex all six shipped flow directions have negative trace, so a trial past the
+tensile corner has **no** return to the apex at all — the mechanism behind the
+ADR-94 H10a residual. P3 fixes the frame; it is not a tension-only edit.
+(ii) The composite's tension branch is **inert on the yield surface** (`f_shear
+≤ 0` already forces `sig3 >= sigma_t`), so `Closest_Point` needs **no
+tension-plane return** — only the apex, which is the shear/tension corner.
+(iii) `CHECK_APEX_REGION` is Euclidean where the exact region is
+`apex + D3·(positive octant)`; since `D3·octant` is a strict subset it always
+OVER-claims (32/400 trials, up to 122.6 kPa of silently lost strength).
+(iv) Two formulation requirements: the Newton must use the surface's natural
+variable (`arg = w^(2/a)`; with `sig3`/`y1` as the unknown it leaves the domain
+on step 1 and the next Jacobian is singular) and must **normalize the flow
+direction** (`|m| ~ arg^(a-1)` blows up at the apex) — together these are what
+hold the `<= 5` iteration gate. Near the apex `|f|`'s own round-off floor
+exceeds `1e-10`, so the yield tolerance must be gradient-scaled.
+
 **ArmstrongFrederick, implicit (this is what removes M3).**
 
     h_alpha = h_a * dev(m) - c_r * ||dev m||_eq * alpha_dev ,   ||v||_eq = sqrt( (2/3) <v,v>_e or _s )
@@ -484,7 +506,7 @@ The remaining 3 (the StiffSoil trio) are **refused at parse time** under
 |---|---|---|
 | 1 (VM, DP, apex) | `tests/test_adr97_p1_smooth.py` | `adr97_oracle/cppm_vm.py`, `cppm_dp.py` |
 | 1 (MC, MCTC) | `tests/test_adr97_p2_principal.py` | `adr97_oracle/cppm_mc.py`, ADR-84 `test_asdplastic_mctc.py` rows |
-| 1 (HB) | `tests/test_adr97_p3_hoekbrown.py` | `adr97_oracle/cppm_hb.py` (P3 writes it) |
+| 1 (HB) | `tests/test_adr97_p3_hoekbrown.py` | `adr97_oracle/cppm_hb.py` (**written in P0**; see the README's HB block for the pins and for the four new header findings it measures) |
 | 2 | `tests/test_adr97_p1_smooth.py::test_algorithmic_vs_fd`, `..._p2_principal.py` (same name) | `adr97_oracle/fd_tangent_driver.py` (`fd_check()`; BE/Continuum negative control 0.573) + the recorded `Continuum` iteration count from `test_adr94_redblue_blue.py` |
 | 3 | `tests/test_adr97_p1_smooth.py::test_af_step_halving` | `adr97_oracle/path_independence.py` + `cppm_vm.py` case (c) |
 | 4 | `tests/test_adr97_p4_inertness.py` (fresh-subprocess helper `_run_child`, ADR-94 pattern) | pre-change stress dumps, same binary |

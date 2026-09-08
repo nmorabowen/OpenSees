@@ -98,6 +98,11 @@ replaces the geometry resolve and the `B` build).
 list): components `1..ndm` are translations, `ndm+1..ndm+nrot` are rotations. Default = every
 DOF the slave possesses. One element therefore subsumes:
 
+- **u–p slaves (ndf 4 in 3D, ndf 3 in 2D) MUST carry an explicit `-dof 1 2 3`** (or `1 2`): the
+  default list is refused for them since 2026-09-07, because without the refusal the pressure
+  DOF (node index `ndm`) was tied to θ_R as if it were a rotation — silently, the "lacks DOF"
+  skip message being reachable only with an explicit list. apeGmsh's `kinematic_coupling`
+  guards the same case on its side (its PR #1100).
 - **translation-only** tie (`-dof 1 2 3` in 3D) — slaves follow R's translation + transport, but spin freely;
 - **translation + transport** of an offset reference;
 - **full rigid** tie (default on 6-DOF slaves) — translations *and* rotations driven.
@@ -186,7 +191,7 @@ element LadrunoKinematicCoupling $tag $refNode $N $s1 ... $sN
 |---|---|---|
 | `$refNode` | the **master** reference node (ndf ≥ ndm+nrot: **6** in 3D, **3** in 2D) | — |
 | `$N $s1..sN` | count + tags of the **slave** nodes (ndf ≥ ndm; may mix 3-/6-DOF) | — |
-| `-dof $c1..cK` | dependent components per slave: `1..ndm` trans, `ndm+1..ndm+nrot` rot | all DOFs the slave has |
+| `-dof $c1..cK` | dependent components per slave: `1..ndm` trans, `ndm+1..ndm+nrot` rot | all DOFs the slave has — **only for slaves of ndf `ndm` or `ndm+nrot`**; any other ndf (an ndf-4 u-p node, say) is REFUSED at the parser without an explicit `-dof`, because the default would tie node DOF `ndm+1` (its pressure) to a master rotation (TIMs 2026-09-07 no-ask 1) |
 | `-k $Kt` / `-k auto` | translational penalty; `auto` = `kAlpha·max\|K_host(i,i)\|` (needs `-host`) | `1e12` |
 | `-kAlpha $a` | multiplier for `-k auto` | `1e3` |
 | `-host $eleTag` | one **representative** slave-side element, used only to scale `-k auto` / `-wcap` | none |
