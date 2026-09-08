@@ -225,10 +225,12 @@ not matter — `-G energy <regions…>` may be followed by other flags in both
 openseespy and the classic Tcl exe (a Tcl-only cursor bug used to force `-G energy`
 to line end; fixed, guarded by the `TCL FLAG ORDER` regression gate).
 
-**Recommended apeGmsh approach.**
-- Add a typed `ops.recorder.Ladruno(…)` (apeGmsh-side name; sibling of the existing
-  `ops.recorder.MPCO`) and a `Results.from_ladruno(path, *, model=…)` reader
-  (sibling of `from_mpco`), keyed on `GENERATOR="Ladruno"` + `FORMAT_VERSION=1` with
+**apeGmsh side — SHIPPED** (the earlier "recommended, not built" wording was stale;
+corrected 2026-09-07, TIMs no-ask finding 3): apeGmsh ships the typed
+`ops.recorder.Ladruno(…)` and the `Results.from_ladruno(path, *, model=…)` reader
+(`apeGmsh/results/Results.py:491`, sibling of `from_mpco`); the TIMs vault reads fields
+through it. What follows is the contract that reader implements:
+- `Results.from_ladruno` is keyed on `GENERATOR="Ladruno"` + `FORMAT_VERSION=1` with
   a two-version window (mirror ADR 0023) — note the `GENERATOR` string is
   `"Ladruno"`, not the old `"MPCO_Ladruno"`. Reuse the partition-merge logic (regex
   `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`); handle chunked **and** legacy
