@@ -127,7 +127,12 @@ crosses zero**: the cost of the error-controlled substepper (moduli ~ √p) grow
 edge GPs approach low p, and the ladder drowns before any GP reaches the apex. IMPL-EX `h20uri`:
 **TARGET s/B 0.15 in 389 s with zero ladder failures**, the only leg to reach the p → 0 zone, where
 the ADR-86 `-Pmin` clamp holds the edge GPs at p = +0.10 kPa for the rest of the push (signature: a
-saturating `implexRefusals` counter, 0 → 1620). So SANISAND has no apex to return to and no dead
+saturating `implexRefusals` counter, 0 → 1620). Its load–settlement curve never plateaus: 233 kPa at
+s/B 0.03, 413 at 0.06, 1189 at 0.10, 2164 at 0.15, with an upturn beyond ~0.06 that coincides with
+the clamp saturating — so the late part of that curve is partly the floor, not the sand, and a
+cohesionless dense sand under a weightless 10 kPa surcharge has no Prandtl collapse load on this
+axis anyway. Where the three SANISAND legs overlap (s/B 0.002–0.03) implicit and IMPL-EX agree to
+~4 %, so IMPL-EX is the right continuation of the same problem. So SANISAND has no apex to return to and no dead
 branch; it has a *cost* singularity in the same zone, already floored by `-Pmin`, and IMPL-EX is the
 path that survives it. The three-material picture: one physical trigger (the tensile spot beside
 the footing edge that only quadratic elements resolve), three different responses — a coding defect
