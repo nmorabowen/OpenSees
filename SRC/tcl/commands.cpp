@@ -4027,7 +4027,9 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
 
     int matType = 0;   // 0 unsym (default) / 1 SPD / 2 symmetric general
-    int statsFlag = 0; // -stats: dump PARDISO's peak-memory counters once
+    int statsFlag = 0; // Ladruno ADR-75 P1k: -stats/-pardisoStats dumps
+                       // PARDISO's fill/memory/flop counters after every
+                       // numeric factorization
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int count = 2;
 
@@ -4060,7 +4062,11 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 	matType = 2;
       } else if (strcmp(argv[count],"-spd") == 0) {
 	matType = 1;
-      } else if (strcmp(argv[count],"-stats") == 0) {
+      } else if (strcmp(argv[count],"-stats") == 0 ||
+                 strcmp(argv[count],"-pardisoStats") == 0) {
+	// Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
+	// `-stats`, matching the `-stats`/`-mumpsStats` pair `system Mumps`
+	// already offers below — a bare flag, consuming no value.
 	statsFlag = 1;
       } else if (strcmp(argv[count],"-krylov") == 0) {
 	// Ladruno ADR-75 P1e: factorization-preconditioned CGS. Takes Intel's L

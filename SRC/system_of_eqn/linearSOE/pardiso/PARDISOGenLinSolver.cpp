@@ -55,13 +55,20 @@
 #include <elementAPI.h>
 #include <mkl_pardiso.h>
 #include <mkl_types.h>
+#include <mkl_service.h>              // Ladruno ADR-75 P1k: mkl_get_max_threads()
+                                      // for the -stats "threads=" field. This TU
+                                      // is only compiled into the build when MKL
+                                      // was found (see the pardiso/CMakeLists.txt
+                                      // guard) — unlike ProfilerRunMeta.h's use
+                                      // of the same call, no _PARDISO ifdef is
+                                      // needed here.
 #include <profiler/ProfilerMacros.h>  // Ladruno ADR-75: phase-split brackets
                                       // (UmfPack parity, ADR-40 rank 8/10)
 
 PARDISOGenLinSolver::PARDISOGenLinSolver()
 :LinearSOESolver(SOLVER_TAGS_PARDISOGenLinSolver),
  theSOE(0), mtype(11), init(false), needsSymbolic(false), cachedN(0),
- reportStats(0), statsDone(false),
+ reportStats(0),
  krylovL(0), krylovK(0), haveFactors(false), factorsCurrent(false),
  cgsCalls(0), cgsWins(0), cgsAdviceDone(false)
 {
@@ -249,14 +256,16 @@ PARDISOGenLinSolver::solve(void)
 			                   tangents: a softening/buckling structure has
 			                   negative eigenvalues, so mtype -2 — NOT 2 — is the
 			                   safe symmetric choice, see the -matrixType docs) */
-		/* nnz-in-factors report: -1 asks PARDISO to fill iparm[17] during the
-		   reorder. Off by default (msglvl=0 means it is never printed anyway);
-		   -stats turns it on. Unlike iparm[18], Intel does NOT document this
-		   one as slowing the reordering. */
+		/* nnz-in-factors (iparm 18 Fortran / iparm[17] here) and Mflops-of-
+		   factorization (iparm 19 Fortran / iparm[18] here) reports: both are
+		   IN/OUT controls — a negative value requested BEFORE the call is what
+		   makes PARDISO fill the same slot with the real count afterwards.
+		   Intel documents the Mflops report as costing extra analysis time, so
+		   -- Ladruno ADR-75 P1k -- both are left at the safe 0 (disabled)
+		   unless `-stats`/`-pardisoStats` asked for them, matching the MUMPS
+		   `-stats` rule of paying that cost only when asked. */
 		iparm[17] = reportStats ? -1 : 0;
-		iparm[18] =  0;  /* no Mflops report — Intel documents -1 as INCREASING
-		                    reordering time, and with msglvl=0 we never read it
-		                    (the prototype paid that cost for nothing) */
+		iparm[18] = reportStats ? -1 : 0;
 		iparm[34] =  0;  /* ONE-based indexing — the SOE builds Fortran-style CSR */
 
 		int phase = 11;
@@ -274,7 +283,6 @@ PARDISOGenLinSolver::solve(void)
 
 		init = true;
 		needsSymbolic = false;
-		statsDone = false;          // new pattern => report its memory once
 		cachedN = n;                // for the destructor; see the header note
 		theSOE->factored = false;   // a new pattern always owes a numeric pass
 
@@ -317,6 +325,12 @@ PARDISOGenLinSolver::solve(void)
 	// same A (a second RHS, a recorder-driven re-solve) would take the phase-33
 	// shortcut and silently answer with the previous tangent.
 	bool solvedByKrylov = false;
+	// Ladruno ADR-75 P1k: true only when THIS call ran phase 22 (a real numeric
+	// factorization, first-time or a refactorization) — the -stats block below
+	// is gated on this, not on a "have we ever printed for this pattern" latch,
+	// so it fires once per factorization event, matching MUMPS `-stats` (which
+	// prints inside `if (theMumpsSOE->factored == false)`, i.e. every job=5).
+	bool didFactorNow = false;
 
 	if (krylovK != 0 && haveFactors == true &&
 	    (theSOE->factored == false || factorsCurrent == false)) {
@@ -403,6 +417,7 @@ PARDISOGenLinSolver::solve(void)
 		theSOE->factored = true;
 		haveFactors = true;      // Ladruno ADR-75 P1e: CGS now has a
 		factorsCurrent = true;   // preconditioner, and it matches A
+		didFactorNow = true;     // Ladruno ADR-75 P1k: -stats fires below
 		ops_pardiso_perturbed(iparm, mtype);
 	}
 
@@ -420,38 +435,45 @@ PARDISOGenLinSolver::solve(void)
 		}
 	}
 
-	// ---- Ladruno ADR-75 P1d: `-stats`, ONCE per sparsity pattern -----------
-	// Deliberately AFTER phase 33, not after phase 22 (adversarial review):
-	// Intel documents iparm[16] as the peak over the numerical factorization
-	// *and solution* phases, so reading it before the first solve reports a
-	// LOWER BOUND. The ratio between two configurations measured the same way
-	// survives that error, but the absolute figure is billed as "the number
-	// that decides whether a model fits" and so has to be the real one.
-	//   iparm[14] peak KB during the symbolic phase
-	//   iparm[15] permanent KB kept after the symbolic phase
-	//   iparm[16] peak KB during numeric factorization + solve
-	//   total peak = max(iparm[14], iparm[15] + iparm[16])
-	// Counters are pattern-determined, so reprinting per Newton iteration would
-	// be noise. Report peak AND factor nnz, never just nnz — the MUMPS BLR study
-	// (P2b) found the analogous INFOG(21) barely moved while stored factors
-	// shrank 21.8%.
-	if (reportStats && statsDone == false) {
-		statsDone = true;
-		const double peakSym  = iparm[14] / 1024.0;
-		const double permSym  = iparm[15] / 1024.0;
-		const double peakFact = iparm[16] / 1024.0;
-		const double totalMB  = (iparm[14] > iparm[15] + iparm[16])
-		                        ? peakSym : (permSym + peakFact);
+	// ---- Ladruno ADR-75 P1k: `-stats`/`-pardisoStats`, EVERY numeric factor -
+	// Printed once per phase-22 call (`didFactorNow`), i.e. the first
+	// factorization AND every refactorization — not latched to "once per
+	// sparsity pattern" the way P1d originally had it: a Newton run
+	// refactorizes the SAME pattern repeatedly, and TIMs PM-01 D26 wants a
+	// factorization-memory/fill number in every desktop leg's log, matching
+	// what the shipped MUMPS `-stats` already does for every job=5 call (see
+	// MumpsParallelSolver.cpp — printed inside `if (factored == false)`, the
+	// same "every real factorization, not every solve" rule).
+	//
+	// Deliberately read AFTER phase 33 (not right after phase 22): Intel
+	// documents iparm[16] (Fortran iparm(17)) as the peak over the numerical
+	// factorization *and solution* phases, so reading it before the first
+	// solve would report a LOWER BOUND.
+	//
+	// Labels use the Fortran 1-based iparm() numbering (iparm(N) == this
+	// array's iparm[N-1]) so the printed numbers are checkable directly
+	// against the MKL Developer Guide's PARDISO iparm table:
+	//   iparm(15) = iparm[14]  peak memory (KB) during symbolic factorization
+	//   iparm(16) = iparm[15]  permanent memory (KB) kept after phase 11
+	//   iparm(17) = iparm[16]  memory (KB) for numerical factorization + solve
+	//   iparm(18) = iparm[17]  nonzeros in the factors (L+U) -- reported only
+	//                          because iparm[17] was set to -1 before phase 11
+	//   iparm(19) = iparm[18]  Mflops of factorization -- likewise only
+	//                          because iparm[18] was set to -1 before phase 11
+	// Both negatives cost extra analysis time, which is exactly why they are
+	// set only when `-stats` is on (see the symbolic-phase block above) --
+	// byte-identical output otherwise.
+	if (reportStats && didFactorNow) {
 		opserr << "PARDISO stats: n=" << n << " nnz(A)=" << theSOE->nnz
-		       << " mtype=" << mtype
-		       << (mtype == 11 ? " (unsymmetric, full CSR)"
-		                       : " (symmetric, upper-triangle CSR)") << "\n";
-		opserr << "  peak symbolic  = " << peakSym  << " MB\n";
-		opserr << "  permanent      = " << permSym  << " MB\n";
-		opserr << "  peak numeric   = " << peakFact << " MB   (factor + solve)\n";
-		opserr << "  TOTAL PEAK     = " << totalMB  << " MB   <- the fit/no-fit number\n";
-		if (iparm[17] > 0)
-			opserr << "  nnz in factors = " << iparm[17] << "\n";
+		       << " matrixType=" << mtype
+		       << " threads=" << mkl_get_max_threads() << "\n";
+		opserr << "  factor entries iparm(18)  = " << iparm[17] << "\n";
+		opserr << "  peak memory KB iparm(15)  = " << iparm[14] << "\n";
+		opserr << "  perm memory KB iparm(16)  = " << iparm[15] << "\n";
+		opserr << "  fact memory KB iparm(17)  = " << iparm[16] << "\n";
+		opserr << "  factor Mflops  iparm(19)  = " << iparm[18] << "\n";
+		// Supplementary, not part of the MUMPS-matching block above: the same
+		// perturbed-pivot/refinement-step diagnostic P1d already reported.
 		opserr << "  perturbed pivots = " << iparm[13]
 		       << "   refinement steps = " << iparm[6] << "\n";
 	}
@@ -476,13 +498,11 @@ PARDISOGenLinSolver::setLinearSOE(PARDISOGenLinSOE &theLinearSOE)
 {
     theSOE = &theLinearSOE;
     // Ladruno ADR-75 P1d (adversarial review): the solver now carries per-SOE
-    // state (mtype is derived from the SOE, statsDone latches per pattern), so
-    // re-pointing it at a DIFFERENT SOE has to invalidate that state. Not
-    // reachable through today's command paths — each factory pairs one solver
-    // with one SOE for life — but the class no longer tolerates the assumption
-    // being broken silently.
+    // state (mtype is derived from the SOE), so re-pointing it at a DIFFERENT
+    // SOE has to invalidate that state. Not reachable through today's command
+    // paths — each factory pairs one solver with one SOE for life — but the
+    // class no longer tolerates the assumption being broken silently.
     needsSymbolic = true;
-    statsDone = false;
     // Ladruno ADR-75 P1e: the retained factors belong to the OLD SOE's matrix.
     haveFactors = false;
     factorsCurrent = false;

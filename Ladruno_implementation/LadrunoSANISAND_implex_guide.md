@@ -208,13 +208,17 @@ generates thousands of refusals. `implexGuards` (ADR-92 P2, §11) is the same ki
 the three P2 events — none of them prints anything per occurrence (they are designed behaviour,
 not warnings), so this response is the only record any of them fired at all.
 
-| response | slots | meaning |
-|---|---|---|
-| `implexError` | 1 | total error, this material's last commit |
-| `avgImplexError` | 1 | process-wide running mean over all commits |
-| `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` the `f` **actually used** for the last extrapolation, frozen for this step (reads `0` on a guarded step, §11; under `-implexFactor control\|controlIter` this is `f*`, not the clock ratio — §12) |
-| `implexRefusals` | 4 | `[0]` total refusals · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` |
-| `implexGuards` | 7 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) · `[5]` hold-skip commits (P2-5c, once per point per hold) · `[6]` control-factor back-offs (P2-9, steps where `f* < 0.5·f_max`) |
+Since WP-86d, `implexError`, `avgImplexError`, `implexDetail` and `implexRefusals` also emit
+`output.tag("ResponseType", ...)` in `setResponse` (the `FSAM`/`ASDConcrete3DMaterial` idiom), so a
+`recorder Element -xml`/`-file` or the fork's own `recorder ladruno` names each column instead of
+falling back to the generic `C1..Cn`. `implexGuards` is unchanged (out of WP-86d's scope).
+| response | slots | meaning | ResponseType name(s) |
+|---|---|---|---|
+| `implexError` | 1 | total error, this material's last commit | `implexError` |
+| `avgImplexError` | 1 | process-wide running mean over all commits | `avgImplexError` |
+| `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` the `f` **actually used** for the last extrapolation, frozen for this step (reads `0` on a guarded step, §11; under `-implexFactor control\|controlIter` this is `f*`, not the clock ratio — §12) | `implexDetail_total`, `implexDetail_dev`, `implexDetail_vol`, `implexDetail_clampFired`, `implexDetail_clampCount`, `implexDetail_f` |
+| `implexRefusals` | 4 | `[0]` total refusals · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` | `implexRefusals_total`, `implexRefusals_signChange`, `implexRefusals_control`, `implexRefusals_companion` |
+| `implexGuards` | 7 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) · `[5]` hold-skip commits (P2-5c, once per point per hold) · `[6]` control-factor back-offs (P2-9, steps where `f* < 0.5·f_max`) | (none yet — out of WP-86d's scope) |
 
 Python:
 
@@ -247,10 +251,13 @@ Two more scalar responses, added for the TIMs proposed-model request (2026-09-07
 read-only and answer from the **committed** state, so a recorder sees the values that fed the
 last committed update.
 
-| response | slots | meaning |
-|---|---|---|
-| `psi` (alias `stateParameter`) | 1 | the state parameter `psi = e - e_c(p')`, the model's own `GetPSI` with `p' = p + p_residual` floored at 1e-10 — the psi behind `M^b` and `M^d`. With the fork's default `p_r = 0` this is plain `e - e_c(p)` from `state[24]` and the mean stress. |
-| `yieldDistance` (alias `yieldFunction`) | 1 | the yield-function value `f = |s - p' alpha| - sqrt(2/3) m p'` on the committed pair: negative inside the cone, `~mTolF` (1e-7 default) on it, never positive after a converged return. |
+Since WP-86d both also emit a `ResponseType` tag, so a recorder names the column `psi` /
+`yieldDistance` (the response's canonical name, not its alias) instead of the generic `C1`.
+
+| response | slots | meaning | ResponseType name |
+|---|---|---|---|
+| `psi` (alias `stateParameter`) | 1 | the state parameter `psi = e - e_c(p')`, the model's own `GetPSI` with `p' = p + p_residual` floored at 1e-10 — the psi behind `M^b` and `M^d`. With the fork's default `p_r = 0` this is plain `e - e_c(p)` from `state[24]` and the mean stress. | `psi` |
+| `yieldDistance` (alias `yieldFunction`) | 1 | the yield-function value `f = |s - p' alpha| - sqrt(2/3) m p'` on the committed pair: negative inside the cone, `~mTolF` (1e-7 default) on it, never positive after a converged return. | `yieldDistance` |
 
 ```python
 psi = ops.eleResponse(eleTag, "material", intPtNum, "psi")[0]

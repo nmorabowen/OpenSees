@@ -32,10 +32,15 @@ class PARDISOGenLinSolver : public LinearSOESolver
 
     int setLinearSOE(PARDISOGenLinSOE &theSOE);
 
-    // Ladruno ADR-75 P1d: `system Pardiso -stats` — dump PARDISO's own memory
-    // counters once per sparsity pattern. Mirrors the shipped MUMPS `-stats`
-    // (INFOG/RINFOG); without it the symmetric path's MEMORY claim cannot be
-    // checked, and P1c measured memory — not time — as the binding constraint.
+    // Ladruno ADR-75 P1k: `system Pardiso -stats` (alias `-pardisoStats`,
+    // matching the MUMPS `-stats`/`-mumpsStats` pair) — dump PARDISO's own
+    // fill/memory/flop counters after EVERY numeric factorization (phase 22:
+    // the first factorization and every refactorization), in the same
+    // labelled-block shape as the shipped MUMPS `-stats`
+    // (MumpsParallelSolver.cpp, INFOG/RINFOG). Without it the desktop leg of a
+    // run has no factorization-memory/fill number to log at all (TIMs PM-01
+    // D26) — the serial MumpsSolver this fork ships is never compiled in, so
+    // PARDISO is the only desktop route.
     void setStats(int on);
 
     // Ladruno ADR-75 P1e: `system Pardiso -krylov <digits>` — factorization-
@@ -75,8 +80,11 @@ class PARDISOGenLinSolver : public LinearSOESolver
 	  // the object is partially destroyed — reading it is use-after-free. Cache
 	  // the order here and hand PARDISO dummy arrays for the release phase.
 	  int   cachedN;       // matrix order, captured at the symbolic phase
-	  int   reportStats;   // Ladruno ADR-75 P1d: -stats requested
-	  bool  statsDone;     // ...and already printed for this pattern
+	  int   reportStats;   // Ladruno ADR-75 P1k: -stats/-pardisoStats requested
+	                       // -- printed after every phase-22 call, not latched
+	                       // to "once per pattern" (a Newton run refactorizes
+	                       // the SAME pattern repeatedly and TIMs PM-01 D26
+	                       // wants every one of those logged).
 
 	  // ---- Ladruno ADR-75 P1e: factorization-preconditioned CGS ------------
 	  int   krylovL;       // -krylov <digits>; 0 = off (eps_CGS = 10^-krylovL)
