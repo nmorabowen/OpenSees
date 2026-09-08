@@ -71,6 +71,64 @@ public:
         return vv_out;
     }
 
+    // Ladruno (ADR-97 wp/97b): dm/dsigma and dm/dq for the closest-point map.
+    //
+    // With r = dev(sigma) - alpha, N = ||r||_s = sqrt(r' W_s r) and the shipped
+    // (Voigt) flow direction m = W_s r / N:
+    //
+    //     dm/dsigma = ( diag(W_s) * I_dev - m (x) m ) / N
+    //     dm/dalpha = -( diag(W_s)         - m (x) m ) / N
+    //
+    // (I_dev is the deviatoric projector on STORED slots; the second term is the
+    // same in both because I_dev * m == m for a deviatoric r.)  Verified against
+    // a central difference of this very expression at 2.6e-11 / 5.7e-11 before
+    // the C++ was written.  Associated flow, so dm/dsigma is the yield Hessian
+    // and C_alg is symmetric for von Mises.
+    PLASTIC_FLOW_STRESS_DERIVATIVE
+    {
+        (void) depsilon;
+        (void) parameters_storage;
+        auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+        VoigtVector r = sigma.deviator() - alpha;
+        const double N = sqrt(tensor_dot_stress_like(r, r));
+        this->dm_dsigma_buffer.setZero();
+        if (!(N > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return this->dm_dsigma_buffer;      // degenerate: m is not defined here
+        VoigtVector mv = r / N;
+        mv(3) *= 2.0; mv(4) *= 2.0; mv(5) *= 2.0;      // m = W_s r / N
+        // diag(W_s) * I_dev
+        for (int i = 0; i < 6; ++i)
+            this->dm_dsigma_buffer(i, i) = (i < 3) ? 1.0 : 2.0;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) this->dm_dsigma_buffer(i, j) -= 1.0 / 3.0;
+        for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+                this->dm_dsigma_buffer(i, j) = (this->dm_dsigma_buffer(i, j) - mv(i) * mv(j)) / N;
+        return this->dm_dsigma_buffer;
+    }
+
+    PLASTIC_FLOW_IV_DERIVATIVE
+    {
+        (void) depsilon;
+        (void) parameters_storage;
+        out.setZero();
+        if constexpr (std::is_same<IVType, AlphaHardeningType>::value)
+        {
+            (void) iv;
+            auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+            VoigtVector r = sigma.deviator() - alpha;
+            const double N = sqrt(tensor_dot_stress_like(r, r));
+            if (!(N > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+                return;
+            VoigtVector mv = r / N;
+            mv(3) *= 2.0; mv(4) *= 2.0; mv(5) *= 2.0;
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j)
+                    out(i, j) = ((i == j ? ((i < 3) ? 1.0 : 2.0) : 0.0)
+                                 - mv(i) * mv(j)) / (-N);
+        }
+    }
+
     using internal_variables_t = std::tuple<AlphaHardeningType>;
     using parameters_t = std::tuple<>;
 
@@ -81,6 +139,10 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97b): analytic closest-point derivatives available.
+template<class AlphaHardeningType>
+struct pf_has_cp_derivatives<VonMises_PF<AlphaHardeningType>> : std::true_type {};
 
 
 #endif

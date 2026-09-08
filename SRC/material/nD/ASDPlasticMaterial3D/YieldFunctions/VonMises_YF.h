@@ -132,6 +132,40 @@ public:
         return dbl_result;
     }
 
+    // Ladruno (ADR-97 wp/97b): df/dq, UNCONTRACTED, in the same VOIGT convention
+    // as df_dsigma_ij and yf_hardening's df_dalpha (shear slots doubled).
+    //   f = ||r||_s - sqrt(2/3)*k ,  r = dev(sigma) - alpha, ||r||_s^2 = r' W_s r
+    //   df/dk      = -sqrt(2/3)                       (the truncated literal)
+    //   df/dalpha  = -(W_s r)/||r||_s  ==  -(r/||r||_s) with the shear slots x2
+    // Any other internal variable (e.g. the plastic-flow direction's own back
+    // stress when it carries a different hardening law, which makes it a
+    // DISTINCT entry of the IV storage) does not appear in f: zero.
+    YIELD_FUNCTION_IV_DERIVATIVE
+    {
+        (void) parameters_storage;
+        const int nq = iv.size();
+        for (int i = 0; i < nq; ++i) out[i] = 0.0;
+
+        if constexpr (std::is_same<IVType, KHardeningType>::value)
+        {
+            out[0] = -SQRT_2_over_3;
+        }
+        else if constexpr (std::is_same<IVType, AlphaHardeningType>::value)
+        {
+            auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+            VoigtVector r = sigma.deviator() - alpha;
+            const double den = sqrt(tensor_dot_stress_like(r, r));
+            if (den > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+            {
+                VoigtVector d = -r / den;
+                d(3) *= 2.0;
+                d(4) *= 2.0;
+                d(5) *= 2.0;
+                for (int i = 0; i < 6; ++i) out[i] = d(i);
+            }
+        }
+    }
+
     // Ladruno (ADR-94 wp/94c, M5): f = sqrt(r:r) - sqrt(2/3)*k, so the term that
     // sets f's scale is sqrt(2/3)*sigma_y, with sigma_y the CURRENT yield stress
     // internal variable (not a model parameter for this YF).
@@ -156,6 +190,10 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97b): von Mises supplies the analytic closest-point df/dq.
+template<class AlphaHardeningType, class KHardeningType>
+struct yf_has_cp_derivatives<VonMises_YF<AlphaHardeningType, KHardeningType>> : std::true_type {};
 
 
 #endif

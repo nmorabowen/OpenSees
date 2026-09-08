@@ -185,6 +185,43 @@ public:
         return vv_out;
     }
 
+    // Ladruno (ADR-97 wp/97b): df/dq, UNCONTRACTED, in the VOIGT convention
+    // (normal slots halved, exactly as df_dsigma_ij and yf_hardening's
+    // df_dalpha).  f = sqrt(J2(r)) + eta*p - xi_c , r = dev(sigma) - alpha:
+    //   df/dalpha = -(r/sqrt(J2)) with the three NORMAL slots halved
+    //   df/d(cohesion IV) = 0
+    //
+    // That zero is deliberate and is ADR-97 P0 header finding 2: this yield
+    // function's cohesion internal variable is COMMENTED OUT of its own `f`
+    // (line 26) while `yf_hardening` still contributes df/dk = -1 times its
+    // rate.  `Closest_Point` must use the TRUE derivative of the f it solves, so
+    // a Drucker-Prager with cohesion hardening is PERFECTLY PLASTIC under
+    // Closest_Point (the cohesion IV still evolves, it just does not move the
+    // surface) and hardening under Backward_Euler.  Restoring `k` in `f` -- or
+    // deleting the hardening term -- changes Backward_Euler, which ADR-97 D1
+    // keeps byte-identical; it is a separate PR.
+    YIELD_FUNCTION_IV_DERIVATIVE
+    {
+        (void) parameters_storage;
+        const int nq = iv.size();
+        for (int i = 0; i < nq; ++i) out[i] = 0.0;
+
+        if constexpr (std::is_same<IVType, AlphaHardeningType>::value)
+        {
+            auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+            VoigtVector r = sigma.deviator() - alpha;
+            const double den = sqrt(0.5 * tensor_dot_stress_like(r, r));
+            if (den > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+            {
+                VoigtVector d = -r / den;
+                d(0) *= 0.5;
+                d(1) *= 0.5;
+                d(2) *= 0.5;
+                for (int i = 0; i < 6; ++i) out[i] = d(i);
+            }
+        }
+    }
+
     // Ladruno (ADR-94 wp/94c, M5): f = sqrt(J2) + eta*p - xi_c, so xi_c (the
     // adjusted cohesion) is the term that sets f's scale.
     YF_STRENGTH_SCALE
@@ -209,5 +246,14 @@ private:
 // Declares this YF as featuring an apex
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
+
+// Ladruno (ADR-97 wp/97b): Drucker-Prager supplies the analytic closest-point
+// df/dq.  NOTE that `check_apex_region` above stays EUCLIDEAN and is used only
+// by Backward_Euler: `Closest_Point` classifies the apex region in the ELASTIC
+// metric, inside the integrator where K, G and etabar are in scope (ADR-97
+// "Drucker-Prager apex").  Two integrators, two answers for the same YF -- a
+// documentation obligation (LEDGER_quirks), not a bug.
+template<class AlphaHardeningType, class CohesionHardeningType>
+struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 #endif

@@ -93,6 +93,66 @@ public:
 
 
 
+    // Ladruno (ADR-97 wp/97b): dm/dsigma and dm/dq for the closest-point map.
+    //
+    // With r = dev(sigma) - alpha, q = sqrt(J2) = sqrt(0.5 r' W_s r) and the
+    // shipped flow direction m = (W_s/2) r / q + (etabar/3) delta, whose
+    // deviatoric part is md = (W_s/2) r / q:
+    //
+    //     dm/dsigma = diag(W_s) * I_dev / (2q)  -  md (x) md / q
+    //     dm/dalpha = -[ diag(W_s) / (2q)       -  md (x) md / q ]
+    //
+    // (the etabar*p term has zero Hessian).  Verified against a central
+    // difference at 1.3e-11 / 3.7e-11 before the C++ was written.  Non-associated
+    // whenever etabar != eta, so C_alg is UNSYMMETRIC -- tests run on UmfPack.
+    // At q -> 0 the expression diverges as 1/q: that is the apex, which
+    // `Closest_Point` classifies in the elastic metric and returns with its own
+    // reduced system, so this returns zero rather than an infinity.
+    PLASTIC_FLOW_STRESS_DERIVATIVE
+    {
+        (void) depsilon;
+        auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+        double etabar = GET_PARAMETER_VALUE(DP_etabar);
+        (void) etabar;
+        VoigtVector r = sigma.deviator() - alpha;
+        const double q = sqrt(0.5 * tensor_dot_stress_like(r, r));
+        this->dm_dsigma_buffer.setZero();
+        if (!(q > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return this->dm_dsigma_buffer;      // apex: handled by the integrator
+        VoigtVector md = r / (2.0 * q);
+        md(3) *= 2.0; md(4) *= 2.0; md(5) *= 2.0;      // md = (W_s/2) r / q
+        for (int i = 0; i < 6; ++i)
+            this->dm_dsigma_buffer(i, i) = ((i < 3) ? 1.0 : 2.0) / (2.0 * q);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                this->dm_dsigma_buffer(i, j) -= 1.0 / (3.0 * 2.0 * q);
+        for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+                this->dm_dsigma_buffer(i, j) -= md(i) * md(j) / q;
+        return this->dm_dsigma_buffer;
+    }
+
+    PLASTIC_FLOW_IV_DERIVATIVE
+    {
+        (void) depsilon;
+        out.setZero();
+        if constexpr (std::is_same<IVType, AlphaHardeningType>::value)
+        {
+            (void) iv;
+            auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+            VoigtVector r = sigma.deviator() - alpha;
+            const double q = sqrt(0.5 * tensor_dot_stress_like(r, r));
+            if (!(q > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+                return;
+            VoigtVector md = r / (2.0 * q);
+            md(3) *= 2.0; md(4) *= 2.0; md(5) *= 2.0;
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j)
+                    out(i, j) = -(((i == j) ? (((i < 3) ? 1.0 : 2.0) / (2.0 * q)) : 0.0)
+                                  - md(i) * md(j) / q);
+        }
+    }
+
     using internal_variables_t = std::tuple<AlphaHardeningType, EtaHardeningType>;
     using parameters_t = std::tuple<DP_etabar>;
 
@@ -105,5 +165,9 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97b): analytic closest-point derivatives available.
+template<class AlphaHardeningType, class EtaHardeningType>
+struct pf_has_cp_derivatives<DruckerPrager_PF<AlphaHardeningType, EtaHardeningType>> : std::true_type {};
 
 #endif

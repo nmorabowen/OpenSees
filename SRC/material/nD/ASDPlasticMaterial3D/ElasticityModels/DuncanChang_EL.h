@@ -85,9 +85,16 @@ public:
 
     using parameters_t = std::tuple<ReferenceYoungsModulus,PoissonsRatio,ReferencePressure,DuncanChang_MaxSigma3,DuncanChang_n>;
 
+    // Ladruno (ADR-97 wp/97b, D6): declared stress dependent -- see the
+    // specialization after this class.
+
 
 };
 
+
+// Ladruno (ADR-97 wp/97b, D6): see the StiffSoil_EL specialization.
+template <>
+struct el_is_stress_dependent<DuncanChang_EL> : std::true_type {};
 
 #endif
 

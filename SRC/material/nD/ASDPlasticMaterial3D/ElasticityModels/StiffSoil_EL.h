@@ -126,6 +126,18 @@ public:
 
     using parameters_t = std::tuple<SS_Eur_ref, PoissonsRatio, SS_pref, SS_m, MC_phi, MC_c>;
 
+    // Ladruno (ADR-97 wp/97b, D6): declared stress dependent -- see the
+    // specialization after this class.
+
 };
+
+// Ladruno (ADR-97 wp/97b, D6): E depends on sigma, so the exact algorithmic
+// tangent carries an `E,sigma : (sigma - sigma_tr)` term that ELASTICITY_STRESS_
+// DERIVATIVE does not yet supply.  Closest_Point evaluates E(sigma_{n+1}) inside
+// the residual regardless (the converged state IS hyperelastically consistent);
+// this trait only drives the one-time `tangent_type Algorithmic` warning.
+// ADR-97 P5 supplies the block.
+template <>
+struct el_is_stress_dependent<StiffSoil_EL> : std::true_type {};
 
 #endif
