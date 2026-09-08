@@ -1,0 +1,121 @@
+[01:43:15] [control 0] engine C:\Users/nmb/AppData/Local/Temp/claude/C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90/5408bcef-bf62-4967-964e-a179fa61676a/scratchpad/dist_fixed/bin\opensees.pyd
+[01:43:15] [control 0] ladrunoBuild() = cf239c9df18ba3d6e201fbcbaf87a4a9e88e404d
+[01:43:15]     [control 2] bernstein tet10 surcharge over 40 top faces: sum 30.000000000 m^2 vs 30.000000000 exact (rel 1.18e-16)
+[01:43:15] === leg beziertet10bbar_h1.0_p3: BezierTet10 -bbar (bernstein surcharge basis), tet mesh h0 = 1.0 m, 2583 nodes / 7749 DOF, 1200 tet10 elements (vs H20 h0=1.0: 4659 DOF; H8 h0=1.0: 1386 DOF -- tet10 is DOF-expensive per note, not directly comparable)
+[01:43:15]     ORACLE q_u = q0*N_q = 138.907 kPa (phi_ps = 27.470 deg); non-associated (gate)
+[01:43:15]     initial 1-D state m0 = 0.2680 of yield  (SAFE)
+
+ \u2584\u2588          \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584     \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2584  \u2588\u2588\u2588\u2584\u2584\u2584\u2584    \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2584
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2580\u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588\u2580\u2580\u2580\u2588\u2588\u2584 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588  \u2584\u2588\u2588\u2588\u2584\u2584\u2584\u2584\u2588\u2588\u2580 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588       \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2580\u2580\u2588\u2588\u2588\u2580\u2580\u2580\u2580\u2580   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588\u258c    \u2584   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2584\u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588\u2588\u2588\u2584\u2584\u2588\u2588   \u2588\u2588\u2588    \u2588\u2580  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580    \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580   \u2580\u2588   \u2588\u2580   \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2580
+\u2580                                   \u2588\u2588\u2588    \u2588\u2588\u2588
+BezierTet10 - Quadratic Bezier Tetrahedron
+  Authors: Nicolas Mora Bowen, Patricio Palacios, Jose Abell, Guppi (Ladruño)
+  Ref: Kadapa, IJNME 2019; 117(5):543-573. doi:10.1002/nme.5967
+[01:43:15]     [control 3] elastic pre-step reaction 300.000000000 vs 300.000000000 kN (-2.998e-13 %)  -> PASS
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+[01:43:16]     [surcharge] plastic-model equilibrium 300.000000 vs 300.000000 kN (-0.000000 %)   [Pardiso, 0.2s]
+[01:43:16]     [control M0] elements at mob >= 0.9 before the push: 0 of 1200  (must be 0), 4 GP/element (expect 4)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:43:16]     ALLOWANCES: ds base/floor/max = 0.02/0.0002/0.2 mm, subdivision budget = 200, s/B target = 0.02, wall cap = 2700 s, cond-at = 0.5 mm
+[01:43:16]     [branch] ds fell to 0.02 mm (trigger 0.5 mm) at s/B = 0.00000: arming the branch-census cadence sampler
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:43:56]     [branch] s/B 0.001000  q    44.00  GP seen/empty 4800/0  branch(0,1,2,3)=(4673,127,0,0)  forced 0  detAmin_min -6.402e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:44:42]     [branch] s/B 0.003500  q    72.30  GP seen/empty 4800/0  branch(0,1,2,3)=(4339,461,0,0)  forced 0  detAmin_min -7.522e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:45:27]     [branch] s/B 0.006000  q    88.85  GP seen/empty 4800/0  branch(0,1,2,3)=(4102,698,0,0)  forced 0  detAmin_min -7.736e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:46:10]     [branch] s/B 0.008500  q   101.23  GP seen/empty 4800/0  branch(0,1,2,3)=(4409,391,0,0)  forced 0  detAmin_min -7.670e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:46:57]     [branch] s/B 0.011000  q   111.21  GP seen/empty 4800/0  branch(0,1,2,3)=(4441,359,0,0)  forced 0  detAmin_min -7.857e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:47:44]     [branch] s/B 0.013500  q   119.58  GP seen/empty 4800/0  branch(0,1,2,3)=(4386,414,0,0)  forced 0  detAmin_min -7.889e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:48:32]     [branch] s/B 0.016000  q   126.53  GP seen/empty 4800/0  branch(0,1,2,3)=(4338,462,0,0)  forced 0  detAmin_min -7.793e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:49:24]     [branch] s/B 0.018500  q   132.21  GP seen/empty 4800/0  branch(0,1,2,3)=(4273,527,0,0)  forced 0  detAmin_min -7.943e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:50:18]     [diag 3] AT THE WALL, s/B 0.02000: sigma_min/scale 3.851e-04, cond 3.246e+04, lam_min(sym)/scale -4.530e-03, negative eigenvalues of the symmetric part: 4 of 4785
+[01:50:18]     [branch] AT THE WALL, s/B 0.020000: GP seen/empty 4800/0  branch(0,1,2,3)=(4258,542,0,0)  forced 0  detAmin_min -7.855e-02
+[01:50:18]     [branch] 9 station(s) written to tpd_beziertet10bbar_h1.0_p3_branch.csv/.npz; 43200 live GP responses, 0 empty
+[01:50:18] 
+[01:50:18]     --- termination -------------------------------------------------
+[01:50:18]     215 steps, 0 failed attempts, 0/200 subdivisions, 0 relaxed, 384 s
+[01:50:18]     MODE = TARGET   [reached the target settlement]
+[01:50:18]     q_max = 135.10 kPa = 0.9726 of exact (138.91 kPa); end s/B = 0.02000 of 0.02
+[01:50:18]     tail dq/ds = 984.2 kPa/m = 6.125 % of initial -> STILL HARDENING
+[01:50:18]     CAPACITY = NO  -> ALLOWANCE named TARGET, not a capacity
+
+     beziertet10bbar_h1.0_p3  beziertet10bbar mode=TARGET    ratio=0.9726 tail=6.125% sub=0/200 CAP=NO

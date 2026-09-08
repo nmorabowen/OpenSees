@@ -144,6 +144,18 @@ ELEMS = {"h8bbar": dict(order=1, form="bbar", label="LadrunoBrick -formulation b
          "h20uri": dict(order=2, form="uri",  label="LadrunoBrick20 -formulation uri"),
          "h20std": dict(order=2, form="std",  label="LadrunoBrick20 -formulation std")}
 
+# Gauss points per element, verified against SRC/element/ladrunoBrick: h8* is
+# the standard 2x2x2 = 8 (LadrunoBrick.h); LadrunoBrick20.h defines NGPU = 8
+# (uri, uniform reduced 2x2x2, the "P2" comment) and NGP = 27 (std, full
+# 3x3x3 -- note 81's H27 BLOCKAGE is about node count, not this integration
+# order).  Used only to bound the `--branch` material-response loop.
+GP_COUNTS = {"h8bbar": 8, "h8std": 8, "h20uri": 8, "h20std": 27}
+
+# --- diagnostic --branch: default dense s/B window when --dense is omitted --
+# note 82 section 7.3's bracket around the h20uri wall (s/B 0.01115 -> 0.01118
+# is where sigma_min collapsed 2.16e-4 -> 2.29e-7).
+BRANCH_DENSE_DEFAULT = (0.0108, 0.0113, 5.0e-6)
+
 log = HP.log
 
 
@@ -468,6 +480,118 @@ def tangent_health(nsub_seen):
 
 
 # ---------------------------------------------------------------------------
+# ADR-95 P0 token: DruckerPrager branch / ellipticity census (`--branch`)
+# ---------------------------------------------------------------------------
+def sample_branch(ncells, ngp, cen):
+    """Pull the `ladrunoBranch` material response at EVERY Gauss point of
+    EVERY element and histogram it.
+
+    Token contract (a separate P0 agent ships the C++ side; this harness must
+    run unchanged against TODAY's binary, which has no such response):
+        ops.eleResponse(eleTag, 'material', gp, 'ladrunoBranch') ->
+            [branch (0 elastic,1 f1 cone,2 f2 tension cutoff,3 corner),
+             gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1, detAmin]
+    Until the token exists this returns an empty list for every call; that is
+    counted (never raised) so a `--branch` run against the current binary is
+    a full dry-run of the harness, not a crash.
+
+    GP coordinates are not separately available from a scalar eleResponse, so
+    the ELEMENT CENTROID is used as an approximate GP location, tagged with
+    the GP index -- adequate for "which corner of the mesh", not for a
+    sub-element position.
+    """
+    n0 = n1 = n2 = n3 = n_forced = n_empty = n_seen = 0
+    det_min = I1_min = float("inf")
+    g0_max = g1_max = float("-inf")
+    n_det_nonpos = 0
+    branch_l, g0_l, g1_l, f1_l, f2_l, forced_l = [], [], [], [], [], []
+    I1_l, det_l, ele_l, gp_l, x_l, z_l = [], [], [], [], [], []
+    lowest_det = []                     # (detAmin, ele, gp, x, z)
+    corner_gps = []                     # (ele, gp, x, z), first 5 seen
+
+    for e in range(1, ncells + 1):
+        xc, zc = float(cen[e - 1, 0]), float(cen[e - 1, 2])
+        for gp in range(1, ngp + 1):
+            resp = ops.eleResponse(e, "material", gp, "ladrunoBranch")
+            if resp is None or len(resp) < 8:
+                n_empty += 1
+                continue
+            n_seen += 1
+            br, g0, g1, f1t, f2t, forced, I1, detA = (float(v) for v in resp[:8])
+            branch_l.append(br); g0_l.append(g0); g1_l.append(g1)
+            f1_l.append(f1t); f2_l.append(f2t); forced_l.append(forced)
+            I1_l.append(I1); det_l.append(detA)
+            ele_l.append(e); gp_l.append(gp); x_l.append(xc); z_l.append(zc)
+            ib = int(round(br))
+            n0 += ib == 0; n1 += ib == 1; n2 += ib == 2; n3 += ib == 3
+            n_forced += bool(forced)
+            det_min = min(det_min, detA)
+            n_det_nonpos += detA <= 0.0
+            I1_min = min(I1_min, I1)
+            g0_max = max(g0_max, g0)
+            g1_max = max(g1_max, g1)
+            lowest_det.append((detA, e, gp, xc, zc))
+            if ib == 3 and len(corner_gps) < 5:
+                corner_gps.append((e, gp, xc, zc))
+
+    lowest_det.sort(key=lambda t: t[0])
+    summary = dict(
+        n_gp_seen=n_seen, n_gp_empty=n_empty,
+        n_branch0=n0, n_branch1=n1, n_branch2=n2, n_branch3=n3,
+        n_forced=n_forced,
+        detAmin_min=(det_min if n_seen else float("nan")),
+        n_detAmin_nonpos=n_det_nonpos,
+        I1_min=(I1_min if n_seen else float("nan")),
+        gamma0_max=(g0_max if n_seen else float("nan")),
+        gamma1_max=(g1_max if n_seen else float("nan")))
+    arrays = dict(branch=np.array(branch_l), gamma0=np.array(g0_l),
+                  gamma1=np.array(g1_l), f1_trial=np.array(f1_l),
+                  f2_trial=np.array(f2_l), forcedAccept=np.array(forced_l),
+                  I1=np.array(I1_l), detAmin=np.array(det_l),
+                  ele=np.array(ele_l, dtype=np.int64),
+                  gp=np.array(gp_l, dtype=np.int64),
+                  x=np.array(x_l), z=np.array(z_l))
+    return summary, arrays, lowest_det[:5], corner_gps
+
+
+def collect_top_nodeunbalance(nodes, n=10):
+    """The `n` DOFs with the largest |nodeUnbalance|, with node coordinates.
+
+    Read AFTER a failed `ops.analyze(1)`: `StaticAnalysis::analyze` reverts
+    the domain to the last commit on failure, so this is the residual of the
+    last CONVERGED state against the newly attempted load target -- exactly
+    "why is the Newton path stuck here".
+    """
+    vals = []
+    for i in range(1, len(nodes) + 1):
+        for c in (1, 2, 3):
+            try:
+                u = float(ops.nodeUnbalance(i, c))
+            except Exception:
+                u = 0.0
+            vals.append((abs(u), i, c, u))
+    vals.sort(key=lambda t: -t[0])
+    return [dict(node=i, dof=c, unbalance=u,
+                 x=float(nodes[i - 1, 0]), y=float(nodes[i - 1, 1]),
+                 z=float(nodes[i - 1, 2]))
+            for _, i, c, u in vals[:n]]
+
+
+def capture_newton_norms():
+    """Per-iteration ||R|| of the LAST `ops.analyze(1)` call, via
+    `ops.testNorms()`/`ops.testIter()` (vanilla OpenSees, already in this
+    binary).  Falls back to `None` rather than raising if the build lacks
+    them, per note 95 P0's --forensics ask.
+    """
+    try:
+        norms = [float(v) for v in ops.testNorms()]
+        niter = int(ops.testIter())
+    except Exception as exc:                                  # pragma: no cover
+        return None, None, str(exc)
+    return norms, niter, None
+
+
+# ---------------------------------------------------------------------------
 # one leg
 # ---------------------------------------------------------------------------
 def run(args):
@@ -619,6 +743,92 @@ def run(args):
     disp_push0 = np.array([[ops.nodeDisp(i, c) for c in (1, 2, 3)]
                            for i in range(1, len(nodes) + 1)])
     cond_log, cond_on = [], False
+
+    # --- ADR-95 P1: --branch (DruckerPrager branch/ellipticity census) ------
+    branch_fh = branch_wr = None
+    branch_on, next_dense = False, None
+    dense_lo = dense_hi = dense_step = None
+    n_branch_empty = n_branch_seen = 0
+    branch_station_s, branch_station_at_wall, branch_station_arrays = [], [], []
+    branch_ngp = GP_COUNTS.get(args.elem)
+    _BRANCH_COLS = (
+        ["s_over_B", "q_kPa", "s_min_rel", "cond", "lam_min_sym_rel",
+         "n_gp_seen", "n_gp_empty", "n_branch0", "n_branch1", "n_branch2",
+         "n_branch3", "n_forced", "detAmin_min", "n_detAmin_nonpos", "I1_min",
+         "gamma0_max", "gamma1_max"]
+        + [f"lowdet{k}_{f}" for k in range(1, 6)
+           for f in ("ele", "gp", "val", "x", "z")]
+        + [f"corner{k}_{f}" for k in range(1, 6)
+           for f in ("ele", "gp", "x", "z")])
+    if args.branch:
+        assert branch_ngp, f"no Gauss-point count registered for --elem {args.elem}"
+        if args.dense is not None:
+            dense_lo, dense_hi, dense_step = args.dense
+        else:
+            dense_lo, dense_hi, dense_step = BRANCH_DENSE_DEFAULT
+        next_dense = dense_lo
+        branch_path = os.path.join(HERE, f"qpd_{tag}_branch.csv")
+        branch_fh = open(branch_path, "w", newline="")
+        branch_fh.write(
+            "# ladrunoBranch census, one row per sampling station.\n"
+            "# station = the existing --cond/--cond-at trigger cadence "
+            f"(every {args.cond_every} converged steps once ds < "
+            f"{args.cond_at * 1e3:.6g} mm) UNIONED with --dense stations "
+            f"every {dense_step} of s/B in [{dense_lo}, {dense_hi}].\n"
+            "# s_min_rel/cond/lam_min_sym_rel are NaN unless --cond is also "
+            "given (or the station coincides with one --cond already "
+            "sampled).\n"
+            "# n_gp_seen/n_gp_empty: GPs with/without a live ladrunoBranch "
+            "response this station (all empty until the C++ token ships).\n"
+            "# n_branch{0,1,2,3} = elastic/f1 cone/f2 tension cutoff/corner "
+            "GP counts; n_forced = forcedAccept count.\n"
+            "# lowdetK_*: the K-th lowest detAmin GP (ele tag, GP index, "
+            "value, centroid x, z -- an approximate GP location).\n"
+            "# cornerK_*: the K-th corner-branch GP encountered this station "
+            "(first 5, ele tag, GP index, centroid x, z).\n")
+        branch_wr = csv.writer(branch_fh)
+        branch_wr.writerow(_BRANCH_COLS)
+
+    # --- ADR-95 P1: --forensics (Newton-path forensics on the first stall) --
+    forensics_records = []
+    forensics_first_done = False
+
+    def write_branch_station(s_over_B, q_now, th, at_wall=False):
+        """Sample every GP's ladrunoBranch response and append one row to
+        `qpd_<tag>_branch.csv` plus one station to the npz payload.  `th`
+        (from `sample_tangent`/`tangent_health`, or None) supplies the
+        sigma_min/cond columns when --cond is also active."""
+        nonlocal n_branch_empty, n_branch_seen
+        bsum, barr, top5, corner5 = sample_branch(len(cells), branch_ngp, cen)
+        n_branch_empty += bsum["n_gp_empty"]
+        n_branch_seen += bsum["n_gp_seen"]
+        row = [s_over_B, q_now,
+               th["s_min_rel"] if th else float("nan"),
+               th["cond"] if th else float("nan"),
+               th["lam_min_sym_rel"] if th else float("nan"),
+               bsum["n_gp_seen"], bsum["n_gp_empty"], bsum["n_branch0"],
+               bsum["n_branch1"], bsum["n_branch2"], bsum["n_branch3"],
+               bsum["n_forced"], bsum["detAmin_min"], bsum["n_detAmin_nonpos"],
+               bsum["I1_min"], bsum["gamma0_max"], bsum["gamma1_max"]]
+        for k in range(5):
+            if k < len(top5):
+                detA, e, gp, x, z = top5[k]
+                row += [e, gp, detA, x, z]
+            else:
+                row += [float("nan")] * 5
+        for k in range(5):
+            if k < len(corner5):
+                e, gp, x, z = corner5[k]
+                row += [e, gp, x, z]
+            else:
+                row += [float("nan")] * 4
+        branch_wr.writerow([f"{v:.9g}" for v in row])
+        branch_fh.flush()
+        branch_station_s.append(s_over_B)
+        branch_station_at_wall.append(at_wall)
+        branch_station_arrays.append(barr)
+        return bsum
+
     t0 = time.time()
     while True:
         s_now = uz0 - ops.getTime()
@@ -634,18 +844,41 @@ def run(args):
                 f"{args.cond_at * 1e3:.6g} mm) at s/B = {s_now / HP.B_FOOT:.5f}: "
                 f"arming the tangent sampler (dense assembly at the sampling "
                 f"points only; PARDISO still solves the leg)")
+        if args.branch and not branch_on and ds < args.cond_at:
+            branch_on = True
+            log(f"    [branch] ds fell to {ds * 1e3:.6g} mm (trigger "
+                f"{args.cond_at * 1e3:.6g} mm) at s/B = {s_now / HP.B_FOOT:.5f}: "
+                f"arming the branch-census cadence sampler (--dense stations "
+                f"are independent of this trigger)")
         ops.integrator("LoadControl", -ds)
         ok, relaxed = False, 0
+        per_algo = [] if args.forensics else None
         for algo, tl, it, rl in ladder:
             ops.test("NormUnbalance", tl, it, 0)
             ops.algorithm(algo)
-            if ops.analyze(1) == 0:
+            rc = ops.analyze(1)
+            if per_algo is not None:
+                norms, niter, err = capture_newton_norms()
+                per_algo.append(dict(algo=algo, tol=tl, max_iter=it, rc=rc,
+                                      iters=niter, norms=norms, error=err))
+            if rc == 0:
                 ok, relaxed = True, rl
                 break
             nfail += 1
         if not ok:
             good, nsub = 0, nsub + 1
             ds *= 0.5
+            if args.forensics and (not forensics_first_done or ds < floor):
+                kind = "first_fail" if not forensics_first_done else "floor"
+                forensics_records.append(dict(
+                    kind=kind, s_over_B=s_now / HP.B_FOOT,
+                    ds_before_halving_mm=2.0 * ds * 1e3, ds_after_mm=ds * 1e3,
+                    attempts=per_algo,
+                    top_unbalance=collect_top_nodeunbalance(nodes)))
+                forensics_first_done = True
+                log(f"    [forensics] captured '{kind}' at s/B = "
+                    f"{s_now / HP.B_FOOT:.5f} ({len(per_algo)} ladder rungs, "
+                    f"ds -> {ds * 1e3:.6g} mm)")
             if nsub > args.budget:
                 mode = "BUDGET"
                 verdict = (f"subdivision budget of {args.budget} spent at "
@@ -670,18 +903,44 @@ def run(args):
         fh.flush()
         hist.append((s, np.array([[ops.nodeDisp(i, c) for c in (1, 2, 3)]
                                   for i in range(1, len(nodes) + 1)])))
+        th_this_step = None
         if cond_on and len(rows) % args.cond_every == 0:
-            th = sample_tangent(setup, nsub)
-            if th:
-                th["s_over_B"] = s / HP.B_FOOT
-                th["q"] = q
-                th["ds_mm"] = ds * 1e3
-                cond_log.append(th)
-                log(f"    [diag 3] s/B {th['s_over_B']:.5f}  q {q:8.2f}  "
-                    f"ds {ds * 1e3:.5g} mm  |  sigma_min/scale "
-                    f"{th['s_min_rel']:.3e}  cond {th['cond']:.3e}  "
-                    f"lam_min(sym)/scale {th['lam_min_sym_rel']:.3e}  "
-                    f"n_neg(sym) {th['n_neg_sym']}")
+            th_this_step = sample_tangent(setup, nsub)
+            if th_this_step:
+                th_this_step["s_over_B"] = s / HP.B_FOOT
+                th_this_step["q"] = q
+                th_this_step["ds_mm"] = ds * 1e3
+                cond_log.append(th_this_step)
+                log(f"    [diag 3] s/B {th_this_step['s_over_B']:.5f}  "
+                    f"q {q:8.2f}  ds {ds * 1e3:.5g} mm  |  sigma_min/scale "
+                    f"{th_this_step['s_min_rel']:.3e}  "
+                    f"cond {th_this_step['cond']:.3e}  "
+                    f"lam_min(sym)/scale {th_this_step['lam_min_sym_rel']:.3e}  "
+                    f"n_neg(sym) {th_this_step['n_neg_sym']}")
+
+        # --- ADR-95 P1 --branch: cadence (same trigger as --cond) unioned
+        # with the --dense fixed s/B grid, so the wall bracket is sampled
+        # even if the natural step ladder never lands inside it.
+        if args.branch:
+            s_ob = s / HP.B_FOOT
+            do_dense = next_dense is not None and s_ob >= next_dense
+            do_cadence = branch_on and len(rows) % args.cond_every == 0
+            if do_dense or do_cadence:
+                th_b = th_this_step
+                if th_b is None and args.cond:
+                    th_b = sample_tangent(setup, nsub)
+                bsum = write_branch_station(s_ob, q, th_b)
+                log(f"    [branch] s/B {s_ob:.6f}  q {q:8.2f}  "
+                    f"GP seen/empty {bsum['n_gp_seen']}/{bsum['n_gp_empty']}  "
+                    f"branch(0,1,2,3)=({bsum['n_branch0']},{bsum['n_branch1']},"
+                    f"{bsum['n_branch2']},{bsum['n_branch3']})  "
+                    f"forced {bsum['n_forced']}  detAmin_min "
+                    f"{bsum['detAmin_min']:.3e}")
+                if do_dense:
+                    while next_dense is not None and s_ob >= next_dense:
+                        next_dense += dense_step
+                        if next_dense > dense_hi + 1e-12:
+                            next_dense = None
         if len(rows) > HP.STALL_WINDOW and \
                 rows[-1][0] - rows[-1 - HP.STALL_WINDOW][0] < HP.STALL_ADVANCE * smax:
             mode = "STALL"
@@ -700,17 +959,53 @@ def run(args):
     # `LoadControl(0.0)` + `algorithm Linear` assembles and factors K at the
     # current state and commits a ZERO increment, so the state is untouched;
     # it is `leg_modes`' idiom from h20_prandtl.py.
+    th_final = None
     if args.cond:
-        th = sample_tangent(setup, nsub)
-        if th:
-            th.update(s_over_B=float(rows[-1][1]), q=float(rows[-1][2]),
-                      ds_mm=float(rows[-1][3]), at_wall=True)
-            cond_log.append(th)
-            log(f"    [diag 3] AT THE WALL, s/B {th['s_over_B']:.5f}: "
-                f"sigma_min/scale {th['s_min_rel']:.3e}, cond {th['cond']:.3e}, "
-                f"lam_min(sym)/scale {th['lam_min_sym_rel']:.3e}, negative "
-                f"eigenvalues of the symmetric part: {th['n_neg_sym']} of "
-                f"{th['n']}")
+        th_final = sample_tangent(setup, nsub)
+        if th_final:
+            th_final.update(s_over_B=float(rows[-1][1]), q=float(rows[-1][2]),
+                             ds_mm=float(rows[-1][3]), at_wall=True)
+            cond_log.append(th_final)
+            log(f"    [diag 3] AT THE WALL, s/B {th_final['s_over_B']:.5f}: "
+                f"sigma_min/scale {th_final['s_min_rel']:.3e}, "
+                f"cond {th_final['cond']:.3e}, lam_min(sym)/scale "
+                f"{th_final['lam_min_sym_rel']:.3e}, negative eigenvalues of "
+                f"the symmetric part: {th_final['n_neg_sym']} of "
+                f"{th_final['n']}")
+
+    # --- ADR-95 P1 --branch: the census AT THE WALL, unconditionally -------
+    # Same rationale as diagnostic 3 above: the cadence/dense triggers only
+    # fire on converged steps, and the leg can walk from its last trigger to
+    # termination without converging another one.
+    if args.branch:
+        bsum = write_branch_station(float(rows[-1][1]), float(rows[-1][2]),
+                                     th_final, at_wall=True)
+        log(f"    [branch] AT THE WALL, s/B {rows[-1][1]:.6f}: GP seen/empty "
+            f"{bsum['n_gp_seen']}/{bsum['n_gp_empty']}  branch(0,1,2,3)="
+            f"({bsum['n_branch0']},{bsum['n_branch1']},{bsum['n_branch2']},"
+            f"{bsum['n_branch3']})  forced {bsum['n_forced']}  detAmin_min "
+            f"{bsum['detAmin_min']:.3e}")
+        branch_fh.close()
+        np.savez(os.path.join(HERE, f"qpd_{tag}_branch.npz"),
+                 station_s_over_B=np.array(branch_station_s),
+                 station_at_wall=np.array(branch_station_at_wall),
+                 ele_gp_note="per-station arrays are qpd_<tag>_branch.npz "
+                             "keys 'stNNN_<field>'; NNN indexes "
+                             "station_s_over_B/station_at_wall",
+                 **{f"st{i:03d}_{k}": v
+                    for i, arrs in enumerate(branch_station_arrays)
+                    for k, v in arrs.items()})
+        log(f"    [branch] {len(branch_station_s)} station(s) written to "
+            f"qpd_{tag}_branch.csv/.npz; {n_branch_seen} live GP responses, "
+            f"{n_branch_empty} empty (binary lacks the ladrunoBranch token "
+            f"until P0 ships it -- not an error)")
+
+    if args.forensics:
+        with open(os.path.join(HERE, f"qpd_{tag}_forensics.json"), "w") as f:
+            json.dump(dict(tag=tag, build=stamp, records=forensics_records),
+                       f, indent=1, default=float)
+        log(f"    [forensics] {len(forensics_records)} event(s) written to "
+            f"qpd_{tag}_forensics.json")
 
     a = np.array([r[:4] for r in rows])
     s, q, dsm = a[:, 0], a[:, 2], a[:, 3]
@@ -946,6 +1241,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--elem", default="h20uri", choices=sorted(ELEMS))
     ap.add_argument("--h0", type=float, default=1.0)
+    ap.add_argument("--sy", type=float, default=None,
+                    help="ADR-95 P2 knob: override h20_prandtl.SY (kPa apex regulariser; tension cutoff T = sqrt(2/3)*SY/rho)")
     ap.add_argument("--sfrac", type=float, default=0.15)
     ap.add_argument("--assoc", action="store_true")
     ap.add_argument("--budget", type=int, default=200)
@@ -961,10 +1258,33 @@ def main():
                          "(metres).  Default COND_TRIGGER x DS_BASE, which sits "
                          "very close to the wall; for a conditioning TRAJECTORY "
                          "set it near DS_MAX so the approach is sampled too.")
+    ap.add_argument("--branch", action="store_true",
+                    help="ADR-95 P1: census the DruckerPrager 'ladrunoBranch' "
+                         "material response (histogram, forced-accept, "
+                         "detAmin/I1 extrema) at every element/GP, at the "
+                         "same cadence as --cond plus --dense; tolerates a "
+                         "binary that does not yet ship the token.")
+    ap.add_argument("--dense", type=float, nargs=3, default=None,
+                    metavar=("LO", "HI", "STEP"),
+                    help="with --branch, add extra sampling stations every "
+                         "STEP of s/B in [LO, HI] regardless of the --cond "
+                         "trigger cadence. Default 0.0108 0.0113 5e-6 (note "
+                         "82 section 7.3's bracket) when --branch is given "
+                         "without --dense.")
+    ap.add_argument("--forensics", action="store_true",
+                    help="ADR-95 P1: at the first failed-ladder step (and "
+                         "again at the step floor), record per-Newton-"
+                         "iteration ||R|| for every ladder rung tried "
+                         "(ops.testNorms()/testIter()) and the 10 largest "
+                         "|nodeUnbalance| DOFs with node coordinates; "
+                         "written to qpd_<tag>_forensics.json.")
     ap.add_argument("--suffix", default="")
     ap.add_argument("--calib", action="store_true",
                     help="run control CHI (elastic calibration) and stop")
     args = ap.parse_args()
+    if args.sy is not None:  # ADR-95 P2: must precede any model build (h20_prandtl reads the module global at call time)
+        HP.SY = args.sy
+        print(f"[adr95] SY override -> {HP.SY} kPa")
 
     if args.calib:
         calibrate_chi(args.elem, args.h0)
@@ -979,6 +1299,8 @@ def main():
         args.ladder = "quad" if order == 2 else "linear"
     if args.cond_at is None:
         args.cond_at = COND_TRIGGER * args.ds_base
+    if args.branch and args.dense is None:
+        args.dense = list(BRANCH_DENSE_DEFAULT)
 
     r = run(args)
     print()

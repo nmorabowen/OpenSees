@@ -250,6 +250,7 @@ WALL_BUDGET_S = float(os.environ.get("LADRUNO_R3_WALL_BUDGET", 3600.0))
 #   * the three bands are DISJOINT, so they cannot be satisfied by a sequence
 #     that is not monotone.
 _BAND_HALFWIDTH = 0.03
+ASSOC_MIN_SEPARATION = 0.20   # ADR-95: associated control must sit >= this above the non-assoc band top (measured 1.6026 vs band top 1.0236 at h0 = 0.5)
 _MEASURED = {1.0: 1.0842, 0.5: 0.9938, 0.25: 0.9513}
 BANDS = {h: (c * (1.0 - _BAND_HALFWIDTH), c * (1.0 + _BAND_HALFWIDTH))
          for h, c in _MEASURED.items()}
@@ -777,20 +778,31 @@ def test_r3_associated_control_is_not_a_capacity(campaign):
     would be plateauing on something other than the collapse mechanism and the
     non-associated agreement would carry no information.
 
-    Note this is asserted on CAPACITY, not on `plateau` alone — precisely
-    because the associated leg's characteristic ending is a step floor, and a
-    seized run can present a flat tail.  Measured, it fails both clauses at
-    once: tail ~39 % of initial AND a terminal step ~1.6x the floor."""
+    ADR-95 (PR #803) REVISED THE PREMISE.  The original assertion was that the
+    associated leg must NOT produce a capacity at all ("hardens straight past
+    its own exact answer", tail ~39 %, terminal step ~1.6x the floor).  That
+    ending was the vanilla UW DruckerPrager tension-cutoff/corner defect, not
+    associated flow: dilatant flow drives I1 up faster, so the associated leg
+    reached the dead cutoff branch EARLIER and seized on the step floor.  With
+    the return map repaired the associated leg plateaus on ITS OWN (higher)
+    collapse load — measured 1.6026 of the non-associated exact at h0 = 0.5 on
+    build feb358fda — which is the physics (psi = phi is the strong upper
+    solution).  The control's job was never "no plateau"; it is that the
+    associated answer must be DISTINCT from the non-associated band, so the
+    non-associated agreement cannot be a coincidence of the deck.  That is what
+    is asserted now: not WALL, and if it is a capacity its ratio must sit at
+    least ASSOC_MIN_SEPARATION above the top of the non-associated band."""
     r = campaign["legs"][(CONTROL_H0, True)]
     assert r["mode"] != "WALL", (
         f"associated control INCONCLUSIVE: stopped by the wall budget, so 'not a "
         f"capacity' would be an artefact of the clock, not of the flow rule. "
         f"Raise LADRUNO_R3_WALL_BUDGET and re-run. " + _why(r)
     )
-    assert not r["capacity"], (
-        f"associated control PRODUCED A CAPACITY (ratio {r['ratio']:.4f}) — the "
-        "reference records associated legs hardening past their own exact answer "
-        "without ever reaching one. Both flow rules yielding a capacity means the "
-        "non-associated agreement is a coincidence, not a measurement of the "
-        "Prandtl mechanism. " + _why(r)
+    band_top = _MEASURED[CONTROL_H0] * (1.0 + _BAND_HALFWIDTH)
+    assert r["ratio"] >= band_top + ASSOC_MIN_SEPARATION, (
+        f"associated control landed at ratio {r['ratio']:.4f}, within "
+        f"{ASSOC_MIN_SEPARATION:.2f} of the non-associated band top {band_top:.4f} "
+        "— both flow rules answering alike means the non-associated agreement is "
+        "a coincidence of the deck, not a measurement of the Prandtl mechanism. "
+        "(ADR-95 reference on the repaired material: 1.6026 at h0 = 0.5.) " + _why(r)
     )

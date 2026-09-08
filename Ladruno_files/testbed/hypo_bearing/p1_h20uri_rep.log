@@ -1,0 +1,1905 @@
+[13:23:35] [control 0] engine C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90\5408bcef-bf62-4967-964e-a179fa61676a\scratchpad\dist_fixed\bin\opensees.pyd
+[13:23:35] [control 0] ladrunoBuild() = cf239c9df18ba3d6e201fbcbaf87a4a9e88e404d
+[13:23:35]     [control 2] consistent Q8 serendipity surcharge over 20 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 42 nodes carry a NEGATIVE weight; per-face weights match the analytic (-A/12, +A/3) to 3.1e-16 of A
+[13:23:35] === leg h20uri_h1.0_p1rep: LadrunoBrick20 -formulation uri, h0 = 1.0 m (2 el across B), 1553 nodes / 4659 DOF, 200 elements
+[13:23:35]     ORACLE q_u = q0*N_q = 138.907 kPa (phi_ps = 27.470 deg); non-associated (gate)
+[13:23:35]     ALLOWANCES (pinned, reported): ds base/floor/max = 0.02/0.0002/0.2 mm (= 6.64 halvings), subdivision budget = 200, s/B target = 0.15, wall cap = 5400 s
+[13:23:35]     initial 1-D state m0 = 0.2680 of yield  (SAFE)
+[13:23:36]     [scale] purely ELASTIC chi on this mesh at nu = 0.45 is -0.88266; a fully isochoric mechanism is chi = +1.  The mechanism index below is M = (chi - -0.88266) / (1.88266), so M = 0 is 'no mechanism, elastic' and M = 1 is 'fully formed'.
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+[13:23:36]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.1s]
+[13:23:36]     [control 1] 1-D elastic stress patch (every GP): max|szz/-q0-1| = 7.75e-14, max|sxx/-K0q0-1| = 6.84e-14  -> PASS
+[13:23:36]     [control M0] mobilisation field at the surcharge step (8 GP/element): max |mob - m0*| = 2.98e-14 against the exact closed form m0* = 0.260306509 (the harness's SY-free screen prints 0.267980)  -> PASS
+[13:23:36]     [control M0] elements at mob >= 0.9 before the push: 0 of 200  (must be 0)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:23:36]     [diag 3] ds fell to 0.02 mm (trigger 0.15 mm) at s/B = 0.00000: arming the tangent sampler (dense assembly at the sampling points only; PARDISO still solves the leg)
+[13:23:36]     [branch] ds fell to 0.02 mm (trigger 0.15 mm) at s/B = 0.00000: arming the branch-census cadence sampler (--dense stations are independent of this trigger)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:23:43]     [diag 3] s/B 0.00004  q    12.95  ds 0.02 mm  |  sigma_min/scale 2.383e-04  cond 8.529e+04  lam_min(sym)/scale 2.383e-04  n_neg(sym) 0
+[13:23:43]     [branch] s/B 0.000040  q    12.95  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:23:51]     [diag 3] s/B 0.00010  q    14.88  ds 0.04 mm  |  sigma_min/scale 2.383e-04  cond 8.529e+04  lam_min(sym)/scale 2.383e-04  n_neg(sym) 0
+[13:23:51]     [branch] s/B 0.000100  q    14.88  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:23:57]     [diag 3] s/B 0.00018  q    17.45  ds 0.08 mm  |  sigma_min/scale 2.383e-04  cond 8.529e+04  lam_min(sym)/scale 2.383e-04  n_neg(sym) 0
+[13:23:57]     [branch] s/B 0.000180  q    17.45  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:03]     [diag 3] s/B 0.00034  q    22.59  ds 0.08 mm  |  sigma_min/scale 2.383e-04  cond 8.529e+04  lam_min(sym)/scale 2.383e-04  n_neg(sym) 0
+[13:24:03]     [branch] s/B 0.000340  q    22.59  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:16]     [diag 3] s/B 0.00058  q    30.31  ds 0.16 mm  |  sigma_min/scale 2.383e-04  cond 8.529e+04  lam_min(sym)/scale 2.383e-04  n_neg(sym) 0
+[13:24:16]     [branch] s/B 0.000580  q    30.31  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:25]     [diag 3] s/B 0.00090  q    40.20  ds 0.2 mm  |  sigma_min/scale 2.382e-04  cond 8.533e+04  lam_min(sym)/scale 2.380e-04  n_neg(sym) 0
+[13:24:25]     [branch] s/B 0.000900  q    40.20  GP seen/empty 1600/0  branch(0,1,2,3)=(1581,19,0,0)  forced 0  detAmin_min 1.626e-03
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 7072.39 (max: 0.003, Norm deltaX: 0.524584)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00317172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 4.74329e+06 (max: 0.003, Norm deltaX: 477.112)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00317172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 1.87824e+06 (max: 0.03, Norm deltaX: 30.9867)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00317172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:35]     [diag 3] s/B 0.00110  q    44.43  ds 0.1 mm  |  sigma_min/scale 2.377e-04  cond 8.555e+04  lam_min(sym)/scale -1.140e-03  n_neg(sym) 2
+[13:24:35]     [branch] s/B 0.001100  q    44.43  GP seen/empty 1600/0  branch(0,1,2,3)=(1545,55,0,0)  forced 0  detAmin_min -2.057e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:41]     [diag 3] s/B 0.00140  q    49.28  ds 0.2 mm  |  sigma_min/scale 2.383e-04  cond 8.541e+04  lam_min(sym)/scale -3.218e-03  n_neg(sym) 2
+[13:24:41]     [branch] s/B 0.001400  q    49.28  GP seen/empty 1600/0  branch(0,1,2,3)=(1522,78,0,0)  forced 0  detAmin_min -3.959e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:47]     [diag 3] s/B 0.00180  q    54.35  ds 0.2 mm  |  sigma_min/scale 2.376e-04  cond 8.572e+04  lam_min(sym)/scale -7.443e-03  n_neg(sym) 4
+[13:24:47]     [branch] s/B 0.001800  q    54.35  GP seen/empty 1600/0  branch(0,1,2,3)=(1506,94,0,0)  forced 0  detAmin_min -4.586e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 348.461 (max: 0.003, Norm deltaX: 0.039644)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00537172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:52]     [diag 3] s/B 0.00220  q    58.53  ds 0.2 mm  |  sigma_min/scale 2.379e-04  cond 8.561e+04  lam_min(sym)/scale -1.091e-05  n_neg(sym) 1
+[13:24:52]     [branch] s/B 0.002200  q    58.53  GP seen/empty 1600/0  branch(0,1,2,3)=(1529,71,0,0)  forced 0  detAmin_min -5.203e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 17025.6 (max: 0.003, Norm deltaX: 1.12169)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00577172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 22.5218 (max: 0.003, Norm deltaX: 0.00406932)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00637172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:24:59]     [diag 3] s/B 0.00260  q    62.10  ds 0.2 mm  |  sigma_min/scale 2.370e-04  cond 8.610e+04  lam_min(sym)/scale -5.682e-03  n_neg(sym) 4
+[13:24:59]     [branch] s/B 0.002600  q    62.10  GP seen/empty 1600/0  branch(0,1,2,3)=(1493,107,0,0)  forced 0  detAmin_min -5.092e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 761918 (max: 0.003, Norm deltaX: 59.5737)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00657172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 42502.2 (max: 0.003, Norm deltaX: 1.99979)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00677172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 5.17943e+06 (max: 0.003, Norm deltaX: 704.423)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00677172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 389540 (max: 0.03, Norm deltaX: 93.8958)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00677172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:13]     [diag 3] s/B 0.00285  q    64.23  ds 0.1 mm  |  sigma_min/scale 2.344e-04  cond 8.696e+04  lam_min(sym)/scale -7.340e-03  n_neg(sym) 4
+[13:25:13]     [branch] s/B 0.002850  q    64.23  GP seen/empty 1600/0  branch(0,1,2,3)=(1503,97,0,0)  forced 0  detAmin_min -5.309e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 24.7657 (max: 0.003, Norm deltaX: 0.00503318)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00737172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:23]     [diag 3] s/B 0.00310  q    66.39  ds 0.2 mm  |  sigma_min/scale 2.342e-04  cond 8.706e+04  lam_min(sym)/scale -1.271e-02  n_neg(sym) 5
+[13:25:23]     [branch] s/B 0.003100  q    66.39  GP seen/empty 1600/0  branch(0,1,2,3)=(1487,113,0,0)  forced 0  detAmin_min -5.478e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 455095 (max: 0.003, Norm deltaX: 32.0661)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00777172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 575254 (max: 0.003, Norm deltaX: 4.45858)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00777172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 228496 (max: 0.03, Norm deltaX: 1.32507)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00777172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:32]     [diag 3] s/B 0.00335  q    68.75  ds 0.1 mm  |  sigma_min/scale 2.352e-04  cond 8.678e+04  lam_min(sym)/scale -1.493e-02  n_neg(sym) 7
+[13:25:32]     [branch] s/B 0.003350  q    68.75  GP seen/empty 1600/0  branch(0,1,2,3)=(1468,132,0,0)  forced 0  detAmin_min -4.580e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.111602 (max: 0.003, Norm deltaX: 1.78873e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00817172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 5422.11 (max: 0.003, Norm deltaX: 0.449466)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00837172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.28119e+10 (max: 0.003, Norm deltaX: 466042)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00837172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 760941 (max: 0.03, Norm deltaX: 20.0247)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00837172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:42]     [diag 3] s/B 0.00355  q    70.38  ds 0.1 mm  |  sigma_min/scale 2.340e-04  cond 8.714e+04  lam_min(sym)/scale -1.009e-02  n_neg(sym) 4
+[13:25:42]     [branch] s/B 0.003550  q    70.38  GP seen/empty 1600/0  branch(0,1,2,3)=(1484,116,0,0)  forced 0  detAmin_min -5.530e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:48]     [diag 3] s/B 0.00375  q    71.85  ds 0.1 mm  |  sigma_min/scale 2.340e-04  cond 8.714e+04  lam_min(sym)/scale -1.137e-02  n_neg(sym) 5
+[13:25:48]     [branch] s/B 0.003750  q    71.85  GP seen/empty 1600/0  branch(0,1,2,3)=(1483,117,0,0)  forced 0  detAmin_min -5.581e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:25:55]     [diag 3] s/B 0.00410  q    74.06  ds 0.2 mm  |  sigma_min/scale 2.345e-04  cond 8.712e+04  lam_min(sym)/scale -6.383e-03  n_neg(sym) 6
+[13:25:55]     [branch] s/B 0.004100  q    74.06  GP seen/empty 1600/0  branch(0,1,2,3)=(1464,136,0,0)  forced 0  detAmin_min -5.493e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00637961 (max: 0.003, Norm deltaX: 1.69551e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00957172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 15281.2 (max: 0.003, Norm deltaX: 1.4198)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00977172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.00527139 (max: 0.003, Norm deltaX: 1.89279e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00997172
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 67.766 (max: 0.003, Norm deltaX: 0.00998356)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0101717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:04]     [diag 3] s/B 0.00450  q    76.27  ds 0.2 mm  |  sigma_min/scale 2.322e-04  cond 8.783e+04  lam_min(sym)/scale -2.375e-02  n_neg(sym) 7
+[13:26:04]     [branch] s/B 0.004500  q    76.27  GP seen/empty 1600/0  branch(0,1,2,3)=(1476,124,0,0)  forced 0  detAmin_min -5.385e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 270.429 (max: 0.003, Norm deltaX: 0.0215838)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0103717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:17]     [diag 3] s/B 0.00490  q    78.32  ds 0.2 mm  |  sigma_min/scale 2.313e-04  cond 8.821e+04  lam_min(sym)/scale -1.040e-02  n_neg(sym) 7
+[13:26:17]     [branch] s/B 0.004900  q    78.32  GP seen/empty 1600/0  branch(0,1,2,3)=(1468,132,0,0)  forced 0  detAmin_min -5.646e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:25]     [diag 3] s/B 0.00530  q    80.46  ds 0.2 mm  |  sigma_min/scale 2.290e-04  cond 8.916e+04  lam_min(sym)/scale -1.652e-02  n_neg(sym) 9
+[13:26:25]     [branch] s/B 0.005300  q    80.46  GP seen/empty 1600/0  branch(0,1,2,3)=(1443,157,0,0)  forced 0  detAmin_min -5.644e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:33]     [diag 3] s/B 0.00570  q    82.73  ds 0.2 mm  |  sigma_min/scale 2.307e-04  cond 8.863e+04  lam_min(sym)/scale -1.160e-02  n_neg(sym) 7
+[13:26:33]     [branch] s/B 0.005700  q    82.73  GP seen/empty 1600/0  branch(0,1,2,3)=(1458,142,0,0)  forced 0  detAmin_min -5.805e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.57733 (max: 0.003, Norm deltaX: 0.00021216)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:40]     [diag 3] s/B 0.00610  q    85.07  ds 0.2 mm  |  sigma_min/scale 2.309e-04  cond 8.841e+04  lam_min(sym)/scale -1.130e-02  n_neg(sym) 11
+[13:26:40]     [branch] s/B 0.006100  q    85.07  GP seen/empty 1600/0  branch(0,1,2,3)=(1439,161,0,0)  forced 0  detAmin_min -5.640e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0131167 (max: 0.003, Norm deltaX: 6.2982e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0135717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:48]     [diag 3] s/B 0.00650  q    87.16  ds 0.2 mm  |  sigma_min/scale 2.343e-04  cond 8.728e+04  lam_min(sym)/scale -7.153e-03  n_neg(sym) 7
+[13:26:48]     [branch] s/B 0.006500  q    87.16  GP seen/empty 1600/0  branch(0,1,2,3)=(1443,157,0,0)  forced 0  detAmin_min -5.504e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 67914.6 (max: 0.003, Norm deltaX: 3.83963)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.02703e+09 (max: 0.003, Norm deltaX: 114860)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 840734 (max: 0.03, Norm deltaX: 6.07379)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:26:56]     [diag 3] s/B 0.00675  q    88.40  ds 0.1 mm  |  sigma_min/scale 2.282e-04  cond 8.960e+04  lam_min(sym)/scale -2.317e-02  n_neg(sym) 11
+[13:26:56]     [branch] s/B 0.006750  q    88.40  GP seen/empty 1600/0  branch(0,1,2,3)=(1432,168,0,0)  forced 0  detAmin_min -5.981e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 11.5052 (max: 0.003, Norm deltaX: 0.00256307)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0151717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 3.15648e+06 (max: 0.003, Norm deltaX: 74.6463)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0151717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 20804.2 (max: 0.03, Norm deltaX: 0.734517)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0151717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:04]     [diag 3] s/B 0.00695  q    89.38  ds 0.1 mm  |  sigma_min/scale 2.336e-04  cond 8.759e+04  lam_min(sym)/scale -1.358e-02  n_neg(sym) 7
+[13:27:04]     [branch] s/B 0.006950  q    89.38  GP seen/empty 1600/0  branch(0,1,2,3)=(1438,162,0,0)  forced 0  detAmin_min -5.885e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:13]     [diag 3] s/B 0.00715  q    90.35  ds 0.1 mm  |  sigma_min/scale 2.291e-04  cond 8.921e+04  lam_min(sym)/scale -5.471e-03  n_neg(sym) 5
+[13:27:13]     [branch] s/B 0.007150  q    90.35  GP seen/empty 1600/0  branch(0,1,2,3)=(1439,161,0,0)  forced 0  detAmin_min -5.873e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 10.0888 (max: 0.003, Norm deltaX: 0.000661899)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.30954e+09 (max: 0.003, Norm deltaX: 2303.25)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 45.9032 (max: 0.03, Norm deltaX: 3.80607e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:25]     [diag 3] s/B 0.00735  q    91.32  ds 0.1 mm  |  sigma_min/scale 2.332e-04  cond 8.783e+04  lam_min(sym)/scale -1.263e-02  n_neg(sym) 9
+[13:27:25]     [branch] s/B 0.007350  q    91.32  GP seen/empty 1600/0  branch(0,1,2,3)=(1438,162,0,0)  forced 0  detAmin_min -5.868e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1128.66 (max: 0.003, Norm deltaX: 0.1041)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.22623e+06 (max: 0.003, Norm deltaX: 179.957)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 682003 (max: 0.03, Norm deltaX: 0.288732)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:33]     [diag 3] s/B 0.00755  q    92.24  ds 0.1 mm  |  sigma_min/scale 2.334e-04  cond 8.769e+04  lam_min(sym)/scale -1.047e-02  n_neg(sym) 7
+[13:27:33]     [branch] s/B 0.007550  q    92.24  GP seen/empty 1600/0  branch(0,1,2,3)=(1434,166,0,0)  forced 0  detAmin_min -5.861e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:39]     [diag 3] s/B 0.00775  q    93.17  ds 0.1 mm  |  sigma_min/scale 2.252e-04  cond 9.104e+04  lam_min(sym)/scale -2.044e-02  n_neg(sym) 14
+[13:27:39]     [branch] s/B 0.007750  q    93.17  GP seen/empty 1600/0  branch(0,1,2,3)=(1388,212,0,0)  forced 0  detAmin_min -5.858e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1180.28 (max: 0.003, Norm deltaX: 0.18783)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 73405.6 (max: 0.003, Norm deltaX: 2.73987)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 180658 (max: 0.03, Norm deltaX: 0.418073)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:48]     [diag 3] s/B 0.00795  q    94.09  ds 0.1 mm  |  sigma_min/scale 2.201e-04  cond 9.307e+04  lam_min(sym)/scale -1.926e-02  n_neg(sym) 14
+[13:27:48]     [branch] s/B 0.007950  q    94.09  GP seen/empty 1600/0  branch(0,1,2,3)=(1403,197,0,0)  forced 0  detAmin_min -5.932e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 457.112 (max: 0.003, Norm deltaX: 0.0719119)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.70033e+10 (max: 0.003, Norm deltaX: 157740)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 99103.1 (max: 0.03, Norm deltaX: 1.26195)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:27:57]     [diag 3] s/B 0.00815  q    94.99  ds 0.1 mm  |  sigma_min/scale 2.266e-04  cond 9.032e+04  lam_min(sym)/scale -9.081e-03  n_neg(sym) 9
+[13:27:57]     [branch] s/B 0.008150  q    94.99  GP seen/empty 1600/0  branch(0,1,2,3)=(1414,186,0,0)  forced 0  detAmin_min -5.840e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0817145 (max: 0.003, Norm deltaX: 1.38426e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0875257 (max: 0.003, Norm deltaX: 1.88043e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:04]     [diag 3] s/B 0.00835  q    95.87  ds 0.1 mm  |  sigma_min/scale 2.309e-04  cond 8.862e+04  lam_min(sym)/scale -1.847e-02  n_neg(sym) 10
+[13:28:04]     [branch] s/B 0.008350  q    95.87  GP seen/empty 1600/0  branch(0,1,2,3)=(1433,167,0,0)  forced 0  detAmin_min -5.870e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.110019 (max: 0.003, Norm deltaX: 2.25105e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1760.91 (max: 0.003, Norm deltaX: 0.200801)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.39634e+07 (max: 0.003, Norm deltaX: 494.883)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 894293 (max: 0.03, Norm deltaX: 2.01715)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.172241 (max: 0.003, Norm deltaX: 3.32622e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0180717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:19]     [diag 3] s/B 0.00855  q    96.73  ds 0.1 mm  |  sigma_min/scale 2.309e-04  cond 8.865e+04  lam_min(sym)/scale -1.317e-02  n_neg(sym) 8
+[13:28:19]     [branch] s/B 0.008550  q    96.73  GP seen/empty 1600/0  branch(0,1,2,3)=(1423,177,0,0)  forced 0  detAmin_min -5.954e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 14685.3 (max: 0.003, Norm deltaX: 1.19903)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 4.94653e+07 (max: 0.003, Norm deltaX: 432.158)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 219403 (max: 0.03, Norm deltaX: 3.88817)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.492883 (max: 0.003, Norm deltaX: 6.8802e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0186717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:32]     [diag 3] s/B 0.00875  q    97.58  ds 0.1 mm  |  sigma_min/scale 2.251e-04  cond 9.115e+04  lam_min(sym)/scale -1.711e-02  n_neg(sym) 14
+[13:28:32]     [branch] s/B 0.008750  q    97.58  GP seen/empty 1600/0  branch(0,1,2,3)=(1375,225,0,0)  forced 0  detAmin_min -6.062e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:37]     [diag 3] s/B 0.00895  q    98.40  ds 0.1 mm  |  sigma_min/scale 2.335e-04  cond 8.717e+04  lam_min(sym)/scale -1.021e-02  n_neg(sym) 6
+[13:28:37]     [branch] s/B 0.008950  q    98.40  GP seen/empty 1600/0  branch(0,1,2,3)=(1522,78,0,0)  forced 0  detAmin_min -6.476e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 268.317 (max: 0.003, Norm deltaX: 0.042784)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0193717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 5.502e+07 (max: 0.003, Norm deltaX: 1156.11)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0193717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 989942 (max: 0.03, Norm deltaX: 89.9056)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0193717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:45]     [diag 3] s/B 0.00915  q    99.21  ds 0.1 mm  |  sigma_min/scale 2.242e-04  cond 9.125e+04  lam_min(sym)/scale -2.298e-02  n_neg(sym) 16
+[13:28:45]     [branch] s/B 0.009150  q    99.21  GP seen/empty 1600/0  branch(0,1,2,3)=(1385,215,0,0)  forced 0  detAmin_min -5.801e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1476.36 (max: 0.003, Norm deltaX: 0.260881)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0199717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.03115e+07 (max: 0.003, Norm deltaX: 664.298)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0199717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 1.28882e+06 (max: 0.03, Norm deltaX: 18.8511)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0199717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:54]     [diag 3] s/B 0.00935  q   100.00  ds 0.1 mm  |  sigma_min/scale 2.341e-04  cond 8.709e+04  lam_min(sym)/scale -1.038e-02  n_neg(sym) 6
+[13:28:54]     [branch] s/B 0.009350  q   100.00  GP seen/empty 1600/0  branch(0,1,2,3)=(1476,124,0,0)  forced 0  detAmin_min -5.905e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:28:59]     [diag 3] s/B 0.00955  q   100.79  ds 0.1 mm  |  sigma_min/scale 2.180e-04  cond 9.417e+04  lam_min(sym)/scale -2.296e-02  n_neg(sym) 10
+[13:28:59]     [branch] s/B 0.009550  q   100.79  GP seen/empty 1600/0  branch(0,1,2,3)=(1386,214,0,0)  forced 0  detAmin_min -5.525e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 9199.76 (max: 0.003, Norm deltaX: 0.611386)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0205717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 36638.7 (max: 0.003, Norm deltaX: 2.44182)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0205717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 3.55777e+06 (max: 0.03, Norm deltaX: 56.9364)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0205717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 3.9285 (max: 0.003, Norm deltaX: 2.10836e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0204717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.45599e+07 (max: 0.003, Norm deltaX: 114.708)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0204717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 4.44485 (max: 0.03, Norm deltaX: 2.22398e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0204717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:16]     [diag 3] s/B 0.00967  q   101.27  ds 0.05 mm  |  sigma_min/scale 2.291e-04  cond 8.939e+04  lam_min(sym)/scale -1.466e-02  n_neg(sym) 10
+[13:29:16]     [branch] s/B 0.009675  q   101.27  GP seen/empty 1600/0  branch(0,1,2,3)=(1428,172,0,0)  forced 0  detAmin_min -5.948e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.71797 (max: 0.003, Norm deltaX: 0.000473825)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0207717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.02449e+06 (max: 0.003, Norm deltaX: 157.882)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0207717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 5.90138 (max: 0.03, Norm deltaX: 0.000394576)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0207717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:29]     [diag 3] s/B 0.00977  q   101.66  ds 0.05 mm  |  sigma_min/scale 2.166e-04  cond 9.463e+04  lam_min(sym)/scale -2.878e-02  n_neg(sym) 22
+[13:29:29]     [branch] s/B 0.009775  q   101.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1352,248,0,0)  forced 0  detAmin_min -5.557e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:35]     [diag 3] s/B 0.00987  q   102.05  ds 0.05 mm  |  sigma_min/scale 2.289e-04  cond 8.942e+04  lam_min(sym)/scale -1.361e-02  n_neg(sym) 12
+[13:29:35]     [branch] s/B 0.009875  q   102.05  GP seen/empty 1600/0  branch(0,1,2,3)=(1419,181,0,0)  forced 0  detAmin_min -5.900e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 8.28428 (max: 0.003, Norm deltaX: 0.00131771)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0210717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 4.30888e+06 (max: 0.003, Norm deltaX: 55.8519)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0210717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 153.525 (max: 0.03, Norm deltaX: 0.00688645)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0210717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:43]     [diag 3] s/B 0.00997  q   102.44  ds 0.05 mm  |  sigma_min/scale 2.177e-04  cond 9.411e+04  lam_min(sym)/scale -1.733e-02  n_neg(sym) 16
+[13:29:43]     [branch] s/B 0.009975  q   102.44  GP seen/empty 1600/0  branch(0,1,2,3)=(1367,233,0,0)  forced 0  detAmin_min -5.894e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 23.9599 (max: 0.003, Norm deltaX: 0.00232954)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 168395 (max: 0.003, Norm deltaX: 15.5778)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 254263 (max: 0.03, Norm deltaX: 2.14253)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0213717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:51]     [diag 3] s/B 0.01007  q   102.82  ds 0.05 mm  |  sigma_min/scale 2.165e-04  cond 9.459e+04  lam_min(sym)/scale -1.701e-02  n_neg(sym) 14
+[13:29:51]     [branch] s/B 0.010075  q   102.82  GP seen/empty 1600/0  branch(0,1,2,3)=(1382,218,0,0)  forced 0  detAmin_min -5.576e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:29:57]     [diag 3] s/B 0.01018  q   103.21  ds 0.05 mm  |  sigma_min/scale 2.275e-04  cond 8.999e+04  lam_min(sym)/scale -1.140e-02  n_neg(sym) 8
+[13:29:57]     [branch] s/B 0.010175  q   103.21  GP seen/empty 1600/0  branch(0,1,2,3)=(1414,186,0,0)  forced 0  detAmin_min -5.818e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 7.74309 (max: 0.003, Norm deltaX: 0.000922736)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0216717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 16.762 (max: 0.003, Norm deltaX: 0.000416174)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0216717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 516.001 (max: 0.03, Norm deltaX: 0.00418726)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0216717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.797679 (max: 0.003, Norm deltaX: 0.00010619)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0217217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 8.17145e+10 (max: 0.003, Norm deltaX: 1.97302e+06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0217217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:30:08]     [diag 3] s/B 0.01028  q   103.61  ds 0.05 mm  |  sigma_min/scale 2.276e-04  cond 8.994e+04  lam_min(sym)/scale -1.154e-02  n_neg(sym) 9
+[13:30:08]     [branch] s/B 0.010275  q   103.61  GP seen/empty 1600/0  branch(0,1,2,3)=(1418,182,0,0)  forced 0  detAmin_min -5.727e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 3.87346 (max: 0.003, Norm deltaX: 0.00035011)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0218717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 260044 (max: 0.003, Norm deltaX: 1.3696)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0218717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 162.489 (max: 0.003, Norm deltaX: 0.0245928)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 648.17 (max: 0.003, Norm deltaX: 0.0819954)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 324017 (max: 0.03, Norm deltaX: 1.29556)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 56.6813 (max: 0.003, Norm deltaX: 0.00499595)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:30:31]     [diag 3] s/B 0.01038  q   103.98  ds 0.05 mm  |  sigma_min/scale 2.268e-04  cond 9.034e+04  lam_min(sym)/scale -9.714e-03  n_neg(sym) 9
+[13:30:31]     [branch] s/B 0.010375  q   103.98  GP seen/empty 1600/0  branch(0,1,2,3)=(1413,187,0,0)  forced 0  detAmin_min -5.741e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0843055 (max: 0.003, Norm deltaX: 1.65468e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.185759 (max: 0.003, Norm deltaX: 2.94962e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0220217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:30:41]     [diag 3] s/B 0.01048  q   104.38  ds 0.05 mm  |  sigma_min/scale 2.130e-04  cond 9.643e+04  lam_min(sym)/scale -1.679e-02  n_neg(sym) 17
+[13:30:41]     [branch] s/B 0.010475  q   104.38  GP seen/empty 1600/0  branch(0,1,2,3)=(1346,254,0,0)  forced 0  detAmin_min -6.270e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.2746 (max: 0.003, Norm deltaX: 4.0247e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0221717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 173.325 (max: 0.003, Norm deltaX: 0.0179594)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0222717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 6.15651 (max: 0.003, Norm deltaX: 0.000270044)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0222717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 355052 (max: 0.03, Norm deltaX: 10.7234)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0222717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:30:50]     [diag 3] s/B 0.01058  q   104.76  ds 0.05 mm  |  sigma_min/scale 2.243e-04  cond 9.132e+04  lam_min(sym)/scale -1.922e-02  n_neg(sym) 10
+[13:30:50]     [branch] s/B 0.010575  q   104.76  GP seen/empty 1600/0  branch(0,1,2,3)=(1409,191,0,0)  forced 0  detAmin_min -5.788e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 80.4041 (max: 0.003, Norm deltaX: 0.0209438)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0223717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 13.6776 (max: 0.003, Norm deltaX: 0.00171901)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.66086e+08 (max: 0.003, Norm deltaX: 29236.5)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 16.2908 (max: 0.03, Norm deltaX: 0.000553728)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0225717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:30:59]     [diag 3] s/B 0.01068  q   105.14  ds 0.05 mm  |  sigma_min/scale 2.135e-04  cond 9.614e+04  lam_min(sym)/scale -2.058e-02  n_neg(sym) 16
+[13:30:59]     [branch] s/B 0.010675  q   105.14  GP seen/empty 1600/0  branch(0,1,2,3)=(1347,253,0,0)  forced 0  detAmin_min -5.719e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0191372 (max: 0.003, Norm deltaX: 1.71773e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0226717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:06]     [diag 3] s/B 0.01078  q   105.51  ds 0.05 mm  |  sigma_min/scale 2.107e-04  cond 9.740e+04  lam_min(sym)/scale -2.946e-02  n_neg(sym) 17
+[13:31:06]     [branch] s/B 0.010775  q   105.51  GP seen/empty 1600/0  branch(0,1,2,3)=(1353,247,0,0)  forced 0  detAmin_min -5.650e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.048707 (max: 0.003, Norm deltaX: 1.10248e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0227717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:11]     [branch] s/B 0.010800  q   105.60  GP seen/empty 1600/0  branch(0,1,2,3)=(1420,180,0,0)  forced 0  detAmin_min -6.141e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2087.11 (max: 0.003, Norm deltaX: 0.176889)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0228717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 8.99297e+06 (max: 0.003, Norm deltaX: 23.6619)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0228717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 523170 (max: 0.03, Norm deltaX: 6.03412)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0228717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:26]     [branch] s/B 0.010825  q   105.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1425,175,0,0)  forced 0  detAmin_min -5.524e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0681608 (max: 0.003, Norm deltaX: 1.27835e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0228717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.749717 (max: 0.003, Norm deltaX: 4.12846e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0228717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:37]     [branch] s/B 0.010850  q   105.78  GP seen/empty 1600/0  branch(0,1,2,3)=(1363,237,0,0)  forced 0  detAmin_min -5.527e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.675234 (max: 0.003, Norm deltaX: 8.40014e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0229217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:43]     [diag 3] s/B 0.01088  q   105.88  ds 0.05 mm  |  sigma_min/scale 2.264e-04  cond 9.049e+04  lam_min(sym)/scale -1.479e-02  n_neg(sym) 10
+[13:31:43]     [branch] s/B 0.010875  q   105.88  GP seen/empty 1600/0  branch(0,1,2,3)=(1409,191,0,0)  forced 0  detAmin_min -6.006e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:47]     [branch] s/B 0.010900  q   105.97  GP seen/empty 1600/0  branch(0,1,2,3)=(1395,205,0,0)  forced 0  detAmin_min -5.612e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:53]     [branch] s/B 0.010925  q   106.06  GP seen/empty 1600/0  branch(0,1,2,3)=(1355,245,0,0)  forced 0  detAmin_min -5.597e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:31:59]     [branch] s/B 0.010950  q   106.15  GP seen/empty 1600/0  branch(0,1,2,3)=(1423,177,0,0)  forced 0  detAmin_min -5.581e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 78.5558 (max: 0.003, Norm deltaX: 0.0170035)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 776.159 (max: 0.003, Norm deltaX: 0.036418)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 504909 (max: 0.03, Norm deltaX: 26.3436)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:07]     [diag 3] s/B 0.01098  q   106.24  ds 0.05 mm  |  sigma_min/scale 2.150e-04  cond 9.517e+04  lam_min(sym)/scale -1.429e-02  n_neg(sym) 14
+[13:32:07]     [branch] s/B 0.010975  q   106.24  GP seen/empty 1600/0  branch(0,1,2,3)=(1419,181,0,0)  forced 0  detAmin_min -5.863e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.108989 (max: 0.003, Norm deltaX: 3.93847e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.385112 (max: 0.003, Norm deltaX: 2.8628e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0231717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:14]     [branch] s/B 0.011000  q   106.32  GP seen/empty 1600/0  branch(0,1,2,3)=(1363,237,0,0)  forced 0  detAmin_min -5.870e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0584583 (max: 0.003, Norm deltaX: 1.21286e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 5.5476 (max: 0.003, Norm deltaX: 0.00013662)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:28]     [branch] s/B 0.011025  q   106.42  GP seen/empty 1600/0  branch(0,1,2,3)=(1460,140,0,0)  forced 0  detAmin_min -5.529e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 5.29925 (max: 0.003, Norm deltaX: 0.000500775)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 5.95671 (max: 0.003, Norm deltaX: 0.00014955)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:38]     [branch] s/B 0.011050  q   106.52  GP seen/empty 1600/0  branch(0,1,2,3)=(1393,207,0,0)  forced 0  detAmin_min -5.525e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.32814 (max: 0.003, Norm deltaX: 0.000113731)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.129647 (max: 0.003, Norm deltaX: 1.24179e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:46]     [diag 3] s/B 0.01108  q   106.60  ds 0.05 mm  |  sigma_min/scale 2.142e-04  cond 9.575e+04  lam_min(sym)/scale -1.351e-02  n_neg(sym) 14
+[13:32:46]     [branch] s/B 0.011075  q   106.60  GP seen/empty 1600/0  branch(0,1,2,3)=(1370,230,0,0)  forced 0  detAmin_min -5.532e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.399472 (max: 0.003, Norm deltaX: 0.000180033)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.409537 (max: 0.003, Norm deltaX: 9.06759e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.256965 (max: 0.03, Norm deltaX: 7.25326e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.208206 (max: 0.003, Norm deltaX: 6.05419e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.929269 (max: 0.003, Norm deltaX: 2.6197e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:32:54]     [branch] s/B 0.011088  q   106.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1375,225,0,0)  forced 0  detAmin_min -5.722e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.296011 (max: 0.003, Norm deltaX: 5.4125e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.243997 (max: 0.003, Norm deltaX: 5.6119e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:01]     [branch] s/B 0.011100  q   106.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1432,168,0,0)  forced 0  detAmin_min -5.972e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.40819 (max: 0.003, Norm deltaX: 0.000252438)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.96657e+06 (max: 0.003, Norm deltaX: 3.51564)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0233967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:11]     [branch] s/B 0.011113  q   106.77  GP seen/empty 1600/0  branch(0,1,2,3)=(1395,205,0,0)  forced 0  detAmin_min -5.527e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.12293 (max: 0.003, Norm deltaX: 1.97677e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.208426 (max: 0.003, Norm deltaX: 3.51115e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:23]     [diag 3] s/B 0.01113  q   106.76  ds 0.025 mm  |  sigma_min/scale 2.130e-04  cond 9.607e+04  lam_min(sym)/scale -1.455e-02  n_neg(sym) 12
+[13:33:23]     [branch] s/B 0.011125  q   106.76  GP seen/empty 1600/0  branch(0,1,2,3)=(1398,202,0,0)  forced 0  detAmin_min -5.532e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0755471 (max: 0.003, Norm deltaX: 1.29708e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0996674 (max: 0.003, Norm deltaX: 2.89499e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.201327 (max: 0.03, Norm deltaX: 3.53942e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.026133 (max: 0.003, Norm deltaX: 5.36579e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234342
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:35]     [branch] s/B 0.011131  q   106.79  GP seen/empty 1600/0  branch(0,1,2,3)=(1446,154,0,0)  forced 0  detAmin_min -5.770e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.108366 (max: 0.003, Norm deltaX: 1.50806e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:49]     [branch] s/B 0.011138  q   106.82  GP seen/empty 1600/0  branch(0,1,2,3)=(1401,199,0,0)  forced 0  detAmin_min -6.197e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:33:57]     [branch] s/B 0.011144  q   106.84  GP seen/empty 1600/0  branch(0,1,2,3)=(1455,145,0,0)  forced 0  detAmin_min -5.509e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:02]     [diag 3] s/B 0.01115  q   106.86  ds 0.0125 mm  |  sigma_min/scale 2.166e-04  cond 9.455e+04  lam_min(sym)/scale -2.361e-02  n_neg(sym) 10
+[13:34:02]     [branch] s/B 0.011150  q   106.86  GP seen/empty 1600/0  branch(0,1,2,3)=(1385,215,0,0)  forced 0  detAmin_min -5.534e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0670518 (max: 0.003, Norm deltaX: 1.22655e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234842
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.099231 (max: 0.003, Norm deltaX: 1.09788e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234842
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:09]     [branch] s/B 0.011156  q   106.92  GP seen/empty 1600/0  branch(0,1,2,3)=(1374,226,0,0)  forced 0  detAmin_min -5.498e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.035744 (max: 0.003, Norm deltaX: 9.57144e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.757742 (max: 0.003, Norm deltaX: 0.000204632)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0234967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:16]     [branch] s/B 0.011163  q   106.93  GP seen/empty 1600/0  branch(0,1,2,3)=(1362,238,0,0)  forced 0  detAmin_min -5.532e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.268531 (max: 0.003, Norm deltaX: 4.21102e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.113031 (max: 0.003, Norm deltaX: 3.96742e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.146617 (max: 0.03, Norm deltaX: 2.40177e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0652019 (max: 0.003, Norm deltaX: 9.95784e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0483514 (max: 0.003, Norm deltaX: 9.338e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:26]     [branch] s/B 0.011169  q   106.96  GP seen/empty 1600/0  branch(0,1,2,3)=(1412,188,0,0)  forced 0  detAmin_min -7.058e-01
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.21047 (max: 0.003, Norm deltaX: 1.94074e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.87869 (max: 0.003, Norm deltaX: 0.000226339)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:33]     [diag 3] s/B 0.01118  q   106.99  ds 0.0125 mm  |  sigma_min/scale 2.031e-04  cond 1.007e+05  lam_min(sym)/scale -2.881e-02  n_neg(sym) 21
+[13:34:33]     [branch] s/B 0.011175  q   106.99  GP seen/empty 1600/0  branch(0,1,2,3)=(1376,224,0,0)  forced 0  detAmin_min -6.749e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.122971 (max: 0.003, Norm deltaX: 8.14737e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235342
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0551089 (max: 0.003, Norm deltaX: 9.98982e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235342
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:39]     [branch] s/B 0.011181  q   107.02  GP seen/empty 1600/0  branch(0,1,2,3)=(1398,202,0,0)  forced 0  detAmin_min -3.294e-01
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0188486 (max: 0.003, Norm deltaX: 5.0484e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0587102 (max: 0.003, Norm deltaX: 3.03044e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:34:53]     [branch] s/B 0.011188  q   107.03  GP seen/empty 1600/0  branch(0,1,2,3)=(1384,216,0,0)  forced 0  detAmin_min -5.530e-02
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0212157 (max: 0.003, Norm deltaX: 5.67292e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235592
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 2.58622 (max: 0.003, Norm deltaX: 0.000655695)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235592
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:02]     [branch] s/B 0.011194  q   107.05  GP seen/empty 1600/0  branch(0,1,2,3)=(1397,201,0,2)  forced 0  detAmin_min -4.681e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0250548 (max: 0.003, Norm deltaX: 1.67938e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.063844 (max: 0.003, Norm deltaX: 5.30506e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235717
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:09]     [diag 3] s/B 0.01120  q   107.09  ds 0.025 mm  |  sigma_min/scale 2.370e-07  cond 5.007e+09  lam_min(sym)/scale -5.281e+01  n_neg(sym) 36
+[13:35:09]     [branch] s/B 0.011200  q   107.09  GP seen/empty 1600/0  branch(0,1,2,3)=(1387,209,0,4)  forced 0  detAmin_min -4.854e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.04416 (max: 0.003, Norm deltaX: 0.000145344)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0892729 (max: 0.003, Norm deltaX: 1.37038e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0330982 (max: 0.03, Norm deltaX: 2.63342e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0423147 (max: 0.003, Norm deltaX: 6.38058e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235842
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0608419 (max: 0.003, Norm deltaX: 3.91227e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235842
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:19]     [branch] s/B 0.011206  q   107.05  GP seen/empty 1600/0  branch(0,1,2,3)=(1378,218,0,4)  forced 0  detAmin_min -1.481e+08
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.026004 (max: 0.003, Norm deltaX: 1.01786e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0342861 (max: 0.003, Norm deltaX: 2.70561e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235967
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:26]     [branch] s/B 0.011213  q   107.13  GP seen/empty 1600/0  branch(0,1,2,3)=(1344,252,0,4)  forced 0  detAmin_min -2.432e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0397281 (max: 0.003, Norm deltaX: 1.57189e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0481157 (max: 0.003, Norm deltaX: 0.000127385)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.039363 (max: 0.03, Norm deltaX: 4.77757e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0329018 (max: 0.003, Norm deltaX: 1.48516e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023603
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0350633 (max: 0.003, Norm deltaX: 2.81722e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023603
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0341963 (max: 0.03, Norm deltaX: 1.92526e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023603
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0304079 (max: 0.003, Norm deltaX: 9.20187e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235998
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0367576 (max: 0.003, Norm deltaX: 3.04257e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235998
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0208267 (max: 0.003, Norm deltaX: 1.16601e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023603
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.023647 (max: 0.003, Norm deltaX: 1.46765e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023603
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:39]     [diag 3] s/B 0.01122  q   107.08  ds 0.003125 mm  |  sigma_min/scale 2.609e-07  cond 4.504e+09  lam_min(sym)/scale -5.427e+01  n_neg(sym) 24
+[13:35:40]     [branch] s/B 0.011216  q   107.08  GP seen/empty 1600/0  branch(0,1,2,3)=(1460,136,0,4)  forced 0  detAmin_min -6.291e+08
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0252457 (max: 0.003, Norm deltaX: 1.1684e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236061
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0614936 (max: 0.003, Norm deltaX: 2.87158e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236061
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0425392 (max: 0.003, Norm deltaX: 2.95234e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0252074 (max: 0.003, Norm deltaX: 2.81981e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236092
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0239105 (max: 0.003, Norm deltaX: 2.05757e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236123
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0498624 (max: 0.003, Norm deltaX: 3.95085e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236123
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:35:57]     [branch] s/B 0.011220  q   107.14  GP seen/empty 1600/0  branch(0,1,2,3)=(1355,241,0,4)  forced 0  detAmin_min -2.287e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0351309 (max: 0.003, Norm deltaX: 1.2847e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236155
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0501063 (max: 0.003, Norm deltaX: 1.6862e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236155
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:36:31]     [diag 3] s/B 0.01122  q   107.14  ds 0.00625 mm  |  sigma_min/scale 2.239e-07  cond 5.233e+09  lam_min(sym)/scale -5.302e+01  n_neg(sym) 38
+[13:36:31]     [branch] s/B 0.011222  q   107.14  GP seen/empty 1600/0  branch(0,1,2,3)=(1341,255,0,4)  forced 0  detAmin_min -2.947e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0377623 (max: 0.003, Norm deltaX: 1.89197e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0335901 (max: 0.003, Norm deltaX: 6.97158e-08)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236217
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:36:48]     [branch] s/B 0.011225  q   107.17  GP seen/empty 1600/0  branch(0,1,2,3)=(1322,274,0,4)  forced 0  detAmin_min -9.986e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0247335 (max: 0.003, Norm deltaX: 7.32353e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023628
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0473742 (max: 0.003, Norm deltaX: 1.77298e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023628
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.052467 (max: 0.003, Norm deltaX: 4.82119e-06)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236342
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0291558 (max: 0.003, Norm deltaX: 1.08065e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236342
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:37:22]     [branch] s/B 0.011231  q   107.16  GP seen/empty 1600/0  branch(0,1,2,3)=(1465,131,0,4)  forced 0  detAmin_min -2.700e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0347746 (max: 0.003, Norm deltaX: 2.83497e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236405
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0418982 (max: 0.003, Norm deltaX: 8.38586e-08)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236405
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:38:23]     [diag 3] s/B 0.01123  q   107.16  ds 0.00625 mm  |  sigma_min/scale 2.219e-07  cond 5.290e+09  lam_min(sym)/scale -5.284e+01  n_neg(sym) 37
+[13:38:23]     [branch] s/B 0.011234  q   107.16  GP seen/empty 1600/0  branch(0,1,2,3)=(1316,280,0,4)  forced 0  detAmin_min -8.704e+07
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0304192 (max: 0.003, Norm deltaX: 2.34273e-08)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0410941 (max: 0.003, Norm deltaX: 1.10858e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236467
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:39:15]     [branch] s/B 0.011238  q   107.19  GP seen/empty 1600/0  branch(0,1,2,3)=(1360,236,0,4)  forced 0  detAmin_min -1.540e+08
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0333201 (max: 0.003, Norm deltaX: 7.31161e-08)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.05601 (max: 0.003, Norm deltaX: 8.31083e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0316248 (max: 0.03, Norm deltaX: 2.30097e-08)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0311924 (max: 0.003, Norm deltaX: 1.10989e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236498
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0520271 (max: 0.003, Norm deltaX: 8.86692e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236498
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.038415 (max: 0.003, Norm deltaX: 2.18322e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0448998 (max: 0.003, Norm deltaX: 4.16764e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0377906 (max: 0.03, Norm deltaX: 1.07008e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.023653
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0358344 (max: 0.003, Norm deltaX: 2.34297e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236514
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.0421262 (max: 0.003, Norm deltaX: 7.03541e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236514
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0348684 (max: 0.03, Norm deltaX: 3.55862e-08)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236514
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0344512 (max: 0.003, Norm deltaX: 7.29614e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236506
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.039945 (max: 0.003, Norm deltaX: 1.56168e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236506
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0347887 (max: 0.03, Norm deltaX: 6.4357e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236506
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0337976 (max: 0.003, Norm deltaX: 1.67746e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236502
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.044163 (max: 0.003, Norm deltaX: 1.04223e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236502
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.0374912 (max: 0.03, Norm deltaX: 2.13163e-07)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0236502
+OpenSees > analyze failed, returned: -3 error flag
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[13:40:34]     [diag 3] AT THE WALL, s/B 0.01124: sigma_min/scale 2.241e-07, cond 5.251e+09, lam_min(sym)/scale -5.346e+01, negative eigenvalues of the symmetric part: 35 of 2787
+[13:40:34]     [branch] AT THE WALL, s/B 0.011239: GP seen/empty 1600/0  branch(0,1,2,3)=(1343,253,0,4)  forced 0  detAmin_min -9.173e+07
+[13:40:34]     [branch] 88 station(s) written to qpd_h20uri_h1.0_p1rep_branch.csv/.npz; 140800 live GP responses, 0 empty (binary lacks the ladrunoBranch token until P0 ships it -- not an error)
+[13:40:34] 
+[13:40:34]     --- termination -------------------------------------------------
+[13:40:34]     242 steps, 202 failed attempts, 36/200 subdivisions, 33 relaxed, 1010 s
+[13:40:34]     MODE = FLOOR   [step collapsed to the 0.0002 mm floor at s/B = 0.01124 (every ladder rung failed at ds = 0.000195313 mm)]
+[13:40:34]     q_max = 107.19 kPa = 0.7716 of exact (138.91 kPa); end s/B = 0.01124 of 0.15
+[13:40:34]     tail dq/ds = 1867.6 kPa/m = 11.624 % of initial -> STILL HARDENING
+[13:40:34]     tail-min step 0.003125 mm = 15.6x the 0.0002 mm floor -> free-advance NO
+[13:40:34]     CAPACITY = NO  -> this number is a CONTROLLER ALLOWANCE named FLOOR, not an element capacity
+[13:40:34] 
+[13:40:34]     --- diagnostic 1: mechanism formation at termination -------------
+[13:40:34]     yielded (mob >= 0.9) : 68/200 elements, 11.89 % BY VOLUME (34.00 % by count), 90.26 % of the core (|x|<=4.0, z>=-4.0)
+[13:40:34]     at yield  (mob >= 0.99) : 52/200, 7.65 % by volume
+[13:40:34]     connectivity: 1 component(s); the largest holds 11.89 % of the volume (68 elements)
+[13:40:34]     band-ness of the largest: fills 66.2 % of its own bounding box (13.98 x 15.41 m), 10 columns x 6.80 cells/column, equivalent thickness 10.21 elements
+[13:40:34]     extent: reaches |x| = 5.95 m and z = -13.63 m; touches the free surface: YES, out to |x| = 1.50 m  (a complete Prandtl fan surfaces near |x| ~ 8.43 m)
+[13:40:34]     ISOCHORIC SPAN RATIO chi = +0.6062 AT THE WALL   ->   MECHANISM INDEX M = +0.7908   (0 = elastic -0.8827, 1 = fully isochoric)
+[13:40:34]            over the WHOLE push: chi = +0.3196, M = +0.6386
+[13:40:34]            increment over 4.781e-04 m = 34 steps
+[13:40:34]            max incremental u_z beside the footing = +0.0504 x ds at x = 4.09 m; at the far boundary +0.0274 x ds  (a peak AT the boundary is the box breathing, not a mechanism -- chi is immune to it)
+
+       h20uri_h1.0_p1rep   h20uri mode=FLOOR     ratio=0.7716 tail=11.624% ds/floor=15.6 sub=36/200 CAP=NO
+P1_DONE exit=0 

@@ -1,0 +1,830 @@
+[01:30:13] [control 0] engine C:\Users\nmb\AppData\Local\Temp\claude\C--Users-nmb-Documents-Github-OpenSees--claude-worktrees-prandtl-reissner-bezier-954a90\5408bcef-bf62-4967-964e-a179fa61676a\scratchpad\dist_p4\bin\opensees.pyd
+[01:30:13] [control 0] ladrunoBuild() = 0388889713bcdb7f6bb1a4bc6fac09f5b4e1d67a
+[01:30:13]     [control 2] consistent Q4 (= tributary) surcharge over 20 top faces: sum 30.000000000 m^2 vs 30.000000000 exact; 0 nodes carry a NEGATIVE weight; per-face weights match the analytic (A/4) to 0.0e+00 of A
+[01:30:13] === leg h8bbar_h1.0_p4fix: LadrunoBrick -formulation bbar, h0 = 1.0 m (2 el across B), 462 nodes / 1386 DOF, 200 elements
+[01:30:13]     ORACLE q_u = q0*N_q = 138.907 kPa (phi_ps = 27.470 deg); non-associated (gate)
+[01:30:13]     ALLOWANCES (pinned, reported): ds base/floor/max = 0.2/0.002/1 mm (= 6.64 halvings), subdivision budget = 200, s/B target = 0.15, wall cap = 5400 s
+[01:30:13]     initial 1-D state m0 = 0.2680 of yield  (SAFE)
+[01:30:14]     [scale] purely ELASTIC chi on this mesh at nu = 0.45 is -0.93704; a fully isochoric mechanism is chi = +1.  The mechanism index below is M = (chi - -0.93704) / (1.93704), so M = 0 is 'no mechanism, elastic' and M = 1 is 'fully formed'.
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+[01:30:14]     [control 3] initial equilibrium 300.000000 vs 300.000000 kN (+0.0000000 %)   [Pardiso, 0.1s]
+[01:30:14]     [control 1] 1-D elastic stress patch (every GP): max|szz/-q0-1| = 1.51e-14, max|sxx/-K0q0-1| = 1.09e-14  -> PASS
+[01:30:14]     [control M0] mobilisation field at the surcharge step (8 GP/element): max |mob - m0*| = 5.44e-15 against the exact closed form m0* = 0.260306509 (the harness's SY-free screen prints 0.267980)  -> PASS
+[01:30:14]     [control M0] elements at mob >= 0.9 before the push: 0 of 200  (must be 0)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:14]     [diag 3] ds fell to 0.2 mm (trigger 10 mm) at s/B = 0.00000: arming the tangent sampler (dense assembly at the sampling points only; PARDISO still solves the leg)
+[01:30:14]     [branch] ds fell to 0.2 mm (trigger 10 mm) at s/B = 0.00000: arming the branch-census cadence sampler (--dense stations are independent of this trigger)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:20]     [diag 3] s/B 0.00040  q    28.23  ds 0.2 mm  |  sigma_min/scale 1.551e-03  cond 6.045e+03  lam_min(sym)/scale 1.551e-03  n_neg(sym) 0
+[01:30:20]     [branch] s/B 0.000400  q    28.23  GP seen/empty 1600/0  branch(0,1,2,3)=(1600,0,0,0)  forced 0  detAmin_min 1.375e+00
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:30]     [diag 3] s/B 0.00100  q    47.08  ds 0.4 mm  |  sigma_min/scale 1.549e-03  cond 6.057e+03  lam_min(sym)/scale 1.546e-03  n_neg(sym) 0
+[01:30:30]     [branch] s/B 0.001000  q    47.08  GP seen/empty 1600/0  branch(0,1,2,3)=(1546,54,0,0)  forced 0  detAmin_min -5.164e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:39]     [diag 3] s/B 0.00180  q    62.36  ds 0.8 mm  |  sigma_min/scale 1.542e-03  cond 6.097e+03  lam_min(sym)/scale -1.077e-03  n_neg(sym) 1
+[01:30:40]     [branch] s/B 0.001800  q    62.36  GP seen/empty 1600/0  branch(0,1,2,3)=(1502,98,0,0)  forced 0  detAmin_min -6.186e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:47]     [diag 3] s/B 0.00340  q    79.82  ds 0.8 mm  |  sigma_min/scale 1.545e-03  cond 6.076e+03  lam_min(sym)/scale -9.973e-04  n_neg(sym) 1
+[01:30:47]     [branch] s/B 0.003400  q    79.82  GP seen/empty 1600/0  branch(0,1,2,3)=(1543,57,0,0)  forced 0  detAmin_min -6.063e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:54]     [diag 3] s/B 0.00520  q    93.84  ds 1 mm  |  sigma_min/scale 1.487e-03  cond 6.364e+03  lam_min(sym)/scale -5.066e-03  n_neg(sym) 4
+[01:30:55]     [branch] s/B 0.005200  q    93.84  GP seen/empty 1600/0  branch(0,1,2,3)=(1357,243,0,0)  forced 0  detAmin_min -7.926e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:30:59]     [diag 3] s/B 0.00720  q   106.06  ds 1 mm  |  sigma_min/scale 1.527e-03  cond 6.154e+03  lam_min(sym)/scale -4.772e-03  n_neg(sym) 2
+[01:30:59]     [branch] s/B 0.007200  q   106.06  GP seen/empty 1600/0  branch(0,1,2,3)=(1510,90,0,0)  forced 0  detAmin_min -7.905e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:03]     [diag 3] s/B 0.00920  q   115.47  ds 1 mm  |  sigma_min/scale 1.534e-03  cond 6.125e+03  lam_min(sym)/scale -6.300e-03  n_neg(sym) 2
+[01:31:04]     [branch] s/B 0.009200  q   115.47  GP seen/empty 1600/0  branch(0,1,2,3)=(1521,79,0,0)  forced 0  detAmin_min -7.890e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:08]     [diag 3] s/B 0.01120  q   122.86  ds 1 mm  |  sigma_min/scale 1.533e-03  cond 6.126e+03  lam_min(sym)/scale -7.724e-03  n_neg(sym) 2
+[01:31:08]     [branch] s/B 0.011200  q   122.86  GP seen/empty 1600/0  branch(0,1,2,3)=(1530,70,0,0)  forced 0  detAmin_min -7.924e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:12]     [branch] s/B 0.011700  q   124.48  GP seen/empty 1600/0  branch(0,1,2,3)=(1468,132,0,0)  forced 0  detAmin_min -7.939e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:16]     [diag 3] s/B 0.01320  q   128.86  ds 1 mm  |  sigma_min/scale 1.512e-03  cond 6.253e+03  lam_min(sym)/scale -8.639e-03  n_neg(sym) 2
+[01:31:16]     [branch] s/B 0.013200  q   128.86  GP seen/empty 1600/0  branch(0,1,2,3)=(1441,159,0,0)  forced 0  detAmin_min -7.923e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:25]     [diag 3] s/B 0.01520  q   133.76  ds 1 mm  |  sigma_min/scale 1.531e-03  cond 6.136e+03  lam_min(sym)/scale -9.470e-03  n_neg(sym) 2
+[01:31:25]     [branch] s/B 0.015200  q   133.76  GP seen/empty 1600/0  branch(0,1,2,3)=(1534,66,0,0)  forced 0  detAmin_min -7.822e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:38]     [diag 3] s/B 0.01720  q   138.05  ds 1 mm  |  sigma_min/scale 1.498e-03  cond 6.303e+03  lam_min(sym)/scale -1.106e-02  n_neg(sym) 2
+[01:31:38]     [branch] s/B 0.017200  q   138.05  GP seen/empty 1600/0  branch(0,1,2,3)=(1450,150,0,0)  forced 0  detAmin_min -7.642e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:48]     [diag 3] s/B 0.01920  q   141.64  ds 1 mm  |  sigma_min/scale 1.479e-03  cond 6.394e+03  lam_min(sym)/scale -1.082e-02  n_neg(sym) 2
+[01:31:48]     [branch] s/B 0.019200  q   141.64  GP seen/empty 1600/0  branch(0,1,2,3)=(1411,189,0,0)  forced 0  detAmin_min -7.782e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:31:53]     [diag 3] s/B 0.02120  q   144.40  ds 1 mm  |  sigma_min/scale 1.452e-03  cond 6.549e+03  lam_min(sym)/scale -1.135e-02  n_neg(sym) 2
+[01:31:53]     [branch] s/B 0.021200  q   144.40  GP seen/empty 1600/0  branch(0,1,2,3)=(1344,256,0,0)  forced 0  detAmin_min -7.909e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:03]     [diag 3] s/B 0.02320  q   146.47  ds 1 mm  |  sigma_min/scale 1.265e-03  cond 7.510e+03  lam_min(sym)/scale -1.174e-02  n_neg(sym) 5
+[01:32:03]     [branch] s/B 0.023200  q   146.47  GP seen/empty 1600/0  branch(0,1,2,3)=(1289,311,0,0)  forced 0  detAmin_min -7.861e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:12]     [diag 3] s/B 0.02520  q   147.79  ds 1 mm  |  sigma_min/scale 1.438e-03  cond 6.590e+03  lam_min(sym)/scale -1.353e-02  n_neg(sym) 3
+[01:32:12]     [branch] s/B 0.025200  q   147.79  GP seen/empty 1600/0  branch(0,1,2,3)=(1377,223,0,0)  forced 0  detAmin_min -7.575e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:18]     [diag 3] s/B 0.02720  q   148.53  ds 1 mm  |  sigma_min/scale 1.463e-03  cond 6.470e+03  lam_min(sym)/scale -1.070e-02  n_neg(sym) 2
+[01:32:18]     [branch] s/B 0.027200  q   148.53  GP seen/empty 1600/0  branch(0,1,2,3)=(1397,203,0,0)  forced 0  detAmin_min -7.649e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:25]     [diag 3] s/B 0.02920  q   149.08  ds 1 mm  |  sigma_min/scale 1.337e-03  cond 7.131e+03  lam_min(sym)/scale -1.389e-02  n_neg(sym) 4
+[01:32:25]     [branch] s/B 0.029200  q   149.08  GP seen/empty 1600/0  branch(0,1,2,3)=(1288,312,0,0)  forced 0  detAmin_min -7.696e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:31]     [diag 3] s/B 0.03120  q   149.47  ds 1 mm  |  sigma_min/scale 1.272e-03  cond 7.523e+03  lam_min(sym)/scale -1.404e-02  n_neg(sym) 4
+[01:32:31]     [branch] s/B 0.031200  q   149.47  GP seen/empty 1600/0  branch(0,1,2,3)=(1224,376,0,0)  forced 0  detAmin_min -7.725e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:38]     [diag 3] s/B 0.03320  q   149.75  ds 1 mm  |  sigma_min/scale 1.337e-03  cond 7.138e+03  lam_min(sym)/scale -1.376e-02  n_neg(sym) 6
+[01:32:38]     [branch] s/B 0.033200  q   149.75  GP seen/empty 1600/0  branch(0,1,2,3)=(1226,374,0,0)  forced 0  detAmin_min -7.806e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:45]     [diag 3] s/B 0.03520  q   149.96  ds 1 mm  |  sigma_min/scale 1.403e-03  cond 6.758e+03  lam_min(sym)/scale -1.094e-02  n_neg(sym) 4
+[01:32:45]     [branch] s/B 0.035200  q   149.96  GP seen/empty 1600/0  branch(0,1,2,3)=(1350,250,0,0)  forced 0  detAmin_min -7.805e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:53]     [diag 3] s/B 0.03720  q   150.11  ds 1 mm  |  sigma_min/scale 1.228e-03  cond 7.738e+03  lam_min(sym)/scale -1.966e-02  n_neg(sym) 7
+[01:32:53]     [branch] s/B 0.037200  q   150.11  GP seen/empty 1600/0  branch(0,1,2,3)=(1275,325,0,0)  forced 0  detAmin_min -7.936e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:32:59]     [diag 3] s/B 0.03920  q   150.22  ds 1 mm  |  sigma_min/scale 1.330e-03  cond 7.142e+03  lam_min(sym)/scale -1.001e-02  n_neg(sym) 6
+[01:32:59]     [branch] s/B 0.039200  q   150.22  GP seen/empty 1600/0  branch(0,1,2,3)=(1268,332,0,0)  forced 0  detAmin_min -7.944e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:04]     [diag 3] s/B 0.04120  q   150.31  ds 1 mm  |  sigma_min/scale 1.323e-03  cond 7.184e+03  lam_min(sym)/scale -1.327e-02  n_neg(sym) 6
+[01:33:04]     [branch] s/B 0.041200  q   150.31  GP seen/empty 1600/0  branch(0,1,2,3)=(1258,342,0,0)  forced 0  detAmin_min -7.725e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:12]     [diag 3] s/B 0.04320  q   150.38  ds 1 mm  |  sigma_min/scale 1.290e-03  cond 7.341e+03  lam_min(sym)/scale -4.948e-03  n_neg(sym) 3
+[01:33:12]     [branch] s/B 0.043200  q   150.38  GP seen/empty 1600/0  branch(0,1,2,3)=(1293,307,0,0)  forced 0  detAmin_min -7.952e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:23]     [diag 3] s/B 0.04520  q   150.43  ds 1 mm  |  sigma_min/scale 1.392e-03  cond 6.793e+03  lam_min(sym)/scale -1.485e-02  n_neg(sym) 4
+[01:33:23]     [branch] s/B 0.045200  q   150.43  GP seen/empty 1600/0  branch(0,1,2,3)=(1335,265,0,0)  forced 0  detAmin_min -7.954e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:29]     [diag 3] s/B 0.04720  q   150.47  ds 1 mm  |  sigma_min/scale 1.376e-03  cond 6.881e+03  lam_min(sym)/scale -1.847e-02  n_neg(sym) 5
+[01:33:29]     [branch] s/B 0.047200  q   150.47  GP seen/empty 1600/0  branch(0,1,2,3)=(1338,262,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:34]     [diag 3] s/B 0.04920  q   150.50  ds 1 mm  |  sigma_min/scale 1.393e-03  cond 6.804e+03  lam_min(sym)/scale -1.404e-02  n_neg(sym) 5
+[01:33:34]     [branch] s/B 0.049200  q   150.50  GP seen/empty 1600/0  branch(0,1,2,3)=(1327,273,0,0)  forced 0  detAmin_min -7.801e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:38]     [diag 3] s/B 0.05120  q   150.53  ds 1 mm  |  sigma_min/scale 1.373e-03  cond 6.897e+03  lam_min(sym)/scale -1.870e-02  n_neg(sym) 5
+[01:33:38]     [branch] s/B 0.051200  q   150.53  GP seen/empty 1600/0  branch(0,1,2,3)=(1346,254,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:43]     [diag 3] s/B 0.05320  q   150.55  ds 1 mm  |  sigma_min/scale 1.363e-03  cond 6.950e+03  lam_min(sym)/scale -1.285e-02  n_neg(sym) 3
+[01:33:43]     [branch] s/B 0.053200  q   150.55  GP seen/empty 1600/0  branch(0,1,2,3)=(1316,284,0,0)  forced 0  detAmin_min -7.957e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:33:51]     [diag 3] s/B 0.05520  q   150.57  ds 1 mm  |  sigma_min/scale 1.349e-03  cond 7.023e+03  lam_min(sym)/scale -1.442e-02  n_neg(sym) 5
+[01:33:51]     [branch] s/B 0.055200  q   150.57  GP seen/empty 1600/0  branch(0,1,2,3)=(1346,254,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:01]     [diag 3] s/B 0.05720  q   150.59  ds 1 mm  |  sigma_min/scale 1.215e-03  cond 7.782e+03  lam_min(sym)/scale -4.985e-03  n_neg(sym) 3
+[01:34:01]     [branch] s/B 0.057200  q   150.59  GP seen/empty 1600/0  branch(0,1,2,3)=(1316,284,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:07]     [diag 3] s/B 0.05920  q   150.60  ds 1 mm  |  sigma_min/scale 1.222e-03  cond 7.737e+03  lam_min(sym)/scale -3.046e-03  n_neg(sym) 2
+[01:34:07]     [branch] s/B 0.059200  q   150.60  GP seen/empty 1600/0  branch(0,1,2,3)=(1326,274,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:12]     [diag 3] s/B 0.06120  q   150.61  ds 1 mm  |  sigma_min/scale 1.454e-03  cond 6.492e+03  lam_min(sym)/scale -8.441e-03  n_neg(sym) 2
+[01:34:12]     [branch] s/B 0.061200  q   150.61  GP seen/empty 1600/0  branch(0,1,2,3)=(1403,197,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:16]     [diag 3] s/B 0.06320  q   150.62  ds 1 mm  |  sigma_min/scale 1.371e-03  cond 6.893e+03  lam_min(sym)/scale -7.628e-03  n_neg(sym) 3
+[01:34:16]     [branch] s/B 0.063200  q   150.62  GP seen/empty 1600/0  branch(0,1,2,3)=(1345,255,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:25]     [diag 3] s/B 0.06520  q   150.63  ds 1 mm  |  sigma_min/scale 1.327e-03  cond 7.125e+03  lam_min(sym)/scale -1.447e-02  n_neg(sym) 4
+[01:34:25]     [branch] s/B 0.065200  q   150.63  GP seen/empty 1600/0  branch(0,1,2,3)=(1322,278,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:36]     [diag 3] s/B 0.06720  q   150.64  ds 1 mm  |  sigma_min/scale 1.299e-03  cond 7.283e+03  lam_min(sym)/scale -1.323e-02  n_neg(sym) 5
+[01:34:36]     [branch] s/B 0.067200  q   150.64  GP seen/empty 1600/0  branch(0,1,2,3)=(1303,297,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:42]     [diag 3] s/B 0.06920  q   150.64  ds 1 mm  |  sigma_min/scale 1.213e-03  cond 7.798e+03  lam_min(sym)/scale -4.774e-03  n_neg(sym) 3
+[01:34:42]     [branch] s/B 0.069200  q   150.64  GP seen/empty 1600/0  branch(0,1,2,3)=(1304,296,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:47]     [diag 3] s/B 0.07120  q   150.65  ds 1 mm  |  sigma_min/scale 1.289e-03  cond 7.338e+03  lam_min(sym)/scale -5.762e-03  n_neg(sym) 4
+[01:34:47]     [branch] s/B 0.071200  q   150.65  GP seen/empty 1600/0  branch(0,1,2,3)=(1316,284,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:34:53]     [diag 3] s/B 0.07320  q   150.65  ds 1 mm  |  sigma_min/scale 1.267e-03  cond 7.469e+03  lam_min(sym)/scale -9.656e-03  n_neg(sym) 4
+[01:34:53]     [branch] s/B 0.073200  q   150.65  GP seen/empty 1600/0  branch(0,1,2,3)=(1301,299,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:00]     [diag 3] s/B 0.07520  q   150.65  ds 1 mm  |  sigma_min/scale 1.224e-03  cond 7.736e+03  lam_min(sym)/scale -7.179e-03  n_neg(sym) 4
+[01:35:00]     [branch] s/B 0.075200  q   150.65  GP seen/empty 1600/0  branch(0,1,2,3)=(1299,301,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:05]     [diag 3] s/B 0.07720  q   150.66  ds 1 mm  |  sigma_min/scale 1.250e-03  cond 7.574e+03  lam_min(sym)/scale -1.036e-02  n_neg(sym) 5
+[01:35:05]     [branch] s/B 0.077200  q   150.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1289,311,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:11]     [diag 3] s/B 0.07920  q   150.66  ds 1 mm  |  sigma_min/scale 1.290e-03  cond 7.330e+03  lam_min(sym)/scale -7.805e-03  n_neg(sym) 4
+[01:35:11]     [branch] s/B 0.079200  q   150.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1306,294,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:17]     [diag 3] s/B 0.08120  q   150.66  ds 1 mm  |  sigma_min/scale 1.352e-03  cond 6.999e+03  lam_min(sym)/scale -1.520e-02  n_neg(sym) 4
+[01:35:17]     [branch] s/B 0.081200  q   150.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1330,270,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:22]     [diag 3] s/B 0.08320  q   150.66  ds 1 mm  |  sigma_min/scale 1.386e-03  cond 6.810e+03  lam_min(sym)/scale -4.279e-03  n_neg(sym) 3
+[01:35:22]     [branch] s/B 0.083200  q   150.66  GP seen/empty 1600/0  branch(0,1,2,3)=(1369,231,0,0)  forced 0  detAmin_min -7.946e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:26]     [diag 3] s/B 0.08520  q   150.67  ds 1 mm  |  sigma_min/scale 1.389e-03  cond 6.798e+03  lam_min(sym)/scale -3.989e-03  n_neg(sym) 2
+[01:35:26]     [branch] s/B 0.085200  q   150.67  GP seen/empty 1600/0  branch(0,1,2,3)=(1379,221,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:30]     [diag 3] s/B 0.08720  q   150.67  ds 1 mm  |  sigma_min/scale 1.427e-03  cond 6.644e+03  lam_min(sym)/scale -7.398e-03  n_neg(sym) 4
+[01:35:30]     [branch] s/B 0.087200  q   150.67  GP seen/empty 1600/0  branch(0,1,2,3)=(1329,271,0,0)  forced 0  detAmin_min -7.901e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:35]     [diag 3] s/B 0.08920  q   150.67  ds 1 mm  |  sigma_min/scale 1.254e-03  cond 7.545e+03  lam_min(sym)/scale -4.062e-03  n_neg(sym) 3
+[01:35:35]     [branch] s/B 0.089200  q   150.67  GP seen/empty 1600/0  branch(0,1,2,3)=(1302,298,0,0)  forced 0  detAmin_min -7.954e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:42]     [diag 3] s/B 0.09120  q   150.67  ds 1 mm  |  sigma_min/scale 1.224e-03  cond 7.732e+03  lam_min(sym)/scale -4.437e-03  n_neg(sym) 3
+[01:35:43]     [branch] s/B 0.091200  q   150.67  GP seen/empty 1600/0  branch(0,1,2,3)=(1309,291,0,0)  forced 0  detAmin_min -7.954e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:47]     [diag 3] s/B 0.09320  q   150.67  ds 1 mm  |  sigma_min/scale 1.226e-03  cond 7.720e+03  lam_min(sym)/scale -3.043e-03  n_neg(sym) 2
+[01:35:48]     [branch] s/B 0.093200  q   150.67  GP seen/empty 1600/0  branch(0,1,2,3)=(1307,293,0,0)  forced 0  detAmin_min -7.954e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:35:54]     [diag 3] s/B 0.09520  q   150.68  ds 1 mm  |  sigma_min/scale 1.242e-03  cond 7.631e+03  lam_min(sym)/scale -2.842e-03  n_neg(sym) 2
+[01:35:54]     [branch] s/B 0.095200  q   150.68  GP seen/empty 1600/0  branch(0,1,2,3)=(1302,298,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:04]     [diag 3] s/B 0.09720  q   150.68  ds 1 mm  |  sigma_min/scale 1.386e-03  cond 6.844e+03  lam_min(sym)/scale -1.621e-02  n_neg(sym) 4
+[01:36:04]     [branch] s/B 0.097200  q   150.68  GP seen/empty 1600/0  branch(0,1,2,3)=(1307,293,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:10]     [diag 3] s/B 0.09920  q   150.68  ds 1 mm  |  sigma_min/scale 1.241e-03  cond 7.631e+03  lam_min(sym)/scale -6.596e-03  n_neg(sym) 4
+[01:36:10]     [branch] s/B 0.099200  q   150.68  GP seen/empty 1600/0  branch(0,1,2,3)=(1301,299,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:15]     [diag 3] s/B 0.10120  q   150.68  ds 1 mm  |  sigma_min/scale 1.237e-03  cond 7.653e+03  lam_min(sym)/scale -3.818e-03  n_neg(sym) 4
+[01:36:15]     [branch] s/B 0.101200  q   150.68  GP seen/empty 1600/0  branch(0,1,2,3)=(1309,291,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:19]     [diag 3] s/B 0.10320  q   150.68  ds 1 mm  |  sigma_min/scale 1.249e-03  cond 7.578e+03  lam_min(sym)/scale -4.101e-03  n_neg(sym) 3
+[01:36:19]     [branch] s/B 0.103200  q   150.68  GP seen/empty 1600/0  branch(0,1,2,3)=(1301,299,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:24]     [diag 3] s/B 0.10520  q   150.69  ds 1 mm  |  sigma_min/scale 1.203e-03  cond 7.874e+03  lam_min(sym)/scale -5.685e-03  n_neg(sym) 4
+[01:36:24]     [branch] s/B 0.105200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1290,310,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:30]     [diag 3] s/B 0.10720  q   150.69  ds 1 mm  |  sigma_min/scale 1.219e-03  cond 7.760e+03  lam_min(sym)/scale -5.333e-03  n_neg(sym) 4
+[01:36:30]     [branch] s/B 0.107200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1291,309,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:37]     [diag 3] s/B 0.10920  q   150.69  ds 1 mm  |  sigma_min/scale 1.348e-03  cond 7.050e+03  lam_min(sym)/scale -1.504e-02  n_neg(sym) 6
+[01:36:37]     [branch] s/B 0.109200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1297,303,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:42]     [diag 3] s/B 0.11120  q   150.69  ds 1 mm  |  sigma_min/scale 1.157e-03  cond 8.238e+03  lam_min(sym)/scale -2.411e-02  n_neg(sym) 10
+[01:36:42]     [branch] s/B 0.111200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1174,426,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:46]     [diag 3] s/B 0.11320  q   150.69  ds 1 mm  |  sigma_min/scale 1.199e-03  cond 7.896e+03  lam_min(sym)/scale -4.586e-03  n_neg(sym) 4
+[01:36:46]     [branch] s/B 0.113200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1286,314,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:52]     [diag 3] s/B 0.11520  q   150.69  ds 1 mm  |  sigma_min/scale 1.377e-03  cond 6.927e+03  lam_min(sym)/scale -1.363e-02  n_neg(sym) 5
+[01:36:52]     [branch] s/B 0.115200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1264,336,0,0)  forced 0  detAmin_min -7.902e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:55]     [diag 3] s/B 0.11720  q   150.69  ds 1 mm  |  sigma_min/scale 1.389e-03  cond 6.808e+03  lam_min(sym)/scale -4.615e-03  n_neg(sym) 2
+[01:36:56]     [branch] s/B 0.117200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1349,251,0,0)  forced 0  detAmin_min -7.947e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:36:59]     [diag 3] s/B 0.11920  q   150.69  ds 1 mm  |  sigma_min/scale 1.241e-03  cond 7.650e+03  lam_min(sym)/scale -6.528e-03  n_neg(sym) 5
+[01:36:59]     [branch] s/B 0.119200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1264,336,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:04]     [diag 3] s/B 0.12120  q   150.69  ds 1 mm  |  sigma_min/scale 1.369e-03  cond 6.921e+03  lam_min(sym)/scale -3.936e-03  n_neg(sym) 3
+[01:37:05]     [branch] s/B 0.121200  q   150.69  GP seen/empty 1600/0  branch(0,1,2,3)=(1325,275,0,0)  forced 0  detAmin_min -7.947e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:09]     [diag 3] s/B 0.12320  q   150.70  ds 1 mm  |  sigma_min/scale 1.387e-03  cond 6.828e+03  lam_min(sym)/scale -3.445e-03  n_neg(sym) 3
+[01:37:09]     [branch] s/B 0.123200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1335,265,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:14]     [diag 3] s/B 0.12520  q   150.70  ds 1 mm  |  sigma_min/scale 1.242e-03  cond 7.644e+03  lam_min(sym)/scale -6.176e-03  n_neg(sym) 5
+[01:37:14]     [branch] s/B 0.125200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1269,331,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:19]     [diag 3] s/B 0.12720  q   150.70  ds 1 mm  |  sigma_min/scale 1.248e-03  cond 7.610e+03  lam_min(sym)/scale -6.170e-03  n_neg(sym) 4
+[01:37:19]     [branch] s/B 0.127200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1269,331,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:23]     [diag 3] s/B 0.12920  q   150.70  ds 1 mm  |  sigma_min/scale 1.256e-03  cond 7.560e+03  lam_min(sym)/scale -5.418e-03  n_neg(sym) 4
+[01:37:23]     [branch] s/B 0.129200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1275,325,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:29]     [diag 3] s/B 0.13120  q   150.70  ds 1 mm  |  sigma_min/scale 1.351e-03  cond 7.069e+03  lam_min(sym)/scale -1.428e-02  n_neg(sym) 4
+[01:37:29]     [branch] s/B 0.131200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1249,351,0,0)  forced 0  detAmin_min -7.865e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:33]     [diag 3] s/B 0.13320  q   150.70  ds 1 mm  |  sigma_min/scale 1.327e-03  cond 7.201e+03  lam_min(sym)/scale -1.442e-02  n_neg(sym) 6
+[01:37:33]     [branch] s/B 0.133200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1220,380,0,0)  forced 0  detAmin_min -7.892e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:40]     [diag 3] s/B 0.13520  q   150.70  ds 1 mm  |  sigma_min/scale 1.259e-03  cond 7.540e+03  lam_min(sym)/scale -5.539e-03  n_neg(sym) 4
+[01:37:41]     [branch] s/B 0.135200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1271,329,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:46]     [diag 3] s/B 0.13720  q   150.70  ds 1 mm  |  sigma_min/scale 1.347e-03  cond 7.072e+03  lam_min(sym)/scale -1.442e-02  n_neg(sym) 6
+[01:37:46]     [branch] s/B 0.137200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1257,343,0,0)  forced 0  detAmin_min -7.889e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:37:53]     [diag 3] s/B 0.13920  q   150.70  ds 1 mm  |  sigma_min/scale 1.367e-03  cond 6.976e+03  lam_min(sym)/scale -1.393e-02  n_neg(sym) 6
+[01:37:53]     [branch] s/B 0.139200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1257,343,0,0)  forced 0  detAmin_min -7.888e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:01]     [diag 3] s/B 0.14120  q   150.70  ds 1 mm  |  sigma_min/scale 1.229e-03  cond 7.724e+03  lam_min(sym)/scale -1.500e-02  n_neg(sym) 5
+[01:38:01]     [branch] s/B 0.141200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1256,344,0,0)  forced 0  detAmin_min -7.955e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:07]     [diag 3] s/B 0.14320  q   150.70  ds 1 mm  |  sigma_min/scale 1.374e-03  cond 6.946e+03  lam_min(sym)/scale -1.371e-02  n_neg(sym) 6
+[01:38:07]     [branch] s/B 0.143200  q   150.70  GP seen/empty 1600/0  branch(0,1,2,3)=(1246,354,0,0)  forced 0  detAmin_min -7.884e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:12]     [diag 3] s/B 0.14520  q   150.71  ds 1 mm  |  sigma_min/scale 1.247e-03  cond 7.611e+03  lam_min(sym)/scale -4.381e-03  n_neg(sym) 4
+[01:38:12]     [branch] s/B 0.145200  q   150.71  GP seen/empty 1600/0  branch(0,1,2,3)=(1283,317,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:17]     [diag 3] s/B 0.14720  q   150.71  ds 1 mm  |  sigma_min/scale 1.388e-03  cond 6.844e+03  lam_min(sym)/scale -1.302e-02  n_neg(sym) 4
+[01:38:17]     [branch] s/B 0.147200  q   150.71  GP seen/empty 1600/0  branch(0,1,2,3)=(1304,296,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:20]     [diag 3] s/B 0.14920  q   150.71  ds 1 mm  |  sigma_min/scale 1.315e-03  cond 7.208e+03  lam_min(sym)/scale -9.003e-03  n_neg(sym) 4
+[01:38:20]     [branch] s/B 0.149200  q   150.71  GP seen/empty 1600/0  branch(0,1,2,3)=(1291,309,0,0)  forced 0  detAmin_min -7.956e-02
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+[01:38:23]     [diag 3] AT THE WALL, s/B 0.15000: sigma_min/scale 1.438e-03, cond 6.590e+03, lam_min(sym)/scale -8.228e-03, negative eigenvalues of the symmetric part: 3 of 794
+[01:38:23]     [branch] AT THE WALL, s/B 0.150000: GP seen/empty 1600/0  branch(0,1,2,3)=(1346,254,0,0)  forced 0  detAmin_min -7.956e-02
+[01:38:24]     [branch] 79 station(s) written to qpd_h8bbar_h1.0_p4fix_branch.csv/.npz; 126400 live GP responses, 0 empty (binary lacks the ladrunoBranch token until P0 ships it -- not an error)
+[01:38:24] 
+[01:38:24]     --- termination -------------------------------------------------
+[01:38:24]     310 steps, 0 failed attempts, 0/200 subdivisions, 0 relaxed, 487 s
+[01:38:24]     MODE = TARGET   [reached the target settlement]
+[01:38:24]     q_max = 150.71 kPa = 1.0850 of exact (138.91 kPa); end s/B = 0.15000 of 0.15
+[01:38:24]     tail dq/ds = 0.2 kPa/m = 0.001 % of initial -> PLATEAU
+[01:38:24]     tail-min step 1 mm = 500.0x the 0.002 mm floor -> free-advance yes
+[01:38:24]     CAPACITY = YES
+[01:38:24] 
+[01:38:24]     --- diagnostic 1: mechanism formation at termination -------------
+[01:38:24]     yielded (mob >= 0.9) : 112/200 elements, 24.91 % BY VOLUME (56.00 % by count), 100.00 % of the core (|x|<=4.0, z>=-4.0)
+[01:38:24]     at yield  (mob >= 0.99) : 108/200, 23.78 % by volume
+[01:38:24]     connectivity: 1 component(s); the largest holds 24.91 % of the volume (112 elements)
+[01:38:24]     band-ness of the largest: fills 74.3 % of its own bounding box (26.09 x 15.41 m), 14 columns x 8.00 cells/column, equivalent thickness 11.46 elements
+[01:38:24]     extent: reaches |x| = 11.35 m and z = -13.63 m; touches the free surface: YES, out to |x| = 11.35 m  (a complete Prandtl fan surfaces near |x| ~ 8.43 m)
+[01:38:24]     ISOCHORIC SPAN RATIO chi = +0.9998 AT THE WALL   ->   MECHANISM INDEX M = +0.9999   (0 = elastic -0.9370, 1 = fully isochoric)
+[01:38:24]            over the WHOLE push: chi = +0.9201, M = +0.9588
+[01:38:24]            increment over 6.600e-03 m = 8 steps
+[01:38:24]            max incremental u_z beside the footing = +0.7154 x ds at x = 2.00 m; at the far boundary +0.0000 x ds  (a peak AT the boundary is the box breathing, not a mechanism -- chi is immune to it)
+
+       h8bbar_h1.0_p4fix   h8bbar mode=TARGET    ratio=1.0850 tail=0.001% ds/floor=500.0 sub=0/200 CAP=yes

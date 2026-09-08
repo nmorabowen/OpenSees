@@ -1,0 +1,100 @@
+[mech] leg B5: build=c945f9a8b5e92783109efcfd25813e6591bbc236 dist=fixed mat=uwdp elem=beziertet10bbar mesh=tet
+[01:08:00]     [control 2] bernstein tet10 surcharge over 40 top faces: sum 30.000000000 m^2 vs 30.000000000 exact (rel 1.18e-16)
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+
+ \u2584\u2588          \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584     \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2584  \u2588\u2588\u2588\u2584\u2584\u2584\u2584    \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2584
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2580\u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588\u2580\u2580\u2580\u2588\u2588\u2584 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588  \u2584\u2588\u2588\u2588\u2584\u2584\u2584\u2584\u2588\u2588\u2580 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588       \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2580\u2580\u2588\u2588\u2588\u2580\u2580\u2580\u2580\u2580   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588         \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588\u258c    \u2584   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2584\u2588\u2588\u2588   \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588    \u2588\u2588\u2588
+\u2588\u2588\u2588\u2588\u2588\u2584\u2584\u2588\u2588   \u2588\u2588\u2588    \u2588\u2580  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580    \u2588\u2588\u2588    \u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580   \u2580\u2588   \u2588\u2580   \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2580
+\u2580                                   \u2588\u2588\u2588    \u2588\u2588\u2588
+BezierTet10 - Quadratic Bezier Tetrahedron
+  Authors: Nicolas Mora Bowen, Patricio Palacios, Jose Abell, Guppi (Ladruño)
+  Ref: Kadapa, IJNME 2019; 117(5):543-573. doi:10.1002/nme.5967
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+    [B5] step 20 s/B=0.00058 q=31.956 ds=0.16mm wall=2s
+    [B5] step 40 s/B=0.00250 q=63.991 ds=0.2mm wall=7s
+    [B5] step 60 s/B=0.00450 q=79.417 ds=0.2mm wall=12s
+    [B5] step 80 s/B=0.00650 q=91.618 ds=0.2mm wall=18s
+    [B5] step 100 s/B=0.00850 q=101.234 ds=0.2mm wall=24s
+    [B5] step 120 s/B=0.01050 q=109.349 ds=0.2mm wall=30s
+    [B5] step 140 s/B=0.01250 q=116.416 ds=0.2mm wall=36s
+    [B5] step 160 s/B=0.01450 q=122.526 ds=0.2mm wall=42s
+    [B5] step 180 s/B=0.01650 q=127.757 ds=0.2mm wall=49s
+    [B5] step 200 s/B=0.01850 q=132.211 ds=0.2mm wall=56s
+    [B5] step 220 s/B=0.02050 q=135.967 ds=0.2mm wall=64s
+    [B5] step 240 s/B=0.02250 q=139.038 ds=0.2mm wall=71s
+    [B5] step 260 s/B=0.02450 q=141.156 ds=0.2mm wall=78s
+    [B5] step 280 s/B=0.02650 q=142.274 ds=0.2mm wall=86s
+    [B5] step 300 s/B=0.02850 q=142.889 ds=0.2mm wall=94s
+    [B5] step 320 s/B=0.03050 q=143.261 ds=0.2mm wall=102s
+    [B5] step 340 s/B=0.03250 q=143.505 ds=0.2mm wall=112s
+    [B5] step 360 s/B=0.03450 q=143.675 ds=0.2mm wall=125s
+    [B5] step 380 s/B=0.03650 q=143.799 ds=0.2mm wall=139s
+    [B5] step 400 s/B=0.03850 q=143.893 ds=0.2mm wall=153s
+    [B5] step 420 s/B=0.04050 q=143.964 ds=0.2mm wall=165s
+    [B5] step 440 s/B=0.04250 q=144.017 ds=0.2mm wall=178s
+    [B5] step 460 s/B=0.04450 q=144.063 ds=0.2mm wall=192s
+    [B5] step 480 s/B=0.04650 q=144.101 ds=0.2mm wall=204s
+    [B5] step 500 s/B=0.04850 q=144.133 ds=0.2mm wall=213s
+    [B5] step 520 s/B=0.05050 q=144.160 ds=0.2mm wall=222s
+    [B5] step 540 s/B=0.05250 q=144.185 ds=0.2mm wall=232s
+    [B5] step 560 s/B=0.05450 q=144.206 ds=0.2mm wall=241s
+    [B5] step 580 s/B=0.05650 q=144.226 ds=0.2mm wall=250s
+    [B5] step 600 s/B=0.05850 q=144.244 ds=0.2mm wall=259s
+    [B5] step 620 s/B=0.06050 q=144.260 ds=0.2mm wall=267s
+    [B5] step 640 s/B=0.06250 q=144.275 ds=0.2mm wall=275s
+    [B5] step 660 s/B=0.06450 q=144.288 ds=0.2mm wall=283s
+    [B5] step 680 s/B=0.06650 q=144.301 ds=0.2mm wall=292s
+    [B5] step 700 s/B=0.06850 q=144.313 ds=0.2mm wall=299s
+    [B5] step 720 s/B=0.07050 q=144.324 ds=0.2mm wall=308s
+    [B5] step 740 s/B=0.07250 q=144.334 ds=0.2mm wall=316s
+    [B5] step 760 s/B=0.07450 q=144.343 ds=0.2mm wall=325s
+    [B5] step 780 s/B=0.07650 q=144.351 ds=0.2mm wall=333s
+    [B5] step 800 s/B=0.07850 q=144.359 ds=0.2mm wall=342s
+    [B5] step 820 s/B=0.08050 q=144.367 ds=0.2mm wall=350s
+    [B5] step 840 s/B=0.08250 q=144.375 ds=0.2mm wall=358s
+    [B5] step 860 s/B=0.08450 q=144.382 ds=0.2mm wall=367s
+    [B5] step 880 s/B=0.08650 q=144.389 ds=0.2mm wall=375s
+    [B5] step 900 s/B=0.08850 q=144.396 ds=0.2mm wall=383s
+    [B5] step 920 s/B=0.09050 q=144.402 ds=0.2mm wall=390s
+    [B5] step 940 s/B=0.09250 q=144.408 ds=0.2mm wall=398s
+    [B5] step 960 s/B=0.09450 q=144.413 ds=0.2mm wall=406s
+    [B5] step 980 s/B=0.09650 q=144.418 ds=0.2mm wall=414s
+    [B5] step 1000 s/B=0.09850 q=144.423 ds=0.2mm wall=423s
+    [B5] step 1020 s/B=0.10050 q=144.428 ds=0.2mm wall=432s
+    [B5] step 1040 s/B=0.10250 q=144.432 ds=0.2mm wall=440s
+    [B5] step 1060 s/B=0.10450 q=144.437 ds=0.2mm wall=449s
+    [B5] step 1080 s/B=0.10650 q=144.441 ds=0.2mm wall=457s
+    [B5] step 1100 s/B=0.10850 q=144.445 ds=0.2mm wall=464s
+    [B5] step 1120 s/B=0.11050 q=144.448 ds=0.2mm wall=472s
+    [B5] step 1140 s/B=0.11250 q=144.452 ds=0.2mm wall=480s
+    [B5] step 1160 s/B=0.11450 q=144.455 ds=0.2mm wall=488s
+    [B5] step 1180 s/B=0.11650 q=144.459 ds=0.2mm wall=495s
+    [B5] step 1200 s/B=0.11850 q=144.462 ds=0.2mm wall=503s
+    [B5] step 1220 s/B=0.12050 q=144.465 ds=0.2mm wall=511s
+    [B5] step 1240 s/B=0.12250 q=144.468 ds=0.2mm wall=519s
+    [B5] step 1260 s/B=0.12450 q=144.471 ds=0.2mm wall=527s
+    [B5] step 1280 s/B=0.12650 q=144.473 ds=0.2mm wall=536s
+    [B5] step 1300 s/B=0.12850 q=144.476 ds=0.2mm wall=543s
+    [B5] step 1320 s/B=0.13050 q=144.478 ds=0.2mm wall=550s
+    [B5] step 1340 s/B=0.13250 q=144.481 ds=0.2mm wall=560s
+    [B5] step 1360 s/B=0.13450 q=144.483 ds=0.2mm wall=570s
+    [B5] step 1380 s/B=0.13650 q=144.485 ds=0.2mm wall=580s
+    [B5] step 1400 s/B=0.13850 q=144.487 ds=0.2mm wall=591s
+    [mech] leg B5: captured s/B>=0.14 at s/B=0.140000 q=144.489
+    [B5] step 1420 s/B=0.14050 q=144.489 ds=0.2mm wall=601s
+    [B5] step 1440 s/B=0.14250 q=144.491 ds=0.2mm wall=612s
+    [B5] step 1460 s/B=0.14450 q=144.493 ds=0.2mm wall=623s
+    [B5] step 1480 s/B=0.14650 q=144.495 ds=0.2mm wall=634s
+    [B5] step 1500 s/B=0.14850 q=144.497 ds=0.2mm wall=646s
+    [mech] leg B5: captured s/B>=0.15 at s/B=0.150000 q=144.498
+[mech] leg B5 MODE=TARGET  [reached the target settlement]
+[mech] leg B5: wall=656s steps=1515 nsub=0 nfail=0 captured=[0.14, 0.15]
+[mech] wrote mech_B5.npz
