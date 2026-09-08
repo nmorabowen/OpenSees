@@ -244,10 +244,18 @@ which the material tangent is unobservable. See §9.
   correction exists); (c) standalone TensionCutoff_YF (needs a real TC_PF +
   apex handlers); (d) apex fix for plain MohrCoulomb_YF; (e) required-parameter
   assertion.
-- **P4 (new, demand-driven):** `Numerical_Algorithmic_*` differentiate
-  `compute_local_stress()`, a simplified map that never calls `special_return`
-  (nor the real `Backward_Euler`), so those operators are inconsistent with the
-  actual response for **every** ASDP material. Framework-wide; out of P3's scope.
+- **P4 — CLOSED by ADR-97 wp/97e (PR [#829](https://github.com/nmorabowen/OpenSees/pull/829)).**
+  `Numerical_Algorithmic_FirstOrder/SecondOrder` re-pointed at the ACTUAL
+  committed map (`Backward_Euler` or `Closest_Point`, via a re-entrant
+  `numerical_tangent_of_committed_map()` helper that calls
+  `setTrialStrainIncr()` itself, snapshotted/restored, with a recursion guard)
+  instead of `compute_local_stress()`. Measured: `Backward_Euler`'s FD error
+  against the binary's own residual dropped from 4.6% (wp/94c) to ~2-3e-8;
+  `compute_local_stress()` kept as a re-tagged, zero-caller dead helper per
+  ADR-97 D2, not deleted. `Backward_Euler`'s own return-map source is
+  untouched (grep-confirmed no call to `compute_local_stress` inside its
+  body). See `Ladruno_implementation/97_ladruno_asdp_closest_point_adr.md`'s
+  P4 implementation-log entry and [[reviews/adr97_p4_report]].
 
 ## 6b. Two defects found during P0 verification (both fixed/filed)
 

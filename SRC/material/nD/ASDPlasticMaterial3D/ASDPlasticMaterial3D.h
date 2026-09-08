@@ -571,13 +571,22 @@ public:
             VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
             Stiffness = Eelastic;
         }
+    // ADR97_P4_MARKER:adr97_p4_guard_computetangentstiffness_dispatch
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_FirstOrder)
         {
-            compute_numerical_tangent_firstorder(TrialStrain-CommitStrain, Stiffness);
+            // Ladruno (ADR-97 wp/97e): a perturbed sub-call made BY
+            // numerical_tangent_of_committed_map() re-enters this exact
+            // dispatch through the SAME integrator; suppress_numerical_tangent
+            // is set for exactly the duration of that sub-call so this branch
+            // does not recurse. The sub-call only needs TrialStress, not
+            // Stiffness, so it is safe to leave Stiffness untouched here.
+            if (!suppress_numerical_tangent)
+                compute_numerical_tangent_firstorder(TrialStrain-CommitStrain, Stiffness);
         }
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_SecondOrder)
         {
-            compute_numerical_tangent_secondorder(TrialStrain-CommitStrain, Stiffness);
+            if (!suppress_numerical_tangent)
+                compute_numerical_tangent_secondorder(TrialStrain-CommitStrain, Stiffness);
         }
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Continuum)
         {
@@ -659,6 +668,21 @@ public:
                << " -- rejecting step (strict_convergence)" << endln;
         return true;
     }
+    // ADR97_P4_MARKER:adr97_p4_compute_local_stress_not_a_map
+    // Ladruno (ADR-97 wp/97e, D2): NOT A MAP. Dead code after the P4
+    // re-point below -- nothing calls this any more (verify with
+    // `grep -n compute_local_stress` before ever wiring a new caller to it).
+    // This is the simplified single-shot elastic-predictor / one-step
+    // plastic-corrector that ADR-94 M3 and ADR-84 P4 identified as a THIRD
+    // return map: it evaluates n/m/H once at the yield-crossing intersection
+    // and takes one closed-form dLambda correction, with no resemblance to
+    // Backward_Euler's cutting-plane Newton loop or Closest_Point's coupled
+    // implicit solve. `Numerical_Algorithmic_FirstOrder/SecondOrder` used to
+    // differentiate THIS function (measured 31%/4.6% off the true consistent
+    // tangent, ADR-94 H6); they now differentiate the actual committed map
+    // via numerical_tangent_of_committed_map(). Retained per ADR-97 D2 for
+    // provenance / possible future standalone use -- do not resurrect it as
+    // a tangent source without re-reading that decision.
     int compute_local_stress(
         const VoigtVector& local_stress, const VoigtVector& local_strain,
         const VoigtVector& strain_incr, VoigtVector& stress_incr) const
@@ -768,116 +792,159 @@ public:
 
 
 
+    // ADR97_P4_MARKER:adr97_p4_numalg_repoint_firstorder
+    // Ladruno (ADR-97 wp/97e, D2 / closes ADR-84 P4 and ADR-94/ADR-97 M3's
+    // "third map"): the CONSISTENT numerical tangent of the map this instance
+    // actually commits -- whichever `integration_method` is configured
+    // (`Backward_Euler`, `Closest_Point`, or in principle any other) -- taken
+    // as a forward (this function) or central (compute_numerical_tangent_
+    // secondorder) finite difference of `setTrialStrainIncr()` ITSELF, the
+    // SAME dispatch every host element drives, instead of the simplified
+    // single-shot `compute_local_stress()` a real element never calls. A
+    // correct FD of this function is BY CONSTRUCTION the consistent tangent
+    // up to stencil truncation error: there is no third algorithm here to be
+    // wrong.
+    //
+    // Recursion: `Backward_Euler`/`Closest_Point` both call
+    // `ComputeTangentStiffness()` at the end of every successful commit; a
+    // perturbed sub-call below would otherwise re-enter that exact path and
+    // try to compute ANOTHER numerical tangent of its own perturbed state,
+    // unbounded. `suppress_numerical_tangent` is raised for the duration of
+    // every sub-call; `ComputeTangentStiffness()` skips the `Numerical_
+    // Algorithmic_*` branches while it is set (a sub-call only needs
+    // `TrialStress`, never `Stiffness`).
+    //
+    // State: the integrator mutates `TrialStrain`, `TrialStress`,
+    // `TrialPlastic_Strain`, every IV's `trial_value` (all of `iv_storage`),
+    // `cp_last_iterations`, and the four `mutable` scratch buffers (`dsigma`,
+    // `depsilon_elpl`, `intersection_stress`, `intersection_strain`). Several
+    // early-return branches inside `Backward_Euler` (the Drucker-Prager apex
+    // switch, the `special_return` hook switch, and the "PLASTIC
+    // INCONSISTENCY" elastic-fallback exit) also assign `Stiffness`
+    // UNCONDITIONALLY, bypassing the tangent-type dispatch entirely. All of
+    // these are snapshotted once before the loop and restored after EVERY
+    // perturbation -- both integrators already reset `TrialPlastic_Strain`/
+    // `iv_storage` from Commit* at their own top (`revert_all()`), so nothing
+    // would actually accumulate across perturbations even without the
+    // per-iteration restore, but restoring immediately keeps the instance
+    // well-defined if a LATER perturbation in the same loop refuses.
+    //
+    // The FD is assembled into a LOCAL matrix, never into `tangent_matrix`
+    // (== `this->Stiffness`, passed by reference from
+    // `ComputeTangentStiffness()`) column-by-column: the unconditional
+    // `Stiffness = ...` branches named above would otherwise clobber columns
+    // already written by an earlier perturbation. `tangent_matrix` is
+    // assigned exactly once, after the loop and after the final restore.
+    //
+    // Refusals: a nonzero return from any perturbed `setTrialStrainIncr()`
+    // call aborts the loop immediately, restores the snapshot, and
+    // propagates that SAME code outward -- never assembles a partial tangent
+    // from whatever columns happened to finish.
+    //
+    // Cost: 6 (first order) or 12 (second order) EXTRA full integrations per
+    // call (the forward-difference baseline is the real, already-computed
+    // `TrialStress` sitting in the snapshot -- no extra unperturbed call is
+    // needed, unlike the old compute_local_stress()-based version).
+    // `Backward_Euler`'s singular-tangent/NaN/plastic-inconsistency
+    // diagnostics are plain `cout <<`, not `opserr`-gated, so a perturbation
+    // landing near one of those guards multiplies that chatter 6x-12x.
+    int numerical_tangent_of_committed_map(const VoigtVector& strain_incr,
+                                            VoigtMatrix& tangent_matrix,
+                                            bool second_order,
+                                            double epsilon_ref = 1e-8,
+                                            double delta_min = 1e-12)
+    {
+        // -------- snapshot the real (unperturbed) converged state ----------
+        const VoigtVector snap_TrialStrain          = TrialStrain;
+        const VoigtVector snap_TrialStress          = TrialStress;
+        const VoigtVector snap_TrialPlastic_Strain  = TrialPlastic_Strain;
+        const iv_storage_t snap_iv_storage          = iv_storage;
+        const int          snap_cp_last_iterations  = cp_last_iterations;
+        const VoigtVector snap_dsigma               = dsigma;
+        const VoigtVector snap_depsilon_elpl        = depsilon_elpl;
+        const VoigtVector snap_intersection_stress  = intersection_stress;
+        const VoigtVector snap_intersection_strain  = intersection_strain;
+        const VoigtMatrix snap_Stiffness            = Stiffness;
+
+        auto restore_snapshot = [&]()
+        {
+            TrialStrain          = snap_TrialStrain;
+            TrialStress          = snap_TrialStress;
+            TrialPlastic_Strain  = snap_TrialPlastic_Strain;
+            iv_storage           = snap_iv_storage;
+            cp_last_iterations   = snap_cp_last_iterations;
+            dsigma               = snap_dsigma;
+            depsilon_elpl        = snap_depsilon_elpl;
+            intersection_stress  = snap_intersection_stress;
+            intersection_strain  = snap_intersection_strain;
+            Stiffness            = snap_Stiffness;
+        };
+
+        const int n = 6;
+        VoigtMatrix local_tangent = VoigtMatrix::Zero();
+        const double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
+        const VoigtVector unperturbed_stress = snap_TrialStress;
+
+        suppress_numerical_tangent = true;
+        int rc = 0;
+        for (int i = 0; i < n && rc == 0; ++i)
+        {
+            VoigtVector strain_incr_p1 = strain_incr;
+            strain_incr_p1(i) += delta;
+            rc = this->setTrialStrainIncr(strain_incr_p1);
+            if (rc != 0) break;
+            const VoigtVector perturbed_stress_p1 = TrialStress;
+            restore_snapshot();
+
+            if (second_order)
+            {
+                VoigtVector strain_incr_p2 = strain_incr;
+                strain_incr_p2(i) -= delta;
+                rc = this->setTrialStrainIncr(strain_incr_p2);
+                if (rc != 0) break;
+                const VoigtVector perturbed_stress_p2 = TrialStress;
+                restore_snapshot();
+
+                for (int j = 0; j < n; ++j)
+                    local_tangent(j, i) = (perturbed_stress_p1(j) - perturbed_stress_p2(j)) / (2.0 * delta);
+            }
+            else
+            {
+                for (int j = 0; j < n; ++j)
+                    local_tangent(j, i) = (perturbed_stress_p1(j) - unperturbed_stress(j)) / delta;
+            }
+        }
+        suppress_numerical_tangent = false;
+        restore_snapshot();
+
+        if (rc != 0)
+            return rc;
+
+        tangent_matrix = local_tangent;
+        return 0; // Return success
+    }
+
+    // Ladruno (ADR-97 wp/97e): thin wrapper kept for source compatibility --
+    // now differentiates the ACTUAL committed map (forward difference) via
+    // numerical_tangent_of_committed_map(), instead of compute_local_stress().
     int compute_numerical_tangent_firstorder(
         const VoigtVector& strain_incr, VoigtMatrix& tangent_matrix, double epsilon_ref = 1e-8, double delta_min = 1e-12)
     {
-        using namespace ASDPlasticMaterial3DGlobals;
-
-        // cout << "strain_incr = " << strain_incr.transpose() << endl;
-        // cout << "epsilon_ref = " << epsilon_ref << endl;
-        // cout << "delta_min = " << delta_min << endl;
-
-        // Number of strain and stress components (Voigt notation in 3D: 6 components)
-        const int n = 6;
-
-        // Initialize the local copies of stress and strain
-        VoigtVector local_stress = CommitStress;
-        VoigtVector local_strain = CommitStrain;
-
-        // Allocate memory for perturbed stress and strain
-        VoigtVector perturbed_stress;
-        VoigtVector perturbed_strain;
-
-        // Compute initial stress increment for the given strain increment (unperturbed)
-        VoigtVector initial_stress_incr;
-        compute_local_stress(local_stress, local_strain, strain_incr, initial_stress_incr);
-
-        // cout << "local_stress = " << local_stress.transpose() << endl;
-        // cout << "initial_stress_incr = " << initial_stress_incr.transpose() << endl;
-        double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
-        // cout << "delta = " << delta << endl;
-
-        // Loop over each strain component to compute the tangent matrix via finite differences
-        for (int i = 0; i < n; ++i) {
-            // Compute adaptive delta based on the current strain component
-
-            // Perturb the i-th strain component by the adaptive delta
-            VoigtVector strain_incr_perturbed = strain_incr;
-            strain_incr_perturbed(i) += delta;
-
-            // Compute the local stress for the perturbed strain increment
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed, perturbed_stress);
-
-            // cout << "        strain_incr_perturbed = " << strain_incr_perturbed.transpose() << endl;
-            // cout << "        perturbed_stress = " << perturbed_stress.transpose() << endl;
-            // Finite difference approximation of the tangent matrix (column i)
-            for (int j = 0; j < n; ++j) {
-                tangent_matrix(j, i) = (perturbed_stress(j) - initial_stress_incr(j)) / delta;
-            }
-        }
-
-        // cout << "tangent_matrix = \n" << tangent_matrix << endl;
-
-        return 0; // Return success
+        return numerical_tangent_of_committed_map(strain_incr, tangent_matrix, false, epsilon_ref, delta_min);
     }
 
 
 
+    // ADR97_P4_MARKER:adr97_p4_numalg_repoint_secondorder
+    // Ladruno (ADR-97 wp/97e): thin wrapper kept for source compatibility --
+    // now differentiates the ACTUAL committed map (central difference) via
+    // numerical_tangent_of_committed_map(), instead of compute_local_stress().
+    // See that function's doc comment for the full design (recursion guard,
+    // state snapshot/restore, refusal propagation, cost).
     int compute_numerical_tangent_secondorder(
         const VoigtVector& strain_incr, VoigtMatrix& tangent_matrix, double epsilon_ref = 1e-8, double delta_min = 1e-12)
     {
-        using namespace ASDPlasticMaterial3DGlobals;
-
-        // cout << "strain_incr = " << strain_incr.transpose() << endl;
-        // cout << "epsilon_ref = " << epsilon_ref << endl;
-        // cout << "delta_min = " << delta_min << endl;
-
-        // Number of strain and stress components (Voigt notation in 3D: 6 components)
-        const int n = 6;
-
-        // Initialize the local copies of stress and strain
-        VoigtVector local_stress = CommitStress;
-        VoigtVector local_strain = CommitStrain;
-
-        // Allocate memory for perturbed stress and strain
-        VoigtVector perturbed_stress1;
-        VoigtVector perturbed_stress2;
-        VoigtVector perturbed_strain;
-
-        // Compute initial stress increment for the given strain increment (unperturbed)
-        // VoigtVector initial_stress_incr;
-        // compute_local_stress(local_stress, local_strain, strain_incr, initial_stress_incr);
-
-        // cout << "local_stress = " << local_stress.transpose() << endl;
-        // cout << "initial_stress_incr = " << initial_stress_incr.transpose() << endl;
-        double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
-        // cout << "delta = " << delta << endl;
-
-        // Loop over each strain component to compute the tangent matrix via finite differences
-        for (int i = 0; i < n; ++i) {
-            // Compute adaptive delta based on the current strain component
-
-            // Perturb the i-th strain component by the adaptive delta
-            VoigtVector strain_incr_perturbed1 = strain_incr;
-            VoigtVector strain_incr_perturbed2 = strain_incr;
-            strain_incr_perturbed1(i) += delta;
-            strain_incr_perturbed2(i) -= delta;
-
-            // Compute the local stress for the perturbed strain increment
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed1, perturbed_stress1);
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed2, perturbed_stress2);
-
-            // cout << "        strain_incr_perturbed = " << strain_incr_perturbed.transpose() << endl;
-            // cout << "        perturbed_stress = " << perturbed_stress.transpose() << endl;
-            // Finite difference approximation of the tangent matrix (column i)
-            for (int j = 0; j < n; ++j) {
-                tangent_matrix(j, i) = (perturbed_stress1(j) - perturbed_stress2(j)) / (2*delta);
-            }
-        }
-
-        // cout << "tangent_matrix = \n" << tangent_matrix << endl;
-
-        return 0; // Return success
+        return numerical_tangent_of_committed_map(strain_incr, tangent_matrix, true, epsilon_ref, delta_min);
     }
 
     const Matrix& getTangent()
@@ -6618,8 +6685,19 @@ protected:
     static std::map<int, int> GLOBAL_INT_max_iter; 
     static std::map<int, double> GLOBAL_DBL_max_error; 
 
+    // ADR97_P4_MARKER:adr97_p4_suppress_numerical_tangent_member
     bool first_step;
     bool stress_set_externally;
+
+    // Ladruno (ADR-97 wp/97e): recursion guard for
+    // numerical_tangent_of_committed_map(). Backward_Euler and Closest_Point
+    // both call ComputeTangentStiffness() at the end of every successful
+    // commit; a perturbed sub-call made BY the numerical-tangent helper would
+    // otherwise re-enter that same call and try to compute another numerical
+    // tangent of ITS OWN perturbed state, unbounded. Per-instance (not one of
+    // the static per-tag option maps): each material instance's own
+    // in-flight tangent call must suppress recursion independently.
+    bool suppress_numerical_tangent = false;
 
     // Ladruno (ADR-97 wp/97b): per-instance Closest_Point Newton iteration count
     // (NSDMI, so both constructors get it without touching their bodies).
