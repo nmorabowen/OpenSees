@@ -117,6 +117,28 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     // sentinel at the floor too -- an honest wall instead of a creeping curve.
     enum FloorMode { FLOOR_IMPLICIT = 0, FLOOR_ACCEPT = 1, FLOOR_REFUSE = 2 };
 
+    // Ladruno ADR-92 P2-9: how the extrapolation factor f is CHOSEN.
+    // `fixed` (the DEFAULT, and byte-identical to every build before P2-9)
+    // takes f = alpha*dt_{n+1}/dt_n, the clock ratio, and lets the P2-2 guard
+    // knock it to zero on a bad committed predecessor. `control` keeps that
+    // value as an UPPER BOUND f_max and picks, at the first trial of the step,
+    // the f that minimises the distance to the -implexControl companion:
+    //
+    //     sigma~(f) - sigma_impl = A - f*B
+    //     A = sigma_n + Ce:d_eps - sigma_impl,   B = Ce:d_eps_p(n)
+    //     f* = clamp( (A:B)/(B:B), 0, f_max )
+    //
+    // (the inner product is DoubleDot2_2_Contr, the one GetNorm_Contr and
+    // therefore implexError itself are built on). f* -> 0 exactly where the
+    // committed plastic increment points the wrong way -- the P2-2 case,
+    // reached WITHOUT a model-specific trigger and one step earlier, at the
+    // trial rather than from the predecessor -- and f* -> f_max where the
+    // history is right. B:B == 0 (an unprimed or purely elastic history) means
+    // there is nothing to choose and f = f_max stands. REQUIRES
+    // -implexControl: without a companion there is no sigma_impl at the trial,
+    // and the request is refused rather than silently ignored.
+    enum FactorMode { FACTOR_FIXED = 0, FACTOR_CONTROL = 1 };   // Ladruno ADR-92 P2-9
+
     bool   enabled;          // -implex
     bool   control;          // -implexControl
     double errorTol;         // -implexControl $tol
@@ -153,6 +175,12 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
     // true with -implex off is refused, on the same rule as guard/trialGuard.
     bool   flipAbsorb;       // -implexFlipAbsorb {on|off}             Ladruno ADR-92 P2-7c
 
+    // Ladruno ADR-92 P2-9: see the FactorMode note above. DEFAULT FACTOR_FIXED
+    // -- under `fixed` no P2-9 arithmetic is reachable at all, so the operator
+    // is byte-identical to the pre-P2-9 build. `control` is an -implex option
+    // AND an -implexControl option: it is refused without either.
+    int    factorMode;       // -implexFactor {fixed|control}          Ladruno ADR-92 P2-9
+
     // errorTol default: measured 2026-09-06 (_adr92_p1_bvp_gate_rerun.md sweep)
     // -- 0.05 fails on reach, 0.1 is the tightest tolerance that beats the
     // implicit control's depth under 5% mean deviation. (WP-92d)
@@ -161,7 +189,8 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
         alpha(1.0), dtSource(DT_PSEUDO), dtUser(0.0),
         floorMode(FLOOR_IMPLICIT), guard(true),
         trialGuard(true),                                             // Ladruno ADR-92 P2 / P2-6
-        flipAbsorb(false) {}   // Ladruno ADR-92 P2-7c: OFF by default
+        flipAbsorb(false),     // Ladruno ADR-92 P2-7c: OFF by default
+        factorMode(FACTOR_FIXED) {}   // Ladruno ADR-92 P2-9: fixed until the gate passes
 };
 
 class LadrunoSANISAND : public ManzariDafalias
@@ -396,6 +425,17 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          so a monotonically negative clock gets the
                               //          positive ratio it is entitled to instead of
                               //          collapsing to alpha.
+    // Ladruno ADR-92 P2-9: "the FIRST trial of this step still owes its f*".
+    // Set by ladrunoImplexArmStep() -- i.e. exactly where mImplexStepArmed is
+    // CONSUMED, on the first trial call after a commit or a revert that
+    // actually carries a strain increment -- and cleared by the one trial pass
+    // that computes f*. Every later iterate of the same step therefore REUSES
+    // the frozen f*, which is what keeps the global step linear (frozen Ce and
+    // a constant f), and a retry at a smaller dt reverts first, re-arms the
+    // step and so recomputes f* against the new f_max. Transient and
+    // reconstructible from the arm, so it is NOT sent on the wire -- same rule
+    // as mImplexStepArmed and mPrimed. Inert unless factorMode == CONTROL.
+    bool   mImplexCtlFPending;   // Ladruno ADR-92 P2-9
     bool   mImplexStepArmed;  // true until the first trial call after a commit/revert
     bool   mImplexTrialDone;  // the last trial pass was an EXTRAPOLATED one, so
                               // commitState() owes a companion return. False on

@@ -74,7 +74,8 @@ nDMaterial LadrunoSANISAND $tag  <23 constants>  \
     -implex  <-implexControl $tol $reductionLimit>  <-implexAlpha $a> \
     <-implexDt pseudo|strain|user <$dt>>  \
     <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>  \
-    <-flipAlphaIn init|vanilla>  <-implexFlipAbsorb on|off>
+    <-flipAlphaIn init|vanilla>  <-implexFlipAbsorb on|off>  \
+    <-implexFactor fixed|control>
 ```
 
 ```python
@@ -100,6 +101,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
 | `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
 | `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
+| `-implexFactor fixed\|control` | how `f` is CHOSEN: `fixed` = the clock ratio `alpha*dt_{n+1}/dt_n` (the pre-P2-9 operator); `control` = the closed-form minimiser of `\|\|sigma~(f) - sigma_impl\|\|`, computed at the FIRST trial of the step and frozen for it, with the clock ratio kept as the upper bound `f_max` | `fixed` | ADR-92 P2-9; **requires `-implexControl`** (refused without it, not silently downgraded); see §12 |
 
 ## 2. What the nine words mean
 
@@ -210,9 +212,9 @@ not warnings), so this response is the only record any of them fired at all.
 |---|---|---|
 | `implexError` | 1 | total error, this material's last commit |
 | `avgImplexError` | 1 | process-wide running mean over all commits |
-| `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` `f`, frozen for this step (reads `0` on a guarded step, §11) |
+| `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` the `f` **actually used** for the last extrapolation, frozen for this step (reads `0` on a guarded step, §11; under `-implexFactor control` this is `f*`, not the clock ratio — §12) |
 | `implexRefusals` | 4 | `[0]` total refusals · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` |
-| `implexGuards` | 5 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) |
+| `implexGuards` | 7 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) · `[5]` hold-skip commits (P2-5c, once per point per hold) · `[6]` control-factor back-offs (P2-9, steps where `f* < 0.5·f_max`) |
 
 Python:
 
@@ -471,3 +473,95 @@ begin with. `LadrunoSANISAND::setParameter` now claims the id without the tag gu
 `LadrunoSANISAND::updateParameter` reads `theDouble` (`ON <=> theDouble != 0.0`; ids `1`
 (`updateMaterialStage`) and `5` (`materialState`) are untouched — they already read the field the
 interpreter writes). Both routes land on the same base flag now.
+
+## 12. ADR-92 P2-9 — the control-informed extrapolation factor (`-implexFactor`)
+
+**Status: implemented, gate pending.** `-implexFactor fixed` is the default and is byte-identical
+to every build before P2-9; `control` is opt-in until the P2-9 acceptance gate
+(`_adr92_p2_9_control_informed_f_plan.md` §2) passes.
+
+### The operator
+
+Under `-implexControl` the companion stress `σ_impl` is already computed at every trial, and the
+extrapolated stress is **affine in `f`** on the frozen `Ce`:
+
+```
+σ~(f)            = σ_n + Ce:(Δε − f·Δε_p(n))
+σ~(f) − σ_impl   = A − f·B,     A = σ_n + Ce:Δε − σ_impl,   B = Ce:Δε_p(n)
+f*               = clamp( (A:B) / (B:B), 0, f_max ),   f_max = alpha·dt_{n+1}/dt_n
+```
+
+`f_max` is exactly today's `f` — the clock ratio — so `control` never *raises* the factor; it only
+decides how much of it to spend. The inner product is `DoubleDot2_2_Contr`, the one `GetNorm_Contr`
+and therefore `implexError` itself are built on, so the quantity being minimised is the numerator
+of the control's own error measure.
+
+- `f* → 0` exactly where the committed plastic increment points the **wrong way** (the P2-2 case,
+  reached with **no model-specific trigger**) or is stale;
+- `f* → f_max` where the history is right — today's default behaviour;
+- in between it is a graded factor rather than a threshold.
+
+`B:B == 0` (an un-primed history, or a purely elastic one) means there is nothing to choose:
+`f_max` stands untouched. That is what keeps the P0 oracle's elastic rows byte-identical.
+
+### Frozen per step — and what "the step" means
+
+`f*` is computed **once**, at the first trial of the step, and held for the rest of it. Later
+Newton iterates reuse it, so `f` is a constant within the step and the delivered operator is still
+exactly `Ce` — the property that removed the subdivision ladder, and P2-9 does not spend it.
+
+"First trial of a step" reuses the **existing** arm (`mImplexStepArmed`), not a second notion of
+freshness: it is the first `setTrialStrain` carrying a non-zero strain increment after a
+`commitState()` **or** a `revertToLastCommit()`. A driver that halves its increment and retries
+reverts first, so the retry re-arms and recomputes `f*` against its own, new `f_max`. Every refusal
+site in `ladrunoImplexTrial()` already re-arms the step, so a refused trial also recomputes.
+
+### Precedence — the P2-2 guard is NOT bypassed
+
+Ordering inside `ladrunoImplexArmStep()` / `ladrunoImplexTrial()`, decided here and recorded so a
+reader does not have to infer it:
+
+1. the clock ratio is formed (`f = alpha·dt_{n+1}/dt_n`, `0` on a hold);
+2. **the P2-2 guard runs, unconditionally and first.** If it fires it sets `f = 0` and bumps
+   `implexGuards[1]`, exactly as before;
+3. whatever survives is `f_max`. Under `control`, `f*` is chosen inside `[0, f_max]`.
+
+So **when the guard fires it wins outright** — `f_max = 0` and the clamp can only return `0`. `f*`
+replaces the guard's *degree* only where the guard had nothing to say, and it acts one step
+**earlier**: the guard reads the committed *predecessor*, so on the reversal step itself it has not
+fired yet, while `f*` sees the wrong-way history at the trial. `control` therefore does not weaken
+the no-control fallback, and with `-implexControl` off the guard remains the only mechanism (which
+is why `-implexFactor control` is *refused* without `-implexControl` rather than downgraded).
+
+Everything downstream — the W7 refusal, the `-implexControl` reduction floor, P2-6's trial-time
+`f = 0` fallback, and `implexDetail[5]` — reads the **`f` actually used**, so none of that
+machinery can be short-circuited by this flag. In particular a P2-6 fallback that fires after `f*`
+was chosen still overwrites `f` with `0` and `implexDetail[5]` still reports `0`.
+
+### Reporting
+
+| where | what |
+|---|---|
+| `implexDetail[5]` | the `f` **actually used** for the last extrapolation — `f*` under `control`, the clock ratio under `fixed`, `0` if P2-2 or P2-6 acted |
+| `implexGuards[6]` | **new**: count of steps where the operator "backed off", i.e. `f* < 0.5·f_max`. Not counted when `f_max == 0` (there was no choice to make — P2-2's own slot `[1]` records that) |
+| `Print` / construction echo | `-implexFactor = fixed\|control`, beside the other IMPL-EX flags |
+
+### Refusals
+
+| deck says | result |
+|---|---|
+| `-implexFactor control` with no `-implexControl` | **refused** at construction (and on every `getCopy`/`recvSelf` clone — the check is not gated on `verbose`) |
+| `-implexFactor …` with no `-implex` | refused, on the same list as `-implexGuard` / `-implexFlipAbsorb` |
+| `-implexFactor <anything else>` | refused with the fixed/control explanation |
+
+### Design forks the plan left open, and how they were settled
+
+- **Recompute `f*` per iterate instead of per step?** Not done. Per-iterate costs the linearity of
+  the global step, which is the property IMPL-EX was adopted for. The plan prices it as an
+  alternative; if it is ever wanted it needs its own flag value, not a change to `control`.
+- **What if `f_max` is negative?** It cannot be — a sign-changed clock is refused by D2 before this
+  point and a zero `dt` gives `f = 0` — but the clamp defensively takes `max(f_max, 0)` so the
+  upper bound can never sit below the lower one.
+- **Wire format.** `factorMode` crosses `sendSelf`/`recvSelf` in a new slot (`data(32)`, the vector
+  widened 32 → 33) on the same rule as the rest of `mImplexOpt`. The per-step arm for the `f*`
+  computation is transient and is **not** sent, like `mImplexStepArmed` itself.

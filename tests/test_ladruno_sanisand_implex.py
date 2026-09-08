@@ -304,6 +304,11 @@ FIFTH RUN, P2-5c + Esmeralda regression check (2026-09-07, `ladrunoBuild()
 [5] = hold-skip commits (once per Gauss point per hold, not per Newton
 iteration or per `ladrunoGuardReversalNoise()` call) -- every remaining
 `len(implexGuards) == 5` check in this file is now `== 6`.
+
+SIXTH RUN, ADR-92 P2-9 (2026-09-07): `implexGuards` grows `Vector(6)` ->
+`Vector(7)`, new slot [6] = steps where the control-informed factor backed off
+(`f* < 0.5 f_max`, `-implexFactor control` only) -- every `== 6` length check
+on `implexGuards` in this file is now `== 7` (`implexDetail` stays 6).
 `ladrunoGuardReversalNoise()` now checks `ops_Dt == 0.0` FIRST,
 unconditionally (ahead of, independent of, `-reversalTol`/`-reversalRel`),
 because a hold is a GLOBAL domain fact, not something to infer from a
@@ -2567,8 +2572,8 @@ def test_floor_fallback_delivers_implicit_stress_and_counts():
         'accept mode', detail_a, tol)
 
     guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
-    assert len(guards_before) == 6, (
-        'implexGuards did not return the documented 6-component vector',
+    assert len(guards_before) == 7, (
+        'implexGuards did not return the documented 7-component vector',
         guards_before)
     hist_implicit = _drive_floor_ladder(8332, 'implicit', tol, reduction_limit)
     guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
@@ -2900,8 +2905,8 @@ def test_hold_keeps_clock_and_history():
     """
     detail_hold, stress_hold, guards_before, guards_after = _drive_hold_sequence(
         8360, with_hold=True)
-    assert guards_before is not None and len(guards_before) == 6, (
-        'implexGuards did not return the documented 6-component vector',
+    assert guards_before is not None and len(guards_before) == 7, (
+        'implexGuards did not return the documented 7-component vector',
         guards_before)
     assert guards_after[2] - guards_before[2] >= 1, (
         'implexGuards[2] (hold-preserved commits) did not increment across '
@@ -4375,3 +4380,278 @@ def test_guard_only_on_primed_states():
         'spuriously armed the reversal/softening guard; the guard is '
         'supposed to apply ONLY to PRIMED states (after the first '
         'plastic commit since the flip)', detail)
+
+
+# ===========================================================================
+#  Ladruno ADR-92 P2-9 -- `-implexFactor fixed|control`
+#
+#  `fixed` (the DEFAULT) is the clock ratio f = alpha*dt_{n+1}/dt_n, exactly
+#  as every build before P2-9 shipped it.  `control` keeps that value as an
+#  UPPER BOUND f_max and picks, at the FIRST trial of the step, the closed-form
+#  minimiser of ||sigma~(f) - sigma_impl||:
+#
+#      sigma~(f) - sigma_impl = A - f*B
+#      A = sigma_n + Ce:d_eps - sigma_impl,   B = Ce:d_eps_p(n)
+#      f* = clamp( (A:B)/(B:B), 0, f_max )
+#
+#  EVERY factor test below passes `-implexGuard off`.  That is deliberate and
+#  it is the point of the lane: P2-2's guard reads the COMMITTED PREDECESSOR,
+#  so on the reversal step itself (where `d_eps_p(n)` genuinely points the
+#  wrong way) it has not fired yet -- it fires one step LATER, on the
+#  continuation, which is what `test_guard_zeroes_f_after_reversal` measures.
+#  P2-9 acts at the trial, one step EARLIER.  Turning the guard off removes it
+#  from the picture entirely so `implexDetail[5]` can only be reading the
+#  factor mode, and it also pins the `fixed` arm to a known, non-zero clock
+#  ratio to compare against.
+#
+#  `-implexControl` is given a DELIBERATELY unreachable tolerance (1e9) in the
+#  factor tests: P2-9 needs the companion (that is what supplies `sigma_impl`
+#  at the trial), but the W7 refusal and P2-6's own f = 0 trial fallback must
+#  stay out of the way, or `implexDetail[5]` could read a 0.0 that P2-6 wrote
+#  rather than one P2-9 chose.
+# ===========================================================================
+
+_P29_CTL = ('-implexControl', 1.0e9, 0.5)   # companion ON, refusal unreachable
+_P29_BASE = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexGuard', 'off')
+
+
+def _drive_p29_reversal(tag, extra_opts):
+    """`_establish_plastic_history` (monotone COMPRESSIVE, at
+    `LoadControl(1/_PROBE_N_HISTORY)`), then ONE step whose deviator load
+    flips sign.
+
+    On THAT step `d_eps_p(n)` is the committed compressive plastic increment
+    and the step travels the other way, so `A:B < 0` and `f*` clamps to the
+    lower end of its range.  The clock ratio is
+    `dt_{n+1}/dt_n = 1.0 / (1/_PROBE_N_HISTORY) = _PROBE_N_HISTORY`, which is
+    what the `fixed` arm must read on the same step.
+
+    Returns (implexDetail after the reversal step, implexGuards before it,
+    implexGuards after it).
+    """
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)     # OPPOSITE sign to the history
+    ops.integrator('LoadControl', 1.0)
+    rc = ops.analyze(1)
+    assert rc == 0, ('the reversal step failed to converge', rc)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+def _drive_p29_monotone(tag, extra_opts):
+    """`_establish_plastic_history`, then TWO further steps in the SAME
+    (compressive) direction at the SAME `LoadControl(1.0)` magnitude -- so
+    `dt_{n+1} == dt_n` and the clock ratio on the second one is exactly 1.0 --
+    with the SECOND step carrying TWICE the deviator load of the first.
+
+    Why the second step is doubled, argued rather than hoped for: `f*` is
+    `(A:B)/(B:B)` with `A ~ Ce:d_eps_p(n+1)` and `B = Ce:d_eps_p(n)`, i.e. it
+    is essentially the RATIO of this step's plastic increment to the last
+    committed one.  A monotone history that DECELERATES (a hardening material
+    taking equal load steps) legitimately produces `f* < 1` -- that is the
+    operator working, not a defect -- so an equal-magnitude continuation would
+    make "f = f_max" a coin toss rather than a property.  Doubling the load
+    puts `f*` near 2 with a factor-of-two margin over the `f_max = 1.0` clamp,
+    which is what makes the clamp BIND and the assertion a real one.
+
+    Returns (implexDetail after the second step, implexGuards before it,
+    implexGuards after it).
+    """
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    # step 1 of 2: sets dt_n = 1.0 and commits d_eps_p(n) in the SAME direction.
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0)
+    assert ops.analyze(1) == 0, 'the first monotone continuation step failed to converge'
+    ops.loadConst('-time', 0.0)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    # step 2 of 2: same direction, same dt, DOUBLE the load -- see the docstring.
+    ops.timeSeries('Linear', 5)
+    ops.pattern('Plain', 5, 5)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -2.0 * dq)
+    ops.integrator('LoadControl', 1.0)
+    assert ops.analyze(1) == 0, 'the second monotone continuation step failed to converge'
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+def test_implexfactor_control_backs_off_on_a_reversal():
+    """ADR-92 P2-9 (a): on a step whose committed `d_eps_p(n)` points the
+    WRONG WAY, `-implexFactor control` must report `implexDetail[5]` at or
+    near zero, while `-implexFactor fixed` reports the full clock ratio on
+    the identical step.
+
+    `A:B < 0` there by construction (`B = Ce:d_eps_p(n)` is the compressive
+    history; `A ~ Ce:d_eps_p(n+1)` on a step that travels the other way), so
+    the clamp's LOWER end binds and `f*` is 0 -- or, if the reversal step
+    unloads elastically and there is no new plastic increment at all, `A ~ 0`
+    and `f*` is a negligible fraction of `f_max`.  Both are "the operator
+    backed off"; neither is the clock ratio.
+
+    Kills a mutant that parses `-implexFactor control` and then never uses
+    `f*` (both arms would read the clock ratio), one that forgets to clamp at
+    0 (a negative `f` would AMPLIFY the wrong increment), and one that wires
+    `f*` to the P2-2 guard's trigger instead of to the companion (the guard
+    is OFF here and has not fired on this step anyway).
+    """
+    d_fixed, _, _ = _drive_p29_reversal(8450, _P29_CTL + ('-implexFactor', 'fixed'))
+    f_max = float(_PROBE_N_HISTORY)   # dt_{n+1}/dt_n = 1.0 / (1/_PROBE_N_HISTORY)
+    assert d_fixed[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        '-implexFactor fixed did not read the plain clock ratio on the '
+        'reversal step -- the comparison the control arm is measured '
+        'against is not the one this test believes it is', d_fixed, f_max)
+
+    d_ctl, g_before, g_after = _drive_p29_reversal(
+        8451, _P29_CTL + ('-implexFactor', 'control'))
+
+    assert d_ctl[5] >= 0.0, (
+        'implexDetail[5] went NEGATIVE under -implexFactor control -- f* is '
+        'clamped into [0, f_max] and a negative f amplifies exactly the '
+        'plastic increment the operator has decided is wrong', d_ctl)
+    assert d_ctl[5] <= 0.05 * f_max, (
+        'implexDetail[5] under -implexFactor control is %r on a step whose '
+        'committed plastic increment points the WRONG WAY -- f* = '
+        'clamp((A:B)/(B:B), 0, f_max) has A:B < 0 there, so this must be at '
+        'or near 0, not the %r the fixed arm reads'
+        % (d_ctl[5], f_max), d_ctl, d_fixed)
+
+    assert g_after[6] - g_before[6] >= 1, (
+        'implexGuards[6] (the P2-9 "backed off" census: f* < 0.5*f_max) did '
+        'not increment across a reversal step on which implexDetail[5] '
+        'itself shows the operator backing off', g_before, g_after, d_ctl)
+
+
+def test_implexfactor_control_holds_fmax_on_a_monotone_history():
+    """ADR-92 P2-9 (b): where the committed history points the RIGHT way,
+    `f*` runs into its upper clamp and `-implexFactor control` reports
+    exactly `f_max` -- the same number `-implexFactor fixed` reports.  The
+    "backed off" census must NOT move.
+
+    Kills a mutant that clamps `f*` to something other than the clock ratio
+    (e.g. to 1.0, or to `alpha`), one that always backs off, and one that
+    counts a census event on every controlled step rather than only on the
+    ones that actually back off.
+    """
+    f_max = 1.0   # equal dt on both continuation steps, no -implexAlpha given
+
+    d_fixed, _, _ = _drive_p29_monotone(8452, _P29_CTL + ('-implexFactor', 'fixed'))
+    assert d_fixed[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        '-implexFactor fixed did not read the plain clock ratio 1.0 on the '
+        'second monotone continuation step', d_fixed)
+
+    d_ctl, g_before, g_after = _drive_p29_monotone(
+        8453, _P29_CTL + ('-implexFactor', 'control'))
+    assert d_ctl[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        'implexDetail[5] under -implexFactor control is %r, not the f_max = '
+        '%r the upper clamp is supposed to deliver on a monotone, '
+        'ACCELERATING history (the step carries twice the previous load, so '
+        '(A:B)/(B:B) is near 2 and the clamp must bind)'
+        % (d_ctl[5], f_max), d_ctl, d_fixed)
+    assert g_after[6] == g_before[6], (
+        'implexGuards[6] (the P2-9 "backed off" census) incremented on a '
+        'step where f* reached its upper clamp -- the counter is for '
+        'f* < 0.5*f_max only', g_before, g_after, d_ctl)
+
+
+def _p29_stress_series(tag, extra_opts, n_steps=3):
+    """Committed stress after each of `n_steps` monotone deviatoric steps on
+    the free-DOF triaxial deck, as plain lists -- for EXACT comparison."""
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    out = []
+    for step in range(n_steps):
+        ops.timeSeries('Linear', 10 + step)
+        ops.pattern('Plain', 10 + step, 10 + step)
+        for j, (x, y) in enumerate(_XY):
+            ops.load(4 + j + 1, 0.0, 0.0, -dq)
+        ops.integrator('LoadControl', 1.0)
+        assert ops.analyze(1) == 0, 'stress-series step %d failed' % (step + 1)
+        ops.loadConst('-time', 0.0)
+        out.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    return out
+
+
+def test_implexfactor_fixed_is_byte_identical_to_omitting_it():
+    """ADR-92 P2-9 (c): `-implexFactor fixed` is the DEFAULT, and it must be
+    BYTE-identical to not passing the flag at all -- `==` on the lists, not
+    `approx`.  Under `fixed` no P2-9 arithmetic is reachable, so this is a
+    claim about the code path, not about a tolerance.
+
+    Both arms carry `-implexControl`, so the companion runs at every trial in
+    both: the ONLY difference between them is the token.  That is what makes
+    this discriminating -- a mutant that ignores the mode and always computes
+    `f*` would move `f` off the clock ratio on every plastic step here and
+    change the committed stress with it.
+    """
+    plain = _p29_stress_series(8454, _P29_CTL)
+    fixed = _p29_stress_series(8455, _P29_CTL + ('-implexFactor', 'fixed'))
+    assert fixed == plain, (
+        '-implexFactor fixed committed a DIFFERENT stress than omitting the '
+        'flag entirely. fixed IS the default and must reach no new '
+        'arithmetic at all', plain, fixed)
+
+
+def test_implexfactor_control_without_implexcontrol_is_refused():
+    """ADR-92 P2-9 (d): `-implexFactor control` chooses `f*` by aiming at the
+    COMPANION stress `sigma_impl`, and the companion exists at the trial only
+    under `-implexControl`.  Without it there is nothing to aim at, so the
+    request is REFUSED at construction rather than silently downgraded to
+    `fixed` -- the "a flag claims to have done something it did not do"
+    defect this material's option handling exists to make impossible.
+
+    The refusal lives in `setLadrunoImplexOptions()` and is NOT gated on
+    `verbose`, on the RED-1 F5 rule, so a `getCopy`/`recvSelf` clone is
+    refused exactly as the deck is.
+
+    Also covers: `-implexFactor` without `-implex` at all (the same list
+    `-implexGuard`/`-implexFlipAbsorb` are on), and an unparsable mode.
+    """
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8456, *_PARAMS,
+                       '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                       '-implexFactor', 'control')
+
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8457, *_PARAMS,
+                       '-implexFactor', 'control')          # no -implex at all
+
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8458, *_PARAMS,
+                       '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                       '-implexControl', 0.1, 0.01,
+                       '-implexFactor', 'graded')            # not fixed|control
+
+    # ... and the accepted form still builds, so the refusals above are not
+    # simply "this material rejects -implexFactor".
+    ops.wipe()
+    ops.nDMaterial('LadrunoSANISAND', 8459, *_PARAMS,
+                   '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                   '-implexControl', 0.1, 0.01,
+                   '-implexFactor', 'control')

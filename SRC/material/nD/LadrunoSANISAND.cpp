@@ -63,7 +63,15 @@
 //        <-implexDt pseudo|strain|user <$dt>>                                   \
 //        <-implexFloor implicit|accept|refuse> <-implexGuard on|off>            \
 //        <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>                  \
+//        <-implexFactor fixed|control>                                          \
 //        <-reversalTol $tol> <-reversalRel $ratio> <-flipAlphaIn init|vanilla>
+//
+//  Ladruno ADR-92 P2-9: -implexFactor picks HOW f is chosen. `fixed` (the
+//  DEFAULT) is the clock ratio alpha*dt_{n+1}/dt_n and reaches no new
+//  arithmetic at all; `control` keeps that as an upper bound and takes the
+//  closed-form minimiser of ||sigma~(f) - sigma_impl|| at the first trial of
+//  the step. It IS an -implex option and additionally REQUIRES -implexControl
+//  (without a companion at the trial there is no sigma_impl to aim at).
 //
 //  Ladruno ADR-92 P2-7c: -flipAlphaIn is NOT an -implex option -- `vanilla`
 //  (the DEFAULT, reversed from the first P2-7 redesign; see RC14 / Esmeralda
@@ -169,6 +177,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexAlpha a?> <-implexDt pseudo|strain|user <dt?>>"     // Ladruno (ADR-92)
                << " <-implexFloor implicit|accept|refuse> <-implexGuard on|off>" // Ladruno ADR-92 P2
                << " <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>"      // Ladruno ADR-92 P2-6/P2-7c
+               << " <-implexFactor fixed|control>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla>"                                // Ladruno ADR-92 P2-7c
                << endln;
@@ -430,6 +439,44 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
+        // Ladruno ADR-92 P2-9: how f is CHOSEN. IS an -implex option (refused
+        // without -implex, like -implexGuard) and additionally requires
+        // -implexControl, which setLadrunoImplexOptions() enforces -- the
+        // parser cannot, because -implexControl may legally follow this token
+        // on the same command line.
+        else if (strcmp(argTok, "-implexFactor") == 0 || strcmp(argTok, "-implexfactor") == 0) {
+            seenFlag = true;
+            sawImplexToken = true;
+            const char *rawMode = OPS_GetString();
+            if (rawMode == 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -implexFactor wants fixed|control" << endln;
+                return 0;
+            }
+            char modeTok[32];
+            int  mc = 0;
+            while (mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+
+            if (strcmp(modeTok, "fixed") == 0)
+                implexOpt.factorMode = LadrunoImplexOptions::FACTOR_FIXED;
+            else if (strcmp(modeTok, "control") == 0)
+                implexOpt.factorMode = LadrunoImplexOptions::FACTOR_CONTROL;
+            else {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -implexFactor wants fixed|control, got '" << modeTok
+                       << "'. fixed (the DEFAULT) takes f = alpha*dt_{n+1}/dt_n, the"
+                          " clock ratio, with the P2-2 guard knocking it to zero on a"
+                          " bad committed predecessor -- byte-identical to every build"
+                          " before ADR-92 P2-9; control keeps that value as an UPPER"
+                          " BOUND and picks, at the first trial of the step, the f that"
+                          " minimises ||sigma~(f) - sigma_impl|| in closed form"
+                          " (f* = clamp((A:B)/(B:B), 0, f_max), A = sigma_n + Ce:d_eps -"
+                          " sigma_impl, B = Ce:d_eps_p(n)) -- it needs -implexControl,"
+                          " which is what supplies sigma_impl at the trial." << endln;
+                return 0;
+            }
+        }
         // ------------------------------------------------------------------
         //  Ladruno (ADR-92 P1): the IMPL-EX flags.
         //
@@ -667,7 +714,8 @@ OPS_LadrunoSANISAND(void)
                        << " -Presidual / -Pmin / -honorTolR / -maxSubsteps /"
                        << " -implex / -implexControl / -implexAlpha / -implexDt /"
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
-                       << " -implexFlipAbsorb / -reversalTol / -reversalRel /"       // Ladruno ADR-92 P2-7c
+                       << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
+                       << " -reversalTol / -reversalRel /"
                        << " -flipAlphaIn" << endln;                                  // Ladruno ADR-92 P2-7c
                 return 0;
             }
@@ -1351,6 +1399,19 @@ LadrunoSANISAND::getCopy(const char *type)
 //                      -implexFlipAbsorb companion return on top of state
 //                      that already includes it.)
 //
+//  Ladruno ADR-92 P2-9 widened it once more, 32 -> 33:
+//
+//      data(32)     = (double)mImplexOpt.factorMode  (-implexFactor; the
+//                      deck's request, same rule as the rest of mImplexOpt --
+//                      recvSelf reconstructs the option set field by field, so
+//                      the wire needs its own slot even though
+//                      setLadrunoImplexOptions()'s struct copy carries it on
+//                      the getCopy(const char*) path)
+//
+//  mImplexCtlFPending (P2-9) is NOT sent: it is the per-step arm for the f*
+//  computation, transient and reconstructible from mImplexStepArmed, on the
+//  same rule as mImplexStepArmed and mPrimed themselves.
+//
 //  mPrimed is still NOT sent, on the same rule as
 //  mImplexGuardReversal/mImplexGuardSoftening above: it is transient,
 //  reconstructible from the next commit.
@@ -1397,7 +1458,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(32);                                                    // Ladruno ADR-92 P2-7c
+    static Vector ladrunoData(33);                                                    // Ladruno ADR-92 P2-9
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1442,6 +1503,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     ladrunoData(30) = mImplexOpt.flipAbsorb ? 1.0 : 0.0;
     ladrunoData(31) = mFlipSeen ? 1.0 : 0.0;
 
+    // Ladruno ADR-92 P2-9
+    ladrunoData(32) = (double)mImplexOpt.factorMode;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1461,7 +1525,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(32);                                                    // Ladruno ADR-92 P2-7c
+    static Vector ladrunoData(33);                                                    // Ladruno ADR-92 P2-9
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1495,6 +1559,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         opt.guard          = (ladrunoData(23) != 0.0);      // Ladruno ADR-92 P2-2
         opt.trialGuard     = (ladrunoData(26) != 0.0);      // Ladruno ADR-92 P2-6
         opt.flipAbsorb     = (ladrunoData(30) != 0.0);      // Ladruno ADR-92 P2-7c
+        opt.factorMode     = (int)ladrunoData(32);          // Ladruno ADR-92 P2-9
         this->ladrunoImplexInitState();
         if (opt.enabled && this->setLadrunoImplexOptions(opt, false) != 0) {
             opserr << "WARNING: LadrunoSANISAND::recvSelf - the received -implex option set"
@@ -1713,13 +1778,27 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     void noteHoldSkipCommit(void)       { nHoldSkipCommit++; }
     long getHoldSkipCommits(void) const { return nHoldSkipCommit; }
 
+    // Ladruno ADR-92 P2-9: the control-informed factor "BACKED OFF" census,
+    // read through `implexGuards`'s new slot 6. Bumped once per STEP per Gauss
+    // point (the f* computation is consumed once per step, with the arm)
+    // whenever the chosen f* is less than half the clock ratio f_max it was
+    // bounded by -- i.e. whenever the companion actually disagreed with the
+    // committed plastic direction enough to matter. It is the graded successor
+    // of P2-2's slot 1: a P2-2 fire is the special case f_max == 0, which is
+    // NOT counted here (there was no choice to make). Same contract as every
+    // counter above -- process-wide, non-destructive, not cleared by a commit
+    // round.
+    void noteControlFactorBackoff(void)       { nCtlFactorBackoff++; }
+    long getControlFactorBackoffs(void) const { return nCtlFactorBackoff; }
+
   private:
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
         nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0),
         nFloorFallback(0), nGuardF0(0), nHoldPreserved(0),
         nReversalNoise(0), nTrialGuardF0(0),
-        nHoldSkipCommit(0) {}   // Ladruno ADR-92 P2-5 / P2-6 / P2-5c
+        nHoldSkipCommit(0),
+        nCtlFactorBackoff(0) {}   // Ladruno ADR-92 P2-5 / P2-6 / P2-5c / P2-9
     LadrunoImplexGlobals(const LadrunoImplexGlobals &);
     LadrunoImplexGlobals &operator=(const LadrunoImplexGlobals &);
 
@@ -1736,6 +1815,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     long        nReversalNoise;    // Ladruno ADR-92 P2-5
     long        nTrialGuardF0;     // Ladruno ADR-92 P2-6
     long        nHoldSkipCommit;   // Ladruno ADR-92 P2-5c
+    long        nCtlFactorBackoff; // Ladruno ADR-92 P2-9
 };
 
 } // anonymous namespace
@@ -1756,6 +1836,7 @@ LadrunoSANISAND::ladrunoImplexInitState(void)
     mImplexDtCommit   = 0.0;
     mImplexDt0        = 0.0;
     mImplexFactor     = 0.0;
+    mImplexCtlFPending = false;   // Ladruno ADR-92 P2-9: armed by ladrunoImplexArmStep()
     mImplexStepArmed  = true;
     mImplexTrialDone  = false;
     // Ladruno ADR-92 P2-2: the guard is COMMITTED-state derived, so it starts
@@ -1798,13 +1879,17 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
         // alpha and the dt source. Ladruno ADR-92 P2-7c: -implexFlipAbsorb
         // joins too -- its default IS neutral (false/OFF), so the test is
         // simply "asked for ON".
+        // Ladruno ADR-92 P2-9: -implexFactor joins the list on the same rule --
+        // its default (fixed) IS neutral, so the test is "asked for control".
         if (opt.control || opt.alpha != 1.0 ||
             opt.dtSource != LadrunoImplexOptions::DT_PSEUDO ||
             opt.floorMode != LadrunoImplexOptions::FLOOR_IMPLICIT ||
-            !opt.guard || !opt.trialGuard || opt.flipAbsorb) {
+            !opt.guard || !opt.trialGuard || opt.flipAbsorb ||
+            opt.factorMode != LadrunoImplexOptions::FACTOR_FIXED) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -implexControl / -implexAlpha / -implexDt / -implexFloor /"
-                      " -implexGuard / -implexTrialGuard / -implexFlipAbsorb were given"
+                      " -implexGuard / -implexTrialGuard / -implexFlipAbsorb /"
+                      " -implexFactor were given"
                       " without -implex. Nothing would read them. Add -implex, or remove"
                       " them."
                    << endln;
@@ -1882,6 +1967,28 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
         return -1;
     }
 
+    // Ladruno ADR-92 P2-9: `-implexFactor control` without `-implexControl` is
+    // REFUSED, not silently downgraded. f* is chosen by aiming at the companion
+    // stress sigma_impl, and the companion is computed at the TRIAL only under
+    // -implexControl (ladrunoImplexTrial's `if (mImplexOpt.control)` probe) --
+    // with the control off there is nothing to aim at, so the flag would claim
+    // to have done something it did not do. Unconditional (NOT gated on
+    // `verbose`), on the P2-7c/RED-1 F5 rule: getCopy(const char*) and recvSelf
+    // pass verbose == false, and a per-Gauss-point clone must be refused
+    // exactly as the deck was.
+    if (opt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL && !opt.control) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -implexFactor control REQUIRES -implexControl. The"
+                  " control-informed factor f* = clamp((A:B)/(B:B), 0, f_max) is chosen"
+                  " by minimising the distance to the COMPANION stress sigma_impl"
+                  " (A = sigma_n + Ce:d_eps - sigma_impl, B = Ce:d_eps_p(n)), and the"
+                  " companion exists at the trial only under -implexControl. Add"
+                  " -implexControl $tol $reductionLimit, or use -implexFactor fixed"
+                  " (the DEFAULT), whose committed-predecessor guard (-implexGuard,"
+                  " ADR-92 P2-2) is the no-control fallback." << endln;
+        return -1;
+    }
+
     if (s == 2 && verbose) {
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                << ": -implex with IntScheme 2 is PERMITTED but is not the ADR-92"
@@ -1953,7 +2060,15 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
                        " 146569 measured the leg crawling at 0.8 um/step without it)"
                      : "OFF (a trial past tol refuses immediately, the pre-P2-6"
                        " behaviour)")
-               << ". All three are counted in the `implexGuards` response." << endln;
+               << ", -implexFactor "                                   // Ladruno ADR-92 P2-9
+               << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
+                     ? "control (f* = clamp((A:B)/(B:B), 0, f_max) at the FIRST trial of"
+                       " each step, frozen for the step -- the clock ratio becomes an"
+                       " upper bound and the companion picks the degree; the P2-2 guard"
+                       " still wins outright, since it makes f_max = 0)"
+                     : "fixed (DEFAULT: f = alpha*dt_{n+1}/dt_n, byte-identical to the"
+                       " pre-P2-9 build)")
+               << ". All are counted in the `implexGuards` response." << endln;
         opserr << "LadrunoSANISAND tag " << this->getTag()
                << ": READING HAZARD (ADR 92 section 8) -- every equilibrium on this"
                   " material is an equilibrium of the EXTRAPOLATED stress. Any limit"
@@ -2120,6 +2235,24 @@ LadrunoSANISAND::ladrunoImplexArmStep(void)
         mImplexFactor = 0.0;
         LadrunoImplexGlobals::instance().noteGuardF0();
     }
+
+    // Ladruno ADR-92 P2-9: the factor now standing is f_max -- the clock ratio,
+    // already knocked to 0 by the P2-2 guard above if that fired. Under
+    // `-implexFactor control` the FIRST trial pass of this step will replace it
+    // with f* <= f_max; arm that here, so "first trial of a step" means exactly
+    // what mImplexStepArmed already means (the first setTrialStrain carrying a
+    // strain increment after a commitState or a revertToLastCommit) and no
+    // second notion of freshness is introduced.
+    //
+    // PRECEDENCE, chosen and recorded here: the P2-2 guard is NOT bypassed. It
+    // runs first and unconditionally, so when it fires f_max == 0 and the clamp
+    // can only return 0 -- the guard wins outright, exactly as it does today,
+    // and its census slot 1 still counts it. f* replaces the guard's DEGREE
+    // only where the guard had nothing to say. Everything downstream (the W7
+    // refusal, the reduction floor, the P2-6 trial guard, implexDetail[5])
+    // reads mImplexFactor, i.e. the f ACTUALLY used, so none of that machinery
+    // can be short-circuited by this flag.
+    mImplexCtlFPending = (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL);
 
     mImplexStepArmed = false;
 }
@@ -2456,6 +2589,13 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         } else {
             mImplexDt     = 0.0;
             mImplexFactor = 0.0;                // no strain advanced, no plastic flow predicted
+            // Ladruno ADR-92 P2-9: a zero-increment evaluation has nothing to
+            // choose an f from (f_max is 0 here by construction), and it does
+            // NOT consume the arm -- so make sure it does not consume P2-9's
+            // arm either, or a stale `pending` from a trial refused before W1
+            // would be spent on this inert pass instead of on the first pass
+            // that actually moves.
+            mImplexCtlFPending = false;
         }
     }
 
@@ -2602,6 +2742,73 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
     // ---- W1: the extrapolated stress, INCREMENTAL --------------------------
     double K = 0.0, G = 0.0;
     this->ladrunoImplexFreezeTangent(K, G);
+
+    // ---- W1b: Ladruno ADR-92 P2-9, the control-informed factor -------------
+    //
+    // Reachable ONLY under `-implexFactor control`, which
+    // setLadrunoImplexOptions() has already refused without -implexControl --
+    // so sigImplicit above is a live companion return, not the uninitialised
+    // Vector it is on the control-off path. Under the DEFAULT `fixed` not one
+    // line of this block executes and the operator is byte-identical to the
+    // pre-P2-9 build.
+    //
+    // sigma~(f) is affine in f on the frozen Ce:
+    //
+    //     sigma~(f) - sigma_impl = A - f*B
+    //     A = sigma_n + Ce:d_eps - sigma_impl        (the f = 0 residual)
+    //     B = Ce:d_eps_p(n)                          (what one unit of f buys)
+    //
+    // so the f minimising ||A - f*B|| is (A:B)/(B:B), clamped into
+    // [0, f_max]. The inner product is DoubleDot2_2_Contr -- the one
+    // GetNorm_Contr, and therefore implexError itself, is built on, so the
+    // quantity being minimised IS the numerator of the control's own error.
+    //
+    // B:B == 0 means d_eps_p(n) is identically zero (an unprimed history, or a
+    // purely elastic one): there is no direction to choose and f_max stands,
+    // which is exactly today's behaviour -- and it is what keeps the P0 oracle's
+    // G0 rows byte-identical.
+    //
+    // Computed ONCE per step (mImplexCtlFPending, armed with the step in
+    // ladrunoImplexArmStep) and held: later iterates reuse it, so f is a
+    // constant within the step and the delivered operator is still exactly Ce.
+    // That is the property that removed the ladder, and P2-9 does not spend it.
+    // A retry at a smaller dt reverts first, which re-arms the step, so the
+    // retry recomputes f* against its own f_max.
+    if (mImplexCtlFPending) {
+        mImplexCtlFPending = false;
+
+        // f_max: the clock ratio as ladrunoImplexArmStep() left it -- already 0
+        // if the P2-2 guard fired, which is how that guard keeps precedence.
+        const double fMax = (mImplexFactor > 0.0) ? mImplexFactor : 0.0;
+
+        Vector dEpsTot(6);
+        dEpsTot = mEpsilon;
+        dEpsTot.addVector(1.0, mEpsilon_n, -1.0);          // d_eps
+
+        Vector Bctl(6);
+        Bctl = mCe * mImplexDEpsP;                         // B = Ce:d_eps_p(n)
+        const double BB = this->DoubleDot2_2_Contr(Bctl, Bctl);
+
+        if (BB > 0.0) {
+            Vector Actl(6);
+            Actl = mSigma_n;
+            Actl.addVector(1.0, mCe * dEpsTot, 1.0);
+            Actl.addVector(1.0, sigImplicit, -1.0);        // A = sigma_n + Ce:d_eps - sigma_impl
+
+            double fStar = this->DoubleDot2_2_Contr(Actl, Bctl) / BB;
+            if (fStar < 0.0)  fStar = 0.0;
+            if (fStar > fMax) fStar = fMax;
+
+            // "Backed off": the companion asked for less than half the clock
+            // ratio. Not counted when fMax == 0 -- there was no choice to make
+            // there, and P2-2's own slot 1 has already recorded it.
+            if (fMax > 0.0 && fStar < 0.5 * fMax)
+                LadrunoImplexGlobals::instance().noteControlFactorBackoff();
+
+            mImplexFactor = fStar;
+        }
+        // else: no plastic history to extrapolate; f_max stands untouched.
+    }
 
     Vector dEps(6);
     dEps = mEpsilon;
@@ -3614,8 +3821,9 @@ constexpr int LadrunoSanisandImplexRefusalsResponseID = 33093;   // Ladruno ADR-
 // band, same rule: response ids, not class tags.
 constexpr int LadrunoSanisandPsiResponseID           = 33094;   // Ladruno (TIMs F4)
 constexpr int LadrunoSanisandYieldDistanceResponseID = 33095;   // Ladruno (TIMs F4)
-// Ladruno ADR-92 P2: `implexGuards`, the census of six P2 events (P2-1, P2-2,
-// P2-3, P2-5's slot 3 (formerly reserved), P2-6's slot 4, and P2-5c's slot 5).
+// Ladruno ADR-92 P2: `implexGuards`, the census of seven P2 events (P2-1, P2-2,
+// P2-3, P2-5's slot 3 (formerly reserved), P2-6's slot 4, P2-5c's slot 5, and
+// P2-9's slot 6 -- the control-informed factor backing off below 0.5*f_max).
 // Same band, same rule -- a response id, not a class tag. None of the six
 // prints anything per occurrence (they are the designed behaviour of
 // P2-1/2/3/5/5c/6, not warnings), so this response is the ONLY record that
@@ -3667,10 +3875,10 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static Vector probe1(1);
         return new MaterialResponse(this, LadrunoSanisandYieldDistanceResponseID, probe1);
     }
-    // Ladruno ADR-92 P2 (grown to 5 slots by P2-6, 6 by P2-5c)
+    // Ladruno ADR-92 P2 (grown to 5 slots by P2-6, 6 by P2-5c, 7 by P2-9)
     if (argc > 0 && (strcmp(argv[0], "implexGuards") == 0 ||
                      strcmp(argv[0], "ImplexGuards") == 0)) {
-        static Vector probe4g(6);
+        static Vector probe4g(7);   // Ladruno ADR-92 P2-9
         return new MaterialResponse(this, LadrunoSanisandImplexGuardsResponseID, probe4g);
     }
     return ManzariDafalias::setResponse(argv, argc, output);
@@ -3715,7 +3923,7 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
     // P2-5c). Process-wide, non-destructive, and NOT cleared by a commit
     // round -- a leg's running totals, exactly like `implexRefusals` beside it.
     if (responseID == LadrunoSanisandImplexGuardsResponseID) {
-        static Vector out4g(6);
+        static Vector out4g(7);   // Ladruno ADR-92 P2-9
         const LadrunoImplexGlobals &g = LadrunoImplexGlobals::instance();
         out4g(0) = (double)g.getFloorFallbacks();        // P2-1: floor -> implicit stress
         out4g(1) = (double)g.getGuardsFired();           // P2-2: f = 0 after reversal/softening
@@ -3723,6 +3931,7 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out4g(3) = (double)g.getReversalNoiseGuards();   // Ladruno ADR-92 P2-5: reversal-noise guards
         out4g(4) = (double)g.getTrialGuardF0();          // Ladruno ADR-92 P2-6: trial-time f = 0 fallbacks
         out4g(5) = (double)g.getHoldSkipCommits();       // Ladruno ADR-92 P2-5c: hold-skip commits (once/point/hold)
+        out4g(6) = (double)g.getControlFactorBackoffs(); // Ladruno ADR-92 P2-9: f* < 0.5*f_max ("backed off")
         return matInformation.setVector(out4g);
     }
     if (responseID == LadrunoSanisandImplexDetailResponseID) {
@@ -3732,6 +3941,10 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out6(2) = mImplexErrorVol;                     // volumetric leg (sqrt(3)|dp|)
         out6(3) = mImplexClampFired ? 1.0 : 0.0;       // p_min clamp on the LAST pass
         out6(4) = (double)mImplexClampCount;           // ... and how often, ever
+        // Ladruno ADR-92 P2-9: this slot is "the f ACTUALLY used for the last
+        // extrapolation" and always was -- under `-implexFactor control` it now
+        // carries f* rather than the raw clock ratio, and it still carries the
+        // 0.0 that P2-2's guard or P2-6's trial fallback wrote if either acted.
         out6(5) = mImplexFactor;                       // f, frozen for this step
         return matInformation.setVector(out6);
     }
@@ -3889,6 +4102,17 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
              " committed AT the elastic->plastic stage flip; -flipAlphaIn "
           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla (DEFAULT)")
           << ")" << endln;
+        // Ladruno ADR-92 P2-9
+        s << "              -implexFactor = "
+          << (mImplexOpt.factorMode == LadrunoImplexOptions::FACTOR_CONTROL
+                ? "control (f* = clamp((A:B)/(B:B), 0, f_max) with"
+                  " A = sigma_n + Ce:d_eps - sigma_impl and B = Ce:d_eps_p(n), chosen at"
+                  " the FIRST trial of the step and frozen for it; the clock ratio is"
+                  " the upper bound f_max, and -implexGuard still wins outright because"
+                  " it makes f_max = 0)"
+                : "fixed (DEFAULT: f = alpha*dt_{n+1}/dt_n, byte-identical to the"
+                  " pre-P2-9 build)")
+          << endln;
         s << "              implexError (last commit) = " << mImplexError
           << "   [deviatoric " << mImplexErrorDev
           << ", volumetric " << mImplexErrorVol << "]" << endln;
