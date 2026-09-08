@@ -1,4 +1,4 @@
-"""ADR-97 P0 oracle 4/5 -- the gate that separates the CLOSEST-POINT map from the
+"""ADR-97 P0 oracle 5/6 -- the gate that separates the CLOSEST-POINT map from the
 shipped CUTTING-PLANE (Ortiz-Simo) ``Backward_Euler``.
 
 WHAT IS BEING SHOWN
@@ -168,7 +168,7 @@ def step_halving(label, runner, mat, legs, nlist, ref_n):
 
 
 def main():
-    banner("ADR-97 oracle 4/5 -- path independence: CPPM vs cutting plane")
+    banner("ADR-97 oracle 5/6 -- path independence: CPPM vs cutting plane")
 
     # =====================================================================
     section("A. von Mises + ARMSTRONG-FREDERICK, 3-leg path, step halving")

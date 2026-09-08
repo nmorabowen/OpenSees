@@ -1,4 +1,4 @@
-"""ADR-97 P0 oracle 3/5 -- Mohr-Coulomb closest-point return in PRINCIPAL STRESS
+"""ADR-97 P0 oracle 3/6 -- Mohr-Coulomb closest-point return in PRINCIPAL STRESS
 space (Clausen, Damkilde & Andersen 2006/2007 style): return to the face, to
 either edge, or to the apex, with the Koiter consistent tangent per region
 pushed back to the 6D Voigt frame through the principal-direction ("T") term.
@@ -322,7 +322,7 @@ def report(mat, name, sig_tr):
 
 
 def main():
-    banner("ADR-97 oracle 3/5 -- MOHR-COULOMB principal-space return (Clausen)")
+    banner("ADR-97 oracle 3/6 -- MOHR-COULOMB principal-space return (Clausen)")
     mat = MC()
     print(f"Material: E = 30000, nu = 0.25, phi = 30 deg, psi = 10 deg "
           f"(NON-associated), c = 10.")
