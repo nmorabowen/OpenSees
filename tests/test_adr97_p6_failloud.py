@@ -28,6 +28,9 @@ Covered here:
 
 Zone-A, ~10 s.
 """
+import subprocess  # Ladruno (ADR-97 wp/97f, D5): child-process stderr checks
+import sys
+
 import numpy as np
 import pytest
 
@@ -264,3 +267,239 @@ def test_dp_hydrostatic_tension_never_commits_nan_under_closest_point():
     for i in range(len(r["sigma"])):
         f = S._f_dp(r["sigma"][i], r["BackStress"][i])
         assert f <= 1e-6, (i, f)
+
+
+# ===========================================================================
+# ADR-97 wp/97f (D5): experimental_integrator gate
+# ===========================================================================
+#: The four integrators D5 gates. `Backward_Euler_LineSearch` and
+#: `Runge_Kutta_45_Error_Control_old` are OUT of scope here -- they stay
+#: refused outright (ADR-94 M7/M8), with or without the flag.
+EXPLICIT_METHODS = ["Forward_Euler", "Forward_Euler_Subincrement",
+                     "Modified_Euler_Error_Control",
+                     "Runge_Kutta_45_Error_Control"]
+
+
+def _mat_vm_raw(tag, method="Backward_Euler", tangent="Secant",
+                experimental=None, niter=100):
+    """Same VonMises deck as ``test_adr97_p1_smooth.mat_vm``, but with a
+    direct ``experimental_integrator`` knob -- ``S.mat_vm`` has no such
+    parameter."""
+    extra = (["experimental_integrator", int(experimental)]
+             if experimental is not None else [])
+    ops.nDMaterial(
+        "ASDPlasticMaterial3D", tag,
+        "VonMises_YF", "VonMises_PF", "LinearIsotropic3D_EL", S.IV_VM_LIN,
+        "Begin_Model_Parameters",
+        "YoungsModulus", S.E_VM, "PoissonsRatio", S.NU_VM,
+        "ScalarLinearHardeningParameter", 0.0,
+        "TensorLinearHardeningParameter", 0.0, "MassDensity", 0.0,
+        "End_Model_Parameters",
+        "Begin_Internal_Variables", "YieldStress", S.SY_VM,
+        "BackStress", 0., 0., 0., 0., 0., 0., "End_Internal_Variables",
+        "Begin_Integration_Options",
+        "integration_method", method, "tangent_type", tangent,
+        "n_max_iterations", int(niter), *extra,
+        "End_Integration_Options",
+    )
+
+
+@pytest.mark.parametrize("method", EXPLICIT_METHODS)
+def test_explicit_integrator_refused_without_the_flag(cp_available, method):
+    """ADR-97 D5.  Without ``experimental_integrator 1`` the four explicit
+    integrators are refused at parse time -- ADR-94 M2/M8 found real defects
+    in them (empty drift-correction bodies, an error controller that accepts
+    unconditionally at ``rk45_dT_min``) and rewriting them is a different ADR;
+    this is the gate, not the fix."""
+    assert not S._constructible(
+        lambda t: _mat_vm_raw(t, method=method, tangent="Secant")), (
+        "integration_method %s was accepted with experimental_integrator "
+        "unset -- the ADR-97 D5 gate is gone" % method)
+
+
+@pytest.mark.parametrize("method", EXPLICIT_METHODS)
+def test_explicit_integrator_accepted_with_the_flag(cp_available, method):
+    """The opt-in half of the same gate: setting the flag must let every one
+    of the four explicit integrators build (D5 gates SELECTION, it does not
+    remove the integrators)."""
+    assert S._constructible(
+        lambda t: _mat_vm_raw(t, method=method, tangent="Secant",
+                              experimental=1)), (
+        "integration_method %s was refused even WITH "
+        "experimental_integrator 1 -- the opt-in half of ADR-97 D5 is "
+        "broken" % method)
+
+
+@pytest.mark.parametrize("method", EXPLICIT_METHODS)
+def test_explicit_integrator_experimental_flag_zero_still_refuses(
+        cp_available, method):
+    """Both directions, explicitly: `experimental_integrator 0` (the
+    documented default value, spelled out rather than omitted) must refuse
+    exactly like leaving the option out entirely."""
+    assert not S._constructible(
+        lambda t: _mat_vm_raw(t, method=method, tangent="Secant",
+                              experimental=0)), (
+        "integration_method %s was accepted with experimental_integrator 0 "
+        "spelled out explicitly" % method)
+
+
+def test_backward_euler_and_closest_point_unaffected_by_the_flag(
+        cp_available):
+    """ADR-97 D1/D5: the gate is scoped to the four explicit integrators
+    only.  Backward_Euler and Closest_Point must build identically whether
+    experimental_integrator is left unset, 0, or 1 -- byte-identity itself is
+    gate 4 (tests/test_adr97_p4_inertness.py); this is the narrower
+    constructibility half."""
+    for method, tangent in (("Backward_Euler", "Secant"),
+                            ("Closest_Point", "Algorithmic")):
+        for experimental in (None, 0, 1):
+            assert S._constructible(
+                lambda t, m=method, g=tangent, e=experimental:
+                    _mat_vm_raw(t, method=m, tangent=g, experimental=e)), (
+                "%s was refused with experimental_integrator=%r -- the D5 "
+                "gate is no longer scoped to the four explicit integrators "
+                "only" % (method, experimental))
+
+
+def test_algorithmic_still_refused_on_an_opted_in_explicit_integrator(
+        cp_available):
+    """Closes a coverage gap the D5 gate would otherwise open: with
+    experimental_integrator=1,
+    ``test_algorithmic_is_refused_with_any_other_integrator`` above stops
+    isolating the ADR-97 D2 tangent/integrator cross-check for three of its
+    four parametrized methods, because the D5 gate now refuses those decks
+    FIRST, for an unrelated reason -- exactly the class of "refused, but for
+    the wrong reason" defect the ADR-97 P3 report's HB_sigma_ci finding
+    warns about. Opting in here removes the D5 refusal so the assertion
+    below is unambiguously exercising D2."""
+    for method in EXPLICIT_METHODS:
+        assert not S._constructible(
+            lambda t, m=method: _mat_vm_raw(t, method=m, tangent="Algorithmic",
+                                            experimental=1)), (
+            "tangent_type Algorithmic was accepted with integration_method "
+            "%s (even opted in via experimental_integrator 1) -- the ADR-97 "
+            "D2 cross-refusal is gone" % method)
+
+
+def test_experimental_integrator_typo_is_still_rejected(cp_available):
+    """The ADR-94 wp/94a unknown-token contract extends to the new option
+    name: a misspelling is an ERROR, not a silently-ignored, still-refused
+    deck that happens to look the same."""
+    def _typo_deck(t):
+        ops.nDMaterial(
+            "ASDPlasticMaterial3D", t,
+            "VonMises_YF", "VonMises_PF", "LinearIsotropic3D_EL", S.IV_VM_LIN,
+            "Begin_Model_Parameters",
+            "YoungsModulus", S.E_VM, "PoissonsRatio", S.NU_VM,
+            "ScalarLinearHardeningParameter", 0.0,
+            "TensorLinearHardeningParameter", 0.0, "MassDensity", 0.0,
+            "End_Model_Parameters",
+            "Begin_Internal_Variables", "YieldStress", S.SY_VM,
+            "BackStress", 0., 0., 0., 0., 0., 0., "End_Internal_Variables",
+            "Begin_Integration_Options",
+            "integration_method", "Forward_Euler",
+            "experimental_integratr", 1,   # deliberate typo
+            "End_Integration_Options")
+    assert not S._constructible(_typo_deck), (
+        "a misspelled 'experimental_integratr' was silently accepted -- the "
+        "ADR-94 wp/94a unknown-token contract no longer covers the new D5 "
+        "option")
+
+
+def _child_script(tests_dir, method, experimental):
+    """Build a standalone script that constructs a VonMises ASDPlasticMaterial3D
+    deck with the given integration_method (and, if not None, an explicit
+    ``experimental_integrator`` value), then prints whether construction
+    succeeded. Run in a FRESH interpreter -- see ``_run_child``'s docstring
+    for why this cannot be done with pytest's own capfd."""
+    lines = [
+        'import sys; sys.path.insert(0, %r)' % tests_dir,
+        'from _testbed import ops',
+        'ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)',
+        'CUBE = [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0,0,1),(1,0,1),(1,1,1),(0,1,1)]',
+        'for k, c in enumerate(CUBE):',
+        '    ops.node(k + 1, *map(float, c))',
+        'rc = None',
+        'try:',
+        '    ops.nDMaterial(',
+        '        "ASDPlasticMaterial3D", 1,',
+        '        "VonMises_YF", "VonMises_PF", "LinearIsotropic3D_EL",',
+        '        "BackStress(TensorLinearHardeningFunction):",',
+        '        "Begin_Model_Parameters",',
+        '        "YoungsModulus", 70000.0, "PoissonsRatio", 0.3,',
+        '        "ScalarLinearHardeningParameter", 0.0,',
+        '        "TensorLinearHardeningParameter", 0.0, "MassDensity", 0.0,',
+        '        "End_Model_Parameters",',
+        '        "Begin_Internal_Variables", "YieldStress", 30.0,',
+        '        "BackStress", 0., 0., 0., 0., 0., 0., "End_Internal_Variables",',
+        '        "Begin_Integration_Options",',
+        '        "integration_method", %r, "tangent_type", "Secant",' % method,
+    ]
+    if experimental is not None:
+        lines.append('        "experimental_integrator", %d,' % int(experimental))
+    lines += [
+        '        "End_Integration_Options",',
+        '    )',
+        '    ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)',
+        '    rc = "CONSTRUCTED"',
+        'except Exception as e:',
+        '    rc = "RAISED " + str(e)',
+        'print("RESULT", rc)',
+    ]
+    return chr(10).join(lines) + chr(10)
+
+
+def _run_child(script, timeout=60):
+    """Run ``script`` in a fresh interpreter and return the completed run.
+
+    Same MEASURED TRAP as ``test_adr94_hlist_mechanical._run_child``: pytest's
+    ``capfd`` cannot see anything the .pyd writes via ``cout``/``opserr`` on
+    this build (a DLL-boundary fd-duplication issue), so the D5 refusal
+    message can only be asserted on a CHILD process's real OS-level
+    stdout/stderr.
+    """
+    import os
+    env = dict(os.environ)
+    dist_dir = os.path.dirname(os.path.abspath(ops.__file__))
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    env["PYTHONPATH"] = dist_dir + os.pathsep + tests_dir + os.pathsep + env.get("PYTHONPATH", "")
+    env["PATH"] = dist_dir + os.pathsep + env.get("PATH", "")
+    return subprocess.run([sys.executable, "-c", script], capture_output=True,
+                          text=True, env=env, timeout=timeout,
+                          cwd=tests_dir, stdin=subprocess.DEVNULL)
+
+
+def test_explicit_integrator_refusal_message_on_real_stderr(cp_available):
+    """Child-process check that the refusal is actually LOUD: the real
+    process stdout/stderr (not pytest's capfd, which cannot see this .pyd's
+    output -- see ``_run_child``) must name ADR-97 D5 and the supported
+    implicit pair when an explicit integrator is picked without the flag."""
+    import os
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    script = _child_script(tests_dir, "Forward_Euler", None)
+    proc = _run_child(script)
+    combined = proc.stdout + proc.stderr
+    assert "RESULT RAISED" in combined, (
+        f"Forward_Euler without experimental_integrator was NOT refused in "
+        f"a fresh process (stdout={proc.stdout!r}, stderr={proc.stderr!r})")
+    assert "ADR-97 D5" in combined, (
+        f"the D5 refusal message did not reach real stdout/stderr "
+        f"(stdout={proc.stdout!r}, stderr={proc.stderr!r})")
+    assert "Backward_Euler" in combined and "Closest_Point" in combined, (
+        f"the D5 refusal message no longer names the supported implicit "
+        f"pair (stdout={proc.stdout!r}, stderr={proc.stderr!r})")
+
+
+def test_explicit_integrator_opt_in_reaches_construction_on_real_process(
+        cp_available):
+    """No-regression twin, same child-process rig: WITH the flag, the same
+    deck actually constructs (real process, not just the in-process
+    ``_constructible`` helper)."""
+    import os
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    script = _child_script(tests_dir, "Forward_Euler", 1)
+    proc = _run_child(script)
+    combined = proc.stdout + proc.stderr
+    assert "RESULT CONSTRUCTED" in combined, (
+        f"Forward_Euler WITH experimental_integrator 1 did not construct in "
+        f"a fresh process (stdout={proc.stdout!r}, stderr={proc.stderr!r})")

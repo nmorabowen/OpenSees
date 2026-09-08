@@ -342,6 +342,7 @@ def test_strict_convergence_gates_forward_euler(mc_available):
     inadmissible.
     """
     _tet_build(lambda t: _mat_mc(t, opts=["integration_method", "Forward_Euler",
+                                           "experimental_integrator", 1,  # Ladruno (ADR-97 wp/97f, D5)
                                            "strict_convergence", 1,
                                            "n_max_iterations", 100]),
                nsteps=20, utop=-0.02)
@@ -374,6 +375,7 @@ def test_strict_convergence_off_still_runs_forward_euler(mc_available):
     before the fix -- the strict helper is constant-false, so nothing in the
     flag-off path changed except the VALUE a failure site returns."""
     _tet_build(lambda t: _mat_mc(t, opts=["integration_method", "Forward_Euler",
+                                           "experimental_integrator", 1,  # Ladruno (ADR-97 wp/97f, D5)
                                            "strict_convergence", 0,
                                            "n_max_iterations", 100]),
                nsteps=20, utop=-0.02)
