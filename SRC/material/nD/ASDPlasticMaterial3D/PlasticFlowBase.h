@@ -56,6 +56,27 @@ struct pf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
 template <typename T>
 struct pf_has_cp_derivatives : std::false_type {};
 
+// Ladruno (ADR-97 wp/97c): twin of `yf_cp_principal_family` (YieldFunctionBase.h).
+// The material takes the principal-stress-space closest-point path only when the
+// yield function's marker and this one are EQUAL and non-zero.
+template <typename T>
+struct pf_cp_principal_family : std::integral_constant<int, 0> {};
+
+// Ladruno (ADR-97 wp/97c): the dilatancy this flow direction contributes to the
+// principal-space return.  The header's `m` is
+//     m = deviator( dg/dsigma evaluated with PHI ) + sin(psi)/3 * delta
+// -- the DEVIATORIC shape of the phi-surface plus a psi-controlled volumetric
+// part, NOT the textbook non-associated gradient (which would use psi in the
+// deviatoric shape too).  In principal space that is exactly
+//     m_ij = a_ij - (sin phi)/3 * [1,1,1] + (sin psi)/3 * [1,1,1]
+// which reduces to a_ij when psi == phi, as it must.  `sin_phi` is read back for
+// a consistency check against the yield function's own (they share ONE MC_phi
+// parameter object -- utuple_storage de-duplicates parameters by type).
+#define CP_PRINCIPAL_MC_FLOW_PARAMS template <typename StorageType, typename ParameterStorageType> \
+    bool cp_mc_flow_params(const StorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage, \
+        double& sin_phi, double& sin_psi) const
+
 // Ladruno (ADR-97 wp/97b): dm/dsigma, the 6x6 derivative of the flow direction
 // with respect to the STORED stress slots -- the `dl * dm/ds` term of the
 // algorithmic elastic modulus Xi = (E^-1 + dl*dm/ds)^-1.  ADR-94 M3 measured
@@ -156,6 +177,17 @@ public:
         (void) internal_variables_storage;
         (void) parameters_storage;
         out.setZero();
+    }
+
+    // Ladruno (ADR-97 wp/97c): default -- this flow direction is not a
+    // Mohr-Coulomb potential.
+    CP_PRINCIPAL_MC_FLOW_PARAMS
+    {
+        (void) internal_variables_storage;
+        (void) parameters_storage;
+        sin_phi = 0.0;
+        sin_psi = 0.0;
+        return false;
     }
 
     inline const char* getName() const { return static_cast<T*>(this)->NAME; }

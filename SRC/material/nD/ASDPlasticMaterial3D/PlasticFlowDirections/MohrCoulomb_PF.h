@@ -196,6 +196,21 @@ public:
         return vv_out;
     }
 
+    // Ladruno (ADR-97 wp/97c): the principal-space dilatancy constants.  NOTE
+    // that this functor's `c` is scaled by M_PI/180 a few lines above (a units
+    // wart recorded in LEDGER_quirks -- benign there because c is additive in g
+    // and dies under differentiation); the closest-point map never reads c from
+    // the flow potential, only sin(psi), so the wart cannot reach it.
+    CP_PRINCIPAL_MC_FLOW_PARAMS
+    {
+        (void) internal_variables_storage;
+        const double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        const double psi = GET_PARAMETER_VALUE(MC_psi)*M_PI/180;
+        sin_phi = std::sin(phi);
+        sin_psi = std::sin(psi);
+        return true;
+    }
+
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
     using parameters_t = std::tuple<MC_phi,MC_c,MC_ds, MC_psi>;
@@ -207,5 +222,10 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97c): principal-stress-space closest-point family 1.
+template<class NO_HARDENING>
+struct pf_cp_principal_family<MohrCoulomb_PF<NO_HARDENING>>
+    : std::integral_constant<int, 1> {};
 
 #endif

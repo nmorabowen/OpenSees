@@ -572,10 +572,13 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
                     else if (std::strcmp(method_name, "Closest_Point") == 0)
                     {
-                        // Ladruno (ADR-97 wp/97b): the closest-point return map.
-                        // Available family by family (ADR-97 D3): P1 ships
-                        // VonMises and DruckerPrager (flank + apex) with Null,
-                        // Linear scalar/tensor and ArmstrongFrederick hardening.
+                        // Ladruno (ADR-97 wp/97b, extended wp/97c): the
+                        // closest-point return map.  Available family by family
+                        // (ADR-97 D3): P1 ships VonMises and DruckerPrager
+                        // (flank + apex) with Null, Linear scalar/tensor and
+                        // ArmstrongFrederick hardening; P2 adds the principal-
+                        // stress-space MohrCoulomb and MohrCoulombTensionCutoff
+                        // returns for MATCHED YF/PF pairs only.
                         // A specialization whose YF, PF or hardening law has not
                         // opted in is refused HERE rather than silently
                         // approximated with the inert zero/finite-difference
@@ -591,9 +594,17 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                             opserr << "   ADR-97 D3: the closest-point map is added"
                                    << " family by family. P1 covers VonMises and"
                                    << " DruckerPrager with Null / Linear / "
-                                   << "ArmstrongFrederick hardening; MohrCoulomb and"
-                                   << " MohrCoulombTensionCutoff are P2, HoekBrown"
-                                   << " P3, StiffSoil P5. Use Backward_Euler."
+                                   << "ArmstrongFrederick hardening; P2 adds the"
+                                   << " perfectly plastic MohrCoulomb and"
+                                   << " MohrCoulombTensionCutoff families, but ONLY"
+                                   << " where the yield function AND the plastic flow"
+                                   << " direction are both of that family -- a mixed"
+                                   << " pairing (MohrCoulomb_YF with VonMises_PF or"
+                                   << " DruckerPrager_PF, VonMises_YF or"
+                                   << " DruckerPrager_YF with MohrCoulomb_PF,"
+                                   << " HoekBrown_PF with anything) is verified by no"
+                                   << " oracle and stays refused. HoekBrown is P3,"
+                                   << " StiffSoil P5. Use Backward_Euler."
                                    << endln;
                             asdp_parse_rejected = true;
                             return false;
