@@ -1,0 +1,422 @@
+{
+ "material_common": {
+  "G0": 264.32,
+  "nu": 0.3129,
+  "e_init": 0.6271,
+  "Mc": 1.3309,
+  "c": 0.71,
+  "lambda_c": 0.027,
+  "e0": 0.83,
+  "ksi": 0.45,
+  "Patm": 101.0,
+  "m": 0.005,
+  "h0": 1.3,
+  "ch": 0.968,
+  "nb": 3.5,
+  "A0": 0.05,
+  "nd": 5.75,
+  "zmax": 12.5,
+  "cz": 1100.0,
+  "Den": 2.0,
+  "IntScheme": 1,
+  "TanType": 2,
+  "TanType_superseded": 0,
+  "TanType_declaration": "WHAT IT SELECTS.  `ManzariDafalias3D::getTangent()` returns `mCe` for 0, `mCep` for 1 and `mCep_Consistent` for anything else (SRC/material/nD/UWmaterials/ManzariDafalias3D.cpp:134-142).  `mCe` is the ELASTIC tangent, so AT TanType 0 `algorithm Newton` IS MODIFIED NEWTON.  The parser default is 0 (SRC/.../LadrunoSANISAND.cpp:117, copied deliberately from `OPS_ManzariDafaliasMaterial` so a renamed deck behaves identically) while the material's own null and parallel constructors default to 2 (ManzariDafalias.cpp:365, :426).  This sheet declared 0 explicitly from the first leg, which made the harness HONEST about what it did and did not make it RIGHT: every D-V, D-L, U-V and U-L leg run before 2026-09-06 gave Newton the elastic tangent.  ADR 90 section 1.2.2 (fork, 2026-09-05) reports it as a fork-wide deck defect, invisible on the zero-free-DOF material-point decks every fork SANISAND test uses and worth about 7x on a boundary-value problem; section 5.1 measures the extreme case, an h0 = 0.25 leg advancing 11 steps to s/B = 1.6e-4 in 350 s at the parser default. MEASURED HERE 2026-09-06 on cell D-V, coarse mesh, build e95a1c74f7e15d7de8655eeeb004d7f34d81d512, host nmbMain, driver Tries/response-curve-matrix/model/harness/drive.py, strict ladder, ds pinned at 1e-4 m both ways, 900 s of push each, evidence labs/ape/response-curve-matrix/level3/D-V-s19-a-tan0-disp/coarse/out/ and .../D-V-s19-b-tan2-disp/coarse/out/.  At the declared NormDispIncr 1e-5 the tangent is worth, on this drained push: MEDIAN ITERATIONS PER STEP 10 -> 7, MAXIMUM 29 -> 8, WALL 28.81 -> 19.64 s a step (1.47x), REACH in a fixed budget s/B 0.00200 -> 0.00273 (37 % further), and the FIRST STEP moves from the line-search rung to plain Newton -- leg a's step 1 needed 25 failed Newton iterations and then NewtonLineSearch, leg b's took 8 iterations of plain Newton.  Every row of leg b is on rung 0; neither leg subdivided. NOT the 7x ADR 90 reports, and the direction is the same: 1.47x on wall and 1.43x on iterations at 21 058 DOF on the coarse mesh.  The ~7x is a boundary-value figure from a different deck, mesh and lane and is not reproduced here; nothing in this act should quote it as ours. AND THE CURVE DOES NOT MOVE.  Q at matched settlement, leg b against leg a, is +0.12 to +0.28 % over rows 3 to 30 and -0.55 % on row 1 (the row the step-size tripwire already says is an elastic predictor).  That is well inside this act's own solver-configuration floor -- Esmeralda's UmfPack against this desktop's Pardiso reads 2.8 % on D-L at matched settlement -- and inside ADR 90 section 5.3's 0.52 % across a complete configuration change.  So the consistent tangent is FREE: the same answer, sooner. AND IT IS NOT FREE ON D-L, WHICH IS THE OTHER HALF OF THIS DECLARATION. Cell D-L is `LadrunoSANISAND` with `-Presidual 0.0`, so the stress-free ring beside the footing edge has no strength AND, for SANISAND, no stiffness: the assembled tangent there is locally ABSENT.  `mCe` is nonsingular everywhere by construction, so at TanType 0 modified Newton keeps producing a correction at a point where the true tangent has none and limps on until the residual itself stops falling; `mCep_Consistent` reports the absence as soon as the ring's Gauss points reach it.  MEASURED 2026-09-06, evidence labs/ape/response-curve-matrix/level3/D-L-s19-dl-strict-tan2/coarse/out/ against cluster job 146299 (.../D-L-dl-strict-ds1e-4/, build a71cdb197, node14): the two legs are THE SAME PROBLEM \u2014 Q at exactly matched settlement agrees to -0.12 to -0.24 % over 140 rows, across two machines, two builds and two tangents \u2014 and the TanType 2 leg meets its FIRST Newton failure at s/B = 0.00927 and its first subdivision at 0.00933, against the TanType 0 leg's 0.01533.  The 0.0206 that leg is recorded as walling at is where its SUBDIVISION BUDGET ran out, not where it stopped converging. THE DECLARATION IS STILL 2, and the reason is the one this act applies to the relaxed ladder rung: a state reached by a correction that is not a Newton step for the problem is not an equilibrium the leg claimed.  But the cost is real and is declared with it \u2014 a D-L leg that wants REACH may take `--tantype 0` and MUST say so in its own note, because its rows past s/B 0.00933 were carried by a tangent the problem does not have.  The clean comparison is still missing: a desktop TanType 0 D-L leg at build e95a1c74f carried past 0.0153, and a TanType 2 + `NormUnbalance` 1e-5 W D-L leg, neither of which has run. SCOPE.  This is a DRAINED measurement.  The undrained row's own S7b paragraph records `TanType` 0, 1 and 2 as indistinguishable, and that was measured on ONE STEP -- the undrained FIRST push step -- where the binding constraint is the near-incompressible u-p coupling and not the tangent; see `push.push_increment_declaration`, which now carries that caveat.  The undrained row has NOT been re-measured at TanType 2 over a push.  It takes the amended declaration because the tangent is a solver choice and cannot move a converged answer, and the first undrained leg run under it should say in its own note whether the cost moved. REACHABLE IN ONE WORD: `drive.py --tantype 0` restores the old declaration exactly, and `--tantype 1` gives the continuum elastoplastic tangent, which nothing in this act has measured.  Refused on D-MC and D-DP, whose materials have no such parameter.\n",
+  "JacoType": 1,
+  "TolF": 1e-10,
+  "TolR": 1e-10,
+  "_implex": {
+   "enabled": true,
+   "max_substeps": 20000,
+   "control": {
+    "tol": 0.1,
+    "reduction_limit": 0.01
+   },
+   "alpha": null,
+   "dt": null,
+   "dt_source": "pseudo (the fork's default: ops_Dt = d(lambda) under DisplacementControl, which the D2 guard refuses at the first sign change \u2014 measured 2026-09-06, S21; ADR 92 D2's claim that pseudo is correct for this deck holds for a LoadControl(-ds) pattern, not for this one)",
+   "stage_rule": "IMPL-EX IS INERT AT STAGE 0, and this harness's S1-S4 are stage 0. `mElastFlag` \u2014 a STATIC, flipped for every SANISAND instance at once by `updateMaterialStage` \u2014 gates `integrate()`'s elastic branch, and while it is 0 the extrapolated path is unreachable.  So gravity (S1), the plastic admission's `LoadControl 0.0` re-equilibration (S2), the consolidation hold (S3) and the reference state (S4) are BIT-IDENTICAL with the flag on or off, and IMPL-EX's own history \u2014 `d_eps_p(n)` and the `dt` bookkeeping \u2014 initialises at the flip to `updateMaterialStage 1`, not before it.  The four S4 gates therefore read the same on an --implex leg as on an implicit one, and any difference between the two is a difference in the PUSH.\nTHE FIRST PLASTIC STEP AFTER THE FLIP IS EXEMT FROM `-implexControl` REFUSAL, by the fork's own design and not by our leniency. `d_eps_p(n) = eps_p(n) - eps_p(n-1)` is identically zero on that one step (there is no committed plastic history yet), so `sigma~ = sigma_n + Ce:d_eps` is a pure elastic predictor with no extrapolation to be wrong about.  The `implexError` measured there is the companion's own DRIFT-CORRECTION JUMP from wherever the elastic stage left the stress to the first plastic return; it does not shrink with `d_eps`, and refusing on it means refusing forever.  The fork measured exactly that before the fix (`_adr92_p1_bvp_gate_rerun.md`): the registered arm refused step 1 of every stage at `implexError` 0.13-0.30 against `tol = 0.05`, before any real extrapolation had happened.  The error is still COMPUTED and REPORTED on that step through `implexError` / `implexDetail` / `avgImplexError`; only the refusal is suppressed, and only there.  Every later step in the stage is primed and refused normally.  Read beside this act's own step-size tripwire, which reports eta after step 1 against M_c for the same reason: the first row of a push is not a stiffness and is not an error either.\n",
+   "reading_hazard": "AN --implex CURVE SATISFIES EQUILIBRIUM WITH THE EXTRAPOLATED STRESS, NOT THE IMPLICIT ONE.  A limit point, a plateau or a capacity read off one is NOT EVIDENCE OF ANYTHING ON ITS OWN.  The guide's section 8 states the discipline and this sheet adopts it whole:\n\n  1. CONFIRM ON THE IMPLICIT MATERIAL, and only over the OVERLAP \u2014 up to\n     the last settlement the implicit solver itself reaches.  Two arms\n     disagreeing at depths beyond where the implicit run reaches proves\n     nothing either way, in either direction.  Every --implex leg of this\n     act therefore has an implicit twin submitted beside it, identical in\n     every other word, and neither is read alone.\n  2. PRINT `implexError` BESIDE EVERY VERDICT.  `curve.csv` carries\n     `implex_err_max` on every row of an --implex curve \u2014 the true maximum\n     over every SANISAND Gauss point at that row's commit, not a sample,\n     because the point about to be wrong is the one under the footing edge\n     \u2014 `run.json` carries `implex_err_max`, `implex_err_avg` and the\n     four-way refusal ledger, and the run log prints all three immediately\n     above the WP1 verdict line.\n  3. NO WIDTH IS A WIDTH.  IMPL-EX is a regularizer with the structure of\n     an artificial viscosity and ITS PARAMETER IS THE STEP SIZE, which has\n     no length in it.  Any band, shear-band width or post-peak branch read\n     off an --implex leg is regularized by `dt`; mesh dependence is NOT\n     removed.  S8g's band plates must not be extracted from one without\n     this sentence attached.\n\nThis is the same lesson `2026-09-05 \u2014 Relaxation and Memory` already cost this act once, from the other direction: a solver that finds an exact equilibrium on a wrong path is the most dangerous instrument the campaign owns.  Dynamic relaxation loaded SANISAND's memory inside a hold; IMPL-EX solves an exactly-satisfied equilibrium of a stress that is not the material's.  Neither is refused here; both are declared, twinned and read against an implicit control.\n",
+   "guide": "Ladruno_implementation/LadrunoSANISAND_implex_guide.md @ c162833ed",
+   "adr": "Ladruno_implementation/92_ladruno_sanisand_implex_adr.md"
+  }
+ },
+ "column": {
+  "label": "LadrunoSANISAND, cohesion off, floor pinned to vanilla's",
+  "command": "LadrunoSANISAND",
+  "flags": {
+   "-Presidual": 1.01,
+   "-Pmin": 0.0101,
+   "-honorTolR": 0
+  },
+  "p_residual_kPa": 1.01,
+  "p_min_kPa": 0.0101,
+  "pin_note": "`-Pmin` is PINNED to vanilla's 1.0e-4 * P_atm = 0.0101 kPa, NOT left at the class default of 1.0e-3 * P_atm = 0.101 kPa.  `Work Plan/03` section 3 and `SANISAND/03` section 5: the class default moves the floor tenfold and \"cohesion off\" and \"floor raised\" would then arrive in one number.  The class echoes its constants at construction, so the run log is the evidence that the pin landed \u2014 `drive.py` greps its own log for the echo and records it.\n",
+  "honorTolR_note": "`-honorTolR 0` reproduces vanilla's hardcoded ModifiedEuler TolE = 1e-4, so the only difference between the columns is the residual pressure.  G1 (S1, closed 2026-09-01) measured `-Presidual 1.01 -Pmin 0.0101 -honorTolR 0` bit-identical to vanilla over 400 rows.\n"
+ },
+ "implex": {
+  "enabled": true,
+  "max_substeps": 20000,
+  "control": {
+   "tol": 0.1,
+   "reduction_limit": 0.01
+  },
+  "alpha": null,
+  "dt": null,
+  "dt_source": "pseudo (the fork's default: ops_Dt = d(lambda) under DisplacementControl, which the D2 guard refuses at the first sign change \u2014 measured 2026-09-06, S21; ADR 92 D2's claim that pseudo is correct for this deck holds for a LoadControl(-ds) pattern, not for this one)",
+  "stage_rule": "IMPL-EX IS INERT AT STAGE 0, and this harness's S1-S4 are stage 0. `mElastFlag` \u2014 a STATIC, flipped for every SANISAND instance at once by `updateMaterialStage` \u2014 gates `integrate()`'s elastic branch, and while it is 0 the extrapolated path is unreachable.  So gravity (S1), the plastic admission's `LoadControl 0.0` re-equilibration (S2), the consolidation hold (S3) and the reference state (S4) are BIT-IDENTICAL with the flag on or off, and IMPL-EX's own history \u2014 `d_eps_p(n)` and the `dt` bookkeeping \u2014 initialises at the flip to `updateMaterialStage 1`, not before it.  The four S4 gates therefore read the same on an --implex leg as on an implicit one, and any difference between the two is a difference in the PUSH.\nTHE FIRST PLASTIC STEP AFTER THE FLIP IS EXEMT FROM `-implexControl` REFUSAL, by the fork's own design and not by our leniency. `d_eps_p(n) = eps_p(n) - eps_p(n-1)` is identically zero on that one step (there is no committed plastic history yet), so `sigma~ = sigma_n + Ce:d_eps` is a pure elastic predictor with no extrapolation to be wrong about.  The `implexError` measured there is the companion's own DRIFT-CORRECTION JUMP from wherever the elastic stage left the stress to the first plastic return; it does not shrink with `d_eps`, and refusing on it means refusing forever.  The fork measured exactly that before the fix (`_adr92_p1_bvp_gate_rerun.md`): the registered arm refused step 1 of every stage at `implexError` 0.13-0.30 against `tol = 0.05`, before any real extrapolation had happened.  The error is still COMPUTED and REPORTED on that step through `implexError` / `implexDetail` / `avgImplexError`; only the refusal is suppressed, and only there.  Every later step in the stage is primed and refused normally.  Read beside this act's own step-size tripwire, which reports eta after step 1 against M_c for the same reason: the first row of a push is not a stiffness and is not an error either.\n",
+  "reading_hazard": "AN --implex CURVE SATISFIES EQUILIBRIUM WITH THE EXTRAPOLATED STRESS, NOT THE IMPLICIT ONE.  A limit point, a plateau or a capacity read off one is NOT EVIDENCE OF ANYTHING ON ITS OWN.  The guide's section 8 states the discipline and this sheet adopts it whole:\n\n  1. CONFIRM ON THE IMPLICIT MATERIAL, and only over the OVERLAP \u2014 up to\n     the last settlement the implicit solver itself reaches.  Two arms\n     disagreeing at depths beyond where the implicit run reaches proves\n     nothing either way, in either direction.  Every --implex leg of this\n     act therefore has an implicit twin submitted beside it, identical in\n     every other word, and neither is read alone.\n  2. PRINT `implexError` BESIDE EVERY VERDICT.  `curve.csv` carries\n     `implex_err_max` on every row of an --implex curve \u2014 the true maximum\n     over every SANISAND Gauss point at that row's commit, not a sample,\n     because the point about to be wrong is the one under the footing edge\n     \u2014 `run.json` carries `implex_err_max`, `implex_err_avg` and the\n     four-way refusal ledger, and the run log prints all three immediately\n     above the WP1 verdict line.\n  3. NO WIDTH IS A WIDTH.  IMPL-EX is a regularizer with the structure of\n     an artificial viscosity and ITS PARAMETER IS THE STEP SIZE, which has\n     no length in it.  Any band, shear-band width or post-peak branch read\n     off an --implex leg is regularized by `dt`; mesh dependence is NOT\n     removed.  S8g's band plates must not be extracted from one without\n     this sentence attached.\n\nThis is the same lesson `2026-09-05 \u2014 Relaxation and Memory` already cost this act once, from the other direction: a solver that finds an exact equilibrium on a wrong path is the most dangerous instrument the campaign owns.  Dynamic relaxation loaded SANISAND's memory inside a hold; IMPL-EX solves an exactly-satisfied equilibrium of a stress that is not the material's.  Neither is refused here; both are declared, twinned and read against an implicit control.\n",
+  "guide": "Ladruno_implementation/LadrunoSANISAND_implex_guide.md @ c162833ed",
+  "adr": "Ladruno_implementation/92_ladruno_sanisand_implex_adr.md"
+ },
+ "material_as_used": {
+  "command": "LadrunoSANISAND",
+  "P_atm_kPa": 101.0,
+  "p_min_kPa": 0.0101,
+  "p_residual_kPa": 1.01,
+  "layer_p_residual_kPa": null,
+  "flags": {
+   "-Presidual": 1.01,
+   "-Pmin": 0.0101,
+   "-honorTolR": 0
+  },
+  "note": "P_atm is `material_common.Patm`, the 18th positional constant of the material line; p_min is `-Pmin` and p_residual is `-Presidual`, both echoed by the parser at construction and both printed in the run log's S0 material line.  On a vanilla `ManzariDafalias` column neither flag exists: p_r is hardcoded at 1.0e-2*P_atm = 1.01 kPa (ManzariDafalias.cpp:836) and the keys are null here, which is the truth and not an omission."
+ },
+ "element": {
+  "soil": {
+   "command": "LadrunoUP",
+   "shape": "H8",
+   "formulation": "bbar",
+   "geom": "linear",
+   "pOrder": "equal",
+   "stab": "auto",
+   "dynSeepage": "off",
+   "Kf": 2200000.0,
+   "poro": 0.38540962448528054,
+   "rhoF": 1.0,
+   "alpha_biot": 1.0,
+   "Ks": null,
+   "permeability_flag": "-permH",
+   "gammaW": 9.81,
+   "body_is": "acceleration",
+   "body": [
+    0.0,
+    0.0,
+    -9.81
+   ],
+   "fluidBody": "defaults to -body",
+   "why_permH": "Guide section 1: `-perm` wants k_hydraulic/gamma_w [L^3 T/M], `-permH ... -gammaW` wants a conductivity in m/s and divides internally.  Using `-permH` removes the unit conversion from this harness entirely, which is the single most common quadUP-family user error and one the parser cannot catch.\n",
+   "command_override": "LadrunoBrick"
+  },
+  "footing": {
+   "command": "LadrunoBrick",
+   "formulation": "bbar",
+   "geom": "linear",
+   "b": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "body_is": "force_per_volume",
+   "trap": "`LadrunoBrick -b` is a FORCE PER UNIT VOLUME; `LadrunoUP -body` is an ACCELERATION (guide section 9b, and r2_gravity_hex.py's own header).  They coincide numerically only when rho = 1.0, which is not the case for either material here.  The gate that catches a mix-up and nothing else does is the summed base reaction against gamma_sat * V.\n"
+  },
+  "tie_footing_to_soil": {
+   "command": "ASDEmbeddedNodeElement",
+   "K": 10000000000.0,
+   "dofs_tied": [
+    1,
+    2,
+    3
+   ],
+   "mode": "top_face_triangle",
+   "mode_superseded": "legacy",
+   "retained_nodes": 3,
+   "mode_declaration": "Until 2026-09-06 this seam passed ALL EIGHT host-hex nodes to `ASDEmbeddedNodeElement`, which accepts AT MOST FOUR (`ASDEmbeddedNodeElement.cpp:201`, its own usage string).  Measured 2026-09-06 on build e95a1c74f: `ops.eleNodes` returns `[Cnode, host[0], host[1], host[2]]` \u2014 five arguments dropped in silence, `-K` still read because the flag loop scans to the end.  With three retained nodes the element runs `TRI_3D_U`, its TRIANGLE support, and apeGmsh emits the hex with `conn[0:3]` on the element's x_min face, so the retained triangle was COPLANAR IN x; `TRI_3D_U` discards the constrained node's offset normal to the plane, and the footing node's own x therefore never entered the constraint.  Every footing node's load was deposited on the node line at its host's lower-x edge.  Consequences, measured and validated against jobs 146299 / 146302 / 146301 in `labs/ape/response-curve-matrix/footprint/`: the loaded footprint is 1.5 m wide in x AT EVERY SCALE \u2014 so Q, s/B and every verdict stand \u2014 but its centroid sits at -0.357 / -0.250 / -0.125 m at coarse / mid / fine, i.e. -0.238 B, -0.167 B, -0.083 B, and the rigidly loaded half-area is 1.5 m2 at coarse against the declared 1.125.  Because the eccentricity changes with the mesh, every CROSS-SCALE load comparison run under `legacy` is contaminated; every same-scale comparison is not.\n`top_face_triangle` ties into the host hex's TOP face, which is the plane the footing bottom lies in (`geometry.footing.d_Ef: 0.0`): the face's quad is split into two triangles and the three nodes of the one CONTAINING the footing node are passed \u2014 the number the element takes, in the mode it is designed for, an exact planar linear interpolation in BOTH x and y with a non-degenerate Jacobian.  A node on the split diagonal goes to the first triangle, where the two triangles agree, so THAT choice moves no number and is made only to keep two builds of the same mesh identical.\nWHICH DIAGONAL IS NOT A FREE CHOICE, and getting it wrong is a defect in the same family as the one being repaired.  A square face has two triangulations and they are NOT equivalent: a node at the face centre lies on both diagonals, and the diagonal decides WHICH PAIR OF CORNERS carries it \u2014 the SW-NE split loads SW and NE, the SE-NW split loads SE and NW.  An angle sort about the face centroid returns every axis-aligned face's corners in the same order, so a FIXED diagonal is SW-NE on every face; but under x -> -x a SW-NE diagonal maps to a SE-NW one, so mirror-image host hexes get mirror-OPPOSITE splits and the tie is not symmetric about the footing's own centreline.  Measured at `coarse` with a fixed diagonal, 2026-09-06: the loaded soil node at (+1.0, 1.0) carried tie weight 0.5 and its mirror (-1.0, 1.0) carried NOTHING, and four push steps of the drained twin at ds = 1e-4 m gave a surface settlement of +0.392788 mm against its mirror's -0.002803 mm \u2014 98.8 % of the whole push settlement \u2014 with the push-settlement centroid at +0.0864 m = +0.058 B.  THE TIE-WEIGHT FIRST MOMENT WAS EXACTLY ZERO THROUGHOUT, which is why only a pushed displacement field could show it: a tie is a KINEMATIC CONSTRAINT, not a load, and an asymmetric constraint set makes an asymmetric problem however symmetrically its weights sum.\nTHE DECLARED RULE IS THEREFORE EQUIVARIANT: split along the diagonal through the face corner NEAREST THE ORIGIN \u2014 the x = 0 plane the model is symmetric about and the y = 0 plane it is cut on.  Under a reflection the face, the node and the nearest corner reflect together, so the diagonal reflects too and mirror-image footing nodes get mirror-image constraints. Ties are broken lexicographically; a face straddling the centreline shares its nearest corner with its own mirror, which is the same node, so the two still mirror.  Measured on the same leg: worst node-by-node weight asymmetry at `coarse` falls from 0.5 to 3.6e-15, the worst field asymmetry from 98.8 % to 0.065 % of the push settlement, and the push-settlement centroid from +8.64e-2 m to -1.15e-4 m \u2014 a factor of 750, leaving a residual at the convergence tolerance rather than in the geometry.  AT `mid` AND `fine` THE CHOICE IS INERT either way: every footing-bottom node coincides with a soil node there, the barycentric weights are (1, 0, 0) whichever triangle is used, and the measured node-by-node asymmetry is 8.9e-16 under both rules.  This is a `coarse`-only correction, and `coarse` is the frozen R2 mesh the whole scale sequence is anchored on.\nMEASURED under this declaration, desktop nmbMain, build e95a1c74f, `drive.py --stop-after S4`, 2026-09-06 \u2014 the numbers `bearing_area_effective_m2` below is read from: coarse x [-1.000, +1.000] y [0, 1.000], centroid (0.000000, 0.375000); mid and fine x [-0.750, +0.750] y [0, 0.750], centroid (0.000000, 0.375000) \u2014 EXACTLY the declared box at both refined scales.  The coarse spread to its own 0.5 m node lines is what a 0.5 m mesh under a 1.5 m footing honestly gives, it is symmetric, and it converges away, so the scale sequence is a discretisation sequence again.\n`run.log` states the retained-node union, the footprint's bounding box and the load centroid on EVERY leg from this date (`stages._tie_footprint`), and `run.json` carries them as `tie`.  RC13's whole cost was that no leg said any of this and the footprint had to be reconstructed from a checkpoint four days later.\n",
+   "why": "The apeGmsh mesh meshes the footing (0.25 m) and the soil (0.5 m) as separate volumes, so the footing-bottom nodes are NOT coincident with soil-top nodes and an equalDOF tie of the guide's section 6.3 kind is not available without re-meshing \u2014 which this stage is forbidden to do.  `run_analysis.py` already embeds each footing-bottom node in its host soil hex, and the element is legal across the ndf-3 / ndf-4 seam: `ASDEmbeddedNodeElement::setDomain` allows ndf 3, 4 or 6 per node in 3D, offsets its local mapping by each node's own ndf, and sets its u-p mode ONLY when the CONSTRAINED node (node 0) has ndf 4 \u2014 which here is the ndf-3 footing node.  So exactly the three translations are tied and the host hexes' pressure DOF is a passenger, which is the arrangement wanted: the footing is mechanically bonded and hydraulically transparent to the tie, with the drainage condition of the footprint set by the pressure BC alone (section 6 below) rather than by the tie. Source read: SRC/element/CEqElement/ASDEmbeddedNodeElement.cpp:333-460 @ ladruno.\n"
+  },
+  "platen": {
+   "command": "LadrunoKinematicCoupling",
+   "dofs": [
+    1,
+    2,
+    3
+   ],
+   "control_node_ndf": 6,
+   "control_node_fix": [
+    1,
+    1,
+    0,
+    1,
+    1,
+    1
+   ],
+   "sp_only": true
+  }
+ },
+ "solution": {
+  "system": "Pardiso",
+  "system_cross_check": "UmfPack",
+  "system_alternatives_general": [
+   "SuperLU",
+   "FullGeneral",
+   "BandGeneral",
+   "UmfPack"
+  ],
+  "system_forbidden": [
+   "ProfileSPD",
+   "SparseSYM",
+   "SparseSPD",
+   "BandSPD",
+   "ProfileSPDLin"
+  ],
+  "system_guard": "Guide section 2 and `Work Plan/03` section 6.3: the honest-p contract makes the effective tangent UNSYMMETRIC \u2014 -Q in getTangentStiff (u-rows), +Q^T in getDamp (p-rows) \u2014 so symmetric-storage solvers keep only the upper triangle, silently drop one coupling block, and return plausible garbage with every analyze() returning 0.  Measured by the fork on the Terzaghi column: UmfPack gives p in [0, 5] kPa, ProfileSPD gives p ~ 1e88.  `ProfileSPD` is the no-`system` default.  `drive.py` REFUSES to start on any name in system_forbidden. `Pardiso` at its default matrix type is legal and roughly 3x faster: with no `-matrixType` the solver selects mtype = 11, real unsymmetric (PARDISOGenLinSolver.cpp:212-213); only `-matrixType 1|2`, the symmetric half-storage paths, are prohibited.  Verified and recorded in vault/ADR/62 R11, where every coupled leg used `system Pardiso` and the perturbed-pivot counter, the exact-weight check and the hydrostatic pore-pressure check all passed.\n",
+  "numberer": "RCM",
+  "test": "NormUnbalance",
+  "test_tol": 1e-05,
+  "test_max_iter": 40,
+  "test_note_superseded": "NormDispIncr, NOT NormUnbalance: under penalty-enforced constraints the unbalance floor bites at the penalty scale and the test stalls (guide section 5, `Work Plan/03` section 6.3).  The trap this harness inherits in exchange is that the increment norm on a u-p system is UNIT-MIXED \u2014 displacements in m (1e-3) and pressures in kPa (1e1..1e2) enter one Euclidean norm, so the tolerance is effectively a pressure tolerance.  It is declared here as a number, it is one of `Work Plan/01`'s named confounders, and it is swept on the D-V cell.\n",
+  "test_note": "THE REASON ABOVE IS THE UNDRAINED ROW'S AND ONLY THE UNDRAINED ROW'S.  It is true and it stands: the transient push imposes a nonzero `sp` under `constraints Penalty 1e14`, the unbalance floor then bites at the PENALTY scale rather than at the model's, and `NormUnbalance` stalls.  The drained row has no such constraint \u2014 it pushes under `constraints Transformation` (`constraints_static`) \u2014 so the reason has never applied to it, and until 2026-09-06 nothing said so. WHAT THE DRAINED ROW INHERITED INSTEAD is the trap the superseded note already conceded and one more that it did not.  The conceded one: on a u-p system the increment norm is UNIT-MIXED, metres and kilopascals in one Euclidean norm, so the tolerance is effectively a pressure tolerance.  The one it did not: THE NORM IS NOT MESH-NEUTRAL.  It runs over the free DOFs, and there are 21 058 of them on `coarse`, 49 626 on `mid` and 175 290 on `fine` \u2014 so the same nominal 1e-5 is a different physical requirement on each mesh of a refinement sequence, which is disqualifying INSIDE a mesh-convergence study.  ADR 90 sections 1.2.2 and 5.2 (fork, 2026-09-05) reports it as a fork-wide deck defect and adds a third: on SANISAND the substepped ModifiedEuler return (hardcoded substep tolerance TolE = 1e-4) makes the discrete stress-strain map only piecewise smooth, so the residual displacement norm STALLS at a median 6.6e-7 m rather than converging quadratically, and a leg that declares 1e-8 is carried by a relaxed rung on two rows in three.  The prescription there is `NormUnbalance` relative to the model's own weight, which is mesh-neutral by construction. THE DRAINED DECLARATION, MEASURED 2026-09-06 on cell D-V, coarse mesh, build e95a1c74f7e15d7de8655eeeb004d7f34d81d512, host nmbMain, driver Tries/response-curve-matrix/model/harness/drive.py, strict ladder, ds pinned at 1e-4 m both ways, 900 s of push each, six legs, evidence labs/ape/response-curve-matrix/level3/D-V-s19-{a,b,c,d,e,f}-*/coarse/out/: `NormUnbalance` at `test_tol_drained_relative` = 1.0e-5 OF THE MODEL'S OWN WEIGHT, which is 1e-5 x 10 594.80 = 1.05948e-1 kN.  Against the control (TanType 0, NormDispIncr 1e-5) it reproduces q at matched settlement to -0.08 to -0.24 % over twenty-seven rows at the same tangent, and to -0.10 to -0.98 % at the consistent tangent; it never subdivides; and with TanType 2 every one of its thirty-six rows is on rung 0.  It costs 21.08 s a step against the control's 28.81 and reaches s/B 0.00240 against 0.00200 in the same budget \u2014 i.e. the tangent pays for the tighter test and leaves change. AND 1e-6 OF THE WEIGHT IS NOT AFFORDABLE AT ds = 1e-4 m, on either tangent: the FIRST step fails Newton at 26 iterations and NewtonLineSearch at 41 and the controller subdivides to 5e-5 m.  Legs c and d reached s/B 0.00080 and 0.00057 against the control's 0.00200 in the same wall.  This is the same finding the step-size tripwire has been reporting since S17 \u2014 at ds = 1e-4, four times the cell's declared 2.5e-5, SANISAND can return its elastic predictor on step 1 \u2014 seen from the solver's side: the loose displacement norm was ACCEPTING that row and the tight unbalance norm REFUSES it.  A leg that wants 1e-6 must also take a smaller `--ds` or it is measuring its own subdivision controller. HOW IT IS USED.  It is NOT the default: `solution.test` above is still `NormDispIncr` 1e-5, so every existing leg re-runs bit-identically and the undrained row keeps the test its penalty handler needs.  The drained declaration is taken on the command line \u2014 `--test NormUnbalance --test-tol 1e-5` \u2014 and `Tries/response-curve-matrix/model/rcm_dv_strict_fixed.sbatch` is the leg that takes it.  `drive.py` REFUSES `--test NormUnbalance` without an explicit `--test-tol`, because under that test the number is a fraction of the weight and carrying the displacement-norm number across silently would run the leg at a tolerance nobody chose.  `stages.test_scale` multiplies the fraction out against the S4 gate's own `base_reaction.value_kN` (gamma'*V on the ndf-3 twin, plus any declared surcharge), writes the absolute kN into run.json as `declared.solution.test_tol_absolute` and its meaning as `test_tol_meaning`, and both go on `curve.csv`'s header.\n",
+  "test_tol_drained_relative": 1e-05,
+  "test_drained": "NormUnbalance",
+  "implex": {
+   "enabled": false,
+   "default_operating_point": {
+    "tol": 0.1,
+    "reduction_limit": 0.01
+   },
+   "dt_source": "pseudo",
+   "guide": "Ladruno_implementation/LadrunoSANISAND_implex_guide.md @ c162833ed",
+   "adr": "Ladruno_implementation/92_ladruno_sanisand_implex_adr.md",
+   "requires_element": "LadrunoBrick",
+   "requires_column_command": "LadrunoSANISAND",
+   "requires_max_substeps": true,
+   "stage_rule": "IMPL-EX IS INERT AT STAGE 0, and this harness's S1-S4 are stage 0. `mElastFlag` \u2014 a STATIC, flipped for every SANISAND instance at once by `updateMaterialStage` \u2014 gates `integrate()`'s elastic branch, and while it is 0 the extrapolated path is unreachable.  So gravity (S1), the plastic admission's `LoadControl 0.0` re-equilibration (S2), the consolidation hold (S3) and the reference state (S4) are BIT-IDENTICAL with the flag on or off, and IMPL-EX's own history \u2014 `d_eps_p(n)` and the `dt` bookkeeping \u2014 initialises at the flip to `updateMaterialStage 1`, not before it.  The four S4 gates therefore read the same on an --implex leg as on an implicit one, and any difference between the two is a difference in the PUSH.\nTHE FIRST PLASTIC STEP AFTER THE FLIP IS EXEMT FROM `-implexControl` REFUSAL, by the fork's own design and not by our leniency. `d_eps_p(n) = eps_p(n) - eps_p(n-1)` is identically zero on that one step (there is no committed plastic history yet), so `sigma~ = sigma_n + Ce:d_eps` is a pure elastic predictor with no extrapolation to be wrong about.  The `implexError` measured there is the companion's own DRIFT-CORRECTION JUMP from wherever the elastic stage left the stress to the first plastic return; it does not shrink with `d_eps`, and refusing on it means refusing forever.  The fork measured exactly that before the fix (`_adr92_p1_bvp_gate_rerun.md`): the registered arm refused step 1 of every stage at `implexError` 0.13-0.30 against `tol = 0.05`, before any real extrapolation had happened.  The error is still COMPUTED and REPORTED on that step through `implexError` / `implexDetail` / `avgImplexError`; only the refusal is suppressed, and only there.  Every later step in the stage is primed and refused normally.  Read beside this act's own step-size tripwire, which reports eta after step 1 against M_c for the same reason: the first row of a push is not a stiffness and is not an error either.\n",
+   "reading_hazard": "AN --implex CURVE SATISFIES EQUILIBRIUM WITH THE EXTRAPOLATED STRESS, NOT THE IMPLICIT ONE.  A limit point, a plateau or a capacity read off one is NOT EVIDENCE OF ANYTHING ON ITS OWN.  The guide's section 8 states the discipline and this sheet adopts it whole:\n\n  1. CONFIRM ON THE IMPLICIT MATERIAL, and only over the OVERLAP \u2014 up to\n     the last settlement the implicit solver itself reaches.  Two arms\n     disagreeing at depths beyond where the implicit run reaches proves\n     nothing either way, in either direction.  Every --implex leg of this\n     act therefore has an implicit twin submitted beside it, identical in\n     every other word, and neither is read alone.\n  2. PRINT `implexError` BESIDE EVERY VERDICT.  `curve.csv` carries\n     `implex_err_max` on every row of an --implex curve \u2014 the true maximum\n     over every SANISAND Gauss point at that row's commit, not a sample,\n     because the point about to be wrong is the one under the footing edge\n     \u2014 `run.json` carries `implex_err_max`, `implex_err_avg` and the\n     four-way refusal ledger, and the run log prints all three immediately\n     above the WP1 verdict line.\n  3. NO WIDTH IS A WIDTH.  IMPL-EX is a regularizer with the structure of\n     an artificial viscosity and ITS PARAMETER IS THE STEP SIZE, which has\n     no length in it.  Any band, shear-band width or post-peak branch read\n     off an --implex leg is regularized by `dt`; mesh dependence is NOT\n     removed.  S8g's band plates must not be extracted from one without\n     this sentence attached.\n\nThis is the same lesson `2026-09-05 \u2014 Relaxation and Memory` already cost this act once, from the other direction: a solver that finds an exact equilibrium on a wrong path is the most dangerous instrument the campaign owns.  Dynamic relaxation loaded SANISAND's memory inside a hold; IMPL-EX solves an exactly-satisfied equilibrium of a stress that is not the material's.  Neither is refused here; both are declared, twinned and read against an implicit control.\n",
+   "known_limits": "Carried from the guide's section 9, because they bound what this act may claim.  NO PLATEAU HAS BEEN MEASURED with IMPL-EX on the fork's own footing-corner deck \u2014 no arm, controlled or not, reaches one \u2014 so on the present evidence it is a SOLVER-ROBUSTNESS DEVICE and not yet a way to see a capacity a deck could not otherwise measure.  Parallel `sendSelf` / `recvSelf` is UNTESTED (the wire grew from 5 to 22 slots), so a `OpenSeesMP` / `OpenSeesSP` IMPL-EX run may not reproduce a serial one \u2014 every leg of this act runs THREADED and serial for that reason.  Cyclic response lags by one step (`alpha`, `z` and `alpha_in` advance only on the committed path, so a reversal is not detected on the extrapolated state); monotonic pushover is the measured target and is what this act does. `LadrunoSANISANDPlaneStrain` is routed but untested.  Three mutation survivors are owed tests and not waived (M4, M5, M10).\n",
+   "tolerance_declaration": "0.1 / 0.01.  The guide's section 7 swept the registered 0.05 against three looser tolerances on the fork's own footing-corner deck (`h1.0_e0.6944`, build `afb95c40c9`) with `control` (no --implex) reaching s/B = 0.0678: 0.05 reaches 0.028, 0.1 reaches 0.076, 0.2 reaches 0.150, 0.5 reaches 0.250, and EVERY tolerance in the sweep \u2014 0.05 included \u2014 tracks `control` to a 1.9-2.3 % mean overlay deviation once the shared step-1 elastic-predictor outlier is excluded.  THE REGISTERED 0.05 FAILS ON REACH, NOT ACCURACY: it never gets past 0.028 against control's own 0.0678, hitting the SUBDIVISION BUDGET rather than a bad extrapolation.  0.1 is the tightest tolerance tested that beats control's own depth while staying under a 5 % mean deviation, and WP-92d made it the C++ default. `reduction_limit` measured INERT at tol 0.05 on that deck \u2014 the floor sits two orders below the working step size at depth and never binds before `tol` refuses; loosening it tenfold with `tol` held produced a byte-identical run.  It is declared at the guide's 0.01 and NOTHING IS EXPECTED OF IT.\n"
+  },
+  "algorithm_ladder": [
+   {
+    "algorithm": "Newton",
+    "tol_factor": 1.0,
+    "max_iter": 25
+   },
+   {
+    "algorithm": "NewtonLineSearch",
+    "tol_factor": 1.0,
+    "max_iter": 40
+   }
+  ],
+  "algorithm_ladder_note": "`r3_hex_control.py`'s ladder, which is the one that reached the exact answer: (Newton, 25), (NewtonLineSearch, 40), (KrylovNewton at 10x tol, 60).  The rungs are short on purpose \u2014 a rung that is going to fail should fail fast, because the subdivision below it is what actually recovers the step, and a forty-iteration Newton that was never going to converge is forty iterations of nothing.  Which rung carried a step is written on that step's row of curve.csv as `relaxed`, so a leg that only converged on the relaxed tolerance says so per step rather than at the end.\n",
+  "constraints_static": [
+   "Transformation"
+  ],
+  "constraints_transient": [
+   "Penalty",
+   100000000000000.0,
+   100000000000000.0
+  ],
+  "constraints_note": "Homogeneous `fix` on the pressure DOF is the drained boundary and needs no penalty. The transient push imposes a NONZERO displacement `sp` on the control node, and the family's recorded trap is that a nonzero `sp` added mid-analysis under `constraints Transformation` converges cleanly (rc = 0) to a WRONG state; Penalty and Lagrange are correct in both sequences (guide section 4).  So the transient row runs Penalty and the static row runs Transformation.  That asymmetry is a declared difference between the rows beyond Gamma, and it is what the S5 gate \"drained transient equals drained static\" is there to price. CORROBORATED at the material point by S6 (one-element `LadrunoUP` legs, build a551f4ed5, 2026-09-02): on the UNDRAINED TRANSIENT path `Transformation` converges with rc = 0 while tr(eps) drifts about 4e-3 and the pore pressure comes out with the SIGN INVERTED, measured against an exact elastic sealed identity; and on the DRAINED STATIC path the reverse holds \u2014 Penalty stalls it and Transformation works. So the handler is chosen PER STAGE AND PER ROW, which is what `stages._wire` does, and it is not a preference.\n",
+  "precondition_before_any_sand_leg": "S6 also asks that the harness ASSERT the elastic sealed identity before any sand leg is read \u2014 the fork guide's Terzaghi column, or the closed-form sealed elastic response, on this element and this constraint handler.  That assertion is stage S5's (`tests/test_harness_gates.py`), not this stage's: the acceptance numbers and tolerances for C0 Terzaghi, C0 Mandel\u2013Cryer, C1 Tresca and C2 Prandtl\u2013Reissner are fixed there.  Until it passes, every sand curve this harness produces is a PROBE and is labelled so, exactly as `Work Plan/02` labels `e1-undrained-probe`.\n",
+  "newmark": {
+   "gamma": 0.6,
+   "beta": 0.3025
+  },
+  "newmark_note": "Guide section 5: the pressure row carries a parasitic history root -(1-gamma)/gamma damped only for gamma > 1/2; a gamma = 0.5 consolidation march diverges measurably (~1e10 by Tv = 0.5).  gamma = 0.6, beta = 0.3025 is the fork's ZS84 production set.\n",
+  "rayleigh": {
+   "a0": 0.0,
+   "a1": 0.0
+  },
+  "rayleigh_note": "NO Rayleigh damping.  The reference model installs xi = 0.5 before S1 and never changes it; note 13 measured that worth 11.7 % of the backbone with 99.1 % carried by the stiffness-proportional term.  This harness declares xi = 0 and takes its algorithmic damping from gamma = 0.6 alone.  Departure from the reference, declared.\n",
+  "tantype": 2,
+  "tangent": "2 = mCep_Consistent, the CONSISTENT (algorithmic) tangent -- unsymmetric under non-associated flow, which is why `system Pardiso` at its default unsymmetric mtype 11 is the declared solver",
+  "test_tol_meaning": "RELATIVE to the model's own weight: 1e-05 x W_ref = 5.997400e-02 kN, with W_ref = 5997.4000 kN (gamma' * V on the ndf-3 twin + surcharge 700.0000 kN).  The same relative number is the same physical requirement on every mesh of the refinement sequence, which is the whole reason it is declared this way (ADR 90 section 1.2.2)",
+  "test_tol_absolute": 0.05997400000000001
+ },
+ "push": {
+  "target_s_over_B": 0.1,
+  "target_s_over_B_level4": 0.15,
+  "ds_base_m": 5e-05,
+  "ds_min_m": 1.95e-07,
+  "ds_max_m": 0.0001,
+  "grow_after": 6,
+  "subdivision_budget": 60,
+  "subdivision_budget_controls": 60,
+  "wall_budget_s": 3600,
+  "ds_note": "The step sizes are `labs/ape/r3_hex_control.py`'s, which is the driver that reached 0.9938 of the exact Prandtl\u2013Reissner answer on a comparable footing push (DS_BASE = 2.0e-5, DS_MIN = 2.0e-7, DS_MAX = 1.0e-3, GROW_AFTER = 6, SUBDIV_BUDGET = 24), rounded to this harness's own scale.  MEASURED 2026-09-01 on a551f4ed5: an earlier ds_base of 2.5e-4 m failed the FIRST plastic push step of cell D-V outright \u2014 `CTestNormDispIncr::test() - failed to converge`, `StaticAnalysis::analyze() - the Algorithm failed at step 0 with domain at load factor 18.9033`, driver `Tries/response-curve-matrix/model/harness/drive.py`, output `labs/ape/response-curve-matrix/level3/D-V-push001/` (leg discarded).  Step size is one of `Work Plan/01`'s named confounders and it is swept on D-V.\n",
+  "Q_definition": "Q(s) = sum Rz over the base node set at s, MINUS the same sum at the S4 reference state.  Vertical equilibrium makes that identically the push force, under either constraint handler and either integrator, which is why it is the primary definition and not the control node's reaction.  Two cross-checks are written on the same row: the DisplacementControl load factor (row D, where the reference load at the control node is a unit downward force so lambda IS Q in kN) and -nodeReaction(CTRL, 3) (row U).  A disagreement between the primary and its cross-check is a defect in the curve, not in the soil, and it is visible per step rather than at the end.\n",
+  "Q_cross_check_status": {
+   "static": "MEASURED 2026-09-01 on D-V, build a551f4ed5: the DisplacementControl load factor and the base-reaction difference agree to nine significant figures on every one of the forty rows (e.g. step 8, 12.6437251 against 12.6437251).  On the static path either definition would have done; the agreement is what says so.\n",
+   "transient": "MEASURED 2026-09-02 on U-V, same build: -nodeReaction(CTRL, 3) OSCILLATES \u2014 +3.13, -2.14, +4.66, -3.03 kN on the first four steps \u2014 while the base-reaction primary rises smoothly through 0.232, 0.989, 1.905, 2.058 kN.  Under a Penalty-enforced `sp` the control node's reaction is not the transmitted force, and reading the curve off it would have produced a sawtooth that looks like a numerical instability in the soil.  On the transient path the cross-check is DIAGNOSTIC ONLY; the primary definition is the one to read, which is why it is the primary.\n"
+  },
+  "Q_is_half_model": true,
+  "ramp_is_relative_to_S4": "On the transient path `sp` prescribes an ABSOLUTE nodal value, so a `Linear` ramp of factor `rate` with sp value -1 commands u_z = -rate*t and, at the first step, -ds \u2014 while the control node is already at the gravity settlement u0 ~ -0.92 mm. That yanks the footing UP through the whole gravity settlement in one step and puts the soil into extension; S6 reported it from the one-element legs and it is true here by construction.  The ramp therefore uses a `Path` series interpolating from u0 to u0 - s_max over T_max = s_max/rate, so the prescribed value STARTS at the committed displacement and the rate is still the declared constant.  The harness ASSERTS it: after step 1 the settlement reached must equal rate*t to 5 %, and the leg is fatal if it does not.\n",
+  "first_step_tripwire": "A push increment coarse enough that SANISAND returns its ELASTIC PREDICTOR produces a plausible-looking curve at an impossible stress ratio \u2014 S6 measured eta ~ 3.9 on one element at NSTEP = 400 and p0 = 10 kPa.  The boundary-value analogue is recorded on every leg: the maximum eta = sqrt(3 J2)/p over the Gauss points of the soil under and just outside the footprint after step 1, against M_c = 1.33090.  It is written to the log and to run.json as `first_step_max_eta`.  Sizing the increment from the elastic strain to yield rather than from a step count is the standing rule; ds_base is the validated driver's and the tripwire is what says whether it was small enough on THIS problem.\n",
+  "curve_columns": [
+   "step",
+   "time",
+   "s_m",
+   "s_over_B",
+   "Q_kN",
+   "k_norm",
+   "k_norm_firststep",
+   "Q_check_kN",
+   "Rz_base_kN",
+   "p_min_kPa",
+   "ds_m",
+   "relaxed",
+   "cum_iter",
+   "wall_s"
+  ],
+  "criterion_WP1": {
+   "epsilon": 0.02,
+   "window_d_s_over_B": 0.01,
+   "initial_tangent_from": "the first max(4, n/50) rows",
+   "tail_tangent_from": "the rows inside the last window_d_s_over_B of settlement",
+   "normalising_tangent": {
+    "mode": "declared",
+    "value_kN_per_m": 53978.706408,
+    "what": "the DRAINED cell's initial tangent on this mesh, applied to both rows",
+    "measured_on": "cell D-V, coarse mesh, build e95a1c74f, driver Tries/response-curve-matrix/model/harness/drive.py, output labs/ape/response-curve-matrix/level3/D-V-overnight/coarse/out/run.json field S5.initial_tangent_kN_per_m, 2026-09-02 -- the same leg's own `initial_tangent_from` fit, so D-V's k_norm is unchanged by this amendment to the last digit and only the undrained row moves.\n",
+    "override_flag": "--wp1-normaliser {declared,firststep}"
+   },
+   "verdicts": [
+    {
+     "terminated_by": "target",
+     "tail_k": "<= 0.02",
+     "trend": "any",
+     "verdict": "limit_point"
+    },
+    {
+     "terminated_by": "any",
+     "tail_k": "< 0",
+     "trend": "any",
+     "verdict": "limit_point_softening"
+    },
+    {
+     "terminated_by": "target",
+     "tail_k": "> 0.02",
+     "trend": "settled",
+     "verdict": "indefinite_hardening"
+    },
+    {
+     "terminated_by": "target",
+     "tail_k": "> 0.02",
+     "trend": "falling",
+     "verdict": "inconclusive"
+    },
+    {
+     "terminated_by": "guard",
+     "tail_k": "any",
+     "trend": "any",
+     "verdict": "wall"
+    },
+    {
+     "terminated_by": "target",
+     "range_shorter_than_window": true,
+     "verdict": "inconclusive_range_shorter_than_window"
+    }
+   ],
+   "short_range_note": "A leg whose whole settlement range is shorter than the window cannot show a sustained tangent either way, so it is NOT classified by WP1's table \u2014 calling it \"indefinite hardening\" would read a verdict off a range the criterion was never evaluated on.  This matters for the short verification legs and for any leg stopped early: the tail tangent is still reported, and the settlement at which the criterion is met is reported when it is met, which WP1 makes mandatory.\n",
+   "step_size_tripwire": {
+    "what": "max eta = sqrt(3 J2)/p over the Gauss points under and around the footprint, after step 1",
+    "read_against": "the reference-state value, not zero",
+    "eta_reference_state_expected": "3(1 - K0)/(1 + 2 K0) with K0 = nu/(1 - nu) = 0.45537, i.e. 0.85512",
+    "ceiling": "M_c = 1.33090"
+   },
+   "window_note": "`Work Plan/01`: epsilon = 2 % sits at the geometric centre of a factor-38 empty gap in every leg the campaign has run and no leg is reclassified between 1 % and 5 %. The WINDOW is the weaker half and is confirmed \u2014 and SHORTENED if necessary \u2014 on the C2 positive control at Level 2, not on a sand cell.  Reporting the settlement at which the criterion is met is MANDATORY, because branch B's fallback criterion has to lie inside the range actually run.\n"
+  },
+  "checkpoints_s_over_B": [
+   0.0,
+   0.0025,
+   0.005,
+   0.01,
+   0.02,
+   0.03,
+   0.05,
+   0.075,
+   0.1
+  ],
+  "checkpoint_fields": [
+   "node_u",
+   "node_p",
+   "gp_stresses",
+   "gp_porePressure",
+   "gp_flux",
+   "gp_state"
+  ]
+ },
+ "stress_correction": {
+  "mode": "on",
+  "changed": false,
+  "note": "untouched \u2014 the material's own default"
+ },
+ "push_driver": "sp-loadcontrol",
+ "_provenance": {
+  "engine": {
+   "expected_build": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+   "act_engine_2026_09_07": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+   "banner_source": "/mnt/deadmanschest/nmorabowen/tims/OpenSees/build/Threaded/OpenSees",
+   "python": "/mnt/deadmanschest/nmorabowen/tims/venv/bin/python",
+   "openseespy_pyd": "/mnt/deadmanschest/nmorabowen/tims/OpenSees/build/Threaded/OpenSeesPy.so",
+   "env": {
+    "LADRUNO_OPENSEES_QUIET": "1",
+    "APEGMSH_QUIET": "1"
+   },
+   "platform_overrides": {
+    "linux": {
+     "banner_source": "/mnt/deadmanschest/nmorabowen/tims/OpenSees/build/Threaded/OpenSees",
+     "python": "/mnt/deadmanschest/nmorabowen/tims/venv/bin/python",
+     "openseespy_pyd": "/mnt/deadmanschest/nmorabowen/tims/OpenSees/build/Threaded/OpenSeesPy.so",
+     "tcl_library": "",
+     "system": "Pardiso",
+     "expected_build": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+     "expected_build_superseded": "a71cdb197adeeda1e77291c947b36cb25f319829",
+     "expected_build_superseded_from": "2026-09-03T13:00:00-04:00",
+     "expected_build_superseded_to": "2026-09-06T22:35:00-04:00",
+     "expected_build_superseded_why": "a71cdb197 is the threaded MKL build of 2026-09-03 and it does not carry ADR 92: its `LadrunoSANISAND` refuses `-maxSubsteps`, `-implex`, `-implexControl` and `-implexAlpha` at parse time, in the words \"positional optional '-maxSubsteps' may not follow a -flag\".  Every number measured on it stands and is comparable with every other number measured on it; NO number from it may be compared with one from c162833ed until the difference is accounted for, which is exactly what `drive.py`'s mismatch banner exists to say.  The flags-off path is claimed byte-identical across the two by the guide's section 1 and that claim has NOT been measured on this deck; the corrected mesh study is where it would be.\n",
+     "threads": 8,
+     "mkl_threading_layer": "mkl_gnu_thread",
+     "build_threaded": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+     "build_threaded_superseded": "a71cdb197adeeda1e77291c947b36cb25f319829",
+     "threaded_from": "2026-09-03T13:00:00-04:00",
+     "system_large_mesh": "Pardiso",
+     "large_mesh_dof_threshold": 50000,
+     "build_large_mesh": "a71cdb197adeeda1e77291c947b36cb25f319829",
+     "build_large_mesh_superseded": "62484a5c2426a443cf81cd72857f917982764c11",
+     "build_sequential_pardiso": "62484a5c2426a443cf81cd72857f917982764c11",
+     "build_coarse_fleet": "e95a1c74f7e15d7de8655eeeb004d7f34d81d512",
+     "why_large_mesh": "TWO BUILDS AND TWO SOLVERS ARE IN PLAY ON THIS MACHINE, AND BOTH ARE RECORDED.  `UmfPack` carries every mesh at or below the `mid` scale (49 626 DOF) and carried the whole coarse fleet on build e95a1c74f; it CANNOT carry the large meshes.  Measured 2026-09-03: UmfPack works at 49 626 DOF and fails at 93 246 with `numeric analysis returns -1` (UMFPACK_ERROR_out_of_memory) while the machine had 28 GB free and `ulimit -v`/`-m` unlimited, so the limit is internal and not the system's; its 64-bit escape hatch `useLongIndices` fails differently and earlier, with `setSize has not been called`, because the long path's symbolic factorisation is never reached (zero `symbolic analysis returns` lines in the log) even though `_UMFPACK_DLONG` is compiled in. SuperLU is correct but not viable: on the SMALLER mid mesh it was abandoned at 1 525 s still inside S1, at 13.1 GB and climbing, where UmfPack finishes S0-S4 in 82 s.\n`system Pardiso` was Windows-only by an accident of the build system (ADR-75 P1b gates it on MKL_LPATH, assigned only in the Windows branch from `.lib` names).  Fork commit 62484a5c2 adds `LADRUNO_MKL_PARDISO_LINUX`, and the cluster build now carries it.\nADMITTED BY AN EQUIVALENCE GATE, NOT BY FIAT.  On `mid` D-V, ten push steps, Pardiso against UmfPack on the SAME build: Q and the control-node settlement agree to 0.000e+00 relative on every one of the ten steps \u2014 bit-identical, against a gate of 1e-6 \u2014 and every S4 gate is exact under both.  Pardiso is 2.45x faster on S0-S4 (33.5 s against 82.1 s) and 2.82x on the ten push steps (216.9 s against 611.3 s).  UmfPack on this new build reproduces its own e95a1c74f numbers (S0-S4 82.1 s against 81.6 s, every gate value identical), so the build change moved nothing.\nThe coarse fleet already running keeps its meaning: those legs were started on e95a1c74f with UmfPack and their run.json records that.  A leg started after 2026-09-03 04:08 runs 62484a5c2, whatever solver it names, because the binary at the engine path is that build; `run.json` reads the hash out of the binary itself, so every leg states its own truth.\n",
+     "why_threaded": "THE THREADED MKL LAYER, DECLARED 2026-09-03 13:00 -04:00 AND ADMITTED BY THE SAME KIND OF GATE AS THE SOLVER BEFORE IT.  Fork commit a71cdb197 (\"build(cmake): threaded-layer opt-in for the Linux PARDISO\"), one commit on top of 62484a5c2, adds `LADRUNO_MKL_PARDISO_LINUX_THREADED`: it swaps mkl_sequential for mkl_gnu_thread + libgomp, and REFUSES to configure if LAPACK_LIBRARIES/BLAS_LIBRARIES still name mkl_sequential, because one process carries one MKL threading layer.  That refusal was made to fire before the build was trusted.  It lives in a SEPARATE build directory, build/Threaded; build/Release is untouched and still holds 62484a5c2.\nEQUIVALENCE.  `mid` D-V, ten push steps, threaded at OMP_NUM_THREADS = MKL_NUM_THREADS = 1 against the sequential build 62484a5c2, same harness and same sheet, differing only in which OpenSeesPy.so the shim resolves to: Q and the control-node settlement are IDENTICAL STRINGS on all ten steps, relQ = rel_s = 0.000e+00 against a gate of 1e-6, in every one of the nine significant figures curve.csv records.  Every S4 gate passes on both arms; the full-precision gravity settlement differs by 8.4e-12 relative (0.9208482574465603 against 0.9208482574543370 mm), the same round-off band and the same cause as the Windows-versus-Esmeralda comparison \u2014 summation order inside a reduction.  The declared S4 number, 0.9208483 mm to seven figures, is unchanged.  Through 62484a5c2's own gate, which found Pardiso bit-identical to UmfPack on these ten steps, the chain reaches back to e95a1c74f + UmfPack, on which the coarse fleet ran: all three builds agree on the answer.\nAND THE THREAD COUNT DOES NOT MOVE THE ANSWER.  Q and s are identical strings at 1, 4, 8, 16 and 24 threads on all ten steps, with zero relaxed rows throughout.\nWHY EIGHT.  Measured on the login node, `mid` D-V, seconds per push step: 21.10 at 1 thread, 12.41 at 4, 10.90 at 8, 10.78 at 16, 10.89 at 24 \u2014 1.94x at eight and flat after, against the sequential build's 21.7 s/step.  S0-S4 does the same: 2.38x at eight, flat after.  `coarse` gets 1.69x.  Sixteen threads buys a further 1 % for twice the cores, inside the noise of a shared node.  So eight, and `--cpus-per-task=8`, which also lets four legs share a 32-core node.  A 32-thread point could not be taken: every 32-core-free node was held by this act's own running legs.\nWHICH LEGS.  The six legs resubmitted at 2026-09-03 13:00 through `rcm_leg_thr.sbatch` run this build at eight threads and their run.json records `engine.threads` and the hash read out of the binary.  The five legs RUNNING at that moment were not touched and keep 62484a5c2 (or e95a1c74f for the two oldest); each states its own truth.\n",
+     "why_system": "SUPERSEDED 2026-09-03 by why_large_mesh and then by why_threaded; kept because the coarse fleet's legs were measured under it.  As written on build e95a1c74f: `system Pardiso` is NOT in this build and the run log proves it: the fork's CMakeLists.txt sets PARDISO_FLAG only inside `if(MKL_FOUND AND DEFINED MKL_LPATH)`, and MKL_LPATH is assigned only under `if(CMAKE_SYSTEM_NAME STREQUAL \"Windows\")` from `.lib` filenames.  The cluster configure therefore printed \"PARDISO DISABLED (no MKL) - serial builds fall back to UmfPack\", and `ops.system(\"Pardiso\")` on the built module answers `WARNING unknown system type Pardiso`.  UmfPack is general and unsymmetric, so the honest-p coupling block survives; it is the sheet's declared `system_cross_check` and is about three times slower than Pardiso on this campaign's coupled legs (vault/ADR/62 R11).  Every cluster number must be read against a Windows number knowing this differs.\n"
+    }
+   },
+   "tcl_library": "",
+   "system": "Pardiso",
+   "expected_build_superseded": "a71cdb197adeeda1e77291c947b36cb25f319829",
+   "expected_build_superseded_from": "2026-09-03T13:00:00-04:00",
+   "expected_build_superseded_to": "2026-09-06T22:35:00-04:00",
+   "expected_build_superseded_why": "a71cdb197 is the threaded MKL build of 2026-09-03 and it does not carry ADR 92: its `LadrunoSANISAND` refuses `-maxSubsteps`, `-implex`, `-implexControl` and `-implexAlpha` at parse time, in the words \"positional optional '-maxSubsteps' may not follow a -flag\".  Every number measured on it stands and is comparable with every other number measured on it; NO number from it may be compared with one from c162833ed until the difference is accounted for, which is exactly what `drive.py`'s mismatch banner exists to say.  The flags-off path is claimed byte-identical across the two by the guide's section 1 and that claim has NOT been measured on this deck; the corrected mesh study is where it would be.\n",
+   "threads": 8,
+   "mkl_threading_layer": "mkl_gnu_thread",
+   "build_threaded": "c162833edc6059a2e5122e3a8e8dfb0a46a3e9f3",
+   "build_threaded_superseded": "a71cdb197adeeda1e77291c947b36cb25f319829",
+   "threaded_from": "2026-09-03T13:00:00-04:00",
+   "system_large_mesh": "Pardiso",
+   "large_mesh_dof_threshold": 50000,
+   "build_large_mesh": "a71cdb197adeeda1e77291c947b36cb25f319829",
+   "build_large_mesh_superseded": "62484a5c2426a443cf81cd72857f917982764c11",
+   "build_sequential_pardiso": "62484a5c2426a443cf81cd72857f917982764c11",
+   "build_coarse_fleet": "e95a1c74f7e15d7de8655eeeb004d7f34d81d512",
+   "why_large_mesh": "TWO BUILDS AND TWO SOLVERS ARE IN PLAY ON THIS MACHINE, AND BOTH ARE RECORDED.  `UmfPack` carries every mesh at or below the `mid` scale (49 626 DOF) and carried the whole coarse fleet on build e95a1c74f; it CANNOT carry the large meshes.  Measured 2026-09-03: UmfPack works at 49 626 DOF and fails at 93 246 with `numeric analysis returns -1` (UMFPACK_ERROR_out_of_memory) while the machine had 28 GB free and `ulimit -v`/`-m` unlimited, so the limit is internal and not the system's; its 64-bit escape hatch `useLongIndices` fails differently and earlier, with `setSize has not been called`, because the long path's symbolic factorisation is never reached (zero `symbolic analysis returns` lines in the log) even though `_UMFPACK_DLONG` is compiled in. SuperLU is correct but not viable: on the SMALLER mid mesh it was abandoned at 1 525 s still inside S1, at 13.1 GB and climbing, where UmfPack finishes S0-S4 in 82 s.\n`system Pardiso` was Windows-only by an accident of the build system (ADR-75 P1b gates it on MKL_LPATH, assigned only in the Windows branch from `.lib` names).  Fork commit 62484a5c2 adds `LADRUNO_MKL_PARDISO_LINUX`, and the cluster build now carries it.\nADMITTED BY AN EQUIVALENCE GATE, NOT BY FIAT.  On `mid` D-V, ten push steps, Pardiso against UmfPack on the SAME build: Q and the control-node settlement agree to 0.000e+00 relative on every one of the ten steps \u2014 bit-identical, against a gate of 1e-6 \u2014 and every S4 gate is exact under both.  Pardiso is 2.45x faster on S0-S4 (33.5 s against 82.1 s) and 2.82x on the ten push steps (216.9 s against 611.3 s).  UmfPack on this new build reproduces its own e95a1c74f numbers (S0-S4 82.1 s against 81.6 s, every gate value identical), so the build change moved nothing.\nThe coarse fleet already running keeps its meaning: those legs were started on e95a1c74f with UmfPack and their run.json records that.  A leg started after 2026-09-03 04:08 runs 62484a5c2, whatever solver it names, because the binary at the engine path is that build; `run.json` reads the hash out of the binary itself, so every leg states its own truth.\n",
+   "why_threaded": "THE THREADED MKL LAYER, DECLARED 2026-09-03 13:00 -04:00 AND ADMITTED BY THE SAME KIND OF GATE AS THE SOLVER BEFORE IT.  Fork commit a71cdb197 (\"build(cmake): threaded-layer opt-in for the Linux PARDISO\"), one commit on top of 62484a5c2, adds `LADRUNO_MKL_PARDISO_LINUX_THREADED`: it swaps mkl_sequential for mkl_gnu_thread + libgomp, and REFUSES to configure if LAPACK_LIBRARIES/BLAS_LIBRARIES still name mkl_sequential, because one process carries one MKL threading layer.  That refusal was made to fire before the build was trusted.  It lives in a SEPARATE build directory, build/Threaded; build/Release is untouched and still holds 62484a5c2.\nEQUIVALENCE.  `mid` D-V, ten push steps, threaded at OMP_NUM_THREADS = MKL_NUM_THREADS = 1 against the sequential build 62484a5c2, same harness and same sheet, differing only in which OpenSeesPy.so the shim resolves to: Q and the control-node settlement are IDENTICAL STRINGS on all ten steps, relQ = rel_s = 0.000e+00 against a gate of 1e-6, in every one of the nine significant figures curve.csv records.  Every S4 gate passes on both arms; the full-precision gravity settlement differs by 8.4e-12 relative (0.9208482574465603 against 0.9208482574543370 mm), the same round-off band and the same cause as the Windows-versus-Esmeralda comparison \u2014 summation order inside a reduction.  The declared S4 number, 0.9208483 mm to seven figures, is unchanged.  Through 62484a5c2's own gate, which found Pardiso bit-identical to UmfPack on these ten steps, the chain reaches back to e95a1c74f + UmfPack, on which the coarse fleet ran: all three builds agree on the answer.\nAND THE THREAD COUNT DOES NOT MOVE THE ANSWER.  Q and s are identical strings at 1, 4, 8, 16 and 24 threads on all ten steps, with zero relaxed rows throughout.\nWHY EIGHT.  Measured on the login node, `mid` D-V, seconds per push step: 21.10 at 1 thread, 12.41 at 4, 10.90 at 8, 10.78 at 16, 10.89 at 24 \u2014 1.94x at eight and flat after, against the sequential build's 21.7 s/step.  S0-S4 does the same: 2.38x at eight, flat after.  `coarse` gets 1.69x.  Sixteen threads buys a further 1 % for twice the cores, inside the noise of a shared node.  So eight, and `--cpus-per-task=8`, which also lets four legs share a 32-core node.  A 32-thread point could not be taken: every 32-core-free node was held by this act's own running legs.\nWHICH LEGS.  The six legs resubmitted at 2026-09-03 13:00 through `rcm_leg_thr.sbatch` run this build at eight threads and their run.json records `engine.threads` and the hash read out of the binary.  The five legs RUNNING at that moment were not touched and keep 62484a5c2 (or e95a1c74f for the two oldest); each states its own truth.\n",
+   "why_system": "SUPERSEDED 2026-09-03 by why_large_mesh and then by why_threaded; kept because the coarse fleet's legs were measured under it.  As written on build e95a1c74f: `system Pardiso` is NOT in this build and the run log proves it: the fork's CMakeLists.txt sets PARDISO_FLAG only inside `if(MKL_FOUND AND DEFINED MKL_LPATH)`, and MKL_LPATH is assigned only under `if(CMAKE_SYSTEM_NAME STREQUAL \"Windows\")` from `.lib` filenames.  The cluster configure therefore printed \"PARDISO DISABLED (no MKL) - serial builds fall back to UmfPack\", and `ops.system(\"Pardiso\")` on the built module answers `WARNING unknown system type Pardiso`.  UmfPack is general and unsymmetric, so the honest-p coupling block survives; it is the sheet's declared `system_cross_check` and is about three times slower than Pardiso on this campaign's coupled legs (vault/ADR/62 R11).  Every cluster number must be read against a Windows number knowing this differs.\n",
+   "platform_key": "linux",
+   "platform_override_applied": true
+  },
+  "cell": "D-L",
+  "scale": "coarse",
+  "date": "2026-09-07T03:06:31",
+  "verdict": "wall"
+ }
+}

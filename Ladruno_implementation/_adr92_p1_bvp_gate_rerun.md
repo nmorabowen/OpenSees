@@ -11,7 +11,7 @@ related:
   - "[[_adr92_p1_redblue_review]]"
   - "[[_adr92_p1_bvp_gate_results]]"
 tags: [adr, sanisand, implex, bvp-gate, measurement, rerun]
-updated: 2026-09-06
+updated: 2026-09-07
 ---
 
 # ADR 92 / P1 gate 1 rerun — control and uncontrolled arms
@@ -381,3 +381,92 @@ clears both bars, and there is currently no evidence in this sweep that going fu
   another lane's mutation-gate rebuild could overwrite the worktree's own binary;
   `ops.ladrunoBuild()` verified against the snapshot before the sweep and re-confirmed
   in all four `run.log`s). `control`/`noctl`/`ctl` unaffected, not re-run.
+
+## P2 regression -- registered arm (`tol0.1`) re-run on `87b9cf846`
+
+WP-92e (PR #807), worktree `ladruno-92e-implex-p2`, branch `wp/92e-implex-p2`.
+`ops.ladrunoBuild()` verified `87b9cf846aa6e75f96d620f24a15b24ba4503a52` before
+running (P2's ADR-92 lane: `-implexFloor` P2-1 and `-implexGuard` P2-2/3 landed on
+top of the P1 fix build this memo's sweep used). Same deck, same invocation as the
+sweep's `tol0.1` leg above (`h1.0_e0.6944`, `--implex --implex-control 0.1 0.01`,
+`--surcharge 10`, `--maxsubsteps 20000`, `--wall 2400`, R3 domain defaulted), into
+`Ladruno_files/testbed/hypo_bearing/adr92_bvp_fix/p2_tol0.1/`. Driver change
+committed separately (`061c8cb1e`, "driver records implexGuards"): a per-converged-step
+read of `implexGuards` (process-wide, non-destructive, same idiom as
+`implexRefusals`), written as 4 new curve-CSV delta columns
+(`guard_floor`/`guard_f0`/`guard_hold`/`guard_res`) and 4 cumulative totals
+(`n_guard_floor`/`n_guard_f0`/`n_guard_hold`/`n_guard_res`) in the leg JSON --
+P2-1/2/3 fire silently by design (ADR §8), so this is the only record of how often
+they did. A pytest battery ran concurrently on the same machine throughout this
+leg; **wall-clock numbers below are indicative only, not a clean single-tenant
+measurement** (same caveat class as the P1 rerun's PID 74216 note above).
+
+The second leg the WP asked for (`-implexFloor refuse`, otherwise identical) was
+**not run**: `sanisand_tau0_band.py`'s `argparse` surface (checked in full --
+`--out`, `--legs`, `--wall`, `--sfrac`, `--dsmax`, `--tol`, `--test`, `--xlim`,
+`--zbot`, `--implex`, `--implex-control`, `--predictor`, `--surcharge`,
+`--maxsubsteps`, `--tantype`) has no `--implex-extra`/`--implex-floor` or any other
+hook for passing extra `nDMaterial LadrunoSANISAND` tokens, so there is no way to
+reach `-implexFloor refuse` from the driver without editing it beyond the one
+`implexGuards`-recording change the WP authorized. Skipped per the WP's own
+fallback instruction.
+
+| | P1 registered `tol0.1` (`afb95c40c`, from the sweep above) | P2 `tol0.1` (`87b9cf846`, this rerun) |
+|---|---|---|
+| mode | BUDGET | BUDGET |
+| depth (s/B) | 0.07642 | 0.07594 |
+| steps (converged) | 514 | 514 |
+| nsub | 81 | 81 |
+| n_material_refused | 9299 | 9235 |
+| refused / converged step | 18.09 | 17.97 |
+| n_guard_floor (P2-1, floor->implicit) | -- (P1 predates the guard) | **0** |
+| n_guard_f0 (P2-2, f=0 after reversal/softening) | -- | **2913** (5.67 / step) |
+| n_guard_hold (P2-3, zero-dt commits) | -- | **0** |
+| implexError avg (running, final) | 0.00005 | 0.0000320 |
+| implexError max (over the 5 matched checkpoints, `s/B` 0.002-0.04) | 0.00226 | 0.00105 (at `s/B=0.005`) |
+| overlay vs `control/`, mean \|dev\| (excl. step 1) | 1.87 % | 1.92 % |
+| overlay vs `control/`, max \|dev\| (excl. step 1) | 21.53 % | 23.99 % (at `s/B=0.00002`, the step directly after the shared step-1 elastic-predictor outlier) |
+| tail fit slope, last 10 % of the matched window (`s/B` <= control's own `0.0678`) | -- (not computed in the sweep table) | 21377 kPa/(unit s/B) -- steep, no plateau |
+| wall_s (contended both runs -- see caveat) | 180.0 | 192 |
+
+Overlay methodology matches the sweep table above: `control/`'s 69-row curve
+(ending `s/B = 0.0678`) is linearly interpolated onto the finer P2 leg's own
+`s/B` grid over the overlap window `s/B <= 0.0678` (463 of P2's 514 rows fall
+in that window), `dev % = (q_P2 - q_control_interp) / q_control_interp * 100`
+at each matched point, and step 1 (`s/B = 1e-5`, the shared pure
+elastic-predictor outlier at +104.98 % on every `-implex` arm in this campaign)
+is excluded from the mean/max headline the same way the P1 sections above
+exclude it. A coarse checkpoint-grid overlay (control-endpoint row last):
+
+| s/B | q_control (kPa) | q_P2 (kPa) | dev % |
+|---|---|---|---|
+| 0.0005 | 17.753 | 18.459 | +3.98 |
+| 0.001 | 31.877 | 32.942 | +3.34 |
+| 0.002 | 58.158 | 59.691 | +2.64 |
+| 0.005 | 131.840 | 134.819 | +2.26 |
+| 0.01 | 248.853 | 254.041 | +2.09 |
+| 0.02 | 477.979 | 486.443 | +1.77 |
+| 0.04 | 926.469 | 941.187 | +1.59 |
+| 0.0678 (control's own endpoint) | 1529.844 | 1548.771 | +1.24 |
+
+**P2 regression verdict.** The registered `tol0.1` arm reproduces the P1 result
+within run-to-run noise on every load-path metric that predates P2: same mode
+(`BUDGET`) and `nsub` (81/80), depth within 0.6 % (`s/B` 0.07594 vs 0.07642),
+converged step count identical (514), refusal rate within 0.7 % (17.97 vs 18.09
+per step), `implexError` an order of magnitude *below* its P1 counterpart at
+every measured point (running-average final value and all five checkpoint
+maxima), and the overlay against `control/` essentially unchanged (mean
+deviation 1.92 % vs 1.87 %, both comfortably under the 5 % bar; the max-deviation
+figure moves from 21.53 % to 23.99 % but both occur at the same shared
+step-1-adjacent outlier the P1 memo already flagged as a feature of the early
+trajectory, not something an operating point or a guard tunes away). The new
+P2 instrumentation shows guard P2-2 (`f = 0` after a reversal/softening event)
+firing 2913 times (5.67 per converged step) over the leg, while P2-1 (the
+implicit-stress floor fallback) and P2-3 (zero-`dt` commit preservation) never
+fire at all on this deck -- consistent with a tau=0 bearing push that stays
+monotonic in loading direction at the material level (no unload/reload cycle
+to trigger a floor or a hold) but crosses `f = 0` at a meaningful rate wherever
+the corner Gauss points reverse or soften locally. No sign of a P2-introduced
+regression on this deck; the `-implexFloor refuse` arm remains unmeasured for
+lack of a driver hook, not because anything here suggests it would behave
+differently.

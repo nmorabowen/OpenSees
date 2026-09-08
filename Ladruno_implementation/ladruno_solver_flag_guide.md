@@ -142,6 +142,53 @@ lines, your binary predates P2h.
 > `LEDGER_quirks.md`). Linking MUMPS into the serial targets is an ADR-75 policy reversal for the
 > owner, not a flag fix. Ledger: `LEDGER_quirks.md` "The serial `MumpsSolver` is never compiled".
 
+### `-stats` on the desktop: `system Pardiso -stats` (ADR-75 P1k)
+
+Since the serial `MumpsSolver` is never compiled (see the warning above), **`system
+Pardiso -stats`** — alias `-pardisoStats` — is the only route to a factorization
+memory/fill number on a plain desktop build (`OpenSees.exe`, the serial `.pyd`, no
+`mpiexec` required). It prints after **every** numeric factorization (PARDISO phase 22 —
+the first factorization and every refactorization, not once per sparsity pattern), in the
+same labelled-block shape as the MUMPS block above:
+
+```
+PARDISO stats: n=1000 nnz(A)=27000 matrixType=11 threads=8
+  factor entries iparm(18)  = 154302
+  peak memory KB iparm(15)  = 8421
+  perm memory KB iparm(16)  = 3104
+  fact memory KB iparm(17)  = 19870
+  factor Mflops  iparm(19)  = 412
+```
+
+- **`matrixType`** is PARDISO's own `mtype` (11 unsymmetric / 2 SPD / -2 symmetric
+  indefinite — see `-matrixType 0|1|2` above this section), not a re-derived label.
+- **`threads`** is `mkl_get_max_threads()` — read back for the log, not a settable
+  option; MKL's thread count still comes only from `MKL_NUM_THREADS`/`OMP_NUM_THREADS`.
+- **`factor entries iparm(18)`** = nonzeros in the factors (L+U) — PARDISO's `INFOG(9)`
+  equivalent.
+- **`peak memory KB iparm(15)`** = peak memory during the symbolic (reorder) phase.
+- **`perm memory KB iparm(16)`** = permanent memory kept after the symbolic phase.
+- **`fact memory KB iparm(17)`** = memory for numerical factorization + solution — read
+  AFTER the triangular solve, so it is the real peak, not a lower bound; this is
+  PARDISO's closest analog to MUMPS's `INFOG(21)` "the number that decides whether a
+  model fits". All three memory lines are printed **raw, in KB** — MKL already reports
+  them in KB, so unlike the MUMPS block above (which converts `INFOG(21)`/`(22)` to MB)
+  there is no unit conversion to double-check here.
+- **`factor Mflops iparm(19)`** = MFlops of factorization. Both this and the nnz-in-factors
+  report cost extra MKL analysis time, so `iparm[17]`/`iparm[18]` are only set to `-1`
+  (the "report me" sentinel) when `-stats`/`-pardisoStats` is on — the flag is
+  byte-identical to a bare `system Pardiso` otherwise.
+
+All five labels use the **Fortran 1-based `iparm()` numbering** (`iparm(N)` == the C array's
+`iparm[N-1]`), on purpose — so every number here is directly checkable against the MKL
+Developer Reference's PARDISO `iparm` table without an off-by-one translation.
+
+Source: `SRC/system_of_eqn/linearSOE/pardiso/PARDISOGenLinSolver.cpp` (the `-stats` block at
+the end of `solve()`, gated on `reportStats && didFactorNow`), parsed in
+`SRC/interpreter/OpenSeesCommands.cpp` (`OPS_PARDISOGenLinSolver`) and `SRC/tcl/commands.cpp`
+(the `system Pardiso` branch) — both interpreters, so it works from OpenSeesPy and Tcl alike
+without the P2h "Tcl-only" trap the MUMPS flags had.
+
 ---
 
 ## apeGmsh

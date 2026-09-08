@@ -5890,6 +5890,24 @@ a material-level flag a recorder reads. Returning a sentinel from
   here 3 of 4 were genuine OOM candidates and 1 was an unrelated, much cheaper bug hiding behind
   the same exit code.
 
+### `-implexControl` under `DisplacementControl` walls on trial strains that do not scale with the step (ADR 93, 2026-09-07)
+- **Symptom:** every IMPL-EX leg driven by `DisplacementControl` walls at s/B ~0.001–0.002 on control refusals at iteration 1, with the committed `implexError` at the free-surface ring RISING (×30) while the step SHRINKS (÷16); cap hits zero, D2 zero.
+- **Cause (inferred from the refusal patterns and error scalings, not measured per iterate):** `DisplacementControl` predicts the load factor from the frozen elastic tangent, which lands an O(1) trial strain on a near-zero-stiffness ring regardless of ds; the control correctly refuses a trial whose error no step size cures.
+- **Fix:** use the fork's push idiom — `LoadControl(-ds)` on a prescribed-settlement `sp` (Linear series, Transformation) — under which the error is O(ds), the registered arm walks at full step, and the curve overlays the implicit twin (Esmeralda jobs 146451/146453 vs 146438). The guide now says so. Recorded so nobody re-derives it from a "tolerance too tight" reading, which is what it looks like.
+
+### `implexRefusals` is a process-wide singleton: read it as DELTAS, never as per-arm totals (ADR 92/93, 2026-09-07)
+- **Symptom:** running two IMPL-EX arms in one Python process (a probe script, a pytest module) shows the second arm's `implexRefusals` starting from the first arm's totals; `ops.wipe()` does not reset it.
+- **Cause:** the four refusal counters live in a process-wide static (the same design as `avgImplexError`'s accumulator), by intent -- the campaign driver reads one element's response as the leg's census.
+- **Rule:** snapshot before, subtract after; one arm per process for a reported census. Also: a zero-increment trial (`LoadControl 0.0` hold) sets `f = 0` and measures NO `implexError` -- an `implexDetail[0] == 0` on a hold is by construction, not evidence of a consistent committed state. And on a FREE-DOF deck a hold is not a zero-strain step: Newton moves the nodes to close the committed state's equilibrium gap (the committed stress is the companion's, equilibrium was found on `sigma~`), which is IMPL-EX's defining property; a true zero-increment material probe needs the zero-free-DOF deck (`sani._build`).
+
+### The P1 settlement-column test deck hits the companion cap at 20000 in 19 of 30 steps at ds 1e-3 (2026-09-07)
+- **Symptom:** `_build_settlement_column` (tests/test_ladruno_sanisand_implex.py) pushed at ds = 1e-3 under `-implex` records `implexRefusals[3]` (companion cap at commit) on 19/30 steps even at `-maxSubsteps 20000`, silently force-accepted (`Domain::commit()` discards the refusal), and the implicit twin cannot converge that deck at ds 1e-3 or 1e-4 at all.
+- **Consequence:** that column is a correctness deck for the operator's bookkeeping, NOT a deck on which `_CAP_ADEQUATE = 20000` is adequate; any test that reads a *history* off it must assert `implexRefusals[3]` unchanged first. The campaign deck (`adr92_bvp_fix/`) had zero cap hits at the same cap.
+
+### `setParameter ... stressCorrection` is a silent no-op from every interpreter (vanilla ManzariDafalias, found 2026-09-07 by TIMs)
+- **Symptom:** `ops.setParameter('-val', 0, '-ele', ..., 'stressCorrection')` binds (a bad tag moves nothing, `refShearModulus` by the same route moves the stress) but changes nothing: `updateParameter` id 9 reads `info.theInt` (`ManzariDafalias.cpp:897`, same pattern at `:864` for `mElastFlag`) while the interpreters' `setParameter` fill only `theDouble`, and `Information` leaves `theInt` at its default. So the drift correction cannot be switched off from a deck; only the in-model default (ON, four constructors) is ever exercised.
+- **Fix (owed, ADR 92 P2 list):** override `updateParameter` in `LadrunoSANISAND` for the ids that read `theInt` and accept `theDouble` too (zero vanilla footprint); until then any "stress-correction-off" arm in a memo was never run.
+
 ### ASDPlasticMaterial3D's tangent is a CLASS-STATIC — every Gauss point is assembled with the last GP's tangent (ADR-94 H1)
 - **Bites:** any multi-element or strain-gradient model on any ASDP specialization, on every host that calls `setTrialStrain` for all GPs in `update()` and `getTangent()` in a later loop (`Brick`, `LadrunoBrick`, `TenNodeTetrahedron`, ...). `Stiffness`, `dsigma`, `depsilon_elpl`, `intersection_*` are `static` members of `ASDPlasticMaterial3D<E,Y,P,tag>` (header 4116-4120); `getTangent()` copies the static; `getInitialTangent()` overwrites it as a side effect. Measured: two disconnected elements whose tangents differ by 13.6 % assemble bit-identical blocks, and which one wins is the domain iteration order.
 - **Why it hid:** every ASDP test was a single-element homogeneous driver, where all GPs share one state. Converged RESULTS are still exact (the residual uses each element's own stress) — the cost is Newton effort (+62 % on a two-cube model, 5.3x with the `Secant` default) and non-convergence on hard steps.
@@ -5933,6 +5951,25 @@ a material-level flag a recorder reads. Returning a sentinel from
 - **Bites:** "stresses"/"forces"/"material" responses always re-derive strain from the CURRENT nodal trial displacement and re-run the material, so a material-level Trial-state corruption (e.g. ASDP's no-op `revertToLastCommit`) is invisible through any eleResponse path after a domain-level revert; `ops.reset()` then reports a third stress value that is neither zero nor the pre-reset commit.
 - **Rule:** to observe raw material Trial/Commit state after a revert, use a source-level structural pin or a recorder that reads the material directly; do not conclude "fixed" from a tet eleResponse.
 
+### `setParameter ... stressCorrection` on `ManzariDafalias` is a silent no-op — FIXED in WP-92e for the Ladruno subclass
+- **Bites:** `ManzariDafalias::updateParameter` reads `info.theInt` for id 9 `stressCorrection` (`ManzariDafalias.cpp:897`), but every interpreter path writes `info.theDouble` and never touches `theInt`: `OPS_updateParameter` (`OpenSeesParameterCommands.cpp:498-504`) reads a DOUBLE → `Domain::updateParameter(tag, double)` → `Parameter::update(double)` → `theInfo.theDouble = newValue` (`Parameter.cpp:194`). The call returns 0, so the deck believes the correction was switched off and it was not. ADR 93's 2026-09-07 fork-side probe spent a whole "stress-correction-off" arm on it and the arm was not one. Worse, `Information`'s default ctor does NOT initialise `theInt` (`Information.cpp:35-40`) and `Parameter`'s ctor sets only `theDouble = 1.0` (`Parameter.cpp:37`), so on the double path the base is reading **indeterminate memory**.
+- **Rule:** on `LadrunoSANISAND` this is **fixed in WP-92e** (ADR-92 P2-4): the subclass overrides `updateParameter`, claims id 9, and reads `theDouble` (`ON <=> theDouble != 0.0`). `theInt` is deliberately not ORed in — it is indeterminate on the only path an interpreter has, and ORing it would make "turn the correction OFF" depend on stack garbage. On vanilla `ManzariDafalias` the defect stands (jaabell-bound). ids 1 `updateMaterialStage` / 5 `materialState` are NOT intercepted: id 5 already reads `theDouble`, and id 1 has a genuine int-path command (`OpenSeesNDMaterialCommands.cpp:371` → `Parameter::update(int)`), so `updateMaterialStage 0` must keep reading `theInt` or the standard "go elastic" call would silently read the stale `1.0`.
+- **Second half of the same quirk, also fixed:** the base REGISTERS id 9 only under `argc >= 2` with the material tag in `argv[1]` (`ManzariDafalias.cpp:820-825`), but the idiomatic route `setParameter -val 0 -ele $eleTag stressCorrection` hands the material `argv = {"stressCorrection"}, argc = 1` (`Brick::setParameter` forwards the remaining args verbatim to every material point), so the base returns -1 and no parameter is ever created. `LadrunoSANISAND::setParameter` now claims `stressCorrection` itself, ungated by the tag, and lands on the same id 9. Both routes work.
+- **General form:** before believing any `setParameter`/`updateParameter` flag took effect, read the material's `setParameter` (does the ROUTE you used even register?) AND its `updateParameter` (WHICH field of `Information` does it read?). `theInt` on a flag reachable only from an interpreter is always a no-op.
+
+### A hold is a MODEL event on ManzariDafalias: the reversal test has no magnitude guard (ADR-92 P2-5)
+- **Bites:** vanilla `ManzariDafalias::integrate()` `:1005-1013` dots `(α_n − α_in_n)` with `Ce·Δε` and resets `α_in := α_n` whenever the dot goes negative — with no magnitude guard. On a zero-increment step (a hold), the sign of that dot is round-off noise, so the reset fires on noise: 28–54 % of 34 560 points on Esmeralda 146458 reset `α_in` during a hold, sending `h → ∞` there and stiffening the implicit column 2.5x for tens of steps afterward. This is on top of, and separate from, the P2-3 zero-`dt_n` fallback defect.
+- **Rule:** a hold is not a no-op step to `ManzariDafalias` — it is a MODEL event that can silently reset internal state. No holds inside a reported push on either material (implicit or IMPL-EX) until P2-5 ships; the fork's `-reversalTol` guard (default 1e-10 on `‖Δε‖`) is the fix, tracked as `implexGuards[3]`. Built in #807, acceptance pending Esmeralda.
+- **Measured noise floor (P2-5b, 2026-09-07):** the fork's R3 footing (1600 GPs, `708152eac`) measured the hold's per-point strain increment directly: median 4e-9, max 6.4e-8 on the IMPL-EX arm, max 1.4e-6 on the implicit arm. A fixed `-reversalTol` cannot sit below that floor and still guard anything: at 1e-10 `alpha_in` still reset at 42 % / 9.5 % of points on a hold, and even 1e-7 left 2.2 % resetting on the implicit arm; Esmeralda's own hold acceptance on `8bfdfbc17` failed the same way (1702/34 560, tangent jump 3.7× → 2.2×). The fix (P2-5b) makes the guard relative to the last committed increment (`-reversalRel`, default 0.05) instead of absolute. An absolute strain threshold on a Newton-converged increment is never right; the floor tracks the solver tolerance.
+
+### Vanilla ManzariDafalias initialises `α_in` at the stage flip via the sign test — deterministic on a real deck (ADR-92 P2-7)
+- **Bites:** the elastic stage sets `α = dev(σ)/p` every step (`ManzariDafalias.cpp:1055`), so at the flip from `updateMaterialStage 0` to `1` the material already holds `α = r_gravity ≠ 0` while `α_in = 0`. `Elastic2Plastic()` never touches `α_in` — the init lines that would set it are commented out (`:5139-5141`). The only place `α_in` ever gets initialised is the sign test inside `integrate()` (`:1005-1013`), which fires on the FIRST plastic evaluation after the flip. That initialisation is decided by the sign test on the first plastic increment; deterministic on a real deck, noise only on an exactly-zero re-equilibration where the fork's synthetic return uses an exactly zero increment and is neutral. Esmeralda 887fea475 (real deck, reversal-noise guard confined to primed states) confirms this: the sign test sets `α_in := α` at 28 629/34 560 points on step 1, identical every run — a genuine continuing-loading decision, not round-off — and the implicit path then returns to the pre-P2 number to the digit (6.511 / 11.539 / 16.117 / 20.528 vs `c162833ed`). The earlier, wider P2-5/5b/5c reversal-noise guard (built to fix the unrelated hold-corruption defect) had suppressed the sign test's reset unconditionally at every state, not just primed ones, which is what produced the 23-33 % soft implicit path from step 1 (Esmeralda 146574/146586: first rows 1.296 / 2.6 kN vs 6.511 on `c162833ed`) — a guard-scope defect, not a defect in the sign test itself.
+- **Consequence:** a hold or re-equilibration step placed EXACTLY at the flip (an exactly-zero increment) is the one case where the sign test is genuinely neutral, because the fork's synthetic zero-increment return has no direction to decide from; that case is handled separately (the `-implex` zero-increment companion return, P2-7c's per-instance detection). On any real (non-zero) first post-flip increment the sign test is deterministic and decides the true loading direction — there is no defect there to work around.
+- **Rule:** the fork's `-flipAlphaIn init|vanilla` defaults to `vanilla`: leave the sign test in control, since it is deterministic on a real deck and reproduces real `ManzariDafalias` exactly. `init` (opt-in) forces `α_in := α` unconditionally at every point at the flip — a declared, opt-in modelling variant, not a defect fix, and every P2-7 curve names which flag it used. The reversal-noise guard now applies only to PRIMED states (points that have taken a plastic commit since the flip), so it can no longer intercept the flip's own sign-test initialisation.
+
+### `updateMaterialStage` reaches one element; the static `mElastFlag` hides it (ADR-92 P2-7c)
+- **Bites:** `MaterialStageParameter::setDomain()` walks the domain's elements and calls `theEle->setParameter(...)` in a loop that stops the instant one element accepts the parameter — `while (((theEle = theEles()) != 0) && (theResult == -1))` (`SRC/domain/component/MaterialStageParameter.cpp:76-78`), with the comment on `:75` spelling out the assumption: "note because of the way this parameter is updated only need to find one in the domain". Measured on the fork's R3 footing (200 elements, 1600 Gauss points): `ops.updateMaterialStage('-material', 1, '-stage', 1)` reached exactly ONE element's 8 Gauss points. Vanilla never noticed because `ManzariDafalias::mElastFlag` is a class-wide `static`, so one dispatch flips every instance at once; P2-7's per-instance work (the `α_in` flip-init, the IMPL-EX zero-increment companion return) ran at 8/1600 points instead of all of them, and on `887fea475` the `init` vs `vanilla` `-flipAlphaIn` arms were indistinguishable as a result — not because the fix was wrong, but because it never ran on 1592 of the 1600 points.
+- **Rule:** any per-instance work keyed on the stage-flip must detect the flip LAZILY inside the instance, never rely on `updateMaterialStage`'s dispatch reaching it. The fix: each material instance checks for the flip itself at its own first plastic trial evaluation (`mElastFlag == 1` and this instance hasn't seen the flip yet), does the init work there (and, under `-implex`, delivers the zero-increment companion return) and then marks itself so it won't repeat. This is dispatch-independent, so it also covers instances restored from a database (`recvSelf`) or that never happened to be the "found in the domain" element on an MPI rank. Do not add stage-flip logic to a command handler or a `setParameter`/`updateParameter` override and assume it reaches every Gauss point — check whether the call site is `Domain`-loop-once (`MaterialStageParameter`-style) or genuinely broadcasts.
 ### A bit-identity gate cannot certify a fix that removes shared static state (ADR-94 wp/94b)
 - **Bites:** wp/94b's gate compared committed-stress histories of 23 single-element decks dumped IN ONE PROCESS on the pre-fix build (`229842f7f`) against the per-instance build (`11e3a1283`): 14/23 decks deviated, mostly 1e-9..1e-16 absolute, and the Hoek-Brown deck by 0.12 kPa at step 1 (2e-5 relative). Neither is a wrong answer: (a) the old build's statics carried state between decks run sequentially in one process, so the BASELINE was the contaminated side; (b) the fix changes the assembled tangent, hence the global Newton path, so converged stresses differ at the global-tolerance level — on rock with E ~ 1e7 kPa a `NormDispIncr 1e-8` tolerance is Δσ ≈ E·1e-8 ≈ 0.1 kPa, which is what was measured.
 - **Why:** "byte-identical before/after" presumes the change is inert on the converged path; a tangent fix is not inert on the PATH, only on the RESULT, and a static-state fix is not even inert on the baseline.
@@ -6068,3 +6105,45 @@ Models running `tangent_type Algorithmic` need `system UmfPack`; `ProfileSPD` is
 wrong, PARDISO's symmetric `-matrixType` (ADR-75 P1d) must not be selected, and
 `FullGeneral` crashes a fully prescribed material-point rig (`FullGenLinSOE`
 N = 0).
+## Growing a `MaterialResponse` vector needs TWO edits, and a mismatch is SILENT (ADR-92 P2-9, 2026-09-07)
+
+The `setResponse` / `getResponse` idiom this codebase uses everywhere allocates a
+function-local `static Vector` at BOTH ends — `setResponse` builds the recorder's
+probe (`static Vector probe4g(6); return new MaterialResponse(this, ID, probe4g);`)
+and `getResponse` builds the value it fills (`static Vector out4g(6); ...
+matInformation.setVector(out4g);`). The two live ~130 lines apart in
+`LadrunoSANISAND.cpp` and nothing ties their sizes together.
+
+Growing a census by one slot (here `implexGuards` 6 -> 7 for P2-9's "backed off"
+counter) means editing BOTH. Change only `getResponse` and the extra slot never
+reaches a recorder — `Information::setVector` copies into a `Vector` the
+`MaterialResponse` sized from the probe, so the value is dropped with no warning
+and a harness reads a short vector or a stale one. Change only `setResponse` and
+the recorder allocates a slot that is never written. Neither is a compile error
+and neither prints anything.
+
+Rule: when you add a slot, grep the response id and fix every `static Vector`
+that mentions it in the same file, then update the slot table in the guide
+(`LadrunoSANISAND_implex_guide.md` §6) in the same commit — the table IS the
+contract the TIMs harnesses read by index.
+## `system Pardiso -stats` used to print once per PATTERN, not once per FACTORIZATION (ADR-75 P1k)
+
+The P1d `-stats` implementation gated its print on a `statsDone` flag reset only
+when the symbolic phase (11) re-ran — i.e. once per sparsity PATTERN. That reads
+as "once per factorization" until you actually refactorize the same pattern:
+`ModifiedNewton` holding `A` fixed never re-triggers it (correct — nothing new
+to report), but plain `Newton` under `LoadControl`/`StaticIntegrator` DOES
+reassemble+refactorize every step against the SAME sparsity pattern (`zeroA()`
+sets `factored = false` on every tangent assembly, `setSize()`/phase 11 is not
+re-run), and the old `-stats` printed its block exactly ONCE across the whole
+analysis — silently dropping every later refactorization's numbers. Not a bug
+exactly (the counters ARE mostly pattern-invariant — peak/permanent symbolic
+memory really doesn't change step to step), but it means "grep the log for
+`PARDISO stats:`" answered "did the model fit at all", not "how many times did
+this thing refactorize and what did each cost" — which is what TIMs PM-01 D26
+actually wanted. Fixed by gating the print on a per-`solve()`-call local
+(`didFactorNow`, true only when THAT call executed phase 22) instead of a
+member latch. Lesson for the next "once per X" cache-style gate on a `-stats`
+style flag: ask explicitly whether X is "this analysis" or "this event", because
+OpenSees's own re-solve/re-factor cadence (one pattern, many refactorizations)
+makes those two very different answers.

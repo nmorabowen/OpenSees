@@ -103,9 +103,363 @@ the P0 oracle table (`_adr92_p0_oracle_results.md` section 4: IMPL-EX-A's
 error grows sharply with increment size at low confinement -- "breaks at
 5e-4" at p0 = 5 kPa).  Nothing here is a number read off THIS build, because
 this build does not exist yet.
+
+LANE B2 / P2 BATTERY (2026-09-07, WP-92e).  Five new tests written for the
+"P2 (owed)" table at the end of `Ladruno_implementation/
+92_ladruno_sanisand_implex_adr.md`, against the interfaces lane A2 is
+building to (not yet built at the time this file was written -- lane A2's
+own note says so, and the module docstring's rule above applies here too:
+nothing below is a number read off a real binary). Four items, all
+process-wide/non-destructive per the new `implexGuards` response
+(`Vector(4)`: [0] floor fallbacks, [1] f=0 guards, [2] hold-preserved
+commits, [3] reserved/unused):
+
+  * `test_floor_fallback_delivers_implicit_stress_and_counts` --
+    `-implexFloor implicit|accept|refuse` (new default `implicit`) at the
+    `-implexControl` reduction floor.
+  * `test_guard_zeroes_f_after_reversal` / `test_guard_zeroes_f_after_softening`
+    -- `-implexGuard on|off` (default `on`): the elastic-predictor (`f = 0`)
+    override on the step after a commit whose state shows a load reversal
+    (`alpha_in` reset) or softening (`Kp <= 0` / declining stress ratio).
+    The softening gate has NO way to be verified against a real run from
+    this lane (no binary exists yet, and lane B2 cannot build one) -- it
+    detects the softening onset AT RUNTIME from the committed state (a
+    peak-then-decline in `eta/M_b`, the observable macroscopic signature of
+    `Kp` crossing zero under monotonic straining) and calls `pytest.xfail`
+    with the actual numbers reached if the dense confine-first deck never
+    softens within its step budget, rather than asserting a canned outcome
+    that was never measured.
+  * `test_hold_keeps_clock_and_history` -- a `LoadControl(0.0)` hold
+    preserves `mImplexDtCommit` and the `d_eps_p` history from the step
+    BEFORE the hold, rather than resetting either.
+  * `test_setparameter_stresscorrection_takes_effect` -- the
+    `updateParameter` dispatch fix for `ManzariDafalias`'s `stressCorrection`
+    responseID (9, `ManzariDafalias.cpp:897`), previously a no-op reaching
+    `LadrunoSANISAND` through the IMPL-EX-era dispatch.
+
+Also pins `test_implexcontrol_floor_accepts_once_reduction_limit_is_reached`
+(the P1/M4 mutation-gate survivor, written against the OLD unconditional-
+accept floor behaviour) to `-implexFloor accept` explicitly -- its own
+assertions describe exactly the `accept` mode's contract, and P2's new
+default (`implicit`) would otherwise silently change what floor behaviour
+that test is exercising out from under it.
+
+Collected count after this lane: 34 `def test_...` functions, 38 collected
+items (`test_implex_refuses_unsupported_schemes` is a 5-way parametrize;
+every other function is a single collected item) -- up from the P1 file's
+21 functions / 25 items. Verified by `python3.12 -m py_compile` plus an AST
+walk over the module's top-level `test_*` `FunctionDef`s, not by hand-count.
+
+FIRST RUN AGAINST A REAL P2 BINARY (2026-09-07, `ladrunoBuild() ==
+87b9cf846`). 27 passed / 1 skipped / 2 xfailed, zero unexplained failures.
+Five genuine test-side bugs found and fixed, all in THIS file, none in
+`SRC/`:
+
+  * `test_negative_monotone_clock_runs_the_spec_factor` and
+    `test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio`
+    (both P1-era, predate `-implexGuard`) needed `-implexGuard off` pinned
+    -- their decks' first plastic commit is UN-PRIMED, and
+    `ladrunoImplexCommit()`'s reversal check (`GetNorm_Contr(dAlphaIn) >
+    0.0`) cannot tell "alpha_in initialised for the first time" from a
+    genuine reversal, so the guard spuriously arms off that first commit
+    and zeroes `f` on the immediately following step -- confirmed a real,
+    reproducible effect (not itself edited here, since it lives in
+    `SRC/LadrunoSANISAND.cpp` and this lane does not touch `SRC/`), worked
+    around the SAME way `-implexFloor accept` was already pinned onto the
+    M4 survivor.
+  * `test_floor_fallback_delivers_implicit_stress_and_counts` compared a
+    refused ladder rung's `implexDetail` against the next rung's -- but
+    `LadrunoBrick` PROPAGATES a refusal, so a refused `analyze()` reverts
+    without ever calling `commitState()`, and `implexDetail`'s error
+    components are written only inside `ladrunoImplexCommit()`; every
+    refused rung therefore read the STALE value from the last real commit
+    (here, exactly `[0,0,0,0,0,0]`). Fixed by comparing the SAME
+    deterministic floor rung's `implexDetail[0]` under `-implexFloor
+    accept` vs `implicit` instead of a refused-vs-accepted pair.
+  * `test_hold_keeps_clock_and_history` used the SAME `ds` before and after
+    the hold, so the correct (`dtCommit`-preserving) and broken
+    (`dtCommit`-reset) readings of `f` collapsed to the identical number
+    (`alpha`) and the test could not tell them apart. Fixed by doubling the
+    post-hold `ds`, and loosened the with/without-hold stress-equality
+    tolerance from 1e-10 to 1e-5 (measured reldiff ~9e-7 on this free-DOF
+    deck -- one extra converged Newton solve at dt = 0, not a defect).
+  * `test_setparameter_stresscorrection_takes_effect` imported
+    `sani._SENSITIVITY_FLOOR` (1e-3, calibrated for the much larger
+    p_residual elastic-vs-plastic gap); `Stress_Correction()` is a small
+    drift-back correction and measured 2.994e-4 on this deck -- real, but
+    under that floor. Fixed with a locally scoped `_SC_SENSITIVITY_FLOOR =
+    1e-5`.
+
+`test_guard_zeroes_f_after_softening` XFAILs as designed: `eta/M_b` stayed
+at exactly 0.0 for all 400 deviatoric steps on this specific `e_conf`/`lat`
+combination -- the deck reaches the `p_min` floor almost immediately at
+this (larger, non-`_PMIN_E_CONF_LOW`) confinement and the base material's
+own floor-correction Newton solve (`ManzariDafalias::Stress_Correction()`,
+the `p < m_Pmin + m_Presidual` branch) converges to a purely hydrostatic
+state there, not a sheared one -- so this deck never develops `q` at all,
+let alone a peak-then-decline. A different `e_conf`/`lat` choice is owed if
+this guard needs positive coverage; not chased further here per the
+xfail-is-an-acceptable-outcome instruction.
+
+SECOND RUN, P2-5 + P2-2b (2026-09-07, `ladrunoBuild() == 8bfdfbc17`). Two
+new tests added (`test_hold_does_not_reset_alpha_in_on_the_implicit_path`,
+`test_guard_ignores_the_unprimed_first_commit`); 29 passed / 1 skipped /
+2 xfailed. Two more test-side fixes, both because P2-5 repurposed the
+formerly-reserved `implexGuards[3]` slot as the reversal-noise-guard
+count (fires on any near-zero strain increment, `-implex` on or off) --
+`test_floor_fallback_delivers_implicit_stress_and_counts`'s own
+"`implexGuards[3]` never moves" assertion, written when that slot really
+was reserved, is now stale (this ladder's shrinking `ds` legitimately
+trips it, +176 on one run) and was dropped; the new hold test's own first
+draft over-claimed that `alpha` (`getAlpha()` -> `mAlpha`, the TRIAL
+value) stays bit-identical across a hold, when only `alpha_in`
+(`mAlpha_in_n`, the COMMITTED value P2-5 actually protects) is promised --
+`mAlpha` moves by ~6e-4 on this deck's hold from the Newton solve's own
+non-bit-exact convergence, which is not a defect.
+
+P2-2b's fix (`guardPrimed`) is directly confirmed:
+`test_guard_ignores_the_unprimed_first_commit` passes clean. It also
+resolves the ORIGINAL reason `test_negative_monotone_clock_runs_the_spec_
+factor` and `test_reararm_after_refusal_without_a_revert_uses_its_own_dt_
+ratio` were pinned to `-implexGuard off` -- re-run with the guard back on,
+each now gets PAST its un-primed second step correctly. Both stay pinned
+regardless: each deck independently reaches genuine softening/reversal
+territory LATER in its own sequence (both sit at/near the `p_min` floor by
+construction -- the settlement column via repeated low-p CLAMPING
+warnings, the M10 deck via `_build_floor_seeking_deck`'s own net-dilating
+design), so the guard legitimately keeps firing there. See each test's own
+docstring for the specific re-measurement. Not a claim this exhausts P2-2b
+verification -- `test_guard_ignores_the_unprimed_first_commit`'s clean
+moderate-p deck is the direct, unconfounded evidence; these two are the
+residual, honestly-reported caveat.
+
+`test_hold_does_not_reset_alpha_in_on_the_implicit_path`'s primary claim
+rests on `implexGuards[3]` counting (fires 8x, one per Gauss point, at the
+default `-reversalTol`; 0x at `-reversalTol 0`, same deck/history/hold) --
+`alpha_in` itself reads bit-identical under BOTH settings on this deck,
+which the test documents as a weaker, deck-specific finding (this
+particular monotone triaxial hold never trips the BASE's own reversal
+branch at any Gauss point, so the guard's assignment is a no-op even when
+live) rather than overclaiming it as proof of the repair.
+
+THIRD RUN, P2-6 (2026-09-07, `ladrunoBuild() == 708152eac`). One new test,
+`test_trial_guard_accepts_f0_before_refusing`. `implexGuards` grows
+`Vector(4)` -> `Vector(5)`, new slot [4] = trial-time f=0 fallbacks --
+every existing `len(guards_before) == 4` assertion in this file (the floor-
+fallback, hold-clock, and hold/alpha_in tests) is updated to `== 5`.
+
+THE DECK NEEDED A REVERSAL, NOT A BIGGER SAME-DIRECTION STEP -- worth
+recording since it cost one wrong guess. `-implexTrialGuard`'s whole
+point is retrying a refused trial with a pure elastic predictor (`f = 0`)
+before refusing; the FIRST deck tried here reused this file's own "10x
+nominal, same direction" shape (`test_floor_fallback_...`'s), on the
+reasoning that a bigger step would push the error further past tol.
+Measured (via the `-implexAlpha 1.0` vs `0.0` probe technique this
+test's own `_probe_trial_guard_reference_errors` uses): on THAT shape the
+elastic guess was slightly WORSE than the full extrapolation (0.264 vs
+0.255) -- the established plastic direction is still the right one for a
+bigger step in the SAME direction, so there was nothing for the fallback
+to rescue. A REVERSAL (half the nominal magnitude, opposite sign) flips
+this: the established `d_eps_p(n)` now points the wrong way, so the
+elastic guess is ~19x BETTER (0.0018 vs 0.034) -- exactly P2-6's own
+motivating case (Esmeralda 146569, a leg crawling through refusals near a
+turning point). `_TRIAL_GUARD_TOL = 0.01` sits cleanly between the two.
+
+FOURTH RUN, P2-5b (2026-09-07, `ladrunoBuild() == d5bd259f6`). One new
+test, `test_reversal_guard_is_relative_to_the_last_increment`. P2-5b adds
+`-reversalRel` (default 0.05): the reversal-noise threshold becomes
+`max(reversalTol, reversalRel * mDEpsNormCommit)`, relative to the last
+COMMITTED (non-hold) strain increment, and the SAME noise verdict now
+also gates the P2-2 guard flags on a matching commit (OR'd with a literal
+hold), so a hold can no longer spuriously arm `f = 0` for the step after
+it. One EXISTING test needed a fix: `test_hold_does_not_reset_alpha_in_
+on_the_implicit_path`'s "disabled" twin only passed `-reversalTol 0.0`,
+which no longer fully disables the guard now that `-reversalRel` defaults
+to 0.05 and is independently sufficient to arm it -- added `-reversalRel
+0.0` alongside it.
+
+TWO THINGS MEASURED, NOT ASSUMED, WHILE BUILDING THE NEW TEST. (1) A
+literal `LoadControl(0.0)` hold on the free-DOF triaxial rig cannot show
+default-vs-disabled on EITHER the `alpha_in` or the `implexGuards[1]`
+channel: `ladrunoImplexCommit()`'s guard-flag gate is
+`reversalNoiseGuardFired OR implexHold`, and a literal hold sets
+`implexHold = true` regardless of the noise thresholds, so that channel
+is protected unconditionally either way -- not because the increment is
+exactly zero (it measurably is not; the earlier P2-5 test found the same
+gap for a different reason). The mutant is instead demonstrated on a
+deterministic, EXACTLY-sized perturbation (`_zero_dof_reversal_guard_
+deck`, a zero-free-DOF stdBrick deck with hand-built Path series, so the
+committed strain increment on any step is known by construction rather
+than fought out of Newton's own convergence-tolerance noise floor) via
+`implexGuards[3]`, which DOES discriminate cleanly. (2) On this same-
+direction (non-reversal) deck, `alpha_in` does not move either way
+regardless of guard settings -- the base's own crude sign-based reversal
+branch simply never triggers on monotone continued loading, so that
+channel is documented as non-discriminating here rather than silently
+dropped; part (c) instead confirms the guard does not eat a GENUINE,
+full-magnitude reversal.
+
+FIFTH RUN, P2-5c + Esmeralda regression check (2026-09-07, `ladrunoBuild()
+== d30c66582`). `implexGuards` grows `Vector(5)` -> `Vector(6)`, new slot
+[5] = hold-skip commits (once per Gauss point per hold, not per Newton
+iteration or per `ladrunoGuardReversalNoise()` call) -- every remaining
+`len(implexGuards) == 5` check in this file is now `== 6`.
+
+SIXTH RUN, ADR-92 P2-9 (2026-09-07): `implexGuards` grows `Vector(6)` ->
+`Vector(7)`, new slot [6] = steps where the control-informed factor backed off
+(`f* < 0.5 f_max`, `-implexFactor control` only) -- every `== 6` length check
+on `implexGuards` in this file is now `== 7` (`implexDetail` stays 6).
+`ladrunoGuardReversalNoise()` now checks `ops_Dt == 0.0` FIRST,
+unconditionally (ahead of, independent of, `-reversalTol`/`-reversalRel`),
+because a hold is a GLOBAL domain fact, not something to infer from a
+strain norm that can itself undershoot (P2-5b's own residual gap,
+Esmeralda 146585: 136/1600 and 88/1600 points still reset on a hold). The
+P2-5/P2-5b hold test (`test_hold_does_not_reset_alpha_in_on_the_implicit_
+path`) is RENAMED and REWRITTEN as `test_hold_leaves_alpha_in_and_guard_
+flags_unchanged`: its own "disabled `-reversalTol 0 -reversalRel 0`
+should show a difference on a literal hold" claim is no longer TRUE (P2-5c
+protects a literal hold unconditionally, regardless of those settings) --
+the old "deterministic perturbation" workaround for the mutant is gone
+too, since P2-5c needs none; the new test instead checks the DIRECT,
+now-guaranteed claim (bit-identical `alpha_in`, `implexGuards[5]` == the
+Gauss-point count, matching `implexGuards[1]` deltas before/after) on
+BOTH the `-implex` and the purely implicit deck. `test_reversal_guard_is_
+relative_to_the_last_increment` (P2-5b) is UNCHANGED and still passes --
+it never used a literal hold, so P2-5c does not touch its own claims.
+
+`test_explicit_default_words_are_byte_identical` answers an Esmeralda
+field report (legs built with explicit `-implexGuard on -implexTrialGuard
+on -implexFloor implicit` running 17-20% softer from step 2 than the same
+deck with no explicit words, which read the identical option values and
+should therefore be indistinguishable) -- NOT REPRODUCED on a single
+material point: three token-order variants commit bit-identical stress at
+every one of 8 plastic steps, `implexGuards` matches exactly, and the
+construction-time echo line is character-for-character identical, all
+while `-implexTrialGuard` is CONFIRMED actively firing (not idle) on every
+run. Native `opserr` writes go straight to the C stderr file descriptor,
+invisible to `capsys`/`redirect_stderr`; a hand-rolled `os.dup2` around
+pytest's own fd-level capture measured empty (nested redirects raced
+pytest's own capture machinery) -- pytest's `capfd` fixture is the
+reliable way to read it back, used here instead.
+
+SIXTH ROUND, P2-7 REDESIGNED -- WRITTEN, NOT RUN (2026-09-07). The dist/bin
+`.pyd` at the time this section was written still holds the FIRST
+(mis-specified) P2-7 attempt (691f4064d, a hold-style skip that was never
+actually built) and is being rebuilt against the redesigned interface
+(`-flipAlphaIn init|vanilla`, `Ladruno_implementation/
+92_ladruno_sanisand_implex_adr.md`'s P2-7 row). Three new tests
+(`test_flip_initialises_alpha_in_at_every_point`,
+`test_flip_absorbs_drift_under_implex`, `test_guard_only_on_primed_
+states`) written against that interface and NOT yet run against any
+binary -- per the module docstring's own opening rule, nothing in that
+section is a measured number; every expected value there is derived
+algebraically from the interface text (`alpha_in := alpha_n` is an exact
+copy, so `==` not `approx`; `implexGuards[5] += 8` is the element's own
+Gauss-point count, stated directly in the interface) or is a qualitative
+direction the ADR's own P2-7 row already reports ("ratio > 2", loosely
+under the ADR's measured "O(0.2) drift" vs "0.02-0.03 later steps" gap).
+`test_explicit_default_words_are_byte_identical`'s `explicit_words` tuple
+gained `-flipAlphaIn init`, extending its word/order byte-identity claim
+to the new token (a WORD-PRESENCE claim, not a physics one -- that test's
+own deck confines isotropically, so the flip's alpha_in effect is vacuous
+there by construction; see the test's updated docstring).
+
+The four P1/P2-2 era tests pinned to `-implexGuard off` (B1, M10, and the
+two inside `_drive_floor_ladder`'s callers) are UNCHANGED this round.
+P2-7's deterministic flip may resolve the underlying un-primed-commit
+issue that motivated some of those pins, but "unpin only if they pass"
+cannot be honoured without running the rebuilt binary -- re-verify and
+unpin (or explain why not) in the NEXT round, against the new hash, not
+here.
+
+INTERIM: RUN AGAINST 887fea475 (the FIRST P2-7 redesign, `init` default),
+NOT COMMITTED. That run's own three new tests passed after switching
+their deck away from `sani._build` (its `_LAT = 0.25` hits the file's
+OWN known "Outside Bounding" M_c-inflation defect, degenerate under the
+flip's companion-absorb -- `_build_p27_k0` at `_P27_LAT = 0.1` avoids
+it). It ALSO found four PRE-EXISTING tests broken by the flip's `-implex`
+-only zero-increment companion-absorb, independent of the `init`/
+`vanilla` choice -- all C++-side, not fixed here: (1)
+`test_implex_on_matches_off_on_a_zero_free_dof_deck` ("THE MOST IMPORTANT
+TEST"), gate 5's ON == OFF byte-identity, broken because the absorb runs
+under `-implex` only, with nothing symmetric on the OFF path; (2)
+`test_implex_db_roundtrip_carries_flags_and_history`, because
+`mStageFlipHandled` (the guard against a REPEAT flip-handling call) is
+explicitly NOT sent over `sendSelf`/`recvSelf` -- a restored material's
+own defensive re-`updateMaterialStage(...,1)` call (this codebase's
+OWN established idiom, since `mElastFlag` is a process-wide static
+construction resets) then re-fires the flip and clobbers the correctly-
+restored `alpha_in` with the CURRENT one (measured:
+`[-0.60569,...] -> [-0.62953,...]` after one redundant re-assert,
+propagating to a 0.00588 reldiff); (3)
+`test_guard_zeroes_f_after_reversal` and (4)
+`test_setparameter_stresscorrection_takes_effect`, both likely
+downstream of the same absorb changing every -implex trajectory through
+a flip, not separately root-caused. The interface changed again
+(P2-7(c), default flipped to `vanilla`) before any of this could be
+addressed -- superseded, not resolved.
+
+THIRD P2-7 INTERFACE CHANGE (2026-09-07, still not run): the flip's
+zero-increment companion return under `-implex` becomes ITS OWN opt-in
+token, `-implexFlipAbsorb on|off`, default OFF -- it is what broke gate
+5's ON == OFF byte-identity (887fea475's own finding above), and
+Esmeralda showed the P2-2b guard-scope fix alone already recovers the
+implicit twin's start without it. `test_flip_absorbs_drift_under_implex`
+now has three parts: (a) DEFAULT flags, `implexGuards[5]` inert at the
+flip AND gate 5 itself confirmed holding again on `_build_p27_k0`; (b)
+EXPLICIT `-implexFlipAbsorb on`, the 2-element `implexGuards[5] += 16`
+check; (c) EXPLICIT `on`, the `init` vs `vanilla` error-ratio check
+(unusable without the absorb on, since that is what produces the
+benefit being compared). `mStageFlipHandled` (the flip-handled marker)
+is now ON THE WIRE -- `test_implex_db_roundtrip_carries_flags_and_
+history` extended to assert its OWN redundant post-restore
+`updateMaterialStage(...,1)` re-assert (the fork's established idiom,
+issued on a JUST-restored material) does not re-run the companion
+absorb or the alpha_in write a second time, with both now EXPLICITLY
+on/init so the check is not vacuous. The echo-line byte-identity test's
+word list gained `-implexFlipAbsorb off` (the new default).
+
+DO NOT RUN THIS FILE until told the new build hash -- the currently
+loaded `dist/bin/opensees.pyd` (887fea475) predates BOTH the
+`vanilla`-default redesign and `-implexFlipAbsorb` entirely, and the
+tests above are now written against the LATEST interface, untested
+against any binary that ships it, for a reason that has nothing to do
+with their own claims.
+
+FINAL BATTERY, P2-7c (2026-09-07, `ladrunoBuild() == 4e07ef014`, defaults
+`-flipAlphaIn vanilla` / `-implexFlipAbsorb off`, `mStageFlipHandled` on
+the wire, per-instance flip detection). Full run: 36 passed / 2 xfailed /
+0 skipped of 38 collected -- clean, no C++-side failures found this
+round. `test_implex_db_roundtrip_carries_flags_and_history`'s extended
+redundant-re-assert check now PASSES (confirms the flip marker fix).
+Part (c) of `test_flip_absorbs_drift_under_implex` needed a TEST-SIDE
+fix: `_build_p27_k0`'s single continuous ramp made the "first push" a
+pure continuation of the SAME proportional ray the elastic leg already
+followed -- the (homogeneous, conical) yield surface never gets crossed
+that way, so `err_init`/`err_vanilla` both measured exactly `0.0`
+regardless of push magnitude (up to 10x), a "radial path never yields"
+degeneracy, same class `test_ladruno_sanisand.py`'s own docstring
+documents for `_OPTS_PR0` -- NOT a P2-7c defect. Fixed with a dedicated
+`_build_p27_k0_pathpush` (two-channel `Path` series, push segment at
+`_P27_PUSH_LAT = 0.3`, deliberately off the elastic leg's own
+`_P27_LAT = 0.1` ray); measured `init` error 0.0272, `vanilla` error
+0.1530, ratio 5.63 (> the required 2). Part (b)'s 2-element
+`implexGuards[5]` delta also needed reading AFTER the flip AND one
+genuine push step, not right after the bare `updateMaterialStage` call
+(per-instance flip detection resolves at the first plastic TRIAL, so a
+bare stage update alone only reaches the first element -- see that
+part's own updated docstring). Re-checked the `-implexGuard off` pins
+on B1 (`test_negative_monotone_clock_runs_the_spec_factor`) and M10
+(`test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio`)
+directly against 4e07ef014 with the guard ON: both still fail exactly
+as their own docstrings predict (B1: step 3 onward reads `f = 0.0`, not
+the ratio; M10: the post-refusal retry step reads `f = 0.0`, not
+`1.0`) -- both decks deliberately sit at/below the `p_min` floor
+(independent of the P2-7c flip machinery), so both pins STAY.
 """
 import math
 import os
+import re
 import subprocess
 import tempfile
 import warnings
@@ -967,10 +1321,21 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
     the control slot itself moving, that refuses the UN-PRIMED step (the
     afb95c40c regression), or that never lifts the exemption once the
     material IS primed (a "-implexControl silently inert forever" mutant).
+
+    PINNED TO `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2,
+    2026-09-07, binary 708152eac). P2-6's trial-time f=0 fallback DEFAULTS
+    on and runs BEFORE any -implexControl refusal, retrying the trial with
+    a pure elastic predictor -- on this deck's big (10x-nominal) step that
+    retry ALSO clears tol, so the step that this test is built to prove
+    gets refused is, with the default, RESCUED instead (`rc == 0`). This
+    test's own claim is about the refusal/un-primed-exemption mechanism,
+    orthogonal to P2-6's rescue; isolated the same way `-implexFloor
+    accept` and `-implexGuard off` are pinned onto sibling tests elsewhere
+    in this file.
     """
     tag = 8213
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 0.02, 0.01)
+            '-implexControl', 0.02, 0.01, '-implexTrialGuard', 'off')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)   # NOT _establish_plastic_history: this test needs
                           # the material UN-PRIMED for its first plastic step
@@ -1043,8 +1408,20 @@ def test_implexcontrol_refuses_past_tolerance_and_leaves_committed_state_unchang
 
 def _roundtrip_implex(matcmd, tag, opts, n_cut, n_total):
     """`test_ladruno_sanisand.py`'s own `_roundtrip`, with the plastic-leg
-    split parametrised and IMPL-EX opts threaded through. Returns (stress at
-    the save, stress right after the restore, final stress)."""
+    split parametrised and IMPL-EX opts threaded through. Returns (stress
+    at the save, stress right after the restore, final stress,
+    `implexGuards[5]` immediately before/after the REDUNDANT post-restore
+    `updateMaterialStage(...,1)` re-assert, `alpha_in` at all 8 Gauss
+    points immediately before/after that SAME re-assert).
+
+    ADR-92 P2-7c: `mStageFlipHandled` (the flip-handled marker) is now ON
+    THE WIRE, so that redundant re-assert -- the fork's OWN established,
+    documented idiom for coping with `mElastFlag`'s process-wide-static
+    reset-on-construction quirk, issued here on a JUST-RESTORED material,
+    exactly as `test_implex_db_roundtrip_carries_flags_and_history` always
+    has -- must NOT re-run the flip's own work (the companion absorb, the
+    alpha_in write) a second time.
+    """
     with tempfile.TemporaryDirectory(prefix='ladruno_sanisand_implex_',
                                      ignore_cleanup_errors=True) as td:
         dbpath = os.path.join(td, 'sanisand_implex_rt')
@@ -1069,14 +1446,23 @@ def _roundtrip_implex(matcmd, tag, opts, n_cut, n_total):
         ops.restore(1)
         after = sani._stress()
 
+        # ADR-92 P2-7c: the redundant re-assert, and what it must NOT do.
+        guards5_before_reassert = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))[5]
+        alpha_in_before_reassert = _read_all_alpha_in(ngp=8)
+
         ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        guards5_after_reassert = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))[5]
+        alpha_in_after_reassert = _read_all_alpha_in(ngp=8)
+
         ops.wipeAnalysis()
         sani._analysis()
         for step in range(n_total - n_cut):
             assert ops.analyze(1) == 0, f'post-restore plastic step {step + 1} failed'
         out = sani._stress()
         ops.wipe()
-        return mid, after, out
+        return (mid, after, out, guards5_before_reassert, guards5_after_reassert,
+               alpha_in_before_reassert, alpha_in_after_reassert)
 
 
 def test_implex_db_roundtrip_carries_flags_and_history():
@@ -1098,14 +1484,30 @@ def test_implex_db_roundtrip_carries_flags_and_history():
     step) would very likely diverge from the reference somewhere in the
     remaining plastic steps, because the extrapolation factor and the history
     it carries feed directly into every subsequent committed stress.
+
+    ADR-92 P2-7c ADDITION (WP-92e lane B2, 2026-09-07): `opts_on` now
+    carries `-implexFlipAbsorb on -flipAlphaIn init` EXPLICITLY -- both
+    non-default, so the flip actually does something observable -- and
+    the test asserts that `_roundtrip_implex`'s own REDUNDANT post-restore
+    `updateMaterialStage(...,1)` re-assert does NOT re-run that work.
+    `mStageFlipHandled` is now on the wire specifically so a restored
+    material's own defensive re-assert (this codebase's established,
+    documented idiom for `mElastFlag`'s process-wide-static reset) cannot
+    silently corrupt an already-primed history the way it did before this
+    fix (measured, pre-fix, on 887fea475: `alpha_in` at Gauss point 1
+    shifted from `[-0.60569, -0.60569, 1.21138, ...]` to `[-0.62953,
+    -0.62953, 1.25906, ...]` across exactly this re-assert, propagating to
+    a 0.00588 committed-stress reldiff against the 1e-12 tolerance).
     """
-    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    opts_on = sani._OPTS_VANILLA + ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                                    '-implexFlipAbsorb', 'on', '-flipAlphaIn', 'init')
 
     ref = sani._drive('LadrunoSANISAND', 8300, opts_on)
 
     n_cut = 12
-    mid, after, out = _roundtrip_implex('LadrunoSANISAND', 8301, opts_on,
-                                        n_cut=n_cut, n_total=sani._N_PL)
+    (mid, after, out, guards5_before_reassert, guards5_after_reassert,
+     alpha_in_before_reassert, alpha_in_after_reassert) = _roundtrip_implex(
+        'LadrunoSANISAND', 8301, opts_on, n_cut=n_cut, n_total=sani._N_PL)
     assert sani._reldiff(mid, after) <= _EQ_TOL, (
         'the restored -implex material did not come back on the state it '
         'was saved at', mid, after)
@@ -1113,6 +1515,22 @@ def test_implex_db_roundtrip_carries_flags_and_history():
         'after the round trip the -implex material no longer finishes on '
         'the reference (unbroken) answer -- the flags or the d_eps_p history '
         'did not survive sendSelf/recvSelf', ref, out)
+
+    # ADR-92 P2-7c: the redundant re-assert must not re-run the flip work.
+    assert guards5_after_reassert == guards5_before_reassert, (
+        'implexGuards[5] moved across the REDUNDANT post-restore '
+        'updateMaterialStage(...,1) re-assert -- mStageFlipHandled is '
+        'supposed to be on the wire now (P2-7c), so a restored material '
+        'must not re-run the zero-increment companion absorb',
+        guards5_before_reassert, guards5_after_reassert)
+    for gp in range(8):
+        assert alpha_in_after_reassert[gp] == alpha_in_before_reassert[gp], (
+            'alpha_in changed at Gauss point %d across the REDUNDANT '
+            'post-restore updateMaterialStage(...,1) re-assert -- '
+            'mStageFlipHandled is supposed to be on the wire now (P2-7c), '
+            'so a restored material\'s ALREADY-primed alpha_in must not '
+            'be re-initialised from the CURRENT alpha' % (gp + 1),
+            alpha_in_before_reassert[gp], alpha_in_after_reassert[gp])
 
     # Non-vacuity: an -implex OFF reference run on the SAME deck up to the
     # cut, if the round trip silently dropped -implex entirely (falling back
@@ -1301,9 +1719,36 @@ def test_negative_monotone_clock_runs_the_spec_factor():
     Kills the B1 mutant directly: an `f` that reads `alpha` (1.0) on the
     ds-doubling step, instead of `2.0 * alpha`, is the bug the campaign's
     own BVP legs shipped with.
+
+    PINNED TO `-implexGuard off` (ADR-92 P2, WP-92e lane B2, 2026-09-07;
+    RE-CHECKED against 8bfdfbc17's P2-2b fix and STILL pinned, see below).
+    Originally measured: with the guard on, step 2 (i=1) read `f = 0.0`
+    instead of `1.0` -- the settlement column's un-primed first plastic
+    commit moved `mAlpha_in_n` as an initialisation artefact, which
+    `ladrunoImplexCommit()`'s reversal check misread as a genuine reversal.
+
+    P2-2b (8bfdfbc17) fixes EXACTLY that: re-run with the guard back on
+    (no pin), `i=1` now correctly reads `f = 1.0` -- confirmed directly.
+    But `i=2` onward now reads `f = 0.0` instead of `1.0`/`2.0`/`1.0` --
+    a DIFFERENT, LATER guard-arming that P2-2b's fix does not (and is not
+    meant to) touch: this deck's own `_SETTLE_E_CONF` sits the material
+    right at the `p_min` floor from the first settlement step on (measured:
+    repeated "mean stress p = 0.1008xx is below the floor... CLAMPING"
+    warnings on this exact deck under the implicit path), which is
+    independently plausible ground for a genuine `Kp <= 0` or reversal
+    commit -- i.e. this looks like the guard doing its documented job on a
+    deck that was never tuned to stay clear of it, not a residual defect.
+    Not chased further (would need reading `mImplexGuardReversal`/
+    `mImplexGuardSoftening` directly, which are not exposed as a response);
+    B1's own claim (the dt-ratio tracking) is orthogonal to the guard
+    either way, so it stays isolated with `-implexGuard off`: verified
+    independently that the ratio sequence [1.0, 1.0, 1.0, 2.0, 1.0] holds
+    exactly with the guard off, matching the precedent
+    `test_implexcontrol_floor_accepts_once_reduction_limit_is_reached`
+    already sets for `-implexFloor`.
     """
     tag = 8400
-    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexGuard', 'off')
     _build_settlement_column(tag, opts)
 
     ops.updateMaterialStage('-material', tag, '-stage', 0)
@@ -1667,12 +2112,33 @@ def test_implexcontrol_floor_accepts_once_reduction_limit_is_reached():
     Kills a mutant that never arms `mImplexDt0` (or arms it with the wrong
     sign/magnitude): with the floor dead, the ladder refuses FOREVER and
     this test's final `assert rc == 0` fails.
+
+    PINNED TO `-implexFloor accept` (ADR-92 P2, WP-92e lane B2, 2026-09-07).
+    This test was written against the ONLY floor behaviour that existed at
+    the time -- unconditional accept, exactly what `-implexFloor accept`
+    now names -- and its own assertion (`last_detail[0] > tol`: the
+    accepted step still carries the RAW large extrapolation error) is that
+    mode's contract verbatim. P2 changes the DEFAULT to `implicit` (see
+    `test_floor_fallback_delivers_implicit_stress_and_counts`), under which
+    the floor step would commit the implicit companion's own answer instead
+    and this assertion would most likely fail for a reason that has nothing
+    to do with the M4 mutant this test exists to kill. Pinning the mode
+    keeps this test's claim exactly what it always was.
+
+    ALSO PINNED TO `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2,
+    2026-09-07, binary 708152eac): P2-6's trial-time f=0 fallback defaults
+    on and runs BEFORE every -implexControl refusal in this ladder,
+    including the very FIRST attempt (ds = 1.0) -- measured: with the
+    default, that first attempt is RESCUED (`rc == 0`) instead of refused,
+    so the ladder never even reaches the reduction-floor rung this test is
+    built to isolate. Same isolation rule as the `-implexFloor` pin above.
     """
     tag = 8320
     tol = 1.0e-9
     reduction_limit = 0.3
     opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', tol, reduction_limit)
+            '-implexControl', tol, reduction_limit,
+            '-implexFloor', 'accept', '-implexTrialGuard', 'off')
     _build_free_dof_triaxial(tag, opts, p0=50.0)
     _confine_only(tag)
 
@@ -1837,6 +2303,25 @@ def test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio():
     Kills a mutant that removes the re-arm at the refusal sites: without
     it, the accepted retry's `f` would be computed against the stale
     refused-attempt dt instead of its own.
+
+    PINNED TO `-implexGuard off` (ADR-92 P2, WP-92e lane B2, 2026-09-07;
+    RE-CHECKED against 8bfdfbc17's P2-2b fix and STILL pinned). This deck's
+    first plastic commit is un-primed (same mechanism as
+    `test_negative_monotone_clock_runs_the_spec_factor`'s pin), which
+    8bfdfbc17's P2-2b fixes directly -- but this deck (`_PMIN_E_CONF_LOW`,
+    `lat = 1.5`, the SAME net-dilating shape `_build_floor_seeking_deck`
+    uses specifically to threaten the `p_min` floor) drives the material
+    hard enough that a re-run with the guard back on STILL reads `f = 0.0`
+    on the small retry step, not `1.0` -- unlike
+    `test_negative_monotone_clock_runs_the_spec_factor`'s deck, this one
+    was deliberately built to reach genuine softening/reversal territory
+    (that is the whole point of "floor-seeking"), so a guard-arming
+    somewhere in its 6-step history-plus-big-step run is plausible on its
+    own terms, independent of the un-primed defect P2-2b fixed. M10's own
+    claim (the re-arm dt-ratio) is orthogonal to the guard either way, so
+    it stays isolated with `-implexGuard off`: verified independently that
+    with the guard off the small (retry) step's `f` is exactly `1.0`
+    (`ds_nominal / ds_nominal`), matching this test's own claim.
     """
     tag = 8322
     e_conf = sani._PMIN_E_CONF_LOW
@@ -1844,7 +2329,7 @@ def test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio():
     lat = 1.5
     opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
             '-implex', '-maxSubsteps', _CAP_ADEQUATE,
-            '-implexControl', 10.0, 0.01)
+            '-implexControl', 10.0, 0.01, '-implexGuard', 'off')
 
     ops.wipe()
     ops.model('basic', '-ndm', 3, '-ndf', 3)
@@ -1945,3 +2430,2243 @@ def test_reararm_after_refusal_without_a_revert_uses_its_own_dt_ratio():
         'last TRULY committed dt -- if the re-arm (mImplexStepArmed) is '
         'missing, f would instead reflect the REFUSED attempt\'s frozen '
         'dt', detail_small[5], expected_f, detail_big, detail_small)
+
+
+# ===========================================================================
+#  ADR-92 P2 (owed) -- `-implexFloor`, `-implexGuard`, the hold-safe clock,
+#  and the `stressCorrection` updateParameter dispatch fix.
+#
+#  Written 2026-09-07 (WP-92e, lane B2) against the interfaces lane A2 is
+#  building to, BEFORE any P2 binary exists -- see the module docstring's
+#  "LANE B2 / P2 BATTERY" paragraph for the full brief and its caveats.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+#  1. `-implexFloor implicit|accept|refuse` (new default `implicit`)
+# ---------------------------------------------------------------------------
+
+def _drive_floor_ladder(tag, floor_mode, tol=1.0e-9, reduction_limit=0.3,
+                        big_factor=20.0, max_attempts=8, ds0=0.05):
+    """Prime a free-DOF triaxial deck (same shape as the M4 survivor test
+    above), then force a subdivision ladder DOWN TO the -implexControl
+    reduction floor -- `tol` is unreachable by construction, so only the
+    floor branch (never a genuinely small error) can ever end the ladder,
+    under any of the three -implexFloor modes.
+
+    `-implexTrialGuard off` (ADR-92 P2-6, WP-92e lane B2, 2026-09-07,
+    binary 708152eac): P2-6's trial-time f=0 fallback defaults on and
+    would otherwise rescue the very FIRST attempt in this ladder before
+    -implexFloor ever gets a chance to matter (measured, matching the same
+    finding on the M4 survivor test) -- this function's whole purpose is
+    to isolate -implexFloor, so P2-6's own orthogonal rescue is disabled
+    here, the same way it is pinned on every other pre-P2-6 refusal test
+    in this file.
+
+    Returns a list of (ds, rc, implexDetail) for every rung attempted, in
+    order, stopping at the first accepted (rc == 0) attempt if any.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', tol, reduction_limit,
+            '-implexFloor', floor_mode, '-implexTrialGuard', 'off')
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -6.0 / 4.0)
+
+    ops.integrator('LoadControl', ds0)
+    rc_prime = ops.analyze(1)
+    assert rc_prime == 0, ('the priming step (un-primed, arms mImplexDt0) '
+                           'failed to converge -- a harness problem', rc_prime)
+    ops.loadConst('-time', 0.0)
+
+    ds = ds0 * big_factor
+    history = []
+    for attempt in range(max_attempts):
+        ops.integrator('LoadControl', ds)
+        rc = ops.analyze(1)
+        detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+        history.append((ds, rc, detail))
+        if rc == 0:
+            break
+        ds = ds / 2.0
+    return history
+
+
+def test_floor_fallback_delivers_implicit_stress_and_counts():
+    """ADR-92 P2: `-implexFloor` selects what happens at the
+    `-implexControl` reduction floor (`|mImplexDt| < reductionLimit *
+    mImplexDt0`), where the OLD (P1) behaviour unconditionally accepted the
+    extrapolated `sigma~` no matter how large its error. Drives the SAME
+    ladder as `test_implexcontrol_floor_accepts_once_reduction_limit_is_reached`
+    under all three modes:
+
+      * `refuse` -- every rung refuses, including the floor rung itself;
+        there is nothing to fall back to.
+      * `accept` -- the RETIRED unconditional-accept behaviour (negative
+        control / the mutant this test is written to catch if
+        `-implexFloor` is silently ignored): the floor step is accepted
+        with the RAW extrapolation error still on the wire.
+      * `implicit` (the NEW default) -- the SAME floor rung is accepted, but
+        the GP delivers the IMPLICIT companion's own stress for that step
+        instead of the extrapolation, so the committed `implexError`
+        collapses relative to `accept`'s reading of that identical rung --
+        sigma~ == sigma_implicit at commit, to within genuine numerical
+        noise, not the raw first-order extrapolation gap.
+
+    `implexGuards[0]` (floor fallbacks) must increment ONLY on the
+    `implicit` run's floor acceptance. (`implexGuards[3]` was reserved when
+    this test was first written; 8bfdfbc17/P2-5 repurposed it as the
+    reversal-noise-guard count, which is NOT specific to `-implexFloor` and
+    is expected to move on this ladder too as ds shrinks toward the floor
+    -- see the P2-5 tests below instead; not re-checked here.)
+
+    Kills a mutant that ignores `-implexFloor` entirely (every mode behaves
+    like the old unconditional accept -- caught by `refuse` never actually
+    refusing at the floor, and by the `implicit` run's error staying close
+    to `accept`'s instead of collapsing), or that swaps `implicit`/`accept`.
+
+    WHY THE COMPARISON IS `accept` VS `implicit` ON THE SAME RUNG, NOT
+    "floor error vs the last refused attempt's error" (fixed 2026-09-07,
+    WP-92e lane B2, re-run against 87b9cf846). `_drive_floor_ladder` uses
+    `LadrunoBrick` (a element that PROPAGATES a material refusal), so a
+    REFUSED rung never reaches `commitState()` -- `StaticAnalysis` reverts
+    instead -- and `implexDetail`'s error components are only written
+    inside `ladrunoImplexCommit()` (i.e. only ON A COMMIT). Reading
+    `implexDetail` right after a refused, reverted `analyze()` call
+    therefore returns whatever was last COMMITTED, not "this attempt's
+    error" -- measured: every refused rung in this ladder reads
+    `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` (the priming commit's own values, which
+    happen to be exactly zero on this deck's un-primed first step), so a
+    "floor error / last-refused error" ratio divides by zero every time.
+    The `accept` and `implicit` runs are DETERMINISTIC and reach the
+    IDENTICAL final rung (same tol/reductionLimit/ds0/big_factor, and
+    `-implexFloor` does not affect any refusal decision ABOVE the floor),
+    so comparing their two floor-accepted (i.e. actually COMMITTED, non-
+    stale) `implexDetail[0]` readings for that SAME rung is both correct
+    and a strictly more apples-to-apples test of the flag than the retired
+    comparison was.
+    """
+    tol = 1.0e-9
+    reduction_limit = 0.3
+
+    hist_refuse = _drive_floor_ladder(8330, 'refuse', tol, reduction_limit)
+    assert all(rc != 0 for _, rc, _ in hist_refuse), (
+        '-implexFloor refuse accepted a step at (or below) the reduction '
+        'floor -- refuse is supposed to refuse EVERY rung, including the '
+        'floor rung, since there is nothing to fall back to', hist_refuse)
+
+    hist_accept = _drive_floor_ladder(8331, 'accept', tol, reduction_limit)
+    accepted_accept = [h for h in hist_accept if h[1] == 0]
+    assert accepted_accept, (
+        '-implexFloor accept never reached an accepted step -- the ladder '
+        'harness itself needs re-deriving, not this assertion', hist_accept)
+    ds_a, rc_a, detail_a = accepted_accept[-1]
+    assert detail_a[0] > tol, (
+        '-implexFloor accept is supposed to commit the RAW extrapolation '
+        'error at the floor (the retired unconditional-accept behaviour), '
+        'above -implexControl\'s own (unreachable, by construction) tol -- '
+        'if this reads at or below tol, the flag stopped selecting the '
+        'accept mode', detail_a, tol)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert len(guards_before) == 7, (
+        'implexGuards did not return the documented 7-component vector',
+        guards_before)
+    hist_implicit = _drive_floor_ladder(8332, 'implicit', tol, reduction_limit)
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    accepted_idx = next((i for i, h in enumerate(hist_implicit) if h[1] == 0), None)
+    assert accepted_idx is not None, (
+        '-implexFloor implicit never reached an accepted step', hist_implicit)
+    assert accepted_idx > 0, (
+        'the FIRST attempt was accepted -- the ladder needs to actually '
+        'refuse at least once before reaching the floor for this test to '
+        'distinguish the floor fallback from an ordinary accept',
+        hist_implicit)
+    assert len(hist_implicit) == len(hist_accept) and accepted_idx == len(hist_accept) - 1, (
+        'the implicit and accept ladders did not reach the SAME rung -- '
+        '-implexFloor is not supposed to influence any refusal decision '
+        'ABOVE the floor, so the two deterministic ladders (same tol/'
+        'reductionLimit/ds0/big_factor) should have an identical shape',
+        hist_accept, hist_implicit)
+
+    ds_floor, rc_floor, detail_floor = hist_implicit[accepted_idx]
+    assert rc_floor == 0, ('sanity: the located "accepted" attempt did not '
+                           'actually converge', hist_implicit)
+    assert ds_floor == ds_a, (
+        'sanity: the implicit ladder\'s floor rung ds does not match the '
+        'accept ladder\'s -- the two ladders are not actually comparable',
+        ds_a, ds_floor)
+
+    err_floor = detail_floor[0]
+    err_accept = detail_a[0]
+    assert err_accept > 0.0, (
+        'the accept ladder\'s own floor-accepted attempt reported a zero '
+        'error -- cannot form the ratio this test needs', detail_a)
+    ratio = err_floor / err_accept
+    assert ratio < 0.1, (
+        '-implexFloor implicit is supposed to deliver the IMPLICIT stress '
+        'at the floor, collapsing the committed implexError relative to '
+        '-implexFloor accept\'s reading of the IDENTICAL rung -- got a '
+        'ratio of %r (implicit floor error %r vs accept floor error %r), '
+        'not < 0.1' % (ratio, err_floor, err_accept), hist_implicit, hist_accept)
+
+    assert guards_after[0] - guards_before[0] >= 1, (
+        'implexGuards[0] (floor fallbacks) did not increment across the '
+        '-implexFloor implicit ladder reaching its floor',
+        guards_before, guards_after)
+    # implexGuards[3] is NOT checked here -- P2-5 (8bfdfbc17) repurposed the
+    # formerly-reserved slot as the reversal-noise-guard count, which fires
+    # on ANY near-zero strain increment regardless of -implexFloor, and this
+    # ladder's shrinking ds legitimately produces some (measured: +176 on
+    # this run). See test_hold_leaves_alpha_in_and_guard_flags_unchanged
+    # for the dedicated P2-5/5b/5c coverage.
+
+
+# ---------------------------------------------------------------------------
+#  2. `-implexGuard on|off` -- the elastic predictor after a load reversal
+# ---------------------------------------------------------------------------
+
+def _drive_reversal(tag, guard_mode):
+    """`_establish_plastic_history`, then ONE reversal step (the axial
+    deviator load flips sign, so `(alpha - alpha_in):n < 0` at that commit
+    and `alpha_in` resets), then ONE continuation step in the SAME reversed
+    direction and at the SAME `LoadControl` magnitude as the reversal step
+    itself -- so a live (non-guarded) `f` on the continuation step would
+    read the ordinary same-ds ratio (1.0, no `-implexAlpha` given), making
+    a guard-forced `f = 0` unambiguous against it.
+
+    Returns (implexDetail on the continuation step, implexGuards before the
+    continuation step, implexGuards after it).
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexGuard', guard_mode)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    # the reversal step: opposite sign to _establish_plastic_history's own
+    # compressive pattern -- relieves, then reverses, the axial deviator.
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)
+    ops.integrator('LoadControl', 1.0)
+    rc_rev = ops.analyze(1)
+    assert rc_rev == 0, ('the reversal step failed to converge', rc_rev)
+    ops.loadConst('-time', 0.0)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    # the continuation step -- same reversed direction, same magnitude.
+    ops.timeSeries('Linear', 5)
+    ops.pattern('Plain', 5, 5)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)
+    ops.integrator('LoadControl', 1.0)
+    rc_cont = ops.analyze(1)
+    assert rc_cont == 0, ('the post-reversal continuation step failed to '
+                          'converge', rc_cont)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+def test_guard_zeroes_f_after_reversal():
+    """ADR-92 P2: `-implexGuard on` (the default) forces the elastic
+    predictor (`implexDetail[5] == 0.0`, i.e. `f = 0`) on the step
+    immediately after a commit whose state shows a load reversal
+    (`alpha_in` reset). `-implexGuard off` leaves the extrapolation live on
+    that same step, reading the ordinary dt ratio instead.
+
+    Kills a mutant that never wires the reversal-guard branch (both modes
+    would read the live ratio) or that ignores `-implexGuard off` (the
+    guard would fire regardless of the flag).
+    """
+    detail_on, guards_before_on, guards_after_on = _drive_reversal(8340, 'on')
+    assert detail_on[5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the step immediately '
+        'after a committed load reversal (alpha_in reset) -- -implexGuard '
+        'on is supposed to force the elastic-predictor (f = 0) '
+        'extrapolation on that step', detail_on)
+    assert guards_after_on[1] - guards_before_on[1] >= 1, (
+        'implexGuards[1] (f=0 guards) did not increment across the '
+        'post-reversal step even though implexDetail[5] read 0.0',
+        guards_before_on, guards_after_on)
+
+    detail_off, guards_before_off, guards_after_off = _drive_reversal(8341, 'off')
+    expected_f_off = 1.0   # same-ds continuation, no -implexAlpha given
+    assert detail_off[5] == pytest.approx(expected_f_off, rel=1.0e-6, abs=1.0e-9), (
+        'with -implexGuard off, implexDetail[5] should equal the ordinary '
+        'dt ratio on the SAME post-reversal step where -implexGuard on '
+        'forces f = 0 -- if this also reads 0.0, the guard is not gated by '
+        'the flag', detail_off, expected_f_off)
+    assert guards_after_off[1] == guards_before_off[1], (
+        'implexGuards[1] moved with -implexGuard off -- the guard count '
+        'must not increment when the guard itself is disabled',
+        guards_before_off, guards_after_off)
+
+
+# ---------------------------------------------------------------------------
+#  3. `-implexGuard on` -- the elastic predictor after softening
+#
+#  NO BINARY EXISTS FOR THIS LANE TO MEASURE AGAINST (module docstring,
+#  "LANE B2 / P2 BATTERY"). Whether the dense confine-first deck below
+#  actually reaches a peak-then-decline in eta/M_b within its step budget
+#  is genuinely unknown from here -- default e_init (0.6944) IS already
+#  dense-of-critical at this deck's confinement (psi ~ -0.13, computed from
+#  _PARAMS: e_c = e0 - lambda_c*(p/Patm)**ksi at p ~ 1.7 kPa, the CONFINED
+#  deck's own measured confinement pressure -- see `_c_series`'s block
+#  comment), and the net-DILATING shape (`lat = 1.5`) is the same one
+#  `_build_floor_seeking_deck` already proves drives the material hard
+#  toward its limits. But "dense and dilating enough to threaten the p_min
+#  floor" (that function's own proven regime, at a MUCH lower confinement)
+#  is not the same claim as "reaches a peak-then-decline in stress ratio at
+#  THIS confinement within 400 steps" -- so this test measures its own
+#  outcome at runtime and reports whichever one is true, rather than
+#  asserting one that was never checked.
+# ---------------------------------------------------------------------------
+
+_SOFTEN_N_DEV = 400
+_SOFTEN_E_CONF = sani._C_E_CONF     # ~1.7 kPa confinement (measured on the
+                                    # sibling _drive_confined deck), safely
+                                    # above the p_min floor
+_SOFTEN_LAT = 1.5                   # net-dilating -- _build_floor_seeking_deck's
+                                    # own proven shape
+
+
+def test_guard_zeroes_f_after_softening():
+    """ADR-92 P2: `-implexGuard on` forces the elastic predictor
+    (`implexDetail[5] == 0.0`) on the step after a commit whose state shows
+    SOFTENING (`Kp <= 0`), the same mechanism
+    `test_guard_zeroes_f_after_reversal` checks for a load reversal.
+
+    `Kp` itself is not a Python-visible response, so this test uses the
+    macroscopic proxy every critical-state model shares: under monotone
+    straining, a stress ratio (`eta/M_b`, `sani._state_probe`'s own
+    `ratio` field) that has been rising step over step and then, for the
+    first time, DECLINES is the observable signature of the return map
+    having found `Kp <= 0` at that declining commit (a still-rising ratio
+    implies `Kp > 0`: the material is still hardening toward the bounding
+    surface). The FIRST such decline is taken as the softening commit, and
+    the guard is checked on the step immediately after it.
+
+    See the block comment above this test for why the outcome is measured
+    at runtime rather than asserted: if the deck never softens within
+    `_SOFTEN_N_DEV` steps, this calls `pytest.xfail` with the actual
+    numbers reached (the eta/M_b history) rather than faking a pass or a
+    hard failure for a claim nobody has verified from this lane.
+    """
+    tag = 8350
+    opts = ('-Presidual', 0.0, '-Pmin', sani._PMIN_LADRUNO, '-honorTolR', 0,
+            '-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    n_dev = _build_floor_seeking_deck(tag, opts, e_conf=_SOFTEN_E_CONF,
+                                      n_dev=_SOFTEN_N_DEV, lat=_SOFTEN_LAT)
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(sani._C_N_CONF):
+        assert ops.analyze(1) == 0, f'confinement step {step + 1} failed'
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+    max_ratio = float('-inf')
+    prev_ratio = None
+    ratio_history = []
+    soften_step = None
+    for step in range(n_dev):
+        assert ops.analyze(1) == 0, f'deviatoric step {step + 1} failed'
+        ratio = sani._state_probe()['ratio']
+        ratio_history.append(ratio)
+        if prev_ratio is not None and ratio < prev_ratio and prev_ratio >= max_ratio:
+            soften_step = step   # THIS commit is the first decline
+            break
+        max_ratio = max(max_ratio, ratio)
+        prev_ratio = ratio
+
+    if soften_step is None:
+        pytest.xfail(
+            'the dense confine-first deck (e_conf=%r, lat=%r) never showed '
+            'a peak-then-decline in eta/M_b over %d deviatoric steps -- '
+            'reached a max ratio of %.6f (last 5: %r) without softening. '
+            'This is a real measurement against a real build, not a stand- '
+            'in: either raise n_dev/lat, lower e_conf, or accept that this '
+            'deck/parameter set does not soften in the tested range'
+            % (_SOFTEN_E_CONF, _SOFTEN_LAT, n_dev, max_ratio,
+               ratio_history[-5:]))
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert ops.analyze(1) == 0, (
+        'the post-softening confirmation step failed to converge', soften_step)
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    assert detail[5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the step immediately '
+        'after the committed state first showed a peak-then-decline in '
+        'eta/M_b (the softening proxy) -- -implexGuard on is supposed to '
+        'force the elastic-predictor (f = 0) extrapolation on that step',
+        soften_step, ratio_history[-3:], detail)
+    assert guards_after[1] - guards_before[1] >= 1, (
+        'implexGuards[1] (f=0 guards) did not increment across the '
+        'post-softening step', guards_before, guards_after)
+
+
+# ---------------------------------------------------------------------------
+#  4. The hold-safe clock -- a LoadControl(0.0) commit preserves
+#     mImplexDtCommit and the d_eps_p history from the step BEFORE it.
+# ---------------------------------------------------------------------------
+
+_HOLD_DS = 0.02
+_HOLD_DS_POST = 2.0 * _HOLD_DS   # DELIBERATELY DIFFERENT from _HOLD_DS -- see
+                                # _drive_hold_sequence's docstring for why a
+                                # same-ds continuation cannot distinguish the
+                                # two readings this test needs to tell apart.
+
+
+def _drive_hold_sequence(tag, with_hold):
+    """A few constant-ds plastic history steps (so "the ds before the
+    hold" is unambiguous), optionally a LoadControl(0.0) hold, then ONE
+    continuation step at `_HOLD_DS_POST` (double `_HOLD_DS`, the history
+    steps' own ds).
+
+    THE POST-HOLD ds MUST DIFFER FROM THE PRE-HOLD ds (fixed 2026-09-07,
+    WP-92e lane B2, after a same-ds first draft measured f = 0.7 on BOTH the
+    correct and the broken reading and could tell them apart). With
+    `-implexAlpha 0.7` the two candidate readings of `implexDetail[5]` are:
+
+      * correct (mImplexDtCommit preserved across the hold, ratio against
+        the PRE-hold dt): `f = (dt_post / dt_pre) * alpha`.
+      * broken (the hold silently reset mImplexDtCommit to 0, the
+        dtCommit-reset fallback): `f = alpha`.
+
+    At `dt_post == dt_pre` (a same-ds continuation, the first draft's
+    choice) the ratio is exactly 1.0, so BOTH readings collapse to the same
+    number (`1.0 * alpha == alpha`) and the test cannot tell them apart --
+    it was checking a tautology, not the hold. `_HOLD_DS_POST = 2 *
+    _HOLD_DS` makes the two readings numerically distinct: correct reads
+    `2.0 * alpha = 1.4`, broken reads `alpha = 0.7`.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexAlpha', 0.7)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+
+    ops.integrator('LoadControl', _HOLD_DS)
+    for step in range(_PROBE_N_HISTORY):
+        assert ops.analyze(1) == 0, f'history step {step + 1} failed'
+    ops.loadConst('-time', 0.0)
+
+    guards_before = guards_after = None
+    if with_hold:
+        ops.integrator('LoadControl', 0.0)
+        guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+        assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
+        guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    ops.integrator('LoadControl', _HOLD_DS_POST)
+    assert ops.analyze(1) == 0, 'the post-hold continuation step failed to converge'
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return detail, stress, guards_before, guards_after
+
+
+def test_hold_keeps_clock_and_history():
+    """ADR-92 P2: a `LoadControl(0.0)` commit (the gravity-hold /
+    re-equilibration idiom) must be COUNTED (`implexGuards[2]`
+    increments) and must PRESERVE `mImplexDtCommit` and the `d_eps_p`
+    history from the step BEFORE the hold -- not reset either, and not
+    treat the hold itself as an ordinary same-ds step.
+
+    See `_drive_hold_sequence` for why the continuation step runs at
+    `_HOLD_DS_POST` (2x the pre-hold ds), NOT the pre-hold ds itself, and
+    the module docstring's "WHAT A ZERO-FREE-DOF DECK CAN AND CANNOT SHOW"
+    section for why this uses the free-DOF triaxial rig rather than a
+    zero-free-DOF one -- a hold-then-continue sequence needs a mechanically
+    meaningful hold, not a vacuous one.
+
+    Also checks the two sequences (with and without the hold) commit
+    CLOSE final stresses -- the hold is a mechanical no-op (zero load
+    increment, nothing to solve for) even though it is not a no-op on the
+    IMPL-EX clock bookkeeping this test's other assertions check. The
+    tolerance is 1e-5, not 1e-10 or bit-identity: this is a genuinely
+    free-DOF Newton deck, and the WITH-hold run takes one MORE `analyze()`
+    call (and one more converged Newton solve, at dt = 0) than the
+    WITHOUT-hold run before reaching the same total load -- measured
+    reldiff ~9e-7 on this deck (87b9cf846), comfortably under 1e-5 but
+    nowhere near 1e-10.
+    """
+    detail_hold, stress_hold, guards_before, guards_after = _drive_hold_sequence(
+        8360, with_hold=True)
+    assert guards_before is not None and len(guards_before) == 7, (
+        'implexGuards did not return the documented 7-component vector',
+        guards_before)
+    assert guards_after[2] - guards_before[2] >= 1, (
+        'implexGuards[2] (hold-preserved commits) did not increment across '
+        'the LoadControl(0.0) hold step', guards_before, guards_after)
+
+    expected_f_correct = (_HOLD_DS_POST / _HOLD_DS) * 0.7   # 1.4
+    assert detail_hold[5] == pytest.approx(expected_f_correct, rel=1.0e-6, abs=1.0e-9), (
+        'implexDetail[5] (f) on the step after a LoadControl(0.0) hold, at '
+        '_HOLD_DS_POST (2x the pre-hold ds), is not (dt_post/dt_pre)*alpha '
+        '-- the hold is supposed to keep mImplexDtCommit (and the d_eps_p '
+        'history) from the step BEFORE the hold, so the ratio must be '
+        'against THAT dt, not reset by the hold. If this reads 0.7 (alpha '
+        'itself) instead, mImplexDtCommit fell back to the dtCommit == 0 '
+        'branch, meaning the hold reset the clock', detail_hold,
+        expected_f_correct)
+
+    _, stress_no_hold, _, _ = _drive_hold_sequence(8361, with_hold=False)
+    assert sani._reldiff(stress_no_hold, stress_hold) <= 1.0e-5, (
+        'the committed stress after the hold-then-continue sequence does '
+        'not match the SAME sequence run WITHOUT the hold, to 1e-5 -- the '
+        'hold is supposed to be a mechanical no-op on the committed answer '
+        'even though it is not a no-op on the clock bookkeeping',
+        stress_no_hold, stress_hold)
+
+
+# ---------------------------------------------------------------------------
+#  5. `ops.setParameter(..., 'stressCorrection')` now takes effect
+# ---------------------------------------------------------------------------
+
+def _drive_stresscorrection(mat_tag, val):
+    """Confine, optionally `setParameter(..., 'stressCorrection')` right
+    before the plastic leg, then take `_PROBE_N_HISTORY` nominal plastic
+    steps. `-ele 1` (the element tag `_build_free_dof_triaxial` always
+    uses), NOT `mat_tag` (the material tag) -- setParameter's `-ele` is an
+    element selector, per every other setParameter call in this fork's own
+    test suite (`test_energyBalanceRecorder.py`,
+    `test_initStrain_dimension_general.py`).
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_free_dof_triaxial(mat_tag, opts, p0=50.0)
+    _confine_only(mat_tag)
+
+    if val is not None:
+        ops.setParameter('-val', val, '-ele', 1, 'stressCorrection')
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+
+    first_stress = None
+    for step in range(_PROBE_N_HISTORY):
+        assert ops.analyze(1) == 0, f'plastic step {step + 1} failed'
+        if step == 0:
+            first_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    final_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return first_stress, final_stress
+
+
+def test_setparameter_stresscorrection_takes_effect():
+    """ADR-92 P2: `ops.setParameter('-val', N, '-ele', <tags>,
+    'stressCorrection')` now reaches `ManzariDafalias::mStressCorrectionInUse`
+    (responseID 9, `ManzariDafalias.cpp:897`) through `LadrunoSANISAND` --
+    previously a no-op on this subclass (the parameter dispatch, `setParameter`
+    at `:852`, was reachable, but nothing carried the update through to
+    where `Stress_Correction()` reads the flag).
+
+    `Stress_Correction()` (`ManzariDafalias.cpp:2676`) is the drift-back-
+    onto-the-yield-surface step inside `ModifiedEuler`'s successful-substep
+    branch (`:1790`, the default -implex companion), guarded
+    `if (!mStressCorrectionInUse) return;` (`:2681`) -- so forcing it off
+    with `-val 0` must measurably move the FIRST plastic step's committed
+    stress away from the default (compiled-in `true`, every constructor)
+    answer, and explicitly setting it back to `1` must reproduce that SAME
+    default answer exactly, proving `-val 1` maps to the identical boolean
+    the constructors hardcode rather than some other encoding.
+
+    Kills a mutant that drops the P2 dispatch fix (every -val is a no-op,
+    all three runs land on the default answer) or that maps `-val 1` to
+    something other than the compiled-in default (e.g. any nonzero treated
+    the same as zero, or a sign flip).
+
+    `_SC_SENSITIVITY_FLOOR`, NOT `sani._SENSITIVITY_FLOOR` (fixed 2026-09-07,
+    WP-92e lane B2, re-run against 87b9cf846). `Stress_Correction()` is a
+    drift-BACK-onto-the-yield-surface correction -- a small perturbation by
+    construction, not a first-order elastic-vs-plastic gap like the
+    p_residual sensitivity `sani._SENSITIVITY_FLOOR` (1e-3) was calibrated
+    for. Measured on this deck: reldiff(first_default, first_off) =
+    2.994e-4 -- genuinely nonzero and reproducible, but under 1e-3, so the
+    imported floor made this test's own positive control fail. 1e-5 sits
+    three orders below the measured signal and many orders above any
+    floating-point noise floor.
+    """
+    _SC_SENSITIVITY_FLOOR = 1.0e-5
+
+    first_default, final_default = _drive_stresscorrection(8370, val=None)
+    first_off, final_off = _drive_stresscorrection(8371, val=0)
+    first_on, final_on = _drive_stresscorrection(8372, val=1)
+
+    assert sani._reldiff(first_default, first_off) > _SC_SENSITIVITY_FLOOR, (
+        '-val 0 did not move the FIRST plastic step away from the default '
+        '(stressCorrection compiled-in true) answer -- the positive '
+        'control this test needs is vacuous; either the P2 dispatch fix '
+        "did not land, or this deck never reaches Stress_Correction() at "
+        "all (it only runs inside ModifiedEuler's successful-substep "
+        'branch)', first_default, first_off)
+
+    assert sani._reldiff(first_default, first_on) <= _EQ_TOL, (
+        'explicitly setting stressCorrection to 1 (the compiled-in '
+        'default) does not reproduce the answer of never calling '
+        'setParameter at all -- either -val 1 is not mapping to the same '
+        'boolean the constructors hardcode, or the dispatch is not '
+        'idempotent', first_default, first_on)
+    assert sani._reldiff(final_default, final_on) <= _EQ_TOL, (
+        'the same divergence as above, carried through the rest of the '
+        'plastic history', final_default, final_on)
+
+
+# ===========================================================================
+#  ADR-92 P2-5 / P2-2b (WP-92e lane B2, 2026-09-07, binary 8bfdfbc17)
+# ===========================================================================
+
+def _read_all_alpha_in(ele=1, ngp=8):
+    return [list(ops.eleResponse(ele, 'material', gp, 'alpha_in')) for gp in range(1, ngp + 1)]
+
+
+def _read_all_alpha(ele=1, ngp=8):
+    return [list(ops.eleResponse(ele, 'material', gp, 'alpha')) for gp in range(1, ngp + 1)]
+
+
+def _drive_hold_p25c(tag, implex_on):
+    """Establish plastic history, take ONE ordinary nominal step (the
+    "pre-hold" step, whose own `implexGuards[1]` delta is captured), then a
+    `LoadControl(0.0)` hold (`alpha_in`/`implexGuards` read before and
+    after), then ONE more ordinary nominal step (the "post-hold" step,
+    whose own `implexGuards[1]` delta is captured too) -- on EITHER an
+    `-implex` deck or a purely implicit one (`implex_on=False`, no
+    `-implex` token anywhere).
+
+    Returns a dict with everything `test_hold_leaves_alpha_in_and_guard_
+    flags_unchanged` needs: `alpha_in` before/after the hold at all 8 Gauss
+    points, `implexGuards` before/after the hold, and the two `guards[1]`
+    deltas (pre-hold step, post-hold step) to compare against each other.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 8)
+    ops.pattern('Plain', 8, 8)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+
+    guards_before_pre = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    assert ops.analyze(1) == 0, 'the pre-hold nominal step failed to converge'
+    guards_after_pre = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta1_pre = guards_after_pre[1] - guards_before_pre[1]
+
+    ai_before_hold = _read_all_alpha_in()
+    guards_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
+
+    ai_after_hold = _read_all_alpha_in()
+    guards_after_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    guards_before_post = guards_after_hold
+    assert ops.analyze(1) == 0, 'the post-hold nominal step failed to converge'
+    guards_after_post = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta1_post = guards_after_post[1] - guards_before_post[1]
+
+    return dict(
+        ai_before_hold=ai_before_hold, ai_after_hold=ai_after_hold,
+        guards_before_hold=guards_before_hold, guards_after_hold=guards_after_hold,
+        delta1_pre=delta1_pre, delta1_post=delta1_post,
+    )
+
+
+def test_hold_leaves_alpha_in_and_guard_flags_unchanged():
+    """ADR-92 P2-5c: `ladrunoGuardReversalNoise()` now checks `ops_Dt ==
+    0.0` FIRST, unconditionally -- ahead of, and independent of,
+    `-reversalTol`/`-reversalRel` -- because a hold is a GLOBAL fact the
+    domain reports (the pseudo-time increment), not something to infer
+    from a strain norm that can itself undershoot at points whose own last
+    committed increment was tiny (P2-5b's own residual gap, measured on
+    Esmeralda 146585: 136/1600 IMPL-EX and 88/1600 implicit points still
+    reset `mAlpha_in` on a hold after P2-5b). On `ops_Dt == 0.0` the reset
+    is unconditionally undone and NO P2-2 guard flag is (re)computed at
+    commit either (`ladrunoImplexCommit()`'s `reversalNoiseGuardFired`
+    gate), on BOTH the implicit and IMPL-EX paths -- so unlike the P2-5 /
+    P2-5b tests this superseded (module docstring, "FIRST"/"FOURTH RUN"),
+    a literal `LoadControl(0.0)` hold now shows the protection directly,
+    with no deterministic-perturbation workaround needed: the predicate is
+    `dt == 0`, not a strain magnitude a Newton solve might not land
+    exactly on.
+
+    Checked on BOTH `implex_on=True` and `implex_on=False` (a purely
+    implicit deck, no `-implex` token -- P2-5c's fix lives in
+    `ladrunoGuardReversalNoise()`, called from both `commitState()`'s plain
+    path and `ladrunoImplexCommit()`):
+
+      * `alpha_in` bit-identical at every one of the 8 Gauss points across
+        the hold.
+      * `implexGuards[5]` (the new hold-skip-commit census, once per point
+        per hold, not per Newton iteration) increments by EXACTLY 8 across
+        the hold -- the element's own Gauss-point count, not merely
+        "at least one".
+      * `implexGuards[1]` (the P2-2 f=0 guard count) moves by the SAME
+        amount on the step BEFORE the hold as on the step AFTER it (both
+        0 on this deck, which never arms the P2-2 guard at all under
+        ordinary monotone loading) -- the hold introduces no NEW guard
+        activity relative to an ordinary step either side of it.
+
+    Kills a mutant that reverts P2-5c to the P2-5b strain-based test (the
+    literal hold could then fail to protect a point whose own history was
+    tiny -- not reproducible on THIS deck, but `implexGuards[5]` failing to
+    hit exactly 8, or `alpha_in` moving, is the direct signature), that
+    drops the `implexGuards[5]` count, or that lets a hold-commit
+    recompute the P2-2 flags after all.
+    """
+    for implex_on, tag in ((True, 8380), (False, 8381)):
+        d = _drive_hold_p25c(tag, implex_on)
+
+        diffs_ai = [max(abs(x - y) for x, y in zip(b, a))
+                   for b, a in zip(d['ai_before_hold'], d['ai_after_hold'])]
+        assert max(diffs_ai) == 0.0, (
+            'alpha_in moved at at least one Gauss point across the '
+            'LoadControl(0.0) hold (implex_on=%r)' % implex_on,
+            diffs_ai, d['ai_before_hold'], d['ai_after_hold'])
+
+        delta5 = d['guards_after_hold'][5] - d['guards_before_hold'][5]
+        assert delta5 == 8.0, (
+            'implexGuards[5] (hold-skip commits) did not increment by '
+            'EXACTLY 8 (this element\'s Gauss-point count) across the hold '
+            '(implex_on=%r)' % implex_on, delta5,
+            d['guards_before_hold'], d['guards_after_hold'])
+
+        assert d['delta1_post'] == d['delta1_pre'], (
+            'implexGuards[1] (P2-2 f=0 guard) moved by a DIFFERENT amount '
+            'on the step after the hold than on the step before it '
+            '(implex_on=%r) -- the hold is supposed to introduce no new '
+            'guard-flag activity relative to an ordinary step either side '
+            'of it', implex_on, d['delta1_pre'], d['delta1_post'])
+
+
+def test_guard_ignores_the_unprimed_first_commit():
+    """ADR-92 P2-2b: the reversal/softening guard in `ladrunoImplexCommit()`
+    used to arm on the un-primed FIRST plastic commit after the elastic ->
+    plastic stage flip (`mAlpha_in_n` necessarily moves there as an
+    initialisation artefact, not a genuine reversal -- P2-2b's own fix
+    gates both halves of the guard on `guardPrimed`, the SAME
+    `GetNorm_Cov(mImplexDEpsP) > 0.0` predicate `-implexControl`'s
+    un-primed-step exemption already uses, afb95c40c). On a deck that
+    never approaches the p_min floor or a genuine reversal (p0 = 50 kPa,
+    monotone loading, `-implexAlpha 0.7` so the un-primed fallback and the
+    live ratio are both `0.7` here -- constant ds, so this does not need to
+    distinguish them, only confirm NEITHER reads `f = 0`), the SECOND
+    plastic step's `implexDetail[5]` must equal its own dt ratio (`0.7`),
+    not `0.0`.
+
+    Kills a mutant that removes `guardPrimed` from EITHER half of the `if`
+    (`mImplexOpt.guard && guardPrimed`) -- the second plastic step would
+    read `f = 0` again, exactly the P2-2 regression this fixes.
+    """
+    tag = 8390
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexAlpha', 0.7)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 0.02)
+
+    assert ops.analyze(1) == 0, 'the FIRST (un-primed) plastic step failed to converge'
+    detail1 = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail1[5] == pytest.approx(0.7, rel=1.0e-6, abs=1.0e-9), (
+        'implexDetail[5] on the un-primed FIRST plastic step is not alpha '
+        '(0.7) -- the mImplexDtCommit == 0 fallback should apply here '
+        'regardless of the guard (this step has no committed predecessor '
+        'to arm the guard from)', detail1)
+
+    assert ops.analyze(1) == 0, 'the SECOND plastic step failed to converge'
+    detail2 = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail2[5] == pytest.approx(0.7, rel=1.0e-6, abs=1.0e-9), (
+        'implexDetail[5] on the SECOND plastic step is not its dt ratio '
+        '(0.7, constant ds) -- P2-2b is supposed to exempt the un-primed '
+        'first commit from arming the reversal/softening guard, so this '
+        'step must NOT read f = 0 the way it did before 8bfdfbc17',
+        detail2)
+
+
+# ===========================================================================
+#  ADR-92 P2-6 (WP-92e lane B2, 2026-09-07, binary 708152eac)
+# ===========================================================================
+
+_TRIAL_GUARD_TOL = 0.01
+_TRIAL_GUARD_REDUCTION = 0.01
+_TRIAL_GUARD_FACTOR = -0.5   # a REVERSAL, half the nominal per-step magnitude
+                             # -- see the test docstring for why a same-
+                             # direction bigger step does NOT show f = 0
+                             # beating the full extrapolation on this deck.
+
+
+def _drive_trial_guard_reversal(tag, trial_guard):
+    """Establish plastic history, then ONE reversal step (opposite sign to
+    `_establish_plastic_history`'s own load, half its per-step magnitude,
+    `LoadControl(1.0)` against the established `1.0 / _PROBE_N_HISTORY`
+    history steps, so the dt ratio itself is also unremarkable -- the
+    error gap this test needs comes from the DIRECTION reversal, not from
+    an oversized dt) under `-implexControl` at `_TRIAL_GUARD_TOL`.
+
+    Returns a dict of every response this test's assertions need, read
+    both immediately before and immediately after the one `analyze()` call.
+    """
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexControl', _TRIAL_GUARD_TOL, _TRIAL_GUARD_REDUCTION,
+            '-implexTrialGuard', trial_guard)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _TRIAL_GUARD_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 3)
+    ops.pattern('Plain', 3, 3)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0)
+
+    refusals_before = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    stress_before = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    rc = ops.analyze(1)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    refusals_after = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    stress_after = list(ops.eleResponse(1, 'material', 1, 'stress'))
+    return dict(rc=rc, detail=detail,
+               refusals_before=refusals_before, refusals_after=refusals_after,
+               guards_before=guards_before, guards_after=guards_after,
+               stress_before=stress_before, stress_after=stress_after)
+
+
+def _probe_trial_guard_reference_errors(tag_full, tag_f0):
+    """Independent measurement of the two errors `-implexTrialGuard` is
+    choosing between on the SAME history + reversal step
+    `_drive_trial_guard_reversal` drives, via `-implexAlpha` (1.0 = the
+    ordinary full extrapolation; 0.0 = the same pure elastic predictor,
+    `sigma~ = sigma_n + Ce:d_eps`, the trial-time fallback itself
+    recomputes) with `-implexControl` set to a tolerance neither probe
+    ever reaches (`1e6`), so BOTH commit normally and their
+    `implexDetail[0]` is directly readable -- unlike a genuinely refused
+    attempt on `LadrunoBrick`, which reverts before ever calling
+    `commitState()` (see `test_floor_fallback_delivers_implicit_stress_
+    and_counts`'s own note on why THAT read is stale).
+
+    NOT claimed to bit-match the live mechanism's own internal fallback
+    number (measured: it does not -- 0.001827 here vs 0.003206 on the
+    actual accepted step in `test_trial_guard_accepts_f0_before_refusing`,
+    same deck/history/step). These are independent reference numbers
+    confirming the SIGN and rough SCALE of the gap (f = 0 substantially
+    better than full-f on a reversal, by roughly an order of magnitude),
+    not a claimed numerical identity with the shipped code path.
+    """
+    def _run(tag, alpha):
+        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                '-implexControl', 1.0e6, _TRIAL_GUARD_REDUCTION,
+                '-implexAlpha', alpha)
+        _build_free_dof_triaxial(tag, opts, p0=50.0)
+        _establish_plastic_history(tag)
+        dq = _TRIAL_GUARD_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+        ops.timeSeries('Linear', 3)
+        ops.pattern('Plain', 3, 3)
+        for j, (x, y) in enumerate(_XY):
+            ops.load(4 + j + 1, 0.0, 0.0, -dq)
+        ops.integrator('LoadControl', 1.0)
+        assert ops.analyze(1) == 0, 'the reference probe failed to converge'
+        return list(ops.eleResponse(1, 'material', 1, 'implexDetail'))[0]
+
+    err_full = _run(tag_full, 1.0)
+    err_f0 = _run(tag_f0, 0.0)
+    return err_full, err_f0
+
+
+def test_trial_guard_accepts_f0_before_refusing():
+    """ADR-92 P2-6: `-implexTrialGuard on` (the default) retries a trial
+    whose FULL extrapolation error is past `-implexControl`'s tolerance,
+    BEFORE refusing it and before the reduction floor, with a pure elastic
+    predictor (`f = 0`, the same `sigma~ = sigma_n + Ce:d_eps` P2-2's
+    guard delivers), re-measured against the SAME companion return already
+    computed -- and delivers it (no refusal) if THAT error clears tol.
+    `-implexTrialGuard off` reproduces the pre-P2-6 behaviour: refuse
+    immediately, with no such retry.
+
+    THE DECK: a REVERSAL (`_TRIAL_GUARD_FACTOR = -0.5`), not a bigger
+    same-direction step. Measured first (see
+    `_probe_trial_guard_reference_errors`'s own docstring and this
+    file's earlier `test_floor_fallback_...`'s "10x nominal, same
+    direction" shape): on a bigger SAME-direction step the full
+    extrapolation (which carries the established plastic direction
+    forward) is actually a BETTER predictor than a pure elastic guess, so
+    `-implexTrialGuard` would have nothing to rescue there. A reversal is
+    exactly the opposite: the established `d_eps_p(n)` now points the
+    WRONG way, so extrapolating it is worse than assuming no plastic flow
+    at all -- probed independently (`_probe_trial_guard_reference_errors`,
+    called below): full-f error 0.034149, f = 0 error 0.0018271, at
+    `_TRIAL_GUARD_TOL = 0.01` sitting cleanly between them.
+
+    Kills a mutant that drops the P2-6 retry entirely (`-implexTrialGuard
+    on` would refuse exactly like `off`), that fires it regardless of the
+    flag (`off` would also accept), or that fails to zero `implexDetail[5]`
+    / count `implexGuards[4]` on the accepted step.
+    """
+    off = _drive_trial_guard_reversal(8395, 'off')
+    assert off['rc'] != 0, (
+        'the reversal step, under -implexTrialGuard off, was NOT refused -- '
+        'the deck needs re-deriving (the full-f error is supposed to sit '
+        'above _TRIAL_GUARD_TOL here), not this test\'s premise', off)
+    assert off['refusals_after'][2] - off['refusals_before'][2] >= 1, (
+        'implexRefusals[2] (-implexControl-specific) did not increment '
+        'across the refused step', off['refusals_before'], off['refusals_after'])
+    assert off['stress_after'] == off['stress_before'], (
+        'the committed stress moved across a refused step', off)
+    assert off['guards_after'][4] == off['guards_before'][4], (
+        'implexGuards[4] (trial-time f=0 fallbacks) moved with '
+        '-implexTrialGuard off -- it must not fire when the flag is '
+        'disabled', off['guards_before'], off['guards_after'])
+
+    on = _drive_trial_guard_reversal(8396, 'on')
+    assert on['rc'] == 0, (
+        'the SAME reversal step, under -implexTrialGuard on (the default), '
+        'was NOT accepted -- the trial-time f=0 fallback is supposed to '
+        'rescue it', on)
+    assert on['detail'][5] == 0.0, (
+        'implexDetail[5] (f) is not exactly 0.0 on the accepted step -- '
+        'the trial-time fallback is supposed to deliver the pure elastic '
+        'predictor', on['detail'])
+    assert on['detail'][0] <= _TRIAL_GUARD_TOL, (
+        'the accepted step\'s implexError is not <= tol -- that is the '
+        'fallback\'s own accept condition', on['detail'], _TRIAL_GUARD_TOL)
+    assert on['guards_after'][4] - on['guards_before'][4] >= 1, (
+        'implexGuards[4] (trial-time f=0 fallbacks) did not increment '
+        'across the accepted step', on['guards_before'], on['guards_after'])
+    assert on['refusals_after'][2] == on['refusals_before'][2], (
+        'implexRefusals[2] moved on the ACCEPTED step -- the fallback is '
+        'supposed to avoid the refusal entirely, not refuse-then-recover',
+        on['refusals_before'], on['refusals_after'])
+
+    err_full, err_f0 = _probe_trial_guard_reference_errors(8397, 8398)
+    assert err_f0 < _TRIAL_GUARD_TOL < err_full, (
+        'the two independently-probed reference errors (full-f %r, f=0 '
+        '%r) do not straddle _TRIAL_GUARD_TOL (%r) the way this deck is '
+        'supposed to -- re-derive the deck/tol/factor rather than trust '
+        'the mechanism assertions above blindly'
+        % (err_full, err_f0, _TRIAL_GUARD_TOL), err_full, err_f0)
+
+
+# ===========================================================================
+#  ADR-92 P2-5b (WP-92e lane B2, 2026-09-07, binary d5bd259f6)
+# ===========================================================================
+#
+#  threshold = max(reversalTol, reversalRel * mDEpsNormCommit), reversalRel
+#  DEFAULT 0.05. mDEpsNormCommit is the norm of the last NON-HOLD committed
+#  strain increment -- so on `_build_free_dof_triaxial` +
+#  `_establish_plastic_history` (this file's own proven deck), a genuine
+#  LoadControl(0.0) hold's own (Newton-tolerance-scale, not round-off)
+#  strain increment is caught by the RELATIVE half of the threshold even
+#  where reversalTol alone (P2-5) would miss it -- and P2-5b additionally
+#  gates the P2-2 guard flags on the SAME noise verdict OR'd with the
+#  literal hold itself, so a hold can never spuriously arm f = 0 on the
+#  step after it.
+# ---------------------------------------------------------------------------
+
+def _zero_dof_reversal_guard_deck(tag, opts, n_conf, e_conf, n_hist, e_hist,
+                                  e_perturb, n_post=1):
+    """A confine-first, ZERO-free-DOF `stdBrick` deck (isochoric deviatoric
+    shear, `_c_series`'s own `lat = 0.5` shape) built from scratch with
+    EXPLICIT, EXACT Path-series magnitudes -- not reused from `sani`'s own
+    helpers, because this test needs to choose `e_perturb` to land in a
+    specific, KNOWN window relative to the history's own increment, and a
+    zero-free-DOF deck gives that window EXACTLY (the committed strain
+    increment on any step is the Path series' own consecutive-factor
+    difference times `e_conf`, with no Newton-tolerance noise floor to
+    fight -- `analyze()` trivially converges with zero equations to solve).
+
+    `n_hist` steps of magnitude `e_hist` (establishing `mDEpsNormCommit`),
+    then ONE step of magnitude `e_perturb` (the "perturbation" this test's
+    assertions are about), then `n_post` more ordinary `e_hist` steps
+    (to observe whatever the perturbation's commit armed for the guard).
+    All in the SAME direction -- deliberately not a reversal; see the
+    module docstring on why a same-direction perturbation cannot show
+    `alpha_in` itself moving (the base's own crude sign check never
+    triggers on a monotone path regardless of guard settings), which is
+    why this deck's own tests read `implexGuards[3]` as the primary
+    evidence and document `alpha_in`/`implexGuards[1]` as non-discriminating
+    here rather than silently dropping the checks.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+
+    s_lat = [i / n_conf for i in range(n_conf + 1)]
+    s_ax = list(s_lat)
+    r_lat_hist = 0.5 * e_hist / e_conf
+    r_ax_hist = e_hist / e_conf
+    for i in range(1, n_hist + 1):
+        s_lat.append(1.0 - r_lat_hist * i)
+        s_ax.append(1.0 + r_ax_hist * i)
+    r_lat_p = 0.5 * e_perturb / e_conf
+    r_ax_p = e_perturb / e_conf
+    s_lat.append(s_lat[-1] - r_lat_p)
+    s_ax.append(s_ax[-1] + r_ax_p)
+    for _ in range(n_post):
+        s_lat.append(s_lat[-1] - r_lat_hist)
+        s_ax.append(s_ax[-1] + r_ax_hist)
+    s_lat.append(s_lat[-1])   # the PathSeries hold point, see sani._c_series
+    s_ax.append(s_ax[-1])
+
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -e_conf)
+            if y == 1.:
+                ops.sp(n, 2, -e_conf)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -e_conf)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+_RGR_N_CONF = 10
+_RGR_E_CONF = 5.0e-4
+_RGR_N_HIST = 4
+_RGR_E_HIST = 1.0e-4     # -> mDEpsNormCommit of this order after history
+_RGR_E_PERTURB = 1.0e-6  # 100x smaller than _RGR_E_HIST: 0.01 of it, comfortably
+                         # under reversalRel's default 0.05, comfortably above 0
+
+
+def test_reversal_guard_is_relative_to_the_last_increment():
+    """ADR-92 P2-5b: the reversal-noise guard's threshold is
+    `max(reversalTol, reversalRel * mDEpsNormCommit)` -- relative to the
+    norm of the LAST COMMITTED (non-hold) strain increment, not the tiny
+    fixed `reversalTol` alone (P2-5's own original, since retired as
+    insufficient: Esmeralda's own census measured a hold's noise at
+    Newton-tolerance scale, not round-off). Three parts:
+
+    (a) On the free-DOF triaxial rig, after a plastic history, a
+        `LoadControl(0.0)` hold at the DEFAULT `-reversalRel 0.05` leaves
+        `alpha_in` bit-identical at every Gauss point, and leaves
+        `implexGuards[1]` (the P2-2 f=0 guard count) moving by the SAME
+        amount on the step AFTER the hold as it did on the step BEFORE the
+        hold (both deltas are 0 on this deck -- P2-5b's OWN fix, gating
+        the P2-2 guard flags on the same noise verdict OR'd with the
+        literal hold, is exactly what keeps a hold from spuriously ARMING
+        f = 0 for the step after it).
+
+    (b) THE MUTANT: `-reversalRel 0 -reversalTol 0` (full disable).
+        MEASURED: on THIS free-DOF deck a literal `LoadControl(0.0)` hold
+        cannot show the disable either, for a DIFFERENT reason than "the
+        increment is exactly zero" (it measurably is not, see the module's
+        earlier P2-5 test) -- `ladrunoImplexCommit()`'s guard-flag gate is
+        `reversalNoiseGuardFired OR implexHold`, and a literal hold sets
+        `implexHold = true` UNCONDITIONALLY regardless of the noise
+        thresholds, so the guard-flags channel is protected either way and
+        cannot distinguish default from disabled there. Per the
+        coordinator's own fallback, this test instead uses a DETERMINISTIC,
+        EXACTLY-SIZED perturbation on a zero-free-DOF deck
+        (`_zero_dof_reversal_guard_deck`, `e_perturb` = 1% of the
+        established `e_hist`) -- NOT a literal hold, but the same
+        "genuinely small, not literally zero" shape, with `implexHold`
+        false (the LoadControl factor for that one step is 1.0, not 0.0,
+        so `mImplexDt != 0`) so the noise-threshold comparison itself is
+        what decides. `implexGuards[3]` (reversal-noise) increments (one
+        per Gauss point) under the default threshold and stays flat under
+        the disabled one, on the IDENTICAL perturbation -- the direct,
+        unambiguous demonstration of the relative threshold actually
+        gating something. `alpha_in` is also checked and reads
+        bit-identical under BOTH settings here (documented, not
+        overclaimed): this SAME-DIRECTION perturbation never trips the
+        base's own crude sign-based reversal branch regardless of guard
+        settings (same reason the module's earlier P2-5 test found for its
+        own deck), so this channel is not the one that discriminates on
+        this deck either.
+
+    (c) A GENUINE reversal (opposite sign, FULL `LoadControl(1.0)`
+        magnitude -- `_drive_reversal`'s own proven shape, already exercised
+        by `test_guard_zeroes_f_after_reversal`) still resets `alpha_in`
+        under the DEFAULT `-reversalRel`/`-reversalTol`: the relative
+        threshold must not eat a real reversal just because it is
+        relative, only genuine noise.
+    """
+    # -- (a): the literal hold, default thresholds --------------------------
+    tag_a = 8401
+    opts_a = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # defaults: rel=0.05, tol=1e-10
+    _build_free_dof_triaxial(tag_a, opts_a, p0=50.0)
+    _establish_plastic_history(tag_a)
+
+    ai_before_hold = _read_all_alpha_in()
+    guards_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    detail_before_hold = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+
+    # the delta across the LAST PRE-hold nominal step (already taken inside
+    # _establish_plastic_history) -- re-derive it by comparing implexGuards
+    # immediately before this hold against what it read one step earlier is
+    # not directly available, so instead this compares the delta ACROSS the
+    # hold against the delta ACROSS the post-hold step below: both must be 0.
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, 'the LoadControl(0.0) hold failed to converge'
+
+    ai_after_hold = _read_all_alpha_in()
+    guards_after_hold = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    diffs_ai_hold = [max(abs(x - y) for x, y in zip(b, a))
+                     for b, a in zip(ai_before_hold, ai_after_hold)]
+    assert max(diffs_ai_hold) == 0.0, (
+        'alpha_in moved at at least one Gauss point across the hold at the '
+        'DEFAULT -reversalRel/-reversalTol', diffs_ai_hold)
+
+    delta_guard1_across_hold = guards_after_hold[1] - guards_before_hold[1]
+    assert delta_guard1_across_hold == 0.0, (
+        'implexGuards[1] moved across the hold itself -- the P2-2 guard '
+        'flags are supposed to be LEFT UNTOUCHED (not recomputed) on a '
+        'literal-hold commit', guards_before_hold, guards_after_hold)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 6)
+    ops.pattern('Plain', 6, 6)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    assert ops.analyze(1) == 0, 'the post-hold nominal step failed to converge'
+
+    guards_after_post = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    detail_after_post = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    delta_guard1_after_hold = guards_after_post[1] - guards_after_hold[1]
+    assert delta_guard1_after_hold == delta_guard1_across_hold == 0.0, (
+        'implexGuards[1] (f=0 guard) delta on the step AFTER the hold does '
+        'not match the (zero) delta across the hold itself -- P2-5b is '
+        'supposed to keep the P2-2 guard flags from a hold-commit exactly '
+        'as the PREVIOUS commit left them, so nothing new should be armed '
+        'for this post-hold step', delta_guard1_across_hold, delta_guard1_after_hold,
+        guards_before_hold, guards_after_hold, guards_after_post)
+    assert detail_after_post[5] != 0.0, (
+        'implexDetail[5] (f) on the post-hold step is exactly 0.0 -- the '
+        'P2-2 guard spuriously armed f = 0 for this step, exactly the '
+        'Esmeralda 146580 defect P2-5b fixes', detail_before_hold, detail_after_post)
+
+    # -- (b): the mutant, full disable, on a deterministic perturbation -----
+    guards_before_pert_default = None
+    for tag_b, rel, tol, label in ((8402, None, None, 'default'),
+                                   (8403, 0.0, 0.0, 'disabled')):
+        opts_b = ['-implex', '-maxSubsteps', _CAP_ADEQUATE]
+        if rel is not None:
+            opts_b += ['-reversalRel', rel]
+        if tol is not None:
+            opts_b += ['-reversalTol', tol]
+        _zero_dof_reversal_guard_deck(tag_b, tuple(opts_b), _RGR_N_CONF, _RGR_E_CONF,
+                                      _RGR_N_HIST, _RGR_E_HIST, _RGR_E_PERTURB)
+        ops.updateMaterialStage('-material', tag_b, '-stage', 0)
+        for step in range(_RGR_N_CONF):
+            assert ops.analyze(1) == 0, f'{label}: confinement step {step + 1} failed'
+        ops.updateMaterialStage('-material', tag_b, '-stage', 1)
+        for step in range(_RGR_N_HIST):
+            assert ops.analyze(1) == 0, f'{label}: history step {step + 1} failed'
+
+        ai_before_p = _read_all_alpha_in()
+        guards_before_p = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+        assert ops.analyze(1) == 0, f'{label}: the perturbation step failed to converge'
+
+        ai_after_p = _read_all_alpha_in()
+        guards_after_p = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+        diffs_ai_p = [max(abs(x - y) for x, y in zip(bb, aa))
+                     for bb, aa in zip(ai_before_p, ai_after_p)]
+        if label == 'default':
+            guards_before_pert_default = guards_before_p
+            assert max(diffs_ai_p) == 0.0, (
+                'DOCUMENTED, not a stronger claim: alpha_in moved on the '
+                'default-threshold perturbation -- see the test docstring '
+                'part (b) for why this deck\'s same-direction perturbation '
+                'is not expected to move it either way', diffs_ai_p)
+            assert guards_after_p[3] - guards_before_p[3] >= 1, (
+                'implexGuards[3] (reversal-noise) did NOT increment on the '
+                'default-threshold perturbation -- the relative threshold '
+                '(reversalRel * mDEpsNormCommit) is supposed to catch a '
+                'perturbation 100x smaller than the established history',
+                guards_before_p, guards_after_p)
+        else:
+            assert guards_after_p[3] == guards_before_p[3], (
+                'implexGuards[3] moved with -reversalRel 0 -reversalTol 0 '
+                '(full disable) on the IDENTICAL perturbation that fired it '
+                'above -- the guard is supposed to be OFF entirely, not '
+                'merely quieter', guards_before_p, guards_after_p)
+
+    # -- (c): a GENUINE reversal must still reset alpha_in, default config --
+    tag_c = 8404
+    opts_c = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)
+    _build_free_dof_triaxial(tag_c, opts_c, p0=50.0)
+    _establish_plastic_history(tag_c)
+
+    ai_before_rev = _read_all_alpha_in()
+
+    dq_rev = _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 7)
+    ops.pattern('Plain', 7, 7)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq_rev)   # opposite sign -- a genuine reversal
+    ops.integrator('LoadControl', 1.0)            # FULL magnitude, matching _drive_reversal
+    assert ops.analyze(1) == 0, 'the genuine reversal step failed to converge'
+
+    ai_after_rev = _read_all_alpha_in()
+    diffs_ai_rev = [max(abs(x - y) for x, y in zip(b, a))
+                    for b, a in zip(ai_before_rev, ai_after_rev)]
+    assert max(diffs_ai_rev) > 0.0, (
+        'alpha_in did NOT move at any Gauss point across a GENUINE, '
+        'full-magnitude reversal at the DEFAULT -reversalRel/-reversalTol '
+        '-- the relative threshold is supposed to leave a REAL reversal '
+        'alone, not eat it along with the noise', diffs_ai_rev)
+
+
+# ===========================================================================
+#  Esmeralda-reported regression check (WP-92e lane B2, 2026-09-07,
+#  binary d30c66582) -- explicit default words vs no words at all
+# ===========================================================================
+
+def _echo_guard_floor_line(capfd, tag, opts, p0=50.0):
+    """Build the free-DOF triaxial deck and return the ONE echo line naming
+    `-implexFloor`/`-implexGuard`/`-implexTrialGuard`
+    (`setLadrunoImplexOptions`'s "ADR-92 P2 --" line), with the material
+    tag number blanked out so lines from different tags compare equal.
+
+    Uses pytest's OWN `capfd` fixture (fd-level capture), not a hand-rolled
+    `os.dup2` redirect -- native `opserr` writes go straight to the C
+    stderr file descriptor, not through Python's `sys.stderr`, so
+    `capsys`/`contextlib.redirect_stderr` cannot see them, and a
+    self-managed `os.dup2` around pytest's OWN fd-capture (pytest's default
+    `--capture=fd` mode has already redirected fd 2 before the test body
+    runs) measured empty every time -- nesting redirects that way is
+    fragile in exactly the way this docstring is warning the next reader
+    off. `capfd.readouterr()` is pytest's own answer to the same problem
+    and reads back clean.
+    """
+    capfd.readouterr()   # drain whatever is already buffered from EARLIER calls
+    _build_free_dof_triaxial(tag, opts, p0=p0)
+    captured = capfd.readouterr()
+    text = captured.err + captured.out   # opserr's own stream target is not
+                                         # asserted on; check both
+    lines = [l for l in text.splitlines() if 'ADR-92 P2 --' in l and 'implexFloor' in l]
+    assert len(lines) == 1, (
+        'expected exactly one "ADR-92 P2 --" echo line naming -implexFloor '
+        'per construction, got a different count -- the capture or the '
+        'source\'s own echo format changed', tag, lines, text)
+    return re.sub(r'tag \d+:', 'tag N:', lines[0])
+
+
+_EDW_FACTOR = 4.0   # per-step load = _EDW_FACTOR * the nominal per-step dq --
+                    # measured (2026-09-07) to converge cleanly for all 8
+                    # steps on this deck (p0 = 50 kPa) while genuinely
+                    # engaging -implexTrialGuard (implexGuards[4] += 3 per
+                    # step) and the P2-5c reversal-noise guard -- NOT the
+                    # "boring" nominal magnitude, where -implexControl never
+                    # refuses anything and every one of these three flags is
+                    # mechanically inert regardless of value or word order.
+
+
+def _drive_explicit_default_words(tag, extra_opts):
+    opts = ('-implex', '-implexControl', 0.1, 0.01, '-maxSubsteps', 20000) + tuple(extra_opts)
+    _build_free_dof_triaxial(tag, opts, p0=50.0)
+    _confine_only(tag)
+    dq = _EDW_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    stresses = []
+    for step in range(8):
+        assert ops.analyze(1) == 0, f'plastic step {step + 1} failed to converge'
+        stresses.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    guards = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return stresses, guards
+
+
+def test_explicit_default_words_are_byte_identical(capfd):
+    """Esmeralda reports a regression on d5bd259f6: legs constructed with
+    the EXPLICIT words `-implexGuard on -implexTrialGuard on -implexFloor
+    implicit` run 17-20% softer from step 2 than the same deck with no
+    explicit words at all -- which should be byte-identical, since `on` /
+    `on` / `implicit` ARE the compiled-in defaults (`setLadrunoImplexOptions`
+    only ever branches on the OPTION VALUES it parsed into `LadrunoImplex
+    Options`, never on whether a token was physically present in the deck
+    string, so there should be no code path that can tell the two decks
+    apart). Three variants on the free-DOF triaxial rig, `-implex
+    -implexControl 0.1 0.01 -maxSubsteps 20000`, `_EDW_FACTOR = 4.0` (see
+    that constant's own comment for why the nominal per-step magnitude is
+    the WRONG deck here -- it never exercises any of the three flags at
+    all, so a bug specific to their VALUE or ORDER would be invisible):
+
+      1. no explicit words.
+      2. the explicit words appended AFTER `-maxSubsteps` (the coordinator's
+         own reported shape).
+      3. the explicit words placed BEFORE `-implexControl` instead (token
+         order swapped, in case the parser's `seenFlag`/dispatch state is
+         itself order-sensitive).
+
+    Asserts the committed stress at EVERY one of 8 plastic steps, and the
+    final `implexGuards` census, are bit-identical across all three; also
+    captures the ONE construction-time echo line naming all three flags
+    (`setLadrunoImplexOptions`'s "ADR-92 P2 --" line, via a real OS-level
+    fd redirect since `opserr` writes straight to the native stderr
+    descriptor) and asserts it reads identically (tag number blanked) in
+    all three.
+
+    MEASURED ON THIS DECK (d30c66582, 2026-09-07): NOT REPRODUCED. All
+    three variants commit bit-identical stress at every one of the 8
+    steps, `implexGuards` matches exactly (deltas verified: `[4]` +3/step,
+    `[3]` moving too, both identical run-to-run), and the echo line is
+    character-for-character identical (tag blanked) across all three. This
+    is a genuine negative result, not a vacuous one -- `_EDW_FACTOR`
+    was deliberately chosen so `-implexTrialGuard` and the reversal-noise
+    guard are ACTIVELY firing on every run (confirmed via the `implexGuards`
+    deltas below), not idle, so a bug that only manifests when these flags
+    do something would have had the opportunity to show up here and did
+    not. Per the coordinator's brief: since SRC is not to be touched from
+    this lane regardless of outcome, this test is left as a STANDING
+    regression guard (it would need to fail, not merely differ from a
+    hand-derived expectation, to catch a future reintroduction) rather than
+    an xfail -- if Esmeralda's field discrepancy is confirmed elsewhere, it
+    is not reproducible from a single material point at all and needs a
+    genuine multi-element/BVP repro, which is out of this lane's scope
+    (a Python material-point rig, not a mesh).
+
+    `-flipAlphaIn vanilla` AND `-implexFlipAbsorb off` ADDED to
+    `explicit_words` (P2-7(c) redesign, WP-92e lane B2, 2026-09-07) --
+    NOT YET RE-RUN against a binary that ships either token; the
+    "MEASURED ON THIS DECK (d30c66582...)" paragraph above describes the
+    run BEFORE this addition. `vanilla`/`off`, not `init`/`on`: both
+    tokens' DEFAULT is the "leave it alone" value now (Esmeralda showed
+    `init`'s "fix" was actually a modelling change -- the implicit twin's
+    own number moved off vanilla's to the digit; the companion absorb
+    under `on` broke gate 5's ON == OFF byte-identity), and this test's
+    whole point is "explicit words matching the DEFAULT must be
+    byte-identical to omitting them" -- using the non-default value for
+    either would test a DIFFERENT claim entirely. `sani._build` is not
+    this test's deck (`_build_free_dof_triaxial` + `_confine_only`,
+    isotropic, is), so the flip's own alpha_in effect is vacuous here
+    (alpha is already 0) either way -- this addition only extends the
+    WORD/ORDER byte-identity claim to the two new tokens, not a physics
+    claim about them.
+    """
+    tag_a, tag_b, tag_c = 8900, 8901, 8902
+    explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
+                      '-implexFloor', 'implicit', '-flipAlphaIn', 'vanilla',
+                      '-implexFlipAbsorb', 'off')
+
+    stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
+    stresses_b, guards_b = _drive_explicit_default_words(tag_b, explicit_words)
+    # variant c: the explicit words BEFORE -implexControl instead of after
+    # -maxSubsteps -- _drive_explicit_default_words always appends its
+    # extra_opts at the END, so build variant c directly here to control
+    # the token order precisely.
+    opts_c = ('-implex',) + explicit_words + ('-implexControl', 0.1, 0.01,
+                                              '-maxSubsteps', 20000)
+    _build_free_dof_triaxial(tag_c, opts_c, p0=50.0)
+    _confine_only(tag_c)
+    dq = _EDW_FACTOR * _PROBE_DQ_NOMINAL / 4.0
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0 / _PROBE_N_HISTORY)
+    stresses_c = []
+    for step in range(8):
+        assert ops.analyze(1) == 0, f'variant c: plastic step {step + 1} failed to converge'
+        stresses_c.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    guards_c = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    for step, (sa, sb, sc) in enumerate(zip(stresses_a, stresses_b, stresses_c)):
+        assert sa == sb, (
+            'variant b (explicit words AFTER -maxSubsteps) diverged from '
+            'variant a (no explicit words) at step %d' % (step + 1),
+            step, sa, sb)
+        assert sa == sc, (
+            'variant c (explicit words BEFORE -implexControl) diverged from '
+            'variant a (no explicit words) at step %d' % (step + 1),
+            step, sa, sc)
+
+    # implexGuards is process-wide, so compare DELTAS from each variant's
+    # own baseline (all three start from 0 new activity relative to
+    # whatever ran earlier in the same pytest process) -- since a/b/c ran
+    # back to back with nothing else in between, and each drives the
+    # IDENTICAL mechanical history, their raw deltas are directly
+    # comparable as consecutive equal-sized increments.
+    delta_ab = [b - a for a, b in zip(guards_a, guards_b)]
+    delta_bc = [c - b for b, c in zip(guards_b, guards_c)]
+    assert delta_ab == delta_bc, (
+        'implexGuards moved by a DIFFERENT amount from variant a->b than '
+        'from variant b->c -- the three decks are not driving the material '
+        'through the identical sequence of guard events',
+        guards_a, guards_b, guards_c, delta_ab, delta_bc)
+    assert guards_b[4] > guards_a[4], (
+        'implexGuards[4] (-implexTrialGuard fallbacks) did not increase at '
+        'all across this deck\'s 8 steps -- the deck is not actually '
+        'exercising the flag this test is about; the bit-identity result '
+        'above would be vacuous', guards_a, guards_b)
+
+    line_a = _echo_guard_floor_line(capfd, 8910, ('-implex', '-maxSubsteps', 20000))
+    line_b = _echo_guard_floor_line(capfd, 8911, ('-implex', '-maxSubsteps', 20000) + explicit_words)
+    line_c = _echo_guard_floor_line(capfd, 8912, ('-implex', '-maxSubsteps', 20000) + explicit_words)   # order doesn't reach the echo text itself
+    assert line_a == line_b == line_c, (
+        'the "ADR-92 P2 --" construction-time echo line (naming -implexFloor'
+        '/-implexGuard/-implexTrialGuard) differs between the no-words and '
+        'explicit-words decks -- the flags are being PARSED to a different '
+        'internal state despite reading the same on/on/implicit values',
+        line_a, line_b, line_c)
+
+
+# ===========================================================================
+#  ADR-92 P2-7, redesigned (WP-92e lane B2, 2026-09-07) -- deterministic
+#  alpha_in at the elastic->plastic stage flip.
+#
+#  WRITTEN BEFORE THE BINARY EXISTS. The dist/bin .pyd at the time this
+#  section was written still holds the FIRST (mis-specified) P2-7 attempt
+#  (691f4064d, a hold-style skip that was never built) and is being
+#  rebuilt against the redesigned interface below -- per the module
+#  docstring's own rule, nothing in this section is a number read off a
+#  real binary. Do not run this file until told the new build hash.
+#
+#  INTERFACE (Ladruno_implementation/92_ladruno_sanisand_implex_adr.md,
+#  the P2-7 row): new token `-flipAlphaIn init|vanilla`, default `init`.
+#  At `updateMaterialStage 1` the fork sets `alpha_in := alpha_n` at EVERY
+#  Gauss point, on BOTH the purely implicit and the `-implex` path, under
+#  `init`; `vanilla` leaves `alpha_in` at its elastic-stage placeholder
+#  (zero), reproducing the old noise-initialisation behaviour for A/B. The
+#  reversal-noise guard (P2-5/5b/5c) applies ONLY to PRIMED states (after
+#  the first plastic commit since the flip) -- the flip itself, and any
+#  hold before the material is primed, must never arm it. Under `-implex`
+#  the flip additionally runs a zero-increment companion return, committed
+#  hold-style (history left at zero, counted in `implexGuards[5]` -- the
+#  SAME slot P2-5c's literal holds use, `+= the Gauss-point count`, once
+#  per point, at the flip).
+#
+#  THE DECK MUST BE ANISOTROPIC AT THE FLIP, NOT `_confine_only`'s OWN
+#  ISOTROPIC ONE. `_confine_only`'s ramp confines equally on every face,
+#  so `alpha == 0` at ITS OWN flip regardless of whether this fix exists --
+#  an `alpha_in == alpha` check there would read `0 == 0` under a mutant
+#  that drops the write entirely, which is exactly the "isotropic deck
+#  makes the fix unfalsifiable" trap the redesigned ADR text itself calls
+#  out. `sani._build`'s OWN single continuous ramp is NOT reused, though:
+#  ITS `_LAT = 0.25` measurably hits the file's own KNOWN, documented
+#  "Outside Bounding" defect (`test_ladruno_sanisand.py`'s own docstring --
+#  the stage-switch stress ratio, eta = 1.817-2.138 depending on the exact
+#  deck, exceeds the calibrated M_c = 1.3309, so `ManzariDafalias::
+#  Elastic2Plastic` inflates M_c by 50-77% before the plastic leg starts).
+#  MEASURED on 887fea475: this defect alone was enough to make
+#  `test_flip_absorbs_drift_under_implex`'s own "first real push" error
+#  read exactly 0.0 (an M_c-inflation degenerate case, not a P2-7 defect).
+#  A custom `_build_p27_k0` deck (SAME zero-free-DOF stdBrick shape and
+#  magnitude sani._build uses, `_P27_LAT = 0.1` instead of `0.25`) is used
+#  instead -- measured eta = 1.176, comfortably under M_c, no "Outside
+#  Bounding" warning, while alpha stays genuinely nonzero (non-vacuous).
+# ===========================================================================
+
+_P27_LAT = 0.1           # lateral extension / axial compression -- see the
+                         # block comment above for why NOT sani._build's own
+                         # 0.25 (measured "Outside Bounding" there; at 0.1,
+                         # eta = 1.176 stays comfortably under M_c = 1.3309)
+_P27_E_AX = sani._E_AX   # 3.0e-4, sani._build's own magnitude, reused
+_P27_N_EL = sani._N_EL   # 5, sani._build's own elastic-stage step count
+
+
+def _build_p27_k0(tag, opts):
+    """A zero-free-DOF stdBrick, K0-like anisotropic elastic ramp (lateral
+    extension `_P27_LAT` x axial compression, ONE continuous Linear series
+    from t = 0 -- the same shape `sani._build` uses, at a SAFE lat ratio;
+    see the section block comment above for why `sani._build` itself
+    cannot be reused here). The SAME `LoadControl(1.0 / _P27_N_EL)`
+    magnitude is used for both the elastic leg (run by the caller,
+    `_p27_elastic_leg`) and any push steps taken afterward, so there is no
+    discontinuity in per-step magnitude across the flip.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, _P27_LAT * _P27_E_AX)
+            if y == 1.:
+                ops.sp(n, 2, _P27_LAT * _P27_E_AX)
+            if k == 1:
+                ops.sp(n, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    ops.analysis('Static')
+
+
+def _p27_elastic_leg(tag):
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'elastic-stage step {step + 1} failed'
+
+def test_flip_initialises_alpha_in_at_every_point():
+    """ADR-92 P2-7(c): at `updateMaterialStage 1`, `alpha_in := alpha_n` at
+    EVERY Gauss point, on both the purely implicit deck (no `-implex`
+    token) and the `-implex` deck, under EXPLICIT `-flipAlphaIn init`.
+
+    DEFAULT FLIPPED (WP-92e lane B2, 2026-09-07, before any P2-7c binary):
+    the coordinator reports Esmeralda showed vanilla's own flip
+    initialisation is deterministic on a real deck and returns the
+    implicit twin to its OLD number to the digit, so `init` is now an
+    OPT-IN modelling choice, not a default fix -- `-flipAlphaIn` DEFAULTS
+    to `vanilla`. Under the (now) DEFAULT, `alpha_in` is the elastic
+    stage's OWN value (unchanged by the flip -- the elastic_integrator
+    branch never touches `mAlpha_in`, so it stays at the zero placeholder
+    every constructor leaves it at) at every point, on both paths.
+
+    See the section block comment above for why `_build_p27_k0`'s K0-like
+    ramp is used instead of an isotropic confine-first deck, and why a
+    non-vacuity check (Gauss point 1's `alpha` is genuinely nonzero at the
+    flip) comes first.
+
+    Kills a mutant that drops the flip's `alpha_in` write entirely under
+    explicit `init` (it would then read identically to the DEFAULT --
+    zero -- everywhere), that only writes Gauss point 1 (every OTHER
+    point would still read the old placeholder), that reaches only one of
+    the two paths (the other deck's read would still show the pre-fix
+    value), or that flips the default back to `init` silently (the
+    DEFAULT-flag loop below would then also read `alpha_in == alpha`).
+    """
+    for implex_on, tag in ((False, 8420), (True, 8421)):
+        opts = ('-flipAlphaIn', 'init')
+        if implex_on:
+            opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) + opts
+        _build_p27_k0(tag, opts)
+        _p27_elastic_leg(tag)
+
+        # the flip itself -- read BEFORE any push into the plastic stage.
+        ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        alpha = _read_all_alpha(ngp=8)
+        alpha_in = _read_all_alpha_in(ngp=8)
+
+        assert _vnorm(alpha[0]) > 0.0, (
+            'the elastic-stage stress is isotropic (alpha == 0) at Gauss '
+            'point 1 right after the flip (implex_on=%r) -- _build_p27_k0\'s '
+            'own K0-like ramp (_P27_LAT = 0.1 lateral, active from the first '
+            'elastic step) is supposed to leave a genuinely anisotropic '
+            'stress there; a zero here makes the alpha_in == alpha check '
+            'below vacuous' % implex_on, alpha[0])
+
+        for gp in range(8):
+            assert alpha[gp] == alpha_in[gp], (
+                'alpha_in does not equal alpha at Gauss point %d right '
+                'after updateMaterialStage 1, under EXPLICIT '
+                '-flipAlphaIn init (implex_on=%r) -- the flip is supposed '
+                'to set alpha_in := alpha_n deterministically at every '
+                'Gauss point' % (gp + 1, implex_on), alpha[gp], alpha_in[gp])
+
+    # -- the DEFAULT (now vanilla): alpha_in stays at its elastic-stage value --
+    for implex_on, tag in ((False, 8422), (True, 8423)):
+        opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+        _build_p27_k0(tag, opts)
+        _p27_elastic_leg(tag)
+        ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        alpha_in_vanilla = _read_all_alpha_in(ngp=8)
+        for gp in range(8):
+            assert all(v == 0.0 for v in alpha_in_vanilla[gp]), (
+                'alpha_in is NOT the elastic-stage placeholder (zero) at '
+                'Gauss point %d under the DEFAULT -flipAlphaIn (implex_on=%r) '
+                '-- the default is supposed to be vanilla, reproducing the '
+                'OLD behaviour and leaving alpha_in untouched by the flip'
+                % (gp + 1, implex_on), alpha_in_vanilla[gp])
+
+
+def _read_all_implex_error(ele=1, ngp=8):
+    return [ops.eleResponse(ele, 'material', gp, 'implexDetail')[0] for gp in range(1, ngp + 1)]
+
+
+def _build_p27_k0_2elem(tag, opts):
+    """TWO independent unit-cube `stdBrick` elements, SAME material tag,
+    the SAME K0-like ramp (`_P27_LAT`/`_P27_E_AX`/`_P27_N_EL`) replicated
+    on both -- 16 Gauss points total (8 per element), each its OWN
+    per-Gauss-point `getCopy()` clone.
+
+    P2-7c moved the flip-handled tracking to a PER-INSTANCE flag
+    (`mStageFlipHandled` on each clone), so a SINGLE-element deck (8
+    instances) cannot distinguish "every instance flips" from "only the
+    first clone flips, the rest silently miss it" -- both would show SOME
+    nonzero `implexGuards[5]` delta at the flip, just a different one (8
+    vs some smaller number). Node numbering is offset by 8 per element so
+    the two cubes share nothing.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for e in range(2):
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                ops.node(8 * e + 4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    for e in range(2):
+        base = 8 * e
+        ops.element('stdBrick', e + 1, base + 1, base + 2, base + 3, base + 4,
+                   base + 5, base + 6, base + 7, base + 8, tag)
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                ops.fix(base + 4 * k + j + 1, 1 if x == 0. else 0,
+                        1 if y == 0. else 0, 1 if k == 0 else 0)
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for e in range(2):
+        base = 8 * e
+        for k in range(2):
+            for j, (x, y) in enumerate(_XY):
+                n = base + 4 * k + j + 1
+                if x == 1.:
+                    ops.sp(n, 1, _P27_LAT * _P27_E_AX)
+                if y == 1.:
+                    ops.sp(n, 2, _P27_LAT * _P27_E_AX)
+                if k == 1:
+                    ops.sp(n, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    ops.analysis('Static')
+
+
+_P27_PUSH_LAT = 0.3   # the push segment's OWN lateral ratio -- deliberately
+                     # DIFFERENT from _P27_LAT (0.1); see
+                     # _build_p27_k0_pathpush's own docstring for why the
+                     # push needs to leave the elastic ramp's own radial
+                     # direction, not continue it. Measured (4e07ef014):
+                     # init/vanilla max errors 0.0272/0.1530, ratio 5.6.
+
+
+def _build_p27_k0_pathpush(tag, opts):
+    """The SAME K0-like elastic ramp as `_build_p27_k0` (_P27_LAT,
+    _P27_E_AX, _P27_N_EL steps, t = 0 -> 1), as a TWO-CHANNEL `Path`
+    series (matching `sani._c_series`'s own technique: the `sp` magnitude
+    is FIXED per channel, `_P27_E_AX`, and the series itself carries the
+    ratio) -- followed by ONE MORE step at a DIFFERENT lateral ratio,
+    `_P27_PUSH_LAT`, not `_P27_LAT`.
+
+    WHY THE PUSH NEEDS A DIFFERENT RATIO (measured, 4e07ef014, WP-92e lane
+    B2, 2026-09-07). `_build_p27_k0`'s single `Linear` series makes ANY
+    "first real push" step (`_flip_and_first_push_error`'s original
+    design) a PURE CONTINUATION of the SAME proportional ray the elastic
+    leg already followed. The yield surface is homogeneous (a cone
+    through the origin) and `alpha` -- hence `alpha_in` under `init` --
+    already sits exactly on that ray at the flip, so continuing along the
+    IDENTICAL ray never crosses it: measured `eta` EXACTLY unchanged and
+    `plasticstrains` EXACTLY zero after a push of up to 10x the elastic
+    leg's own per-step magnitude, on BOTH `init` and `vanilla` -- the same
+    "radial path never yields" pathology `test_ladruno_sanisand.py`'s own
+    module docstring documents for `_OPTS_PR0`. Only used by
+    `_flip_and_first_push_error` -- the OTHER `_build_p27_k0` callers
+    (`test_flip_initialises_alpha_in_at_every_point`,
+    `test_flip_absorbs_drift_under_implex` parts (a)/(b),
+    `test_guard_only_on_primed_states`) do not need genuine post-flip
+    yielding for their own claims, so they are left on the simpler,
+    already-passing single-segment deck.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+    ops.nDMaterial('LadrunoSANISAND', tag, *_PARAMS, *opts)
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+
+    s_lat = [_P27_LAT * i / _P27_N_EL for i in range(_P27_N_EL + 1)]
+    s_ax = [1.0 * i / _P27_N_EL for i in range(_P27_N_EL + 1)]
+    s_lat.append(_P27_LAT + _P27_PUSH_LAT)   # ONE push step, ratio = _P27_PUSH_LAT
+    s_ax.append(1.0 + 1.0)
+    s_lat.append(s_lat[-1])                  # the PathSeries hold point
+    s_ax.append(s_ax[-1])
+
+    ops.timeSeries('Path', 1, '-dt', 1.0, '-values', *s_lat)
+    ops.timeSeries('Path', 2, '-dt', 1.0, '-values', *s_ax)
+    ops.pattern('Plain', 1, 1)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, _P27_E_AX)
+            if y == 1.:
+                ops.sp(n, 2, _P27_E_AX)
+    ops.pattern('Plain', 2, 2)
+    for k in range(2):
+        for j, (x, y) in enumerate(_XY):
+            if k == 1:
+                ops.sp(4 * k + j + 1, 3, -_P27_E_AX)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-13, 25, 0)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def _flip_and_first_push_error(tag, flip_mode):
+    """`_build_p27_k0_pathpush` (K0-like elastic ramp, ONE element, THEN
+    one push step at a DIFFERENT lateral ratio -- see that function's own
+    docstring for why) + `-implex -implexFlipAbsorb on`, elastic leg, the
+    flip, then that ONE real (non-radial) plastic push step -- returns
+    `max_implexError` across all 8 Gauss points after it. `flip_mode` is
+    REQUIRED (`'init'` or `'vanilla'`, no default) -- P2-7c's
+    `-flipAlphaIn` default is `vanilla`, so this helper does not guess.
+    `-implexFlipAbsorb on` is EXPLICIT too (P2-7c's SECOND interface
+    change: the companion absorb defaults OFF) -- the whole point of this
+    comparison is the absorb's own benefit, so it has to be on for either
+    arm to show anything.
+    """
+    opts = ['-implex', '-maxSubsteps', _CAP_ADEQUATE,
+            '-implexFlipAbsorb', 'on', '-flipAlphaIn', flip_mode]
+    _build_p27_k0_pathpush(tag, tuple(opts))
+
+    ops.updateMaterialStage('-material', tag, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'elastic-stage step {step + 1} failed'
+    ops.updateMaterialStage('-material', tag, '-stage', 1)
+    assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
+    return max(_read_all_implex_error(ngp=8))
+
+
+def test_flip_absorbs_drift_under_implex():
+    """ADR-92 P2-7(c): the flip's zero-increment companion return
+    (committed hold-style, at every Gauss point) is now OPT-IN --
+    `-implexFlipAbsorb on|off`, DEFAULT OFF (it broke ADR-92 gate 5's
+    ON == OFF byte-identity, and Esmeralda showed the P2-2b guard-scope
+    fix alone already recovers the implicit twin's start).
+
+    THREE parts:
+
+    (a) DEFAULT flags (`-implexFlipAbsorb off`): `implexGuards[5]` must
+        NOT move at the flip, and gate 5 itself -- `-implex` ON commits
+        the BIT-IDENTICAL stress to OFF, on `_build_p27_k0`'s own
+        zero-free-DOF deck, through the flip and a few pushes -- must
+        hold. This is the direct confirmation that turning the absorb
+        off restores the invariant it broke.
+
+    (b) `-implexFlipAbsorb on` EXPLICIT, on a TWO-element deck
+        (`_build_p27_k0_2elem`): `implexGuards[5]` (the SAME hold-skip-
+        commit slot P2-5c's literal holds use) increments by EXACTLY 16
+        across the flip PLUS ONE real (non-hold) push step -- TWO
+        elements (8 Gauss points each), because P2-7c's flip-handled
+        tracking is PER INSTANCE, resolved at the first PLASTIC TRIAL
+        (see `_build_p27_k0_2elem`'s own docstring for why a
+        single-element deck cannot tell "every instance flips" from
+        "only the first one does"). MEASURED (4e07ef014): the bare
+        `updateMaterialStage(...,1)` call alone only reaches the FIRST
+        element (delta reads 8, not 16) -- the second element's own
+        material instances have not been handed a trial strain yet, so
+        their flip is still pending; a LITERAL HOLD afterward does not
+        give a clean 16 either (it ALSO trips P2-5c's own hold-skip
+        count on the same slot for both elements, measured 32) -- only a
+        REAL push step reads cleanly, matching part (c)'s own single-
+        element convention.
+
+    (c) `-implexFlipAbsorb on` EXPLICIT, single-element, BOTH
+        `-flipAlphaIn` modes EXPLICIT too (there is no default to lean
+        on for this comparison): the deterministic `alpha_in` write
+        under `init` is supposed to leave the FIRST REAL plastic push
+        step's extrapolation error far smaller than under `vanilla` (the
+        old, noise-initialised `alpha_in`, still driving an un-corrected
+        O(0.2)-scale gap into that first step per the ADR's own P2-7
+        measurement) -- checked as `max(implexError)` across all 8 Gauss
+        points on both variants, asserting the vanilla:init ratio
+        exceeds 2.
+
+    Kills a mutant that leaves the absorb ON by default (part (a)'s
+    `implexGuards[5]` delta would be nonzero, and gate 5 would break
+    again), that drops the flip's companion-absorb call entirely under
+    `on` (part (b)'s delta would read 0, not 16), that only flips ONE
+    instance per element (part (b)'s delta would read 8 or some other
+    count short of 16), or that makes `-flipAlphaIn` cosmetic (part
+    (c)'s ratio would collapse toward 1).
+    """
+    # -- (a) DEFAULT flags: no absorb at the flip, gate 5 holds --------
+    tag_off, tag_on_default = 8433, 8434
+    opts_default_off = ()
+    opts_default_on = ('-implex', '-maxSubsteps', _CAP_ADEQUATE)   # DEFAULT -implexFlipAbsorb (off)
+
+    _build_p27_k0(tag_off, opts_default_off)
+    _p27_elastic_leg(tag_off)
+    ops.updateMaterialStage('-material', tag_off, '-stage', 1)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    for step in range(3):
+        assert ops.analyze(1) == 0, f'off-leg push step {step + 1} failed'
+    stress_off = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    _build_p27_k0(tag_on_default, opts_default_on)
+    _p27_elastic_leg(tag_on_default)
+    guards_before_default_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ops.updateMaterialStage('-material', tag_on_default, '-stage', 1)
+    guards_after_default_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta5_default = guards_after_default_flip[5] - guards_before_default_flip[5]
+    assert delta5_default == 0.0, (
+        'implexGuards[5] moved at the flip under DEFAULT flags '
+        '(-implexFlipAbsorb off) -- the companion absorb is supposed to '
+        'be opt-in now, inert by default', delta5_default,
+        guards_before_default_flip, guards_after_default_flip)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    for step in range(3):
+        assert ops.analyze(1) == 0, f'on-leg (default absorb off) push step {step + 1} failed'
+    stress_on_default = list(ops.eleResponse(1, 'material', 1, 'stress'))
+
+    assert stress_off == stress_on_default, (
+        'gate 5 (-implex ON == OFF committed stress) does NOT hold on '
+        'this zero-free-DOF deck under DEFAULT flags -- -implexFlipAbsorb '
+        'off is supposed to restore that byte-identity',
+        stress_off, stress_on_default)
+
+    # -- (b) -implexFlipAbsorb on, 2-element deck: implexGuards[5] += 16 --
+    #
+    # MEASURED (this run, binary 4e07ef014): the bare updateMaterialStage(
+    # ...,1) call ALONE only reaches ONE element's material instances (its
+    # own commit title: "updateMaterialStage reaches one element" -- P2-7c
+    # made the flip PER-INSTANCE, at the first plastic TRIAL, so the SECOND
+    # element's own flip-and-absorb is deferred until ITS material is
+    # first handed a trial strain, which does not happen until an
+    # analyze() call runs). Reading the delta right after
+    # updateMaterialStage (no analyze() in between) therefore reads 8, not
+    # 16 -- not a defect, just reading before the second element's own
+    # first trial has happened. A LITERAL HOLD does NOT fix this cleanly
+    # either: LoadControl(0.0) ALSO trips P2-5c's own hold-skip-commit
+    # census on the SAME implexGuards[5] slot for BOTH elements (all 16
+    # points, a genuine but UNRELATED source of +16), on top of whatever
+    # the flip-absorb itself contributes -- measured 32, not 16, that way.
+    # The clean read is after the flip AND one REAL (non-hold) push step,
+    # matching `_flip_and_first_push_error`'s own single-element
+    # convention exactly.
+    tag_2elem = 8432
+    opts_2elem = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexFlipAbsorb', 'on')
+    _build_p27_k0_2elem(tag_2elem, opts_2elem)
+    ops.updateMaterialStage('-material', tag_2elem, '-stage', 0)
+    for step in range(_P27_N_EL):
+        assert ops.analyze(1) == 0, f'2-element elastic-stage step {step + 1} failed'
+
+    guards_before_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    ops.updateMaterialStage('-material', tag_2elem, '-stage', 1)
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    assert ops.analyze(1) == 0, '2-element deck: the first real plastic push step failed to converge'
+    guards_after_flip = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    delta5 = guards_after_flip[5] - guards_before_flip[5]
+    assert delta5 == 16.0, (
+        'implexGuards[5] (hold-skip commits) did not increase by EXACTLY '
+        '16 (TWO elements x 8 Gauss points each) across the flip PLUS one '
+        'real push step on the 2-element deck, under EXPLICIT '
+        '-implexFlipAbsorb on -- the flip\'s companion-absorb is supposed '
+        'to run at EVERY per-Gauss-point instance, not just the first '
+        'element\'s', delta5, guards_before_flip, guards_after_flip)
+
+    # -- (c) -implexFlipAbsorb on, single-element, init vs vanilla ratio --
+    tag_init = 8430
+    err_init = _flip_and_first_push_error(tag_init, 'init')
+
+    tag_vanilla = 8431
+    err_vanilla = _flip_and_first_push_error(tag_vanilla, 'vanilla')
+
+    assert err_init > 0.0, (
+        'the EXPLICIT -flipAlphaIn init first-push max implexError read '
+        'exactly zero -- cannot form the ratio this test needs', err_init)
+    ratio = err_vanilla / err_init
+    assert ratio > 2.0, (
+        'the EXPLICIT -flipAlphaIn vanilla first-push max implexError is '
+        'not more than 2x the EXPLICIT init one -- the flip\'s '
+        'deterministic alpha_in write plus the zero-increment companion '
+        'absorb are supposed to leave the first REAL plastic step\'s '
+        'extrapolation error far smaller than the old (noise-initialised) '
+        'behaviour', err_init, err_vanilla, ratio)
+
+
+def test_guard_only_on_primed_states():
+    """ADR-92 P2-7(c): the reversal-noise guard (P2-5/5b/5c) applies ONLY
+    to PRIMED states (after the first plastic commit since the flip). A
+    hold placed BEFORE the first plastic commit -- right after the flip,
+    on EXPLICIT `-flipAlphaIn init` (the point of this test is the
+    already-equalised state right after the flip, independent of what the
+    DEFAULT is) -- must not change `alpha_in` (init already equalised it
+    to `alpha` at the flip, so there is nothing left for the hold to
+    disturb), and the FIRST REAL plastic push step afterward must read its
+    ordinary dt ratio for `f` (`implexDetail[5]`), NOT `0.0` -- i.e. the
+    un-primed pre-priming hold must not have armed the P2-2 guard flag.
+
+    Kills a mutant that lets an UN-PRIMED hold arm the guard anyway (the
+    first real push step would read `f = 0` instead of its ratio) or that
+    lets the pre-priming hold disturb `alpha_in` (P2-7's own `init` write
+    would then not be the LAST word on `alpha_in` before priming).
+    """
+    tag = 8440
+    opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-flipAlphaIn', 'init')
+    _build_p27_k0(tag, opts)
+    _p27_elastic_leg(tag)
+    ops.updateMaterialStage('-material', tag, '-stage', 1)   # the flip
+
+    alpha_in_after_flip = _read_all_alpha_in(ngp=8)
+
+    # the hold, BEFORE the first plastic commit (i.e. before priming).
+    ops.integrator('LoadControl', 0.0)
+    assert ops.analyze(1) == 0, 'the pre-priming hold failed to converge'
+
+    alpha_in_after_hold = _read_all_alpha_in(ngp=8)
+    for gp in range(8):
+        assert alpha_in_after_hold[gp] == alpha_in_after_flip[gp], (
+            'alpha_in changed at Gauss point %d across the pre-priming '
+            'hold -- -flipAlphaIn init already equalised it to alpha at '
+            'the flip; the hold must not disturb it'
+            % (gp + 1), alpha_in_after_flip[gp], alpha_in_after_hold[gp])
+
+    # the first REAL plastic push step.
+    ops.integrator('LoadControl', 1.0 / _P27_N_EL)
+    assert ops.analyze(1) == 0, 'the first real plastic push step failed to converge'
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    assert detail[5] != 0.0, (
+        'implexDetail[5] (f) on the first real plastic step, right after '
+        'a pre-priming hold, is exactly 0.0 -- the un-primed hold '
+        'spuriously armed the reversal/softening guard; the guard is '
+        'supposed to apply ONLY to PRIMED states (after the first '
+        'plastic commit since the flip)', detail)
+
+
+# ===========================================================================
+#  Ladruno ADR-92 P2-9 -- `-implexFactor fixed|control`
+#
+#  `fixed` (the DEFAULT) is the clock ratio f = alpha*dt_{n+1}/dt_n, exactly
+#  as every build before P2-9 shipped it.  `control` keeps that value as an
+#  UPPER BOUND f_max and picks, at the FIRST trial of the step, the closed-form
+#  minimiser of ||sigma~(f) - sigma_impl||:
+#
+#      sigma~(f) - sigma_impl = A - f*B
+#      A = sigma_n + Ce:d_eps - sigma_impl,   B = Ce:d_eps_p(n)
+#      f* = clamp( (A:B)/(B:B), 0, f_max )
+#
+#  EVERY factor test below passes `-implexGuard off`.  That is deliberate and
+#  it is the point of the lane: P2-2's guard reads the COMMITTED PREDECESSOR,
+#  so on the reversal step itself (where `d_eps_p(n)` genuinely points the
+#  wrong way) it has not fired yet -- it fires one step LATER, on the
+#  continuation, which is what `test_guard_zeroes_f_after_reversal` measures.
+#  P2-9 acts at the trial, one step EARLIER.  Turning the guard off removes it
+#  from the picture entirely so `implexDetail[5]` can only be reading the
+#  factor mode, and it also pins the `fixed` arm to a known, non-zero clock
+#  ratio to compare against.
+#
+#  `-implexControl` is given a DELIBERATELY unreachable tolerance (1e9) in the
+#  factor tests: P2-9 needs the companion (that is what supplies `sigma_impl`
+#  at the trial), but the W7 refusal and P2-6's own f = 0 trial fallback must
+#  stay out of the way, or `implexDetail[5]` could read a 0.0 that P2-6 wrote
+#  rather than one P2-9 chose.
+# ===========================================================================
+
+_P29_CTL = ('-implexControl', 1.0e9, 0.5)   # companion ON, refusal unreachable
+_P29_BASE = ('-implex', '-maxSubsteps', _CAP_ADEQUATE, '-implexGuard', 'off')
+
+
+def _drive_p29_reversal(tag, extra_opts):
+    """`_establish_plastic_history` (monotone COMPRESSIVE, at
+    `LoadControl(1/_PROBE_N_HISTORY)`), then ONE step whose deviator load
+    flips sign.
+
+    On THAT step `d_eps_p(n)` is the committed compressive plastic increment
+    and the step travels the other way, so `A:B < 0` and `f*` clamps to the
+    lower end of its range.  The clock ratio is
+    `dt_{n+1}/dt_n = 1.0 / (1/_PROBE_N_HISTORY) = _PROBE_N_HISTORY`, which is
+    what the `fixed` arm must read on the same step.
+
+    Returns (implexDetail after the reversal step, implexGuards before it,
+    implexGuards after it).
+    """
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, +dq)     # OPPOSITE sign to the history
+    ops.integrator('LoadControl', 1.0)
+    rc = ops.analyze(1)
+    assert rc == 0, ('the reversal step failed to converge', rc)
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+def _drive_p29_monotone(tag, extra_opts):
+    """`_establish_plastic_history`, then TWO further steps in the SAME
+    (compressive) direction at the SAME `LoadControl(1.0)` magnitude -- so
+    `dt_{n+1} == dt_n` and the clock ratio on the second one is exactly 1.0 --
+    with the SECOND step carrying TWICE the deviator load of the first.
+
+    Why the second step is doubled, argued rather than hoped for: `f*` is
+    `(A:B)/(B:B)` with `A ~ Ce:d_eps_p(n+1)` and `B = Ce:d_eps_p(n)`, i.e. it
+    is essentially the RATIO of this step's plastic increment to the last
+    committed one.  A monotone history that DECELERATES (a hardening material
+    taking equal load steps) legitimately produces `f* < 1` -- that is the
+    operator working, not a defect -- so an equal-magnitude continuation would
+    make "f = f_max" a coin toss rather than a property.  Doubling the load
+    puts `f*` near 2 with a factor-of-two margin over the `f_max = 1.0` clamp,
+    which is what makes the clamp BIND and the assertion a real one.
+
+    Returns (implexDetail after the second step, implexGuards before it,
+    implexGuards after it).
+    """
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+
+    # step 1 of 2: sets dt_n = 1.0 and commits d_eps_p(n) in the SAME direction.
+    ops.timeSeries('Linear', 4)
+    ops.pattern('Plain', 4, 4)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -dq)
+    ops.integrator('LoadControl', 1.0)
+    assert ops.analyze(1) == 0, 'the first monotone continuation step failed to converge'
+    ops.loadConst('-time', 0.0)
+
+    guards_before = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+
+    # step 2 of 2: same direction, same dt, DOUBLE the load -- see the docstring.
+    ops.timeSeries('Linear', 5)
+    ops.pattern('Plain', 5, 5)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(4 + j + 1, 0.0, 0.0, -2.0 * dq)
+    ops.integrator('LoadControl', 1.0)
+    assert ops.analyze(1) == 0, 'the second monotone continuation step failed to converge'
+
+    detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
+    guards_after = list(ops.eleResponse(1, 'material', 1, 'implexGuards'))
+    return detail, guards_before, guards_after
+
+
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_backs_off_on_a_reversal(mode):
+    """ADR-92 P2-9 (a): on a step whose committed `d_eps_p(n)` points the
+    WRONG WAY, `-implexFactor control|controlIter` must report
+    `implexDetail[5]` at or near zero, while `-implexFactor fixed` reports
+    the full clock ratio on the identical step.
+
+    `A:B < 0` there by construction (`B = Ce:d_eps_p(n)` is the compressive
+    history; `A ~ Ce:d_eps_p(n+1)` on a step that travels the other way), so
+    the clamp's LOWER end binds and `f*` is 0 -- or, if the reversal step
+    unloads elastically and there is no new plastic increment at all, `A ~ 0`
+    and `f*` is a negligible fraction of `f_max`.  Both are "the operator
+    backed off"; neither is the clock ratio.  `controlIter` recomputes `f*`
+    at every trial instead of freezing it at the first, but the reversal is
+    the same wrong-way `d_eps_p(n)` at every trial of this step, so the same
+    near-zero clamp is expected on both modes.
+
+    Kills a mutant that parses `-implexFactor control`/`controlIter` and then
+    never uses `f*` (both arms would read the clock ratio), one that forgets
+    to clamp at 0 (a negative `f` would AMPLIFY the wrong increment), and one
+    that wires `f*` to the P2-2 guard's trigger instead of to the companion
+    (the guard is OFF here and has not fired on this step anyway).
+    """
+    d_fixed, _, _ = _drive_p29_reversal(8450, _P29_CTL + ('-implexFactor', 'fixed'))
+    f_max = float(_PROBE_N_HISTORY)   # dt_{n+1}/dt_n = 1.0 / (1/_PROBE_N_HISTORY)
+    assert d_fixed[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        '-implexFactor fixed did not read the plain clock ratio on the '
+        'reversal step -- the comparison the control arm is measured '
+        'against is not the one this test believes it is', d_fixed, f_max)
+
+    d_ctl, g_before, g_after = _drive_p29_reversal(
+        8451, _P29_CTL + ('-implexFactor', mode))
+
+    assert d_ctl[5] >= 0.0, (
+        'implexDetail[5] went NEGATIVE under -implexFactor %s -- f* is '
+        'clamped into [0, f_max] and a negative f amplifies exactly the '
+        'plastic increment the operator has decided is wrong' % mode, d_ctl)
+    assert d_ctl[5] <= 0.05 * f_max, (
+        'implexDetail[5] under -implexFactor %s is %r on a step whose '
+        'committed plastic increment points the WRONG WAY -- f* = '
+        'clamp((A:B)/(B:B), 0, f_max) has A:B < 0 there, so this must be at '
+        'or near 0, not the %r the fixed arm reads'
+        % (mode, d_ctl[5], f_max), d_ctl, d_fixed)
+
+    assert g_after[6] - g_before[6] >= 1, (
+        'implexGuards[6] (the P2-9 "backed off" census: f* < 0.5*f_max) did '
+        'not increment across a reversal step on which implexDetail[5] '
+        'itself shows the operator backing off', g_before, g_after, d_ctl)
+
+
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_holds_fmax_on_a_monotone_history(mode):
+    """ADR-92 P2-9 (b): where the committed history points the RIGHT way,
+    `f*` runs into its upper clamp and `-implexFactor control|controlIter`
+    reports exactly `f_max` -- the same number `-implexFactor fixed`
+    reports.  The "backed off" census must NOT move.
+
+    `controlIter` recomputes `f*` at every Newton trial of the step rather
+    than freezing it at the first; on this deck the ratio `(A:B)/(B:B)` stays
+    near 2 at every trial (the step's own committed `d_eps_p(n)` does not
+    change trial to trial, and the doubled load keeps the numerator above the
+    clamp throughout convergence), so the clamp still binds to `f_max = 1.0`
+    on the CONVERGED trial's report.
+
+    Kills a mutant that clamps `f*` to something other than the clock ratio
+    (e.g. to 1.0, or to `alpha`), one that always backs off, and one that
+    counts a census event on every controlled step rather than only on the
+    ones that actually back off.
+    """
+    f_max = 1.0   # equal dt on both continuation steps, no -implexAlpha given
+
+    d_fixed, _, _ = _drive_p29_monotone(8452, _P29_CTL + ('-implexFactor', 'fixed'))
+    assert d_fixed[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        '-implexFactor fixed did not read the plain clock ratio 1.0 on the '
+        'second monotone continuation step', d_fixed)
+
+    d_ctl, g_before, g_after = _drive_p29_monotone(
+        8453, _P29_CTL + ('-implexFactor', mode))
+    assert d_ctl[5] == pytest.approx(f_max, rel=1.0e-9, abs=1.0e-12), (
+        'implexDetail[5] under -implexFactor %s is %r, not the f_max = '
+        '%r the upper clamp is supposed to deliver on a monotone, '
+        'ACCELERATING history (the step carries twice the previous load, so '
+        '(A:B)/(B:B) is near 2 and the clamp must bind)'
+        % (mode, d_ctl[5], f_max), d_ctl, d_fixed)
+    assert g_after[6] == g_before[6], (
+        'implexGuards[6] (the P2-9 "backed off" census) incremented on a '
+        'step where f* reached its upper clamp -- the counter is for '
+        'f* < 0.5*f_max only', g_before, g_after, d_ctl)
+
+
+def _p29_stress_series(tag, extra_opts, n_steps=3):
+    """Committed stress after each of `n_steps` monotone deviatoric steps on
+    the free-DOF triaxial deck, as plain lists -- for EXACT comparison."""
+    _build_free_dof_triaxial(tag, _P29_BASE + tuple(extra_opts), p0=50.0)
+    _establish_plastic_history(tag)
+
+    dq = _PROBE_DQ_NOMINAL / 4.0
+    out = []
+    for step in range(n_steps):
+        ops.timeSeries('Linear', 10 + step)
+        ops.pattern('Plain', 10 + step, 10 + step)
+        for j, (x, y) in enumerate(_XY):
+            ops.load(4 + j + 1, 0.0, 0.0, -dq)
+        ops.integrator('LoadControl', 1.0)
+        assert ops.analyze(1) == 0, 'stress-series step %d failed' % (step + 1)
+        ops.loadConst('-time', 0.0)
+        out.append(list(ops.eleResponse(1, 'material', 1, 'stress')))
+    return out
+
+
+def test_implexfactor_fixed_is_byte_identical_to_omitting_it():
+    """ADR-92 P2-9 (c): `-implexFactor fixed` is the DEFAULT, and it must be
+    BYTE-identical to not passing the flag at all -- `==` on the lists, not
+    `approx`.  Under `fixed` no P2-9 arithmetic is reachable, so this is a
+    claim about the code path, not about a tolerance.
+
+    Both arms carry `-implexControl`, so the companion runs at every trial in
+    both: the ONLY difference between them is the token.  That is what makes
+    this discriminating -- a mutant that ignores the mode and always computes
+    `f*` would move `f` off the clock ratio on every plastic step here and
+    change the committed stress with it.
+    """
+    plain = _p29_stress_series(8454, _P29_CTL)
+    fixed = _p29_stress_series(8455, _P29_CTL + ('-implexFactor', 'fixed'))
+    assert fixed == plain, (
+        '-implexFactor fixed committed a DIFFERENT stress than omitting the '
+        'flag entirely. fixed IS the default and must reach no new '
+        'arithmetic at all', plain, fixed)
+
+
+@pytest.mark.parametrize('mode', ['control', 'controlIter'])
+def test_implexfactor_control_without_implexcontrol_is_refused(mode):
+    """ADR-92 P2-9 (d): `-implexFactor control|controlIter` chooses `f*` by
+    aiming at the COMPANION stress `sigma_impl`, and the companion exists at
+    the trial only under `-implexControl`.  Without it there is nothing to
+    aim at, so the request is REFUSED at construction rather than silently
+    downgraded to `fixed` -- the "a flag claims to have done something it did
+    not do" defect this material's option handling exists to make
+    impossible.  Both control modes are refused identically -- the check is
+    on `factorMode != FACTOR_FIXED`, not on which control mode was asked for.
+
+    The refusal lives in `setLadrunoImplexOptions()` and is NOT gated on
+    `verbose`, on the RED-1 F5 rule, so a `getCopy`/`recvSelf` clone is
+    refused exactly as the deck is.
+
+    Also covers: `-implexFactor` without `-implex` at all (the same list
+    `-implexGuard`/`-implexFlipAbsorb` are on), and an unparsable mode.
+    """
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8456, *_PARAMS,
+                       '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                       '-implexFactor', mode)
+
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8457, *_PARAMS,
+                       '-implexFactor', mode)                # no -implex at all
+
+    ops.wipe()
+    with pytest.raises(Exception):
+        ops.nDMaterial('LadrunoSANISAND', 8458, *_PARAMS,
+                       '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                       '-implexControl', 0.1, 0.01,
+                       '-implexFactor', 'graded')            # not fixed|control|controlIter
+
+    # ... and the accepted form still builds, so the refusals above are not
+    # simply "this material rejects -implexFactor".
+    ops.wipe()
+    ops.nDMaterial('LadrunoSANISAND', 8459, *_PARAMS,
+                   '-implex', '-maxSubsteps', _CAP_ADEQUATE,
+                   '-implexControl', 0.1, 0.01,
+                   '-implexFactor', mode)
