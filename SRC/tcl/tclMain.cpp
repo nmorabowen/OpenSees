@@ -204,6 +204,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
 "        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
+"        • ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)\n"
 "\n";
     // FEATURES-END
 
