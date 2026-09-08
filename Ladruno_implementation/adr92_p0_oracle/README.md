@@ -95,6 +95,20 @@ frozen `Ce(p_n)`. Results: `../_adr92_p2_direction_oracle.md`. **Note the name
 collision:** the oracle's form `"B"` is P0's *`dGamma`* variant (G1/G2/G4), which is not
 LANE E's B.
 
+**GD — the CONTROL-INFORMED factor `f*`** (ADR-92 P2-9, added 2026-09-07). Form **`"D"`**
+keeps A's direction and replaces A's *degree*: under `-implexControl` the companion
+`sigma_impl` is computed at the trial, so `sigma~(f) - sigma_impl = A - f B` with
+`A = sigma_n + Ce:d_eps - sigma_impl` and `B = Ce:d_eps_p(n)`, and the minimiser is closed
+form, `f* = clamp((A:B)/(B:B), 0, f_max)`. `A:B` is `dd_contr` — the same contravariant
+contraction whose norm the control error uses. `f*` is FROZEN at the first trial of the
+step (`Implex(..., freeze=False)` / `implex_freeze=False` recomputes it per iterate — the
+plan's priced alternative, which costs step linearity). GD.1 checks `A = c B` against
+`clamp(c, 0, f_max)` and the `B:B = 0` short circuit; GD.2 is a real elastic path, bitwise
+`D == A`; GD.3 is the reversal test (`f* = 0` at the turn, `f_max` elsewhere); GD.4 is the
+G2 sweep at `p0 = 100/5` with a frozen and a recomputed column. **`--gate GD` is opt-in and
+NOT part of `--gate all`**, so the P0 memo's tables stay byte-identical. Results:
+`../_adr92_p2_9_oracle_results.md`; the seat arm is `../adr93_p0/seat_replay.py --only p29`.
+
 ## 4. Paths
 
 | path | why |

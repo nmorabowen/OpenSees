@@ -47,6 +47,7 @@
 #include <ID.h>
 #include <Domain.h>
 #include <Element.h>
+#include <Node.h>       // Ladruno (TIMs 2026-09-07 no-ask 1): slave-ndf refusal
 #include <elementAPI.h>
 #include <string.h>
 #include <stdlib.h>
@@ -238,6 +239,33 @@ void* OPS_LadrunoKinematicCoupling(void)
     opserr << "WARNING LadrunoKinematicCoupling: -bipenalty ignored with -enforce al "
            << "(augmented Lagrangian needs no mass penalty)\n";
     bipenalty = false; bpBudgetSet = false;
+  }
+
+  // Ladruno (TIMs 2026-09-07 no-ask 1): with the DEFAULT component list the
+  // element ties components 1..ndm+nrot on every slave and only checks that the
+  // node HAS that DOF index (resolveGeometry), so an ndf-4 u-p slave had its
+  // pressure DOF (index 3) tied to theta_x of the master, silently -- the
+  // "lacks DOF" message is behind !useDefault. Refuse here, where the deck can
+  // still be fixed: a slave whose ndf is neither ndm (translations only) nor
+  // ndm+nrot (full rigid) is ambiguous without an explicit -dof list. Nodes
+  // not yet in the domain are left to setDomain() as before.
+  if (dofSel.Size() == 0) {
+    Domain* dom = OPS_GetDomain();
+    for (int i = 0; dom != 0 && i < N; i++) {
+      Node* sn = dom->getNode(slaves(i));
+      if (sn == 0) continue;
+      int sndf = sn->getNumberDOF();
+      if (sndf != ndm && sndf != ndm + nrot) {
+        opserr << "WARNING LadrunoKinematicCoupling " << tag << ": slave node " << slaves(i)
+               << " has ndf = " << sndf << ", which is neither " << ndm
+               << " (translations) nor " << ndm + nrot
+               << " (translations + rotations) in " << ndm << "D; the default component"
+               << " list would tie node DOF " << ndm + 1 << " (a pressure or other"
+               << " passenger DOF on a u-p node) to a master rotation. Pass -dof explicitly"
+               << " (e.g. -dof 1 2 3) -- REFUSED" << endln;
+        return 0;
+      }
+    }
   }
 
   Element* e = new LadrunoKinematicCoupling(tag, ndm, refNode, slaves, dofSel, Kt,

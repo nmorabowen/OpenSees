@@ -182,7 +182,20 @@ class Sanisand:
 
     def __init__(self, consts=None, scheme=1, Pmin=0.0101, Presidual=0.0,
                  TolF=1e-10, TolR=1e-10, honor_tolR=False, elast_flag=1,
-                 stress_correction=True):
+                 stress_correction=True, substep_stress_ref=0.5, Presidual_e=0.0,
+                 D_factor=True):
+        # ADR-93 P0 seams. All three default to the C++ as shipped:
+        #   substep_stress_ref -- candidate I.1. ModifiedEuler's error norm is
+        #     `err = e if |sigma| < 0.5 else e/(2|sigma|)`, i.e. EXACTLY
+        #     `e / (2 max(|sigma|, 0.5))` -- below the switch the divisor is 1.0.
+        #     The hardcoded 0.5 is a unit-bearing stress reference; this names it.
+        #     `None` selects the verbatim two-branch form, for the identity check.
+        #   Presidual_e -- candidate II.1. A residual pressure in the ELASTIC moduli
+        #     only. It is a NEW number, not a split of an existing one:
+        #     `GetElasticModuli` (ManzariDafalias.cpp:4830-4900, all three overloads)
+        #     floors `p` at `m_Pmin` and NEVER adds `m_Presidual`.
+        #   D_factor -- candidate II.2 / D5a: the dilatancy sigmoid below
+        #     `p = 0.05 P_atm`. False removes it.
         c = dict(CONSTS)
         if consts:
             c.update(consts)
@@ -191,6 +204,9 @@ class Sanisand:
         self.scheme = scheme
         self.m_Pmin = Pmin
         self.m_Presidual = Presidual
+        self.m_Presidual_e = Presidual_e
+        self.mSubstepStressRef = substep_stress_ref
+        self.mUseDFactor = D_factor
         self.mTolF = TolF
         self.mTolR = TolR
         self.mHonorTolRInME = honor_tolR
@@ -257,7 +273,10 @@ class Sanisand:
 
     # ---- kernel
     def elastic_moduli(self, sigma, e):
-        pn = ONE3 * trace(sigma)
+        # ADR-93 II.1: `m_Presidual_e` is 0.0 by default, and at 0.0 this is the
+        # vanilla expression character for character (`+ 0.0` on a finite double is
+        # the identity). ManzariDafalias.cpp:4834-4835 / 4876-4877 / 4896-4897.
+        pn = ONE3 * trace(sigma) + self.m_Presidual_e
         if pn <= self.m_Pmin:
             pn = self.m_Pmin
         eG = self.m_e_init                      # mUseCurrentVoidRatioInG is false
@@ -319,7 +338,10 @@ class Sanisand:
         h = 1.0e10 if abs(aain) < SMALL else b0 / aain
         A = self.m_A0 * (1 + macauley(dd_contr(fabric, n)))
         D = A * dd_contr(d, n)
-        if p < 0.05 * self.m_P_atm:
+        if self.mUseDFactor and p < 0.05 * self.m_P_atm:
+            # ADR-93 II.2 / D5a: `p` here already carries m_Presidual, so the sigmoid's
+            # floor at p -> 0 is 1/(1+exp(7.6349 - 7.2713*p_r)) -- 0.4278 at the vanilla
+            # p_r = 1.01, 4.83e-4 at the fork default p_r = 0. Factor 886.
             D *= 1.0 / (1.0 + math.exp(7.6349 - 7.2713 * 101.0 / self.m_P_atm * p))
         B = 1.0 + 1.5 * (1 - self.m_c) / self.m_c * gc * cos3t
         C = 3.0 * math.sqrt(1.5) * (1 - self.m_c) / self.m_c * gc
@@ -587,7 +609,13 @@ class Sanisand:
 
             sNorm = norm_contr(nStress)
             e_ = norm_contr(dS2 - dS1)
-            err = e_ if sNorm < 0.5 else e_ / (2 * sNorm)
+            # ManzariDafalias.cpp:1746-1753. ADR-93 I.1: the two branches are the one
+            # expression `e_ / (2 max(|sigma|, sigma_ref))` with sigma_ref = 0.5 -- for
+            # |sigma| < 0.5 the divisor is exactly 1.0, so this is bit-identical.
+            if self.mSubstepStressRef is None:
+                err = e_ if sNorm < 0.5 else e_ / (2 * sNorm)
+            else:
+                err = e_ / (2 * max(sNorm, self.mSubstepStressRef))
 
             if err > TolE:
                 q = max(0.8 * math.sqrt(TolE / err), 0.1)
@@ -833,20 +861,43 @@ class Implex:
       "B"  dGamma (P0):      d_eps_p~ = f * mDGamma_n * to_cov(R_n)         -- rejected, G4
       "T"  trial-direction:  d_eps_p~ = f*|d_eps_p(n)| * to_cov(R_tr)/|R_tr|
       "H"  hybrid:           dev from history as A, volumetric from R_tr
+      "D"  control-informed: d_eps_p~ = f* * d_eps_p(n), f* from the companion (P2-9)
 
     `R_tr` is the model's own flow direction `B n - C (n^2 - I/3) + D I/3` evaluated at
     the ELASTIC TRIAL stress `sigma_n + Ce(p_n):d_eps` with the COMMITTED internal state
     (alpha_n, fabric_n, e_n, alpha_in_n).  "T" and "H" are LANE E (the memo calls them
     B and C; "B" here is P0's dGamma form and keeps its name so G1/G2/G4 do not move).
+
+    Form "D" (ADR-92 P2-9) keeps A's *direction* -- the committed `d_eps_p(n)` -- and
+    replaces A's *degree*.  Under `-implexControl` the implicit companion `sigma_impl` is
+    already computed at the trial, so the extrapolation error is available BEFORE the
+    element sees the stress and is linear in the factor:
+
+        sigma~(f) - sigma_impl = A - f B,   A = sigma_n + Ce:d_eps - sigma_impl,
+                                            B = Ce:d_eps_p(n)
+        f* = clamp( (A:B) / (B:B), 0, f_max ),   f_max = today's f (alpha*dt_{n+1}/dt_n)
+
+    `A:B` is the CONTRAVARIANT double contraction `dd_contr` -- both operands are
+    stress-like, and this is the same inner product whose norm the control error uses
+    (`norm_contr(sigma~ - sigma_impl)`), so `f*` minimises exactly the measured quantity.
+
+    `f*` is FROZEN at the first trial of the step (`self.f_star`) and held for every
+    later iterate, so the global operator stays `Ce` (frozen) and the step stays linear
+    -- the property that removed the ladder.  `commit()` clears it.
     """
 
-    FORMS = ("A", "B", "T", "H")
+    FORMS = ("A", "B", "T", "H", "D")
 
-    def __init__(self, mat: Sanisand, form="A", alpha=1.0):
+    def __init__(self, mat: Sanisand, form="A", alpha=1.0, freeze=True):
         assert form in Implex.FORMS
         self.mat = mat
         self.form = form
         self.alpha = alpha
+        # form "D" only: freeze=True is the plan's operator (f* from the FIRST d_eps of
+        # the step, held for every later iterate -- the step stays linear in Ce).
+        # freeze=False is the alternative the plan says is "to be priced": recompute f*
+        # on every trial, so the factor follows the iterate and linearity is lost.
+        self.freeze = freeze
         self.d_eps_p = np.zeros(6)
         self.g_n = 0.0                 # |d_eps_p(n)| (tensor norm) -- forms T, H
         self.dGamma_n = 0.0
@@ -858,6 +909,14 @@ class Implex:
         self.errors = []
         self.hist = []                 # per-step diagnostics, LANE E
         self.trial_overflow = 0        # state_dependent() blew up at the trial stress
+        # ---- form "D" only (P2-9)
+        self.f_star = None             # frozen factor of the CURRENT step, None = unset
+        self.f_hist = []               # per-step (f_max, f_star, A:B, B:B)
+        self.d_backoff = 0             # steps where f* < 0.5 f_max  ("backed off")
+        self.d_zero = 0                # steps where f* == 0 exactly
+        self.d_full = 0                # steps where f* == f_max (clamped at the top)
+        self.d_nullB = 0               # steps with B:B == 0 (no plastic history)
+        self.d_probe_fail = 0          # the companion probe abandoned at the trial
         self._refresh_Rn()
 
     def _refresh_Rn(self):
@@ -877,6 +936,51 @@ class Implex:
         return m.state_dependent(sig_tr, m.alpha_n, m.fabric_n,
                                  m.void_ratio, m.alpha_in_n)
 
+    def companion(self, deps):
+        """`sigma_impl` at the trial: the implicit return the CONTROL already computes.
+
+        `Sanisand.integrate` is a pure function of the COMMITTED state and `eps_trial`
+        (it writes only the trial members and the counters), so this probe is
+        side-effect free once the counters are put back -- `commit()` re-runs it.
+        Raises `Abandoned` exactly where the control's own companion would refuse.
+        """
+        m = self.mat
+        saved = Counters()
+        saved.add(m.cnt)
+        try:
+            return m.integrate(m.eps_n + deps).copy()
+        finally:
+            m.cnt = saved
+
+    def control_factor(self, deps, f_max):
+        """P2-9: `f* = clamp((A:B)/(B:B), 0, f_max)`; see the class docstring.
+
+        Returns `(f_star, A:B, B:B)`.  Two guards the C++ needs verbatim:
+          * `B:B == 0` (no committed plastic history, or an elastic step) -- the
+            extrapolation term is identically zero for EVERY f, so the factor is
+            immaterial; return 0 and do not divide.
+          * the companion refuses (`Abandoned`) -- fall back on `f_max`, i.e. today's
+            behaviour, and count it.  Falling back on 0 would silently turn the
+            operator into the implicit scheme wherever the return map struggles.
+        """
+        m = self.mat
+        Ce = self.Ce()
+        B = Ce @ self.d_eps_p
+        BB = dd_contr(B, B)
+        if BB <= 0.0:
+            self.d_nullB += 1
+            return 0.0, 0.0, 0.0
+        try:
+            sig_impl = self.companion(deps)
+        except Abandoned:
+            self.d_probe_fail += 1
+            return f_max, float("nan"), BB
+        A = m.sig_n + Ce @ deps - sig_impl
+        AB = dd_contr(A, B)
+        f = AB / BB
+        f = 0.0 if f < 0.0 else (f_max if f > f_max else f)
+        return f, AB, BB
+
     def extrapolate(self, eps_trial, f=None):
         """The response the element sees. Incremental form -- see the memo."""
         m = self.mat
@@ -884,6 +988,17 @@ class Implex:
         deps = np.array(eps_trial, float) - m.eps_n
         if self.form == "A":
             dep = f * self.d_eps_p
+        elif self.form == "D":
+            # frozen per step: computed from the FIRST d_eps of the step, held after.
+            if self.f_star is None or not self.freeze:
+                first = self.f_star is None
+                self.f_star, ab, bb = self.control_factor(deps, f)
+                rec = dict(f_max=f, f_star=self.f_star, AB=ab, BB=bb)
+                if first:
+                    self.f_hist.append(rec)
+                else:
+                    self.f_hist[-1] = rec
+            dep = self.f_star * self.d_eps_p
         elif self.form == "B":
             dep = (f * self.dGamma_n) * to_cov(self.R_n)
         else:
@@ -911,6 +1026,17 @@ class Implex:
         epsp_old = m.eps_p_n()
         D_before = self.D_n
         dep_t = self.dep_tilde.copy()
+        f_used = self.alpha if self.f_star is None else self.f_star
+        if self.form == "D" and self.f_hist:
+            h = self.f_hist[-1]             # census once per step, on the factor USED
+            if h["BB"] > 0.0:
+                if h["f_star"] < 0.5 * h["f_max"]:
+                    self.d_backoff += 1
+                if h["f_star"] == 0.0:
+                    self.d_zero += 1
+                if h["f_star"] == h["f_max"]:
+                    self.d_full += 1
+        self.f_star = None                  # the frozen factor belongs to ONE step
         m.integrate(eps_trial)
         self.sig_implicit = m.sig.copy()
         m.commit()
@@ -921,7 +1047,7 @@ class Implex:
         den = norm_contr(self.sig_implicit) + m.m_P_atm * norm_contr(m.eps_n)
         err = norm_contr(self.sig_tilde - self.sig_implicit) / den
         self.errors.append(err)
-        self.hist.append(dict(err=err,
+        self.hist.append(dict(err=err, f_used=f_used,   # implexDetail[5]
                               D_before=D_before, D_after=self.D_n,
                               vol_tilde=trace(dep_t),
                               vol_true=trace(self.d_eps_p)))
@@ -1033,7 +1159,8 @@ def _warn_contaminated(run, label):
 
 
 def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
-                   companion_scheme=None, consts=None, sample=None, **kw):
+                   companion_scheme=None, consts=None, sample=None,
+                   implex_freeze=True, **kw):
     """Drained triaxial compression at one Gauss point.
 
     kind: 'implicit' | 'implex_A' | 'implex_B'.  'reference' = 'implicit' at a tiny
@@ -1046,7 +1173,7 @@ def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
     if kind.startswith("implex"):
         cs = companion_scheme if companion_scheme is not None else scheme
         mat.scheme = cs
-        ix = Implex(mat, form=kind[-1])
+        ix = Implex(mat, form=kind[-1], freeze=implex_freeze)
     de = ez_max / nstep
     sample = set(sample) if sample else None
 
@@ -1097,7 +1224,7 @@ def drive_triaxial(seed_row, p0, nstep, ez_max, kind="implicit", scheme=1,
 
 
 def drive_prescribed(seed_row, path_fn, nstep, kind="implicit", scheme=1,
-                     companion_scheme=None, consts=None, **kw):
+                     companion_scheme=None, consts=None, implex_freeze=True, **kw):
     """Prescribed full 6-component strain path: eps(t), t in [0,1]."""
     mat = make_material(consts, scheme=scheme, **kw)
     seed_from_csv(mat, seed_row)
@@ -1106,7 +1233,7 @@ def drive_prescribed(seed_row, path_fn, nstep, kind="implicit", scheme=1,
     if kind.startswith("implex"):
         cs = companion_scheme if companion_scheme is not None else scheme
         mat.scheme = cs
-        ix = Implex(mat, form=kind[-1])
+        ix = Implex(mat, form=kind[-1], freeze=implex_freeze)
     eps0 = mat.eps_n.copy()
 
     def record():
@@ -1856,11 +1983,227 @@ def gate_GE(ez_max=0.02):
     return summary
 
 
+# ---------------------------------------------------------------- GD (ADR-92 P2-9)
+
+def _gd_operator_controls():
+    """The two algebraic limits of `f*`, checked on the operator itself.
+
+    These are the tests section 3 of the P2-9 plan asks the C++ for, in numpy: the
+    operator is `f* = clamp((A:B)/(B:B), 0, f_max)`, so with `sigma_impl` chosen to make
+    `A = c B` it MUST return `clamp(c, 0, f_max)` exactly, and with `B:B = 0` it must not
+    divide at all.  `dd_contr` is the contravariant (stress-like) double contraction.
+    """
+    print("-" * 78)
+    print("GD.1  operator limits -- A = c B for a sequence of c, and B:B = 0")
+    print("-" * 78)
+    meta, row = _seed("tx_p100_e0.6944_s1_n40")
+    consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+    mat = make_material(consts, scheme=1)
+    seed_from_csv(mat, row)
+    ix = Implex(mat, form="D", alpha=1.0)
+    # a real committed plastic increment, so B = Ce:d_eps_p(n) is a real tensor
+    ix.d_eps_p = np.array([-0.3, -0.3, 1.0, 0.0, 0.0, 0.0]) * 2.0e-5
+    Ce = ix.Ce()
+    B = Ce @ ix.d_eps_p
+    deps = np.array([-0.3, -0.3, 1.0, 0.0, 0.0, 0.0]) * 1.0e-4
+    ok = True
+    print(f"    |B| = |Ce:d_eps_p(n)| = {norm_contr(B):.6f} kPa    "
+          f"B:B = {dd_contr(B, B):.6e}")
+    print(f"    {'c':>10}{'f_max':>8}{'f* got':>12}{'f* want':>10}{'|err|':>11}")
+    for c, f_max in ((-2.0, 1.0), (-0.25, 1.0), (0.0, 1.0), (0.25, 1.0),
+                     (0.5, 1.0), (1.0, 1.0), (2.0, 1.0), (0.75, 0.5), (0.3, 0.5)):
+        # choose sigma_impl so that A = sigma_n + Ce:deps - sigma_impl == c*B exactly
+        sig_impl = mat.sig_n + Ce @ deps - c * B
+        ix.companion = lambda _d, _s=sig_impl: _s.copy()          # noqa: E731
+        f, ab, bb = ix.control_factor(deps, f_max)
+        want = min(max(c, 0.0), f_max)
+        err = abs(f - want)
+        ok = ok and err <= 1e-13
+        print(f"    {c:>10.4f}{f_max:>8.2f}{f:>12.8f}{want:>10.4f}{err:>11.2e}")
+    del ix.companion
+    # B:B = 0 -- no committed plastic history at all
+    ix.d_eps_p = np.zeros(6)
+    calls = {"n": 0}
+
+    def _spy(d):
+        calls["n"] += 1
+        return ix.__class__.companion(ix, d)
+    ix.companion = _spy
+    f0, ab0, bb0 = ix.control_factor(deps, 1.0)
+    del ix.companion
+    print(f"    B:B = 0 -> f* {f0:.1f}, A:B {ab0:.1f}, B:B {bb0:.1f}, "
+          f"companion probed {calls['n']} times (must be 0: no division, no probe)")
+    ok = ok and f0 == 0.0 and bb0 == 0.0 and calls["n"] == 0
+    print(f"    GD.1 verdict: {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+def _gd_elastic_identity():
+    """B:B = 0 in a REAL run: an elastic path inside the yield cone.
+
+    D and A must agree bit for bit -- `d_eps_p(n) = 0` makes the extrapolation term
+    identically zero for every f, so the factor cannot matter.
+    """
+    print("\n" + "-" * 78)
+    print("GD.2  elastic path (B:B = 0 every step) -- form D vs form A, bitwise")
+    print("-" * 78)
+    meta, row = _seed("tx_p100_e0.6944_s1_n40")
+    consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+
+    def path(t):
+        e = np.zeros(6)
+        e[0] = e[1] = e[2] = -1.0e-6 * t        # isotropic UNLOADING: stays elastic
+        return e
+
+    worst, npl = 0.0, 0
+    for n in (20, 40):
+        rA, _, ixA = drive_prescribed(row, path, n, "implex_A", consts=consts)
+        rD, _, ixD = drive_prescribed(row, path, n, "implex_D", consts=consts)
+        d = max(float(np.max(np.abs(a - b))) for a, b in zip(rA.sig, rD.sig))
+        worst = max(worst, d)
+        npl = max(npl, sum(1 for h in ixD.f_hist if h["BB"] > 0.0))
+        print(f"    n={n:<4} max|sig_A - sig_D| = {d:.1e} kPa   "
+              f"steps with B:B=0 {ixD.d_nullB}/{n}   f* != 0 on {npl} steps")
+    ok = worst == 0.0
+    print(f"    GD.2 verdict: {'PASS' if ok else 'FAIL'} (bitwise identical)")
+    return ok
+
+
+def _gd_reversal():
+    """Section-3 test: a reversal must give f* ~ 0; monotone loading f* = f_max."""
+    print("\n" + "-" * 78)
+    print("GD.3  direction test -- monotone loading vs a strain reversal")
+    print("-" * 78)
+    meta, row = _seed("tx_p100_e0.6944_s1_n40")
+    consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+
+    def path_mono(t):
+        e = np.zeros(6)
+        e[2] = 0.004 * t
+        e[0] = e[1] = -0.45 * e[2]
+        return e
+
+    def path_rev(t):
+        e = np.zeros(6)
+        ez = 0.004 * (2 * t if t <= 0.5 else 2 - 2 * t)
+        e[2] = ez
+        e[0] = e[1] = -0.45 * ez
+        return e
+
+    out = {}
+    for lab, pf in (("monotone", path_mono), ("reversal", path_rev)):
+        r, m, ix = drive_prescribed(row, pf, 80, "implex_D", consts=consts)
+        fs = [h["f_star"] for h in ix.f_hist]
+        fm = [h["f_max"] for h in ix.f_hist]
+        plastic = [i for i, h in enumerate(ix.f_hist) if h["BB"] > 0.0]
+        atmax = sum(1 for i in plastic if fs[i] == fm[i])
+        near0 = sum(1 for i in plastic if fs[i] < 1e-3)
+        print(f"    {lab:<9} plastic steps {len(plastic):>3}   f* = f_max on "
+              f"{atmax:>3}   f* < 1e-3 on {near0:>3}   mean f* "
+              f"{float(np.mean([fs[i] for i in plastic])) if plastic else float('nan'):.4f}")
+        if lab == "reversal":
+            # the turn is at step 40 (t = 0.5); print the neighbourhood
+            print(f"      {'step':>6}{'f_max':>9}{'f*':>11}{'A:B':>13}{'B:B':>13}")
+            for k in range(37, 46):
+                h = ix.f_hist[k]
+                print(f"      {k+1:>6}{h['f_max']:>9.3f}{h['f_star']:>11.6f}"
+                      f"{h['AB']:>13.4e}{h['BB']:>13.4e}")
+        out[lab] = (fs, fm, plastic)
+    fs, fm, pl = out["reversal"]
+    turn = [k for k in range(39, 44) if k in pl]
+    ok = bool(turn) and min(fs[k] for k in turn) < 0.5 * max(fm[k] for k in turn)
+    print(f"    GD.3 verdict: {'PASS' if ok else 'FAIL'} "
+          f"(the operator backs off at the turn)")
+    return ok
+
+
+READ_GD4 = """  READ THIS BEFORE THE NUMBERS.  `drive_triaxial` is MIXED-control: `solve_lateral`
+  secant-iterates d(eps_xx) so that sig_xx = p0, and its FIRST iterate is d(eps_xx) = 0
+  -- an OEDOMETRIC increment, not the drained-triaxial one.  Under a pure axial
+  increment at constant lateral strain p rises faster than q, eta DROPS and the step is
+  nearly elastic, so `sigma_impl` at that first trial carries almost no plastic strain:
+  A ~ 0, hence f* ~ 0.  That is a property of the ORACLE'S PREDICTOR, not of the
+  operator -- a global FE step's first iterate comes from the tangent predictor and is
+  close to the converged d_eps.  Column `Dr` recomputes f* at every iterate (the plan's
+  priced alternative), so the factor it commits was computed on the CONVERGED d_eps;
+  the D-vs-Dr gap is the price of freezing on a bad predictor.
+  (`drive_prescribed`, GD.3, has ONE trial per step and shows the operator clean.)"""
+
+
+def gate_GD(ez_max=0.02, ref_de=1.0e-5):
+    """ADR-92 P2-9: the control-informed factor `f*`, variant D.
+
+    GD.1-GD.3 are the operator's limits; GD.4 is the G2 increment sweep at the two
+    registered pressures with a D column beside A.  `gate_G2` itself is NOT touched, so
+    its table stays byte-identical to the P0 memo's.
+    """
+    print("=" * 78)
+    print("GD -- ADR-92 P2-9 control-informed extrapolation factor (variant D)")
+    print("=" * 78)
+    ok1 = _gd_operator_controls()
+    ok2 = _gd_elastic_identity()
+    ok3 = _gd_reversal()
+
+    print("\n" + "-" * 78)
+    print("GD.4  the G2 sweep at the registered pressures, A vs D")
+    print("-" * 78)
+    print(READ_GD4)
+    des = [1.0e-4, 2.0e-4, 5.0e-4, 1.0e-3, 2.0e-3, 5.0e-3, 1.0e-2]
+    out = {}
+    for label, sub, p0 in (("T1 p0=100", "tx_p100_e0.6944_s1_n40", 100.0),
+                           ("T2 p0=5", "tx_p5_", 5.0)):
+        meta, row = _seed(sub)
+        consts = dict(CONSTS); consts["e_init"] = float(meta["e_init"])
+        refn = int(round(ez_max / ref_de))
+        ref, _, _ = drive_triaxial(row, p0, refn, ez_max, "implicit", consts=consts)
+        print(f"\n  {label}   to eps_z = {ez_max}   reference = implicit at "
+              f"d(eps_z) = {ref_de:.1e} ({refn} steps)")
+        print(f"    {'d eps_z':>9}{'N':>5} | {'TOT A':>10}{'TOT D':>10}"
+              f"{'TOT Dr':>10}{'TOT impl':>10} | {'ieA mean':>10}{'ieD mean':>10}"
+              f"{'ieDr mean':>11} | {'f* D':>8}{'f* Dr':>8}"
+              f"{'backD':>7}{'zeroD':>7}{'backDr':>8}{'zeroDr':>8}")
+        for de in des:
+            n = int(round(ez_max / de))
+            rI, _, _ = drive_triaxial(row, p0, n, ez_max, "implicit", consts=consts)
+            rA, _, ixA = drive_triaxial(row, p0, n, ez_max, "implex_A", consts=consts)
+            rD, _, ixD = drive_triaxial(row, p0, n, ez_max, "implex_D",
+                                        consts=consts)
+            rR, _, ixR = drive_triaxial(row, p0, n, ez_max, "implex_D",
+                                        consts=consts, implex_freeze=False)
+
+            def _fm(ix):
+                v = [h["f_star"] for h in ix.f_hist if h["BB"] > 0.0]
+                return float(np.mean(v)) if v else float("nan")
+
+            row_ = dict(de=de, n=n, tot_A=_err_vs_ref(rA, ref),
+                        tot_D=_err_vs_ref(rD, ref), tot_R=_err_vs_ref(rR, ref),
+                        tot_I=_err_vs_ref(rI, ref),
+                        ieAm=float(np.mean(ixA.errors[1:] or ixA.errors)),
+                        ieDm=float(np.mean(ixD.errors[1:] or ixD.errors)),
+                        ieRm=float(np.mean(ixR.errors[1:] or ixR.errors)),
+                        fD=_fm(ixD), fR=_fm(ixR),
+                        backD=ixD.d_backoff, zeroD=ixD.d_zero,
+                        backR=ixR.d_backoff, zeroR=ixR.d_zero,
+                        probefail=ixD.d_probe_fail + ixR.d_probe_fail)
+            out[(label, de)] = row_
+            print(f"    {de:>9.1e}{n:>5} | {row_['tot_A']:>10.3e}"
+                  f"{row_['tot_D']:>10.3e}{row_['tot_R']:>10.3e}"
+                  f"{row_['tot_I']:>10.3e} | {row_['ieAm']:>10.3e}"
+                  f"{row_['ieDm']:>10.3e}{row_['ieRm']:>11.3e} | "
+                  f"{row_['fD']:>8.4f}{row_['fR']:>8.4f}"
+                  f"{ixD.d_backoff:>7}{ixD.d_zero:>7}"
+                  f"{ixR.d_backoff:>8}{ixR.d_zero:>8}"
+                  + (f"   probe-refusals {row_['probefail']}"
+                     if row_['probefail'] else ""))
+    print(f"\n  GD verdict: {'PASS' if (ok1 and ok2 and ok3) else 'FAIL'}"
+          f"   (GD.1 {ok1}, GD.2 {ok2}, GD.3 {ok3})")
+    return out, (ok1, ok2, ok3)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gate", default="all",
                     choices=["all", "G0", "G1", "G2", "G3", "G4", "G5", "GE",
-                             "controls", "instr"])
+                             "GD", "controls", "instr"])
     a = ap.parse_args()
     np.set_printoptions(precision=6, suppress=False, linewidth=140)
     if a.gate in ("all", "G0"):
@@ -1887,6 +2230,10 @@ def main():
         gate_GE()
     if a.gate in ("all", "instr"):
         gate_instr()
+    # GD (ADR-92 P2-9) is opt-in, NOT part of `--gate all`: the P0 memo's reproduction
+    # command is `--gate all` and its tables must stay byte-identical.
+    if a.gate == "GD":
+        gate_GD()
 
 
 if __name__ == "__main__":
