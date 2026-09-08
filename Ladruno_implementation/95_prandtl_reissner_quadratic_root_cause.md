@@ -115,6 +115,24 @@ which at ψ = 0 cannot move p and cannot close f. Fix candidates: classify in th
 (K, G, η̄ of the potential; at η̄ = 0 it is `p ≥ p_apex`), or order the returns flank-first with
 apex projection as the fallback when the flank map fails beyond the apex.
 
+## 3c. SANISAND on the same deck — same zone, different failure class
+
+`LadrunoSANISAND` (ADR-92 CP1 parameters and staging, `-maxSubsteps 1000` — the deck's default of 0
+let one `analyze()` block for 15–45 min near s/B 0.012–0.025), merged build c945f9a8b, prediction
+written first (`_adr95_sanisand_crosscheck_results.md`): the quadratic leg walls when the
+footing-edge GPs reach p → 0, as refusal or substep exhaustion. Measured: **direction confirmed,
+mechanism not.** Implicit `h8bbar` WALL (wall clock) at s/B 0.0317; implicit `h20uri` WALL at
+0.0130 with 88 subdivisions / 1570 failed rungs — in both, I1_max plateaus at −11 kPa and **never
+crosses zero**: the cost of the error-controlled substepper (moduli ~ √p) grows without bound as the
+edge GPs approach low p, and the ladder drowns before any GP reaches the apex. IMPL-EX `h20uri`:
+**TARGET s/B 0.15 in 389 s with zero ladder failures**, the only leg to reach the p → 0 zone, where
+the ADR-86 `-Pmin` clamp holds the edge GPs at p = +0.10 kPa for the rest of the push (signature: a
+saturating `implexRefusals` counter, 0 → 1620). So SANISAND has no apex to return to and no dead
+branch; it has a *cost* singularity in the same zone, already floored by `-Pmin`, and IMPL-EX is the
+path that survives it. The three-material picture: one physical trigger (the tensile spot beside
+the footing edge that only quadratic elements resolve), three different responses — a coding defect
+(UW, fixed), a classification gap (ASD, open), a cost singularity (SANISAND, floored).
+
 ## 4. The defect, precisely (source review)
 
 `DruckerPrager.cpp` (upstream, fmckenna 2011): residual/Jacobian assembly switches on the *value*
