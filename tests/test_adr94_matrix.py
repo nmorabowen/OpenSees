@@ -93,6 +93,13 @@ def _int_opts(method, tangent):
             "n_max_iterations", N_ITER_CAP,
             "rk45_niter_max", RK45_ITER_CAP,
             "strict_convergence", 0,
+            # Ladruno (ADR-97 wp/97f, D5): four of the six INTEGRATORS
+            # this matrix measures (Forward_Euler, Forward_Euler_Subincrement,
+            # Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control) are
+            # explicit and REFUSED without this opt-in. Harmless/inert for
+            # Backward_Euler; Backward_Euler_LineSearch stays refused for its
+            # own separate ADR-94 M7 reason regardless.
+            "experimental_integrator", 1,
             "End_Integration_Options"]
 
 

@@ -1,4 +1,8 @@
 
+// Ladruno (ADR-97 wp/97b): the CP hardening-derivative forwarders and the
+// hardening_has_cp_derivatives trait live in HardeningFunction.h.
+#include "HardeningFunction.h"
+
 //Base template struct for all internal variables
 template <class EvolvingVariableType, class HardeningType, class NAMER>
 struct InternalVariableType {
@@ -43,6 +47,50 @@ struct InternalVariableType {
             trial_value = other.trial_value;
         }
         return;
+    }
+
+    // Ladruno (ADR-97 wp/97b): closest-point Jacobian blocks for THIS internal
+    // variable, evaluated (like hardening_function above) at the TRIAL value --
+    // i.e. at q_{n+1}, which is what makes the ADR-97 hardening update implicit.
+    // `out` is a 6x6 buffer; only rows 0..size()-1 (and, for dh_dq, the same
+    // number of columns) are meaningful.
+    template <class ParameterStorageType>
+    void hardening_dh_dq(
+                const VoigtVector &depsilon,
+                const VoigtVector &m,
+                const VoigtVector& sigma,
+                const ParameterStorageType& parameters,
+                VoigtMatrix& out) const
+    {
+        HardeningType::dh_dq(trial_value, depsilon, m, sigma, parameters, out);
+    }
+
+    template <class ParameterStorageType>
+    void hardening_dh_dm(
+                const VoigtVector &depsilon,
+                const VoigtVector &m,
+                const VoigtVector& sigma,
+                const ParameterStorageType& parameters,
+                VoigtMatrix& out) const
+    {
+        HardeningType::dh_dm(trial_value, depsilon, m, sigma, parameters, out);
+    }
+
+    // Ladruno (ADR-97 wp/97b): does this IV's hardening law have analytic
+    // closest-point derivatives?  Folded over the whole IV tuple at compile time
+    // by ASDPlasticMaterial3D so the parser can refuse Closest_Point for a
+    // specialization carrying an unconverted hardening law.
+    static constexpr bool hardening_supports_cp()
+    {
+        return hardening_has_cp_derivatives<HardeningType>::value;
+    }
+
+    // Ladruno (ADR-97 wp/97c): does this internal variable's hardening law leave
+    // it FIXED (h == 0)?  Required by the principal-space Mohr-Coulomb return,
+    // which projects onto a surface it assumes does not move.
+    static constexpr bool hardening_is_perfectly_plastic()
+    {
+        return hardening_is_inert<HardeningType>::value;
     }
 
     using parameters_t = typename HardeningType::parameters_t;

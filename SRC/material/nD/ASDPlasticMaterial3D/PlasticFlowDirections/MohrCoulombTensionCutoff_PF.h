@@ -286,6 +286,19 @@ public:
         return vv_out;
     }
 
+    // Ladruno (ADR-97 wp/97c): principal-space dilatancy constants (see
+    // MohrCoulomb_PF for the derivation; this functor's MC branch is verbatim
+    // that one).
+    CP_PRINCIPAL_MC_FLOW_PARAMS
+    {
+        (void) internal_variables_storage;
+        const double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        const double psi = GET_PARAMETER_VALUE(MC_psi)*M_PI/180;
+        sin_phi = std::sin(phi);
+        sin_psi = std::sin(psi);
+        return true;
+    }
+
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
     using parameters_t = std::tuple<MC_phi,MC_c,MC_ds, MC_psi, TC_min_stress>;
@@ -297,5 +310,11 @@ private:
 
 // Ladruno (ADR-94 wp/94b, F2): out-of-class static definition removed;
 // the return buffer is a per-instance member now.
+
+// Ladruno (ADR-97 wp/97c): principal-stress-space closest-point family 2
+// (Mohr-Coulomb + Rankine tension cutoff).
+template<class NO_HARDENING>
+struct pf_cp_principal_family<MohrCoulombTensionCutoff_PF<NO_HARDENING>>
+    : std::integral_constant<int, 2> {};
 
 #endif

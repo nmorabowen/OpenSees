@@ -493,6 +493,23 @@ public:
     }
 
 
+    // Ladruno (ADR-97 wp/97c): the Mohr-Coulomb HALF of the composite, for the
+    // principal-space closest-point return.  The map only reaches it after
+    // `special_return` above has declined -- i.e. when the cutoff is inactive at
+    // the trial, or when the trial is MC-dominant and no exact cutoff feature
+    // validated (Stage 3c) -- so the surface being returned to really is the MC
+    // one.  The integrator re-checks the COMPOSITE f at the returned state and
+    // refuses loudly if the cutoff turns out to be violated.
+    CP_PRINCIPAL_MC_FACE_PARAMS
+    {
+        (void) internal_variables_storage;
+        const double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        const double c   = GET_PARAMETER_VALUE(MC_c);
+        sin_phi = std::sin(phi);
+        k_coh   = c * std::cos(phi);
+        return true;
+    }
+
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
     // Ladruno (ADR-94 wp/94c, M5): composite max(f_MC, f_TC).  The Mohr-Coulomb
@@ -946,5 +963,10 @@ private:
 // trial stress and cannot express the cutoff-corner targets.
 template<class NO_HARDENING>
 struct yf_has_special_return<MohrCoulombTensionCutoff_YF<NO_HARDENING>> : std::true_type {};
+
+// Ladruno (ADR-97 wp/97c): principal-stress-space closest-point family 2.
+template<class NO_HARDENING>
+struct yf_cp_principal_family<MohrCoulombTensionCutoff_YF<NO_HARDENING>>
+    : std::integral_constant<int, 2> {};
 
 #endif

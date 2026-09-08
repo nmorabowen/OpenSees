@@ -51,6 +51,7 @@
 #include "AllASDModelParameterTypes.h"
 #include "AllASDInternalVariableTypes.h"
 #include "AllASDHardeningFunctions.h"
+#include <Eigen/Eigenvalues>   // Ladruno (ADR-97 wp/97c): SelfAdjointEigenSolver
 
 #include "utuple_storage.h"
 
@@ -73,6 +74,35 @@
 using namespace ASDPlasticMaterial3DGlobals;
 
 #define ASDP_TAG this->getTag()
+
+// Ladruno (ADR-97 wp/97b): does EVERY internal variable of this specialization
+// carry a hardening law with analytic closest-point derivatives (dh/dq, dh/dm)?
+// Folded over the concatenated IV tuple at compile time so the parser can refuse
+// `integration_method Closest_Point` for a specialization this ADR has not
+// converted, instead of silently believing the inert zero defaults.
+template <typename Tuple>
+struct asdp_all_ivs_support_cp;
+
+template <typename... Ts>
+struct asdp_all_ivs_support_cp<std::tuple<Ts...>>
+{
+    static constexpr bool value = (Ts::hardening_supports_cp() && ... && true);
+};
+
+// Ladruno (ADR-97 wp/97c): is EVERY internal variable of this specialization
+// FIXED (h == 0)?  The principal-stress-space Mohr-Coulomb return of P2 is a
+// closed-form projection onto a surface it assumes does not move: it carries no
+// q-row, so a live hardening law would silently be ignored.  Folding this at
+// compile time is what keeps a hypothetical MohrCoulomb_YF<ArmstrongFrederick..>
+// out of that path and REFUSED at parse time instead.
+template <typename Tuple>
+struct asdp_all_ivs_are_inert;
+
+template <typename... Ts>
+struct asdp_all_ivs_are_inert<std::tuple<Ts...>>
+{
+    static constexpr bool value = (Ts::hardening_is_perfectly_plastic() && ... && true);
+};
 
 template <
     class ElasticityType,
@@ -105,6 +135,49 @@ public:
                                     std::tuple<InitialP0>
                                     >;
     using parameters_storage_t = utuple_storage<parameters_concat_types>;
+
+    // Ladruno (ADR-97 wp/97b): is `integration_method Closest_Point` available for
+    // THIS specialization?  All three legs must opt in: the yield function must
+    // supply the uncontracted df/dq, the plastic flow direction the analytic
+    // dm/dsigma and dm/dq, and every internal variable's hardening law dh/dq and
+    // dh/dm.  P1 ships VonMises + DruckerPrager x {Null, Linear scalar/tensor,
+    // ArmstrongFrederick} = 20 of the 46 registered specializations; the rest are
+    // refused at parse time naming the ADR phase that will deliver them.
+    static constexpr bool ladruno_cp_smooth_supported =
+        yf_has_cp_derivatives<YieldFunctionType>::value &&
+        pf_has_cp_derivatives<PlasticFlowType>::value &&
+        asdp_all_ivs_support_cp<iv_concat_types>::value;
+
+    // Ladruno (ADR-97 wp/97c): the PRINCIPAL-STRESS-SPACE family of this
+    // specialization (0 = none).  Non-zero only when the yield function and the
+    // plastic flow direction carry the SAME non-zero marker -- so the generator's
+    // cross pairings (MohrCoulomb_YF x VonMises_PF, VonMises_YF x MohrCoulomb_PF,
+    // HoekBrown_YF x MohrCoulomb_PF, ...) are NOT enabled by P2: the principal
+    // return assumes both the surface and the potential are the piecewise-linear
+    // Mohr-Coulomb ones, and no oracle covers the mixed maps.  They stay refused.
+    // Perfect plasticity is required as well (the map has no q-row).
+    static constexpr int ladruno_cp_principal_family =
+        (yf_cp_principal_family<YieldFunctionType>::value != 0
+         && yf_cp_principal_family<YieldFunctionType>::value
+            == pf_cp_principal_family<PlasticFlowType>::value
+         && asdp_all_ivs_are_inert<iv_concat_types>::value)
+        ? yf_cp_principal_family<YieldFunctionType>::value : 0;
+
+    static constexpr bool ladruno_cp_supported =
+        ladruno_cp_smooth_supported || (ladruno_cp_principal_family != 0);
+
+    static constexpr bool supportsClosestPoint() { return ladruno_cp_supported; }
+
+    // Ladruno (ADR-97 wp/97b): Newton system size cap.  6 stress rows + the
+    // internal variables + one consistency row; the widest registered
+    // specialization has 14 IV components, so 26 leaves headroom and keeps the
+    // Jacobian on the stack (Eigen fixed-max dynamic storage, no heap traffic in
+    // the Gauss-point loop).  A specialization that exceeds it is REFUSED, loudly.
+    static constexpr int ASDP_CP_MAXN = 26;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                          Eigen::ColMajor, ASDP_CP_MAXN, ASDP_CP_MAXN> cp_matrix_t;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, 1,
+                          Eigen::ColMajor, ASDP_CP_MAXN, 1> cp_vector_t;
 
 
     //==================================================================================================
@@ -304,6 +377,11 @@ public:
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler :
             exitflag = this->Backward_Euler(strain_increment);;
             break;
+        // Ladruno (ADR-97 wp/97b): the fully implicit closest-point return map.
+        // Backward_Euler above is untouched (ADR-97 D1: byte-identical).
+        case ASDPlasticMaterial3D_Constitutive_Integration_Method::Closest_Point :
+            exitflag = this->Closest_Point(strain_increment);
+            break;
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch :
             exitflag = this->Backward_Euler_LineSearch(strain_increment);;
             break;
@@ -406,6 +484,18 @@ public:
         return result;
     }
 
+    // Ladruno (ADR-97 wp/97b): how many Newton iterations the LAST Closest_Point
+    // step took at this Gauss point (0 for an elastic step).  Exposed so ADR-97's
+    // gate 1 can assert the quadratic <= 5 without parsing stdout -- the material
+    // prints a page per construction and pytest's capfd cannot see the .pyd's
+    // cout anyway (LEDGER_quirks).
+    const Vector &getCPIterations(void)
+    {
+        static Vector result(1);
+        result(0) = (double) cp_last_iterations;
+        return result;
+    }
+
     const Vector &getInternalVariableByPos(int pos)
     {
         static Vector return_vector(6);
@@ -481,13 +571,22 @@ public:
             VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
             Stiffness = Eelastic;
         }
+    // ADR97_P4_MARKER:adr97_p4_guard_computetangentstiffness_dispatch
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_FirstOrder)
         {
-            compute_numerical_tangent_firstorder(TrialStrain-CommitStrain, Stiffness);
+            // Ladruno (ADR-97 wp/97e): a perturbed sub-call made BY
+            // numerical_tangent_of_committed_map() re-enters this exact
+            // dispatch through the SAME integrator; suppress_numerical_tangent
+            // is set for exactly the duration of that sub-call so this branch
+            // does not recurse. The sub-call only needs TrialStress, not
+            // Stiffness, so it is safe to leave Stiffness untouched here.
+            if (!suppress_numerical_tangent)
+                compute_numerical_tangent_firstorder(TrialStrain-CommitStrain, Stiffness);
         }
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_SecondOrder)
         {
-            compute_numerical_tangent_secondorder(TrialStrain-CommitStrain, Stiffness);
+            if (!suppress_numerical_tangent)
+                compute_numerical_tangent_secondorder(TrialStrain-CommitStrain, Stiffness);
         }
         else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Continuum)
         {
@@ -569,6 +668,21 @@ public:
                << " -- rejecting step (strict_convergence)" << endln;
         return true;
     }
+    // ADR97_P4_MARKER:adr97_p4_compute_local_stress_not_a_map
+    // Ladruno (ADR-97 wp/97e, D2): NOT A MAP. Dead code after the P4
+    // re-point below -- nothing calls this any more (verify with
+    // `grep -n compute_local_stress` before ever wiring a new caller to it).
+    // This is the simplified single-shot elastic-predictor / one-step
+    // plastic-corrector that ADR-94 M3 and ADR-84 P4 identified as a THIRD
+    // return map: it evaluates n/m/H once at the yield-crossing intersection
+    // and takes one closed-form dLambda correction, with no resemblance to
+    // Backward_Euler's cutting-plane Newton loop or Closest_Point's coupled
+    // implicit solve. `Numerical_Algorithmic_FirstOrder/SecondOrder` used to
+    // differentiate THIS function (measured 31%/4.6% off the true consistent
+    // tangent, ADR-94 H6); they now differentiate the actual committed map
+    // via numerical_tangent_of_committed_map(). Retained per ADR-97 D2 for
+    // provenance / possible future standalone use -- do not resurrect it as
+    // a tangent source without re-reading that decision.
     int compute_local_stress(
         const VoigtVector& local_stress, const VoigtVector& local_strain,
         const VoigtVector& strain_incr, VoigtVector& stress_incr) const
@@ -678,116 +792,159 @@ public:
 
 
 
+    // ADR97_P4_MARKER:adr97_p4_numalg_repoint_firstorder
+    // Ladruno (ADR-97 wp/97e, D2 / closes ADR-84 P4 and ADR-94/ADR-97 M3's
+    // "third map"): the CONSISTENT numerical tangent of the map this instance
+    // actually commits -- whichever `integration_method` is configured
+    // (`Backward_Euler`, `Closest_Point`, or in principle any other) -- taken
+    // as a forward (this function) or central (compute_numerical_tangent_
+    // secondorder) finite difference of `setTrialStrainIncr()` ITSELF, the
+    // SAME dispatch every host element drives, instead of the simplified
+    // single-shot `compute_local_stress()` a real element never calls. A
+    // correct FD of this function is BY CONSTRUCTION the consistent tangent
+    // up to stencil truncation error: there is no third algorithm here to be
+    // wrong.
+    //
+    // Recursion: `Backward_Euler`/`Closest_Point` both call
+    // `ComputeTangentStiffness()` at the end of every successful commit; a
+    // perturbed sub-call below would otherwise re-enter that exact path and
+    // try to compute ANOTHER numerical tangent of its own perturbed state,
+    // unbounded. `suppress_numerical_tangent` is raised for the duration of
+    // every sub-call; `ComputeTangentStiffness()` skips the `Numerical_
+    // Algorithmic_*` branches while it is set (a sub-call only needs
+    // `TrialStress`, never `Stiffness`).
+    //
+    // State: the integrator mutates `TrialStrain`, `TrialStress`,
+    // `TrialPlastic_Strain`, every IV's `trial_value` (all of `iv_storage`),
+    // `cp_last_iterations`, and the four `mutable` scratch buffers (`dsigma`,
+    // `depsilon_elpl`, `intersection_stress`, `intersection_strain`). Several
+    // early-return branches inside `Backward_Euler` (the Drucker-Prager apex
+    // switch, the `special_return` hook switch, and the "PLASTIC
+    // INCONSISTENCY" elastic-fallback exit) also assign `Stiffness`
+    // UNCONDITIONALLY, bypassing the tangent-type dispatch entirely. All of
+    // these are snapshotted once before the loop and restored after EVERY
+    // perturbation -- both integrators already reset `TrialPlastic_Strain`/
+    // `iv_storage` from Commit* at their own top (`revert_all()`), so nothing
+    // would actually accumulate across perturbations even without the
+    // per-iteration restore, but restoring immediately keeps the instance
+    // well-defined if a LATER perturbation in the same loop refuses.
+    //
+    // The FD is assembled into a LOCAL matrix, never into `tangent_matrix`
+    // (== `this->Stiffness`, passed by reference from
+    // `ComputeTangentStiffness()`) column-by-column: the unconditional
+    // `Stiffness = ...` branches named above would otherwise clobber columns
+    // already written by an earlier perturbation. `tangent_matrix` is
+    // assigned exactly once, after the loop and after the final restore.
+    //
+    // Refusals: a nonzero return from any perturbed `setTrialStrainIncr()`
+    // call aborts the loop immediately, restores the snapshot, and
+    // propagates that SAME code outward -- never assembles a partial tangent
+    // from whatever columns happened to finish.
+    //
+    // Cost: 6 (first order) or 12 (second order) EXTRA full integrations per
+    // call (the forward-difference baseline is the real, already-computed
+    // `TrialStress` sitting in the snapshot -- no extra unperturbed call is
+    // needed, unlike the old compute_local_stress()-based version).
+    // `Backward_Euler`'s singular-tangent/NaN/plastic-inconsistency
+    // diagnostics are plain `cout <<`, not `opserr`-gated, so a perturbation
+    // landing near one of those guards multiplies that chatter 6x-12x.
+    int numerical_tangent_of_committed_map(const VoigtVector& strain_incr,
+                                            VoigtMatrix& tangent_matrix,
+                                            bool second_order,
+                                            double epsilon_ref = 1e-8,
+                                            double delta_min = 1e-12)
+    {
+        // -------- snapshot the real (unperturbed) converged state ----------
+        const VoigtVector snap_TrialStrain          = TrialStrain;
+        const VoigtVector snap_TrialStress          = TrialStress;
+        const VoigtVector snap_TrialPlastic_Strain  = TrialPlastic_Strain;
+        const iv_storage_t snap_iv_storage          = iv_storage;
+        const int          snap_cp_last_iterations  = cp_last_iterations;
+        const VoigtVector snap_dsigma               = dsigma;
+        const VoigtVector snap_depsilon_elpl        = depsilon_elpl;
+        const VoigtVector snap_intersection_stress  = intersection_stress;
+        const VoigtVector snap_intersection_strain  = intersection_strain;
+        const VoigtMatrix snap_Stiffness            = Stiffness;
+
+        auto restore_snapshot = [&]()
+        {
+            TrialStrain          = snap_TrialStrain;
+            TrialStress          = snap_TrialStress;
+            TrialPlastic_Strain  = snap_TrialPlastic_Strain;
+            iv_storage           = snap_iv_storage;
+            cp_last_iterations   = snap_cp_last_iterations;
+            dsigma               = snap_dsigma;
+            depsilon_elpl        = snap_depsilon_elpl;
+            intersection_stress  = snap_intersection_stress;
+            intersection_strain  = snap_intersection_strain;
+            Stiffness            = snap_Stiffness;
+        };
+
+        const int n = 6;
+        VoigtMatrix local_tangent = VoigtMatrix::Zero();
+        const double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
+        const VoigtVector unperturbed_stress = snap_TrialStress;
+
+        suppress_numerical_tangent = true;
+        int rc = 0;
+        for (int i = 0; i < n && rc == 0; ++i)
+        {
+            VoigtVector strain_incr_p1 = strain_incr;
+            strain_incr_p1(i) += delta;
+            rc = this->setTrialStrainIncr(strain_incr_p1);
+            if (rc != 0) break;
+            const VoigtVector perturbed_stress_p1 = TrialStress;
+            restore_snapshot();
+
+            if (second_order)
+            {
+                VoigtVector strain_incr_p2 = strain_incr;
+                strain_incr_p2(i) -= delta;
+                rc = this->setTrialStrainIncr(strain_incr_p2);
+                if (rc != 0) break;
+                const VoigtVector perturbed_stress_p2 = TrialStress;
+                restore_snapshot();
+
+                for (int j = 0; j < n; ++j)
+                    local_tangent(j, i) = (perturbed_stress_p1(j) - perturbed_stress_p2(j)) / (2.0 * delta);
+            }
+            else
+            {
+                for (int j = 0; j < n; ++j)
+                    local_tangent(j, i) = (perturbed_stress_p1(j) - unperturbed_stress(j)) / delta;
+            }
+        }
+        suppress_numerical_tangent = false;
+        restore_snapshot();
+
+        if (rc != 0)
+            return rc;
+
+        tangent_matrix = local_tangent;
+        return 0; // Return success
+    }
+
+    // Ladruno (ADR-97 wp/97e): thin wrapper kept for source compatibility --
+    // now differentiates the ACTUAL committed map (forward difference) via
+    // numerical_tangent_of_committed_map(), instead of compute_local_stress().
     int compute_numerical_tangent_firstorder(
         const VoigtVector& strain_incr, VoigtMatrix& tangent_matrix, double epsilon_ref = 1e-8, double delta_min = 1e-12)
     {
-        using namespace ASDPlasticMaterial3DGlobals;
-
-        // cout << "strain_incr = " << strain_incr.transpose() << endl;
-        // cout << "epsilon_ref = " << epsilon_ref << endl;
-        // cout << "delta_min = " << delta_min << endl;
-
-        // Number of strain and stress components (Voigt notation in 3D: 6 components)
-        const int n = 6;
-
-        // Initialize the local copies of stress and strain
-        VoigtVector local_stress = CommitStress;
-        VoigtVector local_strain = CommitStrain;
-
-        // Allocate memory for perturbed stress and strain
-        VoigtVector perturbed_stress;
-        VoigtVector perturbed_strain;
-
-        // Compute initial stress increment for the given strain increment (unperturbed)
-        VoigtVector initial_stress_incr;
-        compute_local_stress(local_stress, local_strain, strain_incr, initial_stress_incr);
-
-        // cout << "local_stress = " << local_stress.transpose() << endl;
-        // cout << "initial_stress_incr = " << initial_stress_incr.transpose() << endl;
-        double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
-        // cout << "delta = " << delta << endl;
-
-        // Loop over each strain component to compute the tangent matrix via finite differences
-        for (int i = 0; i < n; ++i) {
-            // Compute adaptive delta based on the current strain component
-
-            // Perturb the i-th strain component by the adaptive delta
-            VoigtVector strain_incr_perturbed = strain_incr;
-            strain_incr_perturbed(i) += delta;
-
-            // Compute the local stress for the perturbed strain increment
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed, perturbed_stress);
-
-            // cout << "        strain_incr_perturbed = " << strain_incr_perturbed.transpose() << endl;
-            // cout << "        perturbed_stress = " << perturbed_stress.transpose() << endl;
-            // Finite difference approximation of the tangent matrix (column i)
-            for (int j = 0; j < n; ++j) {
-                tangent_matrix(j, i) = (perturbed_stress(j) - initial_stress_incr(j)) / delta;
-            }
-        }
-
-        // cout << "tangent_matrix = \n" << tangent_matrix << endl;
-
-        return 0; // Return success
+        return numerical_tangent_of_committed_map(strain_incr, tangent_matrix, false, epsilon_ref, delta_min);
     }
 
 
 
+    // ADR97_P4_MARKER:adr97_p4_numalg_repoint_secondorder
+    // Ladruno (ADR-97 wp/97e): thin wrapper kept for source compatibility --
+    // now differentiates the ACTUAL committed map (central difference) via
+    // numerical_tangent_of_committed_map(), instead of compute_local_stress().
+    // See that function's doc comment for the full design (recursion guard,
+    // state snapshot/restore, refusal propagation, cost).
     int compute_numerical_tangent_secondorder(
         const VoigtVector& strain_incr, VoigtMatrix& tangent_matrix, double epsilon_ref = 1e-8, double delta_min = 1e-12)
     {
-        using namespace ASDPlasticMaterial3DGlobals;
-
-        // cout << "strain_incr = " << strain_incr.transpose() << endl;
-        // cout << "epsilon_ref = " << epsilon_ref << endl;
-        // cout << "delta_min = " << delta_min << endl;
-
-        // Number of strain and stress components (Voigt notation in 3D: 6 components)
-        const int n = 6;
-
-        // Initialize the local copies of stress and strain
-        VoigtVector local_stress = CommitStress;
-        VoigtVector local_strain = CommitStrain;
-
-        // Allocate memory for perturbed stress and strain
-        VoigtVector perturbed_stress1;
-        VoigtVector perturbed_stress2;
-        VoigtVector perturbed_strain;
-
-        // Compute initial stress increment for the given strain increment (unperturbed)
-        // VoigtVector initial_stress_incr;
-        // compute_local_stress(local_stress, local_strain, strain_incr, initial_stress_incr);
-
-        // cout << "local_stress = " << local_stress.transpose() << endl;
-        // cout << "initial_stress_incr = " << initial_stress_incr.transpose() << endl;
-        double delta = std::max(epsilon_ref * strain_incr.norm(), delta_min);
-        // cout << "delta = " << delta << endl;
-
-        // Loop over each strain component to compute the tangent matrix via finite differences
-        for (int i = 0; i < n; ++i) {
-            // Compute adaptive delta based on the current strain component
-
-            // Perturb the i-th strain component by the adaptive delta
-            VoigtVector strain_incr_perturbed1 = strain_incr;
-            VoigtVector strain_incr_perturbed2 = strain_incr;
-            strain_incr_perturbed1(i) += delta;
-            strain_incr_perturbed2(i) -= delta;
-
-            // Compute the local stress for the perturbed strain increment
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed1, perturbed_stress1);
-            compute_local_stress(local_stress, local_strain, strain_incr_perturbed2, perturbed_stress2);
-
-            // cout << "        strain_incr_perturbed = " << strain_incr_perturbed.transpose() << endl;
-            // cout << "        perturbed_stress = " << perturbed_stress.transpose() << endl;
-            // Finite difference approximation of the tangent matrix (column i)
-            for (int j = 0; j < n; ++j) {
-                tangent_matrix(j, i) = (perturbed_stress1(j) - perturbed_stress2(j)) / (2*delta);
-            }
-        }
-
-        // cout << "tangent_matrix = \n" << tangent_matrix << endl;
-
-        return 0; // Return success
+        return numerical_tangent_of_committed_map(strain_incr, tangent_matrix, true, epsilon_ref, delta_min);
     }
 
     const Matrix& getTangent()
@@ -1309,6 +1466,11 @@ public:
             s.tag("ResponseType", "J2strain");           // 2nd deviatoric strain invariant
             return new MaterialResponse(this, 8, this->getJ2Strain());
         }
+        else if (strcmp(argv[0], "cp_iterations") == 0 ) {
+            // Ladruno (ADR-97 wp/97b)
+            s.tag("ResponseType", "cp_iterations");
+            return new MaterialResponse(this, 9, this->getCPIterations());
+        }
         else
         {
             const char *iv_name = argv[0];
@@ -1370,6 +1532,8 @@ public:
             *(matInformation.theVector) = getVolStrain();        
         else if (responseID == 8)
             *(matInformation.theVector) = getJ2Strain();
+        else if (responseID == 9)   // Ladruno (ADR-97 wp/97b)
+            *(matInformation.theVector) = getCPIterations();
         else if (responseID >= 1000)
         {
             int pos = responseID - 1000;
@@ -1465,6 +1629,7 @@ public:
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Closest_Point   // Ladruno (ADR-97 wp/97b)
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch)
         {
             INT_OPT_constitutive_integration_method[ASDP_TAG] = (ASDPlasticMaterial3D_Constitutive_Integration_Method) method ;
@@ -2209,6 +2374,2095 @@ private:
 // }
 
 
+
+
+    //==================================================================================================
+    // Ladruno (ADR-97 wp/97b): CLOSEST-POINT return map (CPPM) + consistent tangent
+    //==================================================================================================
+    //
+    // Solves, as ONE coupled Newton system in x = (sigma_{n+1}, q_{n+1}, dlambda):
+    //
+    //     R_sigma = s - s_tr + dl * E(s) * m(s, q)                     (6 rows)
+    //     R_q     = q - q_n  - dl * h(s, q, m(s,q))                    (n_q rows)
+    //     R_f     = f(s, q)                                            (1 row)
+    //
+    // with s_tr = sigma_n + E(sigma_n)*depsilon.  This is NOT what
+    // `Backward_Euler` does: that is an Ortiz-Simo CUTTING PLANE which
+    // re-evaluates n, m and H at the running iterate and accumulates
+    // sigma -= deltaLambda*(E*m), so its fixed point is
+    // s_tr - sum_k dl_k E m(sigma^k), and its internal-variable update is a
+    // Newton-path quadrature exact only for constant h.  The two coincide exactly
+    // when the flow direction does not rotate over the step (proportional loading)
+    // and diverge otherwise -- measurably so for Armstrong-Frederick, which 22 of
+    // the 46 registered specializations carry (ADR-94 M3; ADR-97 P0 measured a
+    // 9.15 stress spread over four equally valid cutting-plane iterate paths on a
+    // stress of ~46, against 1.1e-12 for this map).
+    //
+    // `Backward_Euler` is untouched (ADR-97 D1).  Every result the fork has
+    // published on this material was obtained on it.
+    //
+    // Conventions (ADR-94 wp/94c, do not re-derive): tension positive,
+    // p = trace/3, Voigt [11 22 33 12 23 13], strain-like slots ENGINEERING, every
+    // YF/PF gradient taken w.r.t. the STORED slot, every contraction a plain dot.
+    //
+    // E(sigma_{n+1}) is evaluated INSIDE the residual (ADR-97 D6), which makes the
+    // converged state hyperelastically consistent; the dE/dsigma JACOBIAN block is
+    // optional (identically zero for LinearIsotropic3D_EL, the only elasticity
+    // registered in all 43 non-StiffSoil specializations) -- dropping it costs
+    // iterations, never accuracy, because the converged x still satisfies the
+    // exact residual.
+    //
+    // There is NO intersection / elastic-fraction split, and none is missing:
+    // `Backward_Euler` zeroes `intersection_stress`/`intersection_strain` at setup
+    // and never reads either again (the yield-crossing bisection lives in
+    // Forward_Euler and compute_local_stress only).
+    //
+    // No line search: for convex f with associated flow the CPPM residual is the
+    // stationarity system of a strictly convex closest-point projection in the
+    // E-metric, so Newton from the elastic predictor is globally convergent on the
+    // yielding branch.  A line search that "succeeds" on a non-converged system is
+    // ADR-94 M7's Backward_Euler_LineSearch failure mode (2/20 vs BE's 20/20).
+
+    int cp_n_iv()
+    {
+        int n = 0;
+        iv_storage.apply([&n](auto & internal_variable)
+        {
+            n += internal_variable.size();
+        });
+        return n;
+    }
+
+    // Scatter x into (TrialStress, IV trial values) and form the residual; when
+    // `J` is non-null, form the Jacobian at the SAME point.  Returns false on a
+    // non-finite residual.
+    bool cp_assemble(const cp_vector_t& x, int N,
+                     const VoigtVector& sigma_tr, const VoigtVector& depsilon,
+                     VoigtVector& m_out, cp_vector_t& R, cp_matrix_t* J)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+
+        const double dl = x(N - 1);
+        for (int i = 0; i < 6; ++i) TrialStress(i) = x(i);
+        {
+            int off = 6;
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                const int nq = internal_variable.size();
+                for (int i = 0; i < nq; ++i) internal_variable.trial_value(i) = x(off + i);
+                off += nq;
+            });
+        }
+
+        // GCC: never bind an Eigen product (or a functor's mutable return buffer,
+        // which the NEXT call overwrites) to a reference -- named value locals only.
+        VoigtMatrix Ecur = et(TrialStress, parameters_storage);          // ADR-97 D6
+        VoigtVector m    = pf(depsilon, TrialStress, iv_storage, parameters_storage);
+        m_out = m;
+        VoigtVector Em   = Ecur * m;
+        const double f_val = yf(TrialStress, iv_storage, parameters_storage);
+
+        for (int i = 0; i < 6; ++i)
+            R(i) = x(i) - sigma_tr(i) + dl * Em(i);
+        {
+            int off = 6;
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                const int nq = internal_variable.size();
+                // hardening_function reads the TRIAL value, i.e. q_{n+1}: this is
+                // what makes the internal-variable update implicit (ADR-97 D4).
+                auto h = internal_variable.hardening_function(depsilon, m, TrialStress, parameters_storage);
+                for (int i = 0; i < nq; ++i)
+                    R(off + i) = x(off + i) - internal_variable.committed_value(i) - dl * h(i);
+                off += nq;
+            });
+        }
+        R(N - 1) = f_val;
+
+        for (int i = 0; i < N; ++i)
+            if (!(R(i) == R(i))) return false;      // NaN
+
+        if (J == 0) return true;
+
+        VoigtVector nvec = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+        VoigtMatrix dmds = pf.dm_dsigma(depsilon, TrialStress, iv_storage, parameters_storage);
+        VoigtMatrix Edmds = Ecur * dmds;
+
+        cp_matrix_t& Jm = *J;
+        Jm.setZero();
+
+        //   J_ss = I + dl * E * dm/ds     J_sl = E*m     J_fs = (df/ds)^T
+        for (int i = 0; i < 6; ++i)
+        {
+            for (int j = 0; j < 6; ++j)
+                Jm(i, j) = ((i == j) ? 1.0 : 0.0) + dl * Edmds(i, j);
+            Jm(i, N - 1) = Em(i);
+            Jm(N - 1, i) = nvec(i);
+        }
+        //   + dl * (dE/ds : m)  -- ADR-97 D6; identically zero for LinearIsotropic3D_EL
+        if constexpr (el_is_stress_dependent<ElasticityType>::value)
+        {
+            VoigtMatrix dEm = VoigtMatrix::Zero();
+            et.dE_dsigma_contract(TrialStress, m, parameters_storage, dEm);
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j) Jm(i, j) += dl * dEm(i, j);
+        }
+
+        //   J_sq = dl * E * dm/dq        J_fq = (df/dq)^T
+        {
+            int offb = 6;
+            iv_storage.apply([&](auto & iv_b)
+            {
+                const int nb = iv_b.size();
+                VoigtMatrix dmdq = VoigtMatrix::Zero();
+                pf.dm_dq(iv_b, depsilon, TrialStress, iv_storage, parameters_storage, dmdq);
+                VoigtMatrix Edmdq = Ecur * dmdq;
+                double dfdq[6] = {0., 0., 0., 0., 0., 0.};
+                yf.df_dq(iv_b, TrialStress, iv_storage, parameters_storage, dfdq);
+                for (int c = 0; c < nb; ++c)
+                {
+                    for (int i = 0; i < 6; ++i) Jm(i, offb + c) = dl * Edmdq(i, c);
+                    Jm(N - 1, offb + c) = dfdq[c];
+                }
+                offb += nb;
+            });
+        }
+
+        //   J_ql = -h
+        //   J_qs = -dl * (dh/dm)(dm/ds)                 [dh/ds is zero by construction:
+        //                                                no policy in this tree reads sigma]
+        //   J_qq = I - dl * (dh/dq + (dh/dm)(dm/dq))    [the OFF-DIAGONAL IV blocks are
+        //                                                NOT zero: every h reads m, and m
+        //                                                reads the flow direction's own
+        //                                                back stress]
+        {
+            int offa = 6;
+            iv_storage.apply([&](auto & iv_a)
+            {
+                const int na = iv_a.size();
+                auto h = iv_a.hardening_function(depsilon, m, TrialStress, parameters_storage);
+                VoigtMatrix dhdm = VoigtMatrix::Zero();
+                VoigtMatrix dhdq = VoigtMatrix::Zero();
+                iv_a.hardening_dh_dm(depsilon, m, TrialStress, parameters_storage, dhdm);
+                iv_a.hardening_dh_dq(depsilon, m, TrialStress, parameters_storage, dhdq);
+                for (int rr = 0; rr < na; ++rr)
+                {
+                    Jm(offa + rr, N - 1) = -h(rr);
+                    for (int j = 0; j < 6; ++j)
+                    {
+                        double v = 0.0;
+                        for (int k = 0; k < 6; ++k) v += dhdm(rr, k) * dmds(k, j);
+                        Jm(offa + rr, j) = -dl * v;
+                    }
+                }
+                int offb = 6;
+                iv_storage.apply([&](auto & iv_b)
+                {
+                    const int nb = iv_b.size();
+                    VoigtMatrix dmdq_b = VoigtMatrix::Zero();
+                    pf.dm_dq(iv_b, depsilon, TrialStress, iv_storage, parameters_storage, dmdq_b);
+                    const bool same_iv = (offa == offb);
+                    for (int rr = 0; rr < na; ++rr)
+                        for (int c = 0; c < nb; ++c)
+                        {
+                            double v = same_iv ? dhdq(rr, c) : 0.0;
+                            for (int k = 0; k < 6; ++k) v += dhdm(rr, k) * dmdq_b(k, c);
+                            Jm(offa + rr, offb + c) =
+                                ((same_iv && rr == c) ? 1.0 : 0.0) - dl * v;
+                        }
+                    offb += nb;
+                });
+                offa += na;
+            });
+        }
+        return true;
+    }
+
+    // ELASTIC-METRIC apex classification.  `check_apex_region` in the yield
+    // function is EUCLIDEAN (p - p_apex >= eta*q) and says so in its own comment:
+    // the exact condition needs K, G and the dilatancy, none of which the YF's
+    // signature can see.  `Closest_Point` classifies HERE, where E is in scope, and
+    // does not call `check_apex_region` at all.  ADR-97's P0 oracle quantified the
+    // cost of the Euclidean test in BOTH directions: at etabar = 0.2 (exact slope
+    // 0.333 < the header's 0.4) a trial at (p-p_apex)/q = 0.36 is classified CONE
+    // and the cone return then gives sqrt(J2)_{n+1} = -0.47, an INADMISSIBLE
+    // negative deviatoric norm; at etabar = eta = 0.4 (exact slope 0.667) trials at
+    // 0.45 and 0.60 are classified APEX although the correct return is to the cone.
+    //
+    // The test itself is family-agnostic: take the LINEARISED cone step at the
+    // trial state, dl0 = f_tr/(n:E:m - H), and ask whether the deviatoric part of
+    // the returned stress has FLIPPED sign.  For Drucker-Prager E*m has the
+    // deviatoric part (G/q)*r exactly, so this reduces to q_tr - G*dl0 < 0 -- the
+    // oracle's exact test, with K*etabar and G entering through E.
+    bool cp_apex_region(const VoigtVector& depsilon, const VoigtVector& sigma_tr,
+                        const VoigtMatrix& Eelastic, double f_tr, double tol_f)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+        VoigtVector m0 = pf(depsilon, sigma_tr, iv_storage, parameters_storage);
+        VoigtVector n0 = yf.df_dsigma_ij(sigma_tr, iv_storage, parameters_storage);
+        VoigtVector Em0 = Eelastic * m0;
+        // The plastic modulus formed from CLOSEST_POINT's own df/dq, not from
+        // yf.hardening(): for Drucker-Prager the two differ, because the shipped
+        // yf_hardening carries a df/dk = -1 term for a cohesion IV that its own f
+        // does not contain (ADR-97 P0 header finding 2).
+        double H0 = 0.0;
+        iv_storage.apply([&](auto & internal_variable)
+        {
+            double d[6] = {0., 0., 0., 0., 0., 0.};
+            yf.df_dq(internal_variable, sigma_tr, iv_storage, parameters_storage, d);
+            auto h = internal_variable.hardening_function(depsilon, m0, sigma_tr, parameters_storage);
+            const int nq = internal_variable.size();
+            for (int i = 0; i < nq; ++i) H0 += d[i] * h(i);
+        });
+        VoigtVector dev_tr = sigma_tr.deviator();
+        double q2_tr = tensor_dot_stress_like(dev_tr, dev_tr);
+        if (!(q2_tr > 0.0)) q2_tr = 0.0;
+        const double q_tr = std::sqrt(q2_tr);
+        // A trial state ON the hydrostatic axis and outside the surface can only
+        // return to the vertex.  The flip test below is a SIGN test on
+        // dot(dev_ret, dev_tr), which degenerates to 0 < 0 -- i.e. says CONE --
+        // when the trial deviator vanishes; the cone Newton then has no flow
+        // direction at all and exhausts its iterations.  That degenerate state
+        // is not exotic: it is exactly ADR-94 B4's hydrostatic-tension
+        // reproducer, the one that used to commit NaN.  `tol_f` is the yield
+        // tolerance, so this comparison is in stress units and unit consistent
+        // (ADR-94 M5).
+        if (q_tr <= tol_f) return true;
+        const double den = n0.dot(Em0) - H0;
+        if (!(den > MACHINE_EPSILON)) return false;
+        const double dl0 = f_tr / den;
+        VoigtVector dev_Em0 = Em0.deviator();
+        VoigtVector dev_ret = dev_tr - dl0 * dev_Em0;
+        return tensor_dot_stress_like(dev_ret, dev_tr) < 0.0;
+    }
+
+    // Reduced apex system.  At the vertex dm/ds blows up as 1/sqrt(J2) and the
+    // plastic flow direction is a whole subdifferential cone, so the 6-row
+    // residual cannot produce it: sigma_{n+1} is PINNED at the yield function's
+    // own apex, and the only unknowns are the internal variables and dlambda.
+    //     sigma_{n+1} = sigma_apex(q_{n+1})
+    //     d eps^p     = E^{-1}(sigma_tr - sigma_apex)
+    //     dl          = <m_apex, d eps^p>_e / <m_apex, m_apex>_e   (>= 0)
+    //     q_{n+1}     = q_n + dl * h(sigma_apex, q_{n+1}, m_apex)
+    // solved by fixed point (ONE pass for perfect plasticity, where h == 0).
+    // Returns false when the yield function's own apex is not on its own surface,
+    // in which case the caller falls through to the generic Newton -- the same
+    // admissibility gate `Backward_Euler` uses, kept verbatim.
+    bool cp_apex_return(const VoigtVector& depsilon, const VoigtVector& sigma_tr,
+                        const VoigtMatrix& Eelastic, double tol_f, double tol_s,
+                        int max_iter, int& rc)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+
+        Eigen::Matrix<double, 6, 6> E_eig;
+        for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j) E_eig(i, j) = Eelastic(i, j);
+        Eigen::FullPivLU< Eigen::Matrix<double, 6, 6> > elu(E_eig);
+        if (!elu.isInvertible())
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the elastic tangent is singular at the apex return"
+                   << " -- rejecting step" << endln;
+            rc = LADRUNO_MATERIAL_REFUSED;
+            return true;
+        }
+
+        VoigtVector sigma_apex = VoigtVector::Zero();
+        VoigtVector m_apex     = VoigtVector::Zero();
+        VoigtVector dep        = VoigtVector::Zero();
+        double dl = 0.0;
+        bool ok = false;
+
+        for (int it = 0; it < max_iter; ++it)
+        {
+            // Copy out of the YF's return buffer immediately: apex_stress and
+            // df_dsigma_ij share one mutable member per functor.
+            VoigtVector sa = yf.apex_stress(iv_storage, parameters_storage);
+            sigma_apex = sa;
+            const double f_apex = yf(sigma_apex, iv_storage, parameters_storage);
+            const double f_apex_abs = (f_apex < 0) ? -f_apex : f_apex;
+            if (!(f_apex_abs <= tol_f))
+            {
+                // The apex this YF names is not on its own surface: fall through
+                // to the generic map rather than commit a fabricated stress.
+                iv_storage.revert_all();
+                return false;
+            }
+            VoigtVector ma = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
+            m_apex = ma;
+
+            Eigen::Matrix<double, 6, 1> rhs_e;
+            for (int i = 0; i < 6; ++i) rhs_e(i) = sigma_tr(i) - sigma_apex(i);
+            Eigen::Matrix<double, 6, 1> dep_e = elu.solve(rhs_e);
+            for (int i = 0; i < 6; ++i) dep(i) = dep_e(i);
+
+            // Both operands are ENGINEERING-strain-like Voigt vectors, so the
+            // projection uses the engineering contraction (ADR-94 wp/94c B5).
+            const double mm = tensor_dot_engineering_strain_like(m_apex, m_apex);
+            double dl_new = 0.0;
+            if (mm > MACHINE_EPSILON)
+            {
+                dl_new = tensor_dot_engineering_strain_like(m_apex, dep) / mm;
+                if (dl_new < 0.0) dl_new = 0.0;
+            }
+
+            double dq_max = 0.0;
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                auto h = internal_variable.hardening_function(depsilon, m_apex, sigma_apex, parameters_storage);
+                const int nq = internal_variable.size();
+                for (int i = 0; i < nq; ++i)
+                {
+                    const double nv = internal_variable.committed_value(i) + dl_new * h(i);
+                    const double d = nv - internal_variable.trial_value(i);
+                    const double ad = (d < 0) ? -d : d;
+                    if (ad > dq_max) dq_max = ad;
+                    internal_variable.trial_value(i) = nv;
+                }
+            });
+            dl = dl_new;
+            cp_last_iterations = it + 1;
+            if (dq_max <= tol_s) { ok = true; break; }
+        }
+
+        if (!ok)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the apex internal-variable fixed point did not converge in "
+                   << max_iter << " iterations -- rejecting step" << endln;
+            rc = LADRUNO_MATERIAL_REFUSED;
+            return true;
+        }
+
+        {
+            VoigtVector sa = yf.apex_stress(iv_storage, parameters_storage);
+            sigma_apex = sa;
+            Eigen::Matrix<double, 6, 1> rhs_e;
+            for (int i = 0; i < 6; ++i) rhs_e(i) = sigma_tr(i) - sigma_apex(i);
+            Eigen::Matrix<double, 6, 1> dep_e = elu.solve(rhs_e);
+            for (int i = 0; i < 6; ++i) dep(i) = dep_e(i);
+        }
+        TrialStress         = sigma_apex;
+        TrialPlastic_Strain = CommitPlastic_Strain + dep;
+        (void) dl;
+
+        // Algorithmic apex tangent.  sigma_{n+1} = sigma_apex(q_{n+1}), so
+        // C_alg = (d sigma_apex/dq)(dq/d eps).  For every yield function this ADR
+        // ships, apex_stress() is built from MODEL PARAMETERS only
+        // (DruckerPrager_YF: p_apex = xi_c/eta), so d sigma_apex/dq is identically
+        // zero and the consistent tangent is EXACTLY the zero matrix -- rank 0,
+        // which is what the P0 oracle pins (cppm_dp.py, "apex, associated,
+        // perfect": rank C = 0, FD error 0).  That is rank deficient by
+        // construction and WILL make an element whose every Gauss point sits at
+        // the apex singular, which is the true state of affairs.  The finite
+        // difference below MEASURES d sigma_apex/dq instead of assuming it; a
+        // yield function whose apex moves with an internal variable gets a
+        // one-time warning and the same zero, which ADR-97 P5 replaces.
+        VoigtMatrix apex_stiff = VoigtMatrix::Zero();
+        {
+            double a_max = 0.0;
+            VoigtVector s0 = yf.apex_stress(iv_storage, parameters_storage);
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                const int nq = internal_variable.size();
+                for (int i = 0; i < nq; ++i)
+                {
+                    const double v0 = internal_variable.trial_value(i);
+                    const double av = (v0 < 0) ? -v0 : v0;
+                    const double dv = 1e-8 * (av + 1.0);
+                    internal_variable.trial_value(i) = v0 + dv;
+                    VoigtVector sp = yf.apex_stress(iv_storage, parameters_storage);
+                    internal_variable.trial_value(i) = v0;
+                    for (int r = 0; r < 6; ++r)
+                    {
+                        const double d = (sp(r) - s0(r)) / dv;
+                        const double ad = (d < 0) ? -d : d;
+                        if (ad > a_max) a_max = ad;
+                    }
+                }
+            });
+            if (a_max > 0.0
+                && INT_OPT_tangent_operator_type[ASDP_TAG]
+                   == ASDPlasticMaterial3D_Tangent_Operator_Type::Algorithmic)
+            {
+                static bool warned_apex_tangent = false;
+                if (!warned_apex_tangent)
+                {
+                    opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                           << ") - this yield function's apex MOVES with an internal"
+                           << " variable (|d sigma_apex/dq| = " << a_max << "), so the"
+                           << " zero apex tangent reported under tangent_type"
+                           << " Algorithmic is approximate (ADR-97 P5)." << endln;
+                    warned_apex_tangent = true;
+                }
+            }
+        }
+
+        {
+            using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
+            switch (INT_OPT_tangent_operator_type[ASDP_TAG])
+            {
+            case TOT::Elastic:
+                Stiffness = Eelastic;
+                break;
+            case TOT::Continuum:
+            case TOT::Algorithmic:
+            case TOT::Numerical_Algorithmic_FirstOrder:
+            case TOT::Numerical_Algorithmic_SecondOrder:
+                Stiffness = apex_stiff;
+                break;
+            case TOT::Secant:
+            default:
+                Stiffness = VoigtMatrix((apex_stiff + Eelastic) / 2.0);
+                break;
+            }
+        }
+
+        if (ladruno_strict_rejects("Closest_Point (apex)", TrialStress))
+        {
+            rc = LADRUNO_MATERIAL_REFUSED;
+            return true;
+        }
+        rc = 0;
+        return true;
+    }
+
+
+    //==================================================================================================
+    // Ladruno (ADR-97 wp/97c): PRINCIPAL-STRESS-SPACE multi-surface closest-point
+    // return for the Mohr-Coulomb family (Clausen, Damkilde & Andersen 2006/2007)
+    //==================================================================================================
+    //
+    // WHY A SECOND ALGORITHM (ADR-97 D3).  The shipped 6D Mohr-Coulomb yield
+    // function is the exact Lode-angle form
+    //     f = A(theta) sqrt(J2) + I1 sin(phi)/3 - c cos(phi),
+    //     A(theta) = cos(theta) - sin(theta) sin(phi)/sqrt(3),
+    // whose gradient carries a 1/cos(3 theta) that BLOWS UP on the corners; the
+    // header dodges it by swapping in a Drucker-Prager gradient for
+    // |theta| >= 29 deg and otherwise central-differencing f over the six raw
+    // Voigt slots.  A coupled Newton built on that gradient cannot converge
+    // quadratically at a corner -- which is precisely where Mohr-Coulomb models
+    // spend their time.  In PRINCIPAL STRESS SPACE the same surface is six
+    // PLANES: on the sorted sextant s1 >= s2 >= s3 (tension positive) it is the
+    // single plane
+    //     f = a_13 . s - k ,  a_ij = [ (1+sin phi)/2, 0, -(1-sin phi)/2 ], k = c cos(phi),
+    // its two corners are LINES and its vertex is the point (k/sin phi)*[1,1,1].
+    // Every return is then a LINEAR projection in the elastic metric -- closed
+    // form, no Newton at all -- and the tangent is constant on each region.
+    // The P0 oracle `adr97_oracle/cppm_mc.py` verifies numerically, over 2000
+    // random states, that this principal-stress f IS the header's own invariant
+    // expression to 1e-14 relative; every number below is pinned against it.
+    //
+    // FLOW DIRECTION.  The header's `m` is deviator(dg/dsigma with PHI) plus
+    // sin(psi)/3 * delta -- the deviatoric shape of the phi-surface with a
+    // psi-controlled volumetric part, NOT the textbook non-associated gradient.
+    // In principal space that is m_ij = a_ij - (sin phi)/3 * 1 + (sin psi)/3 * 1,
+    // which collapses to a_ij when psi == phi.  Mirrored here, not corrected.
+    //
+    // REGION SELECTION IS BY BOUNDARY PLANES, NEVER BY AN ACTIVE-SET SEARCH.
+    // Each edge line L has a boundary plane spanned by the line direction ell_L
+    // and the face return direction rp = D m_13, passing through the apex; the
+    // side of it the trial principal point falls on decides face vs edge, and the
+    // sign of the edge-line parameter of the edge return decides edge vs apex.
+    // This is exact and branch-free, and it REPLACES the |theta| < 29 deg guard.
+    // It is also not optional: at the apex with psi < phi the three Koiter
+    // multipliers are NOT all positive (the cone of return directions no longer
+    // contains the hydrostatic direction), so a "grow the active set while
+    // dLambda >= 0" search classifies those states wrongly -- ADR-97 P0 header
+    // finding 6, and the reason the oracle prints the multipliers with that note.
+    //
+    // The boundary-plane SIGNS are taken analytically here, not from the oracle's
+    // dimensional reference point: any point strictly inside the open face is
+    // apex + b1*ell_1 + b2*ell_2 with b1, b2 > 0, and n_1 . ell_1 == 0 by
+    // construction, so sgn_1 = sign(n_1 . ell_2) and symmetrically.  Verified
+    // identical to the oracle's calibration over 60 (phi, psi, c) combinations
+    // and 13094 trial states, mismatches 0 (see the P2 report).
+    //
+    // BACK-TRANSFORM.  sigma_ret is an isotropic tensor function of sigma_tr, so
+    //     d sigma / d sigma_tr = Rs * T * Rs^{-1}
+    // with Rs the Voigt image of E -> Q E Q^T (Q the TRIAL eigenvectors),
+    // T's normal block = dy/dx (the principal 3x3 Koiter block) and T's shear
+    // slots = (y_i - y_j)/(x_i - x_j) -- the eigenprojection ROTATION term.  That
+    // ratio is 0/0 on every axisymmetric path (most triaxial decks, so this is
+    // the common case, not the corner case); the l'Hopital limit is
+    // dy_i/dx_i - dy_i/dx_j.  The switch threshold is RELATIVE to the yield
+    // function's strength scale (ADR-94 M5: an absolute one reintroduces the
+    // unit dependence that decided pass/fail in kPa vs Pa).  Rs^{-1} is built
+    // directly as the Voigt image of E -> Q^T E Q, not inverted numerically.
+    //
+    // NO NEWTON, so `cp_iterations` reads 1 on a plastic step here and 0 on an
+    // elastic one -- it is a region count, not an iteration count.
+    //
+    // `Backward_Euler` is untouched (ADR-97 D1): it still runs the scalar Newton
+    // on the smoothed 6D gradient, and for MohrCoulombTensionCutoff still calls
+    // the same ADR-84 `special_return` hook this map calls.
+
+    // Apply the material's configured tangent_type to a raw active-set (Koiter)
+    // tangent.  Mirrors the policy ADR-84 P3 set for `special_return` and the one
+    // P1 set for the Drucker-Prager apex: `Continuum` maps to the same raw
+    // operator, because the continuum elastoplastic operator of a multi-surface
+    // corner is not defined by a single n : E : m.
+    void cp_apply_tangent_policy(const VoigtMatrix& raw, const VoigtMatrix& Eelastic)
+    {
+        using TOT = ASDPlasticMaterial3D_Tangent_Operator_Type;
+        switch (INT_OPT_tangent_operator_type[ASDP_TAG])
+        {
+        case TOT::Elastic:
+            Stiffness = Eelastic;
+            break;
+        case TOT::Continuum:
+        case TOT::Algorithmic:
+        case TOT::Numerical_Algorithmic_FirstOrder:
+        case TOT::Numerical_Algorithmic_SecondOrder:
+            Stiffness = raw;
+            break;
+        case TOT::Secant:
+        default:
+            Stiffness = VoigtMatrix((raw + Eelastic) / 2.0);
+            break;
+        }
+    }
+
+    int cp_principal_return(const VoigtVector& depsilon,
+                            const VoigtVector& sigma_tr,
+                            const VoigtMatrix& Eelastic,
+                            double tol_f)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+        (void) depsilon;
+
+        // ---- surface constants ------------------------------------------
+        double sin_phi = 0.0, k_coh = 0.0, sin_phi_pf = 0.0, sin_psi = 0.0;
+        if (!yf.cp_mc_face_params(iv_storage, parameters_storage, sin_phi, k_coh)
+                || !pf.cp_mc_flow_params(iv_storage, parameters_storage,
+                                         sin_phi_pf, sin_psi))
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - this yield function / plastic flow pair is marked as a"
+                   << " principal-space Mohr-Coulomb family but does not supply the"
+                   << " face parameters (ADR-97 P2) -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        {
+            const double d = sin_phi - sin_phi_pf;
+            if ((d > 1e-12) || (d < -1e-12))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the yield function and the plastic flow direction"
+                       << " disagree on MC_phi (" << sin_phi << " vs " << sin_phi_pf
+                       << ") -- rejecting step (ADR-97 P2)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        if (!(sin_phi > 100 * MACHINE_EPSILON))
+        {
+            // phi == 0 is Tresca: the Mohr-Coulomb apex is at infinity, and
+            // Clausen's boundary planes are defined THROUGH it.  Rather than
+            // silently reclassify, refuse and name the alternative.
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - integration_method Closest_Point needs MC_phi > 0"
+                   << " (ADR-97 P2): at phi = 0 the Mohr-Coulomb surface is a"
+                   << " Tresca prism whose apex is at infinity, so the"
+                   << " boundary-plane region test is undefined."
+                   << " Use Backward_Euler." << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+
+        // ---- isotropy of the elastic tangent ----------------------------
+        // The principal-space projection needs D in the principal frame, which
+        // exists only for an isotropic E.  Same guard ADR-84's special_return
+        // uses; LinearIsotropic3D_EL is the only elasticity registered with this
+        // family, so this is a future-proofing refusal, not a live branch.
+        const double lam = Eelastic(0, 1);
+        const double Gmu = (Eelastic(0, 0) - Eelastic(0, 1)) / 2.0;
+        {
+            const double sE = ((Eelastic(0, 0) < 0) ? -Eelastic(0, 0) : Eelastic(0, 0))
+                              + ((Gmu < 0) ? -Gmu : Gmu);
+            const double t = 1e-8 * sE;
+            const double d02 = Eelastic(0, 2) - lam;
+            const double d12 = Eelastic(1, 2) - lam;
+            const double d33 = Eelastic(3, 3) - Gmu;
+            const double d11 = Eelastic(1, 1) - Eelastic(0, 0);
+            if (!(Gmu > 0.0)
+                    || (d02 > t) || (d02 < -t) || (d12 > t) || (d12 < -t)
+                    || (d33 > t) || (d33 < -t) || (d11 > t) || (d11 < -t))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the principal-space Mohr-Coulomb return needs an"
+                       << " ISOTROPIC elastic tangent -- rejecting step (ADR-97 P2)"
+                       << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        Eigen::Matrix3d D3;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                D3(i, j) = lam + ((i == j) ? 2.0 * Gmu : 0.0);
+
+        // ---- spectral decomposition of the TRIAL stress, DESCENDING ------
+        Eigen::Matrix3d st;
+        st << sigma_tr.v11(), sigma_tr.v12(), sigma_tr.v13(),
+              sigma_tr.v12(), sigma_tr.v22(), sigma_tr.v23(),
+              sigma_tr.v13(), sigma_tr.v23(), sigma_tr.v33();
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(st);
+        if (es.info() != Eigen::Success)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the trial stress eigen-decomposition failed"
+                   << " -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        Eigen::Vector3d xv;
+        Eigen::Matrix3d Q;
+        for (int i = 0; i < 3; ++i)          // eigenvalues come out ASCENDING
+        {
+            xv(i) = es.eigenvalues()(2 - i);
+            Q.col(i) = es.eigenvectors().col(2 - i);
+        }
+
+        // ---- the three surfaces of the sorted sextant --------------------
+        // index 0 = (1,3), 1 = (2,3), 2 = (1,2), in 0-based principal slots.
+        static const int PIJ[3][2] = {{0, 2}, {1, 2}, {0, 1}};
+        const double Aco = 0.5 * (1.0 + sin_phi);
+        const double Bco = 0.5 * (1.0 - sin_phi);
+        Eigen::Vector3d av[3], mv[3];
+        for (int t = 0; t < 3; ++t)
+        {
+            av[t].setZero();
+            av[t](PIJ[t][0]) =  Aco;
+            av[t](PIJ[t][1]) = -Bco;
+            mv[t] = av[t];
+            const double vol = (sin_psi - sin_phi) / 3.0;
+            mv[t](0) += vol; mv[t](1) += vol; mv[t](2) += vol;
+        }
+
+        const Eigen::Vector3d apexv = Eigen::Vector3d::Constant(k_coh / sin_phi);
+        Eigen::Vector3d Dm13 = D3 * mv[0];
+
+        // edge directions: null(A) of the two active gradients = their cross
+        // product, oriented (like the oracle) so ell(0) >= ell(2).
+        Eigen::Vector3d ell1 = av[0].cross(av[1]);      // edge s1 == s2
+        if (ell1(0) < ell1(2)) ell1 = -ell1;
+        ell1.normalize();
+        Eigen::Vector3d ell2 = av[2].cross(av[0]);      // edge s2 == s3
+        if (ell2(0) < ell2(2)) ell2 = -ell2;
+        ell2.normalize();
+        Eigen::Vector3d nb1 = ell1.cross(Dm13);
+        Eigen::Vector3d nb2 = ell2.cross(Dm13);
+        const double dot12 = nb1.dot(ell2);
+        const double dot21 = nb2.dot(ell1);
+        if (!(dot12 > 0.0 || dot12 < 0.0) || !(dot21 > 0.0 || dot21 < 0.0))
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - degenerate Mohr-Coulomb boundary-plane geometry"
+                   << " -- rejecting step (ADR-97 P2)" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        const double sgn1 = (dot12 > 0.0) ? 1.0 : -1.0;
+        const double sgn2 = (dot21 > 0.0) ? 1.0 : -1.0;
+
+        // ---- region classification --------------------------------------
+        const Eigen::Vector3d dtr = xv - apexv;
+        const double pl1 = sgn1 * nb1.dot(dtr);
+        const double pl2 = sgn2 * nb2.dot(dtr);
+
+        Eigen::Vector3d yv;
+        Eigen::Matrix3d dydx = Eigen::Matrix3d::Zero();
+        const Eigen::Matrix3d I3 = Eigen::Matrix3d::Identity();
+        int region = 0;                      // 0 face, 1 edge s1==s2, 2 edge s2==s3, 3 apex
+
+        if (pl1 >= 0.0 && pl2 >= 0.0)
+        {
+            const double den = av[0].dot(Dm13);
+            if (!(den > MACHINE_EPSILON))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - singular Mohr-Coulomb face return (a . E m = " << den
+                       << ") -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            const double dl = (av[0].dot(xv) - k_coh) / den;
+            if (dl < 0.0)
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the Mohr-Coulomb face return produced a NEGATIVE"
+                       << " plastic multiplier (" << dl << ") from a trial state"
+                       << " outside the surface -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            yv = xv - dl * Dm13;
+            Eigen::Matrix3d outer = Dm13 * av[0].transpose();
+            dydx = I3 - outer / den;
+            region = 0;
+        }
+        else
+        {
+            const bool use1 = (pl1 < pl2);
+            const int t0 = use1 ? 0 : 2;     // LINE1 = (13,23); LINE2 = (12,13)
+            const int t1 = use1 ? 1 : 0;
+            Eigen::Matrix<double, 2, 3> Am;
+            Am.row(0) = av[t0].transpose();
+            Am.row(1) = av[t1].transpose();
+            Eigen::Matrix<double, 3, 2> Mm;
+            Mm.col(0) = mv[t0];
+            Mm.col(1) = mv[t1];
+            Eigen::Matrix<double, 3, 2> DM = D3 * Mm;
+            Eigen::Matrix2d ADM = Am * DM;
+            const double det = ADM(0, 0) * ADM(1, 1) - ADM(0, 1) * ADM(1, 0);
+            const double dscale = (ADM.cwiseAbs().maxCoeff() + MACHINE_EPSILON);
+            const double adet = (det < 0) ? -det : det;
+            if (!(adet > MACHINE_EPSILON * dscale * dscale))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - singular Mohr-Coulomb edge return (det A E M = "
+                       << det << ") -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            Eigen::Matrix2d ADMi;
+            ADMi(0, 0) =  ADM(1, 1) / det;  ADMi(0, 1) = -ADM(0, 1) / det;
+            ADMi(1, 0) = -ADM(1, 0) / det;  ADMi(1, 1) =  ADM(0, 0) / det;
+            Eigen::Vector2d rhs;
+            rhs(0) = av[t0].dot(xv) - k_coh;
+            rhs(1) = av[t1].dot(xv) - k_coh;
+            Eigen::Vector2d dl2 = ADMi * rhs;
+            Eigen::Vector3d yline = xv - DM * dl2;
+            const double tpar = (yline - apexv).dot(use1 ? ell1 : ell2);
+            if (tpar < 0.0)
+            {
+                // Beyond the apex along the edge: the vertex is the return.  The
+                // three Koiter multipliers there need NOT be positive for psi <
+                // phi, which is exactly why this is decided geometrically.
+                yv = apexv;
+                dydx.setZero();
+                region = 3;
+            }
+            else
+            {
+                yv = yline;
+                Eigen::Matrix<double, 3, 2> DMi = DM * ADMi;
+                Eigen::Matrix3d proj = DMi * Am;
+                dydx = I3 - proj;
+                region = use1 ? 1 : 2;
+            }
+        }
+
+        // ---- back to 6D --------------------------------------------------
+        Eigen::Matrix3d Sret = Q * yv.asDiagonal() * Q.transpose();
+        VoigtVector sigma_ret(Sret(0, 0), Sret(1, 1), Sret(2, 2),
+                              Sret(0, 1), Sret(1, 2), Sret(0, 2));
+        for (int i = 0; i < 6; ++i)
+        {
+            if (!(sigma_ret(i) == sigma_ret(i)))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - NaN in the principal-space Mohr-Coulomb return"
+                       << " -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+
+        // Admissibility, in TWO places, for two different reasons.
+        //
+        // (a) EXACTLY, in principal space, against ALL THREE surfaces of the
+        //     sextant.  This is where the return was computed and it is perfectly
+        //     conditioned, so it is the check that catches a coding error -- a
+        //     misclassified region, or an edge return that overshoots past a
+        //     third surface.
+        //
+        // (b) LOOSELY, against the header's own COMPOSITE f.  For plain
+        //     Mohr-Coulomb (b) is redundant with (a); for
+        //     MohrCoulombTensionCutoff it is the real gate, because this path is
+        //     only reached after `special_return` declined and the plain-MC
+        //     return it then performs must still respect the cutoff plane.  Its
+        //     tolerance is RELATIVE to the returned stress magnitude, NOT the
+        //     bare `yf_tolerance()`: that accessor defaults to the ABSOLUTE
+        //     `f_absolute_tol = 1e-6` (`f_relative_tol` defaults to 0), and on
+        //     the ADR-84 MCTC deck (kPa, |sigma| ~ 5.4e3, strength scale 94) the
+        //     header's f recomputed from the reassembled `Q diag(y) Q^T` is
+        //     3.4e-6 -- 6e-10 relative, i.e. round-off, amplified because an EDGE
+        //     return lands exactly on a corner where the Lode angle is ill
+        //     conditioned (dtheta/dJ3 ~ 1/cos(3 theta)).  Refusing on that would
+        //     be ADR-94 M5 again: the same model in Pa and in kPa disagreeing.
+        //     A genuine fall-through error is O(|sigma|), which 1e-8 relative
+        //     still catches by eight orders of magnitude.
+        double sig_max = 0.0;
+        for (int i = 0; i < 6; ++i)
+        {
+            const double a = (sigma_ret(i) < 0) ? -sigma_ret(i) : sigma_ret(i);
+            if (a > sig_max) sig_max = a;
+        }
+        double scale_ref = yf.strength_scale(iv_storage, parameters_storage);
+        if (scale_ref < 0) scale_ref = -scale_ref;
+        const double ref_mag = (sig_max > scale_ref) ? sig_max : scale_ref;
+        {
+            double f_princ = -1e300;
+            for (int t = 0; t < 3; ++t)
+            {
+                const double v = av[t].dot(yv) - k_coh;
+                if (v > f_princ) f_princ = v;
+            }
+            if (!(f_princ <= 1e-10 * ref_mag))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the principal-space return landed OUTSIDE the"
+                       << " Mohr-Coulomb cone (max_k a_k . y - k = " << f_princ
+                       << ", region " << region
+                       << ") -- rejecting step (ADR-97 P2)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        {
+            const double f_ret = yf(sigma_ret, iv_storage, parameters_storage);
+            const double tol_adm = (tol_f > 1e-8 * ref_mag) ? tol_f : 1e-8 * ref_mag;
+            if (!(f_ret <= tol_adm))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the principal-space return landed OUTSIDE this yield"
+                       << " function's own surface (f = " << f_ret << " > tol = "
+                       << tol_adm << ", region " << region
+                       << ") -- rejecting step (ADR-97 P2)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+
+        // ---- the Koiter tangent, rotated to the global Voigt frame -------
+        VoigtMatrix Tp = VoigtMatrix::Zero();
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) Tp(i, j) = dydx(i, j);
+        {
+            double xmax = 0.0;
+            for (int i = 0; i < 3; ++i)
+            {
+                const double a = (xv(i) < 0) ? -xv(i) : xv(i);
+                if (a > xmax) xmax = a;
+            }
+            const double eps_deg = 1e-9 * ((xmax > scale_ref) ? xmax : scale_ref);
+            static const int SIJ[3][2] = {{0, 1}, {1, 2}, {0, 2}};   // slots 3,4,5
+            for (int s = 0; s < 3; ++s)
+            {
+                const int i = SIJ[s][0], j = SIJ[s][1];
+                const double dx = xv(i) - xv(j);
+                const double adx = (dx < 0) ? -dx : dx;
+                Tp(3 + s, 3 + s) = (adx > eps_deg)
+                                   ? (yv(i) - yv(j)) / dx
+                                   : (dydx(i, i) - dydx(i, j));
+            }
+        }
+
+        VoigtMatrix Rs = VoigtMatrix::Zero();
+        VoigtMatrix Rsi = VoigtMatrix::Zero();
+        {
+            static const int BI[6][2] = {{0, 0}, {1, 1}, {2, 2}, {0, 1}, {1, 2}, {0, 2}};
+            for (int k = 0; k < 6; ++k)
+            {
+                Eigen::Matrix3d Ek = Eigen::Matrix3d::Zero();
+                Ek(BI[k][0], BI[k][1]) = 1.0;
+                Ek(BI[k][1], BI[k][0]) = 1.0;
+                Eigen::Matrix3d F  = Q * Ek * Q.transpose();
+                Eigen::Matrix3d Fi = Q.transpose() * Ek * Q;
+                for (int r = 0; r < 6; ++r)
+                {
+                    Rs(r, k)  = F(BI[r][0], BI[r][1]);
+                    Rsi(r, k) = Fi(BI[r][0], BI[r][1]);
+                }
+            }
+        }
+        VoigtMatrix RT   = Rs * Tp;
+        VoigtMatrix RTR  = RT * Rsi;
+        VoigtMatrix Calg = RTR * Eelastic;
+
+        // ---- plastic strain increment ------------------------------------
+        // d eps^p = E^{-1} (sigma_tr - sigma_ret): convention-safe (it never
+        // touches the engineering-shear factor of the principal flow vectors)
+        // and exact for every region including the vertex.
+        VoigtVector dep = VoigtVector::Zero();
+        {
+            Eigen::Matrix<double, 6, 6> Ee;
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j) Ee(i, j) = Eelastic(i, j);
+            Eigen::FullPivLU< Eigen::Matrix<double, 6, 6> > elu(Ee);
+            if (!elu.isInvertible())
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the elastic tangent is singular"
+                       << " -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            Eigen::Matrix<double, 6, 1> rhs6;
+            for (int i = 0; i < 6; ++i) rhs6(i) = sigma_tr(i) - sigma_ret(i);
+            Eigen::Matrix<double, 6, 1> d6 = elu.solve(rhs6);
+            for (int i = 0; i < 6; ++i) dep(i) = d6(i);
+        }
+
+        TrialStress         = sigma_ret;
+        TrialPlastic_Strain = CommitPlastic_Strain + dep;
+        cp_last_iterations  = 1;      // closed form: no Newton on any region
+        cp_apply_tangent_policy(Calg, Eelastic);
+
+        if (ladruno_strict_rejects("Closest_Point (principal)", TrialStress))
+            return LADRUNO_MATERIAL_REFUSED;
+        return 0;
+    }
+
+    //==================================================================================================
+    // Ladruno (ADR-97 wp/97d): PRINCIPAL-STRESS-SPACE closest-point return for the
+    // HOEK-BROWN family (Clausen & Damkilde 2008) -- a CURVED surface
+    //==================================================================================================
+    //
+    // WHY A THIRD ALGORITHM.  P1's smooth 6D Newton cannot be used: `HoekBrown_YF`
+    // has NO analytic gradient at all -- `YIELD_FUNCTION_STRESS_DERIVATIVE` central
+    // differences the COMPOSITE max(f_shear, f_tension) over the six raw Voigt
+    // slots, which picks up spurious gradient across the branch switch (ADR-94 M5)
+    // and across every principal-stress crossing.  P2's principal-space map cannot
+    // be used either: it projects onto PLANES in closed form, and the Hoek-Brown
+    // meridian is the curve
+    //     f_ij = y_i - y_j - sigma_ci * (s - mb*y_i/sigma_ci)^a ,   0 < a < 1
+    // (tension positive, y1 >= y2 >= y3; the header stores tension positive and
+    // negates internally, so `sigma_geo = -sigma` turns its (sigma_1, sigma_3)
+    // compression-positive pair into this (y_i, y_j) tension-positive one).
+    // So P3 keeps P2's PRINCIPAL SPACE and its back-transform, and replaces the
+    // closed-form projection with a small Newton on the curved surface.
+    //
+    // THE NATURAL VARIABLE (a requirement, not taste -- ADR-97 P0 measured it).
+    // With y1 as the Newton unknown the map DIVERGES near the apex: the surface
+    // exists only for arg = s - mb*y1/sigma_ci >= 0, the first step from the
+    // elastic predictor overshoots (arg = -2.2e-03 at iteration 1 on the oracle's
+    // own near-apex trial) and the next Jacobian is singular.  Substituting
+    //     arg = (w^2)^(1/a)   <=>   sigma_ci * arg^a = sigma_ci * w^2
+    // -- the surface's OWN variable, since sigma_ci*arg^a IS the strength term --
+    // gives  y1 = T - (sigma_ci/mb) (w^2)^(1/a)  and  f_13 = y1 - y3 - sigma_ci w^2:
+    // polynomial-smooth (2/a = 3.98 for the ADR-94 fixture) and feasible for ANY
+    // real w.  No clipping, no line search, no feasibility guard.  `(w*w)^(1/a)`
+    // rather than `w^(2/a)` because the latter is NaN for a negative iterate and
+    // the two agree for w > 0; the residual is then even in w, so a Newton that
+    // crosses zero converges to -w* and returns the SAME stress.
+    //
+    // NORMALIZED FLOW DIRECTION.  |m| ~ arg^(a-1) blows up exactly where the
+    // near-apex returns land (460.6 there against 3.9 on an ordinary face point).
+    // The residual therefore carries m/|m| with the multiplier rescaled by |m|;
+    // the returned stress is invariant, and the worst-case Newton count over the
+    // oracle's 400-trial scan plus every finite-difference stencil point drops
+    // from 6 to 5.
+    //
+    // THE POTENTIAL (ADR-97 P3 decision -- implemented here, NOT in the shipped
+    // `HoekBrown_PF::g`).  `HoekBrown_PF::g` is evaluated in the un-negated
+    // (tension-positive) frame while `HoekBrown_YF` negates first, and then
+    // destructures the ascending tuple as [sigma3, sigma2, sigma1] and feeds the
+    // tree's most COMPRESSIVE principal into arg = mb_psi*sigma3/sigma_ci + s.
+    // On any compressive state that arg is negative, so `g` always takes its
+    // `else` branch and collapses to a TRESCA potential: `HB_mb_psi` has NO
+    // effect, the flow is exactly non-dilatant, it sits 32.86 deg off the surface
+    // normal even at mb_psi == mb (where the deck is asking for ASSOCIATED flow),
+    // and at the apex all six of its flow directions have negative trace, so the
+    // hydrostatic direction is not in its return cone and a trial pushed past the
+    // tensile corner has NO return to the apex at all -- the mechanism behind the
+    // residual recorded in tests/test_adr94_hlist_hb.py.  `Closest_Point` uses the
+    // FRAME-CONSISTENT potential below in its own code path; the shipped `g` is
+    // untouched, so `Backward_Euler` stays byte-identical (ADR-97 D1) and the
+    // difference is PINNED by a test rather than hidden.  Fixing the shipped `g`
+    // is the owner's separate PR (see LEDGER_quirks and the ADR implementation
+    // log).  When HB_mb_psi == HB_mb the potential below IS the yield function's
+    // own gradient, i.e. associated flow is exact under Closest_Point.
+    //
+    // THE TENSION BRANCH IS INERT ON THE SURFACE, so there is no tension-plane
+    // return and none is missing: f_shear <= 0 already forces y1 <= T (above the
+    // apex the clamp leaves f_shear = y1 - y3 > 0 for every non-hydrostatic
+    // state), so the composite's zero set is the HB shear surface plus its own
+    // natural vertex T*[1,1,1] -- 0 of 4000 surface points sampled by the P0
+    // oracle have f_tension winning, with min(f_shear - f_tension) = 1.0e-04.
+    // Outside the domain the tension branch wins exactly on {y1 > T and y3 > T},
+    // which IS the header's CHECK_APEX_REGION set.  A Rankine return onto the
+    // plane y1 = T from the oracle's [645, 265, 255] trial leaves
+    // f_shear = +123.34 kPa (2.31 % of the strength scale) -- INADMISSIBLE.  The
+    // shear/tension corner IS the apex.
+    //
+    // REGION SELECTION.  Not boundary PLANES (P2's construction needs a
+    // piecewise-linear surface).  APEX: the elastic domain's tangent cone at the
+    // vertex is exactly the negative octant (the meridian meets the hydrostatic
+    // axis vertically, df/dy1 -> inf), so the apex region is exactly
+    // apex + cone{D3 m_ij(apex)} -- for associated flow that is apex + D3*(the
+    // positive octant), i.e. C3 (x_tr - apex) >= 0.  The header's
+    // CHECK_APEX_REGION is the EUCLIDEAN octant x_tr >= T, and D3*(octant) is a
+    // STRICT subset of the octant, so the header always OVER-claims: 32 of the
+    // oracle's 400 scanned trials disagree, and on [645, 265, 255] APEX_STRESS
+    // would commit T*[1,1,1] instead of the correct face return -- 122.6 kPa
+    // (2.29 % of the strength scale) of silently lost strength.  `Closest_Point`
+    // classifies here, where E is in scope, and does not call CHECK_APEX_REGION.
+    // FACE vs EDGE: a curved surface has no precomputed boundary planes, but
+    // their defining property survives -- the boundary is the ruled surface where
+    // the FACE return lands on the edge, so the face return's OWN margins
+    // y1 - y2 and y2 - y3 are the exact signed boundary functions.
+    //
+    // The elastic domain is CONVEX (-sigma_ci*arg^a is convex in y1: arg affine,
+    // 0 < a < 1; a max of such functions over the six permutations stays convex),
+    // so the elastic-metric closest point is unique and KKT is SUFFICIENT.  The
+    // oracle's 400-trial scan closes at a max return-direction residual of
+    // 1.672e-14 with every Koiter multiplier >= 0, which is a PROOF that no trial
+    // is misclassified, not a spot check.
+    //
+    // `Backward_Euler` is untouched (ADR-97 D1).
+
+    // Every constant the HB return needs, read ONCE per call from the yield
+    // function and the plastic flow direction (never re-read inside the Newton).
+    struct hb_consts_t
+    {
+        double sigci, mb, s, a, mb_psi, T, scale;
+        Eigen::Matrix3d D3;
+    };
+
+    // arg = s - mb_psi*y_i/sigma_ci, floored so pow(0, a-1) cannot become inf.
+    // The floor is RELATIVE to s (ADR-94 M5: an absolute one reintroduces the
+    // unit dependence) and is nine orders below anything a converged return can
+    // produce, so it can only ever fire on a diverging iterate.
+    double hb_arg_floor(const hb_consts_t& C) const
+    {
+        const double sc = (C.s > 0.0) ? C.s : 1.0;
+        return 1e-30 * sc;
+    }
+
+    // df/dy for the pair (i, j) -- the TRUE gradient of the surface this map
+    // returns to.  Used only for the start guess (the residual carries the yield
+    // row in the natural variable instead), and NEVER the header's central
+    // difference of the composite max().
+    void hb_a_ij(const hb_consts_t& C, const Eigen::Vector3d& y, int i, int j,
+                 Eigen::Vector3d& out) const
+    {
+        double arg = C.s - C.mb * y(i) / C.sigci;
+        const double fl = hb_arg_floor(C);
+        if (!(arg > fl)) arg = fl;
+        out.setZero();
+        out(i) = 1.0 + C.a * C.mb * std::pow(arg, C.a - 1.0);
+        out(j) = -1.0;
+    }
+
+    // The FRAME-CONSISTENT Hoek-Brown potential's gradient (see the block comment):
+    //     g_ij = y_i - y_j - sigma_ci (s - mb_psi y_i/sigma_ci)^a
+    // which is a_ij exactly when mb_psi == mb (associated flow).
+    void hb_m_ij(const hb_consts_t& C, const Eigen::Vector3d& y, int i, int j,
+                 Eigen::Vector3d& out) const
+    {
+        double argp = C.s - C.mb_psi * y(i) / C.sigci;
+        const double fl = hb_arg_floor(C);
+        if (!(argp > fl)) argp = fl;
+        out.setZero();
+        out(i) = 1.0 + C.a * C.mb_psi * std::pow(argp, C.a - 1.0);
+        out(j) = -1.0;
+    }
+
+    // dm/dy has ONE non-zero entry, at (i, i).  This IS the curvature term that
+    // the algorithmic tangent needs and that the P3 mutation gate removes.
+    double hb_dm_ii(const hb_consts_t& C, const Eigen::Vector3d& y, int i) const
+    {
+        double argp = C.s - C.mb_psi * y(i) / C.sigci;
+        const double fl = hb_arg_floor(C);
+        if (!(argp > fl)) argp = fl;
+        return -C.a * (C.a - 1.0) * C.mb_psi * C.mb_psi / C.sigci
+               * std::pow(argp, C.a - 2.0);
+    }
+
+    // The header's OWN composite, mirrored in principal space (y DESCENDING).
+    double hb_f_composite(const hb_consts_t& C, const Eigen::Vector3d& yd,
+                          double* fs_out, double* ft_out) const
+    {
+        double arg = C.s - C.mb * yd(0) / C.sigci;
+        if (!(arg > 0.0)) arg = 0.0;
+        const double fs = yd(0) - yd(2) - C.sigci * std::pow(arg, C.a);
+        const double ft = yd(0) - C.T;
+        if (fs_out) *fs_out = fs;
+        if (ft_out) *ft_out = ft;
+        return (fs > ft) ? fs : ft;
+    }
+
+    // Round-off floor of f at y -- NOT a fudge factor.  |df/dy1| = 1 + a mb
+    // arg^(a-1) DIVERGES at the apex, so a last-ulp error in y1 carries
+    // eps*|y1|*|df/dy1| into f and an ABSOLUTE gate is unattainable within
+    // ~1e-2 kPa of the vertex (the oracle measures max|f| = 1.08e-10 against its
+    // own floor of 1.16e-08 there).  This is the Hoek-Brown instance of ADR-94's
+    // f_relative_tol lesson: scale the yield tolerance by the GRADIENT, not by
+    // sigma_ci.  64 ulp rather than the oracle's 4, because the C++ path
+    // reassembles through a spectral decomposition the oracle does not.
+    double hb_f_floor(const hb_consts_t& C, const Eigen::Vector3d& yd) const
+    {
+        double arg = C.s - C.mb * yd(0) / C.sigci;
+        const double fl = hb_arg_floor(C);
+        if (!(arg > fl)) arg = fl;
+        const double cond = 1.0 + C.a * C.mb * std::pow(arg, C.a - 1.0);
+        const double y0 = (yd(0) < 0) ? -yd(0) : yd(0);
+        const double mag = (y0 > C.scale) ? y0 : C.scale;
+        return 64.0 * MACHINE_EPSILON * mag * cond;
+    }
+
+    // Region layout.  nshape + ndl == 4 on every region, so the Newton system is
+    // 4x4 everywhere.  key[] indexes the sextant's surfaces in the SAME order
+    // P2 uses: 0 = (1,3), 1 = (2,3), 2 = (1,2), in 0-based principal slots.
+    static void hb_layout(int region, int& ndl, int& nshape, int* key)
+    {
+        if (region == 0)      { ndl = 1; nshape = 3; key[0] = 0; key[1] = -1; }
+        else if (region == 1) { ndl = 2; nshape = 2; key[0] = 0; key[1] = 1; }
+        else                  { ndl = 2; nshape = 2; key[0] = 2; key[1] = 0; }
+    }
+
+    // Unknowns -> principal stresses, with the EDGE CONSTRAINT BUILT IN.  One
+    // surface row then suffices on an edge: f_13 and f_23 share a root iff
+    // y1 == y2 (y - sigma_ci arg(y)^a is strictly increasing), and likewise
+    // f_12 / f_13 iff y2 == y3.
+    void hb_y_of(const hb_consts_t& C, const double* z, int region,
+                 Eigen::Vector3d& y) const
+    {
+        const double y1 = C.T - (C.sigci / C.mb) * std::pow(z[0] * z[0], 1.0 / C.a);
+        if (region == 0)      { y(0) = y1; y(1) = z[1]; y(2) = z[2]; }
+        else if (region == 1) { y(0) = y1; y(1) = y1;   y(2) = z[1]; }
+        else                  { y(0) = y1; y(1) = z[1]; y(2) = z[1]; }
+    }
+
+    // Residual (and, when J != 0, the ANALYTIC Jacobian at the same point) of
+    //     R_y = y(z) - x + sum_k dl_k D3 mhat_k(y)          (3 rows)
+    //     R_f = (y_i - y_j) - sigma_ci w^2                  (1 row)
+    bool hb_assemble(const hb_consts_t& C, const Eigen::Vector3d& x, int region,
+                     const double* z, Eigen::Vector4d& R,
+                     Eigen::Matrix4d* J, Eigen::Vector3d& y_out,
+                     Eigen::Matrix3d& Ydz_out) const
+    {
+        static const int PIJ[3][2] = {{0, 2}, {1, 2}, {0, 1}};
+        int ndl = 0, nshape = 0, key[2] = {0, 0};
+        hb_layout(region, ndl, nshape, key);
+
+        Eigen::Vector3d y;
+        hb_y_of(C, z, region, y);
+        y_out = y;
+
+        const double w = z[0];
+        const double dy1dw = -(C.sigci / C.mb) * (2.0 / C.a) * w
+                             * std::pow(w * w, 1.0 / C.a - 1.0);
+
+        Eigen::Matrix3d Ydz = Eigen::Matrix3d::Zero();
+        if (region == 0)
+        {
+            Ydz(0, 0) = dy1dw;
+            Ydz(1, 1) = 1.0;
+            Ydz(2, 2) = 1.0;
+        }
+        else if (region == 1)
+        {
+            Ydz(0, 0) = dy1dw;  Ydz(1, 0) = dy1dw;
+            Ydz(2, 1) = 1.0;
+        }
+        else
+        {
+            Ydz(0, 0) = dy1dw;
+            Ydz(1, 1) = 1.0;    Ydz(2, 1) = 1.0;
+        }
+        Ydz_out = Ydz;
+
+        Eigen::Vector3d corr = Eigen::Vector3d::Zero();
+        Eigen::Vector3d mh[2], Dmh[2];
+        double dscale[2] = {0.0, 0.0};
+        int    dslot[2]  = {0, 0};
+        for (int k = 0; k < ndl; ++k)
+        {
+            const int t = key[k], i = PIJ[t][0], jj = PIJ[t][1];
+            Eigen::Vector3d mv;
+            hb_m_ij(C, y, i, jj, mv);
+            const double nm = mv.norm();
+            if (!(nm > 0.0)) return false;
+            mh[k]  = mv / nm;
+            Dmh[k] = C.D3 * mh[k];
+            corr  += z[nshape + k] * Dmh[k];
+            dscale[k] = hb_dm_ii(C, y, i) / nm;
+            dslot[k]  = i;
+        }
+
+        const int fi = PIJ[key[0]][0], fj = PIJ[key[0]][1];
+        R(0) = y(0) - x(0) + corr(0);
+        R(1) = y(1) - x(1) + corr(1);
+        R(2) = y(2) - x(2) + corr(2);
+        R(3) = (y(fi) - y(fj)) - C.sigci * w * w;
+        for (int i = 0; i < 4; ++i)
+            if (!(R(i) == R(i))) return false;
+
+        if (J == 0) return true;
+
+        // A = I + sum_k dl_k D3 (dmhat_k/dy).  mhat = m/|m| so
+        // dmhat/dy = (1/|m|)(I - mhat mhat^T) dm/dy, and dm/dy has ONE non-zero
+        // column, so each k contributes exactly one rank-one column update.
+        // Two surfaces of an edge CAN share the slot (LINE2 is (1,2) and (1,3),
+        // both differentiating y1), hence the accumulation.
+        Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
+        for (int k = 0; k < ndl; ++k)
+        {
+            const int i = dslot[k];
+            Eigen::Vector3d col = Eigen::Vector3d::Zero();
+            col(i) = 1.0;
+            col -= mh[k](i) * mh[k];
+            Eigen::Vector3d contrib = C.D3 * col;
+            A.col(i) += (z[nshape + k] * dscale[k]) * contrib;
+        }
+
+        Eigen::Matrix3d AY = A * Ydz;
+        Eigen::Matrix4d& Jm = *J;
+        Jm.setZero();
+        for (int c = 0; c < nshape; ++c)
+            for (int r = 0; r < 3; ++r) Jm(r, c) = AY(r, c);
+        for (int k = 0; k < ndl; ++k)
+            for (int r = 0; r < 3; ++r) Jm(r, nshape + k) = Dmh[k](r);
+
+        Eigen::Vector3d gf = Eigen::Vector3d::Zero();
+        gf(fi) = 1.0;
+        gf(fj) = -1.0;
+        for (int c = 0; c < nshape; ++c)
+            Jm(3, c) = gf.dot(Ydz.col(c)) - ((c == 0) ? 2.0 * C.sigci * w : 0.0);
+        return true;
+    }
+
+    // Elastic predictor in the natural variable (seed sigma_ci w^2 with the
+    // trial's own spread, keep the start sorted) PLUS the first-order
+    // cutting-plane multiplier f/(a . D3 mhat).  Measured by the P0 oracle over
+    // 400+ random trials: with dl = 0 the worst case is 6 Newton iterations,
+    // with this seed it is 5.
+    void hb_start(const hb_consts_t& C, const Eigen::Vector3d& x, int region,
+                  double* z) const
+    {
+        int ndl = 0, nshape = 0, key[2] = {0, 0};
+        hb_layout(region, ndl, nshape, key);
+        double sp = x(0) - x(2);
+        if (!(sp > 1e-12)) sp = 1e-12;
+        z[0] = std::sqrt(sp / C.sigci);
+        z[1] = z[2] = z[3] = 0.0;
+        if (region == 0)      { z[1] = x(1); z[2] = x(2); }
+        else if (region == 1) { z[1] = x(2); }
+        else                  { z[1] = x(1); }
+        const double y1 = C.T - (C.sigci / C.mb) * std::pow(z[0] * z[0], 1.0 / C.a);
+        if (z[1] > y1) z[1] = y1;
+        if (region == 0 && z[2] > y1) z[2] = y1;
+
+        Eigen::Vector3d y0;
+        hb_y_of(C, z, region, y0);
+        Eigen::Vector3d yd = y0;
+        for (int p = 0; p < 2; ++p)
+            for (int q = 0; q < 2 - p; ++q)
+                if (yd(q) < yd(q + 1)) { const double t = yd(q); yd(q) = yd(q + 1); yd(q + 1) = t; }
+
+        Eigen::Vector3d av, mv;
+        hb_a_ij(C, y0, 0, 2, av);
+        hb_m_ij(C, y0, 0, 2, mv);
+        const double nm = mv.norm();
+        double f0 = hb_f_composite(C, yd, 0, 0);
+        if (f0 < 0.0) f0 = 0.0;
+        double den = 0.0;
+        if (nm > 0.0)
+        {
+            Eigen::Vector3d Dm = C.D3 * (mv / nm);
+            den = av.dot(Dm);
+        }
+        z[nshape] = (den > 0.0) ? (f0 / den) : 0.0;
+    }
+
+    // Newton on one region.  Converged when the residual reaches the yield
+    // tolerance floor OR the correction stagnates at round-off -- the second
+    // exit matters near the apex, where the residual floor is set by the
+    // diverging gradient rather than by the tolerance.
+    bool hb_solve(const hb_consts_t& C, const Eigen::Vector3d& x, int region,
+                  double* z, int max_iter, double tol_R, int& iters,
+                  Eigen::Vector3d& y, Eigen::Matrix3d& Ydz,
+                  Eigen::Matrix4d& J) const
+    {
+        hb_start(C, x, region, z);
+        iters = 0;
+        Eigen::Vector4d R;
+        for (int it = 0; it < max_iter; ++it)
+        {
+            if (!hb_assemble(C, x, region, z, R, &J, y, Ydz)) return false;
+            double rn = 0.0;
+            for (int i = 0; i < 4; ++i)
+            {
+                const double a = (R(i) < 0) ? -R(i) : R(i);
+                if (a > rn) rn = a;
+            }
+            if (rn <= tol_R) return true;
+
+            Eigen::FullPivLU<Eigen::Matrix4d> lu(J);
+            if (!lu.isInvertible()) return false;
+            Eigen::Vector4d dz = lu.solve(R);
+            double zn = 1.0, dn = 0.0;
+            for (int i = 0; i < 4; ++i)
+            {
+                if (!(dz(i) == dz(i))) return false;
+                const double az = (z[i] < 0) ? -z[i] : z[i];
+                if (az > zn) zn = az;
+                const double ad = (dz(i) < 0) ? -dz(i) : dz(i);
+                if (ad > dn) dn = ad;
+            }
+            for (int i = 0; i < 4; ++i) z[i] -= dz(i);
+            ++iters;
+            if (dn <= 1e-13 * zn)
+            {
+                // at the round-off floor: re-form at the accepted point so `J`,
+                // `y` and `Ydz` belong to the state that is returned.
+                if (!hb_assemble(C, x, region, z, R, &J, y, Ydz)) return false;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Is `d` in the cone of return directions at the apex?  The generators are
+    // the six limiting directions D3 m_ij(apex), taken at apex*(1 - 1e-9) exactly
+    // as the P0 oracle does (m_ij diverges AT the vertex).  For associated flow
+    // they collapse to D3*(the positive octant), i.e. C3 (x - apex) >= 0, which
+    // is what the oracle's README states as the exact apex region.
+    //
+    // Membership is decided by the DUAL (facet) test: for a POINTED,
+    // FULL-DIMENSIONAL polyhedral cone in R^3 the extreme rays of the dual are
+    // among the pairwise cross products of the generators, so d is in the cone
+    // iff every supporting normal has n . d >= 0.  Pointedness is guaranteed
+    // here, not assumed: every m_ij has component sum M - 1 > 0 (M = 1 + a mb_psi
+    // arg^(a-1) > 1) and D3 is positive definite with
+    // trace(D3 m) = (3 lambda + 2 mu) sum(m) > 0, so all six generators lie
+    // strictly inside the half space trace > 0.  Near-duplicate generators (the
+    // associated case pairs them) are removed first, so a cross product of two
+    // copies of the same ray cannot masquerade as a facet.
+    bool hb_in_apex_cone(const hb_consts_t& C, const Eigen::Vector3d& d) const
+    {
+        static const int OP[6][2] = {{0, 1}, {0, 2}, {1, 0}, {1, 2}, {2, 0}, {2, 1}};
+        Eigen::Vector3d G[6];
+        int nG = 0;
+        Eigen::Vector3d ye = Eigen::Vector3d::Constant(C.T - 1e-9 * C.T);
+        for (int k = 0; k < 6; ++k)
+        {
+            Eigen::Vector3d mv;
+            hb_m_ij(C, ye, OP[k][0], OP[k][1], mv);
+            Eigen::Vector3d gv = C.D3 * mv;
+            const double n = gv.norm();
+            if (!(n > 0.0)) continue;
+            gv /= n;
+            bool dup = false;
+            for (int q = 0; q < nG; ++q)
+                if ((G[q] - gv).norm() <= 1e-4) { dup = true; break; }
+            if (!dup) G[nG++] = gv;
+        }
+        const double nd = d.norm();
+        if (!(nd > 0.0)) return true;
+        if (nG < 3) return false;
+
+        bool any_facet = false;
+        for (int p = 0; p < nG; ++p)
+            for (int q = p + 1; q < nG; ++q)
+            {
+                Eigen::Vector3d nv = G[p].cross(G[q]);
+                const double nn = nv.norm();
+                if (!(nn > 1e-3)) continue;
+                nv /= nn;
+                int npos = 0, nneg = 0;
+                for (int k = 0; k < nG; ++k)
+                {
+                    const double v = nv.dot(G[k]);
+                    if (v >  1e-9) ++npos;
+                    if (v < -1e-9) ++nneg;
+                }
+                double sgn = 0.0;
+                if (nneg == 0)      sgn =  1.0;
+                else if (npos == 0) sgn = -1.0;
+                else continue;
+                any_facet = true;
+                if (sgn * nv.dot(d) < -1e-12 * nd) return false;
+            }
+        return any_facet;
+    }
+
+    // apex (exact elastic-metric cone test) -> face -> edge (ordered by the FACE
+    // return's own margins, which ARE the exact signed boundary functions of a
+    // curved surface) -> apex as the fallback.  Returns the region, and leaves
+    // the ACCEPTED region's converged Newton state in z / y / Ydz / J so the
+    // tangent reuses the factorization-point data (no second solve).
+    int hb_classify(const hb_consts_t& C, const Eigen::Vector3d& x,
+                    int max_iter, double tol_R, double* z, int& iters,
+                    Eigen::Vector3d& y, Eigen::Matrix3d& Ydz,
+                    Eigen::Matrix4d& J) const
+    {
+        if (hb_in_apex_cone(C, Eigen::Vector3d(x - Eigen::Vector3d::Constant(C.T))))
+            return 3;
+
+        int order[2] = {1, 2};
+        double zf[4] = {0., 0., 0., 0.};
+        int itf = 0;
+        Eigen::Vector3d yf;
+        Eigen::Matrix3d Yf;
+        Eigen::Matrix4d Jf;
+        if (hb_solve(C, x, 0, zf, max_iter, tol_R, itf, yf, Yf, Jf))
+        {
+            const double m0 = yf(0) - yf(1);
+            const double m1 = yf(1) - yf(2);
+            if (m0 >= 0.0 && m1 >= 0.0)
+            {
+                for (int i = 0; i < 4; ++i) z[i] = zf[i];
+                iters = itf; y = yf; Ydz = Yf; J = Jf;
+                return 0;
+            }
+            if (m0 >= m1) { order[0] = 2; order[1] = 1; }
+        }
+
+        for (int q = 0; q < 2; ++q)
+        {
+            const int reg = order[q];
+            double ze[4] = {0., 0., 0., 0.};
+            int ite = 0;
+            Eigen::Vector3d ye;
+            Eigen::Matrix3d Ye;
+            Eigen::Matrix4d Je;
+            if (!hb_solve(C, x, reg, ze, max_iter, tol_R, ite, ye, Ye, Je))
+                continue;
+            int ndl = 0, nshape = 0, key[2] = {0, 0};
+            hb_layout(reg, ndl, nshape, key);
+            bool ok = true;
+            for (int k = 0; k < ndl; ++k)
+                if (!(ze[nshape + k] >= -1e-12)) ok = false;
+            Eigen::Vector3d yd = ye;
+            for (int p = 0; p < 2; ++p)
+                for (int r = 0; r < 2 - p; ++r)
+                    if (yd(r) < yd(r + 1)) { const double t = yd(r); yd(r) = yd(r + 1); yd(r + 1) = t; }
+            if (ok && hb_f_composite(C, yd, 0, 0) <= 1e-8 * C.scale)
+            {
+                for (int i = 0; i < 4; ++i) z[i] = ze[i];
+                iters = ite; y = ye; Ydz = Ye; J = Je;
+                return reg;
+            }
+        }
+        return 3;
+    }
+
+    int cp_hb_return(const VoigtVector& depsilon,
+                     const VoigtVector& sigma_tr,
+                     const VoigtMatrix& Eelastic,
+                     double tol_f, int max_iter)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+        (void) depsilon;
+
+        // ---- surface / potential constants -------------------------------
+        hb_consts_t C;
+        double pf_sigci = 0.0, pf_s = 0.0, pf_a = 0.0;
+        if (!yf.cp_hb_face_params(iv_storage, parameters_storage,
+                                  C.sigci, C.mb, C.s, C.a)
+                || !pf.cp_hb_flow_params(iv_storage, parameters_storage,
+                                         pf_sigci, C.mb_psi, pf_s, pf_a))
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - this yield function / plastic flow pair is marked as a"
+                   << " principal-space Hoek-Brown family but does not supply the"
+                   << " surface parameters (ADR-97 P3) -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        {
+            // The two functors share ONE HB_sigci / HB_s / HB_a parameter object
+            // (utuple_storage de-duplicates parameters by type), so a mismatch
+            // here can only mean the traits were widened to a pair that does not
+            // actually share them.  Refuse rather than return to a surface the
+            // potential does not know about.
+            const double d1 = pf_sigci - C.sigci, d2 = pf_s - C.s, d3 = pf_a - C.a;
+            if ((d1 > 1e-12 * C.sigci) || (d1 < -1e-12 * C.sigci)
+                    || (d2 > 1e-12) || (d2 < -1e-12)
+                    || (d3 > 1e-12) || (d3 < -1e-12))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the Hoek-Brown yield function and plastic flow"
+                       << " direction disagree on (sigma_ci, s, a)"
+                       << " -- rejecting step (ADR-97 P3)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        if (!(C.sigci > 0.0) || !(C.mb > 100 * MACHINE_EPSILON) || !(C.s > 0.0)
+                || !(C.a > 0.0) || !(C.a < 1.0) || !(C.mb_psi > 0.0))
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - integration_method Closest_Point needs HB_sigci > 0,"
+                   << " HB_mb > 0, HB_s > 0, HB_mb_psi > 0 and 0 < HB_a < 1"
+                   << " (got sigci = " << C.sigci << ", mb = " << C.mb
+                   << ", s = " << C.s << ", a = " << C.a
+                   << ", mb_psi = " << C.mb_psi << ")"
+                   << " -- rejecting step (ADR-97 P3). Use Backward_Euler."
+                   << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        if (C.mb_psi > C.mb * (1.0 + 1e-12))
+        {
+            // mb_psi > mb is dilation in excess of friction: the potential's own
+            // arg goes NEGATIVE on the surface, where the flow direction does not
+            // exist.  No registered deck does this; refuse rather than clamp.
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - HB_mb_psi (" << C.mb_psi << ") exceeds HB_mb (" << C.mb
+                   << "): the Hoek-Brown flow potential is then undefined on part"
+                   << " of its own yield surface -- rejecting step (ADR-97 P3)"
+                   << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        C.T = C.s * C.sigci / C.mb;
+        C.scale = C.sigci * std::pow(C.s, C.a);
+
+        // ---- isotropy of the elastic tangent -----------------------------
+        const double lam = Eelastic(0, 1);
+        const double Gmu = (Eelastic(0, 0) - Eelastic(0, 1)) / 2.0;
+        {
+            const double sE = ((Eelastic(0, 0) < 0) ? -Eelastic(0, 0) : Eelastic(0, 0))
+                              + ((Gmu < 0) ? -Gmu : Gmu);
+            const double t = 1e-8 * sE;
+            const double d02 = Eelastic(0, 2) - lam;
+            const double d12 = Eelastic(1, 2) - lam;
+            const double d33 = Eelastic(3, 3) - Gmu;
+            const double d11 = Eelastic(1, 1) - Eelastic(0, 0);
+            if (!(Gmu > 0.0)
+                    || (d02 > t) || (d02 < -t) || (d12 > t) || (d12 < -t)
+                    || (d33 > t) || (d33 < -t) || (d11 > t) || (d11 < -t))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the principal-space Hoek-Brown return needs an"
+                       << " ISOTROPIC elastic tangent -- rejecting step (ADR-97 P3)"
+                       << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                C.D3(i, j) = lam + ((i == j) ? 2.0 * Gmu : 0.0);
+
+        // ---- spectral decomposition of the TRIAL stress, DESCENDING ------
+        Eigen::Matrix3d st;
+        st << sigma_tr.v11(), sigma_tr.v12(), sigma_tr.v13(),
+              sigma_tr.v12(), sigma_tr.v22(), sigma_tr.v23(),
+              sigma_tr.v13(), sigma_tr.v23(), sigma_tr.v33();
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(st);
+        if (es.info() != Eigen::Success)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the trial stress eigen-decomposition failed"
+                   << " -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        Eigen::Vector3d xv;
+        Eigen::Matrix3d Q;
+        for (int i = 0; i < 3; ++i)          // eigenvalues come out ASCENDING
+        {
+            xv(i) = es.eigenvalues()(2 - i);
+            Q.col(i) = es.eigenvectors().col(2 - i);
+        }
+
+        double xmax = 0.0;
+        for (int i = 0; i < 3; ++i)
+        {
+            const double a = (xv(i) < 0) ? -xv(i) : xv(i);
+            if (a > xmax) xmax = a;
+        }
+        const double scale_x = (xmax > C.scale) ? xmax : C.scale;
+        double tol_R = 1e-14 * scale_x;
+        {
+            const double floor_R = 64.0 * MACHINE_EPSILON * scale_x;
+            if (floor_R > tol_R) tol_R = floor_R;
+        }
+
+        // ---- region + return ---------------------------------------------
+        double z[4] = {0., 0., 0., 0.};
+        int iters = 0;
+        Eigen::Vector3d yv = Eigen::Vector3d::Zero();
+        Eigen::Matrix3d Ydz = Eigen::Matrix3d::Zero();
+        Eigen::Matrix4d J = Eigen::Matrix4d::Zero();
+        const int region = hb_classify(C, xv, max_iter, tol_R, z, iters,
+                                       yv, Ydz, J);
+
+        Eigen::Matrix3d dydx = Eigen::Matrix3d::Zero();
+        if (region == 3)
+        {
+            // The vertex does not move, so the consistent tangent is EXACTLY the
+            // zero matrix -- rank 0, as for the Drucker-Prager (P1) and
+            // Mohr-Coulomb (P2) apices.  That is rank deficient by construction
+            // and WILL make an element whose every Gauss point sits at the apex
+            // singular, which is the true state of affairs.
+            yv = Eigen::Vector3d::Constant(C.T);
+            iters = 1;
+        }
+        else
+        {
+            int ndl = 0, nshape = 0, key[2] = {0, 0};
+            hb_layout(region, ndl, nshape, key);
+            Eigen::FullPivLU<Eigen::Matrix4d> lu(J);
+            if (!lu.isInvertible())
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the converged Hoek-Brown Jacobian is singular, so"
+                       << " no algorithmic tangent exists (region " << region
+                       << ") -- rejecting step (ADR-97 P3)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            // dz/dx from the converged system (dR/dx = -I on the three stress
+            // rows), then dy/dx = (dy/dz)(dz/dx).  The curvature term dm/dy is
+            // ALREADY inside J -- it is the `dl * D3 dmhat/dy` block of A.
+            Eigen::Matrix<double, 4, 3> rhs = Eigen::Matrix<double, 4, 3>::Zero();
+            for (int i = 0; i < 3; ++i) rhs(i, i) = 1.0;
+            Eigen::Matrix<double, 4, 3> Z = lu.solve(rhs);
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c)
+                {
+                    double v = 0.0;
+                    for (int k = 0; k < nshape; ++k) v += Ydz(r, k) * Z(k, c);
+                    dydx(r, c) = v;
+                }
+            if (!(yv(0) >= yv(1) - 1e-9 * scale_x)
+                    || !(yv(1) >= yv(2) - 1e-9 * scale_x))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the Hoek-Brown return broke the principal ordering"
+                       << " (region " << region << ", y = " << yv(0) << " "
+                       << yv(1) << " " << yv(2) << ") -- rejecting step (ADR-97 P3)"
+                       << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+
+        // ---- admissibility, in TWO places, for two different reasons ------
+        // (a) EXACTLY, in principal space, against the composite this map
+        //     mirrors.  Perfectly conditioned; this is the check that catches a
+        //     coding error.  Its tolerance carries the GRADIENT-scaled floor
+        //     (hb_f_floor): |df/dy1| diverges at the apex, so an absolute gate is
+        //     unattainable within ~1e-2 kPa of the vertex.
+        // (b) LOOSELY, against the header's own 6D f recomputed from the
+        //     reassembled Q diag(y) Q^T.  Redundant with (a) up to the spectral
+        //     round-trip, which is exactly what it is there to bound.
+        double sig_max = 0.0;
+        Eigen::Matrix3d Sret = Q * yv.asDiagonal() * Q.transpose();
+        VoigtVector sigma_ret(Sret(0, 0), Sret(1, 1), Sret(2, 2),
+                              Sret(0, 1), Sret(1, 2), Sret(0, 2));
+        for (int i = 0; i < 6; ++i)
+        {
+            if (!(sigma_ret(i) == sigma_ret(i)))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - NaN in the principal-space Hoek-Brown return"
+                       << " (region " << region << ") -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            const double av = (sigma_ret(i) < 0) ? -sigma_ret(i) : sigma_ret(i);
+            if (av > sig_max) sig_max = av;
+        }
+        double scale_ref = yf.strength_scale(iv_storage, parameters_storage);
+        if (scale_ref < 0) scale_ref = -scale_ref;
+        const double ref_mag = (sig_max > scale_ref) ? sig_max : scale_ref;
+        const double f_floor = hb_f_floor(C, yv);
+        {
+            double gate = 1e-10 * ref_mag;
+            if (tol_f > gate)   gate = tol_f;
+            if (f_floor > gate) gate = f_floor;
+            const double f_pr = hb_f_composite(C, yv, 0, 0);
+            if (!(f_pr <= gate))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the principal-space return landed OUTSIDE the"
+                       << " Hoek-Brown surface (f = " << f_pr << " > tol = " << gate
+                       << ", region " << region << ") -- rejecting step (ADR-97 P3)"
+                       << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+        {
+            double gate = 1e-8 * ref_mag;
+            if (tol_f > gate)   gate = tol_f;
+            if (f_floor > gate) gate = f_floor;
+            const double f_ret = yf(sigma_ret, iv_storage, parameters_storage);
+            if (!(f_ret <= gate))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the reassembled Hoek-Brown return is outside this"
+                       << " yield function's own surface (f = " << f_ret
+                       << " > tol = " << gate << ", region " << region
+                       << ") -- rejecting step (ADR-97 P3)" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+        }
+
+        // ---- the tangent, rotated to the global Voigt frame ---------------
+        // Identical construction to P2 (cp_principal_return): the normal block is
+        // dy/dx, the shear slots the eigenprojection ROTATION term
+        // (y_i - y_j)/(x_i - x_j) with the l'Hopital limit dy_i/dx_i - dy_i/dx_j
+        // on a degenerate trial eigenvalue, and Rs^-1 built as the Voigt image of
+        // E -> Q^T E Q rather than inverted numerically.
+        VoigtMatrix Tp = VoigtMatrix::Zero();
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) Tp(i, j) = dydx(i, j);
+        {
+            const double eps_deg = 1e-9 * ((xmax > scale_ref) ? xmax : scale_ref);
+            static const int SIJ[3][2] = {{0, 1}, {1, 2}, {0, 2}};   // slots 3,4,5
+            for (int sslot = 0; sslot < 3; ++sslot)
+            {
+                const int i = SIJ[sslot][0], j = SIJ[sslot][1];
+                const double dx = xv(i) - xv(j);
+                const double adx = (dx < 0) ? -dx : dx;
+                Tp(3 + sslot, 3 + sslot) = (adx > eps_deg)
+                                           ? (yv(i) - yv(j)) / dx
+                                           : (dydx(i, i) - dydx(i, j));
+            }
+        }
+        VoigtMatrix Rs = VoigtMatrix::Zero();
+        VoigtMatrix Rsi = VoigtMatrix::Zero();
+        {
+            static const int BI[6][2] = {{0, 0}, {1, 1}, {2, 2}, {0, 1}, {1, 2}, {0, 2}};
+            for (int k = 0; k < 6; ++k)
+            {
+                Eigen::Matrix3d Ek = Eigen::Matrix3d::Zero();
+                Ek(BI[k][0], BI[k][1]) = 1.0;
+                Ek(BI[k][1], BI[k][0]) = 1.0;
+                Eigen::Matrix3d F  = Q * Ek * Q.transpose();
+                Eigen::Matrix3d Fi = Q.transpose() * Ek * Q;
+                for (int r = 0; r < 6; ++r)
+                {
+                    Rs(r, k)  = F(BI[r][0], BI[r][1]);
+                    Rsi(r, k) = Fi(BI[r][0], BI[r][1]);
+                }
+            }
+        }
+        VoigtMatrix RT   = Rs * Tp;
+        VoigtMatrix RTR  = RT * Rsi;
+        VoigtMatrix Calg = RTR * Eelastic;
+
+        // ---- plastic strain increment ------------------------------------
+        VoigtVector dep = VoigtVector::Zero();
+        {
+            Eigen::Matrix<double, 6, 6> Ee;
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j) Ee(i, j) = Eelastic(i, j);
+            Eigen::FullPivLU< Eigen::Matrix<double, 6, 6> > elu(Ee);
+            if (!elu.isInvertible())
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the elastic tangent is singular"
+                       << " -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            Eigen::Matrix<double, 6, 1> rhs6;
+            for (int i = 0; i < 6; ++i) rhs6(i) = sigma_tr(i) - sigma_ret(i);
+            Eigen::Matrix<double, 6, 1> d6 = elu.solve(rhs6);
+            for (int i = 0; i < 6; ++i) dep(i) = d6(i);
+        }
+
+        TrialStress         = sigma_ret;
+        TrialPlastic_Strain = CommitPlastic_Strain + dep;
+        cp_last_iterations  = iters;
+        cp_apply_tangent_policy(Calg, Eelastic);
+
+        if (ladruno_strict_rejects("Closest_Point (Hoek-Brown)", TrialStress))
+            return LADRUNO_MATERIAL_REFUSED;
+        return 0;
+    }
+
+    int Closest_Point(const VoigtVector & strain_incr)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+
+        if (!ladruno_cp_supported)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - integration_method Closest_Point is not implemented for"
+                   << " this yield function / plastic flow / hardening family"
+                   << " (ADR-97 D3). Supported today: VonMises and DruckerPrager"
+                   << " with Null / Linear (scalar or tensor) / ArmstrongFrederick"
+                   << " hardening (P1), and the perfectly plastic MohrCoulomb and"
+                   << " MohrCoulombTensionCutoff families where BOTH the yield"
+                   << " function and the plastic flow direction are of that family"
+                   << " (P2). MIXED pairings such as MohrCoulomb_YF x VonMises_PF or"
+                   << " VonMises_YF x MohrCoulomb_PF are NOT supported: the"
+                   << " principal-space map assumes both are piecewise linear, and"
+                   << " the smooth 6D map cannot use MohrCoulomb's Lode-angle"
+                   << " gradient. The Hoek-Brown family (P3) is supported for"
+                   << " HoekBrown_YF x HoekBrown_PF only, on the same"
+                   << " matched-pair rule. StiffSoil is P5."   // Ladruno (ADR-97 wp/97d)
+                   << " Use Backward_Euler." << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+
+        const int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
+        const double tol_f    = yf_tolerance();
+
+        VoigtVector depsilon = strain_incr;
+        const VoigtVector& sigma_n = CommitStress;
+
+        iv_storage.revert_all();
+        dsigma.setZero();
+        // The non-Algorithmic tangent types read `depsilon_elpl` as the `depsilon`
+        // argument of pf()/hardening(); Backward_Euler leaves it stale (it never
+        // sets it), Closest_Point does not.
+        depsilon_elpl = depsilon;
+
+        VoigtMatrix Eelastic = et(sigma_n, parameters_storage);
+        VoigtVector sigma_tr = sigma_n + Eelastic * depsilon;
+
+        TrialStrain         = CommitStrain + depsilon;
+        TrialStress         = sigma_tr;
+        TrialPlastic_Strain = CommitPlastic_Strain;
+        cp_last_iterations  = 0;
+
+        // The stress- and IV-row tolerances get ADR-94 M5's relative floor too, so
+        // the same problem in Pa and in kPa converges identically.  Every internal
+        // variable in the P1 families is stress dimensioned (a yield stress, a
+        // cohesion, a back stress), so one scaled tolerance serves all of them.
+        double scale = yf.strength_scale(iv_storage, parameters_storage);
+        if (scale < 0) scale = -scale;
+        double tol_s = DBL_OPT_stress_absolute_tol[ASDP_TAG];
+        {
+            const double rel_s = DBL_OPT_f_relative_tol[ASDP_TAG] * scale;
+            if (rel_s > tol_s) tol_s = rel_s;
+        }
+
+        const double f_tr = yf(sigma_tr, iv_storage, parameters_storage);
+        if (!(f_tr == f_tr))
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the elastic predictor's yield value is NaN"
+                   << " -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        if (f_tr <= tol_f)
+        {
+            // Genuinely elastic.  Note this is NOT Backward_Euler's second
+            // disjunct ("f merely DECREASED by more than tol => call it elastic"),
+            // which accepts an end state that is still outside the surface; ADR-84
+            // P2a had to gate that with strict_convergence.  A new integrator has
+            // no compatibility reason to inherit it.
+            Stiffness = Eelastic;
+            return 0;
+        }
+
+        // Ladruno (ADR-97 wp/97c): the Mohr-Coulomb family leaves here and never
+        // reaches the smooth 6D Newton below -- its yield function has no usable
+        // 6D gradient (Drucker-Prager substitution for |theta| >= 29 deg,
+        // central differences otherwise).  MohrCoulombTensionCutoff first offers
+        // the trial to ADR-84's `special_return`, whose closed-form cutoff
+        // face / Rankine edge / MC-cutoff corner / compound-corner / apex returns
+        // and RAW Koiter tangent are reused verbatim -- no geometry is
+        // re-derived; when that hook declines (cutoff inactive at the trial, or
+        // an MC-dominant trial none of whose cutoff features validated) the plain
+        // Mohr-Coulomb principal return takes over and re-checks the COMPOSITE f.
+        // Ladruno (ADR-97 wp/97d): the Hoek-Brown family leaves here.  Like the
+        // Mohr-Coulomb family below it never reaches the smooth 6D Newton -- its
+        // yield function has NO analytic gradient at all (a central difference
+        // of the COMPOSITE max() over the six raw Voigt slots).  Unlike it, the
+        // surface is CURVED, so the return is a small Newton in the surface's own
+        // variable rather than a closed-form projection.  Note this branch is
+        // taken BEFORE the yf_has_apex block: HoekBrown_YF declares an apex, but
+        // its CHECK_APEX_REGION is the Euclidean octant and over-claims the apex
+        // region (P0 finding 7), so the elastic-metric cone test inside
+        // cp_hb_return is used instead.
+        if constexpr (ladruno_cp_principal_family == 3)
+        {
+            return cp_hb_return(depsilon, sigma_tr, Eelastic, tol_f, max_iter);
+        }
+        else if constexpr (ladruno_cp_principal_family != 0)
+        {
+            if constexpr (yf_has_special_return<YieldFunctionType>::value)
+            {
+                VoigtVector sigma_sr, dep_sr;
+                VoigtMatrix stiff_sr;
+                int sr_quality = SR_QUALITY_EXACT;
+                if (yf.special_return(sigma_tr, Eelastic, tol_f,
+                                      iv_storage, parameters_storage,
+                                      sigma_sr, dep_sr, stiff_sr, sr_quality))
+                {
+                    if (sr_quality == SR_QUALITY_FALLBACK
+                            && INT_OPT_strict_convergence[ASDP_TAG] != 0)
+                    {
+                        opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                               << ") - special_return could not land this trial on any"
+                               << " exact cutoff feature (face/edge/corner/compound);"
+                               << " the only remaining candidate is the conservative"
+                               << " vertex projection, which would discard the"
+                               << " deviatoric state -- rejecting step"
+                               << " (strict_convergence)" << endln;
+                        return LADRUNO_MATERIAL_REFUSED;
+                    }
+                    TrialStress         = sigma_sr;
+                    TrialPlastic_Strain = CommitPlastic_Strain + dep_sr;
+                    cp_last_iterations  = 1;
+                    // ADR-84 P3: stiff_sr is the RAW active-set (Koiter) tangent,
+                    // i.e. the consistent tangent of THAT exact return -- which is
+                    // precisely what `Algorithmic` means here.
+                    cp_apply_tangent_policy(stiff_sr, Eelastic);
+                    if (ladruno_strict_rejects("Closest_Point (special_return)", TrialStress))
+                        return LADRUNO_MATERIAL_REFUSED;
+                    return 0;
+                }
+            }
+            return cp_principal_return(depsilon, sigma_tr, Eelastic, tol_f);
+        }
+
+        if constexpr (yf_has_apex<YieldFunctionType>::value)
+        {
+            if (cp_apex_region(depsilon, sigma_tr, Eelastic, f_tr, tol_f))
+            {
+                int rc = -1;
+                if (cp_apex_return(depsilon, sigma_tr, Eelastic, tol_f, tol_s, max_iter, rc))
+                    return rc;
+                // else: the YF's apex failed its own admissibility gate; fall
+                // through to the generic Newton below.
+                TrialStress = sigma_tr;
+            }
+        }
+
+        const int n_iv = cp_n_iv();
+        const int N = 6 + n_iv + 1;
+        if (N > ASDP_CP_MAXN)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - this specialization needs a " << N << "x" << N
+                   << " Newton system, over the ASDP_CP_MAXN = " << ASDP_CP_MAXN
+                   << " cap -- rejecting step (raise the cap in "
+                   << "ASDPlasticMaterial3D.h)" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+
+        cp_vector_t x(N), R(N), dx(N);
+        cp_matrix_t J(N, N);
+
+        // Elastic-predictor start: s = s_tr, q = q_n, dl = 0.
+        for (int i = 0; i < 6; ++i) x(i) = sigma_tr(i);
+        {
+            int off = 6;
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                const int nq = internal_variable.size();
+                for (int i = 0; i < nq; ++i) x(off + i) = internal_variable.trial_value(i);
+                off += nq;
+            });
+        }
+        x(N - 1) = 0.0;
+
+        VoigtVector m_conv = VoigtVector::Zero();
+        bool converged = false;
+        int iter = 0;
+        double rs = 0.0, rq = 0.0, rf = 0.0;
+
+        for (iter = 0; iter < max_iter; ++iter)
+        {
+            if (!cp_assemble(x, N, sigma_tr, depsilon, m_conv, R, &J))
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - NaN in the closest-point residual at iteration "
+                       << iter << " -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+
+            rs = 0.0; rq = 0.0;
+            for (int i = 0; i < 6; ++i)
+            {
+                const double a = (R(i) < 0) ? -R(i) : R(i);
+                if (a > rs) rs = a;
+            }
+            for (int i = 6; i < N - 1; ++i)
+            {
+                const double a = (R(i) < 0) ? -R(i) : R(i);
+                if (a > rq) rq = a;
+            }
+            rf = (R(N - 1) < 0) ? -R(N - 1) : R(N - 1);
+
+            if (rf <= tol_f && rs <= tol_s && rq <= tol_s)
+            {
+                converged = true;
+                break;      // J is the Jacobian AT the converged point: reuse it
+            }
+
+            Eigen::FullPivLU<cp_matrix_t> lu(J);
+            if (!lu.isInvertible())
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - singular closest-point Jacobian at iteration " << iter
+                       << " -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            dx = lu.solve(R);
+            for (int i = 0; i < N; ++i)
+                if (!(dx(i) == dx(i)))
+                {
+                    opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                           << ") - NaN in the Newton correction at iteration " << iter
+                           << " -- rejecting step" << endln;
+                    return LADRUNO_MATERIAL_REFUSED;
+                }
+            x -= dx;
+        }
+
+        if (!converged)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - the closest-point Newton exhausted " << max_iter
+                   << " iterations: |f| = " << rf << " (tol " << tol_f
+                   << "), |R_sigma| = " << rs << ", |R_q| = " << rq
+                   << " (tol " << tol_s << ") -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+        cp_last_iterations = iter;
+
+        const double dl = x(N - 1);
+        if (dl < 0.0)
+        {
+            opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                   << ") - converged with a NEGATIVE plastic multiplier (" << dl
+                   << "), which is inadmissible -- rejecting step" << endln;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
+
+        TrialPlastic_Strain = CommitPlastic_Strain + dl * m_conv;
+
+        if (INT_OPT_tangent_operator_type[ASDP_TAG]
+                == ASDPlasticMaterial3D_Tangent_Operator_Type::Algorithmic)
+        {
+            // The converged system depends on epsilon_{n+1} only through s_tr, and
+            // d(s_tr)/d(eps) = E(sigma_n).  Differentiating R(x(eps)) = 0:
+            //     J * [dsigma ; dq ; ddl] = [E*deps ; 0 ; 0]
+            //     C_alg = (J^{-1})_{sigma,sigma} * E
+            // Solved with the ONE factorization already in hand -- the Schur form
+            // in the ADR is for the doc, not for the code.  C_alg is UNSYMMETRIC
+            // whenever m != n (non-associated Drucker-Prager, etabar != eta), so
+            // models using it must run on an unsymmetric solver (UmfPack; NOT
+            // ProfileSPD, and NOT PARDISO's symmetric -matrixType).
+            if constexpr (el_is_stress_dependent<ElasticityType>::value)
+            {
+                static bool warned_dEds = false;
+                if (!warned_dEds)
+                {
+                    opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                           << ") - this elasticity model is stress dependent and has"
+                           << " no ELASTICITY_STRESS_DERIVATIVE, so tangent_type"
+                           << " Algorithmic is missing the E,sigma : (sigma - sigma_tr)"
+                           << " term (ADR-97 D6/P5). The committed stress is"
+                           << " unaffected." << endln;
+                    warned_dEds = true;
+                }
+            }
+            Eigen::FullPivLU<cp_matrix_t> lu(J);
+            if (!lu.isInvertible())
+            {
+                opserr << "ASDPlasticMaterial3D::Closest_Point (tag " << ASDP_TAG
+                       << ") - the converged closest-point Jacobian is singular, so"
+                       << " no algorithmic tangent exists -- rejecting step" << endln;
+                return LADRUNO_MATERIAL_REFUSED;
+            }
+            cp_matrix_t rhs(N, 6);
+            rhs.setZero();
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j) rhs(i, j) = Eelastic(i, j);
+            cp_matrix_t Z = lu.solve(rhs);
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 6; ++j) Stiffness(i, j) = Z(i, j);
+        }
+        else
+        {
+            // Secant / Continuum / Elastic / Numerical_Algorithmic_* are evaluated
+            // at the CONVERGED closest-point state, but they are still the same
+            // operators ADR-94 M3 measured at 80 / 57 / 103 / 5 % against a central
+            // difference of the material's own response: none of them is the
+            // tangent of THIS map.  Only `Algorithmic` is.
+            ComputeTangentStiffness();
+        }
+
+        if (ladruno_strict_rejects("Closest_Point", TrialStress))
+            return LADRUNO_MATERIAL_REFUSED;
+
+        return 0;
+    }
 
     int Backward_Euler(const VoigtVector & strain_incr)
     {
@@ -4431,8 +6685,23 @@ protected:
     static std::map<int, int> GLOBAL_INT_max_iter; 
     static std::map<int, double> GLOBAL_DBL_max_error; 
 
+    // ADR97_P4_MARKER:adr97_p4_suppress_numerical_tangent_member
     bool first_step;
     bool stress_set_externally;
+
+    // Ladruno (ADR-97 wp/97e): recursion guard for
+    // numerical_tangent_of_committed_map(). Backward_Euler and Closest_Point
+    // both call ComputeTangentStiffness() at the end of every successful
+    // commit; a perturbed sub-call made BY the numerical-tangent helper would
+    // otherwise re-enter that same call and try to compute another numerical
+    // tangent of ITS OWN perturbed state, unbounded. Per-instance (not one of
+    // the static per-tag option maps): each material instance's own
+    // in-flight tangent call must suppress recursion independently.
+    bool suppress_numerical_tangent = false;
+
+    // Ladruno (ADR-97 wp/97b): per-instance Closest_Point Newton iteration count
+    // (NSDMI, so both constructors get it without touching their bodies).
+    int cp_last_iterations = 0;
 
     // Ladruno (ADR-94 wp/94b, M1/F1): these five were `static` -- ONE copy shared by
     // every Gauss point, element and material tag of a given <E,Y,P,tag> specialization,

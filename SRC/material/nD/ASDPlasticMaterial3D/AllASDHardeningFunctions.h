@@ -42,6 +42,27 @@ struct LinearHardeningForTensorPolicy {
         VoigtVector h = H * m.deviator();  // best not to use 'auto' here
         return h;
     }
+
+    // Ladruno (ADR-97 wp/97b): h = H*dev(m) is independent of q and LINEAR in m,
+    // so dh/dq = 0 and dh/dm = H * I_dev (the deviatoric projector on stored
+    // Voigt slots: d(dev v)_i/d v_j = delta_ij - 1/3 for i,j < 3, delta_ij else).
+    HARDENING_FUNCTION_IV_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
+    HARDENING_FUNCTION_M_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        double H = GET_PARAMETER_VALUE(TensorLinearHardeningParameter);
+        out.setZero();
+        for (int i = 0; i < 6; ++i) out(i, i) = H;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) out(i, j) -= H / 3.0;
+    }
+
     using parameters_t = tuple<TensorLinearHardeningParameter>;
 };
 
@@ -59,6 +80,40 @@ struct LinearHardeningForScalarPolicy {
         double h = H * sqrt((2 * tensor_dot_engineering_strain_like(m, m)) / 3);
         return h;
     }
+
+    // Ladruno (ADR-97 wp/97b): h = H*sqrt(2/3 <m,m>_e) with <.,.>_e the
+    // ENGINEERING-strain contraction (shear weight 1/2).  Independent of q, so
+    //     dh/dq   = 0
+    //     dh/dm_j = H * (2/3) * (W_e m)_j / sqrt(2/3 <m,m>_e)
+    // (one row).  At <m,m>_e = 0 the rate itself is zero and non-differentiable;
+    // the derivative is taken as zero there, which is the correct one-sided limit
+    // for a flow direction that has not yet been established.
+    HARDENING_FUNCTION_IV_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
+    HARDENING_FUNCTION_M_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) sigma;
+        double H = GET_PARAMETER_VALUE(ScalarLinearHardeningParameter);
+        out.setZero();
+        const double mm = tensor_dot_engineering_strain_like(m, m);
+        const double eq = sqrt((2.0 / 3.0) * mm);
+        if (eq > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+        {
+            const double c = H * (2.0 / 3.0) / eq;
+            out(0, 0) = c * m(0);
+            out(0, 1) = c * m(1);
+            out(0, 2) = c * m(2);
+            out(0, 3) = c * 0.5 * m(3);
+            out(0, 4) = c * 0.5 * m(4);
+            out(0, 5) = c * 0.5 * m(5);
+        }
+    }
+
     using parameters_t = tuple<ScalarLinearHardeningParameter>;
 };
 
@@ -69,6 +124,22 @@ struct NullHardeningScalarPolicy {
         double zero=0;
         return zero;
     }
+
+    // Ladruno (ADR-97 wp/97b): h == 0, so both derivatives are zero (scalar).
+    HARDENING_FUNCTION_IV_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
+    HARDENING_FUNCTION_M_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
     using parameters_t = tuple<>;
 };
 
@@ -82,6 +153,22 @@ struct NullHardeningTensorPolicy {
         VoigtVector zero = VoigtVector::Zero();
         return zero;
     }
+
+    // Ladruno (ADR-97 wp/97b): h == 0, so both derivatives are zero (tensor).
+    HARDENING_FUNCTION_IV_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
+    HARDENING_FUNCTION_M_DERIVATIVE
+    {
+        (void) current_value; (void) depsilon; (void) m; (void) sigma;
+        (void) parameters_storage;
+        out.setZero();
+    }
+
     using parameters_t = tuple<>;
 };
 
@@ -165,8 +252,103 @@ struct ArmstrongFrederickPolicy {
         return derivative;
 
     }
+
+    // Ladruno (ADR-97 wp/97b): Armstrong-Frederick, differentiated EXACTLY as
+    // the branch `f` above actually took -- including the saturation branch.
+    //   unsaturated:  h = ha*dev(m) - cr*|dev m|_eq * dev(alpha),
+    //                 |v|_eq = sqrt(2/3 <v,v>_e)
+    //     dh/dalpha = -cr * |dev m|_eq * I_dev
+    //     dh/dm     =  ha * I_dev
+    //                 - cr * dev(alpha) (x) [ (2/3) * (W_e dev(m)) / |dev m|_eq ]
+    //   saturated (|dev alpha|_eq >= ha/cr):  h == 0, so both blocks are zero.
+    //
+    // ADR-97 plan-note: the plan suggested Closest_Point DROP the saturation
+    // branch (it is non-differentiable, and the implicit AF update is already a
+    // contraction toward ||alpha|| = ha/cr so it cannot overshoot).  It is kept
+    // here instead, because `f` is SHARED with Backward_Euler (D1: byte
+    // identical) and a CP-only `f` would be a second hardening law with the same
+    // name.  Differentiating the branch actually taken keeps CP's Jacobian
+    // exactly consistent with CP's own residual, which is what both the Newton
+    // and the consistent tangent require; the P0 oracle (cppm_vm.py) mirrors the
+    // same branch, so the pinned reference values are unaffected.
+    HARDENING_FUNCTION_IV_DERIVATIVE
+    {
+        (void) depsilon; (void) sigma;
+        out.setZero();
+        double ha = GET_PARAMETER_VALUE(AF_ha);
+        double cr = GET_PARAMETER_VALUE(AF_cr);
+        if (!(cr > 0.0))
+            return;                       // no recovery term -> h is q-independent
+        VoigtVector alpha_dev = current_value.deviator();
+        const double alpha_norm =
+            sqrt((2. / 3.) * tensor_dot_stress_like(alpha_dev, alpha_dev));
+        if (alpha_norm >= ha / cr)
+            return;                       // saturated branch: h == 0
+        VoigtVector mdev = m.deviator();
+        const double mdev_eq =
+            sqrt((2. / 3.) * tensor_dot_engineering_strain_like(mdev, mdev));
+        const double c = -cr * mdev_eq;
+        for (int i = 0; i < 6; ++i) out(i, i) = c;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) out(i, j) -= c / 3.0;
+    }
+
+    HARDENING_FUNCTION_M_DERIVATIVE
+    {
+        (void) depsilon; (void) sigma;
+        out.setZero();
+        double ha = GET_PARAMETER_VALUE(AF_ha);
+        double cr = GET_PARAMETER_VALUE(AF_cr);
+        VoigtVector alpha_dev = current_value.deviator();
+        if (cr > 0.0)
+        {
+            const double alpha_norm =
+                sqrt((2. / 3.) * tensor_dot_stress_like(alpha_dev, alpha_dev));
+            if (alpha_norm >= ha / cr)
+                return;                   // saturated branch: h == 0
+        }
+        // ha * I_dev
+        for (int i = 0; i < 6; ++i) out(i, i) = ha;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) out(i, j) -= ha / 3.0;
+        if (!(cr > 0.0))
+            return;
+        VoigtVector mdev = m.deviator();
+        const double mdev_eq =
+            sqrt((2. / 3.) * tensor_dot_engineering_strain_like(mdev, mdev));
+        if (!(mdev_eq > 100 * ASDPlasticMaterial3DGlobals::MACHINE_EPSILON))
+            return;
+        // row vector d|dev m|_eq / dm  =  (2/3) * W_e dev(m) / |dev m|_eq
+        double drow[6];
+        const double s = (2.0 / 3.0) / mdev_eq;
+        drow[0] = s * mdev(0);
+        drow[1] = s * mdev(1);
+        drow[2] = s * mdev(2);
+        drow[3] = s * 0.5 * mdev(3);
+        drow[4] = s * 0.5 * mdev(4);
+        drow[5] = s * 0.5 * mdev(5);
+        for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+                out(i, j) -= cr * alpha_dev(i) * drow[j];
+    }
+
     using parameters_t = tuple<AF_ha, AF_cr>;
 };
+
+// Ladruno (ADR-97 wp/97b): the five hardening policies P1 solves implicitly at
+// n+1.  Every other policy in the tree (the StiffSoil pair) keeps the inert zero
+// default and is REFUSED at parse time under `integration_method Closest_Point`.
+template <> struct hardening_policy_has_cp_derivatives<LinearHardeningForTensorPolicy> : std::true_type {};
+template <> struct hardening_policy_has_cp_derivatives<LinearHardeningForScalarPolicy> : std::true_type {};
+template <> struct hardening_policy_has_cp_derivatives<NullHardeningScalarPolicy>      : std::true_type {};
+template <> struct hardening_policy_has_cp_derivatives<NullHardeningTensorPolicy>      : std::true_type {};
+template <> struct hardening_policy_has_cp_derivatives<ArmstrongFrederickPolicy>       : std::true_type {};
+
+// Ladruno (ADR-97 wp/97c): the two Null policies return h == 0 identically, so
+// the internal variable never moves.  Nothing else in this file qualifies: both
+// Linear laws and ArmstrongFrederick have a live h.
+template <> struct hardening_policy_is_inert<NullHardeningScalarPolicy> : std::true_type {};
+template <> struct hardening_policy_is_inert<NullHardeningTensorPolicy> : std::true_type {};
 
 
 

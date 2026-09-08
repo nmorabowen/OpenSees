@@ -6069,6 +6069,273 @@ be dead, unverifiable code; MUMPS statistics on the desktop come from a one-rank
 runtime (a no-arg `build.bat`), not the 4-target build. Linking MUMPS into the
 serial targets is an ADR-75 policy reversal for the owner, not a "small" WP.
 
+## ASDPlasticMaterial3D — `Closest_Point` (ADR-97 P1)
+
+**Two integrators, two apex answers for the same yield function — on purpose.**
+`DruckerPrager_YF::check_apex_region` is a EUCLIDEAN normal-cone test
+(`p − p_apex >= eta*q`) and says so in its own comment: the exact condition is in
+the ELASTIC metric, `p_tr − p_apex >= (K*etabar/G) * q_tr`, and the yield
+function's signature cannot see K, G or the dilatancy. `Backward_Euler` cannot
+fix that; `Closest_Point` can, because classification happens in the integrator
+where `E` is in scope — so `Closest_Point` does its own region test and **never
+calls `check_apex_region`**. The ADR-97 P0 oracle quantified the cost of the
+Euclidean test in BOTH directions: at `etabar = 0.2` (exact slope 0.333 < the
+header's 0.4) a trial at `(p−p_apex)/q = 0.36` is classified CONE and the cone
+return then gives `sqrt(J2)_{n+1} = −0.47`, an inadmissible negative deviatoric
+norm; at `etabar = eta = 0.4` (exact slope 0.667) trials at 0.45 and 0.60 are
+classified APEX although the correct return is to the cone. Expect the two
+integrators to disagree in that band, and do not "fix" one to match the other.
+
+**A sign-based region test degenerates on the hydrostatic axis.** ADR-97's
+elastic-metric apex test is `dot(dev_ret, dev_tr) < 0` on the LINEARISED cone
+step. For a trial state sitting exactly on the hydrostatic axis, `dev_tr == 0`
+and that reads `0 < 0` — i.e. CONE — after which the cone Newton has no flow
+direction at all and exhausts its iterations. That degenerate state is not
+exotic: it is ADR-94 B4's hydrostatic-tension reproducer, the deck that used to
+commit NaN. Any deviator-direction test needs an explicit
+`||dev_tr|| <= tol` short circuit, and `tol` must be the YIELD tolerance so the
+comparison stays unit consistent (ADR-94 M5).
+
+**A `Path` time series returns ZERO outside its defined range — including at the
+last time point of a multi-step run.** A prescribed-strain driver that ends
+exactly on the final `-time` entry unloads the whole path to zero in ONE step,
+and a plasticity material then reports a perfectly plausible ON-SURFACE stress
+that is simply the wrong point on the surface (it took us one confused debugging
+round to see it, because the yield residual was 1e-15 the whole way). Always
+give a `Path` series one time point past the end of the analysis.
+
+**`utuple_concat_unique_type` de-duplicates internal variables by TYPE, not by
+name.** `VonMises_YF<BackStress<TensorLinearHardening>, …>` paired with
+`VonMises_PF<BackStress<NullHardeningTensor>>` gives the storage **two**
+`BackStress` entries — the yield function reads one and the flow direction reads
+the other, and they evolve independently. A deck that wants one shared back
+stress must name the SAME hardening law on both sides (the ADR-97 gate-1
+Armstrong–Frederick deck does). This is why ADR-97's `df_dq` / `dm_dq` select on
+`std::is_same<IVType, AlphaHardeningType>` inside the YF/PF rather than on the
+variable's name: each functor differentiates with respect to the variable IT
+reads, and returns zero for the other one — which is the correct derivative.
+
+**`tangent_type Algorithmic` existed upstream with no dispatch case anywhere.**
+It was dead, which is the only reason nobody was silently getting it. ADR-97 D2
+gives it exactly one meaning — the consistent tangent of the `Closest_Point`
+map — and REFUSES it with every other integrator: a consistent tangent is
+defined only relative to a specific committed map, and offering it on the
+cutting-plane `Backward_Euler` would ship a fourth almost-right tangent, which
+is the class of defect ADR-94 M3 found.
+
+**`C_alg` is unsymmetric whenever `m != n`.** Non-associated Drucker–Prager
+(`etabar != eta`), Mohr–Coulomb (`psi != phi`), Hoek–Brown (`mb_psi != mb`).
+Models running `tangent_type Algorithmic` need `system UmfPack`; `ProfileSPD` is
+wrong, PARDISO's symmetric `-matrixType` (ADR-75 P1d) must not be selected, and
+`FullGeneral` crashes a fully prescribed material-point rig (`FullGenLinSOE`
+N = 0).
+## ASDPlasticMaterial3D — Hoek-Brown (ADR-97 P3)
+
+### `HoekBrown_PF::g` is evaluated in the WRONG SIGN FRAME and is a Tresca potential
+
+`HoekBrown_YF` negates to the geomechanics frame (`sigma_geo = -sigma`) before
+calling `principalStresses()`. `HoekBrown_PF::g` does NOT, then destructures the
+ascending tuple as `[sigma3, sigma2, sigma1]` and feeds `sigma3` — the tree's most
+COMPRESSIVE principal, not the geo-frame minor — into
+`arg = mb_psi*sigma3/sigma_ci + s`. On any compressive state that `arg` is negative,
+so `g` always takes its `else` branch, `sigma1 - sigma3 - sigma_ci*s`, which is a
+**Tresca** potential. Measured by the ADR-97 P0 oracle (`adr97_oracle/cppm_hb.py`):
+
+* the header's own central-difference `dg/dsigma` at `[-2000,-6000,-25000]` is
+  `[1,0,-1,0,0,0]` for `HB_mb_psi = mb`, `mb/2` **and** `0` — the parameter has
+  **no effect at all** and the flow is exactly non-dilatant (trace 0);
+* it is **32.86 deg** off the frame-consistent normal at `mb_psi == mb`, i.e. exactly
+  where the deck is asking for ASSOCIATED flow;
+* at the apex all six of its flow directions have negative trace, so the hydrostatic
+  direction is not in its return cone and a trial pushed past the tensile corner has
+  **no return to the apex at all** — this is the mechanism behind the residual
+  recorded in `tests/test_adr94_hlist_hb.py` ("the drive still fails to converge on
+  the step that would push strain past the tensile corner").
+
+Fixing `g` changes `Backward_Euler`, which ADR-97 D1 keeps byte-identical, so
+ADR-97 P3 did NOT fix it: `Closest_Point` builds a frame-consistent Hoek-Brown
+potential in its own code path, and the difference is pinned in BOTH directions by
+`tests/test_adr97_p3_hoekbrown.py::test_gate4_cp_and_be_disagree_by_the_measured_potential_gap`
+(plastic volumetric strain **+2.208e-05** under the intended potential vs
+**+2.1e-13** under the shipped one; a 5.9e-02 relative stress gap, 26.2 % of the
+strength scale). That test turns RED the day `g` is fixed, which is its purpose.
+
+### The Hoek-Brown yield tolerance must be scaled by the GRADIENT, not by sigma_ci
+
+`|df/dy1| = 1 + a*mb*arg^(a-1)` **diverges** at the apex (`arg -> 0`), so a last-ulp
+error in the returned `y1` carries `eps*|y1|*|df/dy1|` into `f`: an ABSOLUTE 1e-10
+admissibility gate is unattainable within ~1e-2 kPa of the vertex. The P0 oracle
+measures `max|f| = 1.08e-10` against its own round-off floor of `1.16e-08` there.
+This is the Hoek-Brown instance of ADR-94 M5's `f_relative_tol` lesson, and it is
+sharper: scaling by `sigma_ci` (or by `strength_scale`) is not enough on its own,
+because the offending factor is the gradient's own conditioning.
+
+### The Newton must run in the surface's OWN variable, not in `y1`
+
+The Hoek-Brown surface exists only for `arg = s - mb*y1/sigma_ci >= 0`. With `y1` as
+the Newton unknown the first step from the elastic predictor OVERSHOOTS (measured
+`arg = -2.2456e-03` at iteration 1 on the oracle's own near-apex trial) and the next
+Jacobian is singular. Substituting `arg = (w^2)^(1/a)` — so
+`y1 = T - (sigma_ci/mb)(w^2)^(1/a)` and `f = y1 - y3 - sigma_ci*w^2` — is
+polynomial-smooth and feasible for ANY real `w`: no clipping, no line search, no
+feasibility guard. Write `(w*w)^(1/a)` rather than `w^(2/a)`: the latter is NaN for a
+negative iterate, and the two agree for `w > 0`.
+
+Related: NORMALIZE the flow direction in the residual (multiplier rescaled by `|m|`,
+the returned stress is invariant). `|m| ~ arg^(a-1)` blows up exactly where the
+near-apex returns land — 460.6 there against 3.9 on an ordinary face point — and the
+worst-case Newton count over the oracle's 400-trial scan is **6** un-normalized and
+**5** normalized.
+
+### `HB_sigma_ci` is not a parameter; it is `HB_sigci`
+
+ADR-97 P1 and P2 both wrote `HB_sigma_ci` in their Hoek-Brown refusal tests. Under
+the ADR-94 contract a missing model parameter is an ERROR, so those decks were
+rejected for the wrong reason and the refusal assertions never exercised the family
+gate at all. A refusal test that is not ALSO checked in the positive direction (the
+same deck must CONSTRUCT under an integrator that does support it) cannot tell the
+two apart. Every gate-6 row in `tests/test_adr97_p3_hoekbrown.py` is checked both
+ways for exactly this reason.
+
+### `AllASDInternalVariableTypes.h` and `AllASDHardeningFunctions.h` have NO include guard
+
+Including either directly in a translation unit that also includes
+`ASDPlasticMaterial3D.h` (which pulls both in) is a redefinition storm. Relevant to
+any standalone syntax-check / pre-flight translation unit.
+
+### `#define private public` breaks GCC 15's libstdc++ if it precedes `<sstream>`
+
+`std::basic_stringbuf::__xfer_bufptrs` is declared `private` and re-declared later;
+flipping the keyword makes the second declaration disagree with the first, which
+GCC 15 reports as a hard `-Wtemplate-body` ERROR (not a warning). The ADR-97 P2
+pre-flight idiom still works — include the standard library and Eigen FIRST, then
+`#define private public`, then the project's own headers.
+
+## ASDPlasticMaterial3D — Mohr-Coulomb principal-space return (ADR-97 P2)
+
+**`Backward_Euler` reproduces the exact Mohr-Coulomb return ONLY through the
+header's own finite difference.** `MohrCoulomb_YF::df_dsigma_ij` and
+`MohrCoulomb_PF` both branch on `MC_ds`: `> 0` central-differences their own
+`f` / `g` over the six Voigt slots, `== 0` uses an ANALYTIC Lode-angle
+`c1/c2/c3` expression. On a proportional face-return deck (E 30000, nu 0.25,
+phi 30, psi 10, c 10; trial `sigma = [-10,-40,-100]`) `Backward_Euler` lands on
+the exact closest point to **2.1e-14** with `MC_ds = 1e-4`, 1.3e-12 with 1e-6,
+1.0e-10 with 1e-8 — and **2.9e-1 away, step-size dependent**, with `MC_ds = 0`.
+Mohr-Coulomb's flow direction is CONSTANT inside a sextant (the surface is
+piecewise linear), so the cutting plane and the closest point are provably the
+same point there; `f` is exactly linear in principal stress, so a central
+difference of it is the EXACT 6D gradient and its accuracy *improves* with a
+larger step. Two independent references therefore agree against the analytic
+coefficients. **Every Mohr-Coulomb deck in `tests/` passes `MC_ds 0.0`**, i.e.
+runs on the analytic branch; the ADR-84 MCTC battery is largely insulated
+because `special_return` does not use that gradient. Pinned in both directions
+by `tests/test_adr97_p2_principal.py::
+test_gate4_backward_euler_agrees_only_through_its_own_finite_difference`.
+Fixing it changes `Backward_Euler`, so ADR-97 D1 defers it to its own PR.
+
+**An oedometric Mohr-Coulomb deck at `nu = 0.25` with `phi = 30` NEVER YIELDS.**
+The elastic lateral-stress ratio `K0 = nu/(1-nu) = 1/3` coincides EXACTLY with
+the Mohr-Coulomb compression meridian `(1-sin phi)/(1+sin phi) = 1/3`, so the
+uniaxial-strain stress path runs PARALLEL to the yield surface and `f` is
+identically `-c cos(phi)` at every stress level, however hard you press. A
+tangent or iteration gate built on that rig is silently vacuous: it measures the
+ELASTIC operator and passes. Assert the state is plastic before measuring
+anything, and pick `nu < 0.25` for `phi = 30` (the P2 gates use 0.15). The same
+coincidence exists for any `nu = (1-sin phi)/2`.
+
+**`yf_tolerance()` is not a usable admissibility tolerance for a stress
+reassembled from a spectral decomposition.** It defaults to the ABSOLUTE
+`f_absolute_tol = 1e-6` (`f_relative_tol` defaults to 0, ADR-94 M5). Recomputing
+the header's `f` from `Q diag(y) Q^T` on the ADR-84 MCTC deck (kPa,
+`|sigma| ~ 5.4e3`) gives 3.4e-6 — 6e-10 RELATIVE, i.e. round-off — and a check
+written against `yf_tolerance()` refuses the step. The round-off is amplified
+because an EDGE return lands exactly on a corner, where the Lode angle is ill
+conditioned (`dtheta/dJ3 ~ 1/cos(3 theta)` diverges and `dA/dtheta` is not
+stationary). Check admissibility where the return was COMPUTED — in principal
+space, against all three surfaces of the sextant, which is exact and perfectly
+conditioned — and keep the invariant-form check only as a loose guard, at a
+tolerance relative to `max(strength_scale, |sigma|)`.
+
+**A load-driven cube rig cannot reach a Mohr-Coulomb FACE state.** Both rigs in
+`adr97_oracle/fd_tangent_driver.py` land on `s1 == s2`: `uniaxial` fixes x and y
+on every node, so the state is axisymmetric by construction, and `full` (top face
+free) passes its limit point under any lateral load before it yields in a
+three-distinct-principal state. Measuring a tangent in the face region needs a
+kinematically over-determined rig — ADR-97 P2 uses a FREE-NODE rig: the
+homogeneous strain field prescribed on seven of the eight nodes, node 7 left
+free. Seven prescribed nodes mean no limit point at any stress level, so any
+state can be reached, and the 3x3 assembled block at the free node is compared
+with a central difference of its own reaction (the same two-rig scheme, since
+`setNodeDisp` does not trigger `Domain::update`).
+**A `template class` explicit instantiation is the WRONG shape for a
+`g++ -fsyntax-only` pre-flight of `ASDPlasticMaterial3D`.** It instantiates
+EVERY member of the specialization, including members the real build never
+touches because their only call site sits under an `if constexpr` -- e.g.
+`cp_apex_return`, which calls `yf.apex_stress()` and therefore fails to compile
+for any yield function without an apex (`VonMises_YF`,
+`MohrCoulombTensionCutoff_YF`). The result is a page of errors about code that is
+correct and unreachable. Instantiate the MEMBERS instead:
+
+    #define private public
+    #include ".../AllASDPlasticMaterial3Ds.h"
+    typedef ASDPlasticMaterial3D<LinearIsotropic3D_EL, ...> MCMC_t;
+    template int MCMC_t::Closest_Point(const VoigtVector&);
+    static_assert(MCMC_t::supportsClosestPoint(), "...");
+
+`if constexpr` then discards the unreachable branches exactly as it does in the
+real build, and the `static_assert`s turn the support matrix itself into a
+compile-time gate (P2 pins all six mixed pairings that way, so a widened family
+trait fails at pre-flight instead of at run time). The include set comes from
+`adr97_scripts/mk_incs.py` and the build tree's `build/build/Release/build.ninja`
+-- note the doubled `build/build`, which `mk_incs.py`'s own usage line does not
+say.
+
+### `cot(phi)` is `Inf` at `phi == 0`, and `Inf * 2*sin(phi)` is the IEEE-754 indeterminate NaN -- `phi == 0` is a NORMAL, legitimate input (undrained clay), not an edge case
+- **Bites:** `StiffSoilShear_YF.h`'s `qf = (c*cot(phi) + sigma3) * 2*sin(phi) / (1 - sin(phi))` NaNs on the very FIRST yield-function call for any deck with `MC_phi = 0.0` -- a completely standard cohesive-only / undrained (`phi_u = 0`) clay model, not a degenerate corner case anyone would think to guard against by inspection. `cot(0) = cos(0)/sin(0) = 1/0 = Inf`; the SAME expression then multiplies that `Inf` by `2*sin(phi) == 0`, and `Inf * 0` is the one indeterminate form IEEE-754 refuses to resolve to anything but NaN.
+- **Why:** the formula was transcribed from a geotechnical reference in `cot`-form without noticing that `cot` is exactly the term that blows up at the model's most common "no friction" configuration.
+- **Fix (ADR-97 P5, `StiffSoilShear_YF.h`):** multiply the ORIGINAL expression through by `sin(phi)` algebraically -- `qf = 2*(c*cos(phi) + sigma3*sin(phi)) / (1 - sin(phi))` -- which removes `cot` entirely, is numerically identical to the old formula for any `phi != 0` (matched to ~1e-14 relative in a standalone probe), and gives the physically correct Tresca limit `qf -> 2c` as `phi -> 0` instead of NaN. **General lesson:** any `cot(x)`/`tan(x)`/`1/sin(x)` term that later gets multiplied by `sin(x)` (or a factor containing it) in the SAME expression is a candidate for exactly this bug -- always check whether the singularity cancels algebraically before accepting it at `x == 0`.
+
+### A numerically-differentiated flow direction that normalizes by its own norm silently NaNs (0/0) at the exact hydrostatic axis -- and this is what "N/194 non-finite cloud points" from an unrelated audit usually means
+- **Bites:** `StiffSoilShear_PF.h`'s `PLASTIC_FLOW_DIRECTION` central-differences a Mohr-Coulomb-type potential, then does `vv_out /= norm` with `norm = sqrt(tensor_dot_stress_like(vv_out, vv_out))` and no zero-guard. At an EXACTLY hydrostatic trial stress (`sigma1 == sigma2 == sigma3` -- the natural first step of any isotropic consolidation leg, and `InitialP0`'s own hydrostatic seed) `computeMobilizedDilatancy()` returns `psi_m == 0` exactly (the mobilized-friction-angle formula's numerator `sigma1 - sigma3` is exactly zero), which kills the potential's `I1*sin(psi)/3` term; what remains, `cos(lodeAngle)*sqrt(J2)`, is an EVEN function of the sign of a `+-ds` perturbation (`cos()` is even, `J2` is sign-invariant), so the central-difference numerator is the exact zero vector on ALL SIX Voigt axes simultaneously -- `norm == 0.0` exactly, and `vv_out /= norm` is the indeterminate 0/0 in every component.
+- **Diagnostic pattern worth remembering:** this bug was independently rediscovered as ADR-94 R3a's "`StiffSoilShear_PF` returns non-finite for 6/194 cloud points", logged at the time as "random general (non-diagonal) points, not yet root-caused." Re-running that EXACT probe (`p5/pf_cloud_probe.cpp`, same seed/cloud/params) showed the 6 failing points are PRECISELY the 6 hydrostatic-axis points in the cloud (`sigma = (p,p,p,0,0,0)` for `p` in `{0,1,5,20,50,100}`) -- not random at all. **When an audit reports "N points fail, seemingly at random," check the hydrostatic/isotropic axis FIRST** -- an even-in-perturbation potential (any potential built from `cos(lodeAngle)`, `J2`, or another sign-invariant invariant with no linear `I1` term surviving) will central-difference to exactly zero there, and "seemingly random" is really "every point that happens to sit on, or very near, that one measure-zero axis."
+- **Fix (ADR-97 P5):** guard the normalization -- `if (norm > 1e-12) vv_out /= norm; else vv_out.setZero();` -- the same `setZero()`-over-`*= 0.0` precedent the ADR-94 DruckerPrager `NaN*0` fix used. The shear flow direction is genuinely undefined by this potential exactly at the isotropic point; falling back to "no shear flow" (`tr(m) == 0`) there is the correct physical answer, not just a numerical patch.
+
+### `pytest --collect-only` on a file with a MODULE-scoped fixture that writes a tracked doc can still overwrite that doc if the file is later collected WITHOUT `--collect-only` in the same session -- and a bare filename passed to `--ignore` silently fails to match
+- **Bites:** `tests/test_adr94_matrix.py` has exactly one test, gated behind a module-scoped fixture that regenerates `Ladruno_implementation/_adr94_matrix.md` (a hand-annotated, git-tracked doc with attribution prose that took real analysis to write) as a side effect of running the sweep. `pytest --collect-only -q test_adr94_matrix.py` alone is safe (fixtures are lazy -- collection never executes them). The trap is `--ignore=test_adr94_matrix.py` (a BARE filename, no directory) inside a broader glob-expanded invocation such as `pytest test_adr94*.py --ignore=test_adr94_matrix.py`: pytest's `--ignore` path matching did not exclude the file on this run (rootdir/path-prefix mismatch), so the shell-expanded glob still handed the file to pytest, the one test ran for real, and the annotated doc was silently overwritten with the sweep's own regenerated (unannotated) version -- discovered only via `git status` after the fact.
+- **Fix/status (ADR-97 P5):** `git checkout -- Ladruno_implementation/_adr94_matrix.md` recovers it (caught before commit here). Going forward: never rely on `--ignore=<bare filename>` to exclude a file that also matches a glob in the SAME invocation -- either build the file LIST in the shell first and explicitly drop the one to exclude (`ls test_adr94*.py | grep -v matrix`), or run the excluded file separately with `--collect-only` and run everything else via an explicit list. Re-verify with `git status` immediately after any run that includes this file by glob, collect-only or not.
+
+### MinGW/MSYS2 g++ hits `MAX_PATH` compiling from a long Windows path -- compile syntax-check probes from a short path (`C:\tmp\...`), never from the Claude scratchpad path
+- **Bites:** the per-session scratchpad directory (`C:\Users\<user>\AppData\Local\Temp\claude\<long-encoded-project-path>\<uuid>\scratchpad\...`) routinely exceeds Windows' legacy 260-character `MAX_PATH`. MinGW/MSYS2's `g++` (used for the header-only `-fsyntax-only` pre-flight, since it needs no OpenSees link) can fail to open its own intermediate files, or fail more confusingly deep inside a header include chain, when invoked with a working directory or `-I` path near that limit -- and the resulting error looks like a header/include problem, not a path-length problem.
+- **Workaround/status:** compile every g++ pre-flight probe from a short path (`C:\tmp\p5preflight\...` or similar), never directly inside the scratchpad tree. Only the STAGING scripts (the `.py` fix appliers) need to live in the scratchpad; the actual g++ invocation's cwd and `-o` target should not.
+
+### `Backward_Euler` calls `ComputeTangentStiffness()` at the tail of EVERY `setTrialStrainIncr()`, not just the converged one -- a numerical tangent re-point can shift a LOAD-CONTROLLED deck's converged answer by ~1e-9 even though the material's own return map is byte-identical
+- **Bites:** ADR-97 P4 (wp/97e) re-pointed `Numerical_Algorithmic_FirstOrder/SecondOrder` at a finite difference of `Backward_Euler`'s ACTUAL committed map (via re-entrant `setTrialStrainIncr()` calls, snapshotted/restored) instead of the unrelated `compute_local_stress()`. `Backward_Euler`'s own source is untouched (grep-confirmed), so the ADR-97 D1 promise ("Backward_Euler is byte-identical") should hold -- and it does, for every FULLY-PRESCRIBED-DOF deck (`drive()`/`_tet_build`-style rigs). But `tests/test_adr97_p4_inertness.py`'s `cube/vm/BE/Numerical_Algorithmic_FirstOrder/plastic` baseline entry (a LOAD-CONTROLLED, free-DOF rig, `test_adr94_hlist_numerics._cube_build`) moved by up to 5.428e-09 absolute in 40/60 committed-stress components. Root cause: `Backward_Euler` calls `ComputeTangentStiffness()` at the end of EVERY `setTrialStrainIncr()` -- i.e. every OUTER Newton trial the host analysis takes, not only the one that ends up committed -- so the RETURNED TANGENT (which the outer Newton uses to compute its next trial displacement) is now materially different (a real, consistent FD of `Backward_Euler` itself, vs. the old FD of an unrelated map) for every intermediate trial along the way. A different tangent changes the outer Newton's convergence PATH, and since `NormDispIncr` has a finite tolerance (`1e-12` on this deck), a different path lands at a different point WITHIN that tolerance ball -- at almost exactly the magnitude of the file's own documented cross-platform compiler-noise floor (5.8e-09, MSVC vs GCC/libm). The material's own map is unchanged; only WHICH of several tolerance-equivalent converged states the outer solver happens to land on shifted.
+- **Diagnostic signature that confirms this (not a real regression):** (1) only decks that are BOTH load-controlled/free-DOF AND genuinely plastic move -- the SAME deck's purely elastic leg is bit-identical, because an elastic `Backward_Euler` trial is exactly linear, so old and new FD reproduce the exact same analytical `E` regardless of which map they differentiate, leaving no path-dependence to expose; (2) every OTHER deck in a large baseline (22 of 23 here, including every other `cube/vm/BE/*` tangent-type combination and every fully-prescribed tet deck) stays bit-identical; (3) the magnitude matches the file's own pre-existing cross-platform noise floor almost exactly.
+- **What to do:** do NOT chase this as a bug. Verify the two diagnostic signatures above (only load-controlled+plastic decks move; magnitude at the Newton-tolerance/compiler-noise floor), regenerate ONLY the affected baseline entries deliberately (never blanket-regenerate without diffing old-vs-new first), and document the root cause in both the ledger and the gate file's own docstring so the next re-point of a `tangent_type` option is not mistaken for a `Backward_Euler` behavior change.
+
+### A perturbed sub-call's tiny (1e-8-relative) strain perturbation essentially NEVER changes a well-behaved Newton integrator's own iteration count -- do not design a refusal-propagation test around "the perturbation alone starves, the primary converges"
+- **Bites:** ADR-97 P4's pre-scope plan called for a refusal-propagation test that isolates a starved `n_max_iterations` to STRICTLY inside one of `numerical_tangent_of_committed_map()`'s perturbed sub-calls (the primary/unperturbed call converges; a perturbation alone exhausts the budget). Measured attempt: bisected `n_max_iterations` to the EXACT boundary a `Backward_Euler` Mohr-Coulomb tet deck needs (42 iterations fails, 43 succeeds, zero slack) and ran BOTH `Secant` and `Numerical_Algorithmic_SecondOrder` at niter 43/44/45 -- ALL succeeded identically at every value tried; the 12 perturbed sub-calls never needed even one more iteration than the primary, despite the primary having zero margin itself. Quadratic Newton convergence means a `~1e-8`-relative perturbation of the strain increment is far too small to meaningfully change the iteration trajectory except in a genuinely adversarial (measure-zero) case that is not practical to construct by search.
+- **Fix/status:** test the property that actually matters operationally instead -- a deck starved badly enough that BOTH the primary call and its perturbations fail (e.g. `n_max_iterations 2` with `strict_convergence 1` on a plain Mohr-Coulomb tet, the ADR-84 P2a exhaustion reproducer) must refuse IDENTICALLY under `Secant` and under `Numerical_Algorithmic_SecondOrder` -- confirming the repoint's snapshot/restore/refusal-propagation code does not mask, alter, or crash differently on, a refusal it did not itself cause. This is fully testable and was verified; the narrower "only-inside-a-perturbation" scenario was not, and is not worth further search time.
+
+### `Backward_Euler` needs `strict_convergence` to fail loud on a starved deck; `Closest_Point` fails loud on the SAME starved deck by default -- do not reuse a `Closest_Point` starvation reproducer for `Backward_Euler` without adding the flag
+- **Bites:** `test_adr97_p6_failloud.py::_starved` (`hiso=7000.0, niter=1` on the VM triaxial path) is a `Closest_Point` reproducer (`mat_vm`'s default `method`) -- it refuses without `strict_convergence` because `Closest_Point`'s Newton has no legacy silent-accept path. Reusing the exact same kwargs with `method="Backward_Euler"` (naively assuming the reproducer is method-agnostic) SILENTLY SUCCEEDS: `Backward_Euler` only fails loud on non-convergence when `strict_convergence` is explicitly turned on (ADR-84 P2a) -- by default it falls out of its Newton loop and commits the non-converged state as "success", which is the ORIGINAL upstream defect ADR-84 P2a's flag exists to opt out of.
+- **Fix:** always pass `strict=1` (or the raw `strict_convergence 1` option) when writing a NEW `Backward_Euler` starvation test, even if copying an existing `Closest_Point` reproducer's `niter`/load values verbatim; `strict_convergence 1` is harmless (bit-identical) on a deck that already converges, so it is safe to add unconditionally to a starvation reproducer regardless of which integrator it targets.
+
+## ASDPlasticMaterial3D — gate-4 byte-identity is platform-scoped, not universal (ADR-97 P1, P7 closeout)
+
+- **Bites:** `tests/test_adr97_p4_inertness.py`'s gate-4 baseline enforces `==` (bit-for-bit) equality against a Windows/MSVC-produced JSON dump. The first Linux Zone-A run of `wp/97b-cp-smooth` (run [34174010743](https://github.com/nmorabowen/OpenSees/actions/runs/34174010743)) FAILED 3 decks: two von Mises rows off by 5.8e-09 (a genuine Newton-tolerance-scale difference, not a code path) and one Drucker-Prager row off by 2e-20 (pure floating-point noise below any physical tolerance). Both are MSVC-vs-GCC/libm differences on a `Backward_Euler` history that never changed source. The same class of failure recurred on `wp/97d-cp-hoekbrown`'s and `wp/97g-measure`'s first Linux runs before the fix had propagated to their branches.
+- **Why:** ADR-94 already learned that an absolute cross-platform float pin needs to be `>= 1e-6` relative, never `1e-9` (it failed twice on Linux there too). Gate-4's OWN baseline was written as an exact `==` because it was designed to prove D1 ("Backward_Euler is untouched"), which really does hold bit-for-bit within one platform/compiler/libm — the mistake was applying that same exactness ACROSS platforms.
+- **Fix (commit `94abcdbb7`, `test(ADR-97 P1): gate-4 byte identity is platform-scoped`):** enforce `==` (exact) only on the platform that produced the baseline (`win32`), and fall back to the fork's standard `1e-6` relative floor everywhere else. This is a general pattern for any "byte-identical before/after" baseline check that is regenerated on a developer's Windows machine but must also pass Zone-A's Ubuntu runner: scope the exactness check to `sys.platform`, don't relax the tolerance in a way that would also hide a real regression on the ORIGINAL platform.
+- **Consequence for reading a Zone-A run history:** an early failing run against a branch that later shows green is not necessarily evidence of a real regression that got quietly patched over — check whether the fix was the platform-scoping pattern above (cross-platform noise, expected) before assuming a substantive bug was found and fixed. Recorded in [[reviews/adr97_verdict]] §1's per-gate manifest, which cites both the failing and the final run id for every branch this bit.
+
+## ADR-97 (multi-WP ADR) — orchestration lessons for future multi-session/multi-worktree work
+
+- **A subagent that backgrounds its own build is never re-woken by the build finishing.** Three separate sessions across this ADR's P1-P6 execution parked on a background build or measurement sweep and were only revived by an unrelated notification landing later, or by a fresh "finisher" session picking the worktree back up cold. Watch a background build with a bounded FOREGROUND `until`-loop polling the artifact's own mtime (e.g. `dist/bin/opensees.pyd`), per `ladruno-long-run-agent-traps` — never fire off a detached background watcher with nothing polling its result.
+- **Inter-agent `SendMessage` was unavailable during this ADR's execution window**, which is exactly why the above could not be worked around with a wake-up call. Plan multi-WP ADRs assuming the "finisher" pattern (a later session resumes a stalled worktree by inspecting its state — `git log`, `git status`, the last build log) is the DEFAULT recovery path, not a fallback.
+- **A duplicate P6 orchestrator ran concurrently** with the session whose measurement report ended up cited in the verdict — two sessions independently started the same mesh-scale-measurement work package. Per `ladruno-duplicate-lane-work`, check `git worktree list` and `gh pr list --state open` for an existing branch/PR on the same phase letter before starting a new one; if a duplicate is found mid-flight, rescue its uncommitted work as its own commit rather than discarding it (it may have measured something the surviving lane did not).
+- **`pytest --ignore=<bare filename>` inside a glob-expanded invocation does not reliably exclude that file** — see the dedicated entry above ("`pytest --collect-only` on a file with a MODULE-scoped fixture..."); re-flagged here as an ADR-wide lesson because it recurred across P5 and was checked for specifically in P7's closeout run (`git status` clean before and after the 237-test battery).
+- **`HB_sigma_ci` vs `HB_sigci` is a specific instance of a general trap: a refusal test using a WRONG parameter name still "passes"**, because a missing/unknown parameter is itself a construction error under the ADR-94 contract, and a test that only checks the refusal direction cannot tell "refused because unsupported" from "refused because the deck itself never built." General fix, applied from P3 onward: every refusal test must ALSO be checked in the positive direction — the identical deck must construct successfully under an integrator/family combination that IS supported.
+- **`ops.ladrunoBuild()` cannot see an uncommitted mutation.** During each of the four mutation-gate exercises (P1-P4), the provenance stamp still reported the last COMMITTED hash even when the binary under test was built from a scratch, never-committed source edit. Verifying `ladrunoBuild() == HEAD` after a mutation build proves nothing about which source the binary actually contains — the only reliable record is the build log's timestamp plus `git status`/`git diff` captured AT build time and written into the mutation report, not re-derived from the binary after the fact.
 ## Growing a `MaterialResponse` vector needs TWO edits, and a mismatch is SILENT (ADR-92 P2-9, 2026-09-07)
 
 The `setResponse` / `getResponse` idiom this codebase uses everywhere allocates a
@@ -6111,3 +6378,49 @@ member latch. Lesson for the next "once per X" cache-style gate on a `-stats`
 style flag: ask explicitly whether X is "this analysis" or "this event", because
 OpenSees's own re-solve/re-factor cadence (one pattern, many refactorizations)
 makes those two very different answers.
+
+### A post-commit re-read of a DruckerPrager tangent (`printA`, `eleResponse 'stiffness'`, a recorder) is the ELASTIC branch roughly half the time — it is not the state the step actually converged with
+
+- **Bites:** any diagnostic or test that reads a DruckerPrager-family
+  material's tangent AFTER a step has committed — `ops.printA('-ret')`,
+  `ops.eleResponse(tag, 'stiffness')`, a stiffness recorder sampled between
+  steps — gets the ELASTIC tangent (`mCep == mCe`, exactly symmetric even
+  under non-associated flow) on a roughly-coin-flip fraction of plastic
+  steps, even though the step just converged plastically. Reading only the
+  LAST step of a ramp for an "is this run plastic" fingerprint (asymmetry,
+  branch id, whatever) is a knife edge: a *relative* `1e-12` nudge to a
+  material constant (e.g. `sig_y`) is enough to flip the read.
+  `tests/test_upstream_symmetrize_fixes.py::test_zerolengthnd_unsym_tangent`
+  hit exactly this — its final-step-only asymmetry read measured `0.0` on
+  `ladruno` head (a false regression signal; the mirror-assembly bug it
+  guards was NOT back), fixed by sampling the max over every converged step
+  instead of the last one.
+- **Why:** the element's `getTangentStiff()` (e.g.
+  `SRC/element/zeroLength/ZeroLengthND.cpp:377`) calls
+  `setTrialStrain(committed strain)` to re-form the tangent for a caller
+  like `printA`, which re-runs `DruckerPrager::plastic_integrator()`
+  (`SRC/material/nD/UWmaterials/DruckerPrager.cpp:446`) from a stress state
+  sitting EXACTLY on the yield surface (it's the state the step just
+  converged to and committed). That integrator tests `f1 <= fTOL` with
+  upstream's `fTOL = 0.0`; on this re-formation `f1_trial` is pure roundoff
+  (`+-1e-15`-ish), so which branch it takes — elastic (`mCep = mCe`,
+  symmetric) or plastic (`mCep` possibly unsymmetric under non-associated
+  flow) — is decided by floating-point noise, not by physics.
+- **Not a real problem:** analysis RESULTS are unaffected. The next step's
+  Newton iterations re-form the tangent at a genuine trial state away from
+  the surface, so the roundoff-branch tangent is only ever used for one
+  diagnostic read, never to compute an increment that matters. Do NOT "fix"
+  this by changing `fTOL` off `0.0` — it's vanilla upstream, has a wide
+  blast radius, and isn't the defect; the fix belongs in the diagnostic/test
+  code that reads the tangent.
+- **Workaround/status (2026-09-08):** any test asserting on a post-commit
+  DruckerPrager tangent must sample over multiple steps (max, or count of
+  nonzero reads) rather than trusting the final one. Multi-Gauss-point
+  volume/area elements (BezierTet10, BezierTri6) mask this in practice —
+  it's unlikely EVERY Gauss point lands on the roundoff boundary
+  simultaneously — but that's luck, not a guarantee; `test_beziertet10_unsym_tangent.py`
+  and `test_beziertri6_unsym_tangent.py` were hardened the same way as a
+  precaution. `test_pardiso_asym_rearm.py` was left alone: its guard samples
+  the SOE's assembly-time (mid-Newton-iteration) tangent across ~135
+  assemblies via a console-log latch, not a single post-commit read, so it
+  doesn't share this mechanism.

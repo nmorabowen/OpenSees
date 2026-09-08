@@ -193,7 +193,16 @@ public:
         
         // cout << "  YF - eps_qp_shear = " << eps_qp_shear << endl;
 
-        double qf = (c * cot(phi) + sigma3) * 2 * sin(phi) / (1 - sin(phi));
+        // Ladruno (ADR-97 P5): rewritten to remove the unguarded cot(phi)
+        // singularity -- cot(phi) -> Inf at phi == 0 (a legitimate
+        // cohesive-only / undrained-clay choice), and Inf * 2*sin(phi)
+        // (== Inf * 0 at phi == 0) is the IEEE-754 indeterminate NaN.
+        // This is an exact algebraic rearrangement of the original
+        // (c*cot(phi)+sigma3)*2*sin(phi)/(1-sin(phi)) formula -- multiply
+        // through by sin(phi) -- so it is numerically identical for any
+        // phi != 0 (matched to ~1e-14 relative) and gives the correct
+        // Tresca limit qf -> 2c as phi -> 0 instead of NaN.
+        double qf = 2.0 * (c * cos(phi) + sigma3 * sin(phi)) / (1.0 - sin(phi));
         // std::cout << "    qf = " << qf << std::endl;
         double qa = qf / Rf;
         double denom = (c*cos(phi) + pref*sin(phi));

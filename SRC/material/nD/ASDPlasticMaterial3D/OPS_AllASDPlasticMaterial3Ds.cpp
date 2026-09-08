@@ -88,14 +88,22 @@ void print_usage(void)
        "    n_max_iterations (int value)\\ \n"
        "    return_to_yield_surface (0 or 1)\\ \n"
        "    strict_convergence (0 or 1, default 0) : 1 = Backward_Euler fails loud on non-convergence\\ \n" // Ladruno (ADR-84 P2a)
-       "    integration_method (string) : Backward_Euler | Forward_Euler |\n"
-       "        Forward_Euler_Subincrement | Modified_Euler_Error_Control |\n"
-       "        Runge_Kutta_45_Error_Control\n"
+       "    experimental_integrator (0 or 1, default 0) : 1 = opt in to the four\n"
+       "        EXPLICIT integrators below (ADR-97 D5); without it they are REFUSED\\ \n"
+       "    integration_method (string) : Backward_Euler | Closest_Point (ADR-97) |\n"
+       "        Forward_Euler | Forward_Euler_Subincrement |\n"
+       "        Modified_Euler_Error_Control | Runge_Kutta_45_Error_Control\n"
+       "    (Closest_Point is the fully implicit closest-point return map; it is the\n"
+       "     ONLY integrator for which tangent_type Algorithmic -- the exact\n"
+       "     consistent tangent -- is defined, and it is currently available for\n"
+       "     VonMises and DruckerPrager only.)\n"
        "    (ADR-94: Backward_Euler_LineSearch and Runge_Kutta_45_Error_Control_old are REFUSED;\n"
        "     every model parameter except MassDensity and InitialP0 is REQUIRED; and any\n"
        "     unrecognised token here is an ERROR -- the material is not created.)\n"
        "    method (string) : Forward_Euler | Runge_Kutta_45_Error_Control\\ \n"
-       "    tangent (string) : Elastic | Numerical_Algorithmic_FirstOrder | Numerical_Algorithmic_SecondOrder\\ \n"
+       "    tangent_type (string) : Secant (default) | Continuum | Elastic |\n"
+       "        Algorithmic (Closest_Point only) | Numerical_Algorithmic_FirstOrder |\n"
+       "        Numerical_Algorithmic_SecondOrder\\ \n"
        "End_Integration_Options \\ \n"
        "\n";
 }
@@ -324,7 +332,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     // verbatim when one is not recognised so the user can see the spelling.
     static const char* const ASDP_VALID_INTEGRATION_OPTIONS =
         "f_absolute_tol, f_relative_tol, stress_absolute_tol, n_max_iterations, strict_convergence, "
-        "rk45_dT_min, rk45_niter_max, return_to_yield_surface, integration_method, "
+        "rk45_dT_min, rk45_niter_max, experimental_integrator, return_to_yield_surface, integration_method, "
         "tangent_type, End_Integration_Options";
 
     cout << "\n\nDefined internal variables: \n";
@@ -353,6 +361,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
     int strict_convergence = 0; // Ladruno (ADR-84 P2a): opt-in fail-loud on Backward_Euler non-convergence
     double rk45_dT_min = 1e-2;
     int rk45_niter_max = 110;
+    int experimental_integrator = 0; // Ladruno (ADR-97 wp/97f, D5): opt-in gate for the four explicit integrators
 
     // Loop over input arguments
     while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -511,6 +520,14 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                     cout << "   Setting rk45_niter_max = " << rk45_niter_max << endl;
                     option_recognised = true;   // Ladruno (ADR-94 wp/94a)
                 }
+
+                if (std::strcmp(param_name, "experimental_integrator") == 0) // Ladruno (ADR-97 wp/97f, D5)
+                {
+                    OPS_GetInt(&get_one_value, &experimental_integrator);
+                    cout << "   Setting experimental_integrator = " << experimental_integrator << endl;
+                    option_recognised = true;
+                }
+
                 if (std::strcmp(param_name, "return_to_yield_surface") == 0)
                 {
                     // OPS_GetInt(&get_one_value, &return_to_yield_surface);
@@ -563,7 +580,52 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                         return false;
                     }
                     else if (std::strcmp(method_name, "Backward_Euler") == 0)
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;                    
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
+                    else if (std::strcmp(method_name, "Closest_Point") == 0)
+                    {
+                        // Ladruno (ADR-97 wp/97b, extended wp/97c): the
+                        // closest-point return map.  Available family by family
+                        // (ADR-97 D3): P1 ships VonMises and DruckerPrager
+                        // (flank + apex) with Null, Linear scalar/tensor and
+                        // ArmstrongFrederick hardening; P2 adds the principal-
+                        // stress-space MohrCoulomb and MohrCoulombTensionCutoff
+                        // returns for MATCHED YF/PF pairs only; P3 adds the
+                        // curved-surface HoekBrown return on the same rule
+                        // (Ladruno ADR-97 wp/97d).
+                        // A specialization whose YF, PF or hardening law has not
+                        // opted in is refused HERE rather than silently
+                        // approximated with the inert zero/finite-difference
+                        // defaults -- the class of defect ADR-94 M3 found.
+                        if (!instance->supportsClosestPoint())
+                        {
+                            opserr << "nDMaterial ASDPlasticMaterial3D - "
+                                   << "integration_method 'Closest_Point' is not"
+                                   << " available for this model (YF "
+                                   << instance->getYFName().c_str() << ", PF "
+                                   << instance->getPFName().c_str() << ", IV "
+                                   << instance->getIVName().c_str() << ")." << endln;
+                            opserr << "   ADR-97 D3: the closest-point map is added"
+                                   << " family by family. P1 covers VonMises and"
+                                   << " DruckerPrager with Null / Linear / "
+                                   << "ArmstrongFrederick hardening; P2 adds the"
+                                   << " perfectly plastic MohrCoulomb and"
+                                   << " MohrCoulombTensionCutoff families, but ONLY"
+                                   << " where the yield function AND the plastic flow"
+                                   << " direction are both of that family -- a mixed"
+                                   << " pairing (MohrCoulomb_YF with VonMises_PF or"
+                                   << " DruckerPrager_PF, VonMises_YF or"
+                                   << " DruckerPrager_YF with MohrCoulomb_PF,"
+                                   << " HoekBrown_PF with anything) is verified by no"
+                                   << " oracle and stays refused. P3 adds the"
+                                   << " Hoek-Brown family under the SAME matched-pair"
+                                   << " rule (HoekBrown_YF x HoekBrown_PF only)."
+                                   << " StiffSoil is P5. Use Backward_Euler."   // Ladruno (ADR-97 wp/97d)
+                                   << endln;
+                            asdp_parse_rejected = true;
+                            return false;
+                        }
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Closest_Point;
+                    }
                     else if (std::strcmp(method_name, "Backward_Euler_LineSearch") == 0)
                     {
                         // Ladruno (ADR-94 wp/94a): ADR-94 M7/H8 -- measured 2/20 steps
@@ -588,7 +650,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                                << "integration_method '" << method_name << "'." << endln;
                         opserr << "   Valid values: Forward_Euler, Forward_Euler_Subincrement, "
                                << "Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control, "
-                               << "Backward_Euler" << endln;
+                               << "Backward_Euler, Closest_Point" << endln;  // Ladruno (ADR-97 wp/97b)
                         asdp_parse_rejected = true;
                         return false;
                     }
@@ -605,6 +667,15 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                         tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Continuum;
                     else if (std::strcmp(tangent_type_name, "Secant") == 0)
                         tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Secant;
+                    else if (std::strcmp(tangent_type_name, "Algorithmic") == 0)
+                        // Ladruno (ADR-97 wp/97b, D2): the EXACT consistent tangent
+                        // of the Closest_Point map.  The enum value has existed
+                        // since upstream with no dispatch case anywhere -- it was
+                        // dead, which is why nobody has been silently getting it.
+                        // The cross-check against integration_method is below,
+                        // after the whole option loop (the two tokens may arrive in
+                        // either order).
+                        tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Algorithmic;
                     else if (std::strcmp(tangent_type_name, "Numerical_Algorithmic_FirstOrder") == 0)
                         tangent = (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Numerical_Algorithmic_FirstOrder;
                     else if (std::strcmp(tangent_type_name, "Numerical_Algorithmic_SecondOrder") == 0)
@@ -614,7 +685,7 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
                         // Ladruno (ADR-94 wp/94a): was a silent default to Elastic.
                         opserr << "nDMaterial ASDPlasticMaterial3D - unknown tangent_type '"
                                << tangent_type_name << "'." << endln;
-                        opserr << "   Valid values: Elastic, Continuum, Secant, "
+                        opserr << "   Valid values: Elastic, Continuum, Secant, Algorithmic, "  // Ladruno (ADR-97 wp/97b)
                                << "Numerical_Algorithmic_FirstOrder, "
                                << "Numerical_Algorithmic_SecondOrder" << endln;
                         asdp_parse_rejected = true;
@@ -673,6 +744,52 @@ bool populate_ASDPlasticMaterial3D(T* instance)   // Ladruno (ADR-94 wp/94a): wa
             asdp_parse_rejected = true;
             return false;
         }
+    }
+
+    // Ladruno (ADR-97 wp/97f, D5): the explicit integrators are gated, not
+    // rewritten (ADR-94 M2/M8 catalogued real defects -- empty drift checks,
+    // an error controller that accepts unconditionally at rk45_dT_min -- but
+    // rewriting four integrators is a different ADR). Without opting in, only
+    // the implicit pair Backward_Euler/Closest_Point may be selected. Resolved
+    // AFTER the whole option loop, like the Algorithmic/Closest_Point check
+    // below, so token order does not matter.
+    if (experimental_integrator == 0
+            && (method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control))
+    {
+        opserr << "nDMaterial ASDPlasticMaterial3D - integration_method is an"
+               << " EXPLICIT integrator with no active drift correction beyond"
+               << " return_to_yield_surface and an error controller that accepts"
+               << " unconditionally at rk45_dT_min (ADR-94 M2/M8); it is REFUSED"
+               << " by default (ADR-97 D5)." << endln;
+        opserr << "   The supported implicit pair is Backward_Euler and"
+               << " Closest_Point. Set 'experimental_integrator 1' inside"
+               << " Begin_Integration_Options to opt in anyway." << endln;
+        asdp_parse_rejected = true;
+        return false;
+    }
+
+    // Ladruno (ADR-97 wp/97b, D2): a consistent tangent is defined only relative
+    // to a specific committed map.  Offering `Algorithmic` on the cutting-plane
+    // Backward_Euler would ship a FOURTH almost-right tangent, which is exactly
+    // the class of defect ADR-94 M3 found (Continuum 57 %, Secant 80 %, Elastic
+    // 103 %, Numerical_Algorithmic 31 % against a central difference of the
+    // material's own committed response).  Refuse, naming both tokens.
+    if (tangent == (int) ASDPlasticMaterial3D_Tangent_Operator_Type::Algorithmic
+            && method != (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Closest_Point)
+    {
+        opserr << "nDMaterial ASDPlasticMaterial3D - tangent_type 'Algorithmic' is"
+               << " the exact consistent tangent of the 'Closest_Point' return map"
+               << " and is REFUSED with any other integration_method (ADR-97 D2)."
+               << endln;
+        opserr << "   Set 'integration_method Closest_Point', or pick a tangent_type"
+               << " that the chosen integrator defines: Secant, Continuum, Elastic,"
+               << " Numerical_Algorithmic_FirstOrder, Numerical_Algorithmic_SecondOrder."
+               << endln;
+        asdp_parse_rejected = true;
+        return false;
     }
 
     instance->set_constitutive_integration_method(method, tangent, f_absolute_tol, stress_absolute_tol, n_max_iterations, return_to_yield_surface, rk45_niter_max, rk45_dT_min, strict_convergence, f_relative_tol); // Ladruno (ADR-84 P2a); Ladruno (ADR-94 wp/94c, M5)
