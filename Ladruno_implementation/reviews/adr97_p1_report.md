@@ -48,7 +48,12 @@ silently approximated:
 | `dh/dq`, `dh/dm` | `HARDENING_FUNCTION_{IV,M}_DERIVATIVE` | zero | `hardening_policy_has_cp_derivatives` |
 | `dE/dσ : m` | `ELASTICITY_STRESS_DERIVATIVE` | zero (D6) | `el_is_stress_dependent` |
 
-`Backward_Euler` is untouched (D1). Build: `ec6091c4f`.
+`Backward_Euler` is untouched (D1).
+
+**Build.** `ec6091c4f` — the last commit that changes anything under `SRC/`.
+The two commits after it (`0dfa7eadd`, `b6c2c7edf`) are tests and docs only, so
+the binary every number below was measured on is current for the source.
+`ops.ladrunoBuild()` on `dist/bin/opensees.pyd` reports `ec6091c4f4941fef...`.
 
 ## 2. Gate-by-gate results
 
@@ -158,7 +163,11 @@ finite, admissible apex stress.
 
 ### Gate 7 — portability
 
-Zone-A dispatched on `wp/97b-cp-smooth`; the whole ASDP translation unit also
+Zone-A dispatched on `wp/97b-cp-smooth`: run
+[34174010743](https://github.com/nmorabowen/OpenSees/actions/runs/34174010743).
+Every cross-platform float pin in the three test files is `>= 1e-6` relative
+(`RTOL`), with the actual measured value printed by each test and recorded here.
+The whole ASDP translation unit also
 passes `g++ -std=c++17 -fsyntax-only` locally with the build's own include set,
 which is how the GCC-only defects below were caught before the 20-minute build.
 
