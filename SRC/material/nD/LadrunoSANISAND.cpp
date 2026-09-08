@@ -3629,28 +3629,71 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
                      strcmp(argv[0], "substepsME") == 0 ||
                      strcmp(argv[0], "ladrunoSubsteps") == 0)) {
         static Vector probe(2);
+        // Ladruno (WP-86d): ResponseType names so a recorder gets "substeps_me" /
+        // "substeps_capHit" columns instead of generic C1/C2 -- apeGmsh's reader
+        // depends on these exact strings.
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "substeps_me");
+        output.tag("ResponseType", "substeps_capHit");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandSubstepResponseID, probe);
     }
     // Ladruno (ADR-92 P1)
     if (argc > 0 && (strcmp(argv[0], "implexError") == 0 ||
                      strcmp(argv[0], "ImplexError") == 0)) {
         static Vector probe1(1);
+        // Ladruno (WP-86d): ResponseType name
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "implexError");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandImplexErrorResponseID, probe1);
     }
     if (argc > 0 && (strcmp(argv[0], "avgImplexError") == 0 ||
                      strcmp(argv[0], "AvgImplexError") == 0)) {
         static Vector probe1(1);
+        // Ladruno (WP-86d): ResponseType name
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "avgImplexError");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandAvgImplexErrorResponseID, probe1);
     }
     if (argc > 0 && (strcmp(argv[0], "implexDetail") == 0 ||
                      strcmp(argv[0], "ImplexDetail") == 0)) {
         static Vector probe6(6);
+        // Ladruno (WP-86d): ResponseType names, one per slot, in the order the
+        // material fills probe6 -- total/dev/vol/clampFired/clampCount/f.
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "implexDetail_total");
+        output.tag("ResponseType", "implexDetail_dev");
+        output.tag("ResponseType", "implexDetail_vol");
+        output.tag("ResponseType", "implexDetail_clampFired");
+        output.tag("ResponseType", "implexDetail_clampCount");
+        output.tag("ResponseType", "implexDetail_f");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandImplexDetailResponseID, probe6);
     }
     // Ladruno ADR-92 fix (red/blue B3, contract item 5)
     if (argc > 0 && (strcmp(argv[0], "implexRefusals") == 0 ||
                      strcmp(argv[0], "ImplexRefusals") == 0)) {
         static Vector probe4(4);
+        // Ladruno (WP-86d): ResponseType names, one per slot -- total/signChange/
+        // control/companion.
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "implexRefusals_total");
+        output.tag("ResponseType", "implexRefusals_signChange");
+        output.tag("ResponseType", "implexRefusals_control");
+        output.tag("ResponseType", "implexRefusals_companion");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
     }
     // Ladruno (TIMs request 2026-09-07, F4): read-only diagnostics. Both are
@@ -3660,11 +3703,23 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     if (argc > 0 && (strcmp(argv[0], "psi") == 0 ||
                      strcmp(argv[0], "stateParameter") == 0)) {
         static Vector probe1(1);
+        // Ladruno (WP-86d): ResponseType name
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "psi");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandPsiResponseID, probe1);
     }
     if (argc > 0 && (strcmp(argv[0], "yieldDistance") == 0 ||
                      strcmp(argv[0], "yieldFunction") == 0)) {
         static Vector probe1(1);
+        // Ladruno (WP-86d): ResponseType name
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "yieldDistance");
+        output.endTag();
         return new MaterialResponse(this, LadrunoSanisandYieldDistanceResponseID, probe1);
     }
     // Ladruno ADR-92 P2 (grown to 5 slots by P2-6, 6 by P2-5c)
