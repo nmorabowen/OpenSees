@@ -179,7 +179,15 @@ if defined SKIP_SETUP_ENV (
 REM ----- 1. MUMPS: build once if not already installed ---------------------
 if not exist "%MUMPS_INSTALL%\lib\dmumps.lib" (
     echo.
-    echo === Step 1: Building MUMPS 5.5.1 (one-time, ~15-20 min) ===
+    REM Keep the banner's parens escaped as ^ and the caret form below, and
+    REM keep THIS COMMENT ITSELF FREE OF PARENS. cmd ends a parenthesized
+    REM block at the first unescaped closing paren anywhere inside it --
+    REM including one in a REM. That is what used to break here: the banner
+    REM said one-time, 15-20 min in bare parens, which closed this
+    REM `if not exist` block early. MUMPS then configured/built/installed on
+    REM EVERY build, the else arm ran too, and seeding mumps-install per
+    REM BUILD_GOTCHAS section 6 silently did nothing. See BUILD_GOTCHAS 10b.
+    echo === Step 1: Building MUMPS 5.5.1 ^(one-time, ~15-20 min^) ===
     if not exist "%MUMPS_ARCHIVE%\mumps_src.tar.gz" (
         echo.
         echo MUMPS source archive not found. Downloading from upstream:
