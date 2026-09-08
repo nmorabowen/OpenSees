@@ -357,28 +357,38 @@ def test_H6_backward_euler_is_exact_for_von_mises(vm_available):
 
 
 @pytest.mark.t0m
+# ADR97_P4_MARKER:adr97_p4_flip_h6_numerical_tangent
 def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
-    """CONFIRMED (major).  On a homogeneous plastic state (so H1 is invisible)
-    NONE of the five ``tangent_type`` options is the consistent tangent of the
-    return map.  Measured vs ``hex8_K(vm_consistent_tangent)`` at
-    ``dEps_zz = -3.6e-3``:
+    """CONFIRMED (major) for the three ANALYTICAL options; REVISED for the
+    numerical pair by ADR-97 P4 (wp/97e).  On a homogeneous plastic state (so
+    H1 is invisible), ``Continuum``/``Secant``/``Elastic`` are still not the
+    consistent tangent of the return map -- unchanged, since P4 only touches
+    the ``Numerical_Algorithmic_*`` dispatch.
 
-                                       52314165a   wp/94c
-        Continuum                          57.3%      57.3%    3 Newton iters
-        Secant  (the DEFAULT)              79.9%      79.9%   16
-        Elastic                           102.5%     102.5%   23
-        Numerical_Algorithmic_FirstOrder   31.0%       4.6%    4
-        Numerical_Algorithmic_SecondOrder  31.0%       4.6%    4
+    ``Numerical_Algorithmic_FirstOrder/SecondOrder`` used to differentiate
+    ``compute_local_stress()``, a simplified map ``Backward_Euler`` never
+    calls (ADR-94 M3, ADR-84 P4).  As of ADR-97 P4 they differentiate
+    ``Backward_Euler`` ITSELF via ``numerical_tangent_of_committed_map()``.
+    This deck is VM + LINEAR hardening under proportional loading, where the
+    return direction does not rotate over the step
+    (``test_H6_backward_euler_is_exact_for_von_mises`` proves ``Backward_
+    Euler``'s cutting plane lands on the exact closest-point answer in ONE
+    Newton step here) -- so a correct FD of the map ``Backward_Euler``
+    commits is, BY CONSTRUCTION, the consistent tangent up to stencil
+    truncation error.  There is no third algorithm left here to disagree.
 
-    The numerical pair are closest, and wp/94c (ADR-94 B5) took them from 31%
-    to 4.6%: correcting the von Mises shear-slot convention moved
-    ``compute_local_stress()`` -- the THIRD map they differentiate -- much
-    closer to the map ``Backward_Euler`` actually commits.  They are still not
-    the consistent tangent (which would land near 1e-12 here) and the
-    analytical three are unmoved, so H6's finding stands; only its margin
-    shrank.
-    The operational consequence is the iteration count: the shipped default
-    costs 5.3x the iterations of ``Continuum`` on this step.
+    Measured vs ``hex8_K(vm_consistent_tangent)`` at ``dEps_zz = -3.6e-3``:
+
+                                       52314165a   wp/94c    ADR-97 P4
+        Continuum                          57.3%      57.3%     57.3%   3 Newton iters
+        Secant  (the DEFAULT)              79.9%      79.9%     79.9%  16
+        Elastic                           102.5%     102.5%    102.5%  23
+        Numerical_Algorithmic_FirstOrder   31.0%       4.6%   MEASURE-ME (expect ~1e-3, forward FD)
+        Numerical_Algorithmic_SecondOrder  31.0%       4.6%   MEASURE-ME (expect <=1e-6, central FD)
+
+    The "ADR-97 P4" column's two numerical rows are placeholders pending a
+    real build (pre-scope has no build to measure from) -- the bounds below
+    are conservative and MUST be tightened once the real numbers are in.
     """
     errs, iters = {}, {}
     for tg in ("Continuum", "Secant", "Elastic",
@@ -392,15 +402,32 @@ def test_H6_no_tangent_option_reproduces_the_consistent_tangent(vm_available):
         errs[tg] = _rel(_sparse_K(4), K_ref)
         iters[tg] = it
 
-    # Threshold lowered from 0.25 to 0.02 by wp/94c: the numerical pair improved
-    # from 31% to 4.6% (measured 0.04574 on 3622d6214).  A genuine consistent
-    # tangent would land near 1e-12, so 2% still says "none of the five is it".
-    assert min(errs.values()) > 0.02, "a consistent tangent appeared: %r" % errs
+    # ADR-97 P4: the three ANALYTICAL options are untouched by this WP and
+    # keep their original H6 floor.
     assert errs["Continuum"] > 0.4
     assert errs["Secant"] > 0.6
     assert errs["Elastic"] > 0.9
-    assert errs["Numerical_Algorithmic_FirstOrder"] > 0.02
-    # the DEFAULT (Secant) is the expensive one
+
+    # ADR-97 P4 (wp/97e): Numerical_Algorithmic_* now differentiate
+    # Backward_Euler's own committed map, which on this non-rotating-normal
+    # deck equals the closest-point answer -- so a correct FD should now land
+    # NEAR the consistent tangent, the opposite of the pre-P4 assertion.
+    # MEASURE-ME (ADR-97 P4): the two bounds below are conservative
+    # placeholders derived from the WP task brief's stated expected orders
+    # (<=1e-6 central / ~1e-3 forward against a central-difference-of-the-
+    # binary's-own-residual metric, a DIFFERENT metric from the assembled
+    # hex8_K comparison used here) -- tighten both once measured on a real
+    # build, and if either comes back ABOVE these placeholders, that is a
+    # real P4 regression, not a threshold to loosen.
+    assert errs["Numerical_Algorithmic_SecondOrder"] < 1e-4, (
+        "ADR-97 P4: Numerical_Algorithmic_SecondOrder should now be close to "
+        "the consistent tangent (central FD of Backward_Euler's own "
+        "committed map): measured %r" % errs["Numerical_Algorithmic_SecondOrder"])
+    assert errs["Numerical_Algorithmic_FirstOrder"] < 1e-2, (
+        "ADR-97 P4: Numerical_Algorithmic_FirstOrder should now be close to "
+        "the consistent tangent (forward FD of Backward_Euler's own "
+        "committed map): measured %r" % errs["Numerical_Algorithmic_FirstOrder"])
+    # the DEFAULT (Secant) is still the expensive one -- unaffected by P4
     assert iters["Secant"] >= 4 * iters["Continuum"]
 
 
