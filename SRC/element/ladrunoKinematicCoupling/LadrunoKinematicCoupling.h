@@ -82,7 +82,7 @@ class LadrunoKinematicCoupling : public Element
                            const ID& dofSel, double kt, double kr, bool krUser,
                            int enforce, bool bipenalty, int bpMode, double bpDt,
                            double bpBeta, double kAlpha, int hostEleTag, bool ktAuto,
-                           bool initGapCapture = true);
+                           bool initGapCapture = true, int alUpdate = 0);
   LadrunoKinematicCoupling();
   ~LadrunoKinematicCoupling();
 
@@ -143,10 +143,60 @@ class LadrunoKinematicCoupling : public Element
   double kAlpha;            // multiplier for the auto K_t
   int hostEleTag;           // representative host element (>=0) for -k auto / -wcap; -1 else
   bool ktResolved;          // transient: auto K_t / derived K_r resolved this run
+  // Ladruno (WP-101 r1): resolveAutoKt() must NOT latch ktResolved when the -host element is
+  // not in the domain yet. Domain::addElement() calls update() at DECLARATION time, so a deck
+  // that declares the coupling BEFORE its host used to latch on that failed lookup: -k auto
+  // silently stayed at 1e12 and the conditioning warning never fired. Retry instead; warn once
+  // if the host is still missing after an analysis exists.
+  bool ktHostMissWarned;    // transient
   double ell2;              // floored rotation length scale; default K_r = K_t·ℓ² (ADR 29 §6 D1)
 
   int enforce;              // 0 = penalty, 1 = augmented Lagrangian
+  // Ladruno (WP-101 / ADR 29 §4.2b): WHERE the Uzawa recursion advances.
+  //
+  //   alUpdate = 0 ("commit", DEFAULT) — one update in commitState: λ ← λ + D g once per
+  //     COMMITTED step, a first-order Uzawa ACROSS steps. The residual is then a genuine
+  //     function of u within a step (λ is frozen), which is what every algorithm's Jacobian
+  //     model assumes. This is the ONLY cadence that is safe with every algorithm and
+  //     integrator, and it is the cadence the ADR-41 D1 held-load augmentation sweep
+  //     (`ladrunoBeginAugment` / `LoadControl 0.0` / `ladrunoEndAugment`) turns into a proper
+  //     OUTER Uzawa loop: each held-load analyze is an inner solve at FIXED λ, and the
+  //     Domain::commit() at its end does the outer update. Measured: the rigidity gate closes
+  //     to ≤1e-9 in 4-5 passes for all of Newton / ModifiedNewton / KrylovNewton / BFGS /
+  //     Broyden × LoadControl / DisplacementControl. THIS is the supported within-step route.
+  //
+  //   alUpdate = 1 ("iter", OPT-IN, EXPERT) — λ ← λ + D g inside update(), once per
+  //     equilibrium iteration on the current trial displacements. The fixed point still has
+  //     g ≡ 0 exactly (Δu = 0 ⇒ Δλ = 0 ⇒ D g = 0) and full Newton under LoadControl reaches
+  //     it in one step, but the scheme is NOT generally safe: update() advances λ BEFORE the
+  //     force is formed, so the tie force carries λ_k + 2·D·g(u_k) against a tangent that
+  //     linearises a single D·g, and λ_k is path-dependent — the residual is NOT a function
+  //     of u. Every secant / accelerated / re-solving method is then fed (du, dr) pairs that
+  //     describe no Jacobian. MEASURED FAILURES on a linear 2×2×2 elastic gate:
+  //       DisplacementControl  — 5/5 steps fail with EVERY algorithm (it re-solves dLambda
+  //                              each iterate against a residual that moves independently of u)
+  //       KrylovNewton / BFGS / Broyden + LoadControl — fail or diverge (Broyden to 2.5e275)
+  //       ModifiedNewton       — survives on this linear model, but 10/10 fail on a
+  //                              LadrunoBrick bbar + LadrunoJ2 host
+  //     So `iter` is REFUSED at the first update() unless the active algorithm is full Newton
+  //     AND the active static integrator is LoadControl (checked via OPS_GetAlgorithm /
+  //     OPS_GetStaticIntegrator). Full Newton survives only because its contraction here is
+  //     ~0.008. Prefer the augment sweep above.
+  //
+  // Either way λ must be restorable: revertToLastCommit rolls back to lambdaCommitted, or a
+  // failed/retried step would inherit the multipliers of a discarded trial state.
+  int alUpdate;             // 0 = per-commit (DEFAULT), 1 = per-iteration (opt-in, guarded)
+  bool alGuardWarned;       // the `iter` refusal has been printed once (transient)
+  bool alWarnedTransient;   // the AL-under-transient note has been printed once (transient)
   Vector lambdaAL;          // per-gap-row AL multiplier (size nGap), Uzawa-updated
+  Vector lambdaCommitted;   // λ as of the last commitState (size nGap) — revert target
+  // Domain::revertToLastCommit() and Domain::revertToStart() BOTH end with
+  // `return this->update();` (Domain.cpp), so every element's update() is invoked once
+  // more on the just-reverted state. An element that mutates state in update() — which is
+  // exactly what the per-iteration Uzawa does — would therefore advance λ on the state it
+  // just rolled back to, ratcheting a little further on every failed step. One-shot latch:
+  // the revert arms it, the induced update() consumes it. Transient (not serialized).
+  bool alSkipUpdate;
 
   // bipenalty (ADR 29 §6): default OFF; when on, lump a penalty mass on every tied DOF
   // that is ACTUALLY massless (R AND slaves), sized from the Gershgorin row-sum of K.
@@ -187,7 +237,12 @@ class LadrunoKinematicCoupling : public Element
   void allocate(void);
   void resolveGeometry(void);    // d_i, ragged layout, ℓ², refuse checks
   void buildB(void);             // fill *B from the layout + per-slave d_i
-  void resolveAutoKt(void);      // -k auto (needs -host) + derive K_r = K_t·ℓ²
+  void resolveAutoKt(void);      // -k auto (needs -host) + derive K_r = K_t·ℓ² + conditioning warn
+  // Ladruno (WP-101 r1): true ⇒ the active algorithm/integrator cannot carry -alUpdate iter,
+  // and update() must abort. Reads OPS_GetAlgorithm / OPS_GetStaticIntegrator /
+  // OPS_GetTransientIntegrator; silent (returns false) when no analysis is configured yet.
+  bool refuseIterCadence(void);
+  void warnAlUnderTransient(void);  // one-time note: -enforce al is unusable under transient
   void resolveBipenalty(void);   // Gershgorin per-DOF massless-scan lumping into *M0
   double effectiveCouplingStiffness(void) const { return Kt > 0.0 ? Kt : 0.0; }
   void computeGap(Vector& g);    // full gap (nGap), incl −g0 if captured
