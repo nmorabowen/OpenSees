@@ -427,8 +427,11 @@ def _soil_block():
     return skin, 1
 
 
-def _gate(kt="auto", enforce=None, alupdate=None, host=False, push=_PUSH):
-    """Build the gate, push the MASTER by `push`, return (analyze status, err, sum Rz)."""
+_TOL = {"NormUnbalance": 1.0e-6, "NormDispIncr": 1.0e-12}
+
+
+def _build_gate(kt="auto", enforce=None, alupdate=None, host=False, host_first=True):
+    """Elastic block + footing skin tied to a 6-DOF master. Returns the skin node tags."""
     skin, hostele = _soil_block()
     ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
     args = ["LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin)] + skin
@@ -440,26 +443,79 @@ def _gate(kt="auto", enforce=None, alupdate=None, host=False, push=_PUSH):
     if alupdate is not None:
         args += ["-alUpdate", alupdate]
     ops.element(*args)
+    return skin
+
+
+def _drive(integ="LoadControl", push=_PUSH):
+    """Prescribe the master (LoadControl) or load it for DisplacementControl."""
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    for d, v in enumerate((0.0, 0.0, push, 0.0, 0.0, 0.0)):
-        ops.sp(_MASTER, d + 1, v)
-    ok = _solve_static_gate()
+    if integ == "LoadControl":
+        for d, v in enumerate((0.0, 0.0, push, 0.0, 0.0, 0.0)):
+            ops.sp(_MASTER, d + 1, v)
+    else:
+        for d in (1, 2, 4, 5, 6):
+            ops.sp(_MASTER, d, 0.0)
+        ops.load(_MASTER, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0)
+
+
+def _gap_err(push=_PUSH):
     g = ops.eleResponse(_COUPLE, "gap")
+    return max(abs(v) for v in g) / abs(push)
+
+
+def _reaction_z():
     ops.reactions()
-    rz = sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
-    return ok, max(abs(v) for v in g) / abs(push), rz
+    return sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
 
 
-def _solve_static_gate(tol=1e-14, maxiter=60):
+def _gate(kt="auto", enforce=None, alupdate=None, host=False, push=_PUSH):
+    """Build the gate, push the MASTER by `push`, return (analyze status, err, sum Rz)."""
+    _build_gate(kt, enforce, alupdate, host)
+    _drive("LoadControl", push)
+    ok = _solve_static_gate()
+    return ok, _gap_err(push), _reaction_z()
+
+
+def _solve_static_gate(tol=1e-14, maxiter=60, algo="Newton", integ="LoadControl",
+                       testname="NormDispIncr", nsteps=1, push=_PUSH):
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("FullGeneral")
-    ops.test("NormDispIncr", tol, maxiter, 0)
-    ops.algorithm("Newton")
-    ops.integrator("LoadControl", 1.0)
+    ops.test(testname, tol, maxiter, 0)
+    ops.algorithm(algo)
+    if integ == "LoadControl":
+        ops.integrator("LoadControl", 1.0)
+    else:
+        ops.integrator("DisplacementControl", _MASTER, 3, push / nsteps)
     ops.analysis("Static")
-    return ops.analyze(1)
+    return sum(1 for _ in range(nsteps) if ops.analyze(1) != 0)     # number of FAILED steps
+
+
+def _augment_sweep(algo="Newton", integ="LoadControl", testname="NormDispIncr",
+                   kt=1.0e6, n_aug=12, augtol=1.0e-9):
+    """The ADR-41 D1 held-load within-step augmentation sweep = an OUTER Uzawa loop.
+
+    Each held-load analyze() is an inner solve at FIXED lambda (so the residual is a
+    genuine function of u and every algorithm works); the Domain::commit() that ends it
+    performs the outer update lambda += D g via the element's commitState.
+    """
+    _build_gate(kt, "al", "commit")
+    _drive(integ)
+    if _solve_static_gate(_TOL[testname], 60, algo, integ, testname, 1) != 0:
+        return -1, _gap_err(), 0
+    ops.ladrunoBeginAugment()
+    ops.integrator("LoadControl", 0.0)          # hold EVERYTHING, whatever drove the step
+    npass = 0
+    for _ in range(n_aug):
+        if ops.analyze(1) != 0:
+            ops.ladrunoEndAugment()
+            return -2, _gap_err(), npass
+        npass += 1
+        if _gap_err() <= augtol:
+            break
+    ops.ladrunoEndAugment()
+    return 0, _gap_err(), npass
 
 
 def _direct_push_reaction():
@@ -496,11 +552,12 @@ def test_al_closes_constraint_within_one_step():
     element's diagonal stiffness) the penalty alone leaves ~1.6e-2 of the push
     un-transmitted. With the per-iteration Uzawa update `-enforce al` drives the
     same gap below 1e-8 in ONE step, and the reaction matches a direct push of
-    the same footprint exactly."""
+    the same footprint exactly. `iter` is OPT-IN and only valid here because this
+    fixture uses full Newton under LoadControl -- see test_iter_cadence_refused."""
     ok_p, err_p, _ = _gate(kt=1.0e6)
     assert ok_p == 0 and err_p > 1.0e-3                        # penalty: ~1.6e-2
 
-    ok_a, err_a, rz_a = _gate(kt=1.0e6, enforce="al")
+    ok_a, err_a, rz_a = _gate(kt=1.0e6, enforce="al", alupdate="iter")
     assert ok_a == 0
     assert err_a <= 1.0e-8, f"AL left gap/push = {err_a:.3e} after one step"
     assert err_a < err_p / 1.0e5                               # >5 decades better
@@ -518,6 +575,10 @@ def test_al_update_commit_reproduces_penalty_within_a_step():
     ok, err_commit, _ = _gate(kt=1.0e7, enforce="al", alupdate="commit")
     assert ok == 0
     assert err_commit == pytest.approx(err_pen, rel=1e-9)
+    # ...and `commit` is the DEFAULT, so a bare -enforce al matches it
+    ok_d, err_default, _ = _gate(kt=1.0e7, enforce="al")
+    assert ok_d == 0
+    assert err_default == pytest.approx(err_commit, rel=1e-12)
 
 
 # ------------------------- 23. -k auto -host cannot hold a rigid footing
@@ -539,7 +600,7 @@ def test_al_lambda_reverts_on_failed_step():
     """With the per-iteration recursion lambda moves INSIDE the step, so
     revertToLastCommit (previously a bare `return 0`) must roll it back — otherwise
     a retried step inherits the multipliers of a discarded trial state."""
-    assert _gate(kt=1.0e6, enforce="al")[0] == 0
+    assert _gate(kt=1.0e6, enforce="al", alupdate="iter")[0] == 0
     lam0 = list(ops.eleResponse(_COUPLE, "lambda"))
     assert max(abs(v) for v in lam0) > 0.0                     # AL is actually live
 
@@ -577,3 +638,143 @@ def test_al_update_without_al_warns(capfd):
     text = "".join(capfd.readouterr())
     assert "-alUpdate has no effect without -enforce al" in text, text
     assert 1 in ops.getEleTags()                               # warned, not refused
+
+# ------------------------- 27. algorithm x integrator x test sweep (WP-101 review r1)
+@pytest.mark.parametrize("algo", ["Newton", "ModifiedNewton", "KrylovNewton"])
+@pytest.mark.parametrize("integ", ["LoadControl", "DisplacementControl"])
+@pytest.mark.parametrize("testname", ["NormUnbalance", "NormDispIncr"])
+def test_enforcement_sweep(algo, integ, testname):
+    """The 12-cell sweep that the first cut of WP-101 did not have, and which caught
+    two hard regressions. Per cell:
+      penalty  -- converges (0 failed steps), error at the c/K_t floor;
+      commit   -- converges, and under LoadControl matches penalty exactly (one step,
+                  one Uzawa update at the END of it, so the step itself is penalty);
+      iter     -- EITHER converges to <=1e-8 (full Newton + LoadControl only) OR is
+                  refused (the analysis fails loudly) -- never a silent wrong answer.
+    """
+    nsteps = 1 if integ == "LoadControl" else 5
+    tol = _TOL[testname]
+
+    _build_gate(1.0e6)
+    _drive(integ)
+    nfail_pen = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    err_pen = _gap_err()
+    assert nfail_pen == 0, f"penalty failed {nfail_pen}/{nsteps} steps"
+    assert err_pen > 1.0e-3                                  # the c/K_t floor, ~1.6e-2
+
+    _build_gate(1.0e6, "al", "commit")
+    _drive(integ)
+    nfail_com = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    err_com = _gap_err()
+    assert nfail_com == 0, f"-alUpdate commit failed {nfail_com}/{nsteps} steps"
+    if integ == "LoadControl":
+        assert err_com == pytest.approx(err_pen, rel=1e-9)   # one step => penalty exactly
+    else:
+        assert err_com <= err_pen                            # across-step Uzawa, 5 steps
+
+    _build_gate(1.0e6, "al", "iter")
+    _drive(integ)
+    nfail_it = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    supported = (algo == "Newton" and integ == "LoadControl")
+    if supported:
+        assert nfail_it == 0
+        assert _gap_err() <= 1.0e-8
+    else:
+        assert nfail_it == nsteps, (
+            f"-alUpdate iter must be REFUSED under {algo}/{integ}; it 'succeeded' "
+            f"({nfail_it}/{nsteps} failed) with gap {_gap_err():.3e}"
+        )
+
+
+# ------------------------- 28. the SUPPORTED within-step route: the ADR-41 augment sweep
+@pytest.mark.parametrize("algo", ["Newton", "ModifiedNewton", "KrylovNewton", "BFGS", "Broyden"])
+@pytest.mark.parametrize("integ", ["LoadControl", "DisplacementControl"])
+def test_augment_sweep_closes_constraint(algo, integ):
+    """The consistent way to close the constraint within a step: an OUTER Uzawa loop
+    with a FIXED residual per inner solve. The fork already ships the mechanism
+    (ADR-41 D1: ladrunoBeginAugment / held-load analyze / ladrunoEndAugment), and
+    LadrunoKinematicCoupling participates with NO new hook -- Domain::commit() still
+    runs every element's commitState() during the sweep (contactAugmenting only
+    suppresses the recorder loop and the commitTag bump), and with -alUpdate commit
+    that commitState IS the outer update lambda += D g.
+
+    Unlike -alUpdate iter this works with EVERY algorithm and integrator, because
+    lambda is frozen inside each inner solve."""
+    status, err, npass = _augment_sweep(algo=algo, integ=integ)
+    assert status == 0, f"augment sweep failed (status {status}) after {npass} passes"
+    assert err <= 1.0e-8, f"augment sweep left gap/push = {err:.3e} after {npass} passes"
+    assert 1 <= npass <= 10
+
+
+# ------------------------- 29. iter is refused, loudly, outside its validity window
+def test_iter_cadence_refused(capfd):
+    """-alUpdate iter makes the residual path-dependent, so it is refused anywhere but
+    full Newton + LoadControl. The refusal must be LOUD (the analysis fails) rather than
+    a silently wrong answer."""
+    _build_gate(1.0e6, "al", "iter")
+    _drive("DisplacementControl")
+    nfail = _solve_static_gate(_TOL["NormDispIncr"], 60, "KrylovNewton",
+                               "DisplacementControl", "NormDispIncr", 2)
+    assert nfail == 2
+    text = "".join(capfd.readouterr())
+    assert "-alUpdate iter is REFUSED" in text, text
+    assert "ladrunoBeginAugment" in text                     # points at the supported route
+
+
+# ------------------------- 30. -alUpdate iter echoes its validity window at parse time
+def test_iter_echo_at_parse(capfd):
+    _build_gate(1.0e6, "al", "iter")
+    text = "".join(capfd.readouterr())
+    assert "EXPERT/opt-in" in text and "LoadControl" in text, text
+
+
+# ------------------------- 31. declaring the coupling BEFORE its -host must still resolve
+def test_host_declared_after_coupling_still_resolves(capfd):
+    """Domain::addElement calls update() -> resolveAutoKt() at DECLARATION time. Latching
+    ktResolved on that failed host lookup left `-k auto` silently at the 1e12 default and
+    made the conditioning warning unreachable. The lookup must be retried, not latched."""
+    # coupling FIRST, host element only afterwards
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    h = _B / _N
+    for k in range(_N + 1):
+        for j in range(_N + 1):
+            for i in range(_N + 1):
+                ops.node(_bn(i, j, k), i * h, j * h, k * h)
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    skin = [_bn(i, j, _N) for j in range(_N + 1) for i in range(_N + 1)]
+    ops.element("LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin), *skin,
+                "-dof", 1, 2, 3, "-k", "auto", "-host", 1)          # host ele 1 does not exist yet
+    e = 1
+    for k in range(_N):
+        for j in range(_N):
+            for i in range(_N):
+                ops.element("stdBrick", e, _bn(i, j, k), _bn(i + 1, j, k), _bn(i + 1, j + 1, k),
+                            _bn(i, j + 1, k), _bn(i, j, k + 1), _bn(i + 1, j, k + 1),
+                            _bn(i + 1, j + 1, k + 1), _bn(i, j + 1, k + 1), 1)
+                e += 1
+    for j in range(_N + 1):
+        for i in range(_N + 1):
+            ops.fix(_bn(i, j, 0), 1, 1, 1)
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    kt = ops.eleResponse(_COUPLE, "kt")[0]
+    assert 1.0e6 < kt < 1.0e8, f"-k auto did not resolve off the late -host (K_t = {kt:.3e})"
+
+
+# ------------------------- 32. round-trip must preserve the AL multiplier
+def test_database_roundtrip_preserves_lambda():
+    """The v1 round-trip probed kr + tiedDOFs only. lambda is now ALSO committed state
+    (and lambdaCommitted rides the payload), and Domain::recv() calls update() right
+    after recvSelf -- which under `iter` used to advance lambda by ~6.6e-9 on the
+    just-restored state. Probe lambda so both are pinned."""
+    def build():
+        _build_gate(1.0e6, "al", "commit")
+        _drive("LoadControl")
+        assert _solve_static_gate() == 0
+
+    database_roundtrip(
+        build, probe_nodes=[_MASTER], ndf=6,
+        probe_fn=lambda: list(ops.eleResponse(_COUPLE, "lambda")),
+    )

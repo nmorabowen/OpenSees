@@ -6481,10 +6481,19 @@ Rules that generalize:
   `revertToStart()` ends the same way. The revert therefore calls `Element::revertToLastCommit()`
   on every element FIRST and `Element::update()` on every element SECOND — a pairing nothing in
   the `Element` interface documents.
+- **Also `Domain::recv()`** (the FE_Datastore / parallel restore path) calls `theEle->update()`
+  immediately after `recvSelf`, with exactly the same consequence: a database save/restore moved the
+  same element's λ by `6.6e-9`. Arm the latch in `recvSelf` too — clearing it there (the obvious
+  "reset my transient flags" reflex) is precisely wrong.
 - **Workaround/status (2026-09-14):** a **one-shot latch**: the element's
-  `revertToLastCommit()`/`revertToStart()` arms a transient `bool`, and the first `update()`
+  `revertToLastCommit()`/`revertToStart()`/`recvSelf()` arms a transient `bool`, and the first `update()`
   after it consumes the flag and returns without advancing. Order is safe because the domain
   finishes ALL the reverts before it calls update at all. Do NOT serialize the latch — it only
   ever lives between those two calls. Same shape as the ADR-39 contact-pair revert note above:
   if your element has state in `update()`, it has this problem. See
   [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### `Domain::addElement()` calls `update()` at DECLARATION time — so any lazy resolve that LATCHES on its first attempt silently locks in whatever the half-built domain could see
+- **Bites:** an element that resolves something lazily (a `-host` element's stiffness scale, a material pointer, a neighbour's geometry) behind a `if (resolved) return; ... resolved = true;` guard gets its FIRST call from `Domain::addElement`, i.e. while the deck is still being read. Anything declared after it is invisible. Real instance (WP-101): `LadrunoKinematicCoupling -k auto -host <ele>` in a deck that declares the coupling before the host element — the lookup failed, `ktResolved` latched anyway, so `K_t` silently stayed at the 1e12 default instead of the intended 7.93e6, AND the conditioning warning that reads the same host could never fire. Host-first decks were fine; coupling-first decks were silently wrong. Nothing in the run said so.
+- **Why:** `Domain::addElement()` ends by calling the element's `setDomain()` and then `update()` so the element is consistent the moment it joins — a reasonable invariant that happens to make "first call" and "deck fully read" completely different moments.
+- **Workaround/status (2026-09-14):** **do not latch on a failed resolve.** Return without setting the flag and retry on the next call; the retry is free (a pointer lookup) next to a solve. If you need to warn that the target is genuinely missing rather than merely not-declared-yet, gate the warning on an analysis existing (`OPS_GetAlgorithm()` non-null) — that is the cheapest available "we are past deck construction" signal. See [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).

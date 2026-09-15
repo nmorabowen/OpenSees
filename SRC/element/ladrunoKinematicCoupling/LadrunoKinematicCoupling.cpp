@@ -41,6 +41,9 @@
 #include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
 #include <OPS_Globals.h>
 #include <elementAPI.h>
+#include <EquiSolnAlgo.h>        // Ladruno (WP-101 r1): -alUpdate iter guard
+#include <StaticIntegrator.h>    // Ladruno (WP-101 r1)
+#include <TransientIntegrator.h> // Ladruno (WP-101 r1)
 #include <math.h>
 #include <string.h>
 
@@ -56,9 +59,9 @@ LadrunoKinematicCoupling::LadrunoKinematicCoupling(int tag, int ndm_, int refNod
     ndm(ndm_), nrot((ndm_ == 3) ? 3 : 1), nSlave(slaveNodes.Size()),
     connectedNodes(1 + slaveNodes.Size()), dofSel(dofSel_),
     Kt(kt), Kr(kr), krUser(krUser_), ktAuto(ktAuto_), kAlpha(kAlpha_),
-    hostEleTag(hostEleTag_), ktResolved(false), ell2(0.0),
-    enforce(enforce_), alUpdate(alUpdate_), lambdaAL(), lambdaCommitted(),
-    alSkipUpdate(false),
+    hostEleTag(hostEleTag_), ktResolved(false), ktHostMissWarned(false), ell2(0.0),
+    enforce(enforce_), alUpdate(alUpdate_), alGuardWarned(false),
+    alWarnedTransient(false), lambdaAL(), lambdaCommitted(), alSkipUpdate(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
     bpResolved(false), hasRefRot(false),
     valid(false), dvec(), nGap(0), gapNode(), gapDof(), gapIsRot(),
@@ -76,9 +79,9 @@ LadrunoKinematicCoupling::LadrunoKinematicCoupling()
   : Element(0, ELE_TAG_LadrunoKinematicCoupling),
     ndm(0), nrot(0), nSlave(0), connectedNodes(), dofSel(),
     Kt(0.0), Kr(0.0), krUser(false), ktAuto(false), kAlpha(0.0),
-    hostEleTag(-1), ktResolved(false), ell2(0.0),
-    enforce(0), alUpdate(1), lambdaAL(), lambdaCommitted(),
-    alSkipUpdate(false),
+    hostEleTag(-1), ktResolved(false), ktHostMissWarned(false), ell2(0.0),
+    enforce(0), alUpdate(0), alGuardWarned(false),
+    alWarnedTransient(false), lambdaAL(), lambdaCommitted(), alSkipUpdate(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
     bpResolved(false), hasRefRot(false),
     valid(false), dvec(), nGap(0), gapNode(), gapDof(), gapIsRot(),
@@ -363,9 +366,34 @@ void LadrunoKinematicCoupling::buildB(void)
 void LadrunoKinematicCoupling::resolveAutoKt(void)
 {
   if (ktResolved) return;
-  if (ktAuto) {
+
+  // Ladruno (WP-101 r1): resolve the -host ONCE, up front, and DO NOT latch if it is not in
+  // the domain yet. Domain::addElement() calls update() -> resolveAutoKt() at DECLARATION
+  // time; a deck that declares the coupling before its host element used to latch on that
+  // failed lookup, so `-k auto` silently stayed at the 1e12 default and the conditioning
+  // warning below could never fire. Derive K_r provisionally and retry on the next call.
+  Element* host = 0;
+  if (hostEleTag >= 0) {
     Domain* theDomain = this->getDomain();
-    Element* host = (theDomain != 0 && hostEleTag >= 0) ? theDomain->getElement(hostEleTag) : 0;
+    if (theDomain != 0) host = theDomain->getElement(hostEleTag);
+    if (host == 0) {
+      if (!krUser) Kr = Kt * ell2;           // provisional, recomputed once the host lands
+      // Warn once -- but only when an analysis exists, i.e. we are past deck construction and
+      // the host is genuinely missing rather than merely not declared YET.
+      EquiSolnAlgo** algoPtr = OPS_GetAlgorithm();
+      if (!ktHostMissWarned && algoPtr != 0 && *algoPtr != 0) {
+        ktHostMissWarned = true;
+        opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
+               << ": -host element " << hostEleTag << " is not in the domain"
+               << (ktAuto ? "; -k auto cannot resolve and K_t stays "
+                          : "; K_t stays ") << Kt
+               << " (the conditioning check is skipped too)\n";
+      }
+      return;                                 // NO latch -- retry next call
+    }
+  }
+
+  if (ktAuto) {
     if (host == 0) {
       opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
              << ": -k auto needs a valid -host element; keeping K_t=" << Kt << "\n";
@@ -394,10 +422,8 @@ void LadrunoKinematicCoupling::resolveAutoKt(void)
   // getInitialStiff() there is a null-node dereference waiting to happen. resolveAutoKt()
   // is the first point where the value is genuinely available, is ktResolved-guarded (so
   // the warning fires exactly once), and still runs before the first factorisation.
-  if (!ktAuto && hostEleTag >= 0 && Kt > 0.0) {
-    Domain* theDomain = this->getDomain();
-    Element* host = (theDomain != 0) ? theDomain->getElement(hostEleTag) : 0;
-    if (host != 0) {
+  if (!ktAuto && host != 0 && Kt > 0.0) {
+    {
       double scale = LadrunoEmbedded::maxAbsDiagonal(host->getInitialStiff());
       if (scale > 0.0 && Kt > 1.0e6 * scale)
         opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
@@ -576,17 +602,85 @@ int LadrunoKinematicCoupling::revertToStart(void)
 int LadrunoKinematicCoupling::update(void)
 {
   this->resolveAutoKt();
-  if (alSkipUpdate) {       // consume the post-revert call; do NOT advance on it
+  this->warnAlUnderTransient();
+  if (alSkipUpdate) {       // consume the post-revert / post-recv call; do NOT advance on it
     alSkipUpdate = false;
     return 0;
   }
   if (enforce == 1 && alUpdate == 1 && valid) {
+    if (this->refuseIterCadence()) return -1;
     Vector g(nGap);
     this->computeGap(g);
     for (int row = 0; row < nGap; row++)
       lambdaAL(row) += this->rowPenalty(row) * g(row);
   }
   return 0;
+}
+
+// Ladruno (WP-101 r1): gate for the opt-in per-iteration cadence. `iter` makes the residual
+// path-dependent (see the header note), which is only survivable under FULL NEWTON +
+// LoadControl. Everything else was MEASURED to fail or stagnate, so refuse loudly instead of
+// returning a silently wrong answer. Returns true when the caller must abort.
+//
+// Deliberately NOT latched on a pass: a deck can swap algorithm/integrator between analyze()
+// calls, and re-reading two pointers per iteration is free. Says nothing when it cannot tell
+// (no analysis configured yet -- Domain::addElement calls update() at declaration time, long
+// before `analysis Static` exists).
+bool LadrunoKinematicCoupling::refuseIterCadence(void)
+{
+  EquiSolnAlgo** algoPtr = OPS_GetAlgorithm();
+  EquiSolnAlgo* algo = (algoPtr != 0) ? *algoPtr : 0;
+  if (algo == 0) return false;                       // no opinion yet
+
+  StaticIntegrator** siPtr = OPS_GetStaticIntegrator();
+  StaticIntegrator* si = (siPtr != 0) ? *siPtr : 0;
+  TransientIntegrator** tiPtr = OPS_GetTransientIntegrator();
+  TransientIntegrator* ti = (tiPtr != 0) ? *tiPtr : 0;
+
+  bool algoOK = (algo->getClassTag() == EquiALGORITHM_TAGS_NewtonRaphson);
+  bool integOK = (si != 0 && si->getClassTag() == INTEGRATOR_TAGS_LoadControl && ti == 0);
+  if (algoOK && integOK) return false;
+
+  if (!alGuardWarned) {
+    alGuardWarned = true;
+    opserr << "LadrunoKinematicCoupling " << this->getTag()
+           << ": -enforce al -alUpdate iter is REFUSED here. The per-iteration Uzawa update "
+           << "makes the residual path-dependent (the tie force carries lambda_k + 2*D*g while "
+           << "the tangent linearises one D*g), so only FULL NEWTON under LoadControl is safe. "
+           << "This analysis has algorithm classTag " << algo->getClassTag() << " and "
+           << (ti != 0 ? "a TRANSIENT integrator" : (si != 0 ? "a static integrator" : "NO integrator"));
+    if (ti == 0 && si != 0) opserr << " classTag " << si->getClassTag();
+    opserr << ". Measured: DisplacementControl fails 5/5 steps with EVERY algorithm; "
+           << "KrylovNewton / BFGS / Broyden fail or diverge under LoadControl; ModifiedNewton "
+           << "fails 10/10 on a nonlinear host. Use the DEFAULT -alUpdate commit and, to close "
+           << "the constraint WITHIN a step, wrap the step in the ADR-41 held-load augmentation "
+           << "sweep (ladrunoBeginAugment; integrator LoadControl 0.0; analyze 1 repeatedly "
+           << "until eleResponse <tag> constraintViolation is small; ladrunoEndAugment) -- that "
+           << "is a proper OUTER Uzawa loop and was measured to close this gate with every "
+           << "algorithm and integrator. See LadrunoKinematicCoupling_guide.md section 4.2\n";
+  }
+  return true;
+}
+
+// Ladruno (WP-101 r1): one-time note that -enforce al cannot work under an explicit /
+// transient integrator. A PARSE-TIME refusal is impossible -- the integrator is unknown when
+// the element is declared -- so the check lives at the first update(), where the active
+// integrator is finally visible. Warn, do not refuse: the combination is pre-existing.
+void LadrunoKinematicCoupling::warnAlUnderTransient(void)
+{
+  if (alWarnedTransient || enforce != 1) return;
+  TransientIntegrator** tiPtr = OPS_GetTransientIntegrator();
+  StaticIntegrator** siPtr = OPS_GetStaticIntegrator();
+  if (tiPtr == 0 || *tiPtr == 0) return;
+  if (siPtr != 0 && *siPtr != 0) return;             // a static analysis is the active one
+  alWarnedTransient = true;
+  opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
+         << ": -enforce al under a TRANSIENT integrator is refused-by-consequence. AL needs "
+         << "equilibrium iterations to converge against, and -bipenalty is refused together "
+         << "with -enforce al, so a massless tied DOF gets no mass source and the explicit "
+         << "step is singular (CentralDifference / CentralDifferenceLadruno / ExplicitBathe "
+         << "all fail at step 0). Use -enforce penalty with -bipenalty for explicit runs. "
+         << "See LadrunoKinematicCoupling_guide.md section 4.2\n";
 }
 
 // full gap g = B u (then minus the captured offsets g0). g is sized nGap.
@@ -770,6 +864,13 @@ int LadrunoKinematicCoupling::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoKinematicCoupling::recvSelf - header failed\n";
     return -1;
   }
+  // Ladruno (WP-101 r1): the version field means something now -- refuse a payload written
+  // by a NEWER layout rather than mis-reading it.
+  if (hdr(19) > 2.0) {
+    opserr << "LadrunoKinematicCoupling::recvSelf - payload version " << hdr(19)
+           << " is newer than this build understands (2); refusing\n";
+    return -1;
+  }
   this->setTag((int)hdr(0));
   ndm = (int)hdr(1);
   nSlave = (int)hdr(2);
@@ -792,8 +893,15 @@ int LadrunoKinematicCoupling::recvSelf(int commitTag, Channel& theChannel,
   alUpdate = (int)hdr(20);                 // Ladruno (WP-101)
   nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
+  ktHostMissWarned = false;
   bpResolved = false;
-  alSkipUpdate = false;                    // Ladruno (WP-101): transient latch
+  alGuardWarned = false;
+  alWarnedTransient = false;
+  // Ladruno (WP-101 r1): ARM the latch, do not clear it. Domain::recv() calls theEle->update()
+  // immediately after recvSelf, which under `iter` advanced lambda on the just-restored state
+  // (measured: a database save/restore moved lambda by 6.6e-9). Same one-shot contract as the
+  // post-revert call.
+  alSkipUpdate = true;
   nDOF = 0;
   valid = false;
 
