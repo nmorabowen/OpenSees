@@ -1555,10 +1555,16 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
                        << " (dT_min = " << dT_min << "); the strain increment is NOT"
                        << " integrated and the trial state is left PARTIAL at T < 1."
                        << " The committed state is unchanged, so a cut step loses"
-                       << " nothing -- but only an element that PROPAGATES a material"
-                       << " failure cuts the step. Today that is LadrunoBrick; under"
-                       << " Brick / BrickUP / QuadUP / stdBrick the return code is"
-                       << " discarded and THIS RUN IS INVALID." << endln;
+                       << " nothing -- but only an element that FORWARDS"     // Ladruno WP-99 (F7)
+                       << " setTrialStrain's return code cuts the step:"      // Ladruno WP-99 (F7)
+                       << " LadrunoBrick (sentinel-filtered), LadrunoBrick20," // Ladruno WP-99 (F7)
+                       << " LadrunoQuad, LadrunoCST, LadrunoLST, BezierTet10," // Ladruno WP-99 (F7)
+                       << " BezierTri6, FourNodeQuad and FourNodeQuadUP do;"   // Ladruno WP-99 (F7)
+                       << " Brick (= stdBrick), BbarBrick, BrickUP, SSPbrick," // Ladruno WP-99 (F7)
+                       << " SSPquad and LadrunoSolidShell DISCARD it and THIS"  // Ladruno WP-99 (F7)
+                       << " RUN IS INVALID. At COMMIT time no element acts on"  // Ladruno WP-99 (F7)
+                       << " it at all -- Domain::commit() drops the return."    // Ladruno WP-99 (F7)
+                       << endln;
                 if (++ladrunoSubstepCapWarnCount == 10)
                     opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"
                            << " warnings suppressed (budget 10 per process)." << endln;

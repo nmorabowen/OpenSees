@@ -568,6 +568,41 @@ class LadrunoSANISAND : public ManzariDafalias
     // rule as mImplexGuardReversal/mImplexGuardSoftening.
     bool   mPrimed;   // Ladruno ADR-92 P2-7 (redesign)
 
+    // Ladruno WP-99 (F7): the COMMIT-TIME refusal latch.
+    //
+    // `Domain::commit()` (Domain.cpp) is `elePtr->commitState();` -- bare, with
+    // the return value dropped -- so NO element, fork or vanilla, can refuse a
+    // step at commit. Before this latch the commit-time companion failure
+    // (`ladrunoImplexCommit()` finding mSubstepCapHitInME) therefore propagated
+    // NOWHERE: the partially integrated state was committed, the step was
+    // reported converged, and the analysis walked on. The TIMs plane-strain
+    // strip measured 25.9 million such commits in one run.
+    //
+    // A material cannot refuse the commit that has already been accepted. What
+    // it CAN do is refuse everything after it. Set true by
+    // ladrunoImplexCommit() when the companion fails -- which then also skips
+    // ManzariDafalias::commitState() and restores the trial from the committed
+    // state, so NOTHING partial is committed -- and read at the top of
+    // ladrunoTrialUpdate(), the one entry both wrappers' setTrialStrain() uses,
+    // where it makes every later update return LADRUNO_MATERIAL_REFUSED, and at
+    // the top of commitState(), which then commits nothing. A driver with
+    // subdivision keeps being refused and gives up; a driver without one stops
+    // at the failed step. Either way the run ENDS at the first invalid commit
+    // instead of walking past it.
+    //
+    // STICKY, and cleared ONLY by revertToStart(). NOT by revertToLastCommit():
+    // the analysis has already ACCEPTED the step whose commit failed (that is
+    // the whole defect), so "the last commit" is the corrupt datum itself --
+    // there is nothing to go back to, and a retry at a smaller increment would
+    // restart from a state the material has just declared it could not produce.
+    // `-implexControl`, which refuses at the TRIAL, is the way to get a
+    // RECOVERABLE refusal.
+    //
+    // SENT on the wire (data(33)) for the same reason mImplexDtCommit is: an MP
+    // rank or a restored datastore that "forgets" the latch resumes producing
+    // exactly the answers the latch exists to stop.
+    bool   mImplexCommitRefusedLatch;   // Ladruno WP-99 (F7)
+
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
     // base.
