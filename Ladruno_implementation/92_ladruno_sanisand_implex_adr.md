@@ -448,6 +448,24 @@ decision.
 
 ## Log
 
+- **2026-09-14 — F10, the SELF-WEIGHT wall: diagnosed, and it is not the material.**
+  `[[92b_implex_selfweight_wall_note]]` (WP-102, engine `9c2f964`, no C++). TIMs' report —
+  the control refusing from the first push step and the harness floor reached at
+  `s/B = 0.0125` on a self-weight strip — is reproduced (`FLOOR` at 0.0085, 724 refusals,
+  **all** in the `control` bucket, `implexGuards[0] = 0`, companion 0) and traced to the
+  **stepping controller**: `implexError` is first order in `ds` (measured on a controlled
+  refinement at the seizure settlement, onto a `dt`-independent floor three orders under
+  `tol`), `-implexControl` bounds it absolutely, and a doubling controller can only find
+  that bound by crossing it — with `f = dt_{n+1}/dt_n = 2` on the crossing step. **Pinning
+  the growth factor at 1.0 takes 724 refusals to 6 and the reach from 0.0085 to 0.0265**,
+  nothing else changed. Of the three candidates the act named: the dilatant-at-rest state
+  is an aggravator (confirmed at 100 % of points, and the contractant twin refuses
+  nothing where it refuses — but only **4** points of 2 280 are over tolerance at the step
+  that actually refuses); the substepper's error control is **refuted**; the `nu*` device
+  is **refuted** (at `K0 = 0.455` `nu*` IS the material's own `nu`). Two defects recorded,
+  not fixed: `implexPrimed` is a bare `> 0.0` sign test (`:2905`), and the P2-2 `f = 0`
+  guard and `-implexControl` work against each other (30 of 49 throttled refusal lines are
+  at `f = 0`) — §9 of the note states the design question for this ADR to settle.
 - **2026-09-05 (later)** — P0 complete (`[[_adr92_p0_oracle_results]]`): G0 PASS to
   round-off, G1 order 1.7–2.1, G5 `5.7e-11`; **D1 = A** (18–22x over `dGamma` on scheme 1);
   **D3 reversed** (scheme 2 is explicit at low `p`, `:2264`); **floor clamp added to P1**;
