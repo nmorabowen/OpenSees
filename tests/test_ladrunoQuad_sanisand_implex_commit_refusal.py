@@ -181,6 +181,31 @@ def _stress():
     return list(ops.eleResponse(1, 'material', 1, 'stress'))
 
 
+def _drive_until_latch(max_steps=6):
+    """Step the deviatoric leg until the commit-time latch arms.
+
+    MEASURED (binary `bab19cfae`): on these decks the FIRST deviatoric step
+    still integrates inside two substeps and commits normally; the SECOND
+    caps and latches.  Which step it is, is a property of the deck's stress
+    path and not of the contract, so the tests drive until it happens rather
+    than hard-coding "step 2" -- but they do assert it happened at all, and
+    within a handful of steps, so a mutant that simply never caps still fails.
+
+    Returns `(n_steps, refusals_before_the_capping_step,
+    stress_before_the_capping_step)`.
+    """
+    for n in range(1, max_steps + 1):
+        before_ref = _refusals()
+        before_sig = _stress()
+        ops.analyze(1)
+        if _refusals()[4] == 1.0:
+            return n, before_ref, before_sig
+    raise AssertionError(
+        f'the commit-time companion never capped in {max_steps} deviatoric '
+        f'steps at -maxSubsteps {_CAP_STARVED}; the deck, not the contract, '
+        f'needs fixing (raise _DQ_BIG). refusals={_refusals()}')
+
+
 # ===========================================================================
 #  (1) LadrunoQuad -- the commit-time hole, closed
 # ===========================================================================
@@ -213,21 +238,15 @@ def test_quad_commit_time_companion_refusal_latches_and_stops_the_run():
     tag = 9910
     _build_quad(tag, ('-implex', '-maxSubsteps', _CAP_STARVED))
     _confine_and_flip(tag)
-
-    before_stress = _stress()
-    before_ref = _refusals()
-    assert before_ref[4] == 0.0, ('latched before the deviatoric step even '
-                                  'started', before_ref)
+    assert _refusals()[4] == 0.0, 'latched before the deviatoric leg started'
 
     _add_deviatoric_pattern_2d()
-    rc_big = ops.analyze(1)
+    nsteps, before_ref, before_stress = _drive_until_latch()
 
     after_ref = _refusals()
     assert after_ref[3] - before_ref[3] > 0, (
         'the commit-time companion cap never incremented the companion slot '
-        'of implexRefusals -- either -maxSubsteps 2 was not starved enough on '
-        'this deck (raise _DQ_BIG) or the refusal is not being counted',
-        before_ref, after_ref)
+        'of implexRefusals on the capping step', before_ref, after_ref)
     assert after_ref[4] == 1.0, (
         'the per-instance commit-refusal latch (implexRefusals[4]) is not set '
         'after a commit-time companion failure -- without it the run walks '
@@ -246,8 +265,8 @@ def test_quad_commit_time_companion_refusal_latches_and_stops_the_run():
         'the step AFTER a refused commit still converged. The latch is '
         'supposed to make every later setTrialStrain return '
         'LADRUNO_MATERIAL_REFUSED, and LadrunoQuad::update forwards it '
-        '(ret += setTrialStrain), so the analysis must fail here. rc_big was '
-        f'{rc_big}', rc_next)
+        '(ret += setTrialStrain), so the analysis must fail here. The '
+        f'capping step was deviatoric step {nsteps}', rc_next)
 
     assert _stress() == before_stress, (
         'the committed stress moved on the REFUSED follow-up step too',
@@ -279,16 +298,20 @@ def test_implexcontrol_refuses_the_same_cap_at_trial_and_does_not_latch():
                       '-implexControl', 0.02, 0.01))
     _confine_and_flip(tag)
 
-    before_stress = _stress()
-    before_ref = _refusals()
-
     _add_deviatoric_pattern_2d()
-    rc = ops.analyze(1)
+
+    rc = 0
+    for _ in range(6):
+        before_ref = _refusals()
+        before_stress = _stress()
+        rc = ops.analyze(1)
+        if rc != 0:
+            break
 
     assert rc != 0, (
-        '-implexControl did not refuse a step whose companion cannot '
+        '-implexControl did not refuse any step whose companion cannot '
         'integrate the increment at all (-maxSubsteps 2). That refusal is at '
-        'the TRIAL and must fail the step it belongs to', rc)
+        'the TRIAL and must fail the step it belongs to', rc, _refusals())
 
     after_ref = _refusals()
     assert after_ref[3] - before_ref[3] > 0, (
@@ -324,11 +347,8 @@ def test_brick_commit_time_companion_refusal_latches_and_stops_the_run():
     _build_brick(tag, ('-implex', '-maxSubsteps', _CAP_STARVED))
     _confine_and_flip(tag)
 
-    before_stress = _stress()
-    before_ref = _refusals()
-
     _add_deviatoric_pattern_3d()
-    ops.analyze(1)
+    _nsteps, before_ref, before_stress = _drive_until_latch()
 
     after_ref = _refusals()
     assert after_ref[3] - before_ref[3] > 0, (
@@ -373,8 +393,7 @@ def test_latch_is_cleared_only_by_reverttostart():
     _confine_and_flip(tag)
 
     _add_deviatoric_pattern_2d()
-    ops.analyze(1)                      # latches at commit
-    assert _refusals()[4] == 1.0, 'setup: the latch did not arm'
+    _drive_until_latch()                # latches at commit
 
     assert ops.analyze(1) != 0, (
         'setup: the latched material stopped refusing before the revert test '

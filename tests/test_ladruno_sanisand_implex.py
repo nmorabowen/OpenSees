@@ -1689,16 +1689,34 @@ def _build_settlement_column(tag, opts):
             n = 4 * k + j + 1
             ops.fix(n, 1 if x == 0. else 0, 1 if y == 0. else 0,
                     1 if k == 0 else 0)
-    # pattern 1: lateral confinement, TOP layer only, applied over the
-    # elastic stage below and then loadConst'd.
+    # pattern 1: lateral confinement, applied over the elastic stage below and
+    # then loadConst'd.
+    #
+    # WP-99 (F7), 2026-09-14: the MIDDLE layer (k == 1) joined the TOP layer
+    # here, and the magnitude _SETTLE_E_CONF is unchanged. Confining only the
+    # top node ring left element 2 laterally free on its LOWER face, so it
+    # drifted onto the p_min floor within a step or two of the flip -- which
+    # the docstring of test_negative_monotone_clock_runs_the_spec_factor
+    # already recorded ("repeated 'mean stress p = 0.1008xx is below the
+    # floor ... CLAMPING'"). At that corner the commit-time companion cannot
+    # integrate the increment in ANY substep budget (measured: identical
+    # refusal at -maxSubsteps 20000 and 200000), and before WP-99 that failure
+    # was DISCARDED by Domain::commit() -- so the leg ran on committed partial
+    # states and the f sequence below was measured on steps that were, by the
+    # shipped contract, invalid. With the latch in place the run correctly
+    # stops instead. Confining both free node rings keeps element 2 off the
+    # floor and the whole five-step sequence integrates cleanly (measured:
+    # f == [1, 1, 1, 2, 1] exactly, zero companion refusals), so B1's claim is
+    # now measured on a leg that is actually valid.
     ops.timeSeries('Linear', 1)
     ops.pattern('Plain', 1, 1)
-    for j, (x, y) in enumerate(_XY):
-        n = 8 + j + 1
-        if x == 1.:
-            ops.sp(n, 1, -_SETTLE_E_CONF)
-        if y == 1.:
-            ops.sp(n, 2, -_SETTLE_E_CONF)
+    for k in (1, 2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -_SETTLE_E_CONF)
+            if y == 1.:
+                ops.sp(n, 2, -_SETTLE_E_CONF)
     ops.constraints('Transformation')
     ops.numberer('Plain')
     ops.system('FullGeneral')

@@ -120,10 +120,25 @@ def _analysis(dlambda):
     ops.analysis("Static")
 
 
-def _refusals():
+def _refusals(nele=1):
+    """Slots 0-3 are PROCESS-WIDE counters, so any one point reports them all.
+    Slot 4 is PER-INSTANCE (this integration point's commit-refusal latch), so
+    it has to be scanned: the points that cap are wherever the low-`p` corner
+    is, not necessarily element 1.  Reported here as "did ANY point latch"."""
     r = list(ops.eleResponse(1, "material", 1, "implexRefusals"))
     while len(r) < 5:
         r.append(0.0)
+    if len(r) >= 5:
+        latched = 0.0
+        for e in range(1, nele + 1):
+            for gp in range(1, 5):
+                v = list(ops.eleResponse(e, "material", gp, "implexRefusals"))
+                if len(v) >= 5 and v[4] != 0.0:
+                    latched = 1.0
+                    break
+            if latched:
+                break
+        r[4] = latched
     return r
 
 
@@ -156,7 +171,7 @@ def main(out_path, nsteps=40, implex_control=False):
         ops.reactions()
         q = sum(ops.nodeReaction(n, 2) for n in footing)
         w = -ops.nodeDisp(footing[0], 2)
-        ref = _refusals()
+        ref = _refusals(nele)
         rows.append((s + 1, rc, w, -q, ref[0], ref[3], ref[4]))
         if rc != 0:
             stopped_at = s + 1

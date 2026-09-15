@@ -23,11 +23,19 @@ Add `--control` to run the same deck with `-implexControl 0.02` instead.
 | binary | result |
 |---|---|
 | `9c2f964ea` (before WP-99) | **40 / 40 steps "converged" and committed**, with **567** commit-time companion refusals swallowed. `strip_quad_implex_OLD.csv`. |
-| WP-99 | the first capped commit refuses, commits nothing, latches — and the **next** step's update is refused, so `analyze()` returns nonzero and the run stops. `strip_quad_implex_NEW.csv`. |
+| `bab19cfae` (WP-99) | the first capped commit (step 1) refuses, commits nothing, latches — and step 2's update is refused, so `analyze()` returns −3 and the run stops with the load–settlement curve frozen. `strip_quad_implex_NEW.csv`. |
 
 The OLD column is the defect in one line: the counter climbs from step 1 and the
 load–settlement curve keeps rising anyway, because `Domain::commit()` drops every
 element's `commitState()` return.
+
+Two reading notes on the CSVs. (1) `ref_total` / `ref_companion` are
+**process-wide** counters, so any integration point reports the same values;
+`commit_latched` is **per instance**, so the script scans every element for it —
+the points that cap sit wherever the low-`p` corner is, not necessarily in
+element 1. (2) `strip_quad_implex_OLD.csv` was recorded on a binary whose
+`implexRefusals` response had only four slots, so its `commit_latched` column is
+a placeholder zero, not a measurement.
 
 ## `brick_implex_trajectory.py` — the bit-identity control
 
