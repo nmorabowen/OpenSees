@@ -82,7 +82,7 @@ class LadrunoKinematicCoupling : public Element
                            const ID& dofSel, double kt, double kr, bool krUser,
                            int enforce, bool bipenalty, int bpMode, double bpDt,
                            double bpBeta, double kAlpha, int hostEleTag, bool ktAuto,
-                           bool initGapCapture = true);
+                           bool initGapCapture = true, int alUpdate = 1);
   LadrunoKinematicCoupling();
   ~LadrunoKinematicCoupling();
 
@@ -146,7 +146,27 @@ class LadrunoKinematicCoupling : public Element
   double ell2;              // floored rotation length scale; default K_r = K_t·ℓ² (ADR 29 §6 D1)
 
   int enforce;              // 0 = penalty, 1 = augmented Lagrangian
+  // Ladruno (WP-101 / ADR 29 §4.2b): WHERE the Uzawa recursion advances.
+  //   alUpdate = 1 ("iter", DEFAULT) — λ ← λ + D g inside update(), i.e. ONCE PER NEWTON
+  //     ITERATION on the current trial displacements. The tangent stays the pure penalty
+  //     operator BᵀDB (∂λ/∂u is NOT differentiated), so this is Uzawa nested in Newton:
+  //     the fixed point has g ≡ 0 exactly (Δu = 0 ⇒ Δλ = 0 ⇒ D g = 0), reached at the
+  //     linear rate ρ = 1/(1 + λ_min(D B S⁻¹Bᵀ)). Closes the constraint WITHIN one step.
+  //   alUpdate = 0 ("commit") — the pre-WP-101 behaviour: one update in commitState, i.e.
+  //     a first-order Uzawa ACROSS steps. Within one step the tie is only penalty-enforced,
+  //     so a short push never converges the constraint. Kept for reproducing old decks.
+  // Either way λ must be restorable: revertToLastCommit rolls back to lambdaCommitted, or a
+  // failed/retried step would inherit the multipliers of a discarded trial state.
+  int alUpdate;             // 1 = per-iteration (default), 0 = per-commit (legacy)
   Vector lambdaAL;          // per-gap-row AL multiplier (size nGap), Uzawa-updated
+  Vector lambdaCommitted;   // λ as of the last commitState (size nGap) — revert target
+  // Domain::revertToLastCommit() and Domain::revertToStart() BOTH end with
+  // `return this->update();` (Domain.cpp), so every element's update() is invoked once
+  // more on the just-reverted state. An element that mutates state in update() — which is
+  // exactly what the per-iteration Uzawa does — would therefore advance λ on the state it
+  // just rolled back to, ratcheting a little further on every failed step. One-shot latch:
+  // the revert arms it, the induced update() consumes it. Transient (not serialized).
+  bool alSkipUpdate;
 
   // bipenalty (ADR 29 §6): default OFF; when on, lump a penalty mass on every tied DOF
   // that is ACTUALLY massless (R AND slaves), sized from the Gershgorin row-sum of K.

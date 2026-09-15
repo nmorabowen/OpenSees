@@ -50,13 +50,15 @@
 LadrunoKinematicCoupling::LadrunoKinematicCoupling(int tag, int ndm_, int refNode,
         const ID& slaveNodes, const ID& dofSel_, double kt, double kr, bool krUser_,
         int enforce_, bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
-        double kAlpha_, int hostEleTag_, bool ktAuto_, bool initGapCapture_)
+        double kAlpha_, int hostEleTag_, bool ktAuto_, bool initGapCapture_,
+        int alUpdate_)
   : Element(tag, ELE_TAG_LadrunoKinematicCoupling),
     ndm(ndm_), nrot((ndm_ == 3) ? 3 : 1), nSlave(slaveNodes.Size()),
     connectedNodes(1 + slaveNodes.Size()), dofSel(dofSel_),
     Kt(kt), Kr(kr), krUser(krUser_), ktAuto(ktAuto_), kAlpha(kAlpha_),
     hostEleTag(hostEleTag_), ktResolved(false), ell2(0.0),
-    enforce(enforce_), lambdaAL(),
+    enforce(enforce_), alUpdate(alUpdate_), lambdaAL(), lambdaCommitted(),
+    alSkipUpdate(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
     bpResolved(false), hasRefRot(false),
     valid(false), dvec(), nGap(0), gapNode(), gapDof(), gapIsRot(),
@@ -75,7 +77,8 @@ LadrunoKinematicCoupling::LadrunoKinematicCoupling()
     ndm(0), nrot(0), nSlave(0), connectedNodes(), dofSel(),
     Kt(0.0), Kr(0.0), krUser(false), ktAuto(false), kAlpha(0.0),
     hostEleTag(-1), ktResolved(false), ell2(0.0),
-    enforce(0), lambdaAL(),
+    enforce(0), alUpdate(1), lambdaAL(), lambdaCommitted(),
+    alSkipUpdate(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
     bpResolved(false), hasRefRot(false),
     valid(false), dvec(), nGap(0), gapNode(), gapDof(), gapIsRot(),
@@ -184,6 +187,13 @@ void LadrunoKinematicCoupling::setDomain(Domain* theDomain)
   bool g0Restored = (nGap > 0 && g0.Size() == nGap && g0Computed);
   lambdaAL.resize(nGap > 0 ? nGap : 1);
   if (!lamRestored || !valid) lambdaAL.Zero();
+  // Ladruno (WP-101): lambdaCommitted mirrors lambdaAL — it is the revertToLastCommit
+  // target, so it must exist and match in size before the first update()/commitState().
+  // Same first-call-detection-before-resize rule as lambdaAL (the resize destroys the
+  // size-0 fresh-vs-recv signal): a recv-restored pair is kept as received.
+  bool lamCommRestored = (nGap > 0 && lambdaCommitted.Size() == nGap && lamRestored);
+  lambdaCommitted.resize(nGap > 0 ? nGap : 1);
+  if (!lamCommRestored || !valid) lambdaCommitted = lambdaAL;
   g0.resize(nGap > 0 ? nGap : 1);
   if (!g0Restored) g0.Zero();
   if (valid) {
@@ -368,6 +378,38 @@ void LadrunoKinematicCoupling::resolveAutoKt(void)
     }
   }
   if (!krUser) Kr = Kt * ell2;   // derived rotational penalty (ADR 29 §6; ℓ² floored)
+
+  // Ladruno (WP-101): conditioning guard on a NUMERIC -k when a -host is named. The
+  // rigidity error of a penalty tie falls as c/K_t while the condition number of the
+  // assembled system rises linearly with K_t, so there is a band, not a "bigger is
+  // better" (guide §3.1). Measured on the TIMs strip (E = 45 MPa soil, B = 1.5 m
+  // footing, 101 583 DOF): K_t = 1e12 drove Pardiso onto perturbed pivots and then to
+  // failure (SuperLU failed its first factorisation) while K_t = 5e9 carried the same
+  // leg to a clean plateau at a rigidity error of 6.7e-7. 1e6x the host's diagonal
+  // stiffness is the loud end of the recommended 1e2..1e4x band.
+  //
+  // This lives here and NOT in the parser on purpose: the check needs the host element's
+  // assembled initial stiffness, and at parse time the host may not exist yet (element
+  // ordering in the deck is free) nor have had setDomain() called — calling
+  // getInitialStiff() there is a null-node dereference waiting to happen. resolveAutoKt()
+  // is the first point where the value is genuinely available, is ktResolved-guarded (so
+  // the warning fires exactly once), and still runs before the first factorisation.
+  if (!ktAuto && hostEleTag >= 0 && Kt > 0.0) {
+    Domain* theDomain = this->getDomain();
+    Element* host = (theDomain != 0) ? theDomain->getElement(hostEleTag) : 0;
+    if (host != 0) {
+      double scale = LadrunoEmbedded::maxAbsDiagonal(host->getInitialStiff());
+      if (scale > 0.0 && Kt > 1.0e6 * scale)
+        opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
+               << ": -k " << Kt << " is " << (Kt / scale)
+               << "x the -host element's stiffness scale (" << scale
+               << "). Above ~1e6x the penalty block dominates the global matrix and the "
+               << "solve goes ill-conditioned (perturbed pivots / failed factorisation) "
+               << "while the rigidity error stops improving. Recommended band: 1e2..1e4x "
+               << "the host diagonal; use -enforce al to tighten the tie at a MODERATE "
+               << "K_t instead. See LadrunoKinematicCoupling_guide.md section 3.1\n";
+    }
+  }
   ktResolved = true;
 }
 
@@ -478,27 +520,72 @@ double LadrunoKinematicCoupling::getExplicitCriticalTimeStep(void)
 // ===========================================================================
 int LadrunoKinematicCoupling::commitState(void)
 {
-  if (enforce == 1 && valid) {                // augmented-Lagrangian Uzawa update
+  if (enforce == 1 && valid) {
     this->resolveAutoKt();
+    // Ladruno (WP-101): the LEGACY per-commit Uzawa step (-alUpdate commit). Under the
+    // default -alUpdate iter the recursion has already advanced once per Newton iteration
+    // inside update(), so adding another D·g here would double-count the last iterate.
+    if (alUpdate == 0) {
+      Vector g(nGap);
+      this->computeGap(g);
+      for (int row = 0; row < nGap; row++)
+        lambdaAL(row) += this->rowPenalty(row) * g(row);
+    }
+    // snapshot: the multipliers this step converged with, and the revert target.
+    if (lambdaCommitted.Size() != lambdaAL.Size())
+      lambdaCommitted.resize(lambdaAL.Size());
+    lambdaCommitted = lambdaAL;
+  }
+  return this->Element::commitState();
+}
+
+// Ladruno (WP-101): a FAILED / retried step must not inherit the multipliers accumulated
+// on the discarded trial state. With the per-iteration recursion lambdaAL moves inside the
+// step, so the (previously empty) revert MUST roll it back to the last committed value.
+int LadrunoKinematicCoupling::revertToLastCommit(void)
+{
+  if (enforce == 1 && lambdaCommitted.Size() == lambdaAL.Size())
+    lambdaAL = lambdaCommitted;
+  alSkipUpdate = true;      // Domain::revertToLastCommit ends with update() — see the header
+  return 0;
+}
+
+int LadrunoKinematicCoupling::revertToStart(void)
+{
+  lambdaAL.Zero();
+  lambdaCommitted.Zero();
+  alSkipUpdate = true;      // Domain::revertToStart ends with update() too
+  return 0;
+}
+
+// Called by Domain::update() once per equilibrium iteration, on the CURRENT trial
+// displacements. Ladruno (WP-101): this is where the augmented-Lagrangian recursion
+// advances under the default -alUpdate iter — Uzawa nested in Newton.
+//
+//   λ_{k+1} = λ_k + D g(u_k),   r = f − S u_k − Bᵀ(λ_{k+1} + D g(u_k)),   T = S + BᵀDB
+//
+// The tangent deliberately stays the penalty operator (λ is frozen w.r.t. u), so with a
+// linear structure one Newton solve IS the Uzawa inner solve and the multiplier error
+// contracts by (I + D B S⁻¹Bᵀ)⁻¹ per iteration. Stationarity forces D g = 0, i.e. the
+// converged state satisfies the constraint EXACTLY (to the algorithm's tolerance) rather
+// than to the penalty's O(1/K) floor — that is the whole point of the change.
+//
+// Caveat (documented, not defended against): a line-search / trial-and-discard algorithm
+// calls update() on states it then throws away, so λ rides those iterates too. The fixed
+// point is unchanged; only the path is. revertToLastCommit restores the step's start value.
+int LadrunoKinematicCoupling::update(void)
+{
+  this->resolveAutoKt();
+  if (alSkipUpdate) {       // consume the post-revert call; do NOT advance on it
+    alSkipUpdate = false;
+    return 0;
+  }
+  if (enforce == 1 && alUpdate == 1 && valid) {
     Vector g(nGap);
     this->computeGap(g);
     for (int row = 0; row < nGap; row++)
       lambdaAL(row) += this->rowPenalty(row) * g(row);
   }
-  return this->Element::commitState();
-}
-
-int LadrunoKinematicCoupling::revertToLastCommit(void) { return 0; }
-
-int LadrunoKinematicCoupling::revertToStart(void)
-{
-  lambdaAL.Zero();
-  return 0;
-}
-
-int LadrunoKinematicCoupling::update(void)
-{
-  this->resolveAutoKt();
   return 0;
 }
 
@@ -619,7 +706,7 @@ const Matrix& LadrunoKinematicCoupling::getMass(void)
 int LadrunoKinematicCoupling::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(20);
+  static Vector hdr(21);        // Ladruno (WP-101): +alUpdate at slot 20
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nSlave;
@@ -639,7 +726,8 @@ int LadrunoKinematicCoupling::sendSelf(int commitTag, Channel& theChannel)
   hdr(16) = nGap;
   hdr(17) = dofSel.Size();
   hdr(18) = ell2;
-  hdr(19) = 1.0;                          // version
+  hdr(19) = 2.0;                          // version (2 = +alUpdate, +lambdaCommitted)
+  hdr(20) = alUpdate;                     // Ladruno (WP-101)
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoKinematicCoupling::sendSelf - header failed\n";
     return -1;
@@ -652,14 +740,19 @@ int LadrunoKinematicCoupling::sendSelf(int commitTag, Channel& theChannel)
     opserr << "LadrunoKinematicCoupling::sendSelf - dofSel ID failed\n";
     return -1;
   }
-  // payload: lambdaAL(nGap) + g0(nGap). nGap is recomputed deterministically in
-  // setDomain on the recv side; the ordering matches, so these align by index.
+  // payload: lambdaAL(nGap) + g0(nGap) + lambdaCommitted(nGap). nGap is recomputed
+  // deterministically in setDomain on the recv side; the ordering matches, so these align
+  // by index. Ladruno (WP-101): lambdaCommitted rides along or a partition that receives
+  // mid-step would revert to a zero multiplier on the next failed step.
   if (nGap > 0) {
-    Vector payload(2 * nGap);
+    Vector payload(3 * nGap);
     for (int r = 0; r < nGap; r++)
       payload(r) = (lambdaAL.Size() == nGap) ? lambdaAL(r) : 0.0;
     for (int r = 0; r < nGap; r++)
       payload(nGap + r) = (g0.Size() == nGap) ? g0(r) : 0.0;
+    for (int r = 0; r < nGap; r++)
+      payload(2 * nGap + r) = (lambdaCommitted.Size() == nGap) ? lambdaCommitted(r)
+                            : ((lambdaAL.Size() == nGap) ? lambdaAL(r) : 0.0);
     if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
       opserr << "LadrunoKinematicCoupling::sendSelf - payload failed\n";
       return -1;
@@ -672,7 +765,7 @@ int LadrunoKinematicCoupling::recvSelf(int commitTag, Channel& theChannel,
                                        FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(20);
+  static Vector hdr(21);        // Ladruno (WP-101): must match sendSelf's size
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoKinematicCoupling::recvSelf - header failed\n";
     return -1;
@@ -696,9 +789,11 @@ int LadrunoKinematicCoupling::recvSelf(int commitTag, Channel& theChannel,
   nGap = (int)hdr(16);
   int nDofSel = (int)hdr(17);
   ell2 = hdr(18);
+  alUpdate = (int)hdr(20);                 // Ladruno (WP-101)
   nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
   bpResolved = false;
+  alSkipUpdate = false;                    // Ladruno (WP-101): transient latch
   nDOF = 0;
   valid = false;
 
@@ -717,15 +812,17 @@ int LadrunoKinematicCoupling::recvSelf(int commitTag, Channel& theChannel,
     dofSel = ID();
   }
   lambdaAL.resize(nGap > 0 ? nGap : 1); lambdaAL.Zero();
+  lambdaCommitted.resize(nGap > 0 ? nGap : 1); lambdaCommitted.Zero();
   g0.resize(nGap > 0 ? nGap : 1);       g0.Zero();
   if (nGap > 0) {
-    Vector payload(2 * nGap);
+    Vector payload(3 * nGap);
     if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
       opserr << "LadrunoKinematicCoupling::recvSelf - payload failed\n";
       return -1;
     }
     for (int r = 0; r < nGap; r++) lambdaAL(r) = payload(r);
     for (int r = 0; r < nGap; r++) g0(r) = payload(nGap + r);
+    for (int r = 0; r < nGap; r++) lambdaCommitted(r) = payload(2 * nGap + r);
   }
 
   nodeNdf.resize(1 + nSlave);
@@ -745,6 +842,8 @@ void LadrunoKinematicCoupling::Print(OPS_Stream& s, int flag)
   for (int i = 0; i < nSlave; i++) s << connectedNodes(1 + i) << " ";
   s << "\n  K_t: " << Kt << "  K_r: " << Kr << "  enforce: "
     << (enforce == 1 ? "al" : "penalty");
+  if (enforce == 1)                          // Ladruno (WP-101)
+    s << " (alUpdate: " << (alUpdate == 1 ? "iter" : "commit") << ")";
   s << "  tied DOFs (nGap): " << nGap << (hasRefRot ? "  +moment-transfer" : "  (translation-only)");
   s << (initGapCapture ? (g0Computed ? "  +initGap(captured)" : "  +initGap")
                        : "  +absolute(no initGap)");

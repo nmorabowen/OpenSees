@@ -33,6 +33,7 @@
 //           [-k {Kt | auto}] [-kAlpha a] [-host eleTag]   # auto needs a representative -host
 //           [-kr Kr]                       # rotational-tie penalty (default derived K_t*ell^2)
 //           [-enforce {penalty | al}]
+//           [-alUpdate {iter | commit}]    # AL Uzawa cadence; default iter (within a step)
 //           [-bipenalty {-dtcr dt | -wcap beta}]   # OFF by default (R is often massed)
 //           [-absolute]                    # opt out of initial-gap (offset) capture
 //
@@ -66,7 +67,8 @@ void* OPS_LadrunoKinematicCoupling(void)
     opserr << "WARNING insufficient args\n"
            << "Want: element LadrunoKinematicCoupling tag refNode N s1..sN "
            << "[-dof c1..cK] [-k {Kt|auto}] [-kAlpha a] [-host eleTag] [-kr Kr] "
-           << "[-enforce {penalty|al}] [-bipenalty {-dtcr dt | -wcap beta}] [-absolute]\n";
+           << "[-enforce {penalty|al}] [-alUpdate {iter|commit}] "
+           << "[-bipenalty {-dtcr dt | -wcap beta}] [-absolute]\n";
     return 0;
   }
 
@@ -104,6 +106,8 @@ void* OPS_LadrunoKinematicCoupling(void)
   double Kr = 0.0;
   bool krUser = false;
   int enforce = 0;
+  int alUpdate = 1;                // Ladruno (WP-101): 1 = iter (default), 0 = commit
+  bool alUpdateSet = false;
   bool bipenalty = false;
   int bpMode = 0;
   double bpDt = 0.0, bpBeta = 0.0;
@@ -192,6 +196,26 @@ void* OPS_LadrunoKinematicCoupling(void)
         return 0;
       }
     }
+    // Ladruno (WP-101): WHERE the augmented-Lagrangian Uzawa recursion advances.
+    //   iter   (default) — once per Newton iteration in update(); closes the constraint
+    //                      WITHIN the step (g -> 0 at the algorithm's tolerance).
+    //   commit (legacy)  — once per committed step; within one step the tie is only
+    //                      penalty-enforced, so a short push never converges it.
+    else if (strcmp(opt, "-alUpdate") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoKinematicCoupling: -alUpdate wants iter|commit\n";
+        return 0;
+      }
+      const char* mode = OPS_GetString();
+      if (strcmp(mode, "iter") == 0)        alUpdate = 1;
+      else if (strcmp(mode, "commit") == 0) alUpdate = 0;
+      else {
+        opserr << "WARNING LadrunoKinematicCoupling: unknown -alUpdate '" << mode
+               << "' (want iter|commit)\n";
+        return 0;
+      }
+      alUpdateSet = true;
+    }
     else if (strcmp(opt, "-bipenalty") == 0) {
       bipenalty = true;
     }
@@ -235,6 +259,14 @@ void* OPS_LadrunoKinematicCoupling(void)
            << "element for omega_host; use -dtcr instead\n";
     return 0;
   }
+  // Ladruno (WP-101): -alUpdate is meaningless without -enforce al. Say so rather than
+  // letting a deck believe it changed something.
+  if (alUpdateSet && enforce != 1) {
+    opserr << "WARNING LadrunoKinematicCoupling " << tag
+           << ": -alUpdate has no effect without -enforce al (the penalty formulation "
+           << "carries no multiplier); ignored\n";
+    alUpdate = 1;
+  }
   if (bipenalty && enforce == 1) {
     opserr << "WARNING LadrunoKinematicCoupling: -bipenalty ignored with -enforce al "
            << "(augmented Lagrangian needs no mass penalty)\n";
@@ -271,7 +303,8 @@ void* OPS_LadrunoKinematicCoupling(void)
   Element* e = new LadrunoKinematicCoupling(tag, ndm, refNode, slaves, dofSel, Kt,
                                             Kr, krUser, enforce,
                                             bipenalty, bpMode, bpDt, bpBeta,
-                                            kAlpha, hostEleTag, ktAuto, initGapCapture);
+                                            kAlpha, hostEleTag, ktAuto, initGapCapture,
+                                            alUpdate);
   if (e == 0) {
     opserr << "WARNING LadrunoKinematicCoupling: could not create element\n";
     return 0;

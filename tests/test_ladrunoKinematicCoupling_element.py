@@ -374,3 +374,206 @@ def test_ndf3_and_ndf6_slaves_default_still_accepted():
     for ndf in (3, 6):
         _face(slave_ndf=ndf)                                  # default component list
         assert 1 in ops.getEleTags()
+
+
+# ===================================================================== WP-101
+# The RIGIDITY GATE: a real elastic block with a rigid footing skin driven by a
+# master node.  This is the configuration the penalty formulation is actually
+# asked to hold rigid (a footing on soil), and the one on which the pre-WP-101
+# `-enforce al` was measured to be no better than plain penalty: its Uzawa
+# recursion advanced ONCE PER COMMITTED STEP, so within a single push the tie
+# was penalty-only and the constraint never converged.
+#
+# Metric: err = max |gap| over the footprint / |push|.  With the master's 6 DOFs
+# prescribed the only thing resisting the tie is the soil, so the residual gap is
+# exactly the tie force divided by K_t => err = c / K_t, c a property of the
+# fixture (measured below: c ~ 1.66e4 for this block).
+#
+# Model: 2x2x2 stdBrick cube, B = 1.5 m, E = 45 000 kPa / nu = 0.3 (the TIMs
+# strip's soil), base fixed, the 9 top-face nodes are the footing skin.
+_E, _NU, _B, _N = 45000.0, 0.3, 1.5, 2
+_PUSH = -0.005
+_MASTER = 90001
+_COUPLE = 90002
+
+
+def _bn(i, j, k):
+    return 1000 + (k * (_N + 1) + j) * (_N + 1) + i
+
+
+def _soil_block():
+    """Elastic block, base fixed. Returns (skin node tags, representative host ele tag)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    h = _B / _N
+    for k in range(_N + 1):
+        for j in range(_N + 1):
+            for i in range(_N + 1):
+                ops.node(_bn(i, j, k), i * h, j * h, k * h)
+    ele = 1
+    for k in range(_N):
+        for j in range(_N):
+            for i in range(_N):
+                ops.element("stdBrick", ele,
+                            _bn(i, j, k), _bn(i + 1, j, k), _bn(i + 1, j + 1, k), _bn(i, j + 1, k),
+                            _bn(i, j, k + 1), _bn(i + 1, j, k + 1), _bn(i + 1, j + 1, k + 1),
+                            _bn(i, j + 1, k + 1), 1)
+                ele += 1
+    for j in range(_N + 1):
+        for i in range(_N + 1):
+            ops.fix(_bn(i, j, 0), 1, 1, 1)
+    skin = [_bn(i, j, _N) for j in range(_N + 1) for i in range(_N + 1)]
+    return skin, 1
+
+
+def _gate(kt="auto", enforce=None, alupdate=None, host=False, push=_PUSH):
+    """Build the gate, push the MASTER by `push`, return (analyze status, err, sum Rz)."""
+    skin, hostele = _soil_block()
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    args = ["LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin)] + skin
+    args += ["-dof", 1, 2, 3, "-k", kt]
+    if host or kt == "auto":
+        args += ["-host", hostele]
+    if enforce is not None:
+        args += ["-enforce", enforce]
+    if alupdate is not None:
+        args += ["-alUpdate", alupdate]
+    ops.element(*args)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for d, v in enumerate((0.0, 0.0, push, 0.0, 0.0, 0.0)):
+        ops.sp(_MASTER, d + 1, v)
+    ok = _solve_static_gate()
+    g = ops.eleResponse(_COUPLE, "gap")
+    ops.reactions()
+    rz = sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
+    return ok, max(abs(v) for v in g) / abs(push), rz
+
+
+def _solve_static_gate(tol=1e-14, maxiter=60):
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", tol, maxiter, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    return ops.analyze(1)
+
+
+def _direct_push_reaction():
+    """Leg B: push the SAME footprint nodes directly (no coupling element)."""
+    skin, _ = _soil_block()
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in skin:
+        ops.sp(n, 1, 0.0)
+        ops.sp(n, 2, 0.0)
+        ops.sp(n, 3, _PUSH)
+    assert _solve_static_gate() == 0
+    ops.reactions()
+    return sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
+
+
+# ------------------------- 20. penalty rigidity error is exactly c/K_t
+def test_penalty_rigidity_error_scales_as_inverse_k():
+    """err = c/K_t over three decades — the reason a "rigid" penalty tie needs a
+    K_t nobody can condition. c is a fixture property, not a tolerance."""
+    cs = []
+    for kt in (1.0e6, 1.0e7, 1.0e8):
+        ok, err, _ = _gate(kt=kt)
+        assert ok == 0
+        cs.append(err * kt)
+    for c in cs[1:]:
+        assert c == pytest.approx(cs[0], rel=0.05)             # err*K_t constant
+    assert 1.0e4 < cs[-1] < 1.0e5                              # measured c ~ 1.66e4
+
+
+# ------------------------- 21. -enforce al closes the constraint WITHIN one step (WP-101)
+def test_al_closes_constraint_within_one_step():
+    """THE WP-101 gate. At a MODERATE, host-order K_t = 1e6 (~1.3e2 x the host
+    element's diagonal stiffness) the penalty alone leaves ~1.6e-2 of the push
+    un-transmitted. With the per-iteration Uzawa update `-enforce al` drives the
+    same gap below 1e-8 in ONE step, and the reaction matches a direct push of
+    the same footprint exactly."""
+    ok_p, err_p, _ = _gate(kt=1.0e6)
+    assert ok_p == 0 and err_p > 1.0e-3                        # penalty: ~1.6e-2
+
+    ok_a, err_a, rz_a = _gate(kt=1.0e6, enforce="al")
+    assert ok_a == 0
+    assert err_a <= 1.0e-8, f"AL left gap/push = {err_a:.3e} after one step"
+    assert err_a < err_p / 1.0e5                               # >5 decades better
+
+    rz_direct = _direct_push_reaction()
+    assert rz_a == pytest.approx(rz_direct, rel=1e-9)
+
+
+# ------------------------- 22. -alUpdate commit reproduces the legacy (pre-WP-101) behaviour
+def test_al_update_commit_reproduces_penalty_within_a_step():
+    """`-alUpdate commit` is the pre-WP-101 cadence: one Uzawa step per COMMITTED
+    step, so within a single push the tie is penalty-only and the gap is exactly
+    the penalty gap. This pins the escape hatch AND documents the defect."""
+    _, err_pen, _ = _gate(kt=1.0e7)
+    ok, err_commit, _ = _gate(kt=1.0e7, enforce="al", alupdate="commit")
+    assert ok == 0
+    assert err_commit == pytest.approx(err_pen, rel=1e-9)
+
+
+# ------------------------- 23. -k auto -host cannot hold a rigid footing
+def test_k_auto_host_cannot_hold_a_rigid_footing():
+    """`-k auto` scales K_t to the HOST's stiffness (kAlpha=1e3 x max|K_host(i,i)|)
+    — that is its job: a tie that does not wreck conditioning. It is NOT a rigidity
+    setting: on this gate it resolves to ~8e6 and leaves ~2e-3 of the push
+    un-transmitted, 5 decades short of rigid. Use -enforce al (or a larger -k)
+    when the footing must actually be rigid."""
+    ok, err, _ = _gate(kt="auto")
+    assert ok == 0
+    kt = ops.eleResponse(_COUPLE, "kt")[0]
+    assert 1.0e6 < kt < 1.0e8                                  # host-order, not 1e12
+    assert err > 1.0e-4, f"-k auto unexpectedly rigid ({err:.3e})"
+
+
+# ------------------------- 24. a failed step must not keep the trial-state multipliers
+def test_al_lambda_reverts_on_failed_step():
+    """With the per-iteration recursion lambda moves INSIDE the step, so
+    revertToLastCommit (previously a bare `return 0`) must roll it back — otherwise
+    a retried step inherits the multipliers of a discarded trial state."""
+    assert _gate(kt=1.0e6, enforce="al")[0] == 0
+    lam0 = list(ops.eleResponse(_COUPLE, "lambda"))
+    assert max(abs(v) for v in lam0) > 0.0                     # AL is actually live
+
+    # a second step that CANNOT converge (1 iteration, impossible tolerance)
+    ops.sp(_MASTER, 3, 2.0 * _PUSH)
+    ops.test("NormDispIncr", 1.0e-30, 1, 0)
+    assert ops.analyze(1) != 0                                 # fails -> domain reverts
+    lam1 = list(ops.eleResponse(_COUPLE, "lambda"))
+    assert lam1 == pytest.approx(lam0, rel=1e-12, abs=1e-12)
+
+
+# ------------------------- 25. conditioning guard: a huge K_t against a named -host warns
+def test_high_kt_against_host_warns(capfd):
+    """K_t far above the host's stiffness scale buys no rigidity (the error floors
+    on round-off) and costs conditioning. With a -host named, say so."""
+    ok, _, _ = _gate(kt=1.0e12, host=True)
+    assert ok == 0
+    text = "".join(capfd.readouterr())
+    assert "x the -host element's stiffness scale" in text, text
+
+    # ...and stay quiet inside the recommended band
+    ok, _, _ = _gate(kt=1.0e6, host=True)
+    assert ok == 0
+    assert "stiffness scale" not in "".join(capfd.readouterr())
+
+
+# ------------------------- 26. -alUpdate without -enforce al is called out
+def test_al_update_without_al_warns(capfd):
+    _face(kt=1.0e7)                                            # fresh model
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0, "-ndf", 6)
+    ops.node(2, 1.0, 0.0, 0.0)
+    ops.element("LadrunoKinematicCoupling", 1, 1, 1, 2, "-k", 1.0e7, "-alUpdate", "commit")
+    text = "".join(capfd.readouterr())
+    assert "-alUpdate has no effect without -enforce al" in text, text
+    assert 1 in ops.getEleTags()                               # warned, not refused
