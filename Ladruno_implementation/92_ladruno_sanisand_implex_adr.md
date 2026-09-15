@@ -460,7 +460,10 @@ decision.
   reached `s/B = 0.15` was run (`sanisand_path_diag.py` passes only `-implex`). **That is a
   TERMINATION result and it is scoped:** `implexRefusals[3] = 0` on B, C, D, E, K, L, N, N1 and
   `<= 42` anywhere (M 42, F1 29, I 12, H 6, F3 3, J 2), so on this deck the companion — §3's
-  actual concern, answered by `-maxSubsteps` plus a watched bucket — never failed. It leaves
+  actual concern, answered by `-maxSubsteps` plus a watched bucket — never failed. (Since WP-99 /
+  PR #838, merged as `c75edc95c`, that bucket read is belt-and-braces: a capped companion commit
+  now aborts the run with `analyze() = -4`. The F10 campaign ran on `9c2f964`, which predates it,
+  so on ITS engine the read was the only thing that would have caught one.) It leaves
   **§8's ACCURACY claim untouched**, and the deck sits inside that claim's range rather than
   outside it: minimum `p'` 6.374 kPa is 1.27x the P0 corner's 5 kPa, leg N's strain increment
   crosses `d_eps = 5e-4` at `s/B = 0.0012` and runs at 2.6-4x the corner to the target, and there
@@ -469,9 +472,9 @@ decision.
   With the control ON, two mechanisms: (a) the refusal COUNT is set by the harness's growth rule
   — ×2 → 724 refusals, ×1.25 → 253, ×1.0 → **6** — because `implexError` is first order in the
   step and the control bounds it absolutely; (b) the `FLOOR` itself is the control's own
-  `implexPrimed` bare `> 0.0` test (`:2905`): points whose committed plastic history is
+  `implexPrimed` bare `> 0.0` test (`:3021`): points whose committed plastic history is
   1e-12…1e-21 forfeit the un-primed exemption and are refused on an error that does **not** decay
-  with `dt` (0.2243 at `|dt| = 4e-5` → 0.2143 at `2e-5`), the exact asymptote `:2889`-`:2898`
+  with `dt` (0.2243 at `|dt| = 4e-5` → 0.2143 at `2e-5`), the exact asymptote `:3005`-`:3014`
   documents. Of the three candidates the act named: the dilatant-at-rest state is an
   **aggravator of the error field** (100 % of points confirmed) but not the wall — the same field
   with the control off refuses nothing; the substepper is **exonerated** and candidate (2)

@@ -252,6 +252,11 @@ def resp(e, gp, name, n):
 
 
 def refusals():
+    # Slots 0-3 (total / signChange / control / companion).  WP-99 (PR #838,
+    # `c75edc95c`) widened this response to 6 -- [4] commitLatched, [5]
+    # post-latch refusals -- so on a post-#838 engine a COMMIT-time cap hit
+    # lands in [4], not in the [3] this reads.  The F10 campaign ran on
+    # `9c2f964`, where the response is 4 wide; asking for 4 works on both.
     v = resp(1, 1, "implexRefusals", 4)
     if v is None:
         return dict(total=0, sign=0, control=0, companion=0)

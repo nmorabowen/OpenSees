@@ -823,7 +823,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
-    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
+    mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
+    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
@@ -852,7 +853,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
-    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
+    mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
+    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
@@ -875,7 +877,8 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
     mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
-    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
+    mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
+    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -893,7 +896,8 @@ LadrunoSANISAND::LadrunoSANISAND()
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
     mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
-    mPrimed(false)                                                                    // Ladruno ADR-92 P2-7
+    mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
+    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -1242,6 +1246,16 @@ LadrunoSANISAND::revertToStart(void)
     } else {
         // normal call for revertToStart (not initialStateAnalysis)
         this->initialize();          // Ladruno: LadrunoSANISAND::initialize(), not the base's
+
+        // Ladruno WP-99 (F7): the ONE place the commit-time refusal latch is
+        // cleared. revertToStart puts the material back at step 0, so the
+        // corrupt commit the latch was protecting against no longer exists --
+        // unlike revertToLastCommit, where it IS the state being returned to.
+        // Deliberately NOT in ladrunoImplexInitState(): that function also runs
+        // at the elastoplastic stage flip (ladrunoImplexInitState's own comment),
+        // and a flip must not silently un-latch a material that has already
+        // refused a commit.
+        mImplexCommitRefusedLatch = false;   // Ladruno WP-99 (F7)
     }
 
     return 0;
@@ -1410,6 +1424,17 @@ LadrunoSANISAND::getCopy(const char *type)
 //                      setLadrunoImplexOptions()'s struct copy carries it on
 //                      the getCopy(const char*) path)
 //
+//  Ladruno WP-99 (F7) widened it once more, 33 -> 34:
+//
+//      data(33)     = (double)mImplexCommitRefusedLatch   the commit-time
+//                      refusal latch. COMMITTED-state-derived and sticky, so it
+//                      crosses for the same reason mImplexDtCommit and
+//                      mImplexGuardArmed do: a rank (or a restored datastore)
+//                      that receives a material which has REFUSED a commit and
+//                      restarts with the latch clear resumes producing exactly
+//                      the invalid answers the latch exists to stop -- silently,
+//                      and only on that rank.
+//
 //  mImplexCtlFPending (P2-9) is NOT sent: it is the per-step arm for the f*
 //  computation, transient and reconstructible from mImplexStepArmed, on the
 //  same rule as mImplexStepArmed and mPrimed themselves.
@@ -1460,7 +1485,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(33);                                                    // Ladruno ADR-92 P2-9
+    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1508,6 +1533,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // Ladruno ADR-92 P2-9
     ladrunoData(32) = (double)mImplexOpt.factorMode;
 
+    // Ladruno WP-99 (F7)
+    ladrunoData(33) = mImplexCommitRefusedLatch ? 1.0 : 0.0;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1527,7 +1555,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(33);                                                    // Ladruno ADR-92 P2-9
+    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1603,6 +1631,11 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // next trial call. mPrimed is still NOT restored (see the sendSelf
     // comment) -- transient, reconstructible from the next commit.
     mFlipSeen = (ladrunoData(31) != 0.0);
+
+    // Ladruno WP-99 (F7): the commit-time refusal latch IS restored -- see the
+    // sendSelf comment. A received/restored material that has already refused a
+    // commit must stay refusing.
+    mImplexCommitRefusedLatch = (ladrunoData(33) != 0.0);   // Ladruno WP-99 (F7)
 
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
@@ -1734,8 +1767,25 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     long getRefusalsD2(void) const        { return nRefusedD2; }
     long getRefusalsControl(void) const   { return nRefusedControl; }
     long getRefusalsCompanion(void) const { return nRefusedCompanion; }
+
+    // Ladruno WP-99 (F7): POST-LATCH refusals get their own bucket, and are
+    // deliberately NOT folded into the total.
+    //
+    // A latched instance refuses on every setTrialStrain call, i.e. once per
+    // Newton ITERATION per Gauss point, so counting them beside the genuine
+    // events destroys the one number the other three buckets exist to give:
+    // review round 1 measured 244 companion refusals against 4 real cap hits on
+    // a deck with one starved element. Slots 0-3 therefore keep meaning "how
+    // many times did a material actually refuse something new"; this one means
+    // "how many updates were turned away because a refusal had already
+    // happened", which is a measure of how long the driver kept pushing after
+    // the run was already dead.
+    void noteRefusalLatched(void)         { nRefusedLatched++; }
+    long getRefusalsLatched(void) const   { return nRefusedLatched; }
+
     long getRefusalsTotal(void) const
     {
+        // NOT nRefusedLatched -- see noteRefusalLatched().
         return nRefusedD2 + nRefusedControl + nRefusedCompanion;
     }
 
@@ -1797,6 +1847,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
         nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0),
+        nRefusedLatched(0),   // Ladruno WP-99 (F7)
         nFloorFallback(0), nGuardF0(0), nHoldPreserved(0),
         nReversalNoise(0), nTrialGuardF0(0),
         nHoldSkipCommit(0),
@@ -1811,6 +1862,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     long        nRefusedD2;
     long        nRefusedControl;
     long        nRefusedCompanion;
+    long        nRefusedLatched;   // Ladruno WP-99 (F7): post-latch, NOT in the total
     long        nFloorFallback;    // Ladruno ADR-92 P2-1
     long        nGuardF0;          // Ladruno ADR-92 P2-2
     long        nHoldPreserved;    // Ladruno ADR-92 P2-3
@@ -2022,9 +2074,20 @@ LadrunoSANISAND::setLadrunoImplexOptions(const LadrunoImplexOptions &opt, bool v
         if (mImplexOpt.control)
             opserr << ", -implexControl tol = " << mImplexOpt.errorTol
                    << " reductionLimit = " << mImplexOpt.reductionLimit
-                   << " (refuses with LADRUNO_MATERIAL_REFUSED = " << LADRUNO_MATERIAL_REFUSED
-                   << ", which only an element that PROPAGATES it can act on -- today"
-                      " LadrunoBrick)";
+                   << " (refuses at the TRIAL with LADRUNO_MATERIAL_REFUSED = "
+                   << LADRUNO_MATERIAL_REFUSED
+                   << ", which cuts the step on every element that FORWARDS"
+                      " setTrialStrain's code -- e.g. LadrunoBrick"
+                      " (sentinel-filtered, per ADR-33/34), LadrunoBrick20,"
+                      " LadrunoQuad/CST/LST, BezierTet10/Tri6, and the whole"
+                      " vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP,"
+                      " Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) --"
+                      " and is DISCARDED by e.g. Brick (= stdBrick), BbarBrick,"
+                      " BrickUP, BBarBrickUP, SSPquad/SSPquadUP,"
+                      " SSPbrick/SSPbrickUP and LadrunoSolidShell. These lists"
+                      " are EXAMPLES, not the whole roster: the full audited"
+                      " table is in Ladruno_implementation/LEDGER_quirks.md,"
+                      " 'element refusal roster')";
         else
             opserr << ", -implexControl OFF (the extrapolation error is measured and"
                       " reported at every commit but NOTHING refuses a step; P0 measured"
@@ -2116,6 +2179,59 @@ LadrunoSANISAND::ladrunoImplexActive(void) const
 int
 LadrunoSANISAND::ladrunoTrialUpdate(void)
 {
+    // Ladruno WP-99 (F7): the commit-time refusal latch, read FIRST.
+    //
+    // This is the SECOND line of defence, not the first. The first is
+    // Domain::commit() itself, which aborts the commit the moment any
+    // integration point declares a refusal (see LadrunoMaterialStatus.h and
+    // ladrunoImplexCommit() below) -- element-independent, so a discarding
+    // element cannot swallow it. This latch then makes sure a driver that
+    // IGNORES the analysis return code still cannot advance: every later update
+    // on this instance refuses, which an element that forwards
+    // setTrialStrain's code turns into a failed step as well. Review round 1
+    // measured why both are needed: with only the latch, two stacked stdBrick
+    // under `algorithm Linear` ran 20 more accepted steps with the starved
+    // element frozen as a rigid inclusion and analyze() == 0 throughout.
+    //
+    // The trial is put back on the committed state first, so getStress() /
+    // getStrain() keep reporting the last VALID committed answer rather than
+    // whatever strain the element just pushed in: a refusing material must not
+    // also be an inventing one.
+    if (mImplexCommitRefusedLatch) {
+        mEpsilon = mEpsilon_n;
+        this->ladrunoRestoreTrialFromCommitted();
+
+        // Ladruno WP-99 (F7), review round 1: a 10-per-process budget naming
+        // EACH tag, like every sibling warning in this file -- the first
+        // version was a single `static bool`, so on a model with several
+        // SANISAND materials it named whichever tag happened to latch first
+        // and hid the rest.
+        static int ladrunoCommitLatchWarnCount = 0;   // Ladruno WP-99 (F7)
+        if (ladrunoCommitLatchWarnCount < 10) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": REFUSING every further update (" << LADRUNO_MATERIAL_REFUSED
+                   << "). The -implex companion hit the -maxSubsteps cap at a"
+                      " commitState; that commit was aborted by Domain::commit()"
+                      " and this integration point has committed nothing since."
+                      " Re-run with -implexControl, which refuses BEFORE the step"
+                      " converges and is therefore recoverable, or raise"
+                      " -maxSubsteps. (Post-latch refusals are counted in the"
+                      " `latched` slot of the `implexRefusals` response, NOT in"
+                      " its total -- they fire once per Newton iteration.)"
+                   << endln;
+            if (++ladrunoCommitLatchWarnCount == 10)
+                opserr << "WARNING LadrunoSANISAND: further post-latch refusal"
+                          " warnings suppressed (budget 10 per process)." << endln;
+        }
+
+        // Ladruno WP-99 (F7), review round 1: NOT noteRefusalCompanion(). This
+        // fires once per Newton iteration per Gauss point, so counting it as a
+        // companion refusal destroyed that bucket's meaning (measured: 244
+        // against 4 genuine cap hits). Own slot, and NOT in the total.
+        LadrunoImplexGlobals::instance().noteRefusalLatched();
+        return LADRUNO_MATERIAL_REFUSED;
+    }
+
     // Ladruno ADR-92 P2-7c: per-instance, DISPATCH-INDEPENDENT flip
     // detection. See the mFlipSeen member note in the header for the defect
     // this fixes (`MaterialStageParameter::setDomain()`'s early-exit element
@@ -3045,9 +3161,19 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                            << mImplexOpt.reductionLimit * mImplexDt0
                            << ", f = " << mImplexFactor
                            << ", |d_eps_p(n)| = " << this->GetNorm_Cov(mImplexDEpsP)
-                           << "). Only an element that PROPAGATES"
-                              " LADRUNO_MATERIAL_REFUSED can cut the step; today that is"
-                              " LadrunoBrick." << endln;
+                           << "). This is a TRIAL-time refusal, so it cuts the step on"
+                              " every element that FORWARDS setTrialStrain's code --"
+                              " e.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20,"
+                              " LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla"
+                              " u-p family (FourNodeQuadUP, BBarFourNodeQuadUP,"
+                              " Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP)."
+                              " Under an element that DISCARDS it -- e.g. Brick"
+                              " (= stdBrick), BbarBrick, BrickUP, BBarBrickUP,"
+                              " SSPquad/SSPquadUP, SSPbrick/SSPbrickUP,"
+                              " LadrunoSolidShell -- the refusal is a log line only."
+                              " Examples, not the whole roster: the full audited table"
+                              " is in LEDGER_quirks.md, 'element refusal roster'."
+                           << endln;
                     if (ladrunoImplexCtlWarnCount < 10 && ++ladrunoImplexCtlWarnCount == 10)
                         opserr << "WARNING LadrunoSANISAND: further -implexControl refusal"
                                   " warnings suppressed (budget 10 per process, plus one"
@@ -3210,26 +3336,29 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     dEpsThisCommit.addVector(1.0, mEpsilon_n, -1.0);
     const double dEpsNormThisCommit = this->GetNorm_Cov(dEpsThisCommit);
 
-    // Ladruno ADR-92 fix (red/blue B3, contract item 3): the commit-time
-    // companion refusal used to EARLY-RETURN here. It was dead code twice over --
-    // Domain::commit() calls `elePtr->commitState();` bare (Domain.cpp:2244) and
-    // then `return 0;` unconditionally (:2309), so AnalysisModel::commitDomain()'s
-    // `< 0` test can never fire on it -- and the early return sat BEFORE every
-    // state update below, so the step was accepted by the domain while
-    // mEpsilon_n, mImplexDEpsP, mImplexDtCommit, mImplexStepArmed and
-    // mImplexTrialDone were all left frozen at n. Every LATER step then ran a
-    // two-step dEps against a one-step-old d_eps_p(n) with a stale f, silently,
-    // in the DEFAULT configuration (control off, cap mandatory).
+    // Ladruno ADR-92 fix (red/blue B3, contract item 3), AMENDED BY WP-99 (F7).
     //
-    // Since the return is discarded no matter what, the material now does the
-    // three things it CAN do: commit the companion's best state so the history
-    // stays self-consistent for the steps that follow, say so once (throttled),
-    // and record the event where a driver can read it. The sentinel is still
-    // returned, for the day an element or a handler reads it. The committed state
-    // is the partially-integrated one ModifiedEuler left at T < 1; that is an
-    // admissible constitutive state, and a consistent history built on a short
-    // increment is strictly better than an exact one built on a stale datum.
-    // -implexControl remains the way to refuse such a step BEFORE it converges.
+    // HISTORY, because the reasoning matters. ADR-92 found that the commit-time
+    // companion refusal used to EARLY-RETURN here, and that this was dead code
+    // twice over: Domain::commit() calls `elePtr->commitState();` bare and the
+    // return is dropped, so the refusal reached nobody -- and the early return
+    // sat BEFORE every state update below, so the step was accepted by the
+    // domain while mEpsilon_n, mImplexDEpsP, mImplexDtCommit, mImplexStepArmed
+    // and mImplexTrialDone were all left frozen at n. Every LATER step then ran
+    // a two-step dEps against a one-step-old d_eps_p(n) with a stale f,
+    // silently, in the DEFAULT configuration (control off, cap mandatory).
+    //
+    // ADR-92's answer was to commit the companion's best state anyway, on the
+    // argument that a self-consistent short-increment history beats an exact
+    // one built on a stale datum. True -- but it is a choice between two
+    // INVALID runs, and the measured cost of choosing either is the TIMs strip:
+    // 25.9 M capped commits to 2674 kPa with every step reported converged.
+    //
+    // WP-99's answer is that the refusal must leave the element path entirely.
+    // It is DECLARED to Domain::commit() out of band (ladrunoNoteCommitRefusal,
+    // LadrunoMaterialStatus.h), which aborts the commit for every element type,
+    // forwarder or discarder. `-implexControl` remains the way to refuse such a
+    // step BEFORE it converges, which is the only RECOVERABLE refusal.
     const bool companionFailed = mSubstepCapHitInME;   // Ladruno ADR-92 fix
     if (companionFailed) {
         LadrunoImplexGlobals::instance().noteRefusalCompanion();
@@ -3237,15 +3366,23 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
         if (ladrunoImplexCompanionWarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": the -implex COMPANION hit the -maxSubsteps cap at commitState."
-                      " This commit is refused (" << LADRUNO_MATERIAL_REFUSED
-                   << ") but Domain::commit() DISCARDS the return, so the companion's"
-                      " partially integrated state is committed anyway rather than"
-                      " leaving the extrapolation history stale for every later step."
+                      " This commit is REFUSED (" << LADRUNO_MATERIAL_REFUSED
+                   << "). THIS GAUSS POINT commits nothing -- the partial state"
+                      " ModifiedEuler left at T < 1 is discarded and the trial is put"
+                      " back on the last valid committed state -- but the nodes and the"
+                      " sibling integration points have ALREADY committed by the time"
+                      " this runs (Domain::commit() walks nodes, then elements, and each"
+                      " Gauss point is its own material object), so the model state at"
+                      " this commit is INCONSISTENT. That is why the commit is aborted"
+                      " rather than repaired: Domain::commit() returns a failure as soon"
+                      " as any point declares a refusal, and this material also LATCHES"
+                      " so a driver that ignores the return code still cannot advance."
                       " This is the ADR-92 section 8 risk measured: under -implex the"
                       " global step is solved on the elastic operator, so the increment"
                       " handed to the commit-time return can be larger and differently"
                       " directed than implicit Newton would have found. Re-run with"
-                      " -implexControl, which refuses such a step BEFORE it converges."
+                      " -implexControl, which refuses such a step BEFORE it converges"
+                      " and is therefore RECOVERABLE, or raise -maxSubsteps."
                    << endln;
             if (++ladrunoImplexCompanionWarnCount == 10)
                 opserr << "WARNING LadrunoSANISAND: further -implex commit-time companion"
@@ -3253,6 +3390,47 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
                           " running count stays readable through the `implexRefusals`"
                           " material response." << endln;
         }
+
+        // Ladruno WP-99 (F7): the state update is SKIPPED, not merely reported.
+        //
+        // Before this WP the block below ran on regardless: ManzariDafalias::
+        // commitState() baked the partially-integrated state in, the history
+        // variables advanced, and the sentinel was returned into a caller
+        // (Domain::commit()) that drops it. The argument for that was that a
+        // self-consistent short-increment history beats an exact one built on a
+        // stale datum -- true, but it decides between two invalid runs. The
+        // measured cost of continuing is the TIMs plane-strain strip: 25.9
+        // million capped commits, a straight-line load-settlement curve to
+        // 2674 kPa, every step reported converged.
+        //
+        // So: restore the trial from the committed state (nothing partial
+        // survives at THIS point -- see the warning above for what has already
+        // committed elsewhere), DECLARE the refusal to Domain::commit(), latch,
+        // and return the sentinel.
+        //
+        // Ladruno WP-99 (F7), review round 1: ladrunoNoteCommitRefusal() is the
+        // load-bearing line. The latch alone is not enough -- it only works on
+        // an element that forwards setTrialStrain's code, and MEASURED on two
+        // stacked stdBrick under `algorithm Linear` the run took 20 more
+        // accepted steps with the starved element frozen as a rigid inclusion
+        // and analyze() == 0 throughout. The declaration makes Domain::commit()
+        // abort the commit itself (LadrunoMaterialStatus.h), which is
+        // element-independent; the latch stays as the second line of defence
+        // for a driver that ignores the analysis return code.
+        // `-implexControl` -- the trial-time refusal -- is unchanged and is
+        // still the recoverable path.
+        ladrunoNoteCommitRefusal();                       // Ladruno WP-99 (F7)
+        mImplexCommitRefusedLatch = true;
+        this->ladrunoRestoreTrialFromCommitted();
+        mEpsilon = mEpsilon_n;
+
+        double Kr = 0.0, Gr = 0.0;
+        this->ladrunoImplexFreezeTangent(Kr, Gr);
+
+        mImplexStepArmed = true;
+        mImplexTrialDone = false;
+
+        return LADRUNO_MATERIAL_REFUSED;
     }
 
     Vector sigImplicit(6);
@@ -3399,11 +3577,11 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     double K = 0.0, G = 0.0;
     this->ladrunoImplexFreezeTangent(K, G);
 
-    // Ladruno ADR-92 fix (red/blue B3, contract item 3): the sentinel is
-    // returned AFTER the state update, not instead of it.
-    if (companionFailed)
-        return LADRUNO_MATERIAL_REFUSED;
-
+    // Ladruno WP-99 (F7): the ADR-92 "sentinel AFTER the state update, not
+    // instead of it" rule is RETIRED here -- a companion failure now returns
+    // from its own block above, before any of this ran, so `companionFailed`
+    // is false by construction at this point. Reaching here means the
+    // companion integrated the increment and `res` is the base's own code.
     return res;
 }
 
@@ -3413,6 +3591,23 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
 int
 LadrunoSANISAND::commitState(void)
 {
+    // Ladruno WP-99 (F7): once the commit-time latch is set NOTHING commits.
+    // Without this the latched material would keep taking the base path below
+    // (mImplexTrialDone is false after a latched commit) and commit the strain
+    // the element pushed in AFTER the refusal -- which is exactly the silent
+    // continuation the latch exists to stop. See the member note in the header.
+    //
+    // Review round 1: the declaration is re-made on EVERY latched commit, not
+    // only on the one that latched. Under a DISCARDING element the trial-time
+    // refusal is invisible, so a driver can reach commitState() again on the
+    // next step; without this line Domain::commit() would see an empty counter
+    // and accept that step. Measured on two stacked stdBrick with `algorithm
+    // Linear`: 20 accepted steps after the latch, analyze() == 0 throughout.
+    if (mImplexCommitRefusedLatch) {
+        ladrunoNoteCommitRefusal();                      // Ladruno WP-99 (F7)
+        return LADRUNO_MATERIAL_REFUSED;
+    }
+
     // mImplexTrialDone is false with -implex off AND on stage 0, so gravity and
     // the LoadControl 0.0 hold take the base path verbatim.
     if (!mImplexTrialDone) {
@@ -3904,9 +4099,11 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     // Ladruno ADR-92 fix (red/blue B3, contract item 5)
     if (argc > 0 && (strcmp(argv[0], "implexRefusals") == 0 ||
                      strcmp(argv[0], "ImplexRefusals") == 0)) {
-        static Vector probe4(4);
+        static Vector probeRef6(6);   // Ladruno WP-99 (F7): 4 -> 6
         // Ladruno (WP-86d): ResponseType names, one per slot -- total/signChange/
-        // control/companion.
+        // control/companion. Ladruno WP-99 (F7) adds slot 4 (commitLatched, the
+        // only PER-INSTANCE entry) and slot 5 (latched, the process-wide count of
+        // POST-latch refusals, deliberately NOT folded into slot 0).
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -3914,8 +4111,10 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         output.tag("ResponseType", "implexRefusals_signChange");
         output.tag("ResponseType", "implexRefusals_control");
         output.tag("ResponseType", "implexRefusals_companion");
+        output.tag("ResponseType", "implexRefusals_commitLatched");
+        output.tag("ResponseType", "implexRefusals_latched");
         output.endTag();
-        return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probe4);
+        return new MaterialResponse(this, LadrunoSanisandImplexRefusalsResponseID, probeRef6);
     }
     // Ladruno (TIMs request 2026-09-07, F4): read-only diagnostics. Both are
     // evaluated from the COMMITTED state at read time (post-commit
@@ -3979,13 +4178,24 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
     // the refusal ledger. The warnings are throttled to 10 per process, so this
     // is the ONLY way to recover how many steps the material actually refused.
     if (responseID == LadrunoSanisandImplexRefusalsResponseID) {
-        static Vector out4(4);
+        static Vector out6(6);   // Ladruno WP-99 (F7): 4 -> 6
         const LadrunoImplexGlobals &g = LadrunoImplexGlobals::instance();
-        out4(0) = (double)g.getRefusalsTotal();      // every refusal site
-        out4(1) = (double)g.getRefusalsD2();         // pseudo-time sign change
-        out4(2) = (double)g.getRefusalsControl();    // -implexControl past tol
-        out4(3) = (double)g.getRefusalsCompanion();  // companion hit -maxSubsteps
-        return matInformation.setVector(out4);
+        out6(0) = (double)g.getRefusalsTotal();      // GENUINE refusals only
+        out6(1) = (double)g.getRefusalsD2();         // pseudo-time sign change
+        out6(2) = (double)g.getRefusalsControl();    // -implexControl past tol
+        out6(3) = (double)g.getRefusalsCompanion();  // companion hit -maxSubsteps
+        // Ladruno WP-99 (F7): slot 4 is the only PER-INSTANCE entry in this
+        // response -- 1 while THIS integration point's commit-time latch is set,
+        // i.e. while it is refusing every update. The counters beside it are
+        // process-wide totals; this one answers "is the run dead yet", which no
+        // running total can.
+        out6(4) = mImplexCommitRefusedLatch ? 1.0 : 0.0;
+        // Ladruno WP-99 (F7), review round 1: POST-latch refusals, process-wide.
+        // Kept OUT of slot 0 on purpose -- they fire once per Newton iteration per
+        // Gauss point, so folding them in destroys the "how many genuine refusals"
+        // reading slots 0-3 exist to give (measured: 244 against 4).
+        out6(5) = (double)g.getRefusalsLatched();
+        return matInformation.setVector(out6);
     }
     // Ladruno ADR-92 P2: the guard census (grown 4 -> 5 by P2-6, 5 -> 6 by
     // P2-5c). Process-wide, non-destructive, and NOT cleared by a commit
@@ -4106,13 +4316,32 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
         s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
              " ModifiedEuler(), so -maxSubsteps is INERT on this deck." << endln;
     // A record that also states what the cap would COST if it fired: the element
-    // must propagate the refusal. LadrunoBrick does; Brick / BrickUP / QuadUP /
-    // stdBrick discard it, and under those a capped run is invalid, not merely
-    // un-cut. The material cannot see its element, so this is a statement, not a
-    // check.
-    if (mMaxSubsteps != 0)
-        s << "             NOTE: a cap is only safe under an element that PROPAGATES"
-             " a material refusal (today: LadrunoBrick)." << endln;
+    // must propagate the refusal. Ladruno WP-99 (F7) corrected the list -- it
+    // said "today LadrunoBrick" and named QuadUP among the discarders, and both
+    // halves were wrong (audited on 9c2f964ea). Review round 1 then found the
+    // REPLACEMENT list was still a wrong CLOSED list, so these strings now name
+    // EXAMPLES and point at LEDGER_quirks.md's full table. The material cannot
+    // see its element, so this is a statement, not a check.
+    if (mMaxSubsteps != 0) {
+        s << "             NOTE: a TRIAL-time cap refusal is only acted on by an"
+             " element that FORWARDS setTrialStrain's return code -- e.g."
+             " LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/"
+             "LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP,"
+             " BBarFourNodeQuadUP, Nine_Four_Node_QuadUP,"
+             " Twenty_Eight_Node_BrickUP). Brick (= stdBrick), BbarBrick, BrickUP,"
+             " BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and"
+             " LadrunoSolidShell DISCARD it. Examples, not the whole roster: the"
+             " full audited table is in LEDGER_quirks.md, 'element refusal"
+             " roster'." << endln;
+        s << "             NOTE: a COMMIT-time cap refusal is acted on by no element"
+             " at all -- Domain::commit() drops every element's commitState()"
+             " return. Under -implex the material therefore declares the refusal to"
+             " Domain::commit() out of band, which ABORTS the commit for every"
+             " element type (Ladruno WP-99), and also LATCHES so a driver that"
+             " ignores the analysis return code cannot advance either;"
+             " -implexControl refuses at the trial and is the recoverable path."
+          << endln;
+    }
     // Ladruno (ADR-86 PR-3): the seam is wired now (it was "inactive in PR-1").
     // Report the tolerance the integrator ACTUALLY ran with, and whether this
     // deck's scheme even reaches the site that reads it -- a record that says

@@ -7,7 +7,7 @@ priority: high
 owner: nmora
 amends: 92_ladruno_sanisand_implex_adr
 requested_by: "TIMs Workbench, F10 (self-weight strip footing act)"
-engine: "ladruno tip 9c2f964eae3bbd1a055c3ede81381a6c601a982b (pinned release build, nothing built for this WP; PREDATES PR #838)"
+engine: "ladruno tip 9c2f964eae3bbd1a055c3ede81381a6c601a982b (pinned release build, nothing built for this WP). NOTE: this build PREDATES WP-99 / PR #838, merged as c75edc95c — every statement below about a silent capped-companion commit is scoped to pre-#838 builds."
 related:
   - "[[92_ladruno_sanisand_implex_adr]]"
   - "[[LadrunoSANISAND_implex_guide]]"
@@ -63,7 +63,7 @@ bucket.
    attempts, 58 s** — and the refusal ledger reads **0 / 0 / 0 / 0**, the
    **companion bucket explicitly zero**, which is the number that matters on
    this build (§3). That is a TERMINATION result, not an accuracy one: ADR-92 §8
-   and the engine's own control-off echo (`:2029`-`:2031`) make a separate
+   and the engine's own control-off echo (`:2092`-`:2095`) make a separate
    accuracy claim that this deck sits inside rather than outside (§3, "what leg N
    does not establish"). The ADR-95 leg D1 that reached `s/B = 0.15`
    (`95_prandtl_reissner_campaign_report.md:176`, 0 failed, 296 s) was itself
@@ -84,7 +84,7 @@ bucket.
    `LadrunoSANISAND.cpp:2889`-`:2898` documents as the reason the un-primed step
    is exempt ("it ASYMPTOTED at ~0.076 instead of decaying … a companion jump
    that is independent of the increment … a dead analysis"). `implexPrimed` at
-   `:2905` is a bare `> 0.0` sign test, so a Gauss point carrying a
+   `:3021` is a bare `> 0.0` sign test, so a Gauss point carrying a
    numerically-zero plastic history is "primed", loses the exemption, and is
    refused on a drift no subdivision can shrink.
 
@@ -134,12 +134,20 @@ is `-0.128 … -0.109`** against TIMs' quoted `~ -0.13`.
 
 | line | test | counted in |
 |---|---|---|
-| `:2905` | `implexPrimed = GetNorm_Cov(mImplexDEpsP) > 0.0` — the exemption test | (gates everything below) |
-| `:2907` | `implexPrimed && mImplexError > errorTol` | (gates the three below) |
-| `:2919` → `:3019` | `... && dtAbs >= reductionLimit * mImplexDt0` — **above** the reduction floor | `implexRefusals[2]` (`control`) |
-| `:2919` else → `:3154` | **at** the floor, `-implexFloor implicit` (the default) delivers the companion and does **not** refuse | `implexGuards[0]` |
-| `:2919` else → `:3123` | at the floor under `-implexFloor refuse` — **unreachable at the default floor mode**, listed for completeness | `implexRefusals[2]` (`control`) |
-| `:2716` / `:3235` | the companion hit `-maxSubsteps` | `implexRefusals[3]` (`companion`) |
+| `:3021` | `implexPrimed = GetNorm_Cov(mImplexDEpsP) > 0.0` — the exemption test | (gates everything below) |
+| `:3023` | `implexPrimed && mImplexError > errorTol` | (gates the three below) |
+| `:3035` → `:3135` | `... && dtAbs >= reductionLimit * mImplexDt0` — **above** the reduction floor | `implexRefusals[2]` (`control`) |
+| `:3035` else → `:3280` | **at** the floor, `-implexFloor implicit` (the default) delivers the companion and does **not** refuse | `implexGuards[0]` |
+| `:3035` else → `:3249` | at the floor under `-implexFloor refuse` — **unreachable at the default floor mode**, listed for completeness | `implexRefusals[2]` (`control`) |
+| `:2832` / `:3364` | the companion hit `-maxSubsteps` | `implexRefusals[3]` (`companion`) |
+
+Line numbers are against `ladruno` **after the WP-99 / PR #838 merge
+(`c75edc95c`)**, which moved this file; they were re-derived by content, not by
+arithmetic, and every one is checked. #838 also widened `implexRefusals` from 4
+slots to 6 — `[4]` `commitLatched` and `[5]` post-latch refusals — so a
+commit-time cap-hit no longer lands in the companion bucket `[3]` that this note
+reads. The F10 legs ran on `9c2f964`, where the response is 4 slots wide and
+`[3]` is the whole companion story; the driver reads the first four either way.
 
 Measured across all seventeen legs:
 
@@ -156,7 +164,7 @@ Measured across all seventeen legs:
 * **the companion never failed** at `-maxSubsteps 1000`: `implexRefusals[3] = 0`
   on B, C, D, E, K, L, N and N1, and ≤ 42 anywhere (M).
 
-The throttled warning line (`:3040`-`:3046`) names both quantities. The full set
+The throttled warning line (`:3158`-`:3164`) names both quantities. The full set
 for the five legs that produced them is committed as
 `out/refusal_warnings_<leg>.txt` (49 lines for leg B, 11.6 kB) — the first cut of
 this note gitignored them with the raw logs, and they are the evidence for §4.
@@ -194,16 +202,21 @@ control-off terminates cleanly, and it is **6× cheaper** than the same arm with
 the growth pinned (58 s vs 364 s) and reaches 5.9× further than the controlled
 arm. The discipline that makes that safe to repeat:
 
-> **Run control-off, and read `implexRefusals[3]` at the end of every leg.** The
-> pinned build `9c2f964` predates PR #838 (`wp/99-refusal-propagation-audit`,
-> still OPEN at the time of writing), so a capped companion commit is otherwise
-> **silent**; once #838 lands the run aborts instead and the read becomes a
-> belt-and-braces check rather than the only one.
+> **Run control-off, and read `implexRefusals[3]` at the end of every leg.**
+> **Since WP-99 / PR #838 (merged as `c75edc95c`, 2026-09-15) that read is
+> belt-and-braces:** a capped companion commit now ABORTS the run —
+> `Domain::commit()` fails and `analyze()` returns `-4` — so the engine enforces
+> what the read confirms, and the latch and its post-latch refusals get their own
+> slots (`implexRefusals[4]` `commitLatched`, `[5]`) instead of polluting the
+> companion bucket `[3]`. **On a pre-#838 build the read is the ONLY thing that
+> would catch it**, and the F10 campaign is one: it ran on `9c2f964`, where a
+> capped companion commit is silent. Every "silent" statement in this note is
+> scoped that way.
 
 **What it does NOT establish — ACCURACY.** `-implexControl` is not only a
 termination device; ADR-92 §8 and the engine's own constructor echo make an
 accuracy claim about the *extrapolation*, printed on every control-off run
-including leg N's (`LadrunoSANISAND.cpp:2029`-`:2031`):
+including leg N's (`LadrunoSANISAND.cpp:2092`-`:2095`):
 
 > `-implexControl` OFF … P0 measured IMPL-EX unusable from `d_eps = 5e-4` at
 > `p0 = 5 kPa`, so at a low-confinement corner the control is a requirement, not
@@ -259,7 +272,7 @@ Two families, and they behave completely differently:
 * **the seizure family** carries a plastic history of **1e-12 to 1e-21** — i.e.
   numerically zero — and its error does **not** decay: at `9.09e-13` the step
   halves 4e-5 → 2e-5 and the error moves from 0.2243 to 0.2143, **4.5 %**. Even
-  the asymptote the source itself documents at `:2889`-`:2898` as the reason the
+  the asymptote the source itself documents at `:3005`-`:3014` as the reason the
   un-primed step is exempt: *"A pure elastic predictor's error must scale with
   `d_eps`; this one does not, which is the signature of a companion jump that is
   independent of the increment."*
@@ -272,7 +285,7 @@ Two families, and they behave completely differently:
   in. It is also why a leg can burn rungs all the way to `DS_MIN` while its
   subdivision budget still has room.
 
-`implexPrimed` (`:2905`) is `GetNorm_Cov(mImplexDEpsP) > 0.0`. `9.09e-13` passes
+`implexPrimed` (`:3021`) is `GetNorm_Cov(mImplexDEpsP) > 0.0`. `9.09e-13` passes
 it. So a Gauss point that took essentially no plastic strain in the previous
 committed step, and then yields in this one, is treated as primed, loses the
 exemption, and is refused on the very quantity the exemption exists to tolerate.
@@ -319,7 +332,7 @@ error at a step four times the base is 0.011, i.e. 4.4× under `tol` — so leg 
 
 Per-Gauss-point census at a fixed `ds`, control tolerance set so high nothing can
 refuse. Counts are Gauss points with `implexError > 0.05`, out of 2 280, at
-**push step 1 and push step 3** (step 1 is the un-primed step `:2907` exempts;
+**push step 1 and push step 3** (step 1 is the un-primed step `:3023` exempts;
 step 3 sits at `s/B ≈ 8e-5` for `ds = 4e-5`):
 
 | deck | `p'` min/med/max kPa | dilatant at rest | `2e-5` s1/s3 | `4e-5` s1/s3 | `8e-5` s1/s3 | `2e-4` s1/s3 |
@@ -331,7 +344,7 @@ step 3 sits at `s/B ≈ 8e-5` for `ds = 4e-5`):
 
 **Read the "4 of 2 280" correctly.** It is *push step 3* at `ds = 4e-5`,
 `s/B ≈ 8e-5`. The same step size at **step 1** has **80** over tolerance (32 over
-0.1). Excluding step 1 is defensible — `:2907` exempts it by construction — but
+0.1). Excluding step 1 is defensible — `:3023` exempts it by construction — but
 it is load-bearing for anything said about candidate (1), so the step is named
 every time the number appears.
 
@@ -446,7 +459,7 @@ claimed on any leg**. Also not established: mesh convergence (one mesh,
 | candidate | verdict | evidence |
 |---|---|---|
 | **(1)** the DILATANT-AT-REST extrapolation error, "wrong at every point at once" | **Aggravator of the error field, not the cause of the wall.** 100 % dilatant at rest confirmed (TIMs: 99.96 %), and the contractant twin (C) has a strictly smaller error field at every step size. But the wall is not an error-field phenomenon at all: the *same* error field with the control OFF (leg N) produces zero refusals and the target settlement. And at the step that refuses, **push step 3** has 4 over-tolerance points of 2 280 — one state replicated 4× by symmetry, **outside** the footing edge, all at `f = 0` (step 1 has 80, and is exempt). | §3, §5 |
-| **(2)** the substepper's error control vs the control's tolerance | **PARTLY — and it is the CONTROL's error control, not the SUBSTEPPER's.** The substepper is exonerated on the arms that matter: `implexRefusals[3] = 0` on B, C, D, E, K, L, N and N1, and `<= 42` anywhere in the campaign (M 42, F1 29, I 12, H 6, F3 3, J 2) — so the companion is not what refuses leg B. But the control's own machinery **is** the wall: its `implexPrimed` gate (`:2905`) is a bare sign test, so points with a 1e-12…1e-21 plastic history lose the un-primed exemption and are refused on an error that does not decay with `dt` (0.2243 → 0.2143 for a halved step). That is the `FLOOR` of legs B, E, F1, I and M. **The first cut called this candidate REFUTED; that was wrong.** | §2, §4 |
+| **(2)** the substepper's error control vs the control's tolerance | **PARTLY — and it is the CONTROL's error control, not the SUBSTEPPER's.** The substepper is exonerated on the arms that matter: `implexRefusals[3] = 0` on B, C, D, E, K, L, N and N1, and `<= 42` anywhere in the campaign (M 42, F1 29, I 12, H 6, F3 3, J 2) — so the companion is not what refuses leg B. But the control's own machinery **is** the wall: its `implexPrimed` gate (`:3021`) is a bare sign test, so points with a 1e-12…1e-21 plastic history lose the un-primed exemption and are refused on an error that does not decay with `dt` (0.2243 → 0.2143 for a halved step). That is the `FLOOR` of legs B, E, F1, I and M. **The first cut called this candidate REFUTED; that was wrong.** | §2, §4 |
 | **(3)** the `nu*` K0 device | **REFUTED.** At `K0 = 0.455` the device's `nu* = 0.31271` **is** the material's own calibrated `nu = 0.3129` to three decimals, so leg B is simultaneously the "K0 reached by the material's own elasticity" control and there is nothing anomalous left behind. (The leg-C half of the first cut's argument is **withdrawn**: leg C changes `K0` *and* holds `nu = 0.45` for the whole push, so it is not a clean one-variable test of the device.) | §1 |
 | **(4)** the stepping controller | **A CO-FACTOR OF THE CONTROL, not an independent cause.** Control on: growth ×2 → 724 refusals and `FLOOR` at 0.0085; ×1.25 → 253 and 0.0113; ×1.0 → 6 and 0.0265. Control **off**: ×2 and ×1.0 both reach the target and agree to 0.383 %, with ×2 six times faster. The growth rule is harmless until an absolute per-step bound is placed on an error that grows with the step. | §3, §6 |
 | **(5) — the primary answer** | **`-implexControl` is what stops this deck.** Bare `-implex` reaches `s/B = 0.05` in 104 steps, 0 subdivisions, 0 failed attempts, 58 s, with the companion bucket verified at zero — which is how the ADR-95 campaign that reached 0.15 was run. Scope: that is a TERMINATION result; §8's accuracy claim is untested here and this deck sits inside its range (§3). | §3 |
@@ -468,9 +481,11 @@ two orderings should not be quoted as agreement or disagreement.
 
 1. **Run bare `-implex`, read the companion bucket, and do not call the result a
    capacity.** Measured: target settlement, 104 steps, 0 subdivisions, 58 s;
-   `implexRefusals[3] = 0`. Check that bucket at the end of every leg — on a build
-   predating PR #838 a capped companion commit is otherwise silent; once #838
-   lands the run aborts instead. This is the configuration the ADR-95 reference
+   `implexRefusals[3] = 0`. Check that bucket at the end of every leg — on a
+   build from WP-99 / PR #838 (`c75edc95c`) on, a capped companion commit ABORTS
+   the run (`analyze()` returns `-4`), so the check is belt-and-braces; on an
+   older build such as this campaign's `9c2f964` it is the only thing that would
+   catch it. This is the configuration the ADR-95 reference
    campaign used, and on this deck it is 156× the reach-per-wall-second of the
    implicit leg. **But see §3:** the control is also an accuracy device, this
    deck's minimum `p'` (6.374 kPa) is 1.27× the P0 corner and leg N's strain
@@ -504,10 +519,10 @@ two orderings should not be quoted as agreement or disagreement.
 ## 10. Two defects, one promoted
 
 1. **`implexPrimed` is a bare sign test — PROMOTED to the mechanism of the FLOOR
-   seizure.** `LadrunoSANISAND.cpp:2905`:
+   seizure.** `LadrunoSANISAND.cpp:3021`:
    `const bool implexPrimed = (this->GetNorm_Cov(mImplexDEpsP) > 0.0);`. The
-   exemption at `:2907` exists because the companion's drift-correction jump does
-   not scale with `d_eps` (`:2889`-`:2898`), but any non-zero plastic history,
+   exemption at `:3023` exists because the companion's drift-correction jump does
+   not scale with `d_eps` (`:3005`-`:3014`), but any non-zero plastic history,
    however small, forfeits it. Measured on leg B at `|d_eps_p(n)|` of 9.09e-13,
    6.66e-12, 9.58e-21 and 2.40e-21, with errors 0.21–0.22 that move 4.5 % when
    the step halves. The matching fix is the shape P2-5b already used for the
@@ -517,7 +532,7 @@ two orderings should not be quoted as agreement or disagreement.
    guard forces `f = 0` on a reversing/softening predecessor; `sigma~` is then a
    pure elastic predictor and the control refuses the step *for being*
    inaccurate — and P2-6's trial-time fallback cannot help, because it only runs
-   when `mImplexFactor != 0.0` (`:2939`). **30 of leg B's 49 throttled refusal
+   when `mImplexFactor != 0.0` (`:3055`). **30 of leg B's 49 throttled refusal
    lines are at `f = 0`**, and so are all four of §5's over-tolerance census
    points. Either the guard should exempt the point it just guarded from the
    tolerance for that step (the same shape as the un-primed exemption), or the

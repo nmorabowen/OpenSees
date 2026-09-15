@@ -754,3 +754,42 @@ COLLECTION with `ModuleNotFoundError: matplotlib` (they import
 imports matplotlib at module scope). That is a genuinely missing dependency in
 the bare `python3.12`, not a handle artefact — `pip install matplotlib` or
 `--ignore` those two modules.
+
+## `ops.ladrunoBuild()` lags after an incremental rebuild
+
+`CMakeLists.txt:200-207` captures the git hash with
+
+```cmake
+execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
+                OUTPUT_VARIABLE GIT_VERSION ...)
+```
+
+— in `execute_process`, i.e. **at configure time**, into a cached variable that
+becomes a compile definition. `Ladruno_scripts\build.bat <targets>` on an
+already-configured tree does not re-run the configure step, so the binary it
+produces is compiled from your *current* source but stamped with whatever commit
+was checked out the last time CMake configured.
+
+The artifact mtimes are fresh; only the stamp is stale. So the failure mode is
+the nasty direction: `ops.ladrunoBuild()` **understates** what you built, and a
+provenance check that trusts it will tell you a genuinely new binary is old.
+
+Measured in WP-99 (#838): the round-0 binary reported `bab19cfae` under `HEAD`
+`c0c31f977`, and the round-1 binary reported `c0c31f977` under `HEAD`
+`fa042bf51` — one commit behind in both cases, both times a docs+tests commit
+that legitimately changed no C++, and once a commit that DID change C++.
+
+**Before an evidence run**, do one of:
+
+- `Ladruno_scripts\build.bat clean <targets>` — guaranteed, and the slow option;
+- `touch CMakeLists.txt` (or any change that makes Ninja re-run CMake) before the
+  incremental build — cheap;
+- or state the lag in the report and prove the binary **behaviourally**: assert
+  on output only the new code can produce. WP-99 used the new
+  `Domain::commit() - N integration point(s) REFUSED this commit` line (present
+  in neither candidate older commit) and the widened 6-slot `implexRefusals`
+  response, which the batteries assert on directly.
+
+The stamp remains the right first check for a *grossly* stale binary — a build
+from another branch, or a `dist/` that was never refreshed. It simply cannot
+resolve a one-commit difference.

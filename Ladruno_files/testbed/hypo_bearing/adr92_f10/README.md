@@ -61,6 +61,12 @@ that module imports `_testbed` and would bind a different engine.
 
 The **pinned release build of `ladruno` tip `9c2f964`** (`ladrunoBuild()` =
 `9c2f964eae3bbd1a055c3ede81381a6c601a982b`). Nothing was built for this WP.
+**That build predates WP-99 / PR #838** (merged as `c75edc95c`), so on it a
+commit-time companion cap-hit is silent and `implexRefusals[3]` is the only thing
+that would catch one; from `c75edc95c` on, such a commit aborts the run with
+`analyze() = -4` and the bucket read is belt-and-braces. Re-running these legs on
+a newer engine is expected to give the same numbers (the bucket is 0 on every arm
+the note leans on) but is not a byte-identity claim.
 Override with `LADRUNO_DIST_BIN`; `LADRUNO_F10_EXPECT_BUILD` pins the hash and
 accepts `any` (and then says so loudly).
 

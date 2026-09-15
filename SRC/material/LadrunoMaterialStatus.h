@@ -73,4 +73,59 @@
 // registered in classTags.h, and nothing may derive one from it.
 constexpr int LADRUNO_MATERIAL_REFUSED = -33086;
 
+// ==========================================================================
+//  Ladruno WP-99 (F7): the COMMIT-TIME refusal seam.
+//
+//  The sentinel above only works at the TRIAL, and only on an element that
+//  forwards `setTrialStrain`'s return code. At COMMIT there is no such path at
+//  all: `Domain::commit()` is `elePtr->commitState();` with the return value
+//  dropped, for EVERY element, fork or vanilla. A material that discovers at
+//  commitState() that it cannot integrate the step therefore had nowhere to
+//  say so -- measured on the TIMs strip as 25.9 M capped commits and a
+//  straight-line load-settlement curve, every step reported converged.
+//
+//  So the refusal goes around the element instead of through it. A material
+//  calls ladrunoNoteCommitRefusal() from its commitState(); Domain::commit()
+//  checks the count after its element loop and aborts the commit with a
+//  negative return, which AnalysisModel::commitDomain() turns into -2
+//  (AnalysisModel.cpp:656-659) and every analysis class turns into a failed
+//  step: StaticAnalysis.cpp:213-222 and DirectIntegrationAnalysis.cpp:259-267
+//  both revert and `return -4`, and
+//  VariableTimeStepDirectIntegrationAnalysis.cpp:137-140 sets result = -4 and
+//  falls into its revert-and-subdivide branch. That is element-independent by
+//  construction, which is the whole point: a discarding element (Brick,
+//  BbarBrick, SSPquad, ...) cannot swallow it.
+//
+//  WHY NOT SIMPLY PROPAGATE `elePtr->commitState()`'s RETURN? Because ADR-33/34
+//  forbids it: ASDConcrete3D and friends return negative "best-state" codes
+//  from a commit that is perfectly valid, and failing the step on those was
+//  MEASURED to break mesh-objectivity gates that had been green for months.
+//  The rule the fork settled on is that only a DECLARED refusal fails a step,
+//  never any nonzero code -- and at commit there is no sentinel-filtering
+//  element in the path to apply that rule, so the declaration has to arrive
+//  out of band. This counter is that declaration.
+//
+//  Header-only, with a function-local static in an inline function (one
+//  instance across all TUs by the ODR), so no library-dependency edge is added
+//  between SRC/domain and SRC/material.
+//
+//  NOT thread-safe, deliberately: it is written from the commit phase, which is
+//  serial in every analysis class today. If ADR-75b Lane 3 ever threads
+//  commitState(), this becomes an atomic.
+// ==========================================================================
+inline int &ladrunoCommitRefusalCounter(void)
+{
+    static int nCommitRefusals = 0;
+    return nCommitRefusals;
+}
+
+// Called by a material whose commitState() could not integrate the step.
+inline void ladrunoNoteCommitRefusal(void) { ++ladrunoCommitRefusalCounter(); }
+
+// How many integration points refused the commit now being assembled.
+inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter(); }
+
+// Called by Domain::commit() once it has acted on them.
+inline void ladrunoClearCommitRefusals(void) { ladrunoCommitRefusalCounter() = 0; }
+
 #endif

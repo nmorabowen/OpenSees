@@ -134,19 +134,41 @@ not" defect this fork's parsers exist to make impossible).
   error-controlled substepping, so the companion could not report a failed return and
   `-implexControl` would have nothing to refuse.
 
-**Only `LadrunoBrick` propagates a refusal.** `-implexControl` (and the D2 sign-change guard, and
-a companion cap-hit) return the sentinel `LADRUNO_MATERIAL_REFUSED` (`-33086`,
+**A TRIAL-time refusal only works on an element that forwards `setTrialStrain`'s return code.**
+`-implexControl` (and the D2 sign-change guard, and a companion cap-hit caught at the trial)
+return the sentinel `LADRUNO_MATERIAL_REFUSED` (`-33086`,
 `SRC/material/LadrunoMaterialStatus.h`). Whether that sentinel does anything depends entirely on
-the *element*:
+the *element*. Audited at source on `9c2f964ea` — this list used to say "only `LadrunoBrick`",
+which was wrong in both directions (WP-99 / F7):
 
-- **Propagates it (subdivision engages):** `LadrunoBrick`.
-- **Silently accepts it (Newton converges on a refused state, nothing in any log):** `SSPbrick`
-  (`SSPbrick.cpp:445`), `Brick` (`Brick.cpp:1069`), `BbarBrick` — and everything else that does
-  not specifically check the material's return code.
+**The full audited roster — all 52 NDMaterial-hosting elements, 26 forward / 1 sentinel-only / 25
+discard — is the table "Element refusal roster" in `LEDGER_quirks.md`, and that is the only
+authoritative copy.** Examples, so this section reads on its own:
+
+- **Propagates ANY nonzero code (subdivision engages):** the fork continuum elements
+  `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST` (`update()` and the EAS path), `LadrunoUP`,
+  `BezierTet10`, `BezierTri6` — and, the group that matters most here because u-p is SANISAND's
+  canonical host, **every vanilla u-p element that has its own `update()`**: `FourNodeQuadUP`
+  (`:419`), `BBarFourNodeQuadUP` (`:369`), `Nine_Four_Node_QuadUP` (`:572`),
+  `Twenty_Eight_Node_BrickUP` (`:983`).
+- **Propagates ONLY the sentinel:** `LadrunoBrick` — deliberately, per ADR-33/34, so
+  `ASDConcrete3D`'s negative "best-state" codes do not fail a step. A material that returns some
+  *other* nonzero value is silently swallowed here. It is the only element in this class.
+- **Silently accepts it (Newton converges on a refused state, nothing in any log):** `Brick`
+  (= `stdBrick`, `Brick.cpp:1069` → `return 0` at `:1073`), `BbarBrick`, `BrickUP`, and the u-p
+  elements that drop the code — `BBarBrickUP` (no `update()` override at all),
+  `SSPquadUP` and `SSPbrickUP` (an `update()` that calls `setTrialStrain` and returns 0
+  regardless) — plus
+  `SSPquad`, `SSPbrick`, `FourNodeTetrahedron`, `EnhancedQuad`, `NineNodeMixedQuad`,
+  `LadrunoSolidShell`.
 
 On a non-propagating element, `-implexControl` still *measures* and *records* the error
-(`implexError`), it just cannot cut the step. If your element is not `LadrunoBrick`, read
-`implexError` yourself rather than trusting the analysis to stop.
+(`implexError`), it just cannot cut the step — read `implexError` yourself rather than trusting
+the analysis to stop.
+
+**At COMMIT time no element propagates anything**, because `Domain::commit()` is a bare
+`elePtr->commitState();`. That is why a commit-time companion failure LATCHES the material
+instead — see §9.
 
 ## 4. The stage rule
 
@@ -217,7 +239,7 @@ falling back to the generic `C1..Cn`. `implexGuards` is unchanged (out of WP-86d
 | `implexError` | 1 | total error, this material's last commit | `implexError` |
 | `avgImplexError` | 1 | process-wide running mean over all commits | `avgImplexError` |
 | `implexDetail` | 6 | `[0]` total error · `[1]` deviatoric leg · `[2]` volumetric leg (`sqrt(3)\|dp\|`) · `[3]` `p_min` clamp fired on the last pass (0/1) · `[4]` clamp fire count, ever · `[5]` the `f` **actually used** for the last extrapolation, frozen for this step (reads `0` on a guarded step, §11; under `-implexFactor control\|controlIter` this is `f*`, not the clock ratio — §12) | `implexDetail_total`, `implexDetail_dev`, `implexDetail_vol`, `implexDetail_clampFired`, `implexDetail_clampCount`, `implexDetail_f` |
-| `implexRefusals` | 4 | `[0]` total refusals · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` | `implexRefusals_total`, `implexRefusals_signChange`, `implexRefusals_control`, `implexRefusals_companion` |
+| `implexRefusals` | 6 | `[0]` total GENUINE refusals (`[1]+[2]+[3]`) · `[1]` D2 sign-change · `[2]` `-implexControl` past tolerance · `[3]` companion hit `-maxSubsteps` · `[4]` **this integration point's** commit-refusal latch, 0/1 — the only per-instance slot (WP-99) · `[5]` POST-latch refusals, process-wide; fires once per Newton iteration per point and is deliberately **not** folded into `[0]` (WP-99) | `implexRefusals_total`, `implexRefusals_signChange`, `implexRefusals_control`, `implexRefusals_companion`, `implexRefusals_commitLatched`, `implexRefusals_latched` |
 | `implexGuards` | 7 | `[0]` floor fallbacks (P2-1, `-implexFloor implicit`) · `[1]` guard firings (P2-2, `f = 0` after a reversal/softening commit) · `[2]` holds preserved (P2-3, zero-`dt` commits left alone) · `[3]` reversal resets restored (P2-5, `-reversalTol`) · `[4]` trial-time `f = 0` fallbacks (P2-6, `-implexTrialGuard`) · `[5]` hold-skip commits (P2-5c, once per point per hold) · `[6]` control-factor back-offs (P2-9, steps where `f* < 0.5·f_max`) | (none yet — out of WP-86d's scope) |
 
 Python:
@@ -227,7 +249,7 @@ r = ops.eleResponse(eleTag, "material", intPtNum, "implexDetail")
 total, dev, vol, clampFired, clampCount, f = r
 
 refusals = ops.eleResponse(eleTag, "material", intPtNum, "implexRefusals")
-n_total, n_signchange, n_control, n_companion = refusals
+n_total, n_signchange, n_control, n_companion, commit_latched, n_latched = refusals
 ```
 
 Tcl:
@@ -314,6 +336,65 @@ a verdict yet.
 
 ## 9. Known limits
 
+### `-implex` without `-implexControl` used to walk past its own failed commits — WP-99 (F7)
+
+Until WP-99 a commit-time companion failure propagated **nowhere**. `Domain::commit()`
+(`SRC/domain/domain/Domain.cpp`) is `elePtr->commitState();` with the return value dropped, so no
+element — fork or vanilla — can refuse a step at commit. When `ladrunoImplexCommit()` found the
+`-maxSubsteps` cap hit, it committed the partially integrated state `ModifiedEuler` had left at
+`T < 1`, returned `LADRUNO_MATERIAL_REFUSED` into that discarding caller, and the analysis
+continued reporting every step converged. The 10-warning-per-process budget meant a long run said
+so ten times and then went quiet. What that buys, measured: the TIMs plane-strain strip
+(`LadrunoQuad` bbar `PlaneStrain`, 9 720 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`) reached
+**25.9 million** commit-time companion cap hits and drew a **straight-line load–settlement curve to
+2 674 kPa** with **every step reported converged** — a number with no mechanics behind it at all.
+Since WP-99 such a commit **fails the step, on every element type**. Two mechanisms, and review
+round 1 measured why both are needed:
+
+1. **The commit is aborted.** The material declares the refusal out of band —
+   `ladrunoNoteCommitRefusal()` in `SRC/material/LadrunoMaterialStatus.h` — and `Domain::commit()`
+   checks that counter after its element loop and returns a failure.
+   `AnalysisModel::commitDomain()` turns that into `-2` and `StaticAnalysis` /
+   `DirectIntegrationAnalysis` / `VariableTimeStepDirectIntegrationAnalysis` all revert and return
+   `-4`. This does not go through the element at all, which is the point: it works under a
+   DISCARD element exactly as under a FORWARD one.
+2. **The instance latches.** The trial is restored from the committed state,
+   `ManzariDafalias::commitState()` is skipped, and every later `setTrialStrain` on that point
+   returns `LADRUNO_MATERIAL_REFUSED`. That is the second line of defence, for a driver that
+   ignores what `analyze()` returns.
+
+**Mechanism 2 alone was not enough, and this is the measurement that decided it.** Two stacked
+`stdBrick` — a DISCARD element, see the roster in `LEDGER_quirks.md` — with the lower element
+starved and `algorithm Linear` ran **20 further accepted steps** with `analyze() == 0` throughout,
+the refusing element frozen as a rigid inclusion, and *more quietly than before the WP*: a latched
+`commitState()` returns early, so the old 10-per-process cap warnings stopped firing too.
+
+**What "commits nothing" means, precisely:** *that Gauss point* commits nothing. `Domain::commit()`
+walks the nodes first and then the elements, and every integration point is its own material
+object, so by the time one refuses, the nodes and its sibling points have already committed
+(measured: `[1,0,0,1]` latched across the four points of one `LadrunoQuad`). The model state at
+that commit is **inconsistent**, not merely un-advanced — which is why it is aborted rather than
+repaired.
+
+The latch is sticky and is cleared only by `revertToStart()`: a driver that subdivides keeps being
+refused and gives up, which is the intended outcome, because the step the latch is about was
+already *accepted* and there is nothing to revert to. **`-implexControl` is the way to get a
+*recoverable* refusal**: it catches the same cap one phase earlier, at the trial, so the step it
+belongs to fails and a retry at a smaller increment is meaningful. Read the latch through slot 4
+(`commitLatched`) of the `implexRefusals` response; genuine companion cap hits stay in slot 3, and
+post-latch refusals — which fire once per Newton iteration per point — get their own slot 5 rather
+than polluting the counters (review round 1 measured 244 of them against 4 real cap hits before
+that split).
+
+**Why not simply propagate the element's `commitState()` return code?** Because ADR-33/34 forbids
+it. `ASDConcrete3D` and friends return *negative* "best-state" codes from commits that are
+perfectly valid, and failing the step on those was measured to break mesh-objectivity gates that
+had been green for months. The fork's rule is that only a **declared** refusal fails a step, never
+any nonzero code — and at commit there is no sentinel-filtering element in the path to tell the two
+apart, so the declaration has to arrive out of band. That is exactly what the counter is.
+
+### Self-weight bearing decks — ADR-92 F10
+
 - **On a SELF-WEIGHT bearing deck, `-implexControl` can be what STOPS the run — and control-off
   buys reach, not a confirmed curve.** Measured on a `B = 1.5` m self-weight strip
   (`gamma' = 9.81`, K0 = 0.455, 2 280 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`,
@@ -328,10 +409,14 @@ a verdict yet.
   buys — integrated every increment it was handed on the control-off arms
   (`implexRefusals[3] = 0` on the campaign's B, C, D, E, K, L, N, N1 legs; `<= 42` anywhere,
   M 42 / F1 29 / I 12 / H 6 / F3 3 / J 2). So the discipline for a control-off leg is
-  **read the companion bucket `implexRefusals[3]` at the end of every run** — on a build
-  predating PR #838 a capped companion commit is otherwise silent; once #838 lands the run
-  aborts instead. (b) *Accuracy is untouched by any of this.* §8 and the constructor echo this
-  material prints on every control-off run (`LadrunoSANISAND.cpp:2029`-`:2031`) say IMPL-EX was
+  **read the companion bucket `implexRefusals[3]` at the end of every run**, which since
+  WP-99 / PR #838 (merged as `c75edc95c`) is **belt-and-braces**: a capped companion commit now
+  ABORTS the run — `Domain::commit()` fails and `analyze()` returns `-4`, the subsection above —
+  so on any build from that merge on the watch confirms what the engine already enforces. On an
+  older build it is the ONLY thing that would catch it: the F10 campaign itself ran on
+  `9c2f964`, which predates #838, and there a capped companion commit is silent.
+  (b) *Accuracy is untouched by any of this.* §8 and the constructor echo this
+  material prints on every control-off run (`LadrunoSANISAND.cpp:2092`-`:2095`) say IMPL-EX was
   measured unusable from `d_eps = 5e-4` at `p0 = 5 kPa`, and **that deck sits inside that
   range**: its minimum `p'` is 6.374 kPa (1.27x the corner) and the control-off leg's strain
   increment crosses `5e-4` at `s/B = 0.0012` and runs at 2.6-4x the corner to the target, with
@@ -348,9 +433,9 @@ a verdict yet.
   refusals and 0.0265 with zero subdivisions**. (With the control OFF, ×2 and ×1.0 agree to
   0.383 % and ×2 is 6× faster, so the growth rule is innocent on its own.) The `FLOOR` itself is
   a separate mechanism: Gauss points whose committed plastic history is 1e-12…1e-21 pass
-  `implexPrimed`'s bare `> 0.0` test (`LadrunoSANISAND.cpp:2905`), lose the un-primed exemption,
+  `implexPrimed`'s bare `> 0.0` test (`LadrunoSANISAND.cpp:3021`), lose the un-primed exemption,
   and are refused on an error that does **not** decay with `dt` (0.2243 at `|dt| = 4e-5` →
-  0.2143 at `2e-5`) — the asymptote `:2889`-`:2898` documents. No subdivision clears that.
+  0.2143 at `2e-5`) — the asymptote `:3005`-`:3014` documents. No subdivision clears that.
   Secondary levers, measured: `tol = 0.1` (the shipped default) +37 % reach; `tol = 0.5` reaches
   the target with 18 refusals and agrees with the control-off arm to **0.395 % mean / 1.625 %
   max** over `0.002 ≤ s/B ≤ 0.05`, i.e. it makes the control nearly inert; `reductionLimit 0.5`
@@ -365,6 +450,7 @@ a verdict yet.
   +5.99 % at 0.0070 and **+19.40 % at 0.0085** against the refusal-free arm on the same deck.
   Compare reach and refusal counts freely; compare `q` only against an arm that ran refusal-free.
   Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
+
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
   matched-window `t_init` tail (`PLATEAU_FRAC = 2 %`; all three run far above it). `-implex` is
