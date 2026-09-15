@@ -60,7 +60,28 @@ MEASURED (build `3324485f74f7ace1a7459c012e5c45167a541368`, h0 = 1.0, exact
 The two associated legs agree to 0.075 % worst over the whole common range, not
 merely at the peak.  `BUDGET` is the gate's own "capacity WITH A NAMED
 ALLOWANCE": the load had been flat for the last tenth of the run with the step
-still 1250x the floor.
+still 1250x the floor.  (The gate's module table RECORDS all three of its own
+legs ending on `BUDGET`; on this box, in this session, both reference legs above
+ran on to `TARGET` instead.)
+
+WHAT THE RATIO AGREEMENT DOES NOT SAY -- READ THE `relaxed` COLUMN
+------------------------------------------------------------------
+The ASD associated leg needed the push ladder's THIRD rung -- `KrylovNewton` at
+10x the `NormUnbalance` tolerance, 60 iterations -- on **638 of its 687 converged
+steps (92.9 %)**, where the UW associated leg and both psi = 0 legs needed
+**zero** (counts from the committed CSVs,
+`Ladruno_files/testbed/hypo_bearing/f8_r3_h1.0_*.csv`, column `relaxed`).  The
+gate records `nrelax` precisely so this cannot pass unnoticed: the ASD leg
+reaches the same collapse load, on a looser tolerance, most of the way.
+
+Part of that asymmetry is the DECK, not the material: the ASD material is
+declared with `strict_convergence 1` and `n_max_iterations 100` (the settings
+ADR-95 measured on, from `asd_path_diag.py`) and the vanilla `DruckerPrager` has
+no equivalent switch, so a step the ASD material REFUSES is a step the UW
+material would have silently accepted.  That is also where the ASD leg's 1528
+failed ladder attempts come from, against UW's zero.  These tests assert the
+collapse load and the path; they do not assert equal iteration cost, and nothing
+here explains why the ASD path costs more Newton work on the same cone.
 
 Pre-fix, on `9c2f964ea`, the ASD associated leg read **1.6307, mode BUDGET,
 plateau NO (tail 8.270 %), free-advance NO (terminal step 50x the floor),

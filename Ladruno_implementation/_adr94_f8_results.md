@@ -19,15 +19,24 @@ if (!be_in_apex)
     be_in_apex = cp_apex_region(...);                   // (p - p_apex) >= (K*etabar/G)*q
 ```
 
-A union takes the **wider** of the two regions. Which one is wider depends on the
-flow rule, because the two slopes are `eta` and `K*etabar/G`:
+A union takes the **wider** of the two regions, and the exact slope `K*etabar/G`
+overtakes the Euclidean `eta` as soon as
+
+    etabar > eta * G / K
+
+On this deck `G/K = 0.10345` and `eta = 0.4457`, so the crossover is at
+`etabar = 0.0461` — **psi ~ 2.3 deg**. The union is therefore unsafe not "under
+associated flow" but under **essentially any dilatancy**; `etabar = 0` is the one
+case where it is safe, and it is the one case wp/94f measured.
 
 | leg | Euclidean slope `eta` | exact slope `K*etabar/G` | union keeps | verdict |
 |---|---|---|---|---|
-| psi = 0 (non-associated, the ADR-95 deck) | 0.4457 | **0** (`p >= p_apex`) | the exact one | correct — this is what wp/94f measured |
+| psi = 0 (the ADR-95 deck wp/94f measured) | 0.4457 | **0** (`p >= p_apex`) | the exact one | correct |
+| psi ~ 2.3 deg (`etabar = eta*G/K`) | 0.4457 | 0.4457 | either | the crossover |
+| **psi ~ phi/2** (`etabar = eta/2`) | 0.4457 | **2.1545** | the **Euclidean** one | **4.8x too wide** |
 | psi = phi (**associated**) | 0.4457 | **4.3089** | the **Euclidean** one | **~10x too wide** |
 
-On the associated leg the union therefore apex-projects every trial in the wedge
+Above the crossover the union therefore apex-projects every trial in the wedge
 
     eta*q  <=  p - p_apex  <  (K*etabar/G)*q
 
@@ -87,13 +96,13 @@ All four legs below are the **same mesh, same deck, same session**
 `SUBDIV_BUDGET = 80`, `WALL_BUDGET = 3600 s`, push to s/B = 0.15). Exact
 `q_u = q0*N_q = 138.907 kPa`.
 
-| leg | build | q_max (kPa) | ratio | mode | tail % | ds/floor | CAPACITY | failed / subdiv | wall s |
-|---|---|---|---|---|---|---|---|---|---|
-| UW associated (reference) | `9c2f964ea` | 268.75 | **1.9348** | TARGET | 0.120 | 4400 | **yes** | 0 / 0 | 63 |
-| **ASD associated, PRE-fix** | `9c2f964ea` | 226.51 | 1.6307 | **BUDGET** | 8.270 | 50 | **NO** | 898 / 81 | 894 |
-| **ASD associated, POST-fix** | `3324485f7` | 268.38 | **1.9321** | BUDGET | 0.163 | 2500 | **yes** | 1528 / 81 | 1122 |
-| ASD psi = 0, PRE-fix | `9c2f964ea` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 72 |
-| ASD psi = 0, POST-fix | `3324485f7` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 107 |
+| leg | build | q_max (kPa) | ratio | mode | tail % | ds/floor | CAPACITY | failed / subdiv | **relaxed steps** | wall s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| UW associated (reference) | `9c2f964ea` | 268.75 | **1.9348** | TARGET | 0.120 | 4400 | **yes** | 0 / 0 | **0 / 329** | 63 |
+| **ASD associated, PRE-fix** | `9c2f964ea` | 226.51 | 1.6307 | **BUDGET** | 8.270 | 50 | **NO** | 898 / 81 | **256 / 560** | 894 |
+| **ASD associated, POST-fix** | `3324485f7` | 268.38 | **1.9321** | BUDGET | 0.163 | 2500 | **yes** | 1528 / 81 | **638 / 687 (92.9 %)** | 1122 |
+| ASD psi = 0, PRE-fix | `9c2f964ea` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | **0 / 329** | 72 |
+| ASD psi = 0, POST-fix | `3324485f7` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | **0 / 329** | 107 |
 | **UW psi = 0** (the gate's own leg, refactor + fix regression) | `3324485f7` | 150.71 | **1.0850** | TARGET | 0.001 | 4400 | yes | 0 / 0 | 41 |
 
 The last row is the check that the material factoring and the `gp_probe` hook
@@ -101,10 +110,25 @@ change nothing the gate builds, and that the C++ change does not reach the
 vanilla `DruckerPrager`: the gate's own `h1.0_nonassoc` record is **1.0849**
 (module docstring) / 1.0850 on the repaired material (ADR-95 §4).
 
-`BUDGET` is the gate's own "capacity WITH A NAMED ALLOWANCE" (all three of its
-non-associated legs end there too): the load had been flat for the last tenth of
-the run with the step still 2500x the floor. **The post-fix ASD associated leg is
-a CAPACITY at 1.9321 against the UW reference's 1.9348 — 0.14 % apart.**
+`BUDGET` is the gate's own "capacity WITH A NAMED ALLOWANCE" — the mode all three
+of the gate's own legs are RECORDED in (its module table: BUDGET at ds/floor
+2500 / 1250 / 800), though in this session, on this box, both reference legs ran
+on to `TARGET` at ds/floor 4400. The load had been flat for the last tenth of the
+run with the step still 2500x the floor. **The post-fix ASD associated leg is a
+CAPACITY at 1.9321 against the UW reference's 1.9348 — 0.14 % apart.**
+
+**The `relaxed steps` column is not decoration.** 638 of the post-fix ASD
+associated leg's 687 converged steps (92.9 %) needed the ladder's THIRD rung —
+`KrylovNewton` at 10x the `NormUnbalance` tolerance, 60 iterations — where the UW
+associated leg and both psi = 0 legs needed **zero**. The gate records `nrelax`
+precisely so this cannot pass unnoticed, and it is the honest qualifier on
+"agree to 0.075 %": the ASD leg reaches the same answer, on a looser
+tolerance, most of the way. Part of the asymmetry is deck, not material: the ASD
+decks run `strict_convergence 1` and `n_max_iterations 100` (inherited from
+`asd_path_diag.py`, the settings ADR-95 measured on) and the vanilla
+`DruckerPrager` has no equivalent switch, so a step the ASD material refuses is a
+step the UW material would have silently accepted. That is also where the 1528
+failed ladder attempts come from.
 
 ### The two implementations now follow the same PATH, not merely the same peak
 
@@ -159,6 +183,105 @@ exact test cannot change anything.
 | `tests/test_adr94c_numerics.py` + `test_adr94_redblue_numerics.py` | **11/11** |
 | total | **29 passed** (pre-fix control on `9c2f964ea`: 25 passed, the new file excluded) |
 | `tests/test_r3_prandtl_asd_associated.py` (new, slow tier) | see Sec. 4 |
+
+## 3b. Review round 1 — what adversarial review found and what changed
+
+Verdict MERGE-OK conditional. The classification fix itself held: 43 sweep rows
+across psi and nu (0.2 / 0.49) with zero misclassifications, byte-identical for
+every yield function without the trait, 232 other ASDPlastic tests green, and
+1.9321 confirmed a genuine plateau. Four SHOULD-FIXes and five nits, all applied.
+
+**(1) The condition is not "associated".** Restated everywhere as
+`etabar > eta*G/K` — psi ~ 2.3 deg on this deck — with the reviewer's
+`etabar = eta/2` row (exact slope 2.1545 vs Euclidean 0.4457, a 4.8x wedge)
+added as two `zone_a` gate cases: the flank row against the closed form, and the
+apex row at ratio 2.1760. Both passed on the round-0 build already; they are
+there because the *framing* was wrong, not the fix.
+
+**(3) A real outcome regression, found and fixed.** Narrowing the apex region
+routes near-boundary trials into the flank scalar Newton, whose `dPhi/dlambda`
+carries the pinned vanilla `df/dk = -1` cohesion term that `f` does not contain.
+With cohesion SOFTENING (`ScalarLinearHardeningParameter = -20000`) that Newton
+**converges** — `rc = 0`, `|f| ~ 1e-7`, no exhaustion — onto a state whose
+deviator points OPPOSITE the trial deviator. Measured, `etabar = eta`, one Gauss
+point, identical at `strict_convergence` 0 and 1:
+
+| (p - p_apex)/q | HS = 0 (correct) | HS = -20000, pre-guard |
+|---|---|---|
+| 3.0 | p -0.189103, q 0.199762, `s_zz-s_xx` **+0.346** | p -0.478023, q 0.328548, `s_zz-s_xx` **-0.569** |
+| 4.3089 | the apex, q 1.0e-15 | p -0.838550, q 0.489254, `s_zz-s_xx` **-0.847** |
+
+Pre-fix those trials were apex-projected (q = 0), so the round-0 PR made them
+worse. Layer (b) could not catch it: its other trigger `be_exhausted` is
+computed **only** under `strict_convergence` (off by default), and this state
+does not exhaust — it converges to the wrong root.
+
+Fixed with a geometric guard after the flank loop, `yf_apex_elastic_metric`
+scope: a Drucker-Prager return is a non-negative radial scaling of the trial
+deviator plus a pressure change, so `dot(dev_ret, dev_tr) < 0` is inadmissible
+for any parameters. It is reported through the existing `be_flank_failed`
+channel, so it inherits layer (b)'s apex fallback and the existing fail-loud
+refusal without adding an exit.
+
+**The guard needed a size test, and finding that cost the round-1 build.** The
+raw sign test regressed wp/94f's own zero-dilatancy acceptance path: that path
+walks up the cone in equal steps (q = 0.0924, 0.0693, 0.0462, 0.0231, ...) and
+lands EXACTLY on the vertex on its 5th, where `dev_ret` is zero to round-off and
+the sign of the dot product is a coin flip — the leg refused at step 5 with
+`codes = [0,0,0,0,-3]`. The guard now also requires `||dev_ret|| > tol_yf`, the
+stress-unit scale the rest of the integrator measures in (ADR-94 M5). In the
+softening reproducer `||dev_ret|| ~ 0.46`; in the round-off case ~1e-17.
+
+**(6) Stale comments.** `DruckerPrager_YF.h`'s wp/97b note ("used only by
+Backward_Euler ... two integrators, two answers") is corrected: for Drucker-Prager
+`Backward_Euler` no longer calls `check_apex_region` at all, so the member is
+dead code for that YF. The residual asymmetry is stated in its place —
+`Closest_Point` applies the elastic-metric test to EVERY `yf_has_apex` YF while
+`Backward_Euler` applies it only to the opted-in ones, so MohrCoulomb /
+HoekBrown / TensionCutoff still get two answers — and the vanilla-ledger row's
+"still used by every non-opted-in path" now says "except DP".
+
+**(8) Measurement honesty — the `relaxed` column.** Added to the table in Sec. 2,
+to the slow gate's module docstring and to the PR: the ASD associated leg needed
+the ladder's third rung on **638 of 687** steps against **0** for UW and both
+psi = 0 legs, and the ASD decks carry `strict_convergence 1` /
+`n_max_iterations 100` with no UW equivalent.
+
+**Nits.** (4) `apex_stress()` ignores the back stress and `cp_apex_region` tests
+`dev(sigma)` rather than `s - alpha` — recorded in `LEDGER_quirks` as
+pinned-not-fixed (identical before and after F8; measured `rc = -3` under strict,
+`q = 0.393` inadmissible under non-strict with `alpha0` nonzero), and the
+`be_apex_project` comment claiming every `yf_has_apex` YF is perfectly plastic is
+corrected — Drucker-Prager opts in WITH hardening template parameters. (5)
+`adr97_oracle/baselines/dump_hist.py` now records `ladrunoBuild()` in each dump
+(recorded, not asserted: a baseline is a different build by construction; what
+was missing was provenance). (9) the "all three end BUDGET" sentence is softened
+to say that is the gate's RECORDED mode, while both reference legs here ran on to
+TARGET. (10) `n_eucl_wedge` is documented as diagnostic-only and unable to see
+the defect: it is evaluated on COMMITTED stresses, so the only thing that can land
+in it is apex round-off — UW 125-137 vs ASD 0 is round-off, not mechanics. (11)
+the cheap gate's docstring said ~15 s; measured 0.71 s for 12 tests.
+
+**Not changed, and why.** `tests/test_adr94_matrix.py` regenerates the tracked
+`_adr94_matrix.md` on every run (a wart already recorded in the ADR-94
+implementation log) and its regeneration also strips the file's provenance
+preamble, so the regenerated file was REVERTED rather than committed. Its cell
+diff is worth reading though: the only cells that moved are the two
+`Numerical_Algorithmic_*` columns of VonMises / MohrCoulomb / HoekBrown, i.e.
+ADR-97 P4's re-point (#829) drifting against a table last regenerated at
+`3622d6214` — **no Drucker-Prager cell moved**, which is independent evidence
+that this WP's change is confined to Drucker-Prager.
+
+### Gate battery, round-1 build
+
+| file | result |
+|---|---|
+| `tests/test_f8_asd_dp_associated_apex.py` | **12/12** in 0.71 s (was 4; +2 for the `eta/2` reframing, +6 for the softening guard and its non-softening controls) |
+| `tests/test_adr94f_asd_apex_fallback.py` | **4/4** |
+| `tests/test_adr97_p4_inertness.py` | **10/10** — still byte-identical on all 23 baseline decks |
+| `tests/test_adr94c_numerics.py` + `test_adr94_redblue_numerics.py` | **11/11** |
+| the five files together | **37 passed in 10.16 s** |
+| `pytest -k "adr84 or adr94 or adr95 or adr97 or asdplastic or f8"` | **273 passed, 9 skipped** (+ the pre-existing `test_adr94_matrix.py` cwd-relative-path error, which passes when run from `tests/`) |
 
 ## 4. Artifacts
 

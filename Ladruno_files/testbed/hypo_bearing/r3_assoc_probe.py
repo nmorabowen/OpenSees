@@ -27,13 +27,17 @@ into the counts that discriminate the candidate causes:
                                                      (inadmissible; should be 0)
   * `n_apex_pinned` : |p - p_apex| tiny AND q ~ 0 -- took the APEX PROJECTION
   * `n_eucl_wedge`  : eta*q <= p - p_apex < (K*etabar/G)*q
-        the states the YF's EUCLIDEAN `check_apex_region` calls APEX while the
-        exact elastic-metric test calls CONE.  At etabar = 0 this band is empty
-        (the elastic-metric test is the WIDER one and the union is harmless);
-        at etabar = eta it is a factor K*eta/G ~ 10 wide, and `Backward_Euler`
-        UNIONS the two answers, so every state in it is apex-projected.
-        Counted on the TRIAL side is impossible from outside the material, so
-        what is counted here is its FOOTPRINT: `n_apex_pinned` at a station
+        DIAGNOSTIC ONLY, AND IT CANNOT SEE THE DEFECT -- kept because reading a
+        column of zeros and knowing WHY is worth more than not having asked.
+        The misclassification happens on the TRIAL state, which is not visible
+        from outside the material; this band is evaluated on COMMITTED stresses,
+        and a committed state is either ON the cone (p - p_apex < 0, outside the
+        band by construction) or AT the apex (p - p_apex = 0, q = 0, on the
+        band's boundary).  So the only thing that can ever land in it is
+        round-off around the apex point -- which is exactly what the two runs
+        show: UW reads 125-137 and ASD reads 0, and that difference is the two
+        materials' apex round-off, NOT a mechanical difference between them.
+        What DOES measure the defect's footprint is `n_apex_pinned` at a station
         where the cone return was available.
 
 RUN (each leg is one process; ~10-40 min at h0 = 1.0)

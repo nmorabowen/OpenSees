@@ -6466,7 +6466,7 @@ Rules that generalize:
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
 
-## ...and the fix for it was a UNION, which is only safe in one direction (ADR-94 addendum, F8)
+## ...and the fix for it was a UNION, which is only safe while `K*etabar/G <= eta` (ADR-94 addendum, F8)
 
 wp/94f (above) repaired the Euclidean apex test by **unioning** the yield
 function's answer with the exact elastic-metric one inside `Backward_Euler`:
@@ -6482,12 +6482,17 @@ on the flow rule**, because the two slopes are `eta` and `K*etabar/G`:
 
 * `etabar = 0` (the deck wp/94f measured): exact slope 0, region `p >= p_apex`,
   which strictly CONTAINS the Euclidean cone. Union == replace. Correct.
-* `etabar = eta` (**associated**): exact slope `K*eta/G` — on that same deck
-  `K/G = 9.667`, so the exact apex cone is about **ten times narrower** than the
-  Euclidean one and the union keeps the Euclidean answer.
+* `etabar > 0`: the exact slope `K*etabar/G` **overtakes** the Euclidean one as
+  soon as `etabar > eta*G/K`. That threshold is tiny: on this deck
+  `G/K = 0.10345` and `eta = 0.4457`, so it is `etabar = 0.0461`, i.e.
+  **psi ~ 2.3 deg** — not "associated", but essentially **every dilatant sand**.
+  At `etabar = eta/2` (psi ~ phi/2) the exact slope is 2.1545 against the
+  Euclidean 0.4457: a 4.8x-wide wedge. At `etabar = eta` (associated) it is
+  4.3089, about **ten times** the Euclidean cone, and the union keeps the
+  Euclidean answer at every one of these.
 
-So the associated leg of the very same deck apex-projected every trial in the
-wedge `eta*q <= p - p_apex < (K*etabar/G)*q`, whose correct return is to the cone
+So a dilatant leg of the very same deck apex-projected every trial in the wedge
+`eta*q <= p - p_apex < (K*etabar/G)*q`, whose correct return is to the cone
 FLANK. Symptoms, all of them misleading:
 
 * **no refusal, no message, no NaN** — the material reports success at every
@@ -6516,5 +6521,66 @@ Rules that generalize:
    failure into on the decks it was not measured on.
 6. **A cone's apex test is flow-rule-dependent; its yield surface is not.** Two
    legs that differ only in `DP_etabar` exercise genuinely different branches of
-   the return map, so a non-associated acceptance leg is not evidence about the
-   associated one. Run both.
+   the return map, so a zero-dilatancy acceptance leg is not evidence about a
+   dilatant one. Run both — and note how low the crossover is (psi ~ 2.3 deg
+   here): "we only tested psi = 0" and "we tested the usual case" are not the
+   same sentence.
+
+## Narrowing an apex region hands the flank Newton states it can answer WRONG — the cohesion-softening deviator flip (ADR-94 addendum, F8)
+
+A consequence of the fix above, found by adversarial review of #836 and fixed in
+the same PR. Once the apex region is the exact (narrower, under dilatancy) one,
+near-boundary trials that used to be apex-projected are handed to the flank
+scalar Newton. That Newton's `dPhi/dlambda` carries the shipped yield function's
+`df/dk = -1` term for a cohesion internal variable **that `f` itself does not
+contain** (ADR-97 P0 header finding 2, pinned not fixed). With cohesion
+SOFTENING the inconsistency lets it converge — `|Phi| ~ 1e-7`, `rc = 0`, no
+exhaustion, no refusal — onto the WRONG ROOT: a state whose deviator points
+OPPOSITE the trial deviator, i.e. the map walked through the vertex and out the
+other side.
+
+Measured (`ScalarLinearHardeningParameter = -20000`, `etabar = eta`, the ADR-95
+cone, one Gauss point):
+
+| (p - p_apex)/q | HS = 0 (correct) | HS = -20000, pre-guard |
+|---|---|---|
+| 3.0 | p -0.189103, q 0.199762, `s_zz-s_xx` **+0.346** | p -0.478023, q 0.328548, `s_zz-s_xx` **-0.569** |
+| 4.3089 | the apex, q 1.0e-15 | p -0.838550, q 0.489254, `s_zz-s_xx` **-0.847** |
+
+Identical at `strict_convergence` 0 and 1.
+
+Three things this teaches:
+
+7. **A yield-function tolerance cannot certify a return map.** Both wrong states
+   sit ON the surface to 1e-7. The check that catches them is GEOMETRIC: a
+   Drucker-Prager return is a non-negative radial scaling of the trial deviator
+   plus a pressure change, so `dot(dev_ret, dev_tr) < 0` is inadmissible for any
+   parameters. That guard is now in `Backward_Euler`, reported through the
+   existing `be_flank_failed` channel so it inherits the apex fallback and the
+   fail-loud refusal without adding an exit.
+8. **`strict_convergence` is not the safety net people assume.** `be_exhausted`
+   — one of layer (b)'s only two triggers — is computed **only** when strict is
+   on, and strict is OFF by default. A failure mode that CONVERGES is invisible
+   to both.
+9. **Narrowing a classification is not automatically conservative.** It moves
+   states from a branch that always "works" (a vertex projection cannot fail)
+   onto one that can be wrong in a new way. Ask what the newly-routed states do,
+   not only whether the classification is now exact.
+
+## `apex_stress()` and `cp_apex_region` ignore the back stress (pinned, not fixed)
+
+`DruckerPrager_YF::apex_stress()` returns `p_apex * I` built from model
+PARAMETERS only, and `cp_apex_region` tests the sign flip of `dev(sigma)` rather
+than of the RELATIVE deviator `s - alpha`. With a nonzero kinematic back stress
+both are wrong. Measured (`alpha0 = (0.02, 0.02, -0.04, 0, 0, 0)`,
+`TensorLinearHardeningParameter = 1000`): `strict_convergence = 1` refuses with
+`rc = -3`; `strict_convergence = 0` commits `q = 0.393` for an inadmissible flank
+state. **Identical before and after F8** — F8 changed which states are classified
+as apex, not what the apex geometry is — so it is recorded, not fixed.
+
+It also falsifies a comment that stood in `ASDPlasticMaterial3D.h`'s
+`be_apex_project`: "every yield function that opts into `yf_has_apex` today is
+perfectly plastic (Null hardening)". `DruckerPrager_YF` opts in with
+`AlphaHardeningType` / `CohesionHardeningType` template parameters and the
+registered specializations include both linear tensor and linear scalar
+hardening. The comment is corrected in the same PR.

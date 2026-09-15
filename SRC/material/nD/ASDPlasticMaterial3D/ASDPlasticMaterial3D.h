@@ -4551,10 +4551,21 @@ private:
         TrialPlastic_Strain  = TrialPlastic_Strain + dep;
 
         // Internal variables: ONE hardening evaluation, at the apex.
-        // Every yield function that opts into `yf_has_apex` today is
+        // Ladruno (ADR-94 addendum, F8): this comment used to claim that
+        // "every yield function that opts into `yf_has_apex` today is
         // perfectly plastic (Null hardening), so this term is exactly
-        // zero for them and the IVs are unchanged; it is written this
-        // way so a hardening Drucker-Prager does not silently freeze.
+        // zero".  That is FALSE: `DruckerPrager_YF` opts in with
+        // `AlphaHardeningType`/`CohesionHardeningType` template
+        // parameters, and the registered specializations include linear
+        // tensor (back-stress) and linear scalar (cohesion) hardening.
+        // The term below is therefore live, which is why it is written
+        // this way -- a hardening Drucker-Prager must not silently
+        // freeze.  Two consequences of the non-Null case are PINNED, NOT
+        // FIXED (LEDGER_quirks): `apex_stress()` ignores the back stress
+        // `alpha`, and `cp_apex_region` tests the sign flip of
+        // dev(sigma) rather than of the RELATIVE deviator `s - alpha`,
+        // so with a nonzero back stress both the classification and the
+        // projected vertex are wrong (identical before and after F8).
         iv_storage.apply([&](auto & internal_variable)
         {
             auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
@@ -4927,6 +4938,63 @@ private:
             }
         }
         // cout << "BE - END iterations----------" << endl << endl;
+
+        // Ladruno (ADR-94 addendum, F8): DEVIATOR-FLIP GUARD on the flank result.
+        // A Drucker-Prager return is a NON-NEGATIVE radial scaling of the trial
+        // deviator plus a pressure change, so the returned deviator can never point
+        // OPPOSITE the trial one: that means the map walked through the vertex and
+        // out the other side.  This is not hypothetical.  Narrowing the apex region
+        // to the exact elastic-metric one (above) routes near-boundary trials into
+        // this flank Newton, whose `dPhi/dlambda` carries the shipped yield
+        // function's `df/dk = -1` term for a cohesion internal variable that `f`
+        // itself does not contain (ADR-97 P0 header finding 2, pinned not fixed).
+        // With cohesion SOFTENING that inconsistency lets the scalar Newton
+        // converge -- |Phi| ~ 1e-7, no exhaustion, no refusal -- onto the WRONG
+        // ROOT.  Measured on this build with `ScalarLinearHardeningParameter`
+        // = -20000 and etabar = eta, trials at (p - p_apex)/q = 3.0 and 4.3089:
+        // committed (p, q) = (-0.478023, 0.328548) and (-0.838550, 0.489254), both
+        // with `s_zz - s_xx` NEGATIVE against a positive trial (the same two rows
+        // at HS = 0 read (-0.189103, 0.199762) and the apex, both with the correct
+        // sign).  No yield-function tolerance can see this -- the states sit ON the
+        // surface -- so the check has to be the geometric one.
+        //
+        // Layer (b) below cannot catch it: its two triggers are `be_flank_failed`
+        // and `be_exhausted`, and the latter is only ever computed under
+        // `strict_convergence` (off by default); this state neither fails nor
+        // exhausts, it CONVERGES.  So the flip is reported through the SAME
+        // `be_flank_failed` channel, which gives it layer (b)'s apex fallback first
+        // and the existing fail-loud refusal if the apex declines -- no new exit.
+        // Restricted to `yf_apex_elastic_metric` (Drucker-Prager), whose meridian is
+        // the straight cone this argument is about.
+        if constexpr (yf_apex_elastic_metric<YieldFunctionType>::value)
+        {
+            if (!be_flank_failed)
+            {
+                const VoigtVector be_dev_ret = TrialStress.deviator();
+                const VoigtVector be_dev_tr  = be_sigma_trial_elastic.deviator();
+                const double be_q2_tr  = tensor_dot_stress_like(be_dev_tr, be_dev_tr);
+                const double be_q2_ret = tensor_dot_stress_like(be_dev_ret, be_dev_ret);
+                // The size test is NOT optional and NOT a fitted tolerance.  A
+                // return that lands exactly ON the vertex has `dev_ret == 0` to
+                // round-off, and the sign of a round-off-sized dot product is a
+                // coin flip -- wp/94f's own zero-dilatancy acceptance path walks
+                // up the cone in equal steps and hits the vertex EXACTLY on its
+                // 5th, where the raw sign test fires on 1e-17.  So the deviator
+                // must also be bigger than the yield tolerance, which is the
+                // stress-unit scale the rest of this integrator measures in
+                // (ADR-94 M5): `||dev_ret|| > tol_yf`.
+                if (be_q2_tr > 0.0 &&
+                    be_q2_ret > tol_yf * tol_yf &&
+                    tensor_dot_stress_like(be_dev_ret, be_dev_tr) < 0.0)
+                {
+                    be_flank_failed = true;
+                    be_flank_reason = "the flank return OVERSHOT the vertex: the"
+                                      " committed deviator points opposite the trial"
+                                      " deviator, which no admissible Drucker-Prager"
+                                      " return can do";
+                }
+            }
+        }
 
         // Ladruno (ADR-84 P2a): strict_convergence gate on the exhaustion-accept.
         // Upstream, falling out of the loop after max_iter iterations falls through

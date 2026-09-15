@@ -248,11 +248,18 @@ template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 // Ladruno (ADR-97 wp/97b): Drucker-Prager supplies the analytic closest-point
-// df/dq.  NOTE that `check_apex_region` above stays EUCLIDEAN and is used only
-// by Backward_Euler: `Closest_Point` classifies the apex region in the ELASTIC
-// metric, inside the integrator where K, G and etabar are in scope (ADR-97
-// "Drucker-Prager apex").  Two integrators, two answers for the same YF -- a
-// documentation obligation (LEDGER_quirks), not a bug.
+// df/dq.  NOTE that `check_apex_region` above stays EUCLIDEAN: `Closest_Point`
+// classifies the apex region in the ELASTIC metric, inside the integrator where
+// K, G and etabar are in scope (ADR-97 "Drucker-Prager apex").
+// Ladruno (ADR-94 addendum, F8): the "two integrators, two answers for the same
+// YF" this comment used to record is GONE for Drucker-Prager -- `Backward_Euler`
+// no longer calls `check_apex_region` for a yield function declaring
+// `yf_apex_elastic_metric`, so for THIS yield function the member is dead code,
+// kept only because it is part of the public YF interface.  The asymmetry does
+// survive one step down: `Closest_Point` applies its elastic-metric test to EVERY
+// `yf_has_apex` yield function, while `Backward_Euler` applies it only to the
+// opted-in ones, so MohrCoulomb / HoekBrown / TensionCutoff still get two answers
+// (LEDGER_quirks).
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 

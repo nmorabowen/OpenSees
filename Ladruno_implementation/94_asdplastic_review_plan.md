@@ -277,13 +277,20 @@ Token discipline (binding for every agent prompt):
   elastic-metric pre-check **unioned** with the Euclidean answer, plus a flank-first apex fallback.
   Record: `_adr94f_results.md`.
 - **2026-09-14, ADR-94 addendum / F8** (#836, branch `wp/100-asd-dp-associated-wall`) — **the union
-  was only safe in one direction, and the other direction is the ASSOCIATED leg.** A union keeps the
-  WIDER region; which of `eta` (Euclidean) and `K·η̄/G` (exact) is larger depends on the flow rule.
-  At η̄ = 0 the exact region contains the Euclidean one (wp/94f's case, correct); at η̄ = η the exact
-  cone is ~10x NARROWER (`K/G = 9.667` on that deck), so the union apex-projected every trial in the
-  wedge `η·q ≤ p − p_apex < (K·η̄/G)·q`, committing `σ_apex` with **no deviator** and — under
+  was only safe while `K·η̄/G ≤ η`.** A union keeps the WIDER region, and the exact slope overtakes
+  the Euclidean one as soon as **η̄ > η·G/K** — on the ADR-95 deck (`K/G = 9.667`, `η = 0.4457`)
+  that is η̄ = 0.046, i.e. **ψ ≈ 2.3°**, so the union was wrong for essentially every DILATANT deck,
+  not only for associated flow: at η̄ = η/2 the exact slope is 2.1545 against 0.4457 (a 4.8× wedge),
+  at η̄ = η it is 4.3089 (~10×). Only at η̄ = 0 — wp/94f's single measured case — does the exact
+  region contain the Euclidean one. The union therefore apex-projected every trial in the wedge
+  `η·q ≤ p − p_apex < (K·η̄/G)·q`, committing `σ_apex` with **no deviator** and — under
   `tangent_type Continuum` — a **zero tangent**, with **no refusal issued**. Fix: for yield functions
-  declaring `yf_apex_elastic_metric` the exact test REPLACES the Euclidean one. Measured on the
+  declaring `yf_apex_elastic_metric` the exact test REPLACES the Euclidean one, plus (adversarial
+  review round 1) a **deviator-flip guard** after the flank Newton: narrowing the region routes
+  near-boundary trials into a flank map whose `dΦ/dλ` carries the pinned vanilla `df/dk = −1`
+  cohesion term, and with cohesion SOFTENING it CONVERGES (`rc = 0`, `|f| ~ 1e-7`) onto a
+  sign-flipped deviator that no yield-function tolerance and no `strict_convergence` can see.
+  Measured on the
   ADR-95 R3 gate deck at h0 = 1.0: the ASD associated leg was **BUDGET at s/B 0.0169, 1.6307, NOT a
   capacity, 898 failed attempts, zero refusals in 894 s** against UW's TARGET 1.9348 in 63 s with
   zero failed attempts. The psi = 0 leg is **byte-identical** across the fix (329 rows) and the
