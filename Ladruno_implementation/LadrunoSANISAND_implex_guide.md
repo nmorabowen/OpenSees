@@ -156,7 +156,9 @@ authoritative copy.** Examples, so this section reads on its own:
   *other* nonzero value is silently swallowed here. It is the only element in this class.
 - **Silently accepts it (Newton converges on a refused state, nothing in any log):** `Brick`
   (= `stdBrick`, `Brick.cpp:1069` → `return 0` at `:1073`), `BbarBrick`, `BrickUP`, and the u-p
-  elements with **no** `update()` override — `BBarBrickUP`, `SSPquadUP`, `SSPbrickUP` — plus
+  elements that drop the code — `BBarBrickUP` (no `update()` override at all),
+  `SSPquadUP` and `SSPbrickUP` (an `update()` that calls `setTrialStrain` and returns 0
+  regardless) — plus
   `SSPquad`, `SSPbrick`, `FourNodeTetrahedron`, `EnhancedQuad`, `NineNodeMixedQuad`,
   `LadrunoSolidShell`.
 

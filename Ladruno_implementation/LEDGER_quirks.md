@@ -6558,12 +6558,24 @@ Rules that generalize:
   25 DISCARD.** Reproduce with
   `grep -rln setTrialStrain SRC/element --include=*.cpp` and read each
   `update()`.
+  **If you script that grep, do not key the definition on `)` followed by `{`.**
+  Six of these files write the opening brace *below a comment line*
+  (`int\nSSPquad::update(void)\n// this function updates ...\n{`), and three more
+  give the class a different name from the file (`Nine_Four_Node_QuadUP.cpp`
+  defines `NineFourNodeQuadUP`). A first pass of this audit reported all nine as
+  "no `update()` override" — the verdicts happened to stay right, because those
+  six return 0 anyway, but the stated *reason* was wrong for six rows until
+  re-verification caught it.
   - **FORWARD** — any nonzero code reaches the return of `update()`, so ANY
     material refusal cuts the step.
   - **SENTINEL** — only `LADRUNO_MATERIAL_REFUSED` cuts the step; every other
     nonzero code is ignored. Deliberate, per ADR-33/34 (ASDConcrete3D's negative
     "best-state" codes must not fail a step). `LadrunoBrick` is the only one.
-  - **DISCARD** — the code cannot reach the analysis at all.
+  - **DISCARD** — the code cannot reach the analysis at all, either because
+    the element has no `update()` override (so `Element::update()` returns 0),
+    or because its `update()` calls `setTrialStrain` and returns 0 regardless,
+    or because `setTrialStrain` is reached only from a `void form*` routine.
+    The table says which.
 
   **THIS TABLE IS THE ONE AUTHORITATIVE COPY.** The `opserr` strings in
   `LadrunoSANISAND.cpp` / `ManzariDafalias.cpp` and the guides name EXAMPLES and
@@ -6572,64 +6584,65 @@ Rules that generalize:
 
 | element | verdict | evidence | first `setTrialStrain` |
 |---|---|---|---|
-| `BBarFourNodeQuadUP` | **FORWARD** | `update()`@328: `ret += ...setTrialStrain(...)`, `return ret` | `:369` |
-| `BezierTet10` | **FORWARD** | `update()`@371: `ret += ...setTrialStrain(...)`, `return ret` | `:408` |
-| `BezierTri6` | **FORWARD** | `update()`@394: `ret += ...setTrialStrain(...)`, `return ret` | `:461` |
-| `ConstantPressureVolumeQuad` | **FORWARD** | `update()`@363: `success += ...setTrialStrain(...)`, `return success` | `:502` |
-| `E_SFI` | **FORWARD** | `update()`@600: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:617` |
-| `E_SFI_MVLEM_3D` | **FORWARD** | `update()`@782: `errCode += ...setTrialStrain(...)`, `return errCode` | `:798` |
-| `EightNodeQuad` | **FORWARD** | `update()`@387: `ret += ...setTrialStrain(...)`, `return ret` | `:437` |
-| `FourNodeQuad` | **FORWARD** | `update()`@577: `ret += ...setTrialStrain(...)`, `return ret` | `:615` |
-| `FourNodeQuad3d` | **FORWARD** | `update()`@385: `ret += ...setTrialStrain(...)`, `return ret` | `:424` |
-| `FourNodeQuadUP` | **FORWARD** | `update()`@360: `ret += ...setTrialStrain(...)`, `return ret` | `:419` |
-| `FourNodeQuadWithSensitivity` | **FORWARD** | `update()`@347: `ret += ...setTrialStrain(...)`, `return ret` | `:385` |
-| `LadrunoBrick20` | **FORWARD** | `update()`@946: `ret += ...setTrialStrain(...)`, `return ret` | `:972` |
-| `LadrunoCST` | **FORWARD** | `update()`@213: `ret += ...setTrialStrain(...)`, `return ret` | `:234` |
-| `LadrunoLST` | **FORWARD** | `update()`@253: `ret += ...setTrialStrain(...)`, `return ret` | `:271` |
-| `LadrunoQuad` | **FORWARD** | `update()`@711: `ret += ...setTrialStrain(...)`, `return ret` | `:534` |
-| `LadrunoUP` | **FORWARD** | `update()`@857: `ret += ...setTrialStrain(...)`, `return ret` | `:916` |
-| `Nine_Four_Node_QuadUP` | **FORWARD** | `update()`@509: `ret += ...setTrialStrain(...)`, `return ret` | `:572` |
-| `Nine_Four_Node_QuadUPOld` | **FORWARD** | `update()`@236: `ret += ...setTrialStrain(...)`, `return ret` | `:266` |
-| `NineNodeQuad` | **FORWARD** | `update()`@393: `ret += ...setTrialStrain(...)`, `return ret` | `:446` |
-| `SFI_MVLEM` | **FORWARD** | `update()`@768: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:785` |
-| `SFI_MVLEM_3D` | **FORWARD** | `update()`@894: `errCode += ...setTrialStrain(...)`, `return errCode` | `:911` |
-| `SixNodeTri` | **FORWARD** | `update()`@353: `ret += ...setTrialStrain(...)`, `return ret` | `:397` |
-| `TenNodeTetrahedron` | **FORWARD** | `update()`@1030: `success += ...setTrialStrain(...)`, `return success` | `:1213` |
-| `Tri31` | **FORWARD** | `update()`@551: `ret += ...setTrialStrain(...)`, `return ret` | `:586` |
-| `Twenty_Eight_Node_BrickUP` | **FORWARD** | `update()`@821: `ret += ...setTrialStrain(...)`, `return ret` | `:983` |
-| `Twenty_Node_Brick` | **FORWARD** | `update()`@428: `ret += ...setTrialStrain(...)`, `return ret` | `:509` |
-| `LadrunoBrick` | **SENTINEL** | `update()`@986 tests `== LADRUNO_MATERIAL_REFUSED` | `:1034` |
-| `AC3D8HexWithSensitivity` | **DISCARD** | `update()`@268 returns 0 | `:289` |
-| `BbarBrick` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:951` |
-| `BBarBrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1021` |
-| `BbarBrickWithSensitivity` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:965` |
-| `BeamContact2D` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:466` |
-| `BeamContact2Dp` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:466` |
-| `BeamContact3D` | **DISCARD** | `update()`@581 returns 0 | `:694` |
-| `BeamContact3Dp` | **DISCARD** | `update()`@455 returns 0 | `:563` |
-| `Brick` | **DISCARD** | `update()`@913 returns 0 | `:1069` |
-| `BrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1069` |
-| `EmbeddedEPBeamInterface` | **DISCARD** | `update()`@689 returns 0 | `:755` |
-| `EnhancedQuad` | **DISCARD** | `update()`@1290 does not call it (called from a void `form*` routine) | `:1077` |
-| `FourNodeTetrahedron` | **DISCARD** | `update()`@974 returns 0 | `:1144` |
-| `IGAKLShell` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:3165` |
-| `IGAKLShell_BendingStrip` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:2445` |
-| `LadrunoDispBeamColumn3d` | **DISCARD** | `update()`@647 does not call it (called from a void `form*` routine) | `:832` |
-| `LadrunoSolidShell` | **DISCARD** | `update()`@275 does not call it (called from a void `form*` routine) | `:670` |
-| `NineNodeMixedQuad` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1003` |
-| `SimpleContact2D` | **DISCARD** | `update()`@369 returns 0 | `:432` |
-| `SimpleContact3D` | **DISCARD** | `update()`@471 returns 0 | `:552` |
-| `SSPbrick` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:445` |
-| `SSPbrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:412` |
-| `SSPquad` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:426` |
-| `SSPquadUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:382` |
-| `ZeroLengthND` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:383` |
+| `BBarFourNodeQuadUP` | **FORWARD** | `update()`@327: `ret += ...setTrialStrain(...)`, `return ret` | `:369` |
+| `BezierTet10` | **FORWARD** | `update()`@370: `ret += ...setTrialStrain(...)`, `return ret` | `:408` |
+| `BezierTri6` | **FORWARD** | `update()`@393: `ret += ...setTrialStrain(...)`, `return ret` | `:461` |
+| `ConstantPressureVolumeQuad` | **FORWARD** | `update()`@362: `success += ...setTrialStrain(...)`, `return success` | `:502` |
+| `E_SFI` | **FORWARD** | `update()`@599: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:617` |
+| `E_SFI_MVLEM_3D` | **FORWARD** | `update()`@781: `errCode += ...setTrialStrain(...)`, `return errCode` | `:798` |
+| `EightNodeQuad` | **FORWARD** | `update()`@386: `ret += ...setTrialStrain(...)`, `return ret` | `:437` |
+| `FourNodeQuad` | **FORWARD** | `update()`@576: `ret += ...setTrialStrain(...)`, `return ret` | `:615` |
+| `FourNodeQuad3d` | **FORWARD** | `update()`@384: `ret += ...setTrialStrain(...)`, `return ret` | `:424` |
+| `FourNodeQuadUP` | **FORWARD** | `update()`@359: `ret += ...setTrialStrain(...)`, `return ret` | `:419` |
+| `FourNodeQuadWithSensitivity` | **FORWARD** | `update()`@346: `ret += ...setTrialStrain(...)`, `return ret` | `:385` |
+| `LadrunoBrick20` | **FORWARD** | `update()`@945: `ret += ...setTrialStrain(...)`, `return ret` | `:972` |
+| `LadrunoCST` | **FORWARD** | `update()`@212: `ret += ...setTrialStrain(...)`, `return ret` | `:234` |
+| `LadrunoLST` | **FORWARD** | `update()`@252: `ret += ...setTrialStrain(...)`, `return ret` | `:271` |
+| `LadrunoQuad` | **FORWARD** | `update()`@710: `ret += ...setTrialStrain(...)`, `return ret` | `:534` |
+| `LadrunoUP` | **FORWARD** | `update()`@856: `ret += ...setTrialStrain(...)`, `return ret` | `:916` |
+| `Nine_Four_Node_QuadUP` | **FORWARD** | `update()`@507: `ret += ...setTrialStrain(...)`, `return ret` | `:572` |
+| `Nine_Four_Node_QuadUPOld` | **FORWARD** | `update()`@235: `ret += ...setTrialStrain(...)`, `return ret` | `:266` |
+| `NineNodeQuad` | **FORWARD** | `update()`@392: `ret += ...setTrialStrain(...)`, `return ret` | `:446` |
+| `SFI_MVLEM` | **FORWARD** | `update()`@767: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:785` |
+| `SFI_MVLEM_3D` | **FORWARD** | `update()`@893: `errCode += ...setTrialStrain(...)`, `return errCode` | `:911` |
+| `SixNodeTri` | **FORWARD** | `update()`@352: `ret += ...setTrialStrain(...)`, `return ret` | `:397` |
+| `TenNodeTetrahedron` | **FORWARD** | `update()`@1029: `success += ...setTrialStrain(...)`, `return success` | `:1213` |
+| `Tri31` | **FORWARD** | `update()`@550: `ret += ...setTrialStrain(...)`, `return ret` | `:586` |
+| `Twenty_Eight_Node_BrickUP` | **FORWARD** | `update()`@819: `ret += ...setTrialStrain(...)`, `return ret` | `:983` |
+| `Twenty_Node_Brick` | **FORWARD** | `update()`@427: `ret += ...setTrialStrain(...)`, `return ret` | `:509` |
+| `LadrunoBrick` | **SENTINEL** | `update()`@985 tests `== LADRUNO_MATERIAL_REFUSED` | `:1034` |
+| `AC3D8HexWithSensitivity` | **DISCARD** | `update()`@267 calls it and drops the code (`return 0`) | `:289` |
+| `BbarBrick` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:951` |
+| `BBarBrickUP` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1021` |
+| `BbarBrickWithSensitivity` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:965` |
+| `BeamContact2D` | **DISCARD** | `update()`@386 calls it and drops the code (`return 0`) | `:466` |
+| `BeamContact2Dp` | **DISCARD** | `update()`@375 calls it and drops the code (`return 0`) | `:466` |
+| `BeamContact3D` | **DISCARD** | `update()`@580 calls it and drops the code (`return 0`) | `:694` |
+| `BeamContact3Dp` | **DISCARD** | `update()`@454 calls it and drops the code (`return 0`) | `:563` |
+| `Brick` | **DISCARD** | `update()`@912 calls it and drops the code (`return 0`) | `:1069` |
+| `BrickUP` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1069` |
+| `EmbeddedEPBeamInterface` | **DISCARD** | `update()`@688 calls it and drops the code (`return 0`) | `:755` |
+| `EnhancedQuad` | **DISCARD** | `update()`@1289 does not call it (called from a void `form*` routine); returns 0 | `:1077` |
+| `FourNodeTetrahedron` | **DISCARD** | `update()`@973 calls it and drops the code (`return 0`) | `:1144` |
+| `IGAKLShell` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:3165` |
+| `IGAKLShell_BendingStrip` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:2445` |
+| `LadrunoDispBeamColumn3d` | **DISCARD** | `update()`@646 does not call it (called from a void `form*` routine); returns 0/err/solveHingeJump(v, L)/solveHingeJumpBiaxial(v, L) | `:832` |
+| `LadrunoSolidShell` | **DISCARD** | `update()`@274 does not call it (called from a void `form*` routine); returns 0 | `:670` |
+| `NineNodeMixedQuad` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1003` |
+| `SimpleContact2D` | **DISCARD** | `update()`@368 calls it and drops the code (`return 0`) | `:432` |
+| `SimpleContact3D` | **DISCARD** | `update()`@470 calls it and drops the code (`return 0`) | `:552` |
+| `SSPbrick` | **DISCARD** | `update()`@402 calls it and drops the code (`return 0`) | `:445` |
+| `SSPbrickUP` | **DISCARD** | `update()`@369 calls it and drops the code (`return 0`) | `:412` |
+| `SSPquad` | **DISCARD** | `update()`@404 calls it and drops the code (`return 0`) | `:426` |
+| `SSPquadUP` | **DISCARD** | `update()`@360 calls it and drops the code (`return 0`) | `:382` |
+| `ZeroLengthND` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:383` |
 
 - **The u-p family is the one to notice.** Every vanilla `*QuadUP` / `*BrickUP`
   element that has its own `update()` FORWARDS (`FourNodeQuadUP`,
   `BBarFourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`),
-  while the ones without one (`BrickUP`, `BBarBrickUP`, `SSPquadUP`,
-  `SSPbrickUP`) DISCARD. "the UP family swallows refusals" was stated in four
+  while `BrickUP` and `BBarBrickUP` (no `update()` override) and `SSPquadUP` /
+  `SSPbrickUP` (an `update()` that calls `setTrialStrain` and returns 0
+  regardless) DISCARD. "the UP family swallows refusals" was stated in four
   fork documents and is wrong for half of them — and u-p is SANISAND's canonical
   host, so it is the half that matters.
 - **Two fork edits are already in the FORWARD column** and are easy to mistake
@@ -6646,3 +6659,28 @@ Rules that generalize:
   every material (`tests/test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal`
   pins it). Pick a FORWARD element for any gate whose meaning depends on a
   refusal being seen.
+
+### `ops.ladrunoBuild()` is a CONFIGURE-time stamp — it LAGS after an incremental rebuild
+- **Bites:** you edit C++, run `Ladruno_scripts\build.bat <targets>`, and the new
+  binary reports the hash of an *older* commit. Every evidence run in WP-99 did
+  this: the round-0 binary reported `bab19cfae` while `HEAD` was `c0c31f977`, and
+  the round-1 binary reported `c0c31f977` while `HEAD` was `fa042bf51`. If you
+  paste that into a PR as "the binary this was measured on", you have understated
+  what you tested by one or more commits — and if you were checking *for* a stale
+  binary, you would have concluded the opposite of the truth.
+- **Why:** `CMakeLists.txt:200-207` captures the hash in an `execute_process`
+  running `git log -1 --format=%H` — **at configure time**, into a cached
+  `GIT_VERSION` that becomes a compile definition. An incremental `build.bat` run
+  does not re-run CMake configure, so the cached value is reused no matter how
+  many commits have landed since. The `.pyd`/`.exe` mtimes *are* fresh; only the
+  stamp is stale.
+- **Workaround/status (2026-09-14):** before an evidence run, force a
+  reconfigure — `touch CMakeLists.txt` (or `Ladruno_scripts\build.bat clean`,
+  which is the guaranteed way) — or state the lag explicitly and prove the
+  binary behaviourally instead: assert on something the new code emits and the
+  old code cannot (WP-99 used the new `Domain::commit() - N integration point(s)
+  REFUSED this commit` line, which exists in neither of the two candidate older
+  commits, plus the widened 6-slot `implexRefusals` response). The stamp is still
+  the right first check for a *grossly* stale build (see the memory entry
+  "ladrunoBuild provenance command"); it just cannot resolve one commit.
+  See `Ladruno_internal/BUILD_GOTCHAS.md`.
