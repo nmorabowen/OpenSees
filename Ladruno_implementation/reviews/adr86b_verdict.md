@@ -105,6 +105,10 @@ kind of scoping cleanup and carry no risk.
   the `LEDGER_vanilla_files.md:529` row, and both docs) now states explicitly: only an element that
   PROPAGATES a material refusal may cut the step; today that is `LadrunoBrick` only; under `Brick` /
   `BrickUP` / `QuadUP` / `stdBrick` a capped run is INVALID, not merely un-cut.
+  *(CORRECTION, 2026-09-14, WP-99 / F7: the element list this verdict signed off was itself wrong —
+  `QuadUP` propagates and `stdBrick` is `Brick`. The claim "only an element that propagates may cut
+  the step" stands; the roster did not. Corrected in the four `opserr` texts and in the guides; the
+  audited lists are in `LEDGER_quirks.md`.)*
 - **J-1 (MAJOR) — a TanType 0-vs-2 answer-equivalence gate.** ADDED
   (`test_tantype_does_not_change_the_converged_answer`, a free-DOF `LadrunoBrick` BVP, the identical
   unsymmetric `FullGeneral` system for both legs, a stated floor). Running it surfaced a real

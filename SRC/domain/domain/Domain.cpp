@@ -82,6 +82,7 @@
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39
 #include <LadrunoPorousOverlay.h>   // Ladruno: ADR-73
 #include <LadrunoEnergyChannels.h>  // Ladruno: ADR-69/72 — energy-channel reset on wipe
+#include <LadrunoMaterialStatus.h>  // Ladruno: WP-99 (F7) — commit-time refusal seam
 #include <Analysis.h>
 #include <FE_Datastore.h>
 #include <FEM_ObjectBroker.h>
@@ -2239,9 +2240,47 @@ Domain::commit(void)
     }
 
     Element *elePtr;
-    ElementIter &theElemIter = this->getElements();    
+    ElementIter &theElemIter = this->getElements();
     while ((elePtr = theElemIter()) != 0) {
       elePtr->commitState();
+    }
+
+    // Ladruno (WP-99 F7): a material that could NOT integrate this commit.
+    //
+    // The loop above drops every element's commitState() return -- that is
+    // upstream's contract and WP-99 does not change it (ADR-33/34: a negative
+    // "best-state" code from ASDConcrete3D and friends must NOT fail a step,
+    // and at commit there is no sentinel-filtering element in the path to tell
+    // the two apart). So a DECLARED refusal arrives out of band instead: a
+    // material calls ladrunoNoteCommitRefusal() from its own commitState() and
+    // this checks the count. Element-independent by construction, which is the
+    // whole point -- before this, a discarding element (Brick, BbarBrick,
+    // SSPquad, ...) swallowed the refusal and the run walked on; even on a
+    // FORWARDING element only the NEXT step failed, so a driver ignoring the
+    // return code kept going. Measured on the TIMs plane-strain strip: 25.9 M
+    // capped commits, a straight-line load-settlement curve to 2674 kPa, every
+    // step reported converged.
+    //
+    // Returning early here deliberately skips committedTime/dT and the recorder
+    // loop: this commit is invalid, so it must leave no trace in the output
+    // stream. Same shape as the ADR-73 overlay abort a few lines below.
+    // AnalysisModel::commitDomain() turns a negative return into -2, which
+    // StaticAnalysis / DirectIntegrationAnalysis / VariableTimeStep... all turn
+    // into a failed step. Inert when no material ever declares a refusal (one
+    // integer compare per commit), so stock decks are byte-identical.
+    if (ladrunoPendingCommitRefusals() > 0) {                        // Ladruno WP-99 (F7)
+      const int nRefused = ladrunoPendingCommitRefusals();
+      ladrunoClearCommitRefusals();
+      opserr << "Domain::commit() - " << nRefused
+             << " integration point(s) REFUSED this commit (the material could not"
+                " integrate the step it was asked to commit). Nodes and the"
+                " sibling integration points have already committed, so the model"
+                " state at this commit is INCONSISTENT: this commit is invalid and"
+                " the analysis is being aborted. See the material's own warning"
+                " above for the tag and the cause; under -implex the recoverable"
+                " alternative is -implexControl, which refuses at the trial."
+             << endln;
+      return -1;
     }
 
     // Ladruno (ADR-39): commit contact pair state (gap0, friction) at the single

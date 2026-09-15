@@ -306,6 +306,18 @@ element('LadrunoBrick', tag, n1..n8, matTag
   deformation are reserved). `-damp` is honoured by `std`/`bbar` only.
 - `uri -hourglass viscous` is **explicit-only** (rate damping, rank-deficient
   tangent under an implicit/eigen solver).
+- **Material refusals: `LadrunoBrick` acts only on the sentinel**
+  `LADRUNO_MATERIAL_REFUSED` returned by `setTrialStrain` (ADR-33/34 — ASDConcrete3D's
+  negative "best-state" codes must *not* fail a step). It is the **only** element in the
+  tree that filters; every other forwarder propagates **any** nonzero code (e.g.
+  `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST`, `LadrunoUP`, `BezierTet10`/`Tri6`,
+  `FourNodeQuad`, `TenNodeTetrahedron`, and the vanilla u-p elements that have their own
+  `update()`), and about half discard it outright (e.g. `Brick` = `stdBrick`, `BbarBrick`,
+  `BrickUP`, `BBarBrickUP`, `SSPbrick`/`SSPquad`, `FourNodeTetrahedron`, `EnhancedQuad`,
+  `LadrunoSolidShell`). Those are examples — the full audited table (52 elements) is **Element refusal roster** in `LEDGER_quirks.md`.
+  At **commit** time nothing propagates at all — `Domain::commit()` drops every element's
+  `commitState()` return — which is why `LadrunoSANISAND` declares a commit-time refusal
+  out of band and `Domain::commit()` aborts the commit (WP-99; see the `-implex` guide §9).
 
 ---
 

@@ -4341,13 +4341,22 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   `strict_convergence 1` before you suspect anything else**; a clean run under
   the flag rules this defect out in one shot.
 
-### `stdBrick`/`BrickUP`/`QuadUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b)
+### `stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b; **roster corrected WP-99**)
 
+- **TITLE AND ROSTER CORRECTED 2026-09-14 (WP-99 / F7).** This entry was headed
+  "`stdBrick`/`BrickUP`/`QuadUP`" and that third name was **wrong**:
+  `FourNodeQuadUP::update()` does `ret += theMaterial[i]->setTrialStrain(eps)`
+  (`FourNodeQuadUP.cpp:419`) and therefore **PROPAGATES** any nonzero code.
+  `BbarBrick` (`:951`), `SSPbrick` (`:445`), `SSPquad` (`:426`) and
+  `LadrunoSolidShell` (`:670`) are the names that belong on the list instead, and
+  `stdBrick` **is** `Brick` (`TclBrickCommand.cpp:210`). Full audited
+  classification in the `Domain::commit()` entry at the end of this ledger.
 - **Bites:** any material that refuses a trial strain (a strict-mode ASDP
   rejection, a `ManzariDafalias`/`LadrunoSANISAND` substep-cap refusal, ...)
-  hosted in `stdBrick`, `BrickUP`, or `QuadUP`. `Brick::update()` writes
+  hosted in `stdBrick` (= `Brick`), `BbarBrick`, `BrickUP`, `SSPbrick`,
+  `SSPquad` or `LadrunoSolidShell`. `Brick::update()` writes
   `success = ...->setTrialStrain(strain);` and then **unconditionally**
-  `return 0;` — the code is assigned and never read. `BrickUP`/`QuadUP` call
+  `return 0;` — the code is assigned and never read. `BbarBrick`/`BrickUP` call
   `setTrialStrain` inside a *void* `formResidAndTangent`, so there is no return
   path for the code at all. So the material refuses, prints its `opserr` line,
   returns a failure code — and the analysis reports success regardless of what
@@ -4371,9 +4380,12 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   covered four of five; the review pass confirmed `updateHypo`/`formEAStrue`
   are also sentinel-aligned, not the blanket `< 0` an earlier ledger row
   mistakenly claimed — see `LEDGER_implementations.md`'s ADR-86b row). **`stdBrick`,
-  `BrickUP`, and `QuadUP` still swallow the refusal, unchanged** — this defect
-  is not fixed on any vanilla element, only worked around by using
-  `LadrunoBrick` for every gate that needs the return code to mean something.
+  `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad` and `LadrunoSolidShell` still
+  swallow the refusal, unchanged** — this defect is not fixed on any vanilla
+  element, only worked around by using an element that forwards the code
+  (`LadrunoBrick`, `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST`,
+  `BezierTet10`/`Tri6`, `FourNodeQuad`, `FourNodeQuadUP`) for every gate that
+  needs the return code to mean something.
 
 ### A `special_return` hook that writes the tangent itself SILENTLY OVERRIDES `tangent_type` (FIXED, ADR-84 P3)
 
@@ -5272,15 +5284,24 @@ once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of
 > **Size the cap from a measurement, not a guess:** `eleResponse <ele> material <gp> substeps`
 > returns `[substeps_taken, cap_hit]` for the last update at that point.
 > **THE PRECONDITION, and it is the sharp edge of this feature.** A cap is only safe under an
-> element that **propagates** a material refusal — today **`LadrunoBrick` only**. The capped update
+> element that **propagates** a material refusal. The capped update
 > returns at `T < 1`, so it leaves a **partially-integrated** trial stress/`alpha`/`fabric` and a
 > partial `aCep_Consistent`. An element that discards the return code assembles that partial state
 > and reports convergence, which is strictly **WORSE** than the un-capped force-accept it replaces
-> (that at least always drove `T` to 1). Under vanilla `Brick` (`update()` discards it), `BrickUP` /
-> `QuadUP` (`setTrialStrain` inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and
-> `stdBrick`, **a capped run is INVALID, not merely un-cut.** Nothing checks this at run time — a
+> (that at least always drove `T` to 1). Nothing checks this at run time — a
 > material cannot see its element — so the default `0` (which cannot reach the branch) is the only
 > thing standing between a user and that state.
+> **CORRECTED 2026-09-14 (WP-99 / F7).** This paragraph used to end "today **`LadrunoBrick` only**"
+> and to list "`Brick`, `BrickUP` / `QuadUP`, `stdBrick`" as the discarders. Both halves were
+> wrong: `QuadUP` (`FourNodeQuadUP.cpp:419`) does `ret += ...->setTrialStrain(...)` and therefore
+> **propagates**, and `stdBrick` **is** `Brick` under its Tcl name (`TclBrickCommand.cpp:210`). The
+> audited lists (`9c2f964ea`) are in the dedicated entry
+> "`Domain::commit()` discards element commit returns" at the end of this ledger; the short form is
+> *propagate any nonzero*: `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST`, `BezierTet10`/`Tri6`,
+> `FourNodeQuad`, `FourNodeQuadUP`; *propagate only the sentinel*: `LadrunoBrick` (ADR-33/34);
+> *discard*: `Brick` (= `stdBrick`), `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad`,
+> `LadrunoSolidShell`. And **at commit time no element propagates anything**, which is the hole
+> WP-99's latch closes.
 > **One more thing that will bite.** The cap bounds one whole `integrate()`, not one `ModifiedEuler`
 > call — `MaxEnergyInc`/`MaxStrainInc` (IntScheme 0/4/6/8/9) call `ModifiedEuler` several times
 > inside one material update, which is why the counter is reset in `integrate()` and not at the top
@@ -6543,3 +6564,200 @@ interpreters disagreed on half the contract.
 - **Gate:** `tests/test_wp103_getstringfromall_tcl.py` +
   `tests/tcl/wp103_getstringfromall.tcl`. It shells out to `dist/bin/OpenSees.exe`
   because nothing else can see the bug.
+### `Domain::commit()` discards element commit returns — a material cannot refuse at commit; `LadrunoQuad` propagates any nonzero update code, `LadrunoBrick` only the sentinel
+- **Bites:** you write a material that detects, at `commitState()`, that the step
+  it is being asked to commit is not integrable — and you return a failure code.
+  Nothing happens. The step is committed, the analysis reports it converged, and
+  the run walks on. Measured instance: `LadrunoSANISAND` under `-implex` without
+  `-implexControl` on the TIMs plane-strain strip — **25.9 million** commit-time
+  companion cap hits, a straight-line load–settlement curve to 2 674 kPa, every
+  step "converged".
+- **Why:** `Domain::commit()` (`SRC/domain/domain/Domain.cpp`, the element loop)
+  is a bare `elePtr->commitState();`. The return value is not captured, not
+  summed, not tested. Nothing downstream of it exists to propagate: by the time
+  `commitState()` runs the algorithm has already declared convergence and
+  `StaticAnalysis::analyze()` is past its failure branch
+  (`StaticAnalysis.cpp`, the `revertToLastCommit` + `return -3` path belongs to a
+  failed `solveCurrentStep`, not to a failed commit). **A refusal is only
+  actionable at the TRIAL** (`setTrialStrain`).
+- **And even at the trial the elements disagree** — 26 forward, 1 sentinel-only,
+  25 discard, out of 52 NDMaterial hosts. The full audited table is the entry
+  **"Element refusal roster"** below; it is the only authoritative copy. The
+  short of it: the same refusal cuts the step on a `LadrunoQuad` mesh and is
+  invisible on an `SSPquad` one, and a material that returns "some nonzero
+  value" rather than the sentinel is silently swallowed by `LadrunoBrick`
+  specifically. Four shipped `opserr` texts stated this wrongly ("today
+  LadrunoBrick", and `QuadUP` listed as a discarder when it is in fact a
+  propagator); WP-99 corrected them and then, after review round 1 found the
+  REPLACEMENT list was still a wrong closed list, made them non-exhaustive and
+  pointed them here.
+- **Workaround/status (2026-09-14, revised after review round 1):** WP-99 makes
+  the refusal leave the element path entirely. A material calls
+  `ladrunoNoteCommitRefusal()` (`SRC/material/LadrunoMaterialStatus.h`) from its
+  `commitState()`; `Domain::commit()` checks that counter after its element loop
+  and **returns a failure**, which `AnalysisModel::commitDomain()` turns into -2
+  and every analysis class turns into `-4`. That is element-independent, so a
+  DISCARD element cannot swallow it. `LadrunoSANISAND` additionally keeps a
+  sticky per-instance latch as a second line of defence, for a driver that
+  ignores the analysis return code. **Why the latch alone was not enough, and
+  this is the measurement that decided the design:** two stacked `stdBrick` with
+  the lower element starved (`-maxSubsteps 2`) under `algorithm Linear` ran **20
+  further accepted steps**, `analyze() == 0` throughout, with the refusing
+  element frozen as a rigid inclusion — and *more quietly than before*, because a
+  latched `commitState()` returns early and so the old 10-per-process cap
+  warnings stopped firing too.
+  **Raw element commit codes are still NOT propagated** and must not be: ADR-33/34
+  requires that a negative "best-state" code (ASDConcrete3D and friends) not fail
+  a step, and at commit there is no sentinel-filtering element in the path to
+  tell a declaration from a diagnostic — which is exactly why the declaration
+  goes out of band instead. If you want a *recoverable* refusal, refuse at the
+  trial (`-implexControl` is the SANISAND example): a commit-time refusal is
+  fatal by construction, because the nodes and the sibling integration points
+  have already committed by the time it happens.
+  Cross-links: [[LEDGER_implementations]] "IMPL-EX commit-time refusal latch",
+  [[LadrunoSANISAND_implex_guide]] §9.
+
+### Element refusal roster — who acts on a material's `setTrialStrain` return code (full audit, WP-99)
+
+- **Bites:** a material returns a failure code from `setTrialStrain` and nothing
+  happens — or it happens on one element of your model and not the one beside
+  it. There is no engine-wide contract here at all: each element's `update()`
+  decides on its own, and roughly half of them throw the code away.
+- **Why:** `setTrialStrain` predates any fail-loud convention. An element either
+  accumulates the codes into the value its `update()` returns (so the algorithm
+  sees a failed state determination and the step is cut), or calls
+  `setTrialStrain` from a `void form*` routine / assigns the result to a variable
+  it never reads / has no `update()` override at all (so `Element::update()`
+  returns 0 and the refusal is invisible).
+- **The audit (2026-09-14, on `9c2f964ea`+WP-99).** Every `.cpp` under
+  `SRC/element` that mentions both `setTrialStrain` and `NDMaterial`, classified
+  by what its own `update()` does. **52 elements: 26 FORWARD, 1 SENTINEL-only,
+  25 DISCARD.** Reproduce with
+  `grep -rln setTrialStrain SRC/element --include=*.cpp` and read each
+  `update()`.
+  **If you script that grep, do not key the definition on `)` followed by `{`.**
+  Six of these files write the opening brace *below a comment line*
+  (`int\nSSPquad::update(void)\n// this function updates ...\n{`), and three more
+  give the class a different name from the file (`Nine_Four_Node_QuadUP.cpp`
+  defines `NineFourNodeQuadUP`). A first pass of this audit reported all nine as
+  "no `update()` override" — the verdicts happened to stay right, because those
+  six return 0 anyway, but the stated *reason* was wrong for six rows until
+  re-verification caught it.
+  - **FORWARD** — any nonzero code reaches the return of `update()`, so ANY
+    material refusal cuts the step.
+  - **SENTINEL** — only `LADRUNO_MATERIAL_REFUSED` cuts the step; every other
+    nonzero code is ignored. Deliberate, per ADR-33/34 (ASDConcrete3D's negative
+    "best-state" codes must not fail a step). `LadrunoBrick` is the only one.
+  - **DISCARD** — the code cannot reach the analysis at all, either because
+    the element has no `update()` override (so `Element::update()` returns 0),
+    or because its `update()` calls `setTrialStrain` and returns 0 regardless,
+    or because `setTrialStrain` is reached only from a `void form*` routine.
+    The table says which.
+
+  **THIS TABLE IS THE ONE AUTHORITATIVE COPY.** The `opserr` strings in
+  `LadrunoSANISAND.cpp` / `ManzariDafalias.cpp` and the guides name EXAMPLES and
+  point here — a second closed copy of this list is exactly how the previous,
+  wrong one survived in three documents at once.
+
+| element | verdict | evidence | first `setTrialStrain` |
+|---|---|---|---|
+| `BBarFourNodeQuadUP` | **FORWARD** | `update()`@327: `ret += ...setTrialStrain(...)`, `return ret` | `:369` |
+| `BezierTet10` | **FORWARD** | `update()`@370: `ret += ...setTrialStrain(...)`, `return ret` | `:408` |
+| `BezierTri6` | **FORWARD** | `update()`@393: `ret += ...setTrialStrain(...)`, `return ret` | `:461` |
+| `ConstantPressureVolumeQuad` | **FORWARD** | `update()`@362: `success += ...setTrialStrain(...)`, `return success` | `:502` |
+| `E_SFI` | **FORWARD** | `update()`@599: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:617` |
+| `E_SFI_MVLEM_3D` | **FORWARD** | `update()`@781: `errCode += ...setTrialStrain(...)`, `return errCode` | `:798` |
+| `EightNodeQuad` | **FORWARD** | `update()`@386: `ret += ...setTrialStrain(...)`, `return ret` | `:437` |
+| `FourNodeQuad` | **FORWARD** | `update()`@576: `ret += ...setTrialStrain(...)`, `return ret` | `:615` |
+| `FourNodeQuad3d` | **FORWARD** | `update()`@384: `ret += ...setTrialStrain(...)`, `return ret` | `:424` |
+| `FourNodeQuadUP` | **FORWARD** | `update()`@359: `ret += ...setTrialStrain(...)`, `return ret` | `:419` |
+| `FourNodeQuadWithSensitivity` | **FORWARD** | `update()`@346: `ret += ...setTrialStrain(...)`, `return ret` | `:385` |
+| `LadrunoBrick20` | **FORWARD** | `update()`@945: `ret += ...setTrialStrain(...)`, `return ret` | `:972` |
+| `LadrunoCST` | **FORWARD** | `update()`@212: `ret += ...setTrialStrain(...)`, `return ret` | `:234` |
+| `LadrunoLST` | **FORWARD** | `update()`@252: `ret += ...setTrialStrain(...)`, `return ret` | `:271` |
+| `LadrunoQuad` | **FORWARD** | `update()`@710: `ret += ...setTrialStrain(...)`, `return ret` | `:534` |
+| `LadrunoUP` | **FORWARD** | `update()`@856: `ret += ...setTrialStrain(...)`, `return ret` | `:916` |
+| `Nine_Four_Node_QuadUP` | **FORWARD** | `update()`@507: `ret += ...setTrialStrain(...)`, `return ret` | `:572` |
+| `Nine_Four_Node_QuadUPOld` | **FORWARD** | `update()`@235: `ret += ...setTrialStrain(...)`, `return ret` | `:266` |
+| `NineNodeQuad` | **FORWARD** | `update()`@392: `ret += ...setTrialStrain(...)`, `return ret` | `:446` |
+| `SFI_MVLEM` | **FORWARD** | `update()`@767: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:785` |
+| `SFI_MVLEM_3D` | **FORWARD** | `update()`@893: `errCode += ...setTrialStrain(...)`, `return errCode` | `:911` |
+| `SixNodeTri` | **FORWARD** | `update()`@352: `ret += ...setTrialStrain(...)`, `return ret` | `:397` |
+| `TenNodeTetrahedron` | **FORWARD** | `update()`@1029: `success += ...setTrialStrain(...)`, `return success` | `:1213` |
+| `Tri31` | **FORWARD** | `update()`@550: `ret += ...setTrialStrain(...)`, `return ret` | `:586` |
+| `Twenty_Eight_Node_BrickUP` | **FORWARD** | `update()`@819: `ret += ...setTrialStrain(...)`, `return ret` | `:983` |
+| `Twenty_Node_Brick` | **FORWARD** | `update()`@427: `ret += ...setTrialStrain(...)`, `return ret` | `:509` |
+| `LadrunoBrick` | **SENTINEL** | `update()`@985 tests `== LADRUNO_MATERIAL_REFUSED` | `:1034` |
+| `AC3D8HexWithSensitivity` | **DISCARD** | `update()`@267 calls it and drops the code (`return 0`) | `:289` |
+| `BbarBrick` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:951` |
+| `BBarBrickUP` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1021` |
+| `BbarBrickWithSensitivity` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:965` |
+| `BeamContact2D` | **DISCARD** | `update()`@386 calls it and drops the code (`return 0`) | `:466` |
+| `BeamContact2Dp` | **DISCARD** | `update()`@375 calls it and drops the code (`return 0`) | `:466` |
+| `BeamContact3D` | **DISCARD** | `update()`@580 calls it and drops the code (`return 0`) | `:694` |
+| `BeamContact3Dp` | **DISCARD** | `update()`@454 calls it and drops the code (`return 0`) | `:563` |
+| `Brick` | **DISCARD** | `update()`@912 calls it and drops the code (`return 0`) | `:1069` |
+| `BrickUP` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1069` |
+| `EmbeddedEPBeamInterface` | **DISCARD** | `update()`@688 calls it and drops the code (`return 0`) | `:755` |
+| `EnhancedQuad` | **DISCARD** | `update()`@1289 does not call it (called from a void `form*` routine); returns 0 | `:1077` |
+| `FourNodeTetrahedron` | **DISCARD** | `update()`@973 calls it and drops the code (`return 0`) | `:1144` |
+| `IGAKLShell` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:3165` |
+| `IGAKLShell_BendingStrip` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:2445` |
+| `LadrunoDispBeamColumn3d` | **DISCARD** | `update()`@646 does not call it (called from a void `form*` routine); returns 0/err/solveHingeJump(v, L)/solveHingeJumpBiaxial(v, L) | `:832` |
+| `LadrunoSolidShell` | **DISCARD** | `update()`@274 does not call it (called from a void `form*` routine); returns 0 | `:670` |
+| `NineNodeMixedQuad` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:1003` |
+| `SimpleContact2D` | **DISCARD** | `update()`@368 calls it and drops the code (`return 0`) | `:432` |
+| `SimpleContact3D` | **DISCARD** | `update()`@470 calls it and drops the code (`return 0`) | `:552` |
+| `SSPbrick` | **DISCARD** | `update()`@402 calls it and drops the code (`return 0`) | `:445` |
+| `SSPbrickUP` | **DISCARD** | `update()`@369 calls it and drops the code (`return 0`) | `:412` |
+| `SSPquad` | **DISCARD** | `update()`@404 calls it and drops the code (`return 0`) | `:426` |
+| `SSPquadUP` | **DISCARD** | `update()`@360 calls it and drops the code (`return 0`) | `:382` |
+| `ZeroLengthND` | **DISCARD** | no `update()` override at all -> `Element::update()` returns 0 | `:383` |
+
+- **The u-p family is the one to notice.** Every vanilla `*QuadUP` / `*BrickUP`
+  element that has its own `update()` FORWARDS (`FourNodeQuadUP`,
+  `BBarFourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`),
+  while `BrickUP` and `BBarBrickUP` (no `update()` override) and `SSPquadUP` /
+  `SSPbrickUP` (an `update()` that calls `setTrialStrain` and returns 0
+  regardless) DISCARD. "the UP family swallows refusals" was stated in four
+  fork documents and is wrong for half of them — and u-p is SANISAND's canonical
+  host, so it is the half that matters.
+- **Two fork edits are already in the FORWARD column** and are easy to mistake
+  for vanilla behaviour: `TenNodeTetrahedron` (`success +=`, the TIMs report
+  item 8 fix) and `LadrunoUP`.
+- **AT COMMIT TIME THE TABLE IS IRRELEVANT: nothing propagates.**
+  `Domain::commit()` is `elePtr->commitState();` with the return value dropped,
+  for every element in the table. See the entry
+  "`Domain::commit()` discards element commit returns" above for what WP-99 does
+  about it (a material declares the refusal out of band and `Domain::commit()`
+  aborts).
+- **Workaround/status (2026-09-14):** none of the vanilla DISCARD elements is
+  fixed — `return success` on `Brick` is an unconditional behaviour change for
+  every material (`tests/test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal`
+  pins it). Pick a FORWARD element for any gate whose meaning depends on a
+  refusal being seen.
+
+### `ops.ladrunoBuild()` is a CONFIGURE-time stamp — it LAGS after an incremental rebuild
+- **Bites:** you edit C++, run `Ladruno_scripts\build.bat <targets>`, and the new
+  binary reports the hash of an *older* commit. Every evidence run in WP-99 did
+  this: the round-0 binary reported `bab19cfae` while `HEAD` was `c0c31f977`, and
+  the round-1 binary reported `c0c31f977` while `HEAD` was `fa042bf51`. If you
+  paste that into a PR as "the binary this was measured on", you have understated
+  what you tested by one or more commits — and if you were checking *for* a stale
+  binary, you would have concluded the opposite of the truth.
+- **Why:** `CMakeLists.txt:200-207` captures the hash in an `execute_process`
+  running `git log -1 --format=%H` — **at configure time**, into a cached
+  `GIT_VERSION` that becomes a compile definition. An incremental `build.bat` run
+  does not re-run CMake configure, so the cached value is reused no matter how
+  many commits have landed since. The `.pyd`/`.exe` mtimes *are* fresh; only the
+  stamp is stale.
+- **Workaround/status (2026-09-14):** before an evidence run, force a
+  reconfigure — `touch CMakeLists.txt` (or `Ladruno_scripts\build.bat clean`,
+  which is the guaranteed way) — or state the lag explicitly and prove the
+  binary behaviourally instead: assert on something the new code emits and the
+  old code cannot (WP-99 used the new `Domain::commit() - N integration point(s)
+  REFUSED this commit` line, which exists in neither of the two candidate older
+  commits, plus the widened 6-slot `implexRefusals` response). The stamp is still
+  the right first check for a *grossly* stale build (see the memory entry
+  "ladrunoBuild provenance command"); it just cannot resolve one commit.
+  See `Ladruno_internal/BUILD_GOTCHAS.md`.

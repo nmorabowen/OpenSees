@@ -46,8 +46,9 @@ MONOTONE NEGATIVE pseudo-clock (`LoadControl(-ds)`, the campaign deck's own
 shape) through a `ds` change and asserts `implexDetail[5]` tracks the
 SIGNED ratio `dt_{n+1}/dt_n * alpha` -- the gap B1 exploited (F1/F7,
 coverage row 10); (2) `-implexControl` and the commit-time companion
-refusal are now COUNTED via the new `implexRefusals` response (Vector(4):
-total, d2, control, companion) -- the companion-at-commit case (B3:
+refusal are now COUNTED via the new `implexRefusals` response (a Vector(4)
+of total, d2, control, companion when this note was written; WP-99 widened
+it to 6 -- see the response-contract table in the -implex guide) -- the companion-at-commit case (B3:
 `Domain::commit()` discards the return code, so this counter is the ONLY
 way to observe it from Python) gets a dedicated test (coverage row 20,
 previously NOT COVERED); (3) `getCopy(const char*)` is now exercised AFTER
@@ -1673,7 +1674,11 @@ _SETTLE_DS1 = 2.0 * _SETTLE_DS0
 def _build_settlement_column(tag, opts):
     """Two stacked `LadrunoBrick` cubes, three node layers -- see the block
     comment above this function for the roller convention and why the
-    middle layer is genuinely free."""
+    middle layer is genuinely free.
+
+    WP-99 (F7): the stage-0 lateral confinement is applied to node layers 1
+    AND 2 (it used to be layer 2 only) -- see the note at the `sp` loop for
+    the measured reason."""
     ops.wipe()
     ops.model('basic', '-ndm', 3, '-ndf', 3)
     for k in range(3):
@@ -1689,16 +1694,34 @@ def _build_settlement_column(tag, opts):
             n = 4 * k + j + 1
             ops.fix(n, 1 if x == 0. else 0, 1 if y == 0. else 0,
                     1 if k == 0 else 0)
-    # pattern 1: lateral confinement, TOP layer only, applied over the
-    # elastic stage below and then loadConst'd.
+    # pattern 1: lateral confinement, applied over the elastic stage below and
+    # then loadConst'd.
+    #
+    # WP-99 (F7), 2026-09-14: the MIDDLE layer (k == 1) joined the TOP layer
+    # here, and the magnitude _SETTLE_E_CONF is unchanged. Confining only the
+    # top node ring left element 2 laterally free on its LOWER face, so it
+    # drifted onto the p_min floor within a step or two of the flip -- which
+    # the docstring of test_negative_monotone_clock_runs_the_spec_factor
+    # already recorded ("repeated 'mean stress p = 0.1008xx is below the
+    # floor ... CLAMPING'"). At that corner the commit-time companion cannot
+    # integrate the increment in ANY substep budget (measured: identical
+    # refusal at -maxSubsteps 20000 and 200000), and before WP-99 that failure
+    # was DISCARDED by Domain::commit() -- so the leg ran on committed partial
+    # states and the f sequence below was measured on steps that were, by the
+    # shipped contract, invalid. With the latch in place the run correctly
+    # stops instead. Confining both free node rings keeps element 2 off the
+    # floor and the whole five-step sequence integrates cleanly (measured:
+    # f == [1, 1, 1, 2, 1] exactly, zero companion refusals), so B1's claim is
+    # now measured on a leg that is actually valid.
     ops.timeSeries('Linear', 1)
     ops.pattern('Plain', 1, 1)
-    for j, (x, y) in enumerate(_XY):
-        n = 8 + j + 1
-        if x == 1.:
-            ops.sp(n, 1, -_SETTLE_E_CONF)
-        if y == 1.:
-            ops.sp(n, 2, -_SETTLE_E_CONF)
+    for k in (1, 2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.sp(n, 1, -_SETTLE_E_CONF)
+            if y == 1.:
+                ops.sp(n, 2, -_SETTLE_E_CONF)
     ops.constraints('Transformation')
     ops.numberer('Plain')
     ops.system('FullGeneral')
@@ -1795,8 +1818,9 @@ def test_negative_monotone_clock_runs_the_spec_factor():
 # ===========================================================================
 
 def test_implexcontrol_refusal_is_counted_and_reported():
-    """`-implexControl` refusing increments `implexRefusals` (Vector(4):
-    total, d2, control, companion) at BOTH index 0 (total) and index 2
+    """`-implexControl` refusing increments `implexRefusals` (widened to
+    Vector(6) by WP-99; slots 0-3 are still total, d2, control, companion)
+    at BOTH index 0 (total) and index 2
     (control-specific), and leaves the committed stress unchanged on a
     free-DOF deck (where a silently-accepted wrong answer WOULD move it).
 
@@ -1821,9 +1845,10 @@ def test_implexcontrol_refusal_is_counted_and_reported():
 
     before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
     before_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
-    assert len(before_refusals) == 4, (
-        'implexRefusals did not return the documented 4-component vector '
-        '(total, d2, control, companion)', before_refusals)
+    assert len(before_refusals) == 6, (
+        'implexRefusals did not return the documented 6-component vector '
+        '(total, d2, control, companion, commitLatched, latched -- slots 4 '
+        'and 5 added by WP-99 F7)', before_refusals)
 
     big_dq = 10.0 * _PROBE_DQ_NOMINAL / 4.0
     ops.timeSeries('Linear', 3)
@@ -1867,17 +1892,28 @@ def test_implexcontrol_refusal_is_counted_and_reported():
 def test_companion_refusal_at_commit_is_observable():
     """B3: the COMMIT-time companion (`ladrunoImplexCommit` hitting the
     `-maxSubsteps` cap) refuses, and that refusal is OBSERVABLE only through
-    `implexRefusals[3]` (companion) -- `Domain::commit()` is `elePtr->
-    commitState();` with the return code discarded, so `analyze()` itself
-    keeps returning 0 even though the companion's own re-integration failed.
-    This is the DEFAULT configuration this file's other decks exercise
-    least: `-implexControl` OFF, cap mandatory.
+    `implexRefusals` -- `Domain::commit()` is `elePtr->commitState();` with
+    the return code discarded, so `analyze()` itself keeps returning 0 on
+    THIS deck (which has no free DOFs at all) even though the companion's
+    own re-integration failed. This is the DEFAULT configuration this
+    file's other decks exercise least: `-implexControl` OFF, cap mandatory.
 
-    Also checks the NEXT step's `f` is NOT stale: B3 requires the material
-    to commit its best-effort state (mEpsilon_n, mImplexDtCommit) even when
-    the companion itself refuses, so a constant-ds step immediately after a
-    counted companion refusal must still read f == 1.0 (the ordinary
-    same-ds ratio), not 0.0 or NaN.
+    REWRITTEN BY WP-99 (F7), 2026-09-14, and again after review round 1 --
+    the "analyze() keeps returning 0" half is now obsolete too, because
+    Domain::commit() itself aborts on a commit-time refusal (see the assertion
+    below). The original version of this test
+    additionally asserted that the material COMMITS its partially
+    integrated best-effort state and that the next step's `f` is therefore
+    the ordinary same-ds ratio (1.0). That was ADR-92's B3 contract and it
+    is now RETIRED: committing a state the companion could not produce,
+    into a caller that drops the refusal, is what let the TIMs plane-strain
+    strip run to 2674 kPa on 25.9 million capped commits with every step
+    reported converged. WP-99 makes a failed commit commit NOTHING and
+    LATCH; the dedicated battery for the new contract is
+    `tests/test_ladrunoQuad_sanisand_implex_commit_refusal.py`. What this
+    test keeps is the half that is still true and is still the only thing
+    this zero-free-DOF deck can show: the refusal is counted, and it is
+    counted in the companion bucket.
 
     Reuses `sani._build_confined`, NOT `sani._build`: MEASURED on the fixed
     binary (2473ce46c), the plain `sani._build` deck's own plastic
@@ -1902,14 +1938,22 @@ def test_companion_refusal_at_commit_is_observable():
 
     before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
 
-    for step in range(3):
-        rc = ops.analyze(1)
-        assert rc == 0, (
-            'the step itself should still "succeed" from Domain::commit()\'s '
-            'point of view -- Domain::commit() is unconditional and '
-            'discards the material return code; a nonzero rc here means '
-            'something else in the deck broke, not the companion refusal',
-            step, rc)
+    rcs = [ops.analyze(1) for _ in range(3)]
+
+    # WP-99 (F7), review round 1: this USED to assert rc == 0 -- on the
+    # argument that Domain::commit() is unconditional, so a commit-time
+    # refusal is invisible to analyze() and the counter is the only witness.
+    # That argument is now obsolete in the best way: Domain::commit() ABORTS
+    # on an out-of-band declaration from the material, so even THIS deck --
+    # zero free DOFs, where no element return code could ever fail a step --
+    # reports the failure. The counter is still checked below; it is no longer
+    # the only witness.
+    assert all(rc != 0 for rc in rcs), (
+        'a commit-time companion refusal did not fail the step. Since WP-99 '
+        'the material declares the refusal to Domain::commit(), which returns '
+        'a failure that AnalysisModel::commitDomain() turns into -2 and '
+        'StaticAnalysis into -4 -- and that path does NOT go through the '
+        'element, so it must work even on this zero-free-DOF deck', rcs)
 
     after_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
     assert after_refusals[0] - before_refusals[0] > 0, (
@@ -1918,26 +1962,22 @@ def test_companion_refusal_at_commit_is_observable():
         "deck's own deviatoric increment", before_refusals, after_refusals)
     assert after_refusals[3] - before_refusals[3] > 0, (
         'the companion refusal at commitState (ladrunoImplexCommit hitting '
-        'the -maxSubsteps cap) never incremented implexRefusals[3]. Since '
-        'Domain::commit() discards commitState()\'s return code, this '
-        'counter is the ONLY way to observe a companion refusal from '
-        'Python -- if it stays at 0 the refusal is silently swallowed '
-        'exactly as B3 found', before_refusals, after_refusals)
+        'the -maxSubsteps cap) never incremented implexRefusals[3] -- the '
+        'bucket that counts GENUINE cap hits, as opposed to slot 5, which '
+        'counts the post-latch refusals that follow one',
+        before_refusals, after_refusals)
+
+    assert after_refusals[4] == 1.0, (
+        'WP-99 (F7): the per-instance commit-refusal latch '
+        '(implexRefusals[4]) is not set after a commit-time companion '
+        'failure. Without it the material commits a state its own '
+        'companion could not produce and the analysis walks on',
+        after_refusals)
 
     detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
-    f_last = detail[5]
-    assert math.isfinite(f_last), (
-        'the extrapolation factor is not finite (NaN/inf) on the step after '
-        'a companion refusal at commit -- B3 requires committing a valid '
-        'best-effort state even when the companion itself fails',
-        f_last, detail)
-    assert f_last == pytest.approx(1.0, rel=1.0e-6, abs=1.0e-9), (
-        'the extrapolation factor after a companion refusal at commit is '
-        'not 1.0 on this constant-ds deck -- B3 requires the material to '
-        'commit its best-effort state (mEpsilon_n, mImplexDtCommit) even '
-        'when the companion itself refuses, so the NEXT step\'s f must '
-        'still be the ordinary same-ds ratio, not stale or zero',
-        f_last, detail)
+    assert math.isfinite(detail[5]), (
+        'the extrapolation factor is not finite (NaN/inf) after a refused '
+        'commit -- a latched material must still be readable', detail)
 
 
 # ===========================================================================

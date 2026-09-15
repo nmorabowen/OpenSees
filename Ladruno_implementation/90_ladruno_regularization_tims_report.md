@@ -178,6 +178,16 @@ silently swallowed and the analysis would accept a partially-integrated state. T
 prints this precondition when the cap fires. **Do not combine `-maxSubsteps` with those
 elements.**
 
+> **CORRECTION, 2026-09-14 (WP-99 / F7)** — left above as written, corrected here rather than
+> silently rewritten. The audit on `9c2f964ea` found this paragraph wrong twice: the `QuadUP`
+> family **propagates** (`FourNodeQuadUP.cpp:419`, `ret +=`), and `stdBrick` **is** `Brick`. The
+> forwarding set is `LadrunoBrick` (sentinel only, ADR-33/34), `LadrunoBrick20`,
+> `LadrunoQuad`/`CST`/`LST`, `BezierTet10`/`Tri6`, `FourNodeQuad`, `FourNodeQuadUP`; the
+> discarders are `Brick` (= `stdBrick`), `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad`,
+> `LadrunoSolidShell`. Separately: all of the above is about the **trial**. At **commit** time no
+> element acts on the return at all, because `Domain::commit()` drops it — see
+> `LadrunoSANISAND_implex_guide.md` §9.
+
 ---
 
 ## 6. What we need from you
