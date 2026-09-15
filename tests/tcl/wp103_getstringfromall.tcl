@@ -98,6 +98,20 @@ if {[try_element "A.k.numeric" LadrunoKinematicCoupling 1 1 2 2 3 -k 1.0e6 -enfo
     puts "--------------------------"
 }
 
+# --- A2. the 'auto' SENTINEL, which is what the idiom really tests for -------
+# `-k auto` is refused either way (it needs a representative -host element), but
+# the MESSAGE says whether the token survived. Pre-WP-103 the stack residue here
+# happened to be an empty string -- the literal symptom in the WP-101 report:
+#     WARNING LadrunoKinematicCoupling: -k wants a number or 'auto', got ''
+# After the fix the parser gets as far as the -host requirement, which is the
+# only way to prove `strcmp(kTok, "auto")` actually matched.
+if {[catch {element LadrunoKinematicCoupling 9 1 2 2 3 -k auto} err]} {
+    puts "PASS A2.k.auto refused as expected (see the WARNING above)"
+} else {
+    incr failures
+    puts "FAIL A2.k.auto '-k auto' was accepted without a -host element"
+}
+
 # ==========================================================================
 # B. LadrunoKinematicCoupling -dof  (same idiom, silent wrong answer)
 # ==========================================================================

@@ -69,16 +69,21 @@ def test_getstringfromall_fills_the_buffer_under_classic_tcl():
     # absence of failure is not by itself evidence.
     assert "SELF-TEST:" in out, f"deck did not reach its verdict:\n{out}"
     n_pass = out.count("PASS ")
-    assert n_pass >= 12, f"only {n_pass} checks ran; expected the full deck:\n{out}"
+    assert n_pass >= 15, f"only {n_pass} checks ran; expected the full deck:\n{out}"
 
-    # the signature of the unwritten buffer: a message quoting an empty or
-    # garbage token where the deck passed a real one.
+    # The signatures of the unwritten buffer, asserted BY NAME rather than by a
+    # blanket "no element was refused": block A2 refuses an element on purpose
+    # (`-k auto` with no -host), so a blanket check would fire on a healthy run.
     assert "got ''" not in out, (
         "an option token came back EMPTY -- OPS_GetStringFromAll is not filling "
         "the caller's buffer:\n" + out
     )
-    assert "unable to create element" not in out, (
-        "an element the deck builds was refused; the parse lost a token:\n" + out
+    assert "-dof needs at least one component" not in out, (
+        "the -dof greedy reader strtol'd an unwritten buffer:\n" + out
+    )
+    assert "nHost must be >= 1" not in out, (
+        "LadrunoEmbeddedNode's host spec came back as garbage -- the explicit "
+        "<nHost> h1..hN form is unusable when the buffer is not filled:\n" + out
     )
 
     assert "SELF-TEST: PASS" in out and proc.returncode == 0, (
