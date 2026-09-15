@@ -6465,3 +6465,82 @@ Rules that generalize:
   the SOE's assembly-time (mid-Newton-iteration) tangent across ~135
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
+
+## `-implexControl` + a DOUBLING step controller is a refusal generator: the tolerance is an ABSOLUTE bound on a FIRST-ORDER-IN-`dt` error, so a growing step must overshoot it (ADR-92 F10, 2026-09-14)
+
+### An adaptive push controller that GROWS `ds` cannot coexist with `-implexControl` at a tight tolerance — the refusal storm is the controller, not the soil
+- **Bites:** a self-weight SANISAND strip footing under `-implex -implexControl 0.05 0.01`
+  refuses from the first push increments, the refusal counter runs into the
+  hundreds (TIMs measured 204 120 on 9 720 Gauss points by step 3), every refusal
+  halves the step, and the harness step falls below its floor at `s/B ~ 0.01`.
+  It reads as a material wall — a dilatancy/fabric/`alpha_in` pathology, or the
+  ADR-93 zero-confinement ring. It is neither.
+- **Why:** `implexError = ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps||)`
+  (`LadrunoSANISAND.cpp:2513`-`:2530`) is **first order in the step** — measured on a
+  controlled refinement at a fixed committed state (ADR-92 F10 §4: max error
+  1.126e-2 / 5.778e-3 / 3.039e-3 / 1.672e-3 for `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5,
+  ratios 1.95 / 1.90 / 1.82, onto a `dt`-independent floor of ~4e-4). `-implexControl`
+  bounds it **absolutely**, so every deck has a maximum admissible step at a given
+  tolerance. The ADR-63 D16 halve-on-failure/double-after-six controller can only
+  DISCOVER that bound by crossing it, and its `x2` recovery latch makes the clock
+  ratio `f = dt_{n+1}/dt_n = 2` on exactly the step that crosses it — so the
+  extrapolated plastic increment is doubled on top of the doubled strain
+  increment. Refuse, halve, six clean steps, double, refuse: an oscillation, not
+  a convergence. One refusing Gauss point refuses the whole step, so **four**
+  over-tolerance points out of 2 280 bought 724 refusals.
+- **Measured (ADR-92 F10 leg table, `Ladruno_files/testbed/hypo_bearing/adr92_f10/out/summary.md`):**
+  same deck, same tolerance, same guards, same mesh — growth factor `2.0`:
+  `FLOOR` at `s/B = 0.0085`, 724 refusals, 53 subdivisions. Growth factor `1.25`:
+  `FLOOR` at 0.0113, 253 refusals. Growth factor **`1.0`: `s/B = 0.0265`, SIX
+  refusals, ZERO subdivisions in 1 984 converged steps.**
+- **Workaround/status:** pin the harness's growth factor at 1.0 for any
+  `-implexControl` leg, or drive the controller off `avgImplexError` (read once
+  per step) so the bound is approached from below instead of discovered by
+  refusal. A gentler growth factor is NOT enough. Secondary levers, in measured
+  order: raise `tol` (0.1 = +37 %, 0.5 reaches the target with 18 refusals);
+  raise `reductionLimit` from the shipped `0.01` to `0.5` (+71 %, and the only
+  setting at which the floor branch is not inert on this deck). NOT levers:
+  `-implexFactor controlIter` (+5 % for 2.9x the wall time) and raising the
+  confinement (leg H: zero over-tolerance Gauss points at every step size
+  tested, and still 2 754 refusals, because its controller grows too).
+
+### `implexPrimed` is a bare `> 0.0` sign test, so a Gauss point with a 1e-12 plastic history loses the un-primed exemption and is refused on the elastic predictor's own drift
+- **Bites:** `LadrunoSANISAND.cpp:2905` is
+  `const bool implexPrimed = (this->GetNorm_Cov(mImplexDEpsP) > 0.0);`. The
+  un-primed exemption at `:2907` exists precisely because "a pure elastic
+  predictor's error must scale with `d_eps`; this one does not" (`:2896`) — but
+  any non-zero committed plastic increment, however small, counts as primed.
+  ADR-92 F10 measured a refusal at `|d_eps_p(n)| = 6.66e-12` with `f = 1` and
+  `implexError = 0.211`: a point that took essentially no plastic strain in the
+  previous step, then yielded in this one, refused on a drift no subdivision can
+  shrink.
+- **Why:** it is the same defect shape P2-5b already fixed for the loading-reversal
+  reset — an absolute threshold (there, `-reversalTol 1e-10`) that cannot separate
+  a real increment from solver-tolerance noise, replaced by a RELATIVE one
+  (`-reversalRel 0.05` against the last committed increment). The primed test
+  never got that treatment.
+- **Workaround/status (2026-09-14):** unfixed, and deliberately so — ADR-92 F10
+  is a diagnosis. The matching fix is a relative test
+  (`||d_eps_p(n)|| > rel * ||d_eps||`) and it needs its own gate and mutation
+  score. Until then, treat an `-implexControl` refusal whose warning line reports
+  a `|d_eps_p(n)|` many decades below the strain increment as a first-yield
+  event, not an extrapolation failure.
+
+### `-implexGuard`'s `f = 0` and `-implexControl`'s tolerance work against each other — the guard makes the prediction inaccurate and the control then refuses the step for being inaccurate
+- **Bites:** the P2-2 guard (`:2243`) forces `f = 0` on any step whose committed
+  predecessor showed a loading reversal or `Kp <= 0`. The guide says this trades
+  "the prediction's accuracy, not the step". That is true with `-implexControl`
+  **off**. With it on, `sigma~` is then a pure elastic predictor, `implexError`
+  measures the whole plastic correction, and the step is refused — and P2-6's
+  trial-time fallback cannot help, because it only runs when `mImplexFactor != 0.0`
+  (`:2939`). **30 of leg B's 49 throttled refusal lines report `f = 0`.**
+- **Measured:** `-implexGuard off` on the ADR-92 F10 self-weight deck buys +85 %
+  reach (0.0085 -> 0.0157); both guards off, +117 % (0.0185) at 12x the refusal
+  count. `implexGuards[1]` ran to 31 491 on leg B, about 3.8 % of all
+  Gauss-point-steps.
+- **Workaround/status (2026-09-14):** do NOT reach for `-implexGuard off` as a
+  fix — the guard exists for ADR-93's softening seat, which that deck does not
+  test. Fix the controller instead (first quirk above). The design question —
+  whether a guarded point should be exempt from the control's tolerance for that
+  step, the same shape as the un-primed exemption — is recorded in
+  [[92b_implex_selfweight_wall_note]] §9 for ADR 92 to settle.
