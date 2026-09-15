@@ -1558,8 +1558,23 @@ int OPS_LadrunoContactForce()
 int OPS_LadrunoBeginAugment()
 {
     Domain *theDomain = OPS_GetDomain();
-    if (theDomain != 0)
+    if (theDomain != 0) {
+        // Ladruno (WP-101 r2): while the flag is ON, Domain::commit() fires NO recorders and
+        // bumps NO commitTag -- so a MISSING ladrunoEndAugment does not fail, it silently
+        // voids every later recorder sample (measured: the next ordinary step returns ok=0
+        // and advances time 1->2, and the recorder file is EMPTY). A second Begin without an
+        // intervening End is the signature of exactly that mistake, so say so. WP-101
+        // promotes this sweep from contact-internal machinery to a documented workflow for
+        // LadrunoKinematicCoupling, which is what makes the silent failure worth a warning.
+        if (theDomain->isContactAugmenting())
+            opserr << "WARNING ladrunoBeginAugment: an augmentation sweep is ALREADY open -- "
+                   << "a previous ladrunoEndAugment was missed. While it is open every "
+                   << "Domain::commit() is recorder-silent and advances no commitTag, so any "
+                   << "recorder output from here on is LOST. Pair every ladrunoBeginAugment "
+                   << "with a ladrunoEndAugment (the flag is also cleared by wipe / "
+                   << "wipeAnalysis)\n";
         theDomain->setContactAugmenting(true);
+    }
     return 0;
 }
 

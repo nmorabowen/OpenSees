@@ -2,7 +2,7 @@
 title: "LadrunoKinematicCoupling — RBE2 / Kinematic-Coupling Element"
 project: Ladruno
 type: reference / user guide
-status: v1 shipped (rigid driver, U + rotation, -dof component select, penalty/AL, derived K_r, bipenalty default-off, g0 birth, 2D+3D); built + 16/16 Zone-A + 4-lens code review; MERGED to ladruno (PR #221, 2026-06-09). v1.1 (WP-101, PR #839): the within-step route is the ADR-41 held-load augmentation sweep with the DEFAULT `-alUpdate commit` (measured to close the gate for every algorithm × integrator); `-alUpdate iter` is opt-in and guarded to full Newton + LoadControl; committed-λ revert; K_t selection rule + conditioning guard; battery 52/52
+status: v1 shipped (rigid driver, U + rotation, -dof component select, penalty/AL, derived K_r, bipenalty default-off, g0 birth, 2D+3D); built + 16/16 Zone-A + 4-lens code review; MERGED to ladruno (PR #221, 2026-06-09). v1.1 (WP-101, PR #839): the within-step route is the ADR-41 held-load augmentation sweep with the DEFAULT `-alUpdate commit` (measured to close the gate for every algorithm × integrator); `-alUpdate iter` is opt-in and guarded to full Newton + LoadControl; committed-λ revert; K_t selection rule + conditioning guard; augmentation-sweep hygiene (double-Begin warning, flag cleared by wipe/wipeAnalysis); battery 55/55
 element: element LadrunoKinematicCoupling
 classTag: 33012 (element)
 related:
@@ -359,8 +359,30 @@ for _ in range(10):
 ops.ladrunoEndAugment()
 ```
 
+> [!danger] Every `ladrunoBeginAugment` MUST be paired with a `ladrunoEndAugment`
+> While the flag is on, `Domain::commit()` fires **no recorders** and bumps **no commitTag** —
+> that is what keeps the held-load passes out of the output stream. Forgetting to close it
+> therefore does **not** fail: the next ordinary step returns `ok = 0` and advances time
+> normally, and **every recorder sample from then on is silently lost** (measured: next step
+> `ok=0`, time `1 → 2`, recorder file **empty**). Since WP-101 a second `ladrunoBeginAugment`
+> without an intervening `End` **warns**, and the flag is cleared by `wipe` and `wipeAnalysis`
+> — but inside one analysis nothing else will tell you. Use `try: … finally:
+> ops.ladrunoEndAugment()`.
+
+> [!note] The held passes HOLD THE LOAD, not the control DOF
+> `LoadControl 0.0` freezes the load factor; it does not pin a `DisplacementControl` target.
+> So under a displacement-driven step the control DOF is **released** during the sweep and
+> drifts a little as the tie stops leaking — measured **1.08 %** of the push on the §9 gate
+> while the gap fell from `1.63e-2` to `9.5e-10`. That is physically right (the tie is taking
+> up load the soil was carrying), but if your post-processing keys on an exact target
+> displacement, read it back after `ladrunoEndAugment` rather than assuming it. A master
+> prescribed with `sp` (the `LoadControl` column below) cannot drift at all — the constraint
+> holds it — which is the cleaner fixture. Both are pinned in the battery.
+
 Use `LoadControl 0.0` for the held passes **whatever drove the real step** — a zero-increment
-`DisplacementControl` is degenerate. Measured on the §9 gate at a moderate `K_t = 1e6`
+`DisplacementControl` is degenerate (vanilla: its `dLambda = −dUabar/dUahat` correction is
+unbounded at a zero increment — see [[LEDGER_quirks]]). Measured on the §9 gate at a moderate
+`K_t = 1e6`
 (`≈1.3e2 · k_host`, where the penalty alone leaves `1.63e-2`), **20/20 cells converge**:
 
 | driving integrator | algorithms | passes | final `max|g|/push` |
@@ -433,10 +455,21 @@ same window when `-alUpdate iter` is parsed.
 > ModifiedNewton). §4.3's sweep costs extra *solves* instead, but keeps every inner solve a
 > well-posed penalty problem.
 
-### 4.5 AL is implicit-only — and under an explicit integrator it is refused *by consequence*
+### 4.5 AL under dynamics: fine implicitly, refused *by consequence* explicitly
 
-Under an explicit integrator there is no equilibrium iteration for the recursion to converge
-against. Worse, the combination is not merely useless but **unusable**: `-bipenalty` is
+**Implicit transient is fine.** Newmark / HHT / GeneralizedAlpha all iterate to equilibrium, so
+the `commit`-cadence Uzawa behaves exactly as it does in statics. Measured on the §9 gate with
+mass (`Newmark 0.5 0.25` + Newton + `-enforce al`, `K_t = 1e6`): **0/10 steps failed**, final
+`max|g| = 1.5e-8`. The element says **nothing** here — an earlier cut of this WP warned on any
+transient integrator and so told users of this perfectly good configuration that it was
+"refused-by-consequence … singular". The check is now gated on the **explicit** integrator
+family by class tag (`CentralDifference*`, `ExplicitDifference*`, `ExplicitBathe*`,
+`CentralDifferenceSMS*`, `CentralDifferenceLadruno`, enumerated from `SRC/classTags.h`), and an
+unrecognised transient tag is treated as implicit so a new integrator never inherits a false
+warning.
+
+**Explicit is refused by consequence.** There is no equilibrium iteration for the recursion to
+converge against, and the combination is not merely useless but **unusable**: `-bipenalty` is
 refused together with `-enforce al` (the flag is dropped at parse with a warning), so a
 massless tied DOF has **no mass source at all** and the explicit step is singular. Measured on
 the §9 gate under `CentralDifferenceLadruno` (`analyze` return code):
@@ -449,7 +482,7 @@ the §9 gate under `CentralDifferenceLadruno` (`analyze` return code):
 
 `CentralDifference` and `ExplicitBathe` fail at step 0 the same way. **A parse-time refusal is
 impossible** — the integrator does not exist when the element is declared — so the element
-emits a one-time warning at the first `update()` when it sees a transient integrator active
+emits a one-time warning at the first `update()` when it sees an **explicit** integrator active
 with `-enforce al`. For explicit runs use `-enforce penalty` with `-bipenalty` (§5).
 
 ### 4.6 Bookkeeping (both cadences)
@@ -618,8 +651,8 @@ components (e.g. `6N` for a full rigid 3D tie of `N` 6-DOF slaves, `3N` for tran
 
 Zone-A battery `tests/test_ladrunoKinematicCoupling_element.py` — **52/52** (16 at v1, +3 at
 the 2026-09-07 u-p refusal, +7 at WP-101, +26 at the WP-101 review round 1: the 12-cell
-algorithm × integrator × test sweep, the 10-cell augmentation sweep, and 4 guard cases),
-plus full
+algorithm × integrator × test sweep, the 10-cell augmentation sweep, and 7 guard cases —
+including implicit-transient silence and the augmentation-sweep hygiene pair), plus full
 Zone-A 633-pass no-regression and a 4-lens adversarial **code** review (2 CRITICAL + 6 MAJOR
 folded in; ADR 29). The kinematic tests exploit a clean fact: with the slaves otherwise free,
 their only stiffness is the penalty tie, so equilibrium drives each slave **exactly** onto R's

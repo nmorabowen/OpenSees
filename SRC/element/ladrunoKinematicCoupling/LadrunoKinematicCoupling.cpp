@@ -662,10 +662,43 @@ bool LadrunoKinematicCoupling::refuseIterCadence(void)
   return true;
 }
 
-// Ladruno (WP-101 r1): one-time note that -enforce al cannot work under an explicit /
-// transient integrator. A PARSE-TIME refusal is impossible -- the integrator is unknown when
+// Ladruno (WP-101 r2): is this integrator class an EXPLICIT one? The r1 cut tested
+// `TransientIntegrator != 0`, which also caught IMPLICIT transient integrators -- and
+// -enforce al under Newmark + Newton works perfectly (measured 0/10 failed steps, max gap
+// 3.4e-21), so that warning was actively wrong. Only the explicit family has the problem,
+// because only there is there no equilibrium iteration AND no mass source (see the warning
+// text). Enumerated from SRC/classTags.h rather than guessed; unknown transient tags are
+// treated as implicit (say nothing) so a new integrator never inherits a false warning.
+static bool ladrunoIsExplicitIntegratorTag(int tag)
+{
+  switch (tag) {
+  case INTEGRATOR_TAGS_CentralDifference:                 // 5
+  case INTEGRATOR_TAGS_CentralDifferenceAlternative:      // 17
+  case INTEGRATOR_TAGS_CentralDifferenceNoDamping:        // 18
+  case INTEGRATOR_TAGS_ExplicitDifference:                // 55
+  case INTEGRATOR_TAGS_ExplicitBathe:                     // 33000 (+ its collapsed aliases)
+  case INTEGRATOR_TAGS_ExplicitDifferenceStatic:          // 33001
+  case INTEGRATOR_TAGS_ExplicitBatheLNVD:                 // 33002
+  case INTEGRATOR_TAGS_CentralDifferenceLadruno:          // 33003
+  case INTEGRATOR_TAGS_CentralDifferenceSMS:              // 33007
+  case INTEGRATOR_TAGS_CentralDifferenceSMSConsistent:    // 33008
+  case INTEGRATOR_TAGS_ExplicitBatheSMS:                  // 33009
+  case INTEGRATOR_TAGS_ExplicitBatheSMSConsistent:        // 33010
+  case INTEGRATOR_TAGS_ExplicitBatheLNVDSMS:              // 33011
+  case INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent:    // 33012
+    return true;
+  default:
+    return false;
+  }
+}
+
+// Ladruno (WP-101 r1, narrowed in r2): one-time note that -enforce al cannot work under an
+// EXPLICIT integrator. A PARSE-TIME refusal is impossible -- the integrator is unknown when
 // the element is declared -- so the check lives at the first update(), where the active
 // integrator is finally visible. Warn, do not refuse: the combination is pre-existing.
+//
+// IMPLICIT transient (Newmark, HHT, GeneralizedAlpha, ...) is NOT warned about: it has
+// equilibrium iterations, so the commit-cadence Uzawa behaves exactly as it does in statics.
 void LadrunoKinematicCoupling::warnAlUnderTransient(void)
 {
   if (alWarnedTransient || enforce != 1) return;
@@ -673,14 +706,17 @@ void LadrunoKinematicCoupling::warnAlUnderTransient(void)
   StaticIntegrator** siPtr = OPS_GetStaticIntegrator();
   if (tiPtr == 0 || *tiPtr == 0) return;
   if (siPtr != 0 && *siPtr != 0) return;             // a static analysis is the active one
+  if (!ladrunoIsExplicitIntegratorTag((*tiPtr)->getClassTag())) return;   // implicit: fine
   alWarnedTransient = true;
   opserr << "WARNING LadrunoKinematicCoupling " << this->getTag()
-         << ": -enforce al under a TRANSIENT integrator is refused-by-consequence. AL needs "
-         << "equilibrium iterations to converge against, and -bipenalty is refused together "
-         << "with -enforce al, so a massless tied DOF gets no mass source and the explicit "
-         << "step is singular (CentralDifference / CentralDifferenceLadruno / ExplicitBathe "
-         << "all fail at step 0). Use -enforce penalty with -bipenalty for explicit runs. "
-         << "See LadrunoKinematicCoupling_guide.md section 4.2\n";
+         << ": -enforce al has no effect under an EXPLICIT integrator and leaves the tie "
+         << "without a mass source. The Uzawa update needs equilibrium iterations to converge "
+         << "against, and -bipenalty is DROPPED when -enforce al is given, so a massless tied "
+         << "DOF gets no penalty mass -- measured under CentralDifferenceLadruno: "
+         << "`-enforce penalty -bipenalty -dtcr <dt>` runs, while `-enforce al -bipenalty` "
+         << "fails at step 0. Use -enforce penalty with -bipenalty for explicit runs. "
+         << "(Implicit transient -- Newmark, HHT, GeneralizedAlpha -- is fine and is not "
+         << "warned about.) See LadrunoKinematicCoupling_guide.md section 4.5\n";
 }
 
 // full gap g = B u (then minus the captured offsets g0). g is sized nGap.

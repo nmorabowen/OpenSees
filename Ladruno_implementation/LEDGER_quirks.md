@@ -6497,3 +6497,41 @@ Rules that generalize:
 - **Bites:** an element that resolves something lazily (a `-host` element's stiffness scale, a material pointer, a neighbour's geometry) behind a `if (resolved) return; ... resolved = true;` guard gets its FIRST call from `Domain::addElement`, i.e. while the deck is still being read. Anything declared after it is invisible. Real instance (WP-101): `LadrunoKinematicCoupling -k auto -host <ele>` in a deck that declares the coupling before the host element — the lookup failed, `ktResolved` latched anyway, so `K_t` silently stayed at the 1e12 default instead of the intended 7.93e6, AND the conditioning warning that reads the same host could never fire. Host-first decks were fine; coupling-first decks were silently wrong. Nothing in the run said so.
 - **Why:** `Domain::addElement()` ends by calling the element's `setDomain()` and then `update()` so the element is consistent the moment it joins — a reasonable invariant that happens to make "first call" and "deck fully read" completely different moments.
 - **Workaround/status (2026-09-14):** **do not latch on a failed resolve.** Return without setting the flag and retry on the next call; the retry is free (a pointer lookup) next to a solve. If you need to warn that the target is genuinely missing rather than merely not-declared-yet, gate the warning on an analysis existing (`OPS_GetAlgorithm()` non-null) — that is the cheapest available "we are past deck construction" signal. See [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A zero-increment `DisplacementControl` step is DEGENERATE — the load-factor correction `dLambda = −dUabar/dUahat` is unbounded, so "hold everything" must be `LoadControl 0.0`
+- **Bites:** the natural way to hold a state while something else converges (an augmentation
+  sweep, a staged activation, a settling pass) is "same integrator, zero increment". Under
+  `DisplacementControl` that is a trap: `newStep` sets `dlambda = theIncrement/dUahat = 0`, but
+  the corrector `update()` still computes `dLambda = -dUabar/dUahat`
+  (`SRC/analysis/integrator/DisplacementControl.cpp:332`) from whatever residual displacement
+  is left, and with no increment to normalise it the load factor runs away. Measured on a
+  2×2×2 elastic gate: a single zero-increment step moved the load factor from ~1.0 to
+  **377.19**; a reviewer's fixture reached **−1.6e38**. The step often still returns `ok = 0`,
+  so nothing announces it.
+- **Why:** `DisplacementControl` is formulated to solve for `lambda` such that the control DOF
+  moves by `theIncrement`. At `theIncrement = 0` the constraint "move the control DOF by zero"
+  is satisfied by the trivial solution only if the residual is already zero; otherwise the
+  method is free to buy that zero displacement with an arbitrarily large load factor.
+- **Workaround/status (2026-09-14):** to hold a converged state, switch to **`LoadControl 0.0`**
+  — it freezes the load factor and leaves the control DOF free, which is what "hold" actually
+  means here. Note the consequence: a `DisplacementControl` target is **released** while you
+  hold (measured 1.08 % drift on the WP-101 gate while the AL multipliers tightened), so read
+  the control displacement back afterwards rather than assuming it. See
+  [[LadrunoKinematicCoupling_guide]] §4.3 / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A `ladrunoBeginAugment` without its `ladrunoEndAugment` does not fail — it silently VOIDS every later recorder sample
+- **Bites:** the ADR-41 D1 held-load augmentation sweep suppresses recorders and the commitTag
+  bump so its passes leave no trace in the output stream (`Domain::commit()`'s
+  `if (!contactAugmenting)` guard). That is correct while the sweep is open — and catastrophic
+  if it is never closed: the next ordinary step returns `ok = 0`, the time advances `1 → 2`
+  exactly as expected, and the recorder file is **empty**. Every downstream check (peak
+  displacement, time history, energy balance) reads a truncated or empty stream, and nothing in
+  the run says why.
+- **Why:** the flag lives on the `Domain` (`Domain::contactAugmenting`), not on the analysis or
+  a scope guard, and both commands were bare idempotent setters.
+- **Workaround/status (2026-09-14, WP-101):** a second `ladrunoBeginAugment` without an
+  intervening `End` now **warns** (it is the signature of exactly this mistake), and the flag is
+  cleared by `Domain::clearAll()` (`wipe`) and by `OpenSeesCommands::wipeAnalysis()`. Inside one
+  analysis nothing else will catch it, so write the sweep as `try: … finally:
+  ops.ladrunoEndAugment()`. Marked `// Ladruno` in `OpenSeesOutputCommands.cpp`,
+  `OpenSeesCommands.cpp` and `Domain.cpp` — see [[LEDGER_vanilla_files]].

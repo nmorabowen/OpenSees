@@ -401,11 +401,11 @@ def _bn(i, j, k):
     return 1000 + (k * (_N + 1) + j) * (_N + 1) + i
 
 
-def _soil_block():
+def _soil_block(density=0.0):
     """Elastic block, base fixed. Returns (skin node tags, representative host ele tag)."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU, density)
     h = _B / _N
     for k in range(_N + 1):
         for j in range(_N + 1):
@@ -504,18 +504,20 @@ def _augment_sweep(algo="Newton", integ="LoadControl", testname="NormDispIncr",
     _drive(integ)
     if _solve_static_gate(_TOL[testname], 60, algo, integ, testname, 1) != 0:
         return -1, _gap_err(), 0
+    u0 = ops.nodeDisp(_MASTER, 3)
     ops.ladrunoBeginAugment()
     ops.integrator("LoadControl", 0.0)          # hold EVERYTHING, whatever drove the step
     npass = 0
     for _ in range(n_aug):
         if ops.analyze(1) != 0:
             ops.ladrunoEndAugment()
-            return -2, _gap_err(), npass
+            return -2, _gap_err(), npass, 0.0
         npass += 1
         if _gap_err() <= augtol:
             break
     ops.ladrunoEndAugment()
-    return 0, _gap_err(), npass
+    drift = abs(ops.nodeDisp(_MASTER, 3) - u0) / abs(u0) if u0 != 0.0 else 0.0
+    return 0, _gap_err(), npass, drift
 
 
 def _direct_push_reaction():
@@ -700,10 +702,17 @@ def test_augment_sweep_closes_constraint(algo, integ):
 
     Unlike -alUpdate iter this works with EVERY algorithm and integrator, because
     lambda is frozen inside each inner solve."""
-    status, err, npass = _augment_sweep(algo=algo, integ=integ)
+    status, err, npass, drift = _augment_sweep(algo=algo, integ=integ)
     assert status == 0, f"augment sweep failed (status {status}) after {npass} passes"
     assert err <= 1.0e-8, f"augment sweep left gap/push = {err:.3e} after {npass} passes"
     assert 1 <= npass <= 10
+    # The held passes run under LoadControl 0.0, which HOLDS THE LOAD, not the control DOF:
+    # a DisplacementControl target is released while lambda tightens, so the master drifts a
+    # little as the tie stops leaking. Bounded, and zero for a prescribed (sp) master.
+    if integ == "LoadControl":
+        assert drift == pytest.approx(0.0, abs=1e-12)     # sp-prescribed: cannot drift
+    else:
+        assert drift < 0.05, f"control DOF drifted {drift*100:.2f}% during the held passes"
 
 
 # ------------------------- 29. iter is refused, loudly, outside its validity window
@@ -778,3 +787,71 @@ def test_database_roundtrip_preserves_lambda():
         build, probe_nodes=[_MASTER], ndf=6,
         probe_fn=lambda: list(ops.eleResponse(_COUPLE, "lambda")),
     )
+
+# ------------------------- 33. IMPLICIT transient + al must be silent AND work (review r2)
+def test_al_under_newmark_is_silent_and_works(capfd):
+    """The r1 cut warned on `TransientIntegrator != 0`, which also caught IMPLICIT transient
+    integrators -- and `-enforce al` under Newmark + Newton works perfectly. That warning told
+    the user a working configuration was "refused-by-consequence ... singular". The warning is
+    now gated on the EXPLICIT integrator family only (classTag enumeration)."""
+    skin, _ = _soil_block(density=2.0)                     # element mass from the density
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    ops.element("LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin), *skin,
+                "-dof", 1, 2, 3, "-k", 1.0e6, "-enforce", "al")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(_MASTER, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    nfail = sum(1 for _ in range(10) if ops.analyze(1, 1.0e-3) != 0)
+    assert nfail == 0
+    g = ops.eleResponse(_COUPLE, "gap")
+    assert max(abs(v) for v in g) < 1.0e-6
+    text = "".join(capfd.readouterr())
+    assert "EXPLICIT integrator" not in text, text        # no false warning
+    assert "refused-by-consequence" not in text, text
+
+
+# ------------------------- 34. forgetting ladrunoEndAugment is a SILENT recorder void
+def test_double_begin_augment_warns(capfd):
+    """While the augmentation flag is on, Domain::commit() fires no recorders and bumps no
+    commitTag -- so a missing ladrunoEndAugment does not fail, it silently voids every later
+    recorder sample. A second Begin without an intervening End is that mistake's signature."""
+    _build_gate(1.0e6, "al", "commit")
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    ops.ladrunoBeginAugment()
+    capfd.readouterr()
+    ops.ladrunoBeginAugment()
+    text = "".join(capfd.readouterr())
+    assert "ALREADY open" in text and "ladrunoEndAugment" in text, text
+    ops.ladrunoEndAugment()
+
+
+def test_wipe_analysis_clears_augment_flag(tmp_path):
+    """...and the flag must not survive a wipeAnalysis: a deck that forgets EndAugment and
+    rebuilds its analysis would otherwise carry the recorder silence into the new one."""
+    _build_gate(1.0e6, "al", "commit")
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    ops.ladrunoBeginAugment()                              # deliberately never closed
+    ops.wipeAnalysis()
+
+    rec = str(tmp_path / "wp101.out")
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    ops.recorder("Node", "-file", rec, "-time", "-node", _MASTER, "-dof", 3, "disp")
+    assert ops.analyze(1) == 0
+    ops.remove("recorders")
+    import os
+    assert os.path.exists(rec) and os.path.getsize(rec) > 0, "recorder stream was still silent"
