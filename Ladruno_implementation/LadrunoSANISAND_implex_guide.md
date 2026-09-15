@@ -314,21 +314,29 @@ a verdict yet.
 
 ## 9. Known limits
 
-- **A SELF-WEIGHT bearing deck may not want `-implexControl` at all, and turning it on is what
-  walls it.** Measured on a `B = 1.5` m self-weight strip (`gamma' = 9.81`, K0 = 0.455,
-  2 280 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`, ADR-92 F10): with
-  `-implexControl 0.05 0.01` and the fork's usual ADR-63 D16 halve/double controller the leg
-  refuses 724 times and dies on the harness step FLOOR at `s/B = 0.0085`; with `-implexControl`
-  simply **removed** — bare `-implex`, the same doubling controller, nothing else changed — the
-  same deck reaches `s/B = 0.0500` in **104 steps, 0 subdivisions, 0 failed attempts, 58 s**,
-  refusal ledger `0/0/0/0`. That is how the ADR-95 campaign which reached `s/B = 0.15` on this
-  material was run (`sanisand_path_diag.py` passes only `-implex`). **Reconciling with §3:** the
-  hard requirement there is `-maxSubsteps`, so that the commit-time companion can *fail* rather
-  than force-accept at `dT_min` — it is not `-implexControl`. On this deck (`p'` 5.7–106 kPa,
-  three decades above `-Pmin`) the companion never capped: `implexRefusals[3] = 0` on every arm.
-  So the discipline for a control-off leg is **read the companion bucket `implexRefusals[3]` at
-  the end of every run** — on a build predating PR #838 a capped companion commit is otherwise
-  silent; once #838 lands the run aborts instead.
+- **On a SELF-WEIGHT bearing deck, `-implexControl` can be what STOPS the run — and control-off
+  buys reach, not a confirmed curve.** Measured on a `B = 1.5` m self-weight strip
+  (`gamma' = 9.81`, K0 = 0.455, 2 280 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`,
+  ADR-92 F10): with `-implexControl 0.05 0.01` and the fork's usual ADR-63 D16 halve/double
+  controller the leg refuses 724 times and dies on the harness step FLOOR at `s/B = 0.0085`;
+  with `-implexControl` simply **removed** — bare `-implex`, the same doubling controller,
+  nothing else changed — the same deck reaches `s/B = 0.0500` in **104 steps, 0 subdivisions,
+  0 failed attempts, 58 s**, refusal ledger `0/0/0/0`. That is how the ADR-95 campaign which
+  reached `s/B = 0.15` on this material was run (`sanisand_path_diag.py` passes only `-implex`).
+  **Two things follow, and they are different things.** (a) *Termination*, and it is measured:
+  the commit-time companion — the thing §3's hard requirement is about, which `-maxSubsteps`
+  buys — integrated every increment it was handed on the control-off arms
+  (`implexRefusals[3] = 0` on the campaign's B, C, D, E, K, L, N, N1 legs; `<= 42` anywhere,
+  M 42 / F1 29 / I 12 / H 6 / F3 3 / J 2). So the discipline for a control-off leg is
+  **read the companion bucket `implexRefusals[3]` at the end of every run** — on a build
+  predating PR #838 a capped companion commit is otherwise silent; once #838 lands the run
+  aborts instead. (b) *Accuracy is untouched by any of this.* §8 and the constructor echo this
+  material prints on every control-off run (`LadrunoSANISAND.cpp:2029`-`:2031`) say IMPL-EX was
+  measured unusable from `d_eps = 5e-4` at `p0 = 5 kPa`, and **that deck sits inside that
+  range**: its minimum `p'` is 6.374 kPa (1.27x the corner) and the control-off leg's strain
+  increment crosses `5e-4` at `s/B = 0.0012` and runs at 2.6-4x the corner to the target, with
+  no implicit anchor past `s/B = 0.00227`. **Do not generalise "the control is not needed at low
+  confinement" from that campaign** — it measured what terminates, not what is right.
 - **If you keep `-implexControl` on a self-weight deck, its refusal count is set by your
   CONTROLLER's growth rule, and its FLOOR is set by the `implexPrimed` test.** `implexError` is
   first order in the step (measured on a controlled refinement at a fixed committed state: max

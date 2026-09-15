@@ -448,7 +448,7 @@ decision.
 
 ## Log
 
-- **2026-09-14 — F10, the SELF-WEIGHT wall: the deck does not need `-implexControl`.**
+- **2026-09-14 — F10, the SELF-WEIGHT wall: `-implexControl` is what stops the deck.**
   `[[92b_implex_selfweight_wall_note]]` (WP-102, engine `9c2f964`, no C++; rewritten after an
   adversarial review that MERGE-BLOCKED the first verdict). TIMs' report — the control refusing
   from the first push step and the harness floor reached at `s/B = 0.0125` on a self-weight
@@ -457,9 +457,15 @@ decision.
   bare `-implex`, the same doubling controller, everything else identical, reaches the target
   `s/B = 0.0500` in **104 steps, 0 subdivisions, 0 failed attempts, 58 s**, refusal ledger
   `0/0/0/0` with the **companion bucket verified zero** — which is how the ADR-95 campaign that
-  reached `s/B = 0.15` was run (`sanisand_path_diag.py` passes only `-implex`). So
-  `-implexControl` is not a low-confinement requirement; `-maxSubsteps` plus a watched
-  `implexRefusals[3]` is (this deck sits at `p'` 5.7–106 kPa and never caps the companion).
+  reached `s/B = 0.15` was run (`sanisand_path_diag.py` passes only `-implex`). **That is a
+  TERMINATION result and it is scoped:** `implexRefusals[3] = 0` on B, C, D, E, K, L, N, N1 and
+  `<= 42` anywhere (M 42, F1 29, I 12, H 6, F3 3, J 2), so on this deck the companion — §3's
+  actual concern, answered by `-maxSubsteps` plus a watched bucket — never failed. It leaves
+  **§8's ACCURACY claim untouched**, and the deck sits inside that claim's range rather than
+  outside it: minimum `p'` 6.374 kPa is 1.27x the P0 corner's 5 kPa, leg N's strain increment
+  crosses `d_eps = 5e-4` at `s/B = 0.0012` and runs at 2.6-4x the corner to the target, and there
+  is no implicit anchor past `s/B = 0.00227`. No general "the control is not a low-confinement
+  requirement" is claimed.
   With the control ON, two mechanisms: (a) the refusal COUNT is set by the harness's growth rule
   — ×2 → 724 refusals, ×1.25 → 253, ×1.0 → **6** — because `implexError` is first order in the
   step and the control bounds it absolutely; (b) the `FLOOR` itself is the control's own

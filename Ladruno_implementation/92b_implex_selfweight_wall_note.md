@@ -1,5 +1,5 @@
 ---
-title: "ADR-92 F10 — the IMPL-EX self-weight wall: the deck does not need `-implexControl`, and with it on the wall is the control's own primed test"
+title: "ADR-92 F10 — the IMPL-EX self-weight wall: `-implexControl` is what stops this deck, and the wall is the control's own primed test"
 project: Ladruno
 type: measurement note
 status: "MEASURED 2026-09-14; REWRITTEN after adversarial review round 1 (leg N added, verdict re-ranked)"
@@ -57,12 +57,15 @@ the ADR-93 apex wall. **Reproduced** on the fork's own deck: leg B walls on the
 step FLOOR at `s/B = 0.0085` with 724 refusals, every one in the `control`
 bucket.
 
-1. **This deck does not need `-implexControl`, and the ADR-95 reference campaign
-   never used it.** Bare `-implex` with the *same doubling controller* (leg N)
+1. **Removing `-implexControl` makes this deck run — and the ADR-95 reference
+   campaign never used it either.** Bare `-implex` with the *same doubling controller* (leg N)
    reaches the target `s/B = 0.0500` in **104 steps, 0 subdivisions, 0 failed
    attempts, 58 s** — and the refusal ledger reads **0 / 0 / 0 / 0**, the
    **companion bucket explicitly zero**, which is the number that matters on
-   this build (§3). The ADR-95 leg D1 that reached `s/B = 0.15`
+   this build (§3). That is a TERMINATION result, not an accuracy one: ADR-92 §8
+   and the engine's own control-off echo (`:2029`-`:2031`) make a separate
+   accuracy claim that this deck sits inside rather than outside (§3, "what leg N
+   does not establish"). The ADR-95 leg D1 that reached `s/B = 0.15`
    (`95_prandtl_reissner_campaign_report.md:176`, 0 failed, 296 s) was itself
    control-OFF under a doubling controller
    (`sanisand_path_diag.py:91`-`:104` passes only `-implex`;
@@ -117,8 +120,10 @@ is `-0.128 … -0.109`** against TIMs' quoted `~ -0.13`.
 **The at-rest census matches the report.** At `K0 = 0.455`, **2 280/2 280
 = 100.00 %** of Gauss points sit on the DILATANT side of `M^d` (median
 `eta = 0.857`, median `M^d = 0.666`) — TIMs' 99.96 %. `p'` at rest spans
-**6.4 – 106 kPa**; the lowest value seen anywhere in the census during the first
-push steps is 5.7 kPa.
+**6.4 – 106 kPa**, and the minimum over the committed fixed-`ds` censuses is
+**6.374 kPa** (`out/f10_census_B_ds4e-05.csv`), falling to 6.06 kPa at
+`ds = 2e-4`. **That minimum is 1.27× the P0 low-confinement corner's 5 kPa**, and
+§3 is where that matters.
 
 ---
 
@@ -176,27 +181,54 @@ it.** `-implexControl` is now a leg knob.
 the control off the doubling controller is not merely survivable, it is
 *accurate* and 6× cheaper.
 
-**Why control-off is defensible here, and how to keep it honest.** The guide §3's
-requirement is that the companion must be able to *fail* rather than force-accept
-at `dT_min`, because it runs at `commitState` where no global Newton is left to
-react. That requirement is about `-maxSubsteps`, which this deck sets (1000), not
-about `-implexControl`. The risk of running without the control is that a capped
-companion commit is **silent on this build** — `9c2f964` predates PR #838
-(`wp/99-refusal-propagation-audit`, still OPEN at the time of writing), which
-makes a capped companion commit abort the run. So the discipline is:
+### What leg N does and does not establish
 
-> **Run control-off, and read `implexRefusals[3]` (the companion bucket) at the
-> end of every leg.** On this deck it is **0** on every arm — the companion never
-> exhausted 1000 substeps anywhere between `p' = 5.7` and 106 kPa. Once #838
-> lands the run aborts instead, and the read becomes a belt-and-braces check
-> rather than the only one.
+**What it establishes — TERMINATION, by measurement.** The guide §3 concern is
+that the commit-time companion must be able to *fail* rather than force-accept at
+`dT_min`, because it runs where no global Newton is left to react; that concern is
+answered by `-maxSubsteps` (this deck sets 1000) and by reading the result.
+Measured: `implexRefusals[3]` (the companion bucket) is **0 on B, C, D, E, K, L,
+N and N1**, and `<= 42` anywhere in the campaign (M 42, F1 29, I 12, H 6, F3 3,
+J 2). So on *this deck* the companion integrated every increment it was handed,
+control-off terminates cleanly, and it is **6× cheaper** than the same arm with
+the growth pinned (58 s vs 364 s) and reaches 5.9× further than the controlled
+arm. The discipline that makes that safe to repeat:
 
-That is also the reconciliation the guide owes: `-implexControl` is not a
-low-confinement *requirement*; `-maxSubsteps` plus a watched companion bucket is.
-This deck's `p'` range is decades above `-Pmin = 0.0101` kPa and the companion
-integrates it without capping, which is precisely why it survives without the
-control. A deck whose companion *does* cap is a different case, and the control
-(or #838) is how you find out.
+> **Run control-off, and read `implexRefusals[3]` at the end of every leg.** The
+> pinned build `9c2f964` predates PR #838 (`wp/99-refusal-propagation-audit`,
+> still OPEN at the time of writing), so a capped companion commit is otherwise
+> **silent**; once #838 lands the run aborts instead and the read becomes a
+> belt-and-braces check rather than the only one.
+
+**What it does NOT establish — ACCURACY.** `-implexControl` is not only a
+termination device; ADR-92 §8 and the engine's own constructor echo make an
+accuracy claim about the *extrapolation*, printed on every control-off run
+including leg N's (`LadrunoSANISAND.cpp:2029`-`:2031`):
+
+> `-implexControl` OFF … P0 measured IMPL-EX unusable from `d_eps = 5e-4` at
+> `p0 = 5 kPa`, so at a low-confinement corner the control is a requirement, not
+> an option
+
+**Nothing measured here touches that claim, and this deck sits inside its
+range**, not decades outside it:
+
+* the deck's **minimum `p'` is 6.374 kPa** (`out/f10_census_B_ds4e-05.csv`) —
+  **1.27× the P0 corner's 5 kPa**, not a comfortable margin. (`-Pmin = 0.0101` kPa
+  is the wrong yardstick and the round-1 text used it; the corner is the yardstick);
+* leg N's strain increment **crosses `5e-4` at step 24** (`s/B = 0.0012`, where
+  its `ds` first reaches 0.32 mm — verified in `out/f10_N.csv`) and, per the
+  re-verification, runs at **1.28e-3 to 2.0e-3, i.e. 2.6–4× the P0 corner**, from
+  `s/B = 0.00248` to the target, where `ds` is pinned at the 1.0 mm cap;
+* and there is **no implicit anchor beyond `s/B = 0.00227`** (leg G), so nothing
+  on this deck checks the extrapolation over the range where it exceeds the
+  corner.
+
+So the honest statement is narrow: **control-off is the configuration that
+terminates and is far cheaper on this deck, and its accuracy over most of its
+range is unanchored.** A deck whose companion *does* cap is a different case, and
+the control (or #838) is how you find that out — but a control-off curve that
+nobody has confirmed against an implicit twin is a reach result, not an accurate
+one, exactly as ADR-92 §8 already requires.
 
 ---
 
@@ -227,11 +259,18 @@ Two families, and they behave completely differently:
 * **the seizure family** carries a plastic history of **1e-12 to 1e-21** — i.e.
   numerically zero — and its error does **not** decay: at `9.09e-13` the step
   halves 4e-5 → 2e-5 and the error moves from 0.2243 to 0.2143, **4.5 %**. Even
-  the 2.86e-07 point rebounds from 0.084 at 1e-5 to 0.172 at 5e-6. This is the
-  asymptote the source itself documents at `:2889`-`:2898` as the reason the
+  the asymptote the source itself documents at `:2889`-`:2898` as the reason the
   un-primed step is exempt: *"A pure elastic predictor's error must scale with
   `d_eps`; this one does not, which is the signature of a companion jump that is
   independent of the increment."*
+* **and one point that spans both families.** `|d_eps_p(n)| = 2.86e-07` decays
+  first order over three rungs — 0.2987 / 0.1491 / 0.0835 at `|dt|` 4e-5 / 2e-5 /
+  1e-5 — and then **rebounds to 0.1724 at 5e-6**, i.e. it is *non-monotone in
+  `dt`*. It refuses at every one of those four rungs. That single point is the
+  clearest thing in the table: the error is first order until it is not, and a
+  controller that only knows how to halve has no way to tell which regime it is
+  in. It is also why a leg can burn rungs all the way to `DS_MIN` while its
+  subdivision budget still has room.
 
 `implexPrimed` (`:2905`) is `GetNorm_Cov(mImplexDEpsP) > 0.0`. `9.09e-13` passes
 it. So a Gauss point that took essentially no plastic strain in the previous
@@ -407,10 +446,10 @@ claimed on any leg**. Also not established: mesh convergence (one mesh,
 | candidate | verdict | evidence |
 |---|---|---|
 | **(1)** the DILATANT-AT-REST extrapolation error, "wrong at every point at once" | **Aggravator of the error field, not the cause of the wall.** 100 % dilatant at rest confirmed (TIMs: 99.96 %), and the contractant twin (C) has a strictly smaller error field at every step size. But the wall is not an error-field phenomenon at all: the *same* error field with the control OFF (leg N) produces zero refusals and the target settlement. And at the step that refuses, **push step 3** has 4 over-tolerance points of 2 280 — one state replicated 4× by symmetry, **outside** the footing edge, all at `f = 0` (step 1 has 80, and is exempt). | §3, §5 |
-| **(2)** the substepper's error control vs the control's tolerance | **PARTLY — and it is the CONTROL's error control, not the SUBSTEPPER's.** The substepper is exonerated: `implexRefusals[3] = 0` on B/C/D/E/K/L/N/N1; the companion never capped between `p' = 5.7` and 106 kPa. But the control's own machinery **is** the wall: its `implexPrimed` gate (`:2905`) is a bare sign test, so points with a 1e-12…1e-21 plastic history lose the un-primed exemption and are refused on an error that does not decay with `dt` (0.2243 → 0.2143 for a halved step). That is the `FLOOR` of legs B, E, F1, I and M. **The first cut called this candidate REFUTED; that was wrong.** | §2, §4 |
+| **(2)** the substepper's error control vs the control's tolerance | **PARTLY — and it is the CONTROL's error control, not the SUBSTEPPER's.** The substepper is exonerated on the arms that matter: `implexRefusals[3] = 0` on B, C, D, E, K, L, N and N1, and `<= 42` anywhere in the campaign (M 42, F1 29, I 12, H 6, F3 3, J 2) — so the companion is not what refuses leg B. But the control's own machinery **is** the wall: its `implexPrimed` gate (`:2905`) is a bare sign test, so points with a 1e-12…1e-21 plastic history lose the un-primed exemption and are refused on an error that does not decay with `dt` (0.2243 → 0.2143 for a halved step). That is the `FLOOR` of legs B, E, F1, I and M. **The first cut called this candidate REFUTED; that was wrong.** | §2, §4 |
 | **(3)** the `nu*` K0 device | **REFUTED.** At `K0 = 0.455` the device's `nu* = 0.31271` **is** the material's own calibrated `nu = 0.3129` to three decimals, so leg B is simultaneously the "K0 reached by the material's own elasticity" control and there is nothing anomalous left behind. (The leg-C half of the first cut's argument is **withdrawn**: leg C changes `K0` *and* holds `nu = 0.45` for the whole push, so it is not a clean one-variable test of the device.) | §1 |
 | **(4)** the stepping controller | **A CO-FACTOR OF THE CONTROL, not an independent cause.** Control on: growth ×2 → 724 refusals and `FLOOR` at 0.0085; ×1.25 → 253 and 0.0113; ×1.0 → 6 and 0.0265. Control **off**: ×2 and ×1.0 both reach the target and agree to 0.383 %, with ×2 six times faster. The growth rule is harmless until an absolute per-step bound is placed on an error that grows with the step. | §3, §6 |
-| **(5) — the primary answer** | **This deck does not need `-implexControl`.** Bare `-implex` reaches `s/B = 0.05` in 104 steps, 0 subdivisions, 0 failed attempts, 58 s, with the companion bucket verified at zero — which is how the ADR-95 campaign that reached 0.15 was run. | §3 |
+| **(5) — the primary answer** | **`-implexControl` is what stops this deck.** Bare `-implex` reaches `s/B = 0.05` in 104 steps, 0 subdivisions, 0 failed attempts, 58 s, with the companion bucket verified at zero — which is how the ADR-95 campaign that reached 0.15 was run. Scope: that is a TERMINATION result; §8's accuracy claim is untested here and this deck sits inside its range (§3). | §3 |
 
 **A caveat we cannot close.** TIMs report `K0 = 0.82` walling *earlier* (0.0082)
 than `K0 = 0.455` (0.0125); this deck measures the opposite ordering by 2.5×
@@ -427,12 +466,17 @@ two orderings should not be quoted as agreement or disagreement.
 
 **For a self-weight SANISAND push, in order.**
 
-1. **Run bare `-implex`, and read the companion bucket.** Measured: target
-   settlement, 104 steps, 0 subdivisions, 58 s. Check `implexRefusals[3] == 0` at
-   the end of every leg — on a build predating PR #838 a capped companion commit
-   is otherwise silent; once #838 lands the run aborts instead. This is the
-   configuration the ADR-95 reference campaign used, and on this deck it is 156×
-   the reach-per-wall-second of the implicit leg.
+1. **Run bare `-implex`, read the companion bucket, and do not call the result a
+   capacity.** Measured: target settlement, 104 steps, 0 subdivisions, 58 s;
+   `implexRefusals[3] = 0`. Check that bucket at the end of every leg — on a build
+   predating PR #838 a capped companion commit is otherwise silent; once #838
+   lands the run aborts instead. This is the configuration the ADR-95 reference
+   campaign used, and on this deck it is 156× the reach-per-wall-second of the
+   implicit leg. **But see §3:** the control is also an accuracy device, this
+   deck's minimum `p'` (6.374 kPa) is 1.27× the P0 corner and leg N's strain
+   increment runs up to 4× the corner's `5e-4` with no implicit anchor past
+   `s/B = 0.00227`. Control-off buys reach and termination; it does not buy a
+   confirmed curve.
 2. **If you want the control, either pin the growth factor at 1.0 or use
    `tol = 0.5`.** Growth 1.0 at `tol 0.05`: 0.0265, 6 refusals, 400 s. `tol 0.5`
    at growth ×2: the target, 18 refusals, 169 s, and within **0.395 % mean /
@@ -499,4 +543,5 @@ Both are in `LEDGER_quirks.md`.
   reducer drops torn lines. The re-run changed leg M not at all (`0.011286`,
   identical to the digit — the physics was deterministic, only the file was
   damaged) and leg L from 0.0185 to 0.0187; both wall times rose once they had
-  the box to themselves (M 115 → 169 s).
+  the box to themselves (M **109.3 → 169.4 s**, the 109.3 read from the
+  pre-re-run `f10_M.json` at `26d5c607f`, not from the interleaved batch log).
