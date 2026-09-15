@@ -296,6 +296,13 @@ per-point `material`/`integrPoint` response (§7).
   plane-stress thickness stretch) and needs a `FiniteStrainND2DMaterial`;
   `-geom corot` is still deferred (§8).
 - **Material must support the requested plane view** or construction fails.
+- **`LadrunoQuad`/`CST`/`LST` propagate ANY nonzero `setTrialStrain` code** — `update()`
+  sums them (`ret += theMaterial[i]->setTrialStrain(eps)`) and the EAS path tests
+  `!= 0` — so a material refusal cuts the step here, whereas `LadrunoBrick` acts only
+  on the sentinel `LADRUNO_MATERIAL_REFUSED` (ADR-33/34, so ASDConcrete3D's negative
+  "best-state" codes do not fail a step) and `SSPquad` discards the code entirely.
+  At **commit** time no element propagates anything: `Domain::commit()` drops every
+  `commitState()` return (WP-99, `LEDGER_quirks.md`).
 
 ---
 

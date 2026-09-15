@@ -1821,9 +1821,10 @@ def test_implexcontrol_refusal_is_counted_and_reported():
 
     before_refusals = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
     before_stress = list(ops.eleResponse(1, 'material', 1, 'stress'))
-    assert len(before_refusals) == 4, (
-        'implexRefusals did not return the documented 4-component vector '
-        '(total, d2, control, companion)', before_refusals)
+    assert len(before_refusals) == 5, (
+        'implexRefusals did not return the documented 5-component vector '
+        '(total, d2, control, companion, commitLatched -- slot 4 added by '
+        'WP-99 F7)', before_refusals)
 
     big_dq = 10.0 * _PROBE_DQ_NOMINAL / 4.0
     ops.timeSeries('Linear', 3)
@@ -1867,17 +1868,25 @@ def test_implexcontrol_refusal_is_counted_and_reported():
 def test_companion_refusal_at_commit_is_observable():
     """B3: the COMMIT-time companion (`ladrunoImplexCommit` hitting the
     `-maxSubsteps` cap) refuses, and that refusal is OBSERVABLE only through
-    `implexRefusals[3]` (companion) -- `Domain::commit()` is `elePtr->
-    commitState();` with the return code discarded, so `analyze()` itself
-    keeps returning 0 even though the companion's own re-integration failed.
-    This is the DEFAULT configuration this file's other decks exercise
-    least: `-implexControl` OFF, cap mandatory.
+    `implexRefusals` -- `Domain::commit()` is `elePtr->commitState();` with
+    the return code discarded, so `analyze()` itself keeps returning 0 on
+    THIS deck (which has no free DOFs at all) even though the companion's
+    own re-integration failed. This is the DEFAULT configuration this
+    file's other decks exercise least: `-implexControl` OFF, cap mandatory.
 
-    Also checks the NEXT step's `f` is NOT stale: B3 requires the material
-    to commit its best-effort state (mEpsilon_n, mImplexDtCommit) even when
-    the companion itself refuses, so a constant-ds step immediately after a
-    counted companion refusal must still read f == 1.0 (the ordinary
-    same-ds ratio), not 0.0 or NaN.
+    REWRITTEN BY WP-99 (F7), 2026-09-14. The original version of this test
+    additionally asserted that the material COMMITS its partially
+    integrated best-effort state and that the next step's `f` is therefore
+    the ordinary same-ds ratio (1.0). That was ADR-92's B3 contract and it
+    is now RETIRED: committing a state the companion could not produce,
+    into a caller that drops the refusal, is what let the TIMs plane-strain
+    strip run to 2674 kPa on 25.9 million capped commits with every step
+    reported converged. WP-99 makes a failed commit commit NOTHING and
+    LATCH; the dedicated battery for the new contract is
+    `tests/test_ladrunoQuad_sanisand_implex_commit_refusal.py`. What this
+    test keeps is the half that is still true and is still the only thing
+    this zero-free-DOF deck can show: the refusal is counted, and it is
+    counted in the companion bucket.
 
     Reuses `sani._build_confined`, NOT `sani._build`: MEASURED on the fixed
     binary (2473ce46c), the plain `sani._build` deck's own plastic
@@ -1924,20 +1933,17 @@ def test_companion_refusal_at_commit_is_observable():
         'Python -- if it stays at 0 the refusal is silently swallowed '
         'exactly as B3 found', before_refusals, after_refusals)
 
+    assert after_refusals[4] == 1.0, (
+        'WP-99 (F7): the per-instance commit-refusal latch '
+        '(implexRefusals[4]) is not set after a commit-time companion '
+        'failure. Without it the material commits a state its own '
+        'companion could not produce and the analysis walks on',
+        after_refusals)
+
     detail = list(ops.eleResponse(1, 'material', 1, 'implexDetail'))
-    f_last = detail[5]
-    assert math.isfinite(f_last), (
-        'the extrapolation factor is not finite (NaN/inf) on the step after '
-        'a companion refusal at commit -- B3 requires committing a valid '
-        'best-effort state even when the companion itself fails',
-        f_last, detail)
-    assert f_last == pytest.approx(1.0, rel=1.0e-6, abs=1.0e-9), (
-        'the extrapolation factor after a companion refusal at commit is '
-        'not 1.0 on this constant-ds deck -- B3 requires the material to '
-        'commit its best-effort state (mEpsilon_n, mImplexDtCommit) even '
-        'when the companion itself refuses, so the NEXT step\'s f must '
-        'still be the ordinary same-ds ratio, not stale or zero',
-        f_last, detail)
+    assert math.isfinite(detail[5]), (
+        'the extrapolation factor is not finite (NaN/inf) after a refused '
+        'commit -- a latched material must still be readable', detail)
 
 
 # ===========================================================================

@@ -314,6 +314,29 @@ a verdict yet.
 
 ## 9. Known limits
 
+### `-implex` without `-implexControl` used to walk past its own failed commits — WP-99 (F7)
+
+Until WP-99 a commit-time companion failure propagated **nowhere**. `Domain::commit()`
+(`SRC/domain/domain/Domain.cpp`) is `elePtr->commitState();` with the return value dropped, so no
+element — fork or vanilla — can refuse a step at commit. When `ladrunoImplexCommit()` found the
+`-maxSubsteps` cap hit, it committed the partially integrated state `ModifiedEuler` had left at
+`T < 1`, returned `LADRUNO_MATERIAL_REFUSED` into that discarding caller, and the analysis
+continued reporting every step converged. The 10-warning-per-process budget meant a long run said
+so ten times and then went quiet. What that buys, measured: the TIMs plane-strain strip
+(`LadrunoQuad` bbar `PlaneStrain`, 9 720 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`) reached
+**25.9 million** commit-time companion cap hits and drew a **straight-line load–settlement curve to
+2 674 kPa** with **every step reported converged** — a number with no mechanics behind it at all.
+Since WP-99 such a commit commits **nothing**: the trial is restored from the committed state,
+`ManzariDafalias::commitState()` is skipped, and the instance **latches**. The next
+`setTrialStrain` on that integration point returns `LADRUNO_MATERIAL_REFUSED`, every element that
+forwards the code fails its update, and the run **stops** at the first invalid commit. The latch is
+sticky and is cleared only by `revertToStart()` — a driver that subdivides keeps being refused and
+gives up, which is the intended outcome, because the step the latch is about was already *accepted*
+and there is nothing to revert to. **`-implexControl` is the way to get a *recoverable* refusal**:
+it catches the same cap one phase earlier, at the trial, so the step it belongs to fails and a
+retry at a smaller increment is meaningful. Read the latch through slot 4 (`commitLatched`) of the
+`implexRefusals` response; the companion count is slot 3, as before.
+
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
   matched-window `t_init` tail (`PLATEAU_FRAC = 2 %`; all three run far above it). `-implex` is

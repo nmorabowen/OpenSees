@@ -6465,3 +6465,43 @@ Rules that generalize:
   the SOE's assembly-time (mid-Newton-iteration) tangent across ~135
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
+
+### `Domain::commit()` discards element commit returns — a material cannot refuse at commit; `LadrunoQuad` propagates any nonzero update code, `LadrunoBrick` only the sentinel
+- **Bites:** you write a material that detects, at `commitState()`, that the step
+  it is being asked to commit is not integrable — and you return a failure code.
+  Nothing happens. The step is committed, the analysis reports it converged, and
+  the run walks on. Measured instance: `LadrunoSANISAND` under `-implex` without
+  `-implexControl` on the TIMs plane-strain strip — **25.9 million** commit-time
+  companion cap hits, a straight-line load–settlement curve to 2 674 kPa, every
+  step "converged".
+- **Why:** `Domain::commit()` (`SRC/domain/domain/Domain.cpp`, the element loop)
+  is a bare `elePtr->commitState();`. The return value is not captured, not
+  summed, not tested. Nothing downstream of it exists to propagate: by the time
+  `commitState()` runs the algorithm has already declared convergence and
+  `StaticAnalysis::analyze()` is past its failure branch
+  (`StaticAnalysis.cpp`, the `revertToLastCommit` + `return -3` path belongs to a
+  failed `solveCurrentStep`, not to a failed commit). **A refusal is only
+  actionable at the TRIAL** (`setTrialStrain`).
+- **And even at the trial the elements disagree.** Audited on `9c2f964ea`:
+  - **Propagate ANY nonzero code** (`ret += theMaterial[i]->setTrialStrain(...)`):
+    `LadrunoQuad` (`update()`, and `!= 0` on the EAS path), `LadrunoCST`,
+    `LadrunoLST`, `LadrunoBrick20`, `BezierTet10`, `BezierTri6`, and vanilla
+    `FourNodeQuad` and `FourNodeQuadUP`.
+  - **Propagate ONLY the sentinel** `LADRUNO_MATERIAL_REFUSED`: `LadrunoBrick`
+    — deliberately, per ADR-33/34, so `ASDConcrete3D`'s negative "best-state"
+    codes do not fail a step.
+  - **Discard the code entirely**: `Brick` (= `stdBrick`), `BbarBrick`,
+    `BrickUP`, `SSPbrick`, `SSPquad`, `LadrunoSolidShell`.
+  So the same refusal cuts the step on a `LadrunoQuad` mesh and is invisible on
+  an `SSPquad` one, and a material that returns "some nonzero value" rather than
+  the sentinel is silently swallowed by `LadrunoBrick` specifically. Four shipped
+  `opserr` texts stated this wrongly ("today LadrunoBrick", and `QuadUP` listed
+  as a discarder when it is in fact a propagator) until WP-99 corrected them.
+- **Workaround/status (2026-09-14):** WP-99 gave `LadrunoSANISAND` a sticky
+  commit-time refusal latch — a failed commit commits nothing and every later
+  `setTrialStrain` returns the sentinel, so the run stops at the first invalid
+  commit instead of walking past it. That is a per-material workaround, not a
+  fix to the engine: **the general problem stands**. If you want a *recoverable*
+  refusal, refuse at the trial (`-implexControl` is the SANISAND example).
+  Cross-links: [[LEDGER_implementations]] "IMPL-EX commit-time refusal latch",
+  [[LadrunoSANISAND_implex_guide]] §9.
