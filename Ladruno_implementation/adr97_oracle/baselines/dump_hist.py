@@ -80,7 +80,19 @@ def _build_one(name):
 
 def child(name, out):
     from _testbed import ops
+    # Ladruno (ADR-94 addendum, F8, review round 1 nit 5): this child binds
+    # the engine through the bare `from _testbed import ops` dual-import,
+    # i.e. via whatever `import opensees` resolves to in the child's
+    # sys.path -- it never asserted WHICH build it got, so the byte-identity
+    # gate that consumes these dumps was only as trustworthy as the caller's
+    # PYTHONPATH.  The hash is now RECORDED in the record itself (recorded,
+    # not asserted: a baseline is by construction a different build, so an
+    # equality assertion would be wrong -- what was missing was provenance).
     rec = {}
+    try:
+        rec['ladrunoBuild'] = str(ops.ladrunoBuild())
+    except Exception:                                   # pragma: no cover
+        rec['ladrunoBuild'] = 'unknown'
     try:
         build, nsteps = _build_one(name)
         build()
