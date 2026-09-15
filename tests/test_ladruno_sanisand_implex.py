@@ -46,8 +46,9 @@ MONOTONE NEGATIVE pseudo-clock (`LoadControl(-ds)`, the campaign deck's own
 shape) through a `ds` change and asserts `implexDetail[5]` tracks the
 SIGNED ratio `dt_{n+1}/dt_n * alpha` -- the gap B1 exploited (F1/F7,
 coverage row 10); (2) `-implexControl` and the commit-time companion
-refusal are now COUNTED via the new `implexRefusals` response (Vector(4):
-total, d2, control, companion) -- the companion-at-commit case (B3:
+refusal are now COUNTED via the new `implexRefusals` response (a Vector(4)
+of total, d2, control, companion when this note was written; WP-99 widened
+it to 6 -- see the response-contract table in the -implex guide) -- the companion-at-commit case (B3:
 `Domain::commit()` discards the return code, so this counter is the ONLY
 way to observe it from Python) gets a dedicated test (coverage row 20,
 previously NOT COVERED); (3) `getCopy(const char*)` is now exercised AFTER
@@ -1817,8 +1818,9 @@ def test_negative_monotone_clock_runs_the_spec_factor():
 # ===========================================================================
 
 def test_implexcontrol_refusal_is_counted_and_reported():
-    """`-implexControl` refusing increments `implexRefusals` (Vector(4):
-    total, d2, control, companion) at BOTH index 0 (total) and index 2
+    """`-implexControl` refusing increments `implexRefusals` (widened to
+    Vector(6) by WP-99; slots 0-3 are still total, d2, control, companion)
+    at BOTH index 0 (total) and index 2
     (control-specific), and leaves the committed stress unchanged on a
     free-DOF deck (where a silently-accepted wrong answer WOULD move it).
 

@@ -415,7 +415,7 @@ def test_latch_is_cleared_only_by_reverttostart():
 #  (5) the response contract
 # ===========================================================================
 def test_implexrefusals_carries_the_commitlatched_slot():
-    """`implexRefusals` grew 4 -> 5 in WP-99. Slots 0-3 stay the process-wide
+    """`implexRefusals` grew 4 -> 6 in WP-99. Slots 0-3 stay the process-wide
     counters ADR-92 shipped; slot 4 is the only PER-INSTANCE entry -- 1 while
     THIS integration point is refusing. A recorder or a driver needs that
     distinction: the counters answer "how many", slot 4 answers "is the run
