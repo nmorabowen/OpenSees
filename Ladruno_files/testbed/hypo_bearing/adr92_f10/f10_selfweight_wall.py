@@ -295,11 +295,26 @@ LEGS = {
     "H":  ("B with a heavy 100 kPa uniform surcharge: min p' raised two decades, "
            "self-weight and the dilatant K0 state kept",
            dict(k0=0.455, q_uniform=100.0)),
+    "I":  ("B with -implexGuard off -- the DECISIVE leg for the P2-2/control "
+           "interaction: stop forcing f = 0 on a reversing/softening predecessor "
+           "and see whether the control still refuses",
+           dict(k0=0.455, guard="off")),
+    "J":  ("B with -implexGuard off AND -implexTrialGuard off -- neither f = 0 "
+           "path armed", dict(k0=0.455, guard="off", trialguard="off")),
+    "K":  ("B with the controller's growth factor pinned at 1.0 (ds never "
+           "doubles, so the clock ratio f can never exceed 1)",
+           dict(k0=0.455, grow=1.0)),
+    "L":  ("B at a CONSTANT ds = 8e-5 m -- the largest step the s/B = 0.0085 "
+           "refinement probe measured at 4.4x under tol (max err 0.011)",
+           dict(k0=0.455, grow=1.0, ds0=8.0e-5)),
+    "M":  ("B with a GENTLE growth factor 1.25 instead of 2, so the clock ratio "
+           "f on a growth step is 1.25 and not 2",
+           dict(k0=0.455, grow=1.25)),
 }
 
 
 def build(h0, k0, gamma, q_uniform, q_surch, q_foot, implex, tol, redlim,
-          factor, maxsubsteps, verbose=True):
+          factor, maxsubsteps, guard="on", trialguard="on", verbose=True):
     """Build + confine + flip.  Returns the deck dict."""
     nodes, hexes, trib, sets, vol, cen = strip_mesh(h0)
     n_hex, n_nodes = len(hexes), len(nodes)
@@ -319,7 +334,10 @@ def build(h0, k0, gamma, q_uniform, q_surch, q_foot, implex, tol, redlim,
         "-maxSubsteps", int(maxsubsteps),
         *(("-implex",) if implex else ()),
         *(("-implexControl", float(tol), float(redlim)) if implex else ()),
-        *(("-implexFactor", factor) if (implex and factor != "fixed") else ()))
+        *(("-implexFactor", factor) if (implex and factor != "fixed") else ()),
+        *(("-implexGuard", guard) if (implex and guard != "on") else ()),
+        *(("-implexTrialGuard", trialguard)
+          if (implex and trialguard != "on") else ()))
 
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
@@ -508,7 +526,8 @@ def run_leg(args, name, desc, kw):
     print(f"=== leg {name}: {desc}", flush=True)
     t0 = time.time()
     deck = build(args.h0, k0, gamma, q_uniform, q_surch, q_foot, implex,
-                 tol, redlim, factor, args.maxsubsteps)
+                 tol, redlim, factor, args.maxsubsteps,
+                 kw.get("guard", "on"), kw.get("trialguard", "on"))
     foot, uz0, r0 = push_setup(deck)
     ptol = PUSH_TOL_REL * max(deck["applied"], 1.0)
     ladder = [("Newton", ptol, 25, 0),
@@ -600,12 +619,14 @@ def run_leg(args, name, desc, kw):
     print(f"    refusals: total {r['total']}  control {r['control']}  "
           f"companion {r['companion']}  signChange {r['sign']}", flush=True)
     print(f"    guards: floor {g[0]}  f=0 {g[1]}  hold {g[2]}  rev {g[3]}  "
-          f"trialF0 {g[4]}  flipAbsorb {g[5]}  backoff {g[6]}", flush=True)
+          f"trialF0 {g[4]}  holdSkip {g[5]}  backoff {g[6]}", flush=True)
     meta = dict(leg=name, desc=desc, build=ops.ladrunoBuild(), h0=args.h0,
                 k0=k0, nu=deck["nu"], gamma=gamma, q_uniform=q_uniform,
                 q_surch=q_surch, q_foot=q_foot, implex=implex, tol=tol,
                 redlim=redlim, factor=factor, maxsubsteps=args.maxsubsteps,
-                hold=hold, ds0=ds0, grow=grow, mode=mode, verdict=verdict,
+                hold=hold, ds0=ds0, grow=grow, guard=kw.get("guard", "on"),
+                trialguard=kw.get("trialguard", "on"),
+                mode=mode, verdict=verdict,
                 wall=wall, steps=nstep, nsub=nsub, nfail=nfail,
                 s_over_B=s_end, q_end=q_end, q_max=q_max, refusals=r,
                 guards=g, patch_err=deck["patch_err"],
@@ -632,7 +653,8 @@ def run_census(args, name, desc, kw):
     print(f"=== census {name}: {desc}", flush=True)
     t0 = time.time()
     deck = build(args.h0, k0, gamma, q_uniform, q_surch, q_foot, True,
-                 args.census_tol, 1.0e-6, "fixed", args.maxsubsteps)
+                 args.census_tol, 1.0e-6, "fixed", args.maxsubsteps,
+                 kw.get("guard", "on"), kw.get("trialguard", "on"))
 
     org = deck["origin"]
     dil = [r for r in org if r["eta"] == r["eta"] and r["eta"] > r["Md"]]
@@ -650,6 +672,7 @@ def run_census(args, name, desc, kw):
 
     foot, uz0, r0 = push_setup(deck)
     ptol = PUSH_TOL_REL * max(deck["applied"], 1.0)
+    sfx = f"{name}_ds{args.census_ds:g}"
     rows_out, have = [], []
     for step in range(1, args.census_steps + 1):
         ops.integrator("LoadControl", -args.census_ds)
@@ -661,6 +684,14 @@ def run_census(args, name, desc, kw):
             ops.algorithm("KrylovNewton")
             rc = ops.analyze(1)
         s = uz0 - ops.getTime()
+        if rc != 0:
+            # A failed step reverts the domain, so every `implexDetail` reads the
+            # PREVIOUS commit (or zero).  Censusing it would report the guard,
+            # not the material: stop instead, and say why.
+            print(f"  -- step {step}: rc={rc} -- the analysis did NOT converge at "
+                  f"ds = {args.census_ds:g} m; the census stops here rather than "
+                  f"report a reverted state.", flush=True)
+            break
         c = gp_census(deck["n_hex"], deck["cen"], deck["half"])
         have = [r for r in c if "err" in r]
         errs = np.array([r["err"] for r in have]) if have else np.zeros(0)
@@ -710,7 +741,7 @@ def run_census(args, name, desc, kw):
                              med=float(np.median(errs)) if len(errs) else 0.0,
                              mx=float(errs.max()) if len(errs) else 0.0))
     if have:
-        path = os.path.join(args.out, f"f10_census_{name}.csv")
+        path = os.path.join(args.out, f"f10_census_{sfx}.csv")
         with open(path, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["ele", "gp", "x", "z", "dx", "p", "q", "eta", "psi",
@@ -733,14 +764,109 @@ def run_census(args, name, desc, kw):
                 eta_max_over_Mc=deck["eta_max"] / M_C,
                 patch_err=deck["patch_err"], steps=rows_out,
                 wall=time.time() - t0)
-    with open(os.path.join(args.out, f"f10_census_{name}.json"), "w") as f:
+    with open(os.path.join(args.out, f"f10_census_{sfx}.json"), "w") as f:
+        json.dump(meta, f, indent=1, default=float)
+    return meta
+
+
+
+# --------------------------------------------------------------------------
+# the step-size refinement probe
+# --------------------------------------------------------------------------
+def run_probe(args, name, desc, kw):
+    """Walk to a FIXED settlement on a refusal-free path (constant ds, control
+    tolerance set so nothing can refuse), then take ONE step of size
+    `--census-ds` and census the error.
+
+    THE QUESTION: at the state where leg B seizes, does the IMPL-EX error at a
+    Gauss point SCALE with the step?  If it does, the wall is the controller
+    walking into an absolute tolerance and a smaller step is always a way out.
+    If it does not, the companion is making a jump independent of the increment
+    -- the un-primed-step signature (`LadrunoSANISAND.cpp:2895-2900`) reached on
+    a PRIMED step, where no exemption applies and no subdivision can help.
+
+    Every ds is a SEPARATE process run to the same settlement on the same
+    deterministic path, so the probe steps all start from the same committed
+    state.
+    """
+    gamma = kw.get("gamma", GAMMA_EFF)
+    q_uniform = kw.get("q_uniform", 0.0)
+    q_surch = kw.get("q_surch", Q_SURCH)
+    q_foot = kw.get("q_foot", Q_FOOT_TOT)
+    k0 = kw.get("k0", 0.455)
+
+    print(f"=== probe {name} to s/B = {args.probe_s}, then ONE step at "
+          f"ds = {args.census_ds:g} m", flush=True)
+    t0 = time.time()
+    deck = build(args.h0, k0, gamma, q_uniform, q_surch, q_foot, True,
+                 args.census_tol, 1.0e-6, "fixed", args.maxsubsteps,
+                 kw.get("guard", "on"), kw.get("trialguard", "on"))
+    foot, uz0, r0 = push_setup(deck)
+    ptol = PUSH_TOL_REL * max(deck["applied"], 1.0)
+    target = args.probe_s * B_FOOT
+    n = 0
+    while (uz0 - ops.getTime()) < target - 1e-12:
+        if time.time() - t0 > args.wall:
+            print(f"    WALL before the probe settlement "
+                  f"(s/B = {(uz0-ops.getTime())/B_FOOT:.6f})", flush=True)
+            return None
+        ops.integrator("LoadControl", -DS_BASE)
+        ops.test("NormUnbalance", ptol, 25, 0)
+        ops.algorithm("Newton")
+        if ops.analyze(1) != 0:
+            ops.test("NormUnbalance", 10 * ptol, 60, 0)
+            ops.algorithm("KrylovNewton")
+            if ops.analyze(1) != 0:
+                print(f"    walk-up FAILED at s/B = "
+                      f"{(uz0-ops.getTime())/B_FOOT:.6f}", flush=True)
+                return None
+        n += 1
+    s_walk = uz0 - ops.getTime()
+    print(f"    walked {n} steps of {DS_BASE:g} m to s/B = {s_walk/B_FOOT:.6f} "
+          f"(q = {q_now(foot, r0):.3f} kPa) in {time.time()-t0:.0f} s", flush=True)
+
+    ops.integrator("LoadControl", -args.census_ds)
+    ops.test("NormUnbalance", ptol, 60, 0)
+    ops.algorithm("Newton")
+    rc = ops.analyze(1)
+    if rc != 0:
+        ops.test("NormUnbalance", 10 * ptol, 80, 0)
+        ops.algorithm("KrylovNewton")
+        rc = ops.analyze(1)
+    c = gp_census(deck["n_hex"], deck["cen"], deck["half"])
+    have = [r for r in c if "err" in r]
+    errs = np.array([r["err"] for r in have]) if have else np.zeros(0)
+    print(f"    PROBE rc={rc}  ds={args.census_ds:g}  n={len(errs)}  "
+          f"median {np.median(errs):.5g}  p99 {np.percentile(errs,99):.5g}  "
+          f"max {errs.max():.5g}  n>0.05 {int((errs>0.05).sum())}  "
+          f"n>0.1 {int((errs>0.1).sum())}", flush=True)
+    bad = sorted(have, key=lambda r: -r["err"])[:6]
+    for r in bad:
+        print(f"      worst {r['ele']:5d}/{r['gp']} z {r['z']:7.3f} dx "
+              f"{r['dx']:7.3f} p' {r['p']:8.3f} eta {r['eta']:6.3f} "
+              f"eta/M^b {r['eta']/r['Mb']:6.3f} eta/M^d {r['eta']/r['Md']:6.3f} "
+              f"psi {r['psi']:8.4f} err {r['err']:8.5f} dev {r['err_dev']:8.5f} "
+              f"vol {r['err_vol']:8.5f} f {r['f']:7.4f}", flush=True)
+    meta = dict(leg=name, kind="probe", build=ops.ladrunoBuild(),
+                probe_s=args.probe_s, s_walked=s_walk / B_FOOT, rc=rc,
+                ds=args.census_ds, n=len(errs),
+                median=float(np.median(errs)), max=float(errs.max()),
+                n_over_005=int((errs > 0.05).sum()),
+                n_over_01=int((errs > 0.1).sum()),
+                worst=[{k: float(v) if k not in ("ele", "gp") else int(v)
+                        for k, v in r.items()} for r in bad],
+                wall=time.time() - t0)
+    with open(os.path.join(
+            args.out,
+            f"f10_probe_{name}_s{args.probe_s:g}_ds{args.census_ds:g}.json"),
+            "w") as f:
         json.dump(meta, f, indent=1, default=float)
     return meta
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["leg", "census"])
+    ap.add_argument("cmd", choices=["leg", "census", "probe"])
     ap.add_argument("--leg", required=True)
     ap.add_argument("--out", default=_HERE)
     ap.add_argument("--h0", type=float, default=0.5)
@@ -751,6 +877,7 @@ def main():
     ap.add_argument("--census-tol", type=float, default=1.0e9)
     ap.add_argument("--census-ds", type=float, default=DS_BASE)
     ap.add_argument("--census-steps", type=int, default=3)
+    ap.add_argument("--probe-s", type=float, default=0.0085)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -765,6 +892,8 @@ def main():
     desc, kw = LEGS[args.leg]
     if args.cmd == "leg":
         run_leg(args, args.leg, desc, kw)
+    elif args.cmd == "probe":
+        run_probe(args, args.leg, desc, kw)
     else:
         run_census(args, args.leg, desc, kw)
 
