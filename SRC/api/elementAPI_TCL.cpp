@@ -490,10 +490,30 @@ const char* OPS_GetString(void)
     return res;
 }
 
+// Ladruno (WP-103): fill the caller's buffer. This used to be a bare
+// `return OPS_GetString();` -- correct as a return value (everything IS a
+// string in Tcl) but it never touched `buffer`, so the API's documented
+// contract ("does a strcpy", elementAPI.h:209) was honoured only by the
+// openseespy backend (PythonModule::getStringFromAll). Every caller written
+// as `char tok[64]; OPS_GetStringFromAll(tok, sizeof(tok)); strcmp(tok,...)`
+// therefore read uninitialised memory under OpenSees.exe and the option was
+// silently lost (e.g. `-k auto` / `-dof` on the Ladruno coupling elements).
+// Out-of-args still returns 0 -- exactly what OPS_GetString() returns here --
+// so no existing null-checking caller changes behaviour, but the buffer is
+// emptied so a caller that ignores the return reads "" rather than garbage.
 extern "C"
 const char* OPS_GetStringFromAll(char *buffer, int len)
 {
-  return OPS_GetString(); // Everything's a string in Tcl
+  const char* res = OPS_GetString(); // Everything's a string in Tcl
+  if (buffer == 0 || len <= 0)
+    return res;
+  if (res == 0) {
+    buffer[0] = '\0';
+    return 0;
+  }
+  strncpy(buffer, res, (size_t)(len - 1));
+  buffer[len - 1] = '\0';
+  return buffer;
 }
 
 extern "C"
