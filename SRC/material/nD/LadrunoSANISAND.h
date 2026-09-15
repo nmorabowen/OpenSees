@@ -752,4 +752,11 @@ class LadrunoSANISAND : public ManzariDafalias
     bool schemeReachesModifiedEuler(void) const;   // Ladruno
 };
 
+// Ladruno WP-104: zero the process-wide IMPL-EX diagnostic ledger
+// (`implexRefusals` slots 0-3 and 5, `implexGuards`, `avgImplexError` and its
+// commit-round marker) on `wipe`. Defined in LadrunoSANISAND.cpp, where the
+// singleton lives in an anonymous namespace; called from
+// OPS_clearAllNDMaterial(). Not called by ops.reset()/revertToStart().
+void ladrunoSanisandResetImplexGlobals(void);
+
 #endif

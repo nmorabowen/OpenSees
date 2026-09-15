@@ -3863,24 +3863,25 @@ def test_explicit_default_words_are_byte_identical(capfd):
             'variant a (no explicit words) at step %d' % (step + 1),
             step, sa, sc)
 
-    # implexGuards is process-wide, so compare DELTAS from each variant's
-    # own baseline (all three start from 0 new activity relative to
-    # whatever ran earlier in the same pytest process) -- since a/b/c ran
-    # back to back with nothing else in between, and each drives the
-    # IDENTICAL mechanical history, their raw deltas are directly
-    # comparable as consecutive equal-sized increments.
-    delta_ab = [b - a for a, b in zip(guards_a, guards_b)]
-    delta_bc = [c - b for b, c in zip(guards_b, guards_c)]
-    assert delta_ab == delta_bc, (
-        'implexGuards moved by a DIFFERENT amount from variant a->b than '
-        'from variant b->c -- the three decks are not driving the material '
-        'through the identical sequence of guard events',
-        guards_a, guards_b, guards_c, delta_ab, delta_bc)
-    assert guards_b[4] > guards_a[4], (
-        'implexGuards[4] (-implexTrialGuard fallbacks) did not increase at '
-        'all across this deck\'s 8 steps -- the deck is not actually '
+    # implexGuards is process-wide WITHIN a model: since WP-104 every
+    # `wipe` zeroes the census, so each variant's raw census IS its own
+    # delta (before WP-104 the three accumulated back to back and only the
+    # consecutive DELTAS were comparable; this block asserted
+    # `delta_ab == delta_bc` and `guards_b[4] > guards_a[4]`, which read the
+    # cross-wipe accumulation as a feature -- exactly the semantics WP-104
+    # removed, and the one assertion in the SANISAND suite that noticed).
+    # Each variant drives the IDENTICAL mechanical history from a zero
+    # census, so the three raw censuses must be EQUAL outright -- a
+    # stronger claim than equal deltas.
+    assert guards_a == guards_b == guards_c, (
+        'the three decks are not driving the material through the identical '
+        'sequence of guard events (each census is per-model since WP-104)',
+        guards_a, guards_b, guards_c)
+    assert guards_a[4] > 0, (
+        'implexGuards[4] (-implexTrialGuard fallbacks) did not fire at all '
+        'across this deck\'s 8 steps -- the deck is not actually '
         'exercising the flag this test is about; the bit-identity result '
-        'above would be vacuous', guards_a, guards_b)
+        'above would be vacuous', guards_a)
 
     line_a = _echo_guard_floor_line(capfd, 8910, ('-implex', '-maxSubsteps', 20000))
     line_b = _echo_guard_floor_line(capfd, 8911, ('-implex', '-maxSubsteps', 20000) + explicit_words)
