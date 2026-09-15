@@ -6487,6 +6487,75 @@ Rules that generalize:
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
 
+### `Domain::revertToLastCommit()` (and `revertToStart()`) END with `return this->update();` — so every element's `update()` fires ONCE MORE on the just-reverted state
+- **Bites:** any element that MUTATES state inside `update()` — a path-dependent internal
+  variable, an augmented-Lagrangian multiplier, a counter — advances it one extra time on the
+  state it has just rolled back to. Symptom is tiny and therefore lethal: an exactness test
+  that should compare equal is off by one increment evaluated at the *converged* gap. Real
+  instance (WP-101, `LadrunoKinematicCoupling`): the AL Uzawa update `λ += D g` was moved into
+  `update()` so the constraint converges within a step; a deliberately failed step then left λ
+  off its committed value by `1.5e-10` on one row of 27 — `D·g` at the committed state, where
+  `g ~ 1e-14` is not exactly zero. On a run with many failed steps that ratchets.
+- **Why:** `Domain.cpp` — `revertToLastCommit()` reverts every node and element, restores
+  `currentTime`/`dT`, re-applies the load at the committed time, and then does
+  `return this->update();` (the trial state has moved, so the elements must be re-informed).
+  `revertToStart()` ends the same way. The revert therefore calls `Element::revertToLastCommit()`
+  on every element FIRST and `Element::update()` on every element SECOND — a pairing nothing in
+  the `Element` interface documents.
+- **Also `Domain::recv()`** (the FE_Datastore / parallel restore path) calls `theEle->update()`
+  immediately after `recvSelf`, with exactly the same consequence: a database save/restore moved the
+  same element's λ by `6.6e-9`. Arm the latch in `recvSelf` too — clearing it there (the obvious
+  "reset my transient flags" reflex) is precisely wrong.
+- **Workaround/status (2026-09-14):** a **one-shot latch**: the element's
+  `revertToLastCommit()`/`revertToStart()`/`recvSelf()` arms a transient `bool`, and the first `update()`
+  after it consumes the flag and returns without advancing. Order is safe because the domain
+  finishes ALL the reverts before it calls update at all. Do NOT serialize the latch — it only
+  ever lives between those two calls. Same shape as the ADR-39 contact-pair revert note above:
+  if your element has state in `update()`, it has this problem. See
+  [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### `Domain::addElement()` calls `update()` at DECLARATION time — so any lazy resolve that LATCHES on its first attempt silently locks in whatever the half-built domain could see
+- **Bites:** an element that resolves something lazily (a `-host` element's stiffness scale, a material pointer, a neighbour's geometry) behind a `if (resolved) return; ... resolved = true;` guard gets its FIRST call from `Domain::addElement`, i.e. while the deck is still being read. Anything declared after it is invisible. Real instance (WP-101): `LadrunoKinematicCoupling -k auto -host <ele>` in a deck that declares the coupling before the host element — the lookup failed, `ktResolved` latched anyway, so `K_t` silently stayed at the 1e12 default instead of the intended 7.93e6, AND the conditioning warning that reads the same host could never fire. Host-first decks were fine; coupling-first decks were silently wrong. Nothing in the run said so.
+- **Why:** `Domain::addElement()` ends by calling the element's `setDomain()` and then `update()` so the element is consistent the moment it joins — a reasonable invariant that happens to make "first call" and "deck fully read" completely different moments.
+- **Workaround/status (2026-09-14):** **do not latch on a failed resolve.** Return without setting the flag and retry on the next call; the retry is free (a pointer lookup) next to a solve. If you need to warn that the target is genuinely missing rather than merely not-declared-yet, gate the warning on an analysis existing (`OPS_GetAlgorithm()` non-null) — that is the cheapest available "we are past deck construction" signal. See [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A zero-increment `DisplacementControl` step is DEGENERATE — the load-factor correction `dLambda = −dUabar/dUahat` is unbounded, so "hold everything" must be `LoadControl 0.0`
+- **Bites:** the natural way to hold a state while something else converges (an augmentation
+  sweep, a staged activation, a settling pass) is "same integrator, zero increment". Under
+  `DisplacementControl` that is a trap: `newStep` sets `dlambda = theIncrement/dUahat = 0`, but
+  the corrector `update()` still computes `dLambda = -dUabar/dUahat`
+  (`SRC/analysis/integrator/DisplacementControl.cpp:332`) from whatever residual displacement
+  is left, and with no increment to normalise it the load factor runs away. Measured on a
+  2×2×2 elastic gate: a single zero-increment step moved the load factor from ~1.0 to
+  **377.19**; a reviewer's fixture reached **−1.6e38**. The step often still returns `ok = 0`,
+  so nothing announces it.
+- **Why:** `DisplacementControl` is formulated to solve for `lambda` such that the control DOF
+  moves by `theIncrement`. At `theIncrement = 0` the constraint "move the control DOF by zero"
+  is satisfied by the trivial solution only if the residual is already zero; otherwise the
+  method is free to buy that zero displacement with an arbitrarily large load factor.
+- **Workaround/status (2026-09-14):** to hold a converged state, switch to **`LoadControl 0.0`**
+  — it freezes the load factor and leaves the control DOF free, which is what "hold" actually
+  means here. Note the consequence: a `DisplacementControl` target is **released** while you
+  hold (measured 1.08 % drift on the WP-101 gate while the AL multipliers tightened), so read
+  the control displacement back afterwards rather than assuming it. See
+  [[LadrunoKinematicCoupling_guide]] §4.3 / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A `ladrunoBeginAugment` without its `ladrunoEndAugment` does not fail — it silently VOIDS every later recorder sample
+- **Bites:** the ADR-41 D1 held-load augmentation sweep suppresses recorders and the commitTag
+  bump so its passes leave no trace in the output stream (`Domain::commit()`'s
+  `if (!contactAugmenting)` guard). That is correct while the sweep is open — and catastrophic
+  if it is never closed: the next ordinary step returns `ok = 0`, the time advances `1 → 2`
+  exactly as expected, and the recorder file is **empty**. Every downstream check (peak
+  displacement, time history, energy balance) reads a truncated or empty stream, and nothing in
+  the run says why.
+- **Why:** the flag lives on the `Domain` (`Domain::contactAugmenting`), not on the analysis or
+  a scope guard, and both commands were bare idempotent setters.
+- **Workaround/status (2026-09-14, WP-101):** a second `ladrunoBeginAugment` without an
+  intervening `End` now **warns** (it is the signature of exactly this mistake), and the flag is
+  cleared by `Domain::clearAll()` (`wipe`) and by `OpenSeesCommands::wipeAnalysis()`. Inside one
+  analysis nothing else will catch it, so write the sweep as `try: … finally:
+  ops.ladrunoEndAugment()`. Marked `// Ladruno` in `OpenSeesOutputCommands.cpp`,
+  `OpenSeesCommands.cpp` and `Domain.cpp` — see [[LEDGER_vanilla_files]].
 ## ...and the fix for it was a UNION, which is only safe while `K*etabar/G <= eta` (ADR-94 addendum, F8)
 
 wp/94f (above) repaired the Euclidean apex test by **unioning** the yield
