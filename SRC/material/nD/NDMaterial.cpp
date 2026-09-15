@@ -83,9 +83,23 @@ NDMaterial *OPS_getNDMaterial(int tag)
   return theMat;
 }
 
+// Ladruno WP-104: `wipe` zeroes LadrunoSANISAND's process-wide IMPL-EX
+// diagnostic ledger (`implexRefusals`, `implexGuards`, `avgImplexError`).
+// Without this a FRESH material in the NEXT model inherited the previous
+// model's refusal totals (measured [9,0,0,9,0,9] on a new tag after
+// ops.wipe()), making any end-of-run `implexRefusals[3] == 0` check depend on
+// which model ran first in the process. Same rule as the ADR-69/72
+// energy-channel reset in Domain::clearAll(); hooked HERE because this is the
+// nD-material wipe hook every interpreter goes through and, unlike
+// Domain::clearAll(), it never runs from recvSelf(). Local extern on purpose:
+// vanilla's own idiom for these hooks (commands.cpp:55-63), and it keeps the
+// SANISAND header out of the base-class file. Defined in LadrunoSANISAND.cpp.
+extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
+
 void OPS_clearAllNDMaterial(void)
 {
     theNDMaterialObjects.clearAll();
+    ladrunoSanisandResetImplexGlobals();   // Ladruno WP-104
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {
