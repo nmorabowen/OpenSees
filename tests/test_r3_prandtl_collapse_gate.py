@@ -260,6 +260,68 @@ CONTROL_H0 = 0.5                      # the associated falsification control
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
 
+# --- the two Drucker-Pragers ------------------------------------------------
+# ADR-94 addendum / F8: the deck is now drivable on EITHER of the fork's two
+# Drucker-Prager implementations, because the ASSOCIATED leg is the one place
+# where they were measured to disagree.  `"UW"` is the vanilla
+# `nDMaterial DruckerPrager` this gate has always used and is the DEFAULT, so
+# every leg above is untouched; `"ASD"` is `ASDPlasticMaterial3D` with
+# `DruckerPrager_YF`/`DruckerPrager_PF`.
+#
+# CONE MAPPING (derived once, in
+# `Ladruno_files/testbed/hypo_bearing/asd_path_diag.py`'s header; reproduced
+# here only as the identities used):
+#     f_UW  = ||dev sigma|| + rho*I1 - sqrt(2/3)*SY      (I1 = tr sigma)
+#     f_ASD = sqrt(J2)      + eta*p  - xi_c              (p  = I1/3)
+#   => eta = 3*alpha  (rho = sqrt(2)*alpha, the sqrt(2)s cancel),
+#      xi_c = SY/sqrt(3);  both tension-positive, identical apex.
+# FLOW: sqrt(2) * d f_ASD/d sigma = s/||s|| + sqrt(2)*etabar/3 * I, so
+# `etabar = eta` reproduces UW's `rho_bar = rho` EXACTLY (associated) and
+# `etabar = 0` reproduces `rho_bar = 0`.
+MATERIALS = ("UW", "ASD")
+
+_ASD_IV = ("BackStress(TensorLinearHardeningFunction):"
+           "DP_cohesion(ScalarLinearHardeningFunction):")
+
+
+def _define_material(material, tag, alpha, assoc, k_el, g_el):
+    """Define material `tag` as the deck's perfectly plastic Drucker-Prager."""
+    if material == "UW":
+        rho = math.sqrt(2.0) * alpha
+        # K G sigma_y rho rho_bar Kinf Ko delta1 delta2 H theta -> perfectly plastic
+        ops.nDMaterial("DruckerPrager", tag, k_el, g_el, SY, rho,
+                       rho if assoc else 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return
+    if material != "ASD":
+        raise ValueError(f"unknown material {material!r}, expected {MATERIALS}")
+    e_el = 9.0 * k_el * g_el / (3.0 * k_el + g_el)
+    eta = 3.0 * alpha
+    ops.nDMaterial(
+        "ASDPlasticMaterial3D", tag,
+        "DruckerPrager_YF", "DruckerPrager_PF", "LinearIsotropic3D_EL", _ASD_IV,
+        "Begin_Internal_Variables",
+        "BackStress", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        "DP_cohesion", 0.0,
+        "End_Internal_Variables",
+        "Begin_Model_Parameters",
+        "YoungsModulus", e_el,
+        "PoissonsRatio", NU,
+        "DP_xi_c", SY / math.sqrt(3.0),
+        "DP_eta", eta,
+        "DP_etabar", eta if assoc else 0.0,
+        "TensorLinearHardeningParameter", 0.0,
+        "ScalarLinearHardeningParameter", 0.0,
+        "End_Model_Parameters",
+        "Begin_Integration_Options",
+        "integration_method", "Backward_Euler",
+        "tangent_type", "Continuum",
+        "n_max_iterations", 100,
+        "strict_convergence", 1,
+        "End_Integration_Options",
+    )
+
+
 # --- oracle -----------------------------------------------------------------
 def _alpha_from_phi_txc(phi_deg):
     s = math.sin(math.radians(phi_deg))
@@ -356,7 +418,7 @@ def _pick_system():
 
 
 # --- one leg ----------------------------------------------------------------
-def _run_leg(h0, assoc, out_dir, wall_budget=None):
+def _run_leg(h0, assoc, out_dir, wall_budget=None, material="UW", gp_probe=None):
     """Push the strip footing to collapse and return the measurement.
 
     Never raises on a physics outcome: a leg that fails to reach a plateau, or
@@ -367,8 +429,6 @@ def _run_leg(h0, assoc, out_dir, wall_budget=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     nodes, hexes, trib, sets = _strip_mesh(h0)
     alpha = _alpha_from_phi_txc(PHI_TXC)
-    rho = math.sqrt(2.0) * alpha
-    rho_bar = rho if assoc else 0.0
     g_el = 3.0 * K_EL * (1.0 - 2.0 * NU) / (2.0 * (1.0 + NU))
     phi_ps = _phi_ps_from_cone(alpha)
     q_exact = Q0 * _n_q(phi_ps)
@@ -385,9 +445,7 @@ def _run_leg(h0, assoc, out_dir, wall_budget=None):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for i, (x, y, z) in enumerate(nodes, start=1):
         ops.node(i, float(x), float(y), float(z))
-    # K G sigma_y rho rho_bar Kinf Ko delta1 delta2 H theta -> perfectly plastic
-    ops.nDMaterial("DruckerPrager", 1, K_EL, g_el, SY, rho, rho_bar,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    _define_material(material, 1, alpha, assoc, K_EL, g_el)
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, 0.0,
@@ -467,7 +525,8 @@ def _run_leg(h0, assoc, out_dir, wall_budget=None):
               ("NewtonLineSearch", tol, 40, 0),
               ("KrylovNewton", 10.0 * tol, 60, 1)]
 
-    tag = f"h{h0}_{'assoc' if assoc else 'nonassoc'}"
+    tag = (f"h{h0}_{'assoc' if assoc else 'nonassoc'}"
+           + ("" if material == "UW" else f"_{material.lower()}"))
     csv_path = os.path.join(out_dir, f"r3_{tag}.csv")
     fh = open(csv_path, "w", newline="")
     w = csv.writer(fh)
@@ -519,6 +578,11 @@ def _run_leg(h0, assoc, out_dir, wall_budget=None):
         rows.append((s, s / B_FOOT, q, ds * 1000, relaxed, time.time() - t0))
         w.writerow([f"{v:.9g}" for v in rows[-1]])
         fh.flush()
+        # ADR-94 addendum / F8: optional read-only Gauss-point census, called
+        # once per CONVERGED step.  `None` in every gate leg, so the gate's own
+        # path is unchanged; the ASD associated investigation passes a probe.
+        if gp_probe is not None:
+            gp_probe(len(rows), s / B_FOOT, q, len(hexes))
     fh.close()
     wall = time.time() - t0
 
@@ -553,7 +617,7 @@ def _run_leg(h0, assoc, out_dir, wall_budget=None):
     budget_used_frac = nsub / float(SUBDIV_BUDGET)
     capacity = bool(plateau and free and mode in _CAPACITY_MODES)
 
-    return dict(h0=h0, assoc=assoc, tag=tag, solver=solver,
+    return dict(h0=h0, assoc=assoc, material=material, tag=tag, solver=solver,
                 nodes=len(nodes), hexes=len(hexes), dof=3 * len(nodes),
                 qmax=qmax, q_exact=q_exact, ratio=qmax / q_exact,
                 plateau=plateau, free=free, capacity=capacity, mode=mode,
