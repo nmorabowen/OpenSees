@@ -578,17 +578,37 @@ class LadrunoSANISAND : public ManzariDafalias
     // reported converged, and the analysis walked on. The TIMs plane-strain
     // strip measured 25.9 million such commits in one run.
     //
-    // A material cannot refuse the commit that has already been accepted. What
-    // it CAN do is refuse everything after it. Set true by
-    // ladrunoImplexCommit() when the companion fails -- which then also skips
-    // ManzariDafalias::commitState() and restores the trial from the committed
-    // state, so NOTHING partial is committed -- and read at the top of
-    // ladrunoTrialUpdate(), the one entry both wrappers' setTrialStrain() uses,
-    // where it makes every later update return LADRUNO_MATERIAL_REFUSED, and at
-    // the top of commitState(), which then commits nothing. A driver with
-    // subdivision keeps being refused and gives up; a driver without one stops
-    // at the failed step. Either way the run ENDS at the first invalid commit
-    // instead of walking past it.
+    // WP-99 answers that in two places, and review round 1 measured why BOTH
+    // are needed.
+    //
+    // (1) THE COMMIT IS ABORTED, element-independently. ladrunoImplexCommit()
+    //     calls ladrunoNoteCommitRefusal() (LadrunoMaterialStatus.h);
+    //     Domain::commit() reads that counter after its element loop and
+    //     returns a failure, which AnalysisModel::commitDomain() turns into -2
+    //     and every analysis class turns into a failed step. This works under a
+    //     DISCARDING element too -- with the latch alone, two stacked
+    //     `stdBrick` under `algorithm Linear` took 20 more accepted steps with
+    //     the starved element frozen as a rigid inclusion and analyze() == 0
+    //     throughout.
+    //
+    // (2) THIS LATCH, as the second line of defence. Set true by
+    //     ladrunoImplexCommit() when the companion fails -- which also skips
+    //     ManzariDafalias::commitState() and restores the trial from the
+    //     committed state -- and read at the top of ladrunoTrialUpdate(), the
+    //     one entry both wrappers' setTrialStrain() uses, where it makes every
+    //     later update return LADRUNO_MATERIAL_REFUSED, and at the top of
+    //     commitState(), which then commits nothing and RE-declares the
+    //     refusal. A driver that ignores the analysis return code still cannot
+    //     advance this material.
+    //
+    // WHAT "COMMITS NOTHING" MEANS, precisely (review round 1): THIS GAUSS
+    // POINT commits nothing. Domain::commit() walks the nodes first and then
+    // the elements, and every integration point is its own material object, so
+    // by the time this instance refuses, the nodes and its sibling points have
+    // ALREADY committed -- measured as [1,0,0,1] latched across the four points
+    // of one LadrunoQuad. The model state at that commit is therefore
+    // INCONSISTENT, not merely un-advanced, which is exactly why the commit is
+    // aborted rather than repaired.
     //
     // STICKY, and cleared ONLY by revertToStart(). NOT by revertToLastCommit():
     // the analysis has already ACCEPTED the step whose commit failed (that is

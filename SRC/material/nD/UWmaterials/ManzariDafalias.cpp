@@ -1518,19 +1518,28 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // Ladruno WP-99 (F7): the list this comment used to give was wrong twice
         // -- it said "TODAY ONLY LadrunoBrick propagates the refusal" and named
         // `QuadUP` among the discarders, alongside a `stdBrick` that is simply
-        // `Brick` under its Tcl name (TclBrickCommand.cpp:210). Audited at source
-        // on 9c2f964ea, the TRIAL-time picture is:
-        //   * propagate ANY nonzero code (`ret += ...->setTrialStrain(...)`):
-        //     LadrunoBrick20, LadrunoQuad (and its EAS path's `!= 0`), LadrunoCST,
-        //     LadrunoLST, BezierTet10, BezierTri6, and vanilla FourNodeQuad AND
-        //     FourNodeQuadUP (FourNodeQuadUP.cpp:419 -- it PROPAGATES);
+        // `Brick` under its Tcl name (TclBrickCommand.cpp:210). THE FULL AUDITED
+        // ROSTER -- every NDMaterial-hosting element in SRC/element, classified
+        // by what its update() does with the return code -- is the table
+        // "element refusal roster" in Ladruno_implementation/LEDGER_quirks.md.
+        // It is 40-odd elements long and it is NOT reproduced here, because a
+        // second copy of a closed list is exactly how the wrong one survived
+        // three documents. The shape of it, with EXAMPLES only:
+        //   * propagate ANY nonzero code (`ret +=` / `success +=` reaching the
+        //     return of update()): the fork continuum elements LadrunoBrick20,
+        //     LadrunoQuad/CST/LST, LadrunoUP, BezierTet10/Tri6; the whole
+        //     vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP,
+        //     Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) -- which matters
+        //     most here, because u-p IS SANISAND's canonical host; plus
+        //     FourNodeQuad, Tri31, TenNodeTetrahedron, Twenty_Node_Brick and
+        //     others;
         //   * propagate ONLY the sentinel LADRUNO_MATERIAL_REFUSED: LadrunoBrick,
         //     deliberately, per ADR-33/34 (ASDConcrete3D's negative "best-state"
         //     codes must not fail a step);
         //   * DISCARD it: Brick (= stdBrick; setTrialStrain at :1069, `return 0`
-        //     at :1073), BbarBrick (:951) and BrickUP (:1069) -- these three call
-        //     setTrialStrain inside a void formResidAndTangent -- plus SSPbrick
-        //     (:445), SSPquad (:426) and LadrunoSolidShell (:670).
+        //     at :1073), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP,
+        //     SSPbrick/SSPbrickUP, FourNodeTetrahedron, EnhancedQuad,
+        //     NineNodeMixedQuad, LadrunoSolidShell.
         // Under a discarding element a capped run is INVALID, not merely un-cut.
         // At COMMIT time the return is discarded by EVERY element, because
         // Domain::commit() is a bare `elePtr->commitState();` -- see the WP-99
@@ -1573,14 +1582,19 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
                        << " integrated and the trial state is left PARTIAL at T < 1."
                        << " The committed state is unchanged, so a cut step loses"
                        << " nothing -- but only an element that FORWARDS"     // Ladruno WP-99 (F7)
-                       << " setTrialStrain's return code cuts the step:"      // Ladruno WP-99 (F7)
+                       << " setTrialStrain's return code cuts the step. E.g."  // Ladruno WP-99 (F7)
                        << " LadrunoBrick (sentinel-filtered), LadrunoBrick20," // Ladruno WP-99 (F7)
-                       << " LadrunoQuad, LadrunoCST, LadrunoLST, BezierTet10," // Ladruno WP-99 (F7)
-                       << " BezierTri6, FourNodeQuad and FourNodeQuadUP do;"   // Ladruno WP-99 (F7)
-                       << " Brick (= stdBrick), BbarBrick, BrickUP, SSPbrick," // Ladruno WP-99 (F7)
-                       << " SSPquad and LadrunoSolidShell DISCARD it and THIS"  // Ladruno WP-99 (F7)
-                       << " RUN IS INVALID. At COMMIT time no element acts on"  // Ladruno WP-99 (F7)
-                       << " it at all -- Domain::commit() drops the return."    // Ladruno WP-99 (F7)
+                       << " LadrunoQuad/CST/LST, BezierTet10/Tri6 and the"     // Ladruno WP-99 (F7)
+                       << " vanilla u-p family (FourNodeQuadUP,"               // Ladruno WP-99 (F7)
+                       << " BBarFourNodeQuadUP, Nine_Four_Node_QuadUP,"        // Ladruno WP-99 (F7)
+                       << " Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick)," // Ladruno WP-99 (F7)
+                       << " BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP," // Ladruno WP-99 (F7)
+                       << " SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD"  // Ladruno WP-99 (F7)
+                       << " it and THIS RUN IS INVALID. Examples, not the whole" // Ladruno WP-99 (F7)
+                       << " roster: the full audited table is in"               // Ladruno WP-99 (F7)
+                       << " LEDGER_quirks.md, 'element refusal roster'. At"     // Ladruno WP-99 (F7)
+                       << " COMMIT time no element acts on it at all --"        // Ladruno WP-99 (F7)
+                       << " Domain::commit() drops the return."                 // Ladruno WP-99 (F7)
                        << endln;
                 if (++ladrunoSubstepCapWarnCount == 10)
                     opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"

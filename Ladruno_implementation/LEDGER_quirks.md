@@ -6503,26 +6503,146 @@ Rules that generalize:
   (`StaticAnalysis.cpp`, the `revertToLastCommit` + `return -3` path belongs to a
   failed `solveCurrentStep`, not to a failed commit). **A refusal is only
   actionable at the TRIAL** (`setTrialStrain`).
-- **And even at the trial the elements disagree.** Audited on `9c2f964ea`:
-  - **Propagate ANY nonzero code** (`ret += theMaterial[i]->setTrialStrain(...)`):
-    `LadrunoQuad` (`update()`, and `!= 0` on the EAS path), `LadrunoCST`,
-    `LadrunoLST`, `LadrunoBrick20`, `BezierTet10`, `BezierTri6`, and vanilla
-    `FourNodeQuad` and `FourNodeQuadUP`.
-  - **Propagate ONLY the sentinel** `LADRUNO_MATERIAL_REFUSED`: `LadrunoBrick`
-    — deliberately, per ADR-33/34, so `ASDConcrete3D`'s negative "best-state"
-    codes do not fail a step.
-  - **Discard the code entirely**: `Brick` (= `stdBrick`), `BbarBrick`,
-    `BrickUP`, `SSPbrick`, `SSPquad`, `LadrunoSolidShell`.
-  So the same refusal cuts the step on a `LadrunoQuad` mesh and is invisible on
-  an `SSPquad` one, and a material that returns "some nonzero value" rather than
-  the sentinel is silently swallowed by `LadrunoBrick` specifically. Four shipped
-  `opserr` texts stated this wrongly ("today LadrunoBrick", and `QuadUP` listed
-  as a discarder when it is in fact a propagator) until WP-99 corrected them.
-- **Workaround/status (2026-09-14):** WP-99 gave `LadrunoSANISAND` a sticky
-  commit-time refusal latch — a failed commit commits nothing and every later
-  `setTrialStrain` returns the sentinel, so the run stops at the first invalid
-  commit instead of walking past it. That is a per-material workaround, not a
-  fix to the engine: **the general problem stands**. If you want a *recoverable*
-  refusal, refuse at the trial (`-implexControl` is the SANISAND example).
+- **And even at the trial the elements disagree** — 26 forward, 1 sentinel-only,
+  25 discard, out of 52 NDMaterial hosts. The full audited table is the entry
+  **"Element refusal roster"** below; it is the only authoritative copy. The
+  short of it: the same refusal cuts the step on a `LadrunoQuad` mesh and is
+  invisible on an `SSPquad` one, and a material that returns "some nonzero
+  value" rather than the sentinel is silently swallowed by `LadrunoBrick`
+  specifically. Four shipped `opserr` texts stated this wrongly ("today
+  LadrunoBrick", and `QuadUP` listed as a discarder when it is in fact a
+  propagator); WP-99 corrected them and then, after review round 1 found the
+  REPLACEMENT list was still a wrong closed list, made them non-exhaustive and
+  pointed them here.
+- **Workaround/status (2026-09-14, revised after review round 1):** WP-99 makes
+  the refusal leave the element path entirely. A material calls
+  `ladrunoNoteCommitRefusal()` (`SRC/material/LadrunoMaterialStatus.h`) from its
+  `commitState()`; `Domain::commit()` checks that counter after its element loop
+  and **returns a failure**, which `AnalysisModel::commitDomain()` turns into -2
+  and every analysis class turns into `-4`. That is element-independent, so a
+  DISCARD element cannot swallow it. `LadrunoSANISAND` additionally keeps a
+  sticky per-instance latch as a second line of defence, for a driver that
+  ignores the analysis return code. **Why the latch alone was not enough, and
+  this is the measurement that decided the design:** two stacked `stdBrick` with
+  the lower element starved (`-maxSubsteps 2`) under `algorithm Linear` ran **20
+  further accepted steps**, `analyze() == 0` throughout, with the refusing
+  element frozen as a rigid inclusion — and *more quietly than before*, because a
+  latched `commitState()` returns early and so the old 10-per-process cap
+  warnings stopped firing too.
+  **Raw element commit codes are still NOT propagated** and must not be: ADR-33/34
+  requires that a negative "best-state" code (ASDConcrete3D and friends) not fail
+  a step, and at commit there is no sentinel-filtering element in the path to
+  tell a declaration from a diagnostic — which is exactly why the declaration
+  goes out of band instead. If you want a *recoverable* refusal, refuse at the
+  trial (`-implexControl` is the SANISAND example): a commit-time refusal is
+  fatal by construction, because the nodes and the sibling integration points
+  have already committed by the time it happens.
   Cross-links: [[LEDGER_implementations]] "IMPL-EX commit-time refusal latch",
   [[LadrunoSANISAND_implex_guide]] §9.
+
+### Element refusal roster — who acts on a material's `setTrialStrain` return code (full audit, WP-99)
+
+- **Bites:** a material returns a failure code from `setTrialStrain` and nothing
+  happens — or it happens on one element of your model and not the one beside
+  it. There is no engine-wide contract here at all: each element's `update()`
+  decides on its own, and roughly half of them throw the code away.
+- **Why:** `setTrialStrain` predates any fail-loud convention. An element either
+  accumulates the codes into the value its `update()` returns (so the algorithm
+  sees a failed state determination and the step is cut), or calls
+  `setTrialStrain` from a `void form*` routine / assigns the result to a variable
+  it never reads / has no `update()` override at all (so `Element::update()`
+  returns 0 and the refusal is invisible).
+- **The audit (2026-09-14, on `9c2f964ea`+WP-99).** Every `.cpp` under
+  `SRC/element` that mentions both `setTrialStrain` and `NDMaterial`, classified
+  by what its own `update()` does. **52 elements: 26 FORWARD, 1 SENTINEL-only,
+  25 DISCARD.** Reproduce with
+  `grep -rln setTrialStrain SRC/element --include=*.cpp` and read each
+  `update()`.
+  - **FORWARD** — any nonzero code reaches the return of `update()`, so ANY
+    material refusal cuts the step.
+  - **SENTINEL** — only `LADRUNO_MATERIAL_REFUSED` cuts the step; every other
+    nonzero code is ignored. Deliberate, per ADR-33/34 (ASDConcrete3D's negative
+    "best-state" codes must not fail a step). `LadrunoBrick` is the only one.
+  - **DISCARD** — the code cannot reach the analysis at all.
+
+  **THIS TABLE IS THE ONE AUTHORITATIVE COPY.** The `opserr` strings in
+  `LadrunoSANISAND.cpp` / `ManzariDafalias.cpp` and the guides name EXAMPLES and
+  point here — a second closed copy of this list is exactly how the previous,
+  wrong one survived in three documents at once.
+
+| element | verdict | evidence | first `setTrialStrain` |
+|---|---|---|---|
+| `BBarFourNodeQuadUP` | **FORWARD** | `update()`@328: `ret += ...setTrialStrain(...)`, `return ret` | `:369` |
+| `BezierTet10` | **FORWARD** | `update()`@371: `ret += ...setTrialStrain(...)`, `return ret` | `:408` |
+| `BezierTri6` | **FORWARD** | `update()`@394: `ret += ...setTrialStrain(...)`, `return ret` | `:461` |
+| `ConstantPressureVolumeQuad` | **FORWARD** | `update()`@363: `success += ...setTrialStrain(...)`, `return success` | `:502` |
+| `E_SFI` | **FORWARD** | `update()`@600: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:617` |
+| `E_SFI_MVLEM_3D` | **FORWARD** | `update()`@782: `errCode += ...setTrialStrain(...)`, `return errCode` | `:798` |
+| `EightNodeQuad` | **FORWARD** | `update()`@387: `ret += ...setTrialStrain(...)`, `return ret` | `:437` |
+| `FourNodeQuad` | **FORWARD** | `update()`@577: `ret += ...setTrialStrain(...)`, `return ret` | `:615` |
+| `FourNodeQuad3d` | **FORWARD** | `update()`@385: `ret += ...setTrialStrain(...)`, `return ret` | `:424` |
+| `FourNodeQuadUP` | **FORWARD** | `update()`@360: `ret += ...setTrialStrain(...)`, `return ret` | `:419` |
+| `FourNodeQuadWithSensitivity` | **FORWARD** | `update()`@347: `ret += ...setTrialStrain(...)`, `return ret` | `:385` |
+| `LadrunoBrick20` | **FORWARD** | `update()`@946: `ret += ...setTrialStrain(...)`, `return ret` | `:972` |
+| `LadrunoCST` | **FORWARD** | `update()`@213: `ret += ...setTrialStrain(...)`, `return ret` | `:234` |
+| `LadrunoLST` | **FORWARD** | `update()`@253: `ret += ...setTrialStrain(...)`, `return ret` | `:271` |
+| `LadrunoQuad` | **FORWARD** | `update()`@711: `ret += ...setTrialStrain(...)`, `return ret` | `:534` |
+| `LadrunoUP` | **FORWARD** | `update()`@857: `ret += ...setTrialStrain(...)`, `return ret` | `:916` |
+| `Nine_Four_Node_QuadUP` | **FORWARD** | `update()`@509: `ret += ...setTrialStrain(...)`, `return ret` | `:572` |
+| `Nine_Four_Node_QuadUPOld` | **FORWARD** | `update()`@236: `ret += ...setTrialStrain(...)`, `return ret` | `:266` |
+| `NineNodeQuad` | **FORWARD** | `update()`@393: `ret += ...setTrialStrain(...)`, `return ret` | `:446` |
+| `SFI_MVLEM` | **FORWARD** | `update()`@768: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:785` |
+| `SFI_MVLEM_3D` | **FORWARD** | `update()`@894: `errCode += ...setTrialStrain(...)`, `return errCode` | `:911` |
+| `SixNodeTri` | **FORWARD** | `update()`@353: `ret += ...setTrialStrain(...)`, `return ret` | `:397` |
+| `TenNodeTetrahedron` | **FORWARD** | `update()`@1030: `success += ...setTrialStrain(...)`, `return success` | `:1213` |
+| `Tri31` | **FORWARD** | `update()`@551: `ret += ...setTrialStrain(...)`, `return ret` | `:586` |
+| `Twenty_Eight_Node_BrickUP` | **FORWARD** | `update()`@821: `ret += ...setTrialStrain(...)`, `return ret` | `:983` |
+| `Twenty_Node_Brick` | **FORWARD** | `update()`@428: `ret += ...setTrialStrain(...)`, `return ret` | `:509` |
+| `LadrunoBrick` | **SENTINEL** | `update()`@986 tests `== LADRUNO_MATERIAL_REFUSED` | `:1034` |
+| `AC3D8HexWithSensitivity` | **DISCARD** | `update()`@268 returns 0 | `:289` |
+| `BbarBrick` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:951` |
+| `BBarBrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1021` |
+| `BbarBrickWithSensitivity` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:965` |
+| `BeamContact2D` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:466` |
+| `BeamContact2Dp` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:466` |
+| `BeamContact3D` | **DISCARD** | `update()`@581 returns 0 | `:694` |
+| `BeamContact3Dp` | **DISCARD** | `update()`@455 returns 0 | `:563` |
+| `Brick` | **DISCARD** | `update()`@913 returns 0 | `:1069` |
+| `BrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1069` |
+| `EmbeddedEPBeamInterface` | **DISCARD** | `update()`@689 returns 0 | `:755` |
+| `EnhancedQuad` | **DISCARD** | `update()`@1290 does not call it (called from a void `form*` routine) | `:1077` |
+| `FourNodeTetrahedron` | **DISCARD** | `update()`@974 returns 0 | `:1144` |
+| `IGAKLShell` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:3165` |
+| `IGAKLShell_BendingStrip` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:2445` |
+| `LadrunoDispBeamColumn3d` | **DISCARD** | `update()`@647 does not call it (called from a void `form*` routine) | `:832` |
+| `LadrunoSolidShell` | **DISCARD** | `update()`@275 does not call it (called from a void `form*` routine) | `:670` |
+| `NineNodeMixedQuad` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:1003` |
+| `SimpleContact2D` | **DISCARD** | `update()`@369 returns 0 | `:432` |
+| `SimpleContact3D` | **DISCARD** | `update()`@471 returns 0 | `:552` |
+| `SSPbrick` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:445` |
+| `SSPbrickUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:412` |
+| `SSPquad` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:426` |
+| `SSPquadUP` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:382` |
+| `ZeroLengthND` | **DISCARD** | no `update()` override -> `Element::update()` returns 0 | `:383` |
+
+- **The u-p family is the one to notice.** Every vanilla `*QuadUP` / `*BrickUP`
+  element that has its own `update()` FORWARDS (`FourNodeQuadUP`,
+  `BBarFourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`),
+  while the ones without one (`BrickUP`, `BBarBrickUP`, `SSPquadUP`,
+  `SSPbrickUP`) DISCARD. "the UP family swallows refusals" was stated in four
+  fork documents and is wrong for half of them — and u-p is SANISAND's canonical
+  host, so it is the half that matters.
+- **Two fork edits are already in the FORWARD column** and are easy to mistake
+  for vanilla behaviour: `TenNodeTetrahedron` (`success +=`, the TIMs report
+  item 8 fix) and `LadrunoUP`.
+- **AT COMMIT TIME THE TABLE IS IRRELEVANT: nothing propagates.**
+  `Domain::commit()` is `elePtr->commitState();` with the return value dropped,
+  for every element in the table. See the entry
+  "`Domain::commit()` discards element commit returns" above for what WP-99 does
+  about it (a material declares the refusal out of band and `Domain::commit()`
+  aborts).
+- **Workaround/status (2026-09-14):** none of the vanilla DISCARD elements is
+  fixed — `return success` on `Brick` is an unconditional behaviour change for
+  every material (`tests/test_adr84_p2a_strict_convergence.py::test_stdbrick_swallows_the_refusal`
+  pins it). Pick a FORWARD element for any gate whose meaning depends on a
+  refusal being seen.

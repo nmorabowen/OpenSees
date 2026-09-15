@@ -23,7 +23,7 @@ Add `--control` to run the same deck with `-implexControl 0.02` instead.
 | binary | result |
 |---|---|
 | `9c2f964ea` (before WP-99) | **40 / 40 steps "converged" and committed**, with **567** commit-time companion refusals swallowed. `strip_quad_implex_OLD.csv`. |
-| `bab19cfae` (WP-99) | the first capped commit (step 1) refuses, commits nothing, latches — and step 2's update is refused, so `analyze()` returns −3 and the run stops with the load–settlement curve frozen. `strip_quad_implex_NEW.csv`. |
+| `c0c31f977` (WP-99, review round 1) | the first capped commit (step 1) refuses, `Domain::commit()` aborts **that** step, and `analyze()` returns −4 immediately — the run stops with nothing committed past gravity. `strip_quad_implex_NEW.csv`. (The first WP-99 binary stopped one step later, at step 2, because only the latch was in play; round 1 moved the abort into `Domain::commit()` so it fails the step it belongs to, and on every element type.) |
 
 The OLD column is the defect in one line: the counter climbs from step 1 and the
 load–settlement curve keeps rising anyway, because `Domain::commit()` drops every

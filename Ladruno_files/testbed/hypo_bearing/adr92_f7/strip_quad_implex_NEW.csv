@@ -1,3 +1,2 @@
 step,rc,settlement_m,footing_load_kN_per_m,ref_total,ref_companion,commit_latched
-1,0,0.002,-24.7428939,32,32,1
-2,-3,0.002,-24.7428939,100,100,1
+1,-4,0.002,-24.7428939,32,32,1

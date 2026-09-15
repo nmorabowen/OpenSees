@@ -15,10 +15,12 @@ WHAT IT SHOWS
                                (points x steps).  The load-settlement curve
                                keeps rising.  Nothing stops.
 
-  NEW binary (WP-99):          the first capped commit refuses, nothing is
-                               committed, the material latches, and the NEXT
-                               step's update is refused -- `analyze()` returns
-                               nonzero and the run stops.
+  NEW binary (WP-99):          the first capped commit refuses; the material
+                               declares it and `Domain::commit()` aborts that
+                               commit, so `analyze()` returns -4 on the step it
+                               belongs to and nothing past gravity is committed.
+                               The per-instance latch then refuses every later
+                               update as a second line of defence.
 
 Usage (from the worktree root):
 
@@ -126,14 +128,14 @@ def _refusals(nele=1):
     it has to be scanned: the points that cap are wherever the low-`p` corner
     is, not necessarily element 1.  Reported here as "did ANY point latch"."""
     r = list(ops.eleResponse(1, "material", 1, "implexRefusals"))
-    while len(r) < 5:
+    while len(r) < 6:
         r.append(0.0)
-    if len(r) >= 5:
+    if len(r) >= 6:
         latched = 0.0
         for e in range(1, nele + 1):
             for gp in range(1, 5):
                 v = list(ops.eleResponse(e, "material", gp, "implexRefusals"))
-                if len(v) >= 5 and v[4] != 0.0:
+                if len(v) >= 6 and v[4] != 0.0:
                     latched = 1.0
                     break
             if latched:

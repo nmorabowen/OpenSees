@@ -171,9 +171,9 @@ def _add_deviatoric_pattern_3d(ts_tag=2, pat_tag=2, dq=_DQ_BIG):
 
 def _refusals():
     r = list(ops.eleResponse(1, 'material', 1, 'implexRefusals'))
-    assert len(r) == 5, (
-        'implexRefusals must be the 5-component vector WP-99 (F7) documents '
-        '(total, signChange, control, companion, commitLatched)', r)
+    assert len(r) == 6, (
+        'implexRefusals must be the 6-component vector WP-99 (F7) documents '
+        '(total, signChange, control, companion, commitLatched, latched)', r)
     return r
 
 
@@ -430,6 +430,141 @@ def test_implexrefusals_carries_the_commitlatched_slot():
         'a deck with an ADEQUATE cap reports itself latched -- slot 4 must be '
         'the latch, not a counter', r)
     assert r[0] == pytest.approx(r[1] + r[2] + r[3]), (
-        'implexRefusals[0] is no longer the sum of the three refusal buckets '
-        '-- slot 4 must NOT be folded into the total; it is a flag, not a '
-        'count', r)
+        'implexRefusals[0] is no longer the sum of the three GENUINE refusal '
+        'buckets. Slot 4 is a per-instance flag and slot 5 counts POST-latch '
+        'refusals -- neither may be folded into the total (review round 1 '
+        'measured 244 post-latch refusals against 4 real cap hits, which is '
+        'what folding them in would have reported)', r)
+
+# ===========================================================================
+#  (6) review round 1 -- the DISCARD element. Domain::commit() must abort.
+# ===========================================================================
+_STACK_N_CONF = 5
+
+
+def _build_stdbrick_stack(tag_starved, tag_ok):
+    """Two stacked vanilla `stdBrick` cubes, three node layers.
+
+    `stdBrick` is `Brick` under its Tcl name (`TclBrickCommand.cpp:210`), and
+    `Brick::update()` assigns `setTrialStrain`'s code to a local it never reads
+    and then `return 0;` unconditionally (`Brick.cpp:1069` -> `:1073`). It is
+    the canonical DISCARD element (see the "Element refusal roster" table in
+    `LEDGER_quirks.md`), so the WP-99 LATCH is invisible on it by construction:
+    the refusing material returns the sentinel and the element throws it away.
+
+    The lower element gets the starved material (`-maxSubsteps 2`), the upper
+    one an adequate cap, so exactly one element can refuse and the other keeps
+    supplying a finite stiffness -- which is what let the pre-fix build keep
+    "converging" with the refusing element frozen as a rigid inclusion.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for k in range(3):
+        for j, (x, y) in enumerate(_XY):
+            ops.node(4 * k + j + 1, x, y, float(k))
+
+    common = (1, 2, 1, 1.0e-7, 1.0e-7,
+              '-Presidual', 0.0, '-Pmin', 1.0e-4 * _P_ATM, '-implex')
+    ops.nDMaterial('LadrunoSANISAND', tag_starved, *_PARAMS, *common,
+                   '-maxSubsteps', _CAP_STARVED)
+    ops.nDMaterial('LadrunoSANISAND', tag_ok, *_PARAMS, *common,
+                   '-maxSubsteps', 20000)
+
+    ops.element('stdBrick', 1, 1, 2, 3, 4, 5, 6, 7, 8, tag_starved)
+    ops.element('stdBrick', 2, 5, 6, 7, 8, 9, 10, 11, 12, tag_ok)
+
+    for k in range(3):
+        for j, (x, y) in enumerate(_XY):
+            ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                    1 if k == 0 else 0)
+
+    # Isotropic confinement, applied over the elastic stage: lateral tractions
+    # on the two positive faces of BOTH elements, vertical on the top. A purely
+    # uniaxial column never starves the companion (measured: zero cap hits at
+    # -maxSubsteps 2 with sigma_xx = sigma_yy = 0), because there is no
+    # deviatoric path for it to integrate.
+    q = _P0 / 4.0
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for k in (1, 2):
+        for j, (x, y) in enumerate(_XY):
+            n = 4 * k + j + 1
+            if x == 1.:
+                ops.load(n, -q, 0.0, 0.0)
+            if y == 1.:
+                ops.load(n, 0.0, -q, 0.0)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(8 + j + 1, 0.0, 0.0, -q)
+
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormUnbalance', _TOL_REL * _P0, _MAXITER, 0)
+    # `Linear`: ONE tangent solve per step, no convergence test consulted --
+    # the algorithm that made the pre-fix hole loudest, because it never asks
+    # whether the state determination succeeded.
+    ops.algorithm('Linear')
+    ops.integrator('LoadControl', 1.0 / _STACK_N_CONF)
+    ops.analysis('Static')
+
+
+def test_discarding_element_still_stops_the_run_via_domain_commit():
+    """REVIEW ROUND 1, BLOCKER 2. The latch alone is not enough.
+
+    MEASURED on the first WP-99 binary with this deck: the starved element
+    latched, `Brick::update()` discarded the sentinel, and the analysis ran
+    **20 further accepted steps** with `analyze() == 0` throughout, the
+    refusing element frozen as a rigid inclusion -- and more QUIETLY than
+    before the WP, because a latched `commitState()` returns early so the old
+    10-per-process substep-cap warnings stopped firing too.
+
+    The fix is not in the element and cannot be: `Domain::commit()` drops every
+    element's `commitState()` return, and ADR-33/34 forbids changing that
+    (negative "best-state" codes must not fail a step, and at commit there is
+    no sentinel-filtering element in the path to tell the two apart). So the
+    material DECLARES the refusal out of band -- `ladrunoNoteCommitRefusal()`,
+    `SRC/material/LadrunoMaterialStatus.h` -- and `Domain::commit()` returns a
+    failure, which `AnalysisModel::commitDomain()` turns into -2 and
+    `StaticAnalysis` into -4.
+
+    So: the step that latches must fail, and EVERY step after it must fail,
+    on an element that cannot see the sentinel at all.
+
+    Kills a mutant that keeps only the latch (this deck then runs to the end
+    with rc == 0), one that declares the refusal only on the FIRST latched
+    commit (step N+1 would then be accepted again, because a discarding
+    element lets the trial-time refusal through to commitState()), and one
+    that clears the Domain counter without returning nonzero.
+    """
+    tag_starved, tag_ok = 9920, 9921
+    _build_stdbrick_stack(tag_starved, tag_ok)
+
+    for t in (tag_starved, tag_ok):
+        ops.updateMaterialStage('-material', t, '-stage', 0)
+    for step in range(_STACK_N_CONF):
+        assert ops.analyze(1) == 0, f'gravity-stage step {step + 1} failed'
+    ops.loadConst('-time', 0.0)
+    for t in (tag_starved, tag_ok):
+        ops.updateMaterialStage('-material', t, '-stage', 1)
+
+    ops.timeSeries('Linear', 2)
+    ops.pattern('Plain', 2, 2)
+    for j, (x, y) in enumerate(_XY):
+        ops.load(8 + j + 1, 0.0, 0.0, -_DQ_BIG / 4.0)
+    ops.integrator('LoadControl', 1.0)
+
+    rcs = [ops.analyze(1) for _ in range(6)]
+
+    assert any(rc != 0 for rc in rcs), (
+        'a starved material under two stacked stdBrick never failed a step. '
+        "stdBrick DISCARDS setTrialStrain's return code, so the WP-99 latch "
+        'is invisible here -- Domain::commit() itself has to abort on the '
+        'out-of-band declaration. Measured pre-fix: 20 accepted steps, '
+        'rc == 0 throughout', rcs)
+
+    first_fail = next(i for i, rc in enumerate(rcs) if rc != 0)
+    assert all(rc != 0 for rc in rcs[first_fail:]), (
+        'the run RESUMED after a refused commit on a discarding element. '
+        'Every later commit must be refused too: a discarding element lets '
+        'the trial-time refusal through, so the declaration has to be '
+        're-made on every latched commitState()', rcs)

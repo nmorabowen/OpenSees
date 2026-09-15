@@ -301,8 +301,10 @@ per-point `material`/`integrPoint` response (§7).
   `!= 0` — so a material refusal cuts the step here, whereas `LadrunoBrick` acts only
   on the sentinel `LADRUNO_MATERIAL_REFUSED` (ADR-33/34, so ASDConcrete3D's negative
   "best-state" codes do not fail a step) and `SSPquad` discards the code entirely.
+  Half the plane elements in the tree discard it — the full audited table (52 elements) is **Element refusal roster** in `LEDGER_quirks.md`.
   At **commit** time no element propagates anything: `Domain::commit()` drops every
-  `commitState()` return (WP-99, `LEDGER_quirks.md`).
+  `commitState()` return, so under `-implex` `LadrunoSANISAND` declares the refusal
+  out of band and `Domain::commit()` aborts the commit (WP-99).
 
 ---
 
