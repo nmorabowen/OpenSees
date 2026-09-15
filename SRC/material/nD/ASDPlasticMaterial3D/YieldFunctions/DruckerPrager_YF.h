@@ -272,12 +272,16 @@ struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHarden
 // with small shear was routed to a flank map that cannot move p and therefore
 // cannot close f.
 // Ladruno (ADR-94 addendum, F8): wp/94f UNIONED the two answers, which is safe
-// only while the exact region is the WIDER one.  Under ASSOCIATED flow it is the
-// narrower one (K*etabar/G = K*eta/G, ~10x eta on that deck), so the union kept
-// the too-wide Euclidean answer and apex-projected trials whose correct return is
-// to the cone flank.  The elastic-metric test now REPLACES it; the trait below is
-// exactly the claim "this yield function's apex region IS the elastic-metric
-// one", in both directions.
+// only while the exact region is the WIDER one -- and the exact slope `K*etabar/G`
+// OVERTAKES the Euclidean `eta` as soon as `etabar > eta*G/K`, i.e. psi ~ 2.3 deg
+// on the ADR-95 deck (`G/K = 0.10345`, `eta = 0.4457`).  THE CROSSOVER IS
+// DILATANCY, NOT ASSOCIATIVITY: the union was wrong for essentially every dilatant
+// deck (etabar = eta/2 -> exact slope 2.1545, a 4.8x-wide wedge; etabar = eta ->
+// 4.3089, ~10x), and `etabar = 0` is the single case where it was right.  Above the
+// crossover the union kept the too-wide Euclidean answer and apex-projected trials
+// whose correct return is to the cone flank.  The elastic-metric test now REPLACES
+// it; the trait below is exactly the claim "this yield function's apex region IS
+// the elastic-metric one", in both directions.
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_apex_elastic_metric<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 

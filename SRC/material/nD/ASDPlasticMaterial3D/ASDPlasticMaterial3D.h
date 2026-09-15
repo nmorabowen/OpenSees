@@ -2615,6 +2615,27 @@ private:
             for (int i = 0; i < nq; ++i) H0 += d[i] * h(i);
         });
         VoigtVector dev_tr = sigma_tr.deviator();
+        // Ladruno (ADR-94 addendum, F8, review round 2): measure the flip on the
+        // RELATIVE deviator `r = dev(sigma) - alpha`, which is the variable the
+        // surface is actually written in -- `DruckerPrager_YF`'s own
+        // `check_apex_region` has always used `r` (its line 146) while this
+        // elastic-metric twin used the raw deviator, so the two disagreed for any
+        // model with a back stress and this one was the wrong half.  Consequence
+        // measured before the fix: `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`,
+        // `Ht = 0`, associated, trial `(q_tr, p_tr) = (0.02, 0.3810)` classified
+        // APEX although its exact return is the cone point `sqrt(J2(r)) = 0.017321`,
+        // `p = 0.220190`; `be_apex_project` then refused the step because the vertex
+        // `apex_stress()` names is not on the surface either -- `|f(sigma_apex)| =
+        // 0.034641`, which is exactly `sqrt(J2(alpha))`.  Restricted to the yield
+        // functions that opt into the elastic-metric classification, whose first
+        // internal variable IS that back stress; every other family keeps the raw
+        // deviator and is byte-identical here.
+        if constexpr (yf_apex_elastic_metric<YieldFunctionType>::value)
+        {
+            using CpAlphaIV = typename std::tuple_element<
+                    0, typename YieldFunctionType::internal_variables_t>::type;
+            dev_tr = dev_tr - iv_storage.template get<CpAlphaIV>().trial_value;
+        }
         double q2_tr = tensor_dot_stress_like(dev_tr, dev_tr);
         if (!(q2_tr > 0.0)) q2_tr = 0.0;
         const double q_tr = std::sqrt(q2_tr);
@@ -4697,16 +4718,24 @@ private:
         //
         // Ladruno (ADR-94 addendum, F8): the elastic-metric answer REPLACES the
         // Euclidean one for the opted-in yield functions; wp/94f UNIONED them, and
-        // the union is only safe in the direction wp/94f measured.  The two slopes
-        // are `eta` (Euclidean) and `K*etabar/G` (exact), and WHICH IS LARGER
-        // DEPENDS ON THE FLOW RULE:
-        //   * etabar = 0  (non-associated, the ADR-95 deck): exact slope 0, the
-        //     exact region `p >= p_apex` strictly CONTAINS the Euclidean one, so
+        // the union is only safe in the direction wp/94f measured.  A union keeps
+        // the WIDER region, and the exact slope `K*etabar/G` OVERTAKES the Euclidean
+        // `eta` as soon as
+        //          etabar > eta * G / K
+        // -- on the ADR-95 deck `G/K = 0.10345` and `eta = 0.4457`, so the crossover
+        // is `etabar = 0.0461`, i.e. psi ~ 2.3 deg.  THE CONDITION IS DILATANCY, NOT
+        // ASSOCIATIVITY: the union is wrong for essentially every dilatant deck, and
+        // `etabar = 0` is the single case where it is right -- which is the single
+        // case wp/94f measured.
+        //   * etabar = 0  (the ADR-95 deck): exact slope 0, the exact region
+        //     `p >= p_apex` strictly CONTAINS the Euclidean one, so
         //     union == replace and wp/94f's result is untouched;
-        //   * etabar = eta (ASSOCIATED): exact slope `K*eta/G` -- on that same deck
-        //     `K/G = 9.667`, so the exact apex cone is ~10x NARROWER than the
-        //     Euclidean one and the union keeps the too-wide Euclidean answer.
-        //     Every trial in the wedge `eta*q <= p - p_apex < (K*etabar/G)*q` is then
+        //   * etabar = eta/2 (psi ~ phi/2, an ordinary sand): exact slope 2.1545
+        //     against the Euclidean 0.4457 -- a 4.8x-wide misclassified wedge;
+        //   * etabar = eta (associated): exact slope `K*eta/G` = 4.3089 on that same
+        //     deck, ~10x the Euclidean cone.
+        //     Above the crossover the union keeps the too-wide Euclidean answer, and
+        //     every trial in the wedge `eta*q <= p - p_apex < (K*etabar/G)*q` is
         //     apex-projected although its correct return is to the cone FLANK: the
         //     committed stress is pinned at `sigma_apex` with NO deviator, and under
         //     `tangent_type Continuum` that Gauss point also reports a ZERO tangent.
@@ -4941,9 +4970,25 @@ private:
 
         // Ladruno (ADR-94 addendum, F8): DEVIATOR-FLIP GUARD on the flank result.
         // A Drucker-Prager return is a NON-NEGATIVE radial scaling of the trial
-        // deviator plus a pressure change, so the returned deviator can never point
-        // OPPOSITE the trial one: that means the map walked through the vertex and
-        // out the other side.  This is not hypothetical.  Narrowing the apex region
+        // RELATIVE deviator `r = dev(sigma) - alpha` plus a pressure change, so the
+        // returned `r` can never point OPPOSITE the trial one: that means the map
+        // walked through the vertex and out the other side.
+        //
+        // `r`, NOT `dev(sigma)`.  Review round 2 caught the earlier version of this
+        // guard asserting the flip on the ABSOLUTE deviator, which is only the same
+        // statement when the back stress is zero.  With `alpha` antiparallel to the
+        // trial deviator, `dev(sigma)` can legitimately cross zero while
+        // `sqrt(J2(r))` stays positive, and the guard then refused an admissible
+        // return: measured with `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`,
+        // associated, trials `(q_tr, p_tr) = (0.05, 0.5103)` and `(0.02, 0.3810)`,
+        // whose exact return is `sqrt(J2(r)) = 0.017321`, `p = 0.220190`, `f = 0` --
+        // refused with `rc = -3` under both `strict_convergence` settings, with a
+        // message asserting the return was impossible.  Both `r` are formed against
+        // the back stress CURRENT AT THEIR OWN STATE (trial IVs for the returned
+        // stress, committed IVs for the elastic predictor), which is the pairing the
+        // yield function itself uses; with `Ht = 0` the two coincide.
+        //
+        // This is not hypothetical.  Narrowing the apex region
         // to the exact elastic-metric one (above) routes near-boundary trials into
         // this flank Newton, whose `dPhi/dlambda` carries the shipped yield
         // function's `df/dk = -1` term for a cohesion internal variable that `f`
@@ -4970,22 +5015,38 @@ private:
         {
             if (!be_flank_failed)
             {
-                const VoigtVector be_dev_ret = TrialStress.deviator();
-                const VoigtVector be_dev_tr  = be_sigma_trial_elastic.deviator();
-                const double be_q2_tr  = tensor_dot_stress_like(be_dev_tr, be_dev_tr);
-                const double be_q2_ret = tensor_dot_stress_like(be_dev_ret, be_dev_ret);
+                // The back stress this yield function subtracts.  Every YF opting
+                // into `yf_apex_elastic_metric` is a cone in the (p, sqrt(J2(r)))
+                // half-plane whose first internal variable IS that back stress
+                // (`DruckerPrager_YF::internal_variables_t` = <Alpha, Cohesion>),
+                // which is how it is reached without a new accessor.
+                using BeAlphaIV = typename std::tuple_element<
+                        0, typename YieldFunctionType::internal_variables_t>::type;
+                const VoigtVector be_alpha_trial =
+                        iv_storage.template get<BeAlphaIV>().trial_value;
+                const VoigtVector be_alpha_commit =
+                        iv_storage.template get<BeAlphaIV>().committed_value;
+                const VoigtVector be_r_ret =
+                        TrialStress.deviator() - be_alpha_trial;
+                const VoigtVector be_r_tr  =
+                        be_sigma_trial_elastic.deviator() - be_alpha_commit;
+                const double be_r2_tr  = tensor_dot_stress_like(be_r_tr, be_r_tr);
+                const double be_r2_ret = tensor_dot_stress_like(be_r_ret, be_r_ret);
                 // The size test is NOT optional and NOT a fitted tolerance.  A
-                // return that lands exactly ON the vertex has `dev_ret == 0` to
+                // return that lands exactly ON the vertex has `r_ret == 0` to
                 // round-off, and the sign of a round-off-sized dot product is a
                 // coin flip -- wp/94f's own zero-dilatancy acceptance path walks
                 // up the cone in equal steps and hits the vertex EXACTLY on its
-                // 5th, where the raw sign test fires on 1e-17.  So the deviator
-                // must also be bigger than the yield tolerance, which is the
-                // stress-unit scale the rest of this integrator measures in
-                // (ADR-94 M5): `||dev_ret|| > tol_yf`.
-                if (be_q2_tr > 0.0 &&
-                    be_q2_ret > tol_yf * tol_yf &&
-                    tensor_dot_stress_like(be_dev_ret, be_dev_tr) < 0.0)
+                // 5th, where the raw sign test fires on 1e-17.  So the relative
+                // deviator must also be bigger than the yield tolerance, which is
+                // the stress-unit scale the rest of this integrator measures in
+                // (ADR-94 M5): `||r_ret|| > tol_yf`.  The floor is not free: a
+                // flip smaller than `f_absolute_tol` is invisible to this guard BY
+                // CONSTRUCTION, because that is the scale at which the integrator
+                // stops distinguishing states at all.
+                if (be_r2_tr > 0.0 &&
+                    be_r2_ret > tol_yf * tol_yf &&
+                    tensor_dot_stress_like(be_r_ret, be_r_tr) < 0.0)
                 {
                     be_flank_failed = true;
                     be_flank_reason = "the flank return OVERSHOT the vertex: the"

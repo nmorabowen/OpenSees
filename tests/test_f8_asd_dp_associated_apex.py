@@ -149,12 +149,12 @@ ops.nDMaterial("ASDPlasticMaterial3D", 1,
     "Begin_Model_Parameters",
     "YoungsModulus", {E}, "PoissonsRatio", {NU},
     "DP_xi_c", {xi_c}, "DP_eta", {eta}, "DP_etabar", {etabar},
-    "TensorLinearHardeningParameter", 0.0,
+    "TensorLinearHardeningParameter", {ht},
     "ScalarLinearHardeningParameter", {hs},
     "MassDensity", 0.0,
     "End_Model_Parameters",
     "Begin_Internal_Variables",
-    "BackStress", 0., 0., 0., 0., 0., 0.,
+    "BackStress", {a0}, {a1}, {a2}, {a3}, {a4}, {a5},
     "DP_cohesion", 0.0,
     "End_Internal_Variables",
     "Begin_Integration_Options",
@@ -192,11 +192,15 @@ sys.stdout.write("RESULT " + json.dumps(out) + "\n")
 '''
 
 
-def _run(etabar, ex, ey, ez, nsteps=1, strict=1, tangent="Continuum", hs=0.0):
+def _run(etabar, ex, ey, ez, nsteps=1, strict=1, tangent="Continuum", hs=0.0,
+         ht=0.0, alpha0=(0.0,) * 6):
+    a = [repr(float(v)) for v in alpha0]
     script = _CHILD.format(dist=os.path.abspath(_DIST), iv=IV_DP, E=E, NU=NU,
                            xi_c=XI_C, eta=ETA, etabar=etabar, strict=strict,
                            tangent=tangent, ex=repr(ex), ey=repr(ey),
-                           ez=repr(ez), nsteps=nsteps, hs=repr(float(hs)))
+                           ez=repr(ez), nsteps=nsteps, hs=repr(float(hs)),
+                           ht=repr(float(ht)), a0=a[0], a1=a[1], a2=a[2],
+                           a3=a[3], a4=a[4], a5=a[5])
     p = subprocess.run([sys.executable, "-c", textwrap.dedent(script)],
                        capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=600)
@@ -489,3 +493,85 @@ def test_f8_nonsoftening_rows_are_unaffected(dp_available, hs):
             f"HS={hs}, ratio={ratio}: q moved, {q!r} vs pre-guard {q_ref!r}")
         assert last[2] - last[0] > 0.0 or q <= 1e-6 * XI_C, (
             f"HS={hs}, ratio={ratio}: deviator sign flipped: {last!r}")
+
+
+# ===========================================================================
+# 8. NONZERO BACK STRESS -- the apex region and the flip guard both live in the
+#    RELATIVE deviator r = dev(sigma) - alpha
+# ===========================================================================
+# Review round 2.  ``DruckerPrager_YF::check_apex_region`` has always measured in
+# ``r`` (its own line 146); ``cp_apex_region``, the elastic-metric twin the
+# integrator uses, measured in the raw ``dev(sigma)``.  With ``alpha``
+# antiparallel to the trial deviator the two disagree: the raw deviator can cross
+# zero while ``sqrt(J2(r))`` stays positive, so a cone state is classified APEX.
+# ``be_apex_project`` then refuses the step, because the vertex ``apex_stress()``
+# names is not on the surface either -- ``|f(sigma_apex)| = sqrt(J2(alpha))``,
+# measured 0.034641 for the alpha below.  Same variable, same mistake, in the
+# deviator-flip guard.
+#
+# The reviewer's two trials, with the oracle computed HERE rather than
+# transcribed: the elastic trial from a zero stress state built by
+# ``_normal_strains`` has deviator ``(-k, -k, 2k)`` with ``k = q_tr/sqrt(3)``, so
+# ``r_tr`` and the closed-form cone return are both elementary.
+ALPHA0 = (0.02, 0.02, -0.04, 0.0, 0.0, 0.0)
+BACKSTRESS_TRIALS = [(0.05, 0.5103), (0.02, 0.3810)]
+# the reviewer's quoted answer, which is trial 2's (trial 1 lands 5.0e-6 away in
+# sqrt(J2(r)) -- the two trials do NOT share a return point)
+REVIEWER_QREL, REVIEWER_P = 0.017321, 0.220190
+
+
+def _q_rel(sig, alpha):
+    """sqrt(J2) of the RELATIVE deviator r = dev(sigma) - alpha."""
+    p = (sig[0] + sig[1] + sig[2]) / 3.0
+    r = [sig[0] - p - alpha[0], sig[1] - p - alpha[1], sig[2] - p - alpha[2],
+         sig[3] - alpha[3], sig[4] - alpha[4], sig[5] - alpha[5]]
+    j2 = 0.5 * (r[0] ** 2 + r[1] ** 2 + r[2] ** 2) + r[3] ** 2 + r[4] ** 2 + r[5] ** 2
+    return math.sqrt(max(j2, 0.0))
+
+
+def _relative_trial(p_tr, q_tr, alpha):
+    """sqrt(J2(r)) of the elastic trial `_normal_strains(p_tr, q_tr)` produces."""
+    k = q_tr / math.sqrt(3.0)
+    dev = (-k, -k, 2.0 * k, 0.0, 0.0, 0.0)
+    r = [dev[i] - alpha[i] for i in range(6)]
+    j2 = 0.5 * (r[0] ** 2 + r[1] ** 2 + r[2] ** 2) + r[3] ** 2 + r[4] ** 2 + r[5] ** 2
+    return math.sqrt(max(j2, 0.0))
+
+
+@pytest.mark.parametrize("q_tr,p_tr", BACKSTRESS_TRIALS)
+@pytest.mark.parametrize("strict", [0, 1])
+def test_f8_backstress_admissible_return_is_not_refused(dp_available, q_tr, p_tr,
+                                                        strict):
+    """A legitimate cone return whose ABSOLUTE deviator has crossed zero.  It
+    must be accepted, and it must land on the closed form."""
+    q_rel_tr = _relative_trial(p_tr, q_tr, ALPHA0)
+    p_ex, q_ex = _cone_return(p_tr, q_rel_tr, ETA)       # the same closed form,
+    assert q_ex > 0.0, "oracle says apex -- the trial was mis-constructed"
+
+    ex, ey, ez = _normal_strains(p_tr, q_tr)
+    res = _run(ETA, ex, ey, ez, nsteps=1, strict=strict, ht=0.0, alpha0=ALPHA0)
+    assert res["codes"] == [0], (
+        f"an ADMISSIBLE return was refused at (q_tr, p_tr) = ({q_tr}, {p_tr}), "
+        f"strict={strict}, alpha0={ALPHA0}: codes={res['codes']}. Its exact "
+        f"return is sqrt(J2(r)) = {q_ex!r}, p = {p_ex!r}. Both the apex "
+        f"classification and the flip guard must measure in the RELATIVE "
+        f"deviator; in the raw one this state reads as 'impossible' because "
+        f"dev(sigma) crosses zero when alpha is antiparallel to it.\n"
+        f"{res['raw'][-2500:]}")
+    last = res["hist"][-1]
+    p = (last[0] + last[1] + last[2]) / 3.0
+    q_rel = _q_rel(last, ALPHA0)
+    assert abs(q_rel - q_ex) <= 1e-6 * q_ex, (
+        f"sqrt(J2(r)) = {q_rel!r} vs closed form {q_ex!r}")
+    assert abs(p - p_ex) <= 1e-6 * abs(p_ex), (
+        f"p = {p!r} vs closed form {p_ex!r}")
+
+
+def test_f8_backstress_oracle_matches_the_reviewers_quoted_answer():
+    """Provenance, not physics: the closed form used above reproduces the figure
+    the review quoted, so the two are the same calculation.  It is trial 2's --
+    trial 1 returns to a point 5.0e-6 away in sqrt(J2(r))."""
+    q_tr, p_tr = BACKSTRESS_TRIALS[1]
+    p_ex, q_ex = _cone_return(p_tr, _relative_trial(p_tr, q_tr, ALPHA0), ETA)
+    assert abs(q_ex - REVIEWER_QREL) <= 5e-7, (q_ex, REVIEWER_QREL)
+    assert abs(p_ex - REVIEWER_P) <= 5e-7, (p_ex, REVIEWER_P)

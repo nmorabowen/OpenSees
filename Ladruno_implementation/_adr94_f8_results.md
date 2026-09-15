@@ -283,6 +283,84 @@ that this WP's change is confined to Drucker-Prager.
 | the five files together | **37 passed in 10.16 s** |
 | `pytest -k "adr84 or adr94 or adr95 or adr97 or asdplastic or f8"` | **273 passed, 9 skipped** (+ the pre-existing `test_adr94_matrix.py` cwd-relative-path error, which passes when run from `tests/`) |
 
+## 3c. Review round 2 — MERGE-OK, two follow-ups closed
+
+Re-verification returned **MERGE-OK**: the gate cases reproduce the reviewer's
+table exactly, the flip guard fixes the reported softening defect, the vertex
+floor was verified at 14 resolutions and lands at the predicted `||r_ret||`
+crossover, inertness 10/10, 205 other ASDPlastic tests green. Two follow-ups:
+
+**(1) Two C++ comment blocks still said "associated"** — `ASDPlasticMaterial3D.h`
+enumerated only `etabar = 0` and `etabar = eta`, and `DruckerPrager_YF.h` said
+"Under ASSOCIATED flow it is the narrower one". Both now state the crossover
+`etabar > eta*G/K` (psi ~ 2.3 deg on this deck) and carry the `etabar = eta/2`
+row. Comment-only.
+
+**(2) The apex region is in the RELATIVE deviator — fixed, and the attribution
+is one layer up from where the review put it.** Drucker-Prager's surface is
+written in `r = dev(sigma) - alpha`, so both the flip guard AND the apex
+classification have to be. The review named the guard; the measured refusal is
+actually the apex **classification** reaching the state first — the message is
+`predictor-classified apex: ... |f(sigma_apex)| = 0.0346`, which is exactly
+`sqrt(J2(alpha))`. `cp_apex_region` tested the flip on `dev(sigma)`, so it called
+a cone state APEX; `be_apex_project` was then asked for a vertex
+`DruckerPrager_YF::apex_stress()` cannot supply (it ignores `alpha`), its own
+`|f(sigma_apex)| <= tol_yf` guard fired, and the step was refused. Both were
+fixed in the same variable; the guard's premise was wrong too and would have been
+the next thing to bite. Reviewer's reproducer,
+`alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`, associated:
+
+| trial `(q_tr, p_tr)` | exact return (closed form) | round 1 | round 2 |
+|---|---|---|---|
+| (0.05, 0.5103) | `sqrt(J2(r))` 0.0173156018, `p` 0.2202010508 | **rc -3** (strict 0 and 1) | **rc 0**, matches to 1e-6 |
+| (0.02, 0.3810) | `sqrt(J2(r))` 0.0173206061, `p` 0.2201898240 | **rc -3** (strict 0 and 1) | **rc 0**, matches to 1e-6 |
+
+The two trials do **not** share a return point — they differ by 5.0e-6 in
+`sqrt(J2(r))`. The review quoted one pair (0.017321, 0.220190); that is trial 2's,
+and the test now computes each trial's own closed form in-test rather than
+transcribing a constant, with a separate provenance case asserting that the
+in-test oracle reproduces the reviewer's quoted figure to 5e-7.
+
+**This refusal is older than F8 and is not the union's doing.** The Euclidean
+`check_apex_region` over-classifies the same trial (`p - p_apex = 0.1220` against
+`eta*q_rel = 0.0244`), so every arrangement since wp/94c made the apex projection
+live — Euclidean alone, Euclidean OR elastic-metric, or elastic-metric alone —
+reaches it. What round 2 changed is the test the integrator now relies on.
+
+**What is still pinned:** `apex_stress()` ignores `alpha`. The vertex of this
+surface is `alpha + p_apex*I`, not `p_apex*I`, so a state that genuinely IS in
+the apex region with a nonzero back stress is still refused rather than
+projected. Refusing is the safe half of wrong, and the fix is a one-line change
+to a vanilla yield function that also moves `Closest_Point`'s apex return — its
+own WP, its own gate.
+
+In the guard, both `r` are formed against the back stress current at their own
+state (trial internal variables for the returned stress, committed ones for the
+elastic predictor) — the pairing the yield function itself uses; with `Ht = 0`
+they coincide. The back stress is reached through
+`YieldFunctionType::internal_variables_t`'s first element, which for every yield
+function declaring `yf_apex_elastic_metric` IS the back stress, so no new
+accessor was needed, and `cp_apex_region`'s correction is behind the same
+`if constexpr` so every other family is byte-identical there. The
+`||r_ret|| > tol_yf` floor is unchanged, and the guard comment now says plainly
+that a flip smaller than `f_absolute_tol` is invisible **by construction** — that
+is the integrator's own `f` scale, not a tuning knob.
+
+Regression checks re-measured on the round-2 build: wp/94f's psi = 0 walk
+`codes = [0]*10` ending at the apex; the `HS = -20000` rows now commit the apex
+(`q = 0`) instead of a flipped deviator, at both strict settings; the `HS = 0`
+and `HS = +2000` rows reproduce their pinned values to the last printed digit.
+
+| gate | round 1 | round 2 |
+|---|---|---|
+| `tests/test_f8_asd_dp_associated_apex.py` | 12/12 | **17/17** |
+| the five ASDPlastic files | 37 | **42 passed in 6.43 s** |
+| `-k "adr84 or adr94 or adr95 or adr97 or asdplastic or f8"` | 273 passed, 9 skipped | **278 passed, 9 skipped** |
+
+The `Closest_Point` gates (ADR-97 P1/P2/P3/P5/P6) are inside that sweep and stay
+green: `cp_apex_region` is shared with them, and with a zero back stress the
+correction is arithmetically a no-op.
+
 ## 4. Artifacts
 
 All under `Ladruno_files/testbed/hypo_bearing/`, prefix `f8_`:
