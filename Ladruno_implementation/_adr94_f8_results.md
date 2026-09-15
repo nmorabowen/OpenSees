@@ -91,9 +91,42 @@ All four legs below are the **same mesh, same deck, same session**
 |---|---|---|---|---|---|---|---|---|---|
 | UW associated (reference) | `9c2f964ea` | 268.75 | **1.9348** | TARGET | 0.120 | 4400 | **yes** | 0 / 0 | 63 |
 | **ASD associated, PRE-fix** | `9c2f964ea` | 226.51 | 1.6307 | **BUDGET** | 8.270 | 50 | **NO** | 898 / 81 | 894 |
-| **ASD associated, POST-fix** | `3324485f7` | <!-- POSTFIX-ROW --> | | | | | | | |
+| **ASD associated, POST-fix** | `3324485f7` | 268.38 | **1.9321** | BUDGET | 0.163 | 2500 | **yes** | 1528 / 81 | 1122 |
 | ASD psi = 0, PRE-fix | `9c2f964ea` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 72 |
 | ASD psi = 0, POST-fix | `3324485f7` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 107 |
+
+`BUDGET` is the gate's own "capacity WITH A NAMED ALLOWANCE" (all three of its
+non-associated legs end there too): the load had been flat for the last tenth of
+the run with the step still 2500x the floor. **The post-fix ASD associated leg is
+a CAPACITY at 1.9321 against the UW reference's 1.9348 — 0.14 % apart.**
+
+### The two implementations now follow the same PATH, not merely the same peak
+
+`q` (kPa) at matched settlement, both legs of this session:
+
+| s/B | UW assoc | ASD assoc POST-fix | rel | ASD assoc PRE-fix |
+|---|---|---|---|---|
+| 0.0050 | 126.68 | 126.68 | +0.000 % | 130.08 |
+| 0.0169 | 226.19 | 226.26 | +0.027 % | *(walled at 0.01685)* |
+| 0.0200 | 233.04 | 233.14 | +0.043 % | — |
+| 0.0400 | 255.97 | 256.08 | +0.045 % | — |
+| 0.0600 | 261.63 | 261.83 | +0.075 % | — |
+| 0.0800 | 264.18 | 264.34 | +0.062 % | — |
+| 0.1000 | 265.93 | 266.08 | +0.056 % | — |
+| 0.1366 | 268.24 | 268.38 | +0.052 % | — |
+
+Worst over the whole common range: **0.075 %**.
+
+**How large the stress error was, and why that is not the point.** Over its own
+(short) range the PRE-fix leg's load-settlement curve was never far from UW's:
+worst 5.17 % at s/B 0.00202, and 0.141 % at its terminal point. The
+misclassification's stress error at a handful of Gauss points is small in
+absolute terms (the apex sits at 0.259 kPa in a 200 kPa field). What it destroys
+is the **iteration**: an apex projection is a different, non-smooth map with a
+zero `Continuum` tangent, so the outer Newton loses its quadratic convergence at
+exactly the Gauss points the mechanism is forming around. The symptom is a
+controller death, not a wrong number — which is why "the load path looks fine"
+is not evidence that the return map is.
 
 **The pre-fix failure is SILENT.** `grep -c "rejecting step"` over the whole
 894-second pre-fix associated log is **0**: no refusal, no NaN, no apex message.
@@ -119,6 +152,16 @@ exact test cannot change anything.
 | `tests/test_adr97_p4_inertness.py` | **10/10** — `Backward_Euler` still BYTE-IDENTICAL on all 23 baseline decks |
 | `tests/test_adr94c_numerics.py` + `test_adr94_redblue_numerics.py` | **11/11** |
 | total | **29 passed** (pre-fix control on `9c2f964ea`: 25 passed, the new file excluded) |
+| `tests/test_r3_prandtl_asd_associated.py` (new, slow tier) | see Sec. 4 |
+
+## 4. Artifacts
+
+All under `Ladruno_files/testbed/hypo_bearing/`, prefix `f8_`:
+`f8_r3_h1.0_assoc_{uw,asd_PRE,asd_POST}.csv` (the load-settlement curves),
+`f8_r3_h1.0_nonassoc_asd_{PRE,POST}.csv` (the byte-identical pair),
+`f8_census_assoc_{uw,asd_PRE,asd_POST}.csv` (the Gauss-point census),
+`f8_asd_assoc_h1.0_{PRE,POST}.log` (trimmed, with the refusal/NaN counts of the
+full logs in their headers). Driver: `r3_assoc_probe.py`.
 
 ## 3. What is NOT claimed
 
@@ -135,10 +178,17 @@ exact test cannot change anything.
   apex under `tangent_type Continuum` deliberately ("the honest continuum
   operator at a perfectly plastic apex is ZERO"), and `Secant` — the default —
   blends it with the elastic operator. This WP only changed WHICH states are
-  classified as apex, not what happens to one that is. On the post-fix leg 228 of
-  1600 Gauss points are apex-pinned at s/B 0.043 and the leg advances freely, so
-  the zero tangent is not by itself a wall; that was the alternative hypothesis
-  and it is not supported.
+  classified as apex, not what happens to one that is. On the post-fix leg **412
+  of 1600 Gauss points are apex-pinned at s/B 0.1225** and the leg still advances
+  to a plateau (the UW reference carries 436 at s/B 0.148), so the zero tangent
+  is not by itself a wall — that was the alternative hypothesis and it is not
+  supported.
+* **The associated leg is still the expensive one.** Post-fix it takes 1122 s and
+  1528 failed ladder attempts against the UW material's 63 s and zero, and it
+  ends on `BUDGET` rather than `TARGET`. What changed is that it advances: tail
+  0.163 % vs 8.270 %, terminal step 2500x the floor vs 50x, s/B 0.1366 vs 0.0169.
+  Why the ASD path costs more Newton work than UW's on the same cone is not
+  answered here.
 * **Nothing is claimed about `Closest_Point`.** It has always classified in the
   elastic metric; this WP makes `Backward_Euler` agree with it, which is what
   wp/94f said it was doing.
