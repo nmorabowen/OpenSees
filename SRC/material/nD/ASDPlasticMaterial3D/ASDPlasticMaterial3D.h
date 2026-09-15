@@ -4683,14 +4683,37 @@ private:
         // that opt in via `yf_apex_elastic_metric` (today: Drucker-Prager, whose apex
         // is a cone vertex in the (p, sqrt(J2)) half-plane); every other yield
         // function keeps its own Euclidean answer and is byte-identical here.
+        //
+        // Ladruno (ADR-94 addendum, F8): the elastic-metric answer REPLACES the
+        // Euclidean one for the opted-in yield functions; wp/94f UNIONED them, and
+        // the union is only safe in the direction wp/94f measured.  The two slopes
+        // are `eta` (Euclidean) and `K*etabar/G` (exact), and WHICH IS LARGER
+        // DEPENDS ON THE FLOW RULE:
+        //   * etabar = 0  (non-associated, the ADR-95 deck): exact slope 0, the
+        //     exact region `p >= p_apex` strictly CONTAINS the Euclidean one, so
+        //     union == replace and wp/94f's result is untouched;
+        //   * etabar = eta (ASSOCIATED): exact slope `K*eta/G` -- on that same deck
+        //     `K/G = 9.667`, so the exact apex cone is ~10x NARROWER than the
+        //     Euclidean one and the union keeps the too-wide Euclidean answer.
+        //     Every trial in the wedge `eta*q <= p - p_apex < (K*etabar/G)*q` is then
+        //     apex-projected although its correct return is to the cone FLANK: the
+        //     committed stress is pinned at `sigma_apex` with NO deviator, and under
+        //     `tangent_type Continuum` that Gauss point also reports a ZERO tangent.
+        //   MEASURED (tests/test_f8_asd_dp_associated_apex.py, build 9c2f964ea, the
+        //   ADR-95 cone): a trial at (p - p_apex)/q = 2.0, associated, committed
+        //   (p, q) = (0.25905, 0) against the closed-form cone return
+        //   (-0.53149, 0.35238).
+        // The trait is the statement "this yield function's apex region is exactly
+        // the elastic-metric one", which is what `Closest_Point` has always acted on;
+        // the flank-first fallback (layer (b) below) remains the safety net for any
+        // state the exact test routes to a flank map that then fails.
         if constexpr (yf_has_apex<YieldFunctionType>::value)
         {
-            bool be_in_apex = yf.check_apex_region(TrialStress, iv_storage, parameters_storage);
+            bool be_in_apex;
             if constexpr (yf_apex_elastic_metric<YieldFunctionType>::value)
-            {
-                if (!be_in_apex)
-                    be_in_apex = cp_apex_region(depsilon, TrialStress, Eelastic, yf_val_end, tol_yf);
-            }
+                be_in_apex = cp_apex_region(depsilon, TrialStress, Eelastic, yf_val_end, tol_yf);
+            else
+                be_in_apex = yf.check_apex_region(TrialStress, iv_storage, parameters_storage);
             if (be_in_apex)
             {
                 const int apex_rc = be_apex_project(depsilon, TrialStress, Eelastic,

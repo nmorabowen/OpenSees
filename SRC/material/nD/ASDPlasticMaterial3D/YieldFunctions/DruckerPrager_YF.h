@@ -257,13 +257,20 @@ template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 // Ladruno (ADR-94 wp/94f): ...and now Backward_Euler agrees with Closest_Point.
-// The Euclidean `check_apex_region` above is kept (it is part of the yield
-// function's own interface and is still consulted first), but the integrator
-// UNIONS it with the elastic-metric classification: `(p - p_apex) >= eta*q` is
-// only the exact test when K*etabar/G == eta, and on a zero-dilatancy deck
-// (etabar = 0, the ADR-95 Prandtl footing) the exact test is just p >= p_apex,
-// so every over-apex state with small shear was routed to a flank map that
-// cannot move p and therefore cannot close f.
+// The Euclidean `check_apex_region` above is kept -- it is part of the yield
+// function's own public interface -- but `Backward_Euler` no longer consults it
+// for this yield function: `(p - p_apex) >= eta*q` is the exact test only when
+// K*etabar/G == eta, and on a zero-dilatancy deck (etabar = 0, the ADR-95
+// Prandtl footing) the exact test is just p >= p_apex, so every over-apex state
+// with small shear was routed to a flank map that cannot move p and therefore
+// cannot close f.
+// Ladruno (ADR-94 addendum, F8): wp/94f UNIONED the two answers, which is safe
+// only while the exact region is the WIDER one.  Under ASSOCIATED flow it is the
+// narrower one (K*etabar/G = K*eta/G, ~10x eta on that deck), so the union kept
+// the too-wide Euclidean answer and apex-projected trials whose correct return is
+// to the cone flank.  The elastic-metric test now REPLACES it; the trait below is
+// exactly the claim "this yield function's apex region IS the elastic-metric
+// one", in both directions.
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_apex_elastic_metric<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
