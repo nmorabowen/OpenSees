@@ -310,11 +310,17 @@ LEGS = {
     "M":  ("B with a GENTLE growth factor 1.25 instead of 2, so the clock ratio "
            "f on a growth step is 1.25 and not 2",
            dict(k0=0.455, grow=1.25)),
+    "N":  ("B with -implexControl REMOVED -- bare `-implex`, the way the ADR-95 "
+           "reference campaign ran it; growth factor still 2.0, everything else "
+           "identical. THE DECISIVE ARM.", dict(k0=0.455, control=False)),
+    "N1": ("N with the growth factor also pinned at 1.0 -- separates 'no control' "
+           "from 'no growth'", dict(k0=0.455, control=False, grow=1.0)),
 }
 
 
 def build(h0, k0, gamma, q_uniform, q_surch, q_foot, implex, tol, redlim,
-          factor, maxsubsteps, guard="on", trialguard="on", verbose=True):
+          factor, maxsubsteps, guard="on", trialguard="on", control=True,
+          verbose=True):
     """Build + confine + flip.  Returns the deck dict."""
     nodes, hexes, trib, sets, vol, cen = strip_mesh(h0)
     n_hex, n_nodes = len(hexes), len(nodes)
@@ -333,8 +339,14 @@ def build(h0, k0, gamma, q_uniform, q_surch, q_foot, implex, tol, redlim,
         "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN, "-honorTolR", 0,
         "-maxSubsteps", int(maxsubsteps),
         *(("-implex",) if implex else ()),
-        *(("-implexControl", float(tol), float(redlim)) if implex else ()),
-        *(("-implexFactor", factor) if (implex and factor != "fixed") else ()),
+        # ADR-92 F10 review round 1, BLOCKER 1: `-implexControl` used to be
+        # hard-wired onto `-implex` here, so no leg could run IMPL-EX the way
+        # the ADR-95 reference campaign actually ran it (`sanisand_path_diag.py`
+        # passes `-implex` alone).  It is now a leg knob, and leg N is that arm.
+        *(("-implexControl", float(tol), float(redlim))
+          if (implex and control) else ()),
+        *(("-implexFactor", factor)
+          if (implex and control and factor != "fixed") else ()),
         *(("-implexGuard", guard) if (implex and guard != "on") else ()),
         *(("-implexTrialGuard", trialguard)
           if (implex and trialguard != "on") else ()))
@@ -522,12 +534,13 @@ def run_leg(args, name, desc, kw):
     hold = kw.get("hold", False)
     ds0 = kw.get("ds0", DS_BASE)
     grow = kw.get("grow", 2.0)
+    control = kw.get("control", True)
 
     print(f"=== leg {name}: {desc}", flush=True)
     t0 = time.time()
     deck = build(args.h0, k0, gamma, q_uniform, q_surch, q_foot, implex,
                  tol, redlim, factor, args.maxsubsteps,
-                 kw.get("guard", "on"), kw.get("trialguard", "on"))
+                 kw.get("guard", "on"), kw.get("trialguard", "on"), control)
     foot, uz0, r0 = push_setup(deck)
     ptol = PUSH_TOL_REL * max(deck["applied"], 1.0)
     ladder = [("Newton", ptol, 25, 0),
@@ -543,6 +556,19 @@ def run_leg(args, name, desc, kw):
               flush=True)
 
     out = os.path.join(args.out, f"f10_{name}.csv")
+    # ADR-92 F10 review round 1, nit 13.  `hypo_bearing/README.md` records this
+    # exact failure: two processes on the same leg interleave rows into one CSV
+    # and leave a torn line, and the summary then reduces a file neither process
+    # wrote.  It cost legs L and M a re-run here.  Same guard as the ADR-79
+    # runner: refuse a CSV another process touched in the last 180 s
+    # (F10_FORCE=1 overrides).
+    if (os.path.exists(out) and not os.environ.get("F10_FORCE")
+            and time.time() - os.path.getmtime(out) < 180.0):
+        raise SystemExit(
+            f"\n{out} was written {time.time()-os.path.getmtime(out):.0f} s "
+            f"ago -- another process is probably running leg {name}. Two "
+            f"writers interleave rows and tear the file. Set F10_FORCE=1 to "
+            f"override.\n")
     fh = open(out, "w", newline="")
     wr = csv.writer(fh)
     wr.writerow(["step", "s_m", "s_over_B", "q_kPa", "ds_mm", "relaxed",
@@ -624,7 +650,8 @@ def run_leg(args, name, desc, kw):
                 k0=k0, nu=deck["nu"], gamma=gamma, q_uniform=q_uniform,
                 q_surch=q_surch, q_foot=q_foot, implex=implex, tol=tol,
                 redlim=redlim, factor=factor, maxsubsteps=args.maxsubsteps,
-                hold=hold, ds0=ds0, grow=grow, guard=kw.get("guard", "on"),
+                hold=hold, ds0=ds0, grow=grow, control=control,
+                guard=kw.get("guard", "on"),
                 trialguard=kw.get("trialguard", "on"),
                 mode=mode, verdict=verdict,
                 wall=wall, steps=nstep, nsub=nsub, nfail=nfail,

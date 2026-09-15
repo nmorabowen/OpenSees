@@ -18,6 +18,13 @@ not the ADR-93 apex/zero-confinement wall.
 Which `-implexControl` criterion fires, at which Gauss points, in what state —
 and is there a flag or a staging that carries a self-weight strip to a peak?
 
+**Answer (leg N):** remove `-implexControl`. Bare `-implex` with the same
+doubling controller reaches the target `s/B = 0.05` in 104 steps, 0
+subdivisions, 58 s, refusal ledger `0/0/0/0` — which is how the ADR-95 campaign
+that reached `s/B = 0.15` was run. With the control on, the refusal COUNT is set
+by the harness's growth rule and the step FLOOR is set by the control's own
+`implexPrimed` bare `> 0.0` test. Full verdict and tables in the note.
+
 ## The deck
 
 | | |
@@ -68,14 +75,24 @@ accepts `any` (and then says so loudly).
   * `probe` — walk to a fixed settlement on a refusal-free path, then take ONE
     step of a given size and census it. Run once per `ds` from separate
     processes, this is a controlled **step-size refinement at a fixed state**:
-    does the error scale with the step, or not?
+    does the bulk error field scale with the step, or not? (It does — first
+    order.) **Two limits, stated because the probe was over-read in the first
+    cut:** it measures the BULK field and reports zero over-tolerance points at
+    every `ds`, so it cannot see the handful of seizing points the leg's own
+    throttled warning lines carry; and its maximum-error point runs at `f = 0`
+    at every `ds` (guarded elastic-predictor drift, not extrapolation) while `f`
+    itself scales with `ds` through the sweep, so `O(ds)` and `O(f)` are not
+    separated by it.
 * `f10_summary.py` — reduces the JSONs and CSVs to the note's tables. Imports no
   engine, so an old campaign's artefacts can be re-reduced on any box.
 * `out/` — the measured artefacts (per-leg CSV + JSON, per-census CSV + JSON,
-  per-probe JSON) and the run scripts. **Raw engine logs are not committed**
-  (`.gitignore` here): they are tens of MB of throttled warning text and are
-  reproduced exactly by re-running the scripts. `out/summary.md` carries the
-  reduced tables that the note quotes.
+  per-probe JSON), the run scripts, and `out/refusal_warnings_<leg>.txt` — the
+  throttled `-implexControl REFUSES` lines, extracted and committed because they
+  are the evidence for the note's §4 (the `dt`-INDEPENDENT refusal family that
+  the error-field probe cannot see). **Raw engine logs are not committed**
+  (`.gitignore` here): tens of MB of throttled warning text plus a banner per
+  process, reproduced exactly by re-running the scripts. `out/summary.md` carries
+  the reduced tables that the note quotes.
 
 ## Running
 
@@ -87,16 +104,28 @@ python3.12 -u f10_selfweight_wall.py probe  --leg B --h0 0.5 --probe-s 0.0085 --
 python3.12    f10_summary.py out
 ```
 
-`out/run_legs.sh`, `out/run_legs2.sh`, `out/run_census.sh` and `out/run_probe.sh`
-are the campaign's own batch scripts, committed so the reported set is
-reproducible verbatim. Measured wall time for the whole campaign: about
-75 minutes on the reference box (Windows 11, Intel oneAPI build,
-`system Pardiso -matrixType 0`).
+`out/run_legs*.sh`, `out/run_census.sh` and `out/run_probe.sh` are the campaign's
+own batch scripts, committed so the reported set is reproducible verbatim.
+Measured wall time for the whole campaign: **about 84 minutes** across 17 legs,
+16 censuses and 7 probes on the reference box (Windows 11, Intel oneAPI build,
+`system Pardiso -matrixType 0`). Four legs (D, G, K, L) terminated on their
+wall-clock budget rather than on the physics, and **the box was not attested
+idle** — treat every wall number as an upper bound, and do not compare wall
+times across legs that ran at different times.
+
+**One writer per leg.** The driver refuses to open `out/f10_<leg>.csv` if another
+process touched it in the last 180 s (`F10_FORCE=1` overrides) — the same guard
+the ADR-79 runner carries, added here after an accidental double launch
+interleaved rows into legs L and M and tore a line. The physics was unaffected
+(leg M reproduced `s/B = 0.011286` to the digit on the single-process re-run) but
+both wall times were wrong. `f10_summary.py` also drops torn lines.
 
 ## The legs
 
 | leg | what it changes against B |
 |---|---|
+| **N** | **`-implexControl` REMOVED** — bare `-implex`, growth factor still 2.0. THE DECISIVE ARM, and the way the ADR-95 reference campaign ran it |
+| **N1** | N with the growth factor also pinned at 1.0 — separates "no control" from "no growth" |
 | **A** | weightless, uniform 10 kPa surcharge — the ADR-95 campaign's condition |
 | **B** | **the reported configuration**: self-weight, `K0 = 0.455` via `nu*`, `-implexControl 0.05 0.01` |
 | **C** | `K0 = 0.818` via `nu* = 0.45` — the ADR-95 slab's own Poisson ratio; CONTRACTANT at rest |

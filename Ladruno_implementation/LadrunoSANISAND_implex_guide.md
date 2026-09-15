@@ -314,33 +314,49 @@ a verdict yet.
 
 ## 9. Known limits
 
-- **A SELF-WEIGHT deck needs a NON-GROWING step, and that matters more than any flag on this
-  page.** `implexError` is **first order in the step** — measured on a controlled refinement at a
-  fixed committed state (ADR-92 F10 §4: max error over 2 280 Gauss points 1.13e-2 / 5.78e-3 /
-  3.04e-3 / 1.67e-3 at `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5 m, onto a `dt`-independent floor of
-  ~4e-4) — while `-implexControl` bounds it **absolutely**. Every deck therefore has a maximum
-  admissible step at a given tolerance, and a halve-on-failure / **double**-after-N controller
-  (the ADR-63 D16 one every fork bearing campaign uses) can only discover that bound by crossing
-  it — with the clock ratio `f = dt_{n+1}/dt_n` sitting at **2** on exactly the step that crosses
-  it, so the extrapolated plastic increment is doubled on top of the doubled strain increment.
-  Refuse, halve, N clean steps, double, refuse: an oscillation, not a convergence, and one
-  refusing Gauss point refuses the whole step. Measured on a `B = 1.5` m self-weight strip
-  (`gamma' = 9.81`, K0 = 0.455, 2 280 Gauss points, `tol 0.05`, everything else identical):
-  growth `x2` walls at `s/B = 0.0085` on the step FLOOR with 724 refusals; growth `x1.25` at
-  0.0113 with 253; **growth `x1.0` reaches 0.0265 with SIX refusals and zero subdivisions in
-  1 984 converged steps.** So: **pin the growth factor at 1.0 on any `-implexControl` leg**, or
-  drive the controller off `avgImplexError` so the bound is approached from below. A gentler
-  growth factor is not enough. Self weight is not itself the problem — it only decides *where*
-  the bound sits, by putting a low-`p'`, strongly dilatant ring (5.7–11 kPa, 100 % of points past
-  `M^d` at rest) under the footing edge while the rest of the block sits at 30–107 kPa; at the
-  step size that actually refuses, the over-tolerance population is **4 Gauss points out of
-  2 280**, not the whole block. Secondary levers, in measured order: raise `tol` (`0.1` = +37 %
-  reach, `0.5` reaches the target with 18 refusals — but §8's reading hazard then binds); raise
-  `reductionLimit` from the shipped `0.01` to `0.5` (+71 %, and the only setting at which the
-  floor branch is not inert on that deck). NOT levers: `-implexFactor controlIter` (+5 % for 2.9x
-  the wall time) and more confinement (a 100 kPa surcharge leg has **zero** over-tolerance Gauss
-  points at every step size tested and still refuses 2 754 times, because its controller grows
-  too). Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
+- **A SELF-WEIGHT bearing deck may not want `-implexControl` at all, and turning it on is what
+  walls it.** Measured on a `B = 1.5` m self-weight strip (`gamma' = 9.81`, K0 = 0.455,
+  2 280 Gauss points, `-maxSubsteps 1000`, `-Pmin 0.0101`, ADR-92 F10): with
+  `-implexControl 0.05 0.01` and the fork's usual ADR-63 D16 halve/double controller the leg
+  refuses 724 times and dies on the harness step FLOOR at `s/B = 0.0085`; with `-implexControl`
+  simply **removed** — bare `-implex`, the same doubling controller, nothing else changed — the
+  same deck reaches `s/B = 0.0500` in **104 steps, 0 subdivisions, 0 failed attempts, 58 s**,
+  refusal ledger `0/0/0/0`. That is how the ADR-95 campaign which reached `s/B = 0.15` on this
+  material was run (`sanisand_path_diag.py` passes only `-implex`). **Reconciling with §3:** the
+  hard requirement there is `-maxSubsteps`, so that the commit-time companion can *fail* rather
+  than force-accept at `dT_min` — it is not `-implexControl`. On this deck (`p'` 5.7–106 kPa,
+  three decades above `-Pmin`) the companion never capped: `implexRefusals[3] = 0` on every arm.
+  So the discipline for a control-off leg is **read the companion bucket `implexRefusals[3]` at
+  the end of every run** — on a build predating PR #838 a capped companion commit is otherwise
+  silent; once #838 lands the run aborts instead.
+- **If you keep `-implexControl` on a self-weight deck, its refusal count is set by your
+  CONTROLLER's growth rule, and its FLOOR is set by the `implexPrimed` test.** `implexError` is
+  first order in the step (measured on a controlled refinement at a fixed committed state: max
+  error 1.13e-2 / 5.78e-3 / 3.04e-3 / 1.67e-3 at `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5 m, onto a
+  `dt`-independent floor of ~4e-4), while `-implexControl` bounds it **absolutely** — so a
+  halve-on-failure / double-after-N controller can only find the bound by crossing it, with the
+  clock ratio `f = dt_{n+1}/dt_n` sitting at 2 on exactly the crossing step. Measured at
+  `tol 0.05`: growth ×2 → 724 refusals and `FLOOR` at 0.0085; ×1.25 → 253 and 0.0113; **×1.0 → 6
+  refusals and 0.0265 with zero subdivisions**. (With the control OFF, ×2 and ×1.0 agree to
+  0.383 % and ×2 is 6× faster, so the growth rule is innocent on its own.) The `FLOOR` itself is
+  a separate mechanism: Gauss points whose committed plastic history is 1e-12…1e-21 pass
+  `implexPrimed`'s bare `> 0.0` test (`LadrunoSANISAND.cpp:2905`), lose the un-primed exemption,
+  and are refused on an error that does **not** decay with `dt` (0.2243 at `|dt| = 4e-5` →
+  0.2143 at `2e-5`) — the asymptote `:2889`-`:2898` documents. No subdivision clears that.
+  Secondary levers, measured: `tol = 0.1` (the shipped default) +37 % reach; `tol = 0.5` reaches
+  the target with 18 refusals and agrees with the control-off arm to **0.395 % mean / 1.625 %
+  max** over `0.002 ≤ s/B ≤ 0.05`, i.e. it makes the control nearly inert; `reductionLimit 0.5`
+  +71 %, but understand it as "switch the control off after one halving" (at the shipped `0.01`
+  the material floor `reductionLimit·|dt0| = 2e-7` m is the harness `DS_MIN` exactly, which is
+  why it never fires). NOT levers: `-implexFactor controlIter` (+5 % for 2.9× the wall time),
+  and more confinement (a 100 kPa surcharge leg has **zero** over-tolerance Gauss points at every
+  step size tested and still refuses 2 754 times).
+- **Never quote a load from a leg that refused.** Equilibrium is found on the extrapolated
+  stress, so a leg that refused, halved and re-grew reaches a given settlement on a different
+  strain path and reads a **stiffer** curve: +1.72 % at `s/B = 0.0030`, +2.56 % at 0.0050,
+  +5.99 % at 0.0070 and **+19.40 % at 0.0085** against the refusal-free arm on the same deck.
+  Compare reach and refusal counts freely; compare `q` only against an arm that ran refusal-free.
+  Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
   matched-window `t_init` tail (`PLATEAU_FRAC = 2 %`; all three run far above it). `-implex` is

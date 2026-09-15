@@ -6466,81 +6466,168 @@ Rules that generalize:
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
 
-## `-implexControl` + a DOUBLING step controller is a refusal generator: the tolerance is an ABSOLUTE bound on a FIRST-ORDER-IN-`dt` error, so a growing step must overshoot it (ADR-92 F10, 2026-09-14)
+## LadrunoSANISAND `-implexControl` on a self-weight bearing deck (ADR-92 F10, 2026-09-14)
 
-### An adaptive push controller that GROWS `ds` cannot coexist with `-implexControl` at a tight tolerance — the refusal storm is the controller, not the soil
+### `-implexControl` is not a requirement, and turning it ON is what walls a self-weight SANISAND push that runs fine without it
 - **Bites:** a self-weight SANISAND strip footing under `-implex -implexControl 0.05 0.01`
   refuses from the first push increments, the refusal counter runs into the
   hundreds (TIMs measured 204 120 on 9 720 Gauss points by step 3), every refusal
-  halves the step, and the harness step falls below its floor at `s/B ~ 0.01`.
-  It reads as a material wall — a dilatancy/fabric/`alpha_in` pathology, or the
-  ADR-93 zero-confinement ring. It is neither.
-- **Why:** `implexError = ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps||)`
-  (`LadrunoSANISAND.cpp:2513`-`:2530`) is **first order in the step** — measured on a
-  controlled refinement at a fixed committed state (ADR-92 F10 §4: max error
-  1.126e-2 / 5.778e-3 / 3.039e-3 / 1.672e-3 for `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5,
-  ratios 1.95 / 1.90 / 1.82, onto a `dt`-independent floor of ~4e-4). `-implexControl`
-  bounds it **absolutely**, so every deck has a maximum admissible step at a given
-  tolerance. The ADR-63 D16 halve-on-failure/double-after-six controller can only
-  DISCOVER that bound by crossing it, and its `x2` recovery latch makes the clock
-  ratio `f = dt_{n+1}/dt_n = 2` on exactly the step that crosses it — so the
-  extrapolated plastic increment is doubled on top of the doubled strain
-  increment. Refuse, halve, six clean steps, double, refuse: an oscillation, not
-  a convergence. One refusing Gauss point refuses the whole step, so **four**
-  over-tolerance points out of 2 280 bought 724 refusals.
-- **Measured (ADR-92 F10 leg table, `Ladruno_files/testbed/hypo_bearing/adr92_f10/out/summary.md`):**
-  same deck, same tolerance, same guards, same mesh — growth factor `2.0`:
-  `FLOOR` at `s/B = 0.0085`, 724 refusals, 53 subdivisions. Growth factor `1.25`:
-  `FLOOR` at 0.0113, 253 refusals. Growth factor **`1.0`: `s/B = 0.0265`, SIX
-  refusals, ZERO subdivisions in 1 984 converged steps.**
-- **Workaround/status:** pin the harness's growth factor at 1.0 for any
-  `-implexControl` leg, or drive the controller off `avgImplexError` (read once
-  per step) so the bound is approached from below instead of discovered by
-  refusal. A gentler growth factor is NOT enough. Secondary levers, in measured
-  order: raise `tol` (0.1 = +37 %, 0.5 reaches the target with 18 refusals);
-  raise `reductionLimit` from the shipped `0.01` to `0.5` (+71 %, and the only
-  setting at which the floor branch is not inert on this deck). NOT levers:
-  `-implexFactor controlIter` (+5 % for 2.9x the wall time) and raising the
-  confinement (leg H: zero over-tolerance Gauss points at every step size
-  tested, and still 2 754 refusals, because its controller grows too).
+  halves the step, and the harness step falls below its floor at `s/B ~ 0.01`. It
+  reads as a material wall — a dilatancy/fabric/`alpha_in` pathology, or the
+  ADR-93 zero-confinement ring.
+- **Measured (ADR-92 F10, `Ladruno_files/testbed/hypo_bearing/adr92_f10/`):** the
+  SAME deck and mesh, identical in every other respect, with `-implexControl`
+  simply **removed** — bare `-implex`, the doubling controller untouched —
+  reaches the target `s/B = 0.05` in **104 steps, 0 subdivisions, 0 failed
+  attempts, 58 s**, refusal ledger **0/0/0/0**. With the control on it walls at
+  `s/B = 0.0085` with 724 refusals in 142 s. The ADR-95 campaign that reached
+  `s/B = 0.15` on this material was itself control-OFF
+  (`sanisand_path_diag.py:91`-`:104` passes only `-implex`).
+- **Why the control is not a low-confinement requirement:** the guide section 3
+  requirement is that the companion must be able to FAIL rather than force-accept
+  at `dT_min`, and that is `-maxSubsteps`, not `-implexControl`. On this deck
+  (`p'` 5.7-106 kPa, `-Pmin 0.0101`, `-maxSubsteps 1000`) the companion **never
+  capped**: `implexRefusals[3] = 0` on every arm.
+- **Workaround/status (2026-09-14):** run bare `-implex` on a deck of this kind
+  and **read `implexRefusals[3]` (the companion bucket) at the end of every
+  leg**. On a build predating PR #838 (`wp/99-refusal-propagation-audit`) a
+  capped companion commit is otherwise SILENT; once #838 lands the run aborts
+  instead and the read is a second line of defence rather than the only one.
+  If the control is wanted anyway: `tol = 0.5` reaches the target with 18
+  refusals and agrees with the control-off arm to **0.395 % mean / 1.625 % max**
+  over `0.002 <= s/B <= 0.05` — i.e. it makes the control nearly inert, which is
+  the honest description of what it buys.
 
-### `implexPrimed` is a bare `> 0.0` sign test, so a Gauss point with a 1e-12 plastic history loses the un-primed exemption and is refused on the elastic predictor's own drift
-- **Bites:** `LadrunoSANISAND.cpp:2905` is
+### The FLOOR seizure under `-implexControl` is the `implexPrimed` bare `> 0.0` sign test: a 1e-12 plastic history forfeits the un-primed exemption and is refused on an error that does not decay with `dt`
+- **Bites:** the run does not spend its subdivision budget — it reaches the step
+  FLOOR. Halving stops helping: the same Gauss point refuses at every rung all
+  the way down to `DS_MIN`.
+- **Why:** `LadrunoSANISAND.cpp:2905` is
   `const bool implexPrimed = (this->GetNorm_Cov(mImplexDEpsP) > 0.0);`. The
-  un-primed exemption at `:2907` exists precisely because "a pure elastic
-  predictor's error must scale with `d_eps`; this one does not" (`:2896`) — but
-  any non-zero committed plastic increment, however small, counts as primed.
-  ADR-92 F10 measured a refusal at `|d_eps_p(n)| = 6.66e-12` with `f = 1` and
-  `implexError = 0.211`: a point that took essentially no plastic strain in the
-  previous step, then yielded in this one, refused on a drift no subdivision can
-  shrink.
-- **Why:** it is the same defect shape P2-5b already fixed for the loading-reversal
-  reset — an absolute threshold (there, `-reversalTol 1e-10`) that cannot separate
-  a real increment from solver-tolerance noise, replaced by a RELATIVE one
-  (`-reversalRel 0.05` against the last committed increment). The primed test
-  never got that treatment.
-- **Workaround/status (2026-09-14):** unfixed, and deliberately so — ADR-92 F10
-  is a diagnosis. The matching fix is a relative test
-  (`||d_eps_p(n)|| > rel * ||d_eps||`) and it needs its own gate and mutation
-  score. Until then, treat an `-implexControl` refusal whose warning line reports
-  a `|d_eps_p(n)|` many decades below the strain increment as a first-yield
-  event, not an extrapolation failure.
+  un-primed exemption at `:2907` exists precisely because the companion's
+  drift-correction jump does not scale with `d_eps` — the source says so at
+  `:2889`-`:2898` ("it ASYMPTOTED at ~0.076 instead of decaying ... the signature
+  of a companion jump that is independent of the increment ... a dead analysis").
+  But ANY non-zero committed plastic increment, however small, forfeits the
+  exemption. A Gauss point that took essentially no plastic strain last step and
+  yields in this one is therefore refused on exactly the quantity the exemption
+  exists to tolerate.
+- **Measured (ADR-92 F10 leg B, `out/refusal_warnings_B.txt`):** refusals at
+  `|d_eps_p(n)| =` 9.09e-13, 6.66e-12, 9.58e-21 and 2.40e-21. At 9.09e-13 the
+  step halves `4e-5 -> 2e-5` and the error moves **0.2243 -> 0.2143, i.e. 4.5 %**
+  — it does not decay. The other 39 of 49 throttled lines
+  (`|d_eps_p(n)| >= 5e-8`) DO decay first order (0.299 / 0.149 / 0.084 as `|dt|`
+  goes `4e-5 -> 2e-5 -> 1e-5`), so the two families are cleanly separable in the
+  warning text itself.
+- **Diagnostic that does NOT see it:** a step-size refinement probe of the bulk
+  error field at the same settlement reports **zero** Gauss points over tolerance
+  at every `ds` from 8e-5 down to 5e-7, first order throughout. The seizure is a
+  handful of points reached only along a path that has already been refusing.
+  Read the throttled warning lines, not the field.
+- **Workaround/status (2026-09-14):** unfixed, and deliberately — ADR-92 F10 is a
+  diagnosis. The matching fix is the shape P2-5b already used for the
+  loading-reversal reset: a RELATIVE test (`||d_eps_p(n)|| > rel * ||d_eps||`)
+  instead of an absolute/sign one. It needs its own gate and mutation score.
+  Until then: an `-implexControl` refusal whose warning line reports a
+  `|d_eps_p(n)|` many decades below the strain increment is a first-yield event,
+  not an extrapolation failure, and no amount of subdivision will clear it —
+  turn the control off instead.
 
-### `-implexGuard`'s `f = 0` and `-implexControl`'s tolerance work against each other — the guard makes the prediction inaccurate and the control then refuses the step for being inaccurate
+### With `-implexControl` ON, an adaptive controller that DOUBLES the step is a refusal generator — but the growth rule is innocent with the control off
+- **Bites:** with the control on, the refusal count tracks the controller's
+  growth factor and nothing else: x2 -> 724 refusals and FLOOR at `s/B = 0.0085`;
+  x1.25 -> 253 and 0.0113; x1.0 -> **6** and 0.0265, zero subdivisions in 1 984
+  converged steps. It reads as a material effect and is not one.
+- **Why:** `implexError = ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps||)`
+  (`LadrunoSANISAND.cpp:2513`-`:2530`) is first order in the step — measured on a
+  controlled refinement at a fixed committed state (max error 1.126e-2 /
+  5.778e-3 / 3.039e-3 / 1.672e-3 for `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5, ratios
+  1.95 / 1.90 / 1.82, onto a `dt`-independent floor of ~4e-4). `-implexControl`
+  bounds it ABSOLUTELY, so a halve-on-failure / double-after-N controller can
+  only find the bound by crossing it — with the clock ratio `f = dt_{n+1}/dt_n`
+  sitting at 2 on exactly the crossing step, so the extrapolated plastic
+  increment is doubled on top of the doubled strain increment.
+- **But it is a CO-FACTOR, not a cause:** with the control OFF, growth x2 and
+  growth x1.0 both reach the target and agree to **0.383 % mean / 0.779 % max**,
+  and x2 is **6x faster** (58 s vs 364 s). Do not "fix" a growth rule that is
+  only pathological under a flag you may not need.
+- **Workaround/status (2026-09-14):** if you keep `-implexControl`, pin the
+  growth factor at 1.0 (x1.25 is not enough) or drive the controller off
+  `avgImplexError` so the bound is approached from below. Also read the
+  `q`-column warning below.
+
+### A refuse/halve/regrow path does not just cost reach — it STIFFENS the curve, by ~19 % at the settlement where it dies
+- **Bites:** two `-implex` legs of the same deck are compared at matched
+  settlement and the refusing one reads higher. It is easy to mistake for a real
+  difference between the flags being compared.
+- **Measured (ADR-92 F10):** leg B (`tol 0.05`, growth x2, 724 refusals) against
+  leg N (control off, 0 refusals), at matched `s/B`: **+1.72 % at 0.0030,
+  +2.56 % at 0.0050, +5.99 % at 0.0070, +19.40 % at 0.0085** — monotone. At leg
+  B's terminal settlement the whole leg set splits by whether it refused
+  (B +19.4 %, L +20.2 %, I +18.5 %, F2 +12.1 %; F1 +2.4 %, M +1.5 %, J +0.7 %,
+  K +0.3 %, F3 -0.7 %). A refusal-free constant-`ds` walk agrees with N to 0.4 %.
+- **Why:** equilibrium is found on the EXTRAPOLATED stress, so a leg that
+  refused, halved and re-grew arrives at the same settlement along a different
+  strain path. The material state is the implicit companion's at every commit;
+  the divergence lives in the structure's kinematics.
+- **Workaround/status (2026-09-14):** never quote a `q` from a leg that refused
+  without saying so, and never compare two `-implex` legs on load unless both
+  ran refusal-free. Compare reach and refusal counts; compare load only against
+  a refusal-free arm.
+
+### `-implexGuard`'s `f = 0` and `-implexControl` work against each other — the guard makes the prediction inaccurate and the control then refuses the step for being inaccurate
 - **Bites:** the P2-2 guard (`:2243`) forces `f = 0` on any step whose committed
   predecessor showed a loading reversal or `Kp <= 0`. The guide says this trades
   "the prediction's accuracy, not the step". That is true with `-implexControl`
   **off**. With it on, `sigma~` is then a pure elastic predictor, `implexError`
   measures the whole plastic correction, and the step is refused — and P2-6's
-  trial-time fallback cannot help, because it only runs when `mImplexFactor != 0.0`
-  (`:2939`). **30 of leg B's 49 throttled refusal lines report `f = 0`.**
-- **Measured:** `-implexGuard off` on the ADR-92 F10 self-weight deck buys +85 %
-  reach (0.0085 -> 0.0157); both guards off, +117 % (0.0185) at 12x the refusal
-  count. `implexGuards[1]` ran to 31 491 on leg B, about 3.8 % of all
-  Gauss-point-steps.
+  trial-time fallback cannot help, because it only runs when
+  `mImplexFactor != 0.0` (`:2939`).
+- **Measured:** **30 of leg B's 49 throttled refusal lines report `f = 0`**, and
+  so do all four of the over-tolerance Gauss points in the fixed-`ds` census.
+  `-implexGuard off` buys +85 % reach (0.0085 -> 0.0157); both guards off +117 %
+  (0.0185) at 12x the refusal count. `implexGuards[1]` ran to 31 491 on leg B,
+  about 3.8 % of all Gauss-point-steps.
 - **Workaround/status (2026-09-14):** do NOT reach for `-implexGuard off` as a
   fix — the guard exists for ADR-93's softening seat, which that deck does not
-  test. Fix the controller instead (first quirk above). The design question —
-  whether a guarded point should be exempt from the control's tolerance for that
-  step, the same shape as the un-primed exemption — is recorded in
-  [[92b_implex_selfweight_wall_note]] §9 for ADR 92 to settle.
+  test. Turn the control off instead. The design question — whether a guarded
+  point should be exempt from the control's tolerance for that step, the same
+  shape as the un-primed exemption — is recorded in
+  [[92b_implex_selfweight_wall_note]] section 10 for ADR 92 to settle.
+
+### `-implexControl`'s `reductionLimit` at its shipped `0.01` puts the material's floor exactly ON the harness's own `DS_MIN` — it can never fire, and raising it is "turn the control off after one halving"
+- **Bites:** `implexGuards[0]` (floor fallbacks) reads 0 and the P2-1 floor
+  policy looks dead. Raising `reductionLimit` then looks like a free
+  tolerance-preserving win (+71 % reach measured).
+- **Why, arithmetically:** the floor is `reductionLimit * |dt0|`, and on the
+  fork's R3-derived controller `|dt0| = DS_BASE = 2e-5` m while `DS_MIN = 2e-7`
+  m. At the shipped `0.01` the material's floor is `0.01 x 2e-5 = 2e-7` — the
+  harness's own floor to the digit, so the driver declares `FLOOR` at exactly the
+  step where the branch would first become reachable. (The guide section 7
+  records `reductionLimit` "measured inert"; this is why.)
+- **What raising it actually does:** at `0.5` the floor sits at `1e-5`, one
+  halving below the base step, so the P2-1 floor branch — which DELIVERS the
+  companion and does NOT refuse — takes over almost immediately. That is not a
+  gentler tolerance; it is the control switching itself off after one halving.
+  Measured: 151 floor fallbacks, +71 % reach, `tol` untouched.
+- **Workaround/status (2026-09-14):** if you want that behaviour, prefer saying
+  so — run with the control off (above) rather than with a floor set so high the
+  tolerance branch cannot reach.
+
+### Two processes writing one leg CSV interleave rows and tear a line — the ADR-79 runner's 180 s guard exists for this, and a new testbed driver that omits it will lose a leg
+- **Bites:** a leg's CSV has more rows than the run reported steps, a line with
+  the wrong field count in the middle, and a `wall_s` column that jumps
+  backwards. The reducer then quietly reports a curve neither process wrote.
+- **Why:** two invocations of the same leg (an accidental double launch of a
+  batch script) open the same `out/f10_<leg>.csv` in `"w"` mode and both keep
+  writing at their own offsets. `hypo_bearing/README.md` already records this for
+  the ADR-79 runner, whose fix is to refuse a CSV another process touched in the
+  last 180 s (`ADR79_FORCE=1` overrides).
+- **Measured (ADR-92 F10, legs L and M):** the physics was unaffected — re-run
+  single-process, leg M reproduced `s/B = 0.011286` to the digit — but both wall
+  times were wrong (M 115 s contended vs 169 s alone) and leg L's CSV carried a
+  7-field line at row 2767.
+- **Workaround/status (2026-09-14):** the F10 driver now carries the same guard
+  (`F10_FORCE=1` overrides) and its reducer drops torn lines. **Copy the guard
+  into any new testbed runner that writes one file per named leg** — a batch
+  script that can be launched twice is not a hypothetical.

@@ -13,23 +13,29 @@ import sys
 
 import numpy as np
 
-ORDER = ["A", "B", "C", "D", "E", "F1", "F2", "F3", "G", "H", "I", "J", "K", "L", "M"]
+ORDER = ["N", "N1", "A", "B", "C", "D", "E", "F1", "F2", "F3", "G", "H",
+         "I", "J", "K", "L", "M"]
 CENSUS = [f"{L}_ds{ds}" for L in ("A", "B", "C", "H")
           for ds in ("2e-05", "4e-05", "8e-05", "0.0002")]
 
 
-def leg_table(d):
-    print("| leg | s/B reached | mode | steps | subdiv | wall s | refusals "
-          "total / ctl / comp / sign | floor fallbacks | f=0 guard | trial f=0 |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+def leg_table(d0):
+    print("| leg | control | s/B reached | mode | steps | subdiv | relaxed | "
+          "wall s | refusals total / ctl / comp / sign | floor fallbacks | "
+          "f=0 guard | trial f=0 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for leg in ORDER:
-        p = os.path.join(d, f"f10_{leg}.json")
+        p = os.path.join(d0, f"f10_{leg}.json")
         if not os.path.exists(p):
             continue
         m = json.load(open(p))
         r, g = m["refusals"], m["guards"]
-        print(f"| {leg} | {m['s_over_B']:.4f} | {m['mode']} | {m['steps']} | "
-              f"{m['nsub']} | {m['wall']:.0f} | {r['total']} / {r['control']} / "
+        c = m.get("control", True)
+        cur = _load(d0, leg)
+        nrel = int(cur[2].sum()) if cur is not None else -1
+        print(f"| {leg} | {'on' if c else 'OFF'} | {m['s_over_B']:.4f} | "
+              f"{m['mode']} | {m['steps']} | {m['nsub']} | {nrel} | "
+              f"{m['wall']:.0f} | {r['total']} / {r['control']} / "
               f"{r['companion']} / {r['sign']} | {g[0]} | {g[1]} | {g[4]} |")
 
 
@@ -92,23 +98,79 @@ def err_vs_state(d, leg):
                   f"| {100*(e[m] > 0.05).mean():.1f} % |")
 
 
-def overlay(d, ref="G", arms=("B", "D", "F1", "F2", "F3", "I", "J", "K", "M")):
+def _load(d, leg):
+    """Leg curve, sorted, torn lines dropped (see the driver's concurrent-writer
+    guard and review round 1 nit 13)."""
+    p = os.path.join(d, f"f10_{leg}.csv")
+    if not os.path.exists(p):
+        return None
+    rows = []
+    for r in csv.DictReader(open(p)):
+        try:
+            rows.append((float(r["s_over_B"]), float(r["q_kPa"]),
+                         int(r["relaxed"])))
+        except (TypeError, ValueError):
+            continue
+    if not rows:
+        return None
+    a = np.array(rows)
+    o = np.argsort(a[:, 0], kind="stable")
+    return a[o, 0], a[o, 1], a[o, 2]
+
+
+def terminal_q(d, at=0.0085,
+               legs=("B", "I", "F2", "L", "F1", "M", "J", "K", "N", "F3")):
+    """Review round 1, SHOULD-FIX 3: what the refuse/halve/regrow path does to
+    the LOAD, read at the settlement where the reported configuration died."""
+    print("")
+    print(f"q at s/B = {at} (leg B's own terminal settlement) — the "
+          f"refuse/halve/regrow path STIFFENS the curve:")
+    print("| leg | q (kPa) | vs leg N (control OFF) |")
+    print("|---|---|---|")
+    ref = _load(d, "N")
+    qref = float(np.interp(at, ref[0], ref[1])) if ref is not None else None
+    for leg in legs:
+        a = _load(d, leg)
+        if a is None or a[0].max() < at:
+            continue
+        q = float(np.interp(at, a[0], a[1]))
+        rel = "--" if qref is None else f"{100*(q/qref-1):+.1f} %"
+        print(f"| {leg} | {q:.2f} | {rel} |")
+    b = _load(d, "B")
+    if b is not None and ref is not None:
+        print("")
+        print("leg B against leg N at matched settlement "
+              "(monotone stiffening):")
+        print("| s/B | B q | N q | B/N - 1 |")
+        print("|---|---|---|---|")
+        for s in (0.003, 0.005, 0.007, 0.0085):
+            qb = float(np.interp(s, b[0], b[1]))
+            qn = float(np.interp(s, ref[0], ref[1]))
+            print(f"| {s:.4f} | {qb:.2f} | {qn:.2f} | {100*(qb/qn-1):+.2f} % |")
+
+
+def deep_overlay(d, a="F3", b="N", lo=0.002, hi=0.05):
+    """The only long-window accuracy comparison this campaign can make: two arms
+    that both reached the target."""
+    A, B = _load(d, a), _load(d, b)
+    if A is None or B is None:
+        return
+    g = np.linspace(lo, min(hi, A[0].max(), B[0].max()), 200)
+    qa, qb = np.interp(g, A[0], A[1]), np.interp(g, B[0], B[1])
+    dev = 100.0 * (qa - qb) / qb
+    print("")
+    print(f"{a} vs {b} over {lo} <= s/B <= {g[-1]:.4f}: mean |dev| "
+          f"{np.abs(dev).mean():.3f} %, max |dev| {np.abs(dev).max():.3f} %, "
+          f"q_end {A[1][-1]:.2f} vs {B[1][-1]:.2f} kPa")
+
+
+def overlay(d, ref="G", arms=("N", "N1", "B", "D", "F1", "F2", "F3", "I", "J", "K", "M")):
     """ADR-92 section 8's reporting condition: an -implex curve is only
     comparable to the implicit twin OVER THE OVERLAP.  `ref` is the implicit leg.
     """
     def load(leg):
-        p = os.path.join(d, f"f10_{leg}.csv")
-        if not os.path.exists(p):
-            return None
-        rows = list(csv.DictReader(open(p)))
-        if not rows:
-            return None
-        x = np.array([float(r["s_over_B"]) for r in rows])
-        y = np.array([float(r["q_kPa"]) for r in rows])
-        # the adaptive controller can log two rows at the same settlement after a
-        # refused-and-retried step; np.interp needs a monotone abscissa.
-        o = np.argsort(x, kind="stable")
-        return x[o], y[o]
+        r = _load(d, leg)
+        return None if r is None else (r[0], r[1])
     g = load(ref)
     if g is None:
         return
@@ -155,6 +217,9 @@ if __name__ == "__main__":
     d = sys.argv[1] if len(sys.argv) > 1 else "out"
     leg_table(d)
     census_table(d)
+    terminal_q(d)
+    deep_overlay(d)
+    deep_overlay(d, "N1", "N")
     overlay(d)
     probe_table(d)
     for leg in ("B_ds4e-05", "A_ds4e-05", "C_ds4e-05", "H_ds4e-05"):
