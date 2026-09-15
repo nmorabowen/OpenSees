@@ -248,22 +248,40 @@ template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 // Ladruno (ADR-97 wp/97b): Drucker-Prager supplies the analytic closest-point
-// df/dq.  NOTE that `check_apex_region` above stays EUCLIDEAN and is used only
-// by Backward_Euler: `Closest_Point` classifies the apex region in the ELASTIC
-// metric, inside the integrator where K, G and etabar are in scope (ADR-97
-// "Drucker-Prager apex").  Two integrators, two answers for the same YF -- a
-// documentation obligation (LEDGER_quirks), not a bug.
+// df/dq.  NOTE that `check_apex_region` above stays EUCLIDEAN: `Closest_Point`
+// classifies the apex region in the ELASTIC metric, inside the integrator where
+// K, G and etabar are in scope (ADR-97 "Drucker-Prager apex").
+// Ladruno (ADR-94 addendum, F8): the "two integrators, two answers for the same
+// YF" this comment used to record is GONE for Drucker-Prager -- `Backward_Euler`
+// no longer calls `check_apex_region` for a yield function declaring
+// `yf_apex_elastic_metric`, so for THIS yield function the member is dead code,
+// kept only because it is part of the public YF interface.  The asymmetry does
+// survive one step down: `Closest_Point` applies its elastic-metric test to EVERY
+// `yf_has_apex` yield function, while `Backward_Euler` applies it only to the
+// opted-in ones, so MohrCoulomb / HoekBrown / TensionCutoff still get two answers
+// (LEDGER_quirks).
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_has_cp_derivatives<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 // Ladruno (ADR-94 wp/94f): ...and now Backward_Euler agrees with Closest_Point.
-// The Euclidean `check_apex_region` above is kept (it is part of the yield
-// function's own interface and is still consulted first), but the integrator
-// UNIONS it with the elastic-metric classification: `(p - p_apex) >= eta*q` is
-// only the exact test when K*etabar/G == eta, and on a zero-dilatancy deck
-// (etabar = 0, the ADR-95 Prandtl footing) the exact test is just p >= p_apex,
-// so every over-apex state with small shear was routed to a flank map that
-// cannot move p and therefore cannot close f.
+// The Euclidean `check_apex_region` above is kept -- it is part of the yield
+// function's own public interface -- but `Backward_Euler` no longer consults it
+// for this yield function: `(p - p_apex) >= eta*q` is the exact test only when
+// K*etabar/G == eta, and on a zero-dilatancy deck (etabar = 0, the ADR-95
+// Prandtl footing) the exact test is just p >= p_apex, so every over-apex state
+// with small shear was routed to a flank map that cannot move p and therefore
+// cannot close f.
+// Ladruno (ADR-94 addendum, F8): wp/94f UNIONED the two answers, which is safe
+// only while the exact region is the WIDER one -- and the exact slope `K*etabar/G`
+// OVERTAKES the Euclidean `eta` as soon as `etabar > eta*G/K`, i.e. psi ~ 2.3 deg
+// on the ADR-95 deck (`G/K = 0.10345`, `eta = 0.4457`).  THE CROSSOVER IS
+// DILATANCY, NOT ASSOCIATIVITY: the union was wrong for essentially every dilatant
+// deck (etabar = eta/2 -> exact slope 2.1545, a 4.8x-wide wedge; etabar = eta ->
+// 4.3089, ~10x), and `etabar = 0` is the single case where it was right.  Above the
+// crossover the union kept the too-wide Euclidean answer and apex-projected trials
+// whose correct return is to the cone flank.  The elastic-metric test now REPLACES
+// it; the trait below is exactly the claim "this yield function's apex region IS
+// the elastic-metric one", in both directions.
 template<class AlphaHardeningType, class CohesionHardeningType>
 struct yf_apex_elastic_metric<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 

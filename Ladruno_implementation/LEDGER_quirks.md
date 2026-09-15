@@ -6487,6 +6487,179 @@ Rules that generalize:
   assemblies via a console-log latch, not a single post-commit read, so it
   doesn't share this mechanism.
 
+## ...and the fix for it was a UNION, which is only safe while `K*etabar/G <= eta` (ADR-94 addendum, F8)
+
+wp/94f (above) repaired the Euclidean apex test by **unioning** the yield
+function's answer with the exact elastic-metric one inside `Backward_Euler`:
+
+```cpp
+bool be_in_apex = yf.check_apex_region(...);      // (p - p_apex) >= eta*q
+if (!be_in_apex)
+    be_in_apex = cp_apex_region(...);             // (p - p_apex) >= (K*etabar/G)*q
+```
+
+A union takes the **wider** of the two regions, and **which one is wider depends
+on the flow rule**, because the two slopes are `eta` and `K*etabar/G`:
+
+* `etabar = 0` (the deck wp/94f measured): exact slope 0, region `p >= p_apex`,
+  which strictly CONTAINS the Euclidean cone. Union == replace. Correct.
+* `etabar > 0`: the exact slope `K*etabar/G` **overtakes** the Euclidean one as
+  soon as `etabar > eta*G/K`. That threshold is tiny: on this deck
+  `G/K = 0.10345` and `eta = 0.4457`, so it is `etabar = 0.0461`, i.e.
+  **psi ~ 2.3 deg** — not "associated", but essentially **every dilatant sand**.
+  At `etabar = eta/2` (psi ~ phi/2) the exact slope is 2.1545 against the
+  Euclidean 0.4457: a 4.8x-wide wedge. At `etabar = eta` (associated) it is
+  4.3089, about **ten times** the Euclidean cone, and the union keeps the
+  Euclidean answer at every one of these.
+
+So a dilatant leg of the very same deck apex-projected every trial in the wedge
+`eta*q <= p - p_apex < (K*etabar/G)*q`, whose correct return is to the cone
+FLANK. Symptoms, all of them misleading:
+
+* **no refusal, no message, no NaN** — the material reports success at every
+  Gauss point, because an apex projection always "works";
+* the committed stress at those Gauss points is `sigma_apex` with **zero
+  deviator** (on the ADR-95 cone that is 0.259 kPa hydrostatic in a 200 kPa
+  field), and under `tangent_type Continuum` the Gauss point also reports a
+  **zero tangent** — by design, since the apex stress cannot move;
+* the analysis therefore presents as "the element/mesh walls while still
+  hardening": the step size collapses, the load is still climbing, and every
+  refusal counter reads zero. Measured on the ADR-95 R3 gate deck at `h0 = 1.0`:
+  ASD associated crawled to s/B 0.016 in 773 s where the vanilla UW material
+  reached s/B 0.15 in 63 s with zero failed attempts.
+
+Rules that generalize:
+
+4. **Never union two classifications of the same region unless you have shown
+   which one is wider, in every regime the code will see.** Two tests of "am I
+   in region X" are not interchangeable with "am I in region X *or* Y". If one
+   of them is the exact test, it should REPLACE the other, not widen it — that
+   is what an opt-in trait like `yf_apex_elastic_metric` is for.
+5. **A silent wrong answer is harder to find than a loud refusal, and fixing a
+   refusal can create one.** wp/94f converted a refusal (435 `scalar Newton
+   exhausted` lines) into silence; the leg that then walled had *zero*
+   diagnostics. When a fix removes a failure mode, ask what it turns that
+   failure into on the decks it was not measured on.
+6. **A cone's apex test is flow-rule-dependent; its yield surface is not.** Two
+   legs that differ only in `DP_etabar` exercise genuinely different branches of
+   the return map, so a zero-dilatancy acceptance leg is not evidence about a
+   dilatant one. Run both — and note how low the crossover is (psi ~ 2.3 deg
+   here): "we only tested psi = 0" and "we tested the usual case" are not the
+   same sentence.
+
+## Narrowing an apex region hands the flank Newton states it can answer WRONG — the cohesion-softening deviator flip (ADR-94 addendum, F8)
+
+A consequence of the fix above, found by adversarial review of #836 and fixed in
+the same PR. Once the apex region is the exact (narrower, under dilatancy) one,
+near-boundary trials that used to be apex-projected are handed to the flank
+scalar Newton. That Newton's `dPhi/dlambda` carries the shipped yield function's
+`df/dk = -1` term for a cohesion internal variable **that `f` itself does not
+contain** (ADR-97 P0 header finding 2, pinned not fixed). With cohesion
+SOFTENING the inconsistency lets it converge — `|Phi| ~ 1e-7`, `rc = 0`, no
+exhaustion, no refusal — onto the WRONG ROOT: a state whose deviator points
+OPPOSITE the trial deviator, i.e. the map walked through the vertex and out the
+other side.
+
+Measured (`ScalarLinearHardeningParameter = -20000`, `etabar = eta`, the ADR-95
+cone, one Gauss point):
+
+| (p - p_apex)/q | HS = 0 (correct) | HS = -20000, pre-guard |
+|---|---|---|
+| 3.0 | p -0.189103, q 0.199762, `s_zz-s_xx` **+0.346** | p -0.478023, q 0.328548, `s_zz-s_xx` **-0.569** |
+| 4.3089 | the apex, q 1.0e-15 | p -0.838550, q 0.489254, `s_zz-s_xx` **-0.847** |
+
+Identical at `strict_convergence` 0 and 1.
+
+Three things this teaches:
+
+7. **A yield-function tolerance cannot certify a return map.** Both wrong states
+   sit ON the surface to 1e-7. The check that catches them is GEOMETRIC: a
+   Drucker-Prager return is a non-negative radial scaling of the trial RELATIVE
+   deviator `r = dev(sigma) - alpha` plus a pressure change, so
+   `dot(r_ret, r_tr) < 0` is inadmissible for any parameters. That guard is now
+   in `Backward_Euler`, reported through the existing `be_flank_failed` channel
+   so it inherits the apex fallback and the fail-loud refusal without adding an
+   exit.
+
+   **`r`, not `dev(sigma)` — the first version of this guard got that wrong**
+   (caught by review round 2), and the two are only the same statement when the
+   back stress is zero. With `alpha` antiparallel to the trial deviator, the
+   ABSOLUTE deviator can legitimately cross zero while `sqrt(J2(r))` stays
+   positive: `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`, associated, trials
+   `(q_tr, p_tr) = (0.05, 0.5103)` and `(0.02, 0.3810)`. (On those two trials the
+   guard is not what refuses — the apex CLASSIFICATION gets there first; see the
+   entry below. The guard would have been the next thing to be wrong, and is
+   fixed in the same variable at the same time.) The general
+   lesson: **a guard written from a picture of the surface must be written in the
+   surface's own variables**, and for any kinematically hardening model that is
+   the relative stress, never the raw one.
+
+   Two things the guard cannot see, by construction: a flip whose returned
+   relative deviator is smaller than `f_absolute_tol` (that is the scale at which
+   the integrator stops distinguishing states at all, so the floor is not a
+   tuning knob), and anything at a yield function that does not declare
+   `yf_apex_elastic_metric`.
+8. **`strict_convergence` is not the safety net people assume.** `be_exhausted`
+   — one of layer (b)'s only two triggers — is computed **only** when strict is
+   on, and strict is OFF by default. A failure mode that CONVERGES is invisible
+   to both.
+9. **Narrowing a classification is not automatically conservative.** It moves
+   states from a branch that always "works" (a vertex projection cannot fail)
+   onto one that can be wrong in a new way. Ask what the newly-routed states do,
+   not only whether the classification is now exact.
+
+## The apex region is in the RELATIVE deviator `r = s - alpha`; two of the three places that decide it were not (one fixed, one pinned)
+
+Drucker-Prager's surface is written in `r = dev(sigma) - alpha`, so every test
+about where a trial sits relative to the vertex has to be written in `r` too.
+Three places decide that, and they did not agree:
+
+| | measured in | status |
+|---|---|---|
+| `DruckerPrager_YF::check_apex_region` (Euclidean) | **`r`** — correct variable, wrong metric | unchanged |
+| `cp_apex_region` (elastic metric, the one the integrator uses) | `dev(sigma)` | **FIXED, F8 round 2** |
+| `DruckerPrager_YF::apex_stress()` | ignores `alpha` entirely | **pinned, not fixed** |
+
+The consequence, measured with `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`,
+associated, trial `(q_tr, p_tr) = (0.02, 0.3810)`: the raw-deviator flip test
+classifies it APEX although its exact return is the cone point
+`sqrt(J2(r)) = 0.017321`, `p = 0.220190`. `be_apex_project` is then asked for a
+vertex the yield function cannot supply — `apex_stress()` returns `p_apex*I`,
+whose `|f|` is exactly `sqrt(J2(alpha))` = **0.034641**, not zero — so its own
+`|f(sigma_apex)| <= tol_yf` guard fires and the step is **refused** (`rc = -3`,
+both `strict_convergence` settings). An admissible return, reported impossible.
+
+This is **older than F8** and is not the union's doing: the Euclidean test also
+over-classifies this trial (`p - p_apex = 0.1220 >= eta*q_rel = 0.0244`), so
+every arrangement since wp/94c made the apex projection live — Euclidean alone,
+Euclidean OR elastic-metric, or elastic-metric alone — reached the same refusal.
+What F8 round 2 changed is the one of the three that the integrator now relies
+on: `cp_apex_region` measures in `r`, the trial classifies CONE, and the state
+returns to the closed-form cone point (verified to 1e-6, `rc = 0`, both strict
+settings).
+
+**Still pinned:** `apex_stress()`. The vertex of this surface is at
+`sigma = alpha + p_apex*I`, not `p_apex*I`, so a state that genuinely IS in the
+apex region with `alpha != 0` still hits the `|f(sigma_apex)|` guard and is
+refused rather than projected. Refusing is the safe half of wrong — the guard
+exists exactly so a bad vertex is never committed — but the fix is one line in a
+vanilla yield function that also changes `Closest_Point`'s apex return, so it
+belongs in its own WP with its own gate. Both tests here use zero back stress in
+every other case, which is why nothing else moved.
+
+It also falsifies a comment that stood in `ASDPlasticMaterial3D.h`'s
+`be_apex_project`: "every yield function that opts into `yf_has_apex` today is
+perfectly plastic (Null hardening)". `DruckerPrager_YF` opts in with
+`AlphaHardeningType` / `CohesionHardeningType` template parameters and the
+registered specializations include both linear tensor and linear scalar
+hardening. The comment is corrected in the same PR.
+
+It also falsifies a comment that stood in `ASDPlasticMaterial3D.h`'s
+`be_apex_project`: "every yield function that opts into `yf_has_apex` today is
+perfectly plastic (Null hardening)". `DruckerPrager_YF` opts in with
+`AlphaHardeningType` / `CohesionHardeningType` template parameters and the
+registered specializations include both linear tensor and linear scalar
+hardening. The comment is corrected in the same PR.
 ### `Domain::commit()` discards element commit returns — a material cannot refuse at commit; `LadrunoQuad` propagates any nonzero update code, `LadrunoBrick` only the sentinel
 - **Bites:** you write a material that detects, at `commitState()`, that the step
   it is being asked to commit is not integrable — and you return a failure code.
