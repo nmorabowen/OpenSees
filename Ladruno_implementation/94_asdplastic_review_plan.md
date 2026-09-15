@@ -270,6 +270,26 @@ Token discipline (binding for every agent prompt):
   calls `exit(-1)` (integrator is parser-refused); `tests/test_adr94_matrix.py` regenerates the
   tracked `_adr94_matrix.md` on every run and its HB oracle predates the composite port; banner text
   amended after the last build (cosmetic).
+- **2026-09-08, wp/94f** (#832, merged `67474aeb7`) — the ASD Drucker-Prager APEX REGION TEST:
+  `check_apex_region` is Euclidean, the exact test is in the elastic metric; on the ADR-95
+  zero-dilatancy footing deck the exact test is `p ≥ p_apex`, so over-apex trials with small shear
+  were routed to a flank map with no solution (435 refusals, FLOOR at s/B 0.011). Shipped as an
+  elastic-metric pre-check **unioned** with the Euclidean answer, plus a flank-first apex fallback.
+  Record: `_adr94f_results.md`.
+- **2026-09-14, ADR-94 addendum / F8** (#836, branch `wp/100-asd-dp-associated-wall`) — **the union
+  was only safe in one direction, and the other direction is the ASSOCIATED leg.** A union keeps the
+  WIDER region; which of `eta` (Euclidean) and `K·η̄/G` (exact) is larger depends on the flow rule.
+  At η̄ = 0 the exact region contains the Euclidean one (wp/94f's case, correct); at η̄ = η the exact
+  cone is ~10x NARROWER (`K/G = 9.667` on that deck), so the union apex-projected every trial in the
+  wedge `η·q ≤ p − p_apex < (K·η̄/G)·q`, committing `σ_apex` with **no deviator** and — under
+  `tangent_type Continuum` — a **zero tangent**, with **no refusal issued**. Fix: for yield functions
+  declaring `yf_apex_elastic_metric` the exact test REPLACES the Euclidean one. Measured on the
+  ADR-95 R3 gate deck at h0 = 1.0: the ASD associated leg was **BUDGET at s/B 0.0169, 1.6307, NOT a
+  capacity, 898 failed attempts, zero refusals in 894 s** against UW's TARGET 1.9348 in 63 s with
+  zero failed attempts. The psi = 0 leg is **byte-identical** across the fix (329 rows) and the
+  23-deck inertness gate stays 10/10. Record: `_adr94_f8_results.md`; new gates
+  `tests/test_f8_asd_dp_associated_apex.py` (cheap, zone_a) and
+  `tests/test_r3_prandtl_asd_associated.py` (slow tier).
 - **Orchestration lessons** (also in `LEDGER_quirks.md`): MSVC green ≠ GCC green (temporaries into
   non-const refs); cross-platform float pins need global-tolerance-size bounds (≥ 1e-6 rel), 1e-9
   failed twice; a bit-identity gate cannot certify a static-state/tangent fix; agents that stage

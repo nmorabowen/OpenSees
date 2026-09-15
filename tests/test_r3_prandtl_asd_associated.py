@@ -145,6 +145,43 @@ def test_asd_associated_is_separated_from_the_nonassociated_band(assoc_pair):
         f"{band_top:.4f}. " + G._why(r))
 
 
+def test_asd_and_uw_associated_curves_agree_at_matched_settlement(assoc_pair):
+    """Stronger than the ratio: the two implementations must produce the SAME
+    load-settlement PATH, not merely the same peak.  Both legs are read from
+    their own CSVs and compared at matched s/B on a common grid.
+
+    A peak-only comparison can be satisfied by two curves that disagree
+    everywhere and happen to top out together; the pre-fix failure was a path
+    failure (the ASD leg diverged into a wall at s/B 0.017 with the load still
+    climbing), so the path is what this pins."""
+    import csv
+
+    def curve(r):
+        with open(r["csv"], newline="") as fh:
+            rows = list(csv.reader(fh))[1:]
+        return [(float(x[1]), float(x[2])) for x in rows]
+
+    a = curve(assoc_pair["legs"][("ASD", True)])
+    u = curve(assoc_pair["legs"][("UW", True)])
+    s_hi = min(a[-1][0], u[-1][0])
+    grid = [s_hi * f for f in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0)]
+
+    def q_at(c, s):
+        return min(c, key=lambda p: abs(p[0] - s))[1]
+
+    worst, worst_s = 0.0, 0.0
+    for s in grid:
+        qa, qu = q_at(a, s), q_at(u, s)
+        rel = abs(qa - qu) / abs(qu)
+        if rel > worst:
+            worst, worst_s = rel, s
+    assert worst <= 0.01, (
+        f"the two Drucker-Pragers follow DIFFERENT associated paths: worst "
+        f"relative q difference {100*worst:.3f} % at s/B = {worst_s:.4f}, over "
+        f"a common range up to s/B = {s_hi:.4f}. Measured 0.05 % on the fixed "
+        f"build; pre-fix the ASD leg did not reach this range at all.")
+
+
 def test_asd_nonassociated_leg_is_unchanged(assoc_pair):
     """wp/94f's own result is the thing this fix must not move: at etabar = 0
     the elastic-metric region strictly CONTAINS the Euclidean one, so replacing

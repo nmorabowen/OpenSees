@@ -82,8 +82,66 @@ per-step Gauss-point census in the `(p, sqrt(J2))` half-plane. The associated le
 is run at `h0 = 1.0` (`CONTROL_H0 = 0.5` is the gate's own rung; `h0 = 1.0` is the
 cheapest and is where the TIMs act reported the wall).
 
-<!-- F8-RESULTS-TABLE -->
+All four legs below are the **same mesh, same deck, same session**
+(200 `LadrunoBrick -formulation bbar`, 1386 DOF, `system Pardiso`,
+`SUBDIV_BUDGET = 80`, `WALL_BUDGET = 3600 s`, push to s/B = 0.15). Exact
+`q_u = q0*N_q = 138.907 kPa`.
+
+| leg | build | q_max (kPa) | ratio | mode | tail % | ds/floor | CAPACITY | failed / subdiv | wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| UW associated (reference) | `9c2f964ea` | 268.75 | **1.9348** | TARGET | 0.120 | 4400 | **yes** | 0 / 0 | 63 |
+| **ASD associated, PRE-fix** | `9c2f964ea` | 226.51 | 1.6307 | **BUDGET** | 8.270 | 50 | **NO** | 898 / 81 | 894 |
+| **ASD associated, POST-fix** | `3324485f7` | <!-- POSTFIX-ROW --> | | | | | | | |
+| ASD psi = 0, PRE-fix | `9c2f964ea` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 72 |
+| ASD psi = 0, POST-fix | `3324485f7` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 107 |
+
+**The pre-fix failure is SILENT.** `grep -c "rejecting step"` over the whole
+894-second pre-fix associated log is **0**: no refusal, no NaN, no apex message.
+Every Gauss point reported success; 12 → 32 of them were simply pinned at
+`p = p_apex = 0.259047` with `sqrt(J2) = 0` while the surrounding field ran to
+−187 kPa. What failed was the outer Newton — 898 failed attempts, the step
+ground down to 50x the floor over the final tenth of the run, and the load was
+still climbing at 8.3 % of the initial tangent when the subdivision budget went.
+That is why this reads as "the element walls" rather than as a material defect.
+
+**The psi = 0 leg is BYTE-IDENTICAL across the fix**: 329 rows, all of
+`(s_m, s_over_B, q_kPa, ds_mm, relaxed)` equal, `q_max` 150.709859 both sides.
+That is the construction argument made experimentally — at `etabar = 0` the
+elastic-metric region contains the Euclidean one, so replacing the union by the
+exact test cannot change anything.
+
+### Gate battery, post-fix build `3324485f7`
+
+| file | result |
+|---|---|
+| `tests/test_f8_asd_dp_associated_apex.py` (new) | **4/4** — and **1 failed / 3 passed on `9c2f964ea`**, so it gates the fix |
+| `tests/test_adr94f_asd_apex_fallback.py` | **4/4** — wp/94f's own cases unchanged |
+| `tests/test_adr97_p4_inertness.py` | **10/10** — `Backward_Euler` still BYTE-IDENTICAL on all 23 baseline decks |
+| `tests/test_adr94c_numerics.py` + `test_adr94_redblue_numerics.py` | **11/11** |
+| total | **29 passed** (pre-fix control on `9c2f964ea`: 25 passed, the new file excluded) |
 
 ## 3. What is NOT claimed
 
-<!-- F8-CAVEATS -->
+* **The `h0 = 0.5` rung (`CONTROL_H0`) was not re-run on ASD.** The gate's own
+  associated control lives at `h0 = 0.5`; this WP measured `h0 = 1.0`, the
+  cheapest rung and the one where the wall was reported. The ASD-vs-UW agreement
+  is therefore established at one resolution, not across the sequence.
+* **The associated collapse load itself is not a validated capacity in the
+  physical sense.** `psi = phi` on a bounded mesh is the strong upper solution
+  and the gate has always treated the associated leg as a falsification control,
+  not as an answer to compare against Prandtl. What is claimed here is that the
+  two IMPLEMENTATIONS of one cone now agree on it.
+* **The zero apex tangent is untouched.** wp/94c chose `Stiffness = 0` at the
+  apex under `tangent_type Continuum` deliberately ("the honest continuum
+  operator at a perfectly plastic apex is ZERO"), and `Secant` — the default —
+  blends it with the elastic operator. This WP only changed WHICH states are
+  classified as apex, not what happens to one that is. On the post-fix leg 228 of
+  1600 Gauss points are apex-pinned at s/B 0.043 and the leg advances freely, so
+  the zero tangent is not by itself a wall; that was the alternative hypothesis
+  and it is not supported.
+* **Nothing is claimed about `Closest_Point`.** It has always classified in the
+  elastic metric; this WP makes `Backward_Euler` agree with it, which is what
+  wp/94f said it was doing.
+* The number the task brief quoted for the campaign's associated UW leg (1.60)
+  is the **`h0 = 0.5`** measurement recorded in note 95 §4 (1.6026). At
+  `h0 = 1.0`, measured here for the first time, UW associated reads **1.9348**.

@@ -125,6 +125,24 @@ fallback never fires. `Backward_Euler` stays byte-identical on all 23 ADR-97 bas
 **Consequence for §0:** all three of the fork's constitutive models now cross the footing-edge
 tensile spot without a wall; only SANISAND's low-pressure cost remains, and it is floored.
 
+**ADDENDUM 2026-09-14 (ADR-94 addendum / F8, PR #836): the wp/94f fix was a UNION, and a union is
+only safe in one direction.** `Backward_Euler` did not replace the Euclidean answer with the
+elastic-metric one; it took the OR of the two, which keeps the WIDER region. Which of the two slopes
+— `η` (Euclidean) and `K·η̄/G` (exact) — is larger depends on the **flow rule**. At η̄ = 0, the leg
+above, the exact region `p ≥ p_apex` strictly contains the Euclidean cone, so union = replace and
+everything in this section stands. At η̄ = η (**associated**) the exact cone is about **ten times
+narrower** (`K/G = 9.667` on this deck), so the union kept the too-wide Euclidean answer and
+apex-projected trials whose correct return is to the cone flank — committing `σ_apex` with no
+deviator and, under `tangent_type Continuum`, a zero tangent, **with no refusal printed anywhere**.
+Measured on the ADR-95 R3 gate deck at h0 = 1.0 (`tests/test_r3_prandtl_collapse_gate.py`, now
+material-pluggable): ASD associated **BUDGET at s/B 0.01685, 1.6307 of exact, NOT a capacity, 898
+failed attempts, 81 subdivisions, zero refusals, 894 s**, against the vanilla UW material's **TARGET
+at s/B 0.15, 1.9348, zero failed attempts, 63 s** on the same mesh. The fix makes the elastic-metric
+test REPLACE the Euclidean one for the opted-in yield functions; the psi = 0 leg of this section is
+**byte-identical** across it (329 rows) and the 23-deck inertness gate stays 10/10. Record:
+`_adr94_f8_results.md`. **This does not change any number in §0 or in this section** — every leg
+here is non-associated.
+
 ## 3c. SANISAND on the same deck — same zone, different failure class
 
 `LadrunoSANISAND` (ADR-92 CP1 parameters and staging, `-maxSubsteps 1000` — the deck's default of 0
