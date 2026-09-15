@@ -146,6 +146,12 @@ exactly the silence being fixed.
 > all.** Nothing checks the precondition at run time — a material cannot see its element — so it is
 > stated in three places that a user can actually read (the `opserr` line when the cap fires, the
 > construction `Print()` record, and the emitter guide) and enforced in none.
+>
+> **CORRECTION, 2026-09-14 (WP-99 / F7)** — the element list in the box above is left as written
+> (this is a dated handoff record) but it is **wrong**: `QuadUP` propagates
+> (`FourNodeQuadUP.cpp:419`) and `stdBrick` **is** `Brick`. Use the audited lists in
+> `86_ladruno_sanisand_apegmsh_emitter_guide.md` and `LadrunoSANISAND_implex_guide.md` §3 instead.
+> All of it concerns the **trial**; at **commit** time no element acts on the return at all.
 
 **T1 needed an element change too, and the obvious version of it was wrong.** `LadrunoBrick::update()`
 **discarded** `setTrialStrain`'s return code on four of its five paths (std/b-bar, SSP, and both URI

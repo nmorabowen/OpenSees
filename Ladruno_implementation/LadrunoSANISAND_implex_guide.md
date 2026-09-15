@@ -134,19 +134,30 @@ not" defect this fork's parsers exist to make impossible).
   error-controlled substepping, so the companion could not report a failed return and
   `-implexControl` would have nothing to refuse.
 
-**Only `LadrunoBrick` propagates a refusal.** `-implexControl` (and the D2 sign-change guard, and
-a companion cap-hit) return the sentinel `LADRUNO_MATERIAL_REFUSED` (`-33086`,
+**A TRIAL-time refusal only works on an element that forwards `setTrialStrain`'s return code.**
+`-implexControl` (and the D2 sign-change guard, and a companion cap-hit caught at the trial)
+return the sentinel `LADRUNO_MATERIAL_REFUSED` (`-33086`,
 `SRC/material/LadrunoMaterialStatus.h`). Whether that sentinel does anything depends entirely on
-the *element*:
+the *element*. Audited at source on `9c2f964ea` — this list used to say "only `LadrunoBrick`",
+which was wrong in both directions (WP-99 / F7):
 
-- **Propagates it (subdivision engages):** `LadrunoBrick`.
-- **Silently accepts it (Newton converges on a refused state, nothing in any log):** `SSPbrick`
-  (`SSPbrick.cpp:445`), `Brick` (`Brick.cpp:1069`), `BbarBrick` — and everything else that does
-  not specifically check the material's return code.
+- **Propagates ANY nonzero code (subdivision engages):** `LadrunoBrick20`, `LadrunoQuad`
+  (`update()` and the EAS path), `LadrunoCST`, `LadrunoLST`, `BezierTet10`, `BezierTri6`, and
+  vanilla `FourNodeQuad` and **`FourNodeQuadUP`** (`FourNodeQuadUP.cpp:419`, `ret +=`).
+- **Propagates ONLY the sentinel:** `LadrunoBrick` — deliberately, per ADR-33/34, so
+  `ASDConcrete3D`'s negative "best-state" codes do not fail a step. A material that returns some
+  *other* nonzero value is silently swallowed here.
+- **Silently accepts it (Newton converges on a refused state, nothing in any log):** `Brick`
+  (= `stdBrick`, `Brick.cpp:1069` → `return 0` at `:1073`), `BbarBrick` (`:951`), `BrickUP`
+  (`:1069`), `SSPbrick` (`:445`), `SSPquad` (`:426`), `LadrunoSolidShell` (`:670`).
 
 On a non-propagating element, `-implexControl` still *measures* and *records* the error
-(`implexError`), it just cannot cut the step. If your element is not `LadrunoBrick`, read
-`implexError` yourself rather than trusting the analysis to stop.
+(`implexError`), it just cannot cut the step — read `implexError` yourself rather than trusting
+the analysis to stop.
+
+**At COMMIT time no element propagates anything**, because `Domain::commit()` is a bare
+`elePtr->commitState();`. That is why a commit-time companion failure LATCHES the material
+instead — see §9.
 
 ## 4. The stage rule
 

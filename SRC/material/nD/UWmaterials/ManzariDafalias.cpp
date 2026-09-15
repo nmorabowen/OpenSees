@@ -1514,13 +1514,30 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // But an element that DISCARDS the return code will assemble that partial
         // state and report convergence -- which is strictly WORSE than the
         // pre-cap behaviour, where force-accepting at least always drove T to 1.
-        // TODAY ONLY `LadrunoBrick` propagates the refusal. Under vanilla `Brick`
-        // (Brick.cpp update() discards it), `BrickUP` / `QuadUP` (setTrialStrain
-        // is called inside a void formResidAndTangent, BrickUP.cpp:1069) and
-        // `stdBrick`, a capped run is INVALID, not merely un-cut. The cap is
-        // opt-in for exactly this reason: the default 0 cannot reach this branch.
-        // Precedent for failing rather than force-accepting: ADR-84's
-        // strict_convergence.
+        //
+        // Ladruno WP-99 (F7): the list this comment used to give was wrong twice
+        // -- it said "TODAY ONLY LadrunoBrick propagates the refusal" and named
+        // `QuadUP` among the discarders, alongside a `stdBrick` that is simply
+        // `Brick` under its Tcl name (TclBrickCommand.cpp:210). Audited at source
+        // on 9c2f964ea, the TRIAL-time picture is:
+        //   * propagate ANY nonzero code (`ret += ...->setTrialStrain(...)`):
+        //     LadrunoBrick20, LadrunoQuad (and its EAS path's `!= 0`), LadrunoCST,
+        //     LadrunoLST, BezierTet10, BezierTri6, and vanilla FourNodeQuad AND
+        //     FourNodeQuadUP (FourNodeQuadUP.cpp:419 -- it PROPAGATES);
+        //   * propagate ONLY the sentinel LADRUNO_MATERIAL_REFUSED: LadrunoBrick,
+        //     deliberately, per ADR-33/34 (ASDConcrete3D's negative "best-state"
+        //     codes must not fail a step);
+        //   * DISCARD it: Brick (= stdBrick; setTrialStrain at :1069, `return 0`
+        //     at :1073), BbarBrick (:951) and BrickUP (:1069) -- these three call
+        //     setTrialStrain inside a void formResidAndTangent -- plus SSPbrick
+        //     (:445), SSPquad (:426) and LadrunoSolidShell (:670).
+        // Under a discarding element a capped run is INVALID, not merely un-cut.
+        // At COMMIT time the return is discarded by EVERY element, because
+        // Domain::commit() is a bare `elePtr->commitState();` -- see the WP-99
+        // latch in LadrunoSANISAND for what a material can do about that.
+        // The cap is opt-in for exactly this reason: the default 0 cannot reach
+        // this branch. Precedent for failing rather than force-accepting:
+        // ADR-84's strict_convergence.
         //
         // mMaxSubstepsInME is 0 in every ManzariDafalias constructor, so on vanilla
         // this is one integer increment and one `0 > 0` compare per substep and the

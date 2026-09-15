@@ -4341,13 +4341,22 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   `strict_convergence 1` before you suspect anything else**; a clean run under
   the flag rules this defect out in one shot.
 
-### `stdBrick`/`BrickUP`/`QuadUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b)
+### `stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal — a THIRD silent accept, in a vanilla ELEMENT (found ADR-84 §6c finding 2; status updated ADR-86b; **roster corrected WP-99**)
 
+- **TITLE AND ROSTER CORRECTED 2026-09-14 (WP-99 / F7).** This entry was headed
+  "`stdBrick`/`BrickUP`/`QuadUP`" and that third name was **wrong**:
+  `FourNodeQuadUP::update()` does `ret += theMaterial[i]->setTrialStrain(eps)`
+  (`FourNodeQuadUP.cpp:419`) and therefore **PROPAGATES** any nonzero code.
+  `BbarBrick` (`:951`), `SSPbrick` (`:445`), `SSPquad` (`:426`) and
+  `LadrunoSolidShell` (`:670`) are the names that belong on the list instead, and
+  `stdBrick` **is** `Brick` (`TclBrickCommand.cpp:210`). Full audited
+  classification in the `Domain::commit()` entry at the end of this ledger.
 - **Bites:** any material that refuses a trial strain (a strict-mode ASDP
   rejection, a `ManzariDafalias`/`LadrunoSANISAND` substep-cap refusal, ...)
-  hosted in `stdBrick`, `BrickUP`, or `QuadUP`. `Brick::update()` writes
+  hosted in `stdBrick` (= `Brick`), `BbarBrick`, `BrickUP`, `SSPbrick`,
+  `SSPquad` or `LadrunoSolidShell`. `Brick::update()` writes
   `success = ...->setTrialStrain(strain);` and then **unconditionally**
-  `return 0;` — the code is assigned and never read. `BrickUP`/`QuadUP` call
+  `return 0;` — the code is assigned and never read. `BbarBrick`/`BrickUP` call
   `setTrialStrain` inside a *void* `formResidAndTangent`, so there is no return
   path for the code at all. So the material refuses, prints its `opserr` line,
   returns a failure code — and the analysis reports success regardless of what
@@ -4371,9 +4380,12 @@ any state that only feeds future steps (mass, damping, committed internal vars).
   covered four of five; the review pass confirmed `updateHypo`/`formEAStrue`
   are also sentinel-aligned, not the blanket `< 0` an earlier ledger row
   mistakenly claimed — see `LEDGER_implementations.md`'s ADR-86b row). **`stdBrick`,
-  `BrickUP`, and `QuadUP` still swallow the refusal, unchanged** — this defect
-  is not fixed on any vanilla element, only worked around by using
-  `LadrunoBrick` for every gate that needs the return code to mean something.
+  `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad` and `LadrunoSolidShell` still
+  swallow the refusal, unchanged** — this defect is not fixed on any vanilla
+  element, only worked around by using an element that forwards the code
+  (`LadrunoBrick`, `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST`,
+  `BezierTet10`/`Tri6`, `FourNodeQuad`, `FourNodeQuadUP`) for every gate that
+  needs the return code to mean something.
 
 ### A `special_return` hook that writes the tangent itself SILENTLY OVERRIDES `tangent_type` (FIXED, ADR-84 P3)
 
@@ -5272,15 +5284,24 @@ once. The deepest leg reached `s/B = 0.0228` of a `0.25` target in 40 minutes of
 > **Size the cap from a measurement, not a guess:** `eleResponse <ele> material <gp> substeps`
 > returns `[substeps_taken, cap_hit]` for the last update at that point.
 > **THE PRECONDITION, and it is the sharp edge of this feature.** A cap is only safe under an
-> element that **propagates** a material refusal — today **`LadrunoBrick` only**. The capped update
+> element that **propagates** a material refusal. The capped update
 > returns at `T < 1`, so it leaves a **partially-integrated** trial stress/`alpha`/`fabric` and a
 > partial `aCep_Consistent`. An element that discards the return code assembles that partial state
 > and reports convergence, which is strictly **WORSE** than the un-capped force-accept it replaces
-> (that at least always drove `T` to 1). Under vanilla `Brick` (`update()` discards it), `BrickUP` /
-> `QuadUP` (`setTrialStrain` inside a *void* `formResidAndTangent`, `BrickUP.cpp:1069`) and
-> `stdBrick`, **a capped run is INVALID, not merely un-cut.** Nothing checks this at run time — a
+> (that at least always drove `T` to 1). Nothing checks this at run time — a
 > material cannot see its element — so the default `0` (which cannot reach the branch) is the only
 > thing standing between a user and that state.
+> **CORRECTED 2026-09-14 (WP-99 / F7).** This paragraph used to end "today **`LadrunoBrick` only**"
+> and to list "`Brick`, `BrickUP` / `QuadUP`, `stdBrick`" as the discarders. Both halves were
+> wrong: `QuadUP` (`FourNodeQuadUP.cpp:419`) does `ret += ...->setTrialStrain(...)` and therefore
+> **propagates**, and `stdBrick` **is** `Brick` under its Tcl name (`TclBrickCommand.cpp:210`). The
+> audited lists (`9c2f964ea`) are in the dedicated entry
+> "`Domain::commit()` discards element commit returns" at the end of this ledger; the short form is
+> *propagate any nonzero*: `LadrunoBrick20`, `LadrunoQuad`/`CST`/`LST`, `BezierTet10`/`Tri6`,
+> `FourNodeQuad`, `FourNodeQuadUP`; *propagate only the sentinel*: `LadrunoBrick` (ADR-33/34);
+> *discard*: `Brick` (= `stdBrick`), `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad`,
+> `LadrunoSolidShell`. And **at commit time no element propagates anything**, which is the hole
+> WP-99's latch closes.
 > **One more thing that will bite.** The cap bounds one whole `integrate()`, not one `ModifiedEuler`
 > call — `MaxEnergyInc`/`MaxStrainInc` (IntScheme 0/4/6/8/9) call `ModifiedEuler` several times
 > inside one material update, which is why the counter is reset in `integrate()` and not at the top
