@@ -174,7 +174,7 @@ Every phase produces a committed artefact; nothing is "known" until it is in a f
 - `system("FullGeneral")` hard-crashes fully-prescribed drivers (N = 0). Use `UmfPack`.
 - A fully-prescribed material-point driver cannot see a wrong tangent. Leave DOFs free and gate on `ops.testIter()`.
 - The NaN-heap trap: a standalone probe passes, pytest's churned heap fails. Run the battery, not the probe.
-- `stdBrick`/`BrickUP`/`QuadUP` swallow material refusals; use `LadrunoBrick` or `TenNodeTetrahedron` for any refusal gate.
+- `stdBrick` (= `Brick`), `BbarBrick`, `BrickUP`, `SSPbrick`, `SSPquad` and `LadrunoSolidShell` swallow material refusals; use `LadrunoBrick` or `TenNodeTetrahedron` for any refusal gate. *(Roster corrected 2026-09-14, WP-99 / F7: this line used to name `QuadUP` as a swallower — `FourNodeQuadUP.cpp:419` is `ret +=`, so it PROPAGATES. And no element propagates at COMMIT time, ever.)*
 - Framework fixes that change default behaviour for VM/DP users are upstream-facing; coordinate with José before shipping them as fork defaults (ADR-84 §3 "bit-identical strategy").
 - Number collision: 94 is claimed by this file; a second `94_*` must not appear.
 

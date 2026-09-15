@@ -568,6 +568,61 @@ class LadrunoSANISAND : public ManzariDafalias
     // rule as mImplexGuardReversal/mImplexGuardSoftening.
     bool   mPrimed;   // Ladruno ADR-92 P2-7 (redesign)
 
+    // Ladruno WP-99 (F7): the COMMIT-TIME refusal latch.
+    //
+    // `Domain::commit()` (Domain.cpp) is `elePtr->commitState();` -- bare, with
+    // the return value dropped -- so NO element, fork or vanilla, can refuse a
+    // step at commit. Before this latch the commit-time companion failure
+    // (`ladrunoImplexCommit()` finding mSubstepCapHitInME) therefore propagated
+    // NOWHERE: the partially integrated state was committed, the step was
+    // reported converged, and the analysis walked on. The TIMs plane-strain
+    // strip measured 25.9 million such commits in one run.
+    //
+    // WP-99 answers that in two places, and review round 1 measured why BOTH
+    // are needed.
+    //
+    // (1) THE COMMIT IS ABORTED, element-independently. ladrunoImplexCommit()
+    //     calls ladrunoNoteCommitRefusal() (LadrunoMaterialStatus.h);
+    //     Domain::commit() reads that counter after its element loop and
+    //     returns a failure, which AnalysisModel::commitDomain() turns into -2
+    //     and every analysis class turns into a failed step. This works under a
+    //     DISCARDING element too -- with the latch alone, two stacked
+    //     `stdBrick` under `algorithm Linear` took 20 more accepted steps with
+    //     the starved element frozen as a rigid inclusion and analyze() == 0
+    //     throughout.
+    //
+    // (2) THIS LATCH, as the second line of defence. Set true by
+    //     ladrunoImplexCommit() when the companion fails -- which also skips
+    //     ManzariDafalias::commitState() and restores the trial from the
+    //     committed state -- and read at the top of ladrunoTrialUpdate(), the
+    //     one entry both wrappers' setTrialStrain() uses, where it makes every
+    //     later update return LADRUNO_MATERIAL_REFUSED, and at the top of
+    //     commitState(), which then commits nothing and RE-declares the
+    //     refusal. A driver that ignores the analysis return code still cannot
+    //     advance this material.
+    //
+    // WHAT "COMMITS NOTHING" MEANS, precisely (review round 1): THIS GAUSS
+    // POINT commits nothing. Domain::commit() walks the nodes first and then
+    // the elements, and every integration point is its own material object, so
+    // by the time this instance refuses, the nodes and its sibling points have
+    // ALREADY committed -- measured as [1,0,0,1] latched across the four points
+    // of one LadrunoQuad. The model state at that commit is therefore
+    // INCONSISTENT, not merely un-advanced, which is exactly why the commit is
+    // aborted rather than repaired.
+    //
+    // STICKY, and cleared ONLY by revertToStart(). NOT by revertToLastCommit():
+    // the analysis has already ACCEPTED the step whose commit failed (that is
+    // the whole defect), so "the last commit" is the corrupt datum itself --
+    // there is nothing to go back to, and a retry at a smaller increment would
+    // restart from a state the material has just declared it could not produce.
+    // `-implexControl`, which refuses at the TRIAL, is the way to get a
+    // RECOVERABLE refusal.
+    //
+    // SENT on the wire (data(33)) for the same reason mImplexDtCommit is: an MP
+    // rank or a restored datastore that "forgets" the latch resumes producing
+    // exactly the answers the latch exists to stop.
+    bool   mImplexCommitRefusedLatch;   // Ladruno WP-99 (F7)
+
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
     // base.

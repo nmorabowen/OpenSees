@@ -108,7 +108,7 @@ ZeroLength and contact), `zerolength_and_link_springs_guide.md` §2.1.
 | `avgImplexError` | 1 | `avgImplexError` (process-wide mean; every GP reports the same) |
 | `substeps` | 2 | `substeps_me`, `substeps_capHit` |
 | `implexDetail` | 6 | `implexDetail_total`, `_dev`, `_vol`, `_clampFired`, `_clampCount`, `_f` |
-| `implexRefusals` | 4 | `implexRefusals_total`, `_signChange`, `_control`, `_companion` (process-wide ledger) |
+| `implexRefusals` | 6 | `implexRefusals_total`, `_signChange`, `_control`, `_companion` (process-wide ledger of GENUINE refusals; `_total` is the sum of the other three), plus **WP-99**: `_commitLatched` (per-INSTANCE flag, 0/1 — the only non-process-wide slot in any of these responses; 1 once this integration point has refused a commit and is refusing every later update) and `_latched` (process-wide count of POST-latch refusals, deliberately **not** in `_total` — it fires once per Newton iteration per point) |
 
   Vanilla names are unchanged and still unnamed (C1..Cn): `stress` 6, `strain` 6, `state` 26
   (void ratio `[24]`, dGamma `[25]`), `alpha` 6, `fabric` 6, `alpha_in` 6, `estrains` 6,
@@ -214,7 +214,13 @@ Docs: `ladruno_solver_flag_guide.md` §`-stats` (PARDISO subsection).
   `yieldDistance` per GP as the "on the surface" flag (`>= -tol * sqrt(2/3) m p'`); the per-step
   delta of `implexRefusals[0]` — a refused step returns `analyze` rc `= -33086`
   (`LADRUNO_MATERIAL_REFUSED`, propagated by exact value) and is the retry-with-smaller-step
-  signal; `substeps[1]` cap-hit and `implexDetail[3]` clamp-fired as quality warnings.
+  signal. **WP-99 caveat for a substep controller:** that is true of a TRIAL-time refusal only.
+  A COMMIT-time refusal (the `-implex` companion hitting `-maxSubsteps`) is **not** retryable
+  — `Domain::commit()` aborts and `analyze` returns `-4`, the material latches, and every later
+  update is refused. Read `implexRefusals[4]` (`_commitLatched`) as a terminal flag: when it is
+  1, back off is pointless, the run must be re-launched with `-implexControl` or a bigger
+  `-maxSubsteps`. Do not count `implexRefusals[5]` as retry signal — it is the post-latch
+  refusal count and climbs once per Newton iteration; `substeps[1]` cap-hit and `implexDetail[3]` clamp-fired as quality warnings.
 - **Rigid footing driver is geometrically linear** (F6 scoped, #812): `LadrunoKinematicCoupling`
   builds its gap operator once from the reference lever arms; the reference-point moment
   transfer TIMs post-process is exact under that linearisation only. TIMs' G4 measures whether
