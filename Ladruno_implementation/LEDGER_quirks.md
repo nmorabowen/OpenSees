@@ -6564,6 +6564,431 @@ interpreters disagreed on half the contract.
 - **Gate:** `tests/test_wp103_getstringfromall_tcl.py` +
   `tests/tcl/wp103_getstringfromall.tcl`. It shells out to `dist/bin/OpenSees.exe`
   because nothing else can see the bug.
+## LadrunoSANISAND `-implexControl` on a self-weight bearing deck (ADR-92 F10, 2026-09-14)
+
+### Turning `-implexControl` ON is what walls a self-weight SANISAND push that TERMINATES fine without it — and control-off buys reach, not a confirmed curve
+- **Bites:** a self-weight SANISAND strip footing under `-implex -implexControl 0.05 0.01`
+  refuses from the first push increments, the refusal counter runs into the
+  hundreds (TIMs measured 204 120 on 9 720 Gauss points by step 3), every refusal
+  halves the step, and the harness step falls below its floor at `s/B ~ 0.01`. It
+  reads as a material wall — a dilatancy/fabric/`alpha_in` pathology, or the
+  ADR-93 zero-confinement ring.
+- **Measured (ADR-92 F10, `Ladruno_files/testbed/hypo_bearing/adr92_f10/`):** the
+  SAME deck and mesh, identical in every other respect, with `-implexControl`
+  simply **removed** — bare `-implex`, the doubling controller untouched —
+  reaches the target `s/B = 0.05` in **104 steps, 0 subdivisions, 0 failed
+  attempts, 58 s**, refusal ledger **0/0/0/0**. With the control on it walls at
+  `s/B = 0.0085` with 724 refusals in 142 s. The ADR-95 campaign that reached
+  `s/B = 0.15` on this material was itself control-OFF
+  (`sanisand_path_diag.py:91`-`:104` passes only `-implex`).
+- **What that does and does not establish.** It establishes TERMINATION, and it
+  establishes it by measurement: the commit-time companion — the thing guide
+  section 3 requires be able to FAIL rather than force-accept at `dT_min`, which
+  is what `-maxSubsteps` buys — integrated every increment it was handed.
+  `implexRefusals[3] = 0` on legs B, C, D, E, K, L, N and N1, and `<= 42`
+  anywhere in the campaign (M 42, F1 29, I 12, H 6, F3 3, J 2). It does **not**
+  touch the ACCURACY claim `-implexControl` also carries — ADR-92 section 8, and
+  the engine's own control-off constructor echo at
+  `LadrunoSANISAND.cpp:2092`-`:2095`: *"P0 measured IMPL-EX unusable from
+  `d_eps = 5e-4` at `p0 = 5 kPa`, so at a low-confinement corner the control is a
+  requirement, not an option."* **This deck sits inside that range, not outside
+  it:** its minimum `p'` is **6.374 kPa, 1.27x the P0 corner**, and the
+  control-off leg's strain increment crosses `5e-4` at step 24 (`s/B = 0.0012`)
+  and runs at 2.6-4x the corner from `s/B = 0.00248` to the target — with **no
+  implicit anchor past `s/B = 0.00227`**. So do not read this row as a general
+  "the control is not needed at low confinement"; read it as "on this deck the
+  control is what stops the run, its termination job is done by `-maxSubsteps`
+  plus a watched bucket, and its accuracy job is simply not tested here."
+- **Workaround/status (2026-09-14):** run bare `-implex` on a deck of this kind,
+  **read `implexRefusals[3]` (the companion bucket) at the end of every leg**,
+  and **do not quote the resulting curve as a capacity**. **Since WP-99 / PR #838
+  (merged as `c75edc95c`, 2026-09-15) a capped companion commit ABORTS the run**
+  (`Domain::commit()` fails, `analyze()` returns `-4`), so on any build from that
+  merge on the bucket read is a second line of defence; the latch and its
+  post-latch refusals live in `implexRefusals[4]`/`[5]`, not in the companion
+  bucket `[3]`. **On a PRE-#838 build the read is the only thing that would catch
+  it** — the F10 campaign itself ran on `9c2f964`, where such a commit is silent,
+  which is the scope of every "silent" claim in this group. If the control is wanted
+  anyway: `tol = 0.5` reaches the target with 18 refusals and agrees with the
+  control-off arm to **0.395 % mean / 1.625 % max** over `0.002 <= s/B <= 0.05`
+  — i.e. it makes the control nearly inert, which is the honest description of
+  what it buys.
+
+### The FLOOR seizure under `-implexControl` is the `implexPrimed` bare `> 0.0` sign test: a 1e-12 plastic history forfeits the un-primed exemption and is refused on an error that does not decay with `dt`
+- **Bites:** the run does not spend its subdivision budget — it reaches the step
+  FLOOR. Halving stops helping: the same Gauss point refuses at every rung all
+  the way down to `DS_MIN`.
+- **Why:** `LadrunoSANISAND.cpp:3021` is
+  `const bool implexPrimed = (this->GetNorm_Cov(mImplexDEpsP) > 0.0);`. The
+  un-primed exemption at `:3023` exists precisely because the companion's
+  drift-correction jump does not scale with `d_eps` — the source says so at
+  `:3005`-`:3014` ("it ASYMPTOTED at ~0.076 instead of decaying ... the signature
+  of a companion jump that is independent of the increment ... a dead analysis").
+  But ANY non-zero committed plastic increment, however small, forfeits the
+  exemption. A Gauss point that took essentially no plastic strain last step and
+  yields in this one is therefore refused on exactly the quantity the exemption
+  exists to tolerate.
+- **Measured (ADR-92 F10 leg B, `out/refusal_warnings_B.txt`):** refusals at
+  `|d_eps_p(n)| =` 9.09e-13, 6.66e-12, 9.58e-21 and 2.40e-21. At 9.09e-13 the
+  step halves `4e-5 -> 2e-5` and the error moves **0.2243 -> 0.2143, i.e. 4.5 %**
+  — it does not decay. The other 39 of 49 throttled lines
+  (`|d_eps_p(n)| >= 5e-8`) DO decay first order (0.299 / 0.149 / 0.084 as `|dt|`
+  goes `4e-5 -> 2e-5 -> 1e-5`), so the two families are cleanly separable in the
+  warning text itself.
+- **Diagnostic that does NOT see it:** a step-size refinement probe of the bulk
+  error field at the same settlement reports **zero** Gauss points over tolerance
+  at every `ds` from 8e-5 down to 5e-7, first order throughout. The seizure is a
+  handful of points reached only along a path that has already been refusing.
+  Read the throttled warning lines, not the field.
+- **Workaround/status (2026-09-14):** unfixed, and deliberately — ADR-92 F10 is a
+  diagnosis. The matching fix is the shape P2-5b already used for the
+  loading-reversal reset: a RELATIVE test (`||d_eps_p(n)|| > rel * ||d_eps||`)
+  instead of an absolute/sign one. It needs its own gate and mutation score.
+  Until then: an `-implexControl` refusal whose warning line reports a
+  `|d_eps_p(n)|` many decades below the strain increment is a first-yield event,
+  not an extrapolation failure, and no amount of subdivision will clear it —
+  turn the control off instead.
+
+### With `-implexControl` ON, an adaptive controller that DOUBLES the step is a refusal generator — but the growth rule is innocent with the control off
+- **Bites:** with the control on, the refusal count tracks the controller's
+  growth factor and nothing else: x2 -> 724 refusals and FLOOR at `s/B = 0.0085`;
+  x1.25 -> 253 and 0.0113; x1.0 -> **6** and 0.0265, zero subdivisions in 1 984
+  converged steps. It reads as a material effect and is not one.
+- **Why:** `implexError = ||sigma~ - sigma_impl|| / (||sigma_impl|| + P_atm*||eps||)`
+  (`LadrunoSANISAND.cpp:2629`-`:2646`) is first order in the step — measured on a
+  controlled refinement at a fixed committed state (max error 1.126e-2 /
+  5.778e-3 / 3.039e-3 / 1.672e-3 for `ds` = 8e-5 / 4e-5 / 2e-5 / 1e-5, ratios
+  1.95 / 1.90 / 1.82, onto a `dt`-independent floor of ~4e-4). `-implexControl`
+  bounds it ABSOLUTELY, so a halve-on-failure / double-after-N controller can
+  only find the bound by crossing it — with the clock ratio `f = dt_{n+1}/dt_n`
+  sitting at 2 on exactly the crossing step, so the extrapolated plastic
+  increment is doubled on top of the doubled strain increment.
+- **But it is a CO-FACTOR, not a cause:** with the control OFF, growth x2 and
+  growth x1.0 both reach the target and agree to **0.383 % mean / 0.779 % max**,
+  and x2 is **6x faster** (58 s vs 364 s). Do not "fix" a growth rule that is
+  only pathological under a flag you may not need.
+- **Workaround/status (2026-09-14):** if you keep `-implexControl`, pin the
+  growth factor at 1.0 (x1.25 is not enough) or drive the controller off
+  `avgImplexError` so the bound is approached from below. Also read the
+  `q`-column warning below.
+
+### A refuse/halve/regrow path does not just cost reach — it STIFFENS the curve, by ~19 % at the settlement where it dies
+- **Bites:** two `-implex` legs of the same deck are compared at matched
+  settlement and the refusing one reads higher. It is easy to mistake for a real
+  difference between the flags being compared.
+- **Measured (ADR-92 F10):** leg B (`tol 0.05`, growth x2, 724 refusals) against
+  leg N (control off, 0 refusals), at matched `s/B`: **+1.72 % at 0.0030,
+  +2.56 % at 0.0050, +5.99 % at 0.0070, +19.40 % at 0.0085** — monotone. At leg
+  B's terminal settlement the whole leg set splits by whether it refused
+  (B +19.4 %, L +20.2 %, I +18.5 %, F2 +12.1 %; F1 +2.4 %, M +1.5 %, J +0.7 %,
+  K +0.3 %, F3 -0.7 %). A refusal-free constant-`ds` walk agrees with N to 0.4 %.
+- **Why:** equilibrium is found on the EXTRAPOLATED stress, so a leg that
+  refused, halved and re-grew arrives at the same settlement along a different
+  strain path. The material state is the implicit companion's at every commit;
+  the divergence lives in the structure's kinematics.
+- **Workaround/status (2026-09-14):** never quote a `q` from a leg that refused
+  without saying so, and never compare two `-implex` legs on load unless both
+  ran refusal-free. Compare reach and refusal counts; compare load only against
+  a refusal-free arm.
+
+### `-implexGuard`'s `f = 0` and `-implexControl` work against each other — the guard makes the prediction inaccurate and the control then refuses the step for being inaccurate
+- **Bites:** the P2-2 guard (`:2359`) forces `f = 0` on any step whose committed
+  predecessor showed a loading reversal or `Kp <= 0`. The guide says this trades
+  "the prediction's accuracy, not the step". That is true with `-implexControl`
+  **off**. With it on, `sigma~` is then a pure elastic predictor, `implexError`
+  measures the whole plastic correction, and the step is refused — and P2-6's
+  trial-time fallback cannot help, because it only runs when
+  `mImplexFactor != 0.0` (`:3055`).
+- **Measured:** **30 of leg B's 49 throttled refusal lines report `f = 0`**, and
+  so do all four of the over-tolerance Gauss points in the fixed-`ds` census.
+  `-implexGuard off` buys +85 % reach (0.0085 -> 0.0157); both guards off +117 %
+  (0.0185) at 12x the refusal count. `implexGuards[1]` ran to 31 491 on leg B,
+  about 3.8 % of all Gauss-point-steps.
+- **Workaround/status (2026-09-14):** do NOT reach for `-implexGuard off` as a
+  fix — the guard exists for ADR-93's softening seat, which that deck does not
+  test. Turn the control off instead. The design question — whether a guarded
+  point should be exempt from the control's tolerance for that step, the same
+  shape as the un-primed exemption — is recorded in
+  [[92b_implex_selfweight_wall_note]] section 10 for ADR 92 to settle.
+
+### `-implexControl`'s `reductionLimit` at its shipped `0.01` puts the material's floor exactly ON the harness's own `DS_MIN` — it can never fire, and raising it is "turn the control off after one halving"
+- **Bites:** `implexGuards[0]` (floor fallbacks) reads 0 and the P2-1 floor
+  policy looks dead. Raising `reductionLimit` then looks like a free
+  tolerance-preserving win (+71 % reach measured).
+- **Why, arithmetically:** the floor is `reductionLimit * |dt0|`, and on the
+  fork's R3-derived controller `|dt0| = DS_BASE = 2e-5` m while `DS_MIN = 2e-7`
+  m. At the shipped `0.01` the material's floor is `0.01 x 2e-5 = 2e-7` — the
+  harness's own floor to the digit, so the driver declares `FLOOR` at exactly the
+  step where the branch would first become reachable. (The guide section 7
+  records `reductionLimit` "measured inert"; this is why.)
+- **What raising it actually does:** at `0.5` the floor sits at `1e-5`, one
+  halving below the base step, so the P2-1 floor branch — which DELIVERS the
+  companion and does NOT refuse — takes over almost immediately. That is not a
+  gentler tolerance; it is the control switching itself off after one halving.
+  Measured: 151 floor fallbacks, +71 % reach, `tol` untouched.
+- **Workaround/status (2026-09-14):** if you want that behaviour, prefer saying
+  so — run with the control off (above) rather than with a floor set so high the
+  tolerance branch cannot reach.
+
+### Two processes writing one leg CSV interleave rows and tear a line — the ADR-79 runner's 180 s guard exists for this, and a new testbed driver that omits it will lose a leg
+- **Bites:** a leg's CSV has more rows than the run reported steps, a line with
+  the wrong field count in the middle, and a `wall_s` column that jumps
+  backwards. The reducer then quietly reports a curve neither process wrote.
+- **Why:** two invocations of the same leg (an accidental double launch of a
+  batch script) open the same `out/f10_<leg>.csv` in `"w"` mode and both keep
+  writing at their own offsets. `hypo_bearing/README.md` already records this for
+  the ADR-79 runner, whose fix is to refuse a CSV another process touched in the
+  last 180 s (`ADR79_FORCE=1` overrides).
+- **Measured (ADR-92 F10, legs L and M):** the physics was unaffected — re-run
+  single-process, leg M reproduced `s/B = 0.011286` to the digit — but both wall
+  times were wrong (M 115 s contended vs 169 s alone) and leg L's CSV carried a
+  7-field line at row 2767.
+- **Workaround/status (2026-09-14):** the F10 driver now carries the same guard
+  (`F10_FORCE=1` overrides) and its reducer drops torn lines. **Copy the guard
+  into any new testbed runner that writes one file per named leg** — a batch
+  script that can be launched twice is not a hypothetical.
+### `Domain::revertToLastCommit()` (and `revertToStart()`) END with `return this->update();` — so every element's `update()` fires ONCE MORE on the just-reverted state
+- **Bites:** any element that MUTATES state inside `update()` — a path-dependent internal
+  variable, an augmented-Lagrangian multiplier, a counter — advances it one extra time on the
+  state it has just rolled back to. Symptom is tiny and therefore lethal: an exactness test
+  that should compare equal is off by one increment evaluated at the *converged* gap. Real
+  instance (WP-101, `LadrunoKinematicCoupling`): the AL Uzawa update `λ += D g` was moved into
+  `update()` so the constraint converges within a step; a deliberately failed step then left λ
+  off its committed value by `1.5e-10` on one row of 27 — `D·g` at the committed state, where
+  `g ~ 1e-14` is not exactly zero. On a run with many failed steps that ratchets.
+- **Why:** `Domain.cpp` — `revertToLastCommit()` reverts every node and element, restores
+  `currentTime`/`dT`, re-applies the load at the committed time, and then does
+  `return this->update();` (the trial state has moved, so the elements must be re-informed).
+  `revertToStart()` ends the same way. The revert therefore calls `Element::revertToLastCommit()`
+  on every element FIRST and `Element::update()` on every element SECOND — a pairing nothing in
+  the `Element` interface documents.
+- **Also `Domain::recv()`** (the FE_Datastore / parallel restore path) calls `theEle->update()`
+  immediately after `recvSelf`, with exactly the same consequence: a database save/restore moved the
+  same element's λ by `6.6e-9`. Arm the latch in `recvSelf` too — clearing it there (the obvious
+  "reset my transient flags" reflex) is precisely wrong.
+- **Workaround/status (2026-09-14):** a **one-shot latch**: the element's
+  `revertToLastCommit()`/`revertToStart()`/`recvSelf()` arms a transient `bool`, and the first `update()`
+  after it consumes the flag and returns without advancing. Order is safe because the domain
+  finishes ALL the reverts before it calls update at all. Do NOT serialize the latch — it only
+  ever lives between those two calls. Same shape as the ADR-39 contact-pair revert note above:
+  if your element has state in `update()`, it has this problem. See
+  [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### `Domain::addElement()` calls `update()` at DECLARATION time — so any lazy resolve that LATCHES on its first attempt silently locks in whatever the half-built domain could see
+- **Bites:** an element that resolves something lazily (a `-host` element's stiffness scale, a material pointer, a neighbour's geometry) behind a `if (resolved) return; ... resolved = true;` guard gets its FIRST call from `Domain::addElement`, i.e. while the deck is still being read. Anything declared after it is invisible. Real instance (WP-101): `LadrunoKinematicCoupling -k auto -host <ele>` in a deck that declares the coupling before the host element — the lookup failed, `ktResolved` latched anyway, so `K_t` silently stayed at the 1e12 default instead of the intended 7.93e6, AND the conditioning warning that reads the same host could never fire. Host-first decks were fine; coupling-first decks were silently wrong. Nothing in the run said so.
+- **Why:** `Domain::addElement()` ends by calling the element's `setDomain()` and then `update()` so the element is consistent the moment it joins — a reasonable invariant that happens to make "first call" and "deck fully read" completely different moments.
+- **Workaround/status (2026-09-14):** **do not latch on a failed resolve.** Return without setting the flag and retry on the next call; the retry is free (a pointer lookup) next to a solve. If you need to warn that the target is genuinely missing rather than merely not-declared-yet, gate the warning on an analysis existing (`OPS_GetAlgorithm()` non-null) — that is the cheapest available "we are past deck construction" signal. See [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A zero-increment `DisplacementControl` step is DEGENERATE — the load-factor correction `dLambda = −dUabar/dUahat` is unbounded, so "hold everything" must be `LoadControl 0.0`
+- **Bites:** the natural way to hold a state while something else converges (an augmentation
+  sweep, a staged activation, a settling pass) is "same integrator, zero increment". Under
+  `DisplacementControl` that is a trap: `newStep` sets `dlambda = theIncrement/dUahat = 0`, but
+  the corrector `update()` still computes `dLambda = -dUabar/dUahat`
+  (`SRC/analysis/integrator/DisplacementControl.cpp:332`) from whatever residual displacement
+  is left, and with no increment to normalise it the load factor runs away. Measured on a
+  2×2×2 elastic gate: a single zero-increment step moved the load factor from ~1.0 to
+  **377.19**; a reviewer's fixture reached **−1.6e38**. The step often still returns `ok = 0`,
+  so nothing announces it.
+- **Why:** `DisplacementControl` is formulated to solve for `lambda` such that the control DOF
+  moves by `theIncrement`. At `theIncrement = 0` the constraint "move the control DOF by zero"
+  is satisfied by the trivial solution only if the residual is already zero; otherwise the
+  method is free to buy that zero displacement with an arbitrarily large load factor.
+- **Workaround/status (2026-09-14):** to hold a converged state, switch to **`LoadControl 0.0`**
+  — it freezes the load factor and leaves the control DOF free, which is what "hold" actually
+  means here. Note the consequence: a `DisplacementControl` target is **released** while you
+  hold (measured 1.08 % drift on the WP-101 gate while the AL multipliers tightened), so read
+  the control displacement back afterwards rather than assuming it. See
+  [[LadrunoKinematicCoupling_guide]] §4.3 / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
+
+### A `ladrunoBeginAugment` without its `ladrunoEndAugment` does not fail — it silently VOIDS every later recorder sample
+- **Bites:** the ADR-41 D1 held-load augmentation sweep suppresses recorders and the commitTag
+  bump so its passes leave no trace in the output stream (`Domain::commit()`'s
+  `if (!contactAugmenting)` guard). That is correct while the sweep is open — and catastrophic
+  if it is never closed: the next ordinary step returns `ok = 0`, the time advances `1 → 2`
+  exactly as expected, and the recorder file is **empty**. Every downstream check (peak
+  displacement, time history, energy balance) reads a truncated or empty stream, and nothing in
+  the run says why.
+- **Why:** the flag lives on the `Domain` (`Domain::contactAugmenting`), not on the analysis or
+  a scope guard, and both commands were bare idempotent setters.
+- **Workaround/status (2026-09-14, WP-101):** a second `ladrunoBeginAugment` without an
+  intervening `End` now **warns** (it is the signature of exactly this mistake), and the flag is
+  cleared by `Domain::clearAll()` (`wipe`) and by `OpenSeesCommands::wipeAnalysis()`. Inside one
+  analysis nothing else will catch it, so write the sweep as `try: … finally:
+  ops.ladrunoEndAugment()`. Marked `// Ladruno` in `OpenSeesOutputCommands.cpp`,
+  `OpenSeesCommands.cpp` and `Domain.cpp` — see [[LEDGER_vanilla_files]].
+## ...and the fix for it was a UNION, which is only safe while `K*etabar/G <= eta` (ADR-94 addendum, F8)
+
+wp/94f (above) repaired the Euclidean apex test by **unioning** the yield
+function's answer with the exact elastic-metric one inside `Backward_Euler`:
+
+```cpp
+bool be_in_apex = yf.check_apex_region(...);      // (p - p_apex) >= eta*q
+if (!be_in_apex)
+    be_in_apex = cp_apex_region(...);             // (p - p_apex) >= (K*etabar/G)*q
+```
+
+A union takes the **wider** of the two regions, and **which one is wider depends
+on the flow rule**, because the two slopes are `eta` and `K*etabar/G`:
+
+* `etabar = 0` (the deck wp/94f measured): exact slope 0, region `p >= p_apex`,
+  which strictly CONTAINS the Euclidean cone. Union == replace. Correct.
+* `etabar > 0`: the exact slope `K*etabar/G` **overtakes** the Euclidean one as
+  soon as `etabar > eta*G/K`. That threshold is tiny: on this deck
+  `G/K = 0.10345` and `eta = 0.4457`, so it is `etabar = 0.0461`, i.e.
+  **psi ~ 2.3 deg** — not "associated", but essentially **every dilatant sand**.
+  At `etabar = eta/2` (psi ~ phi/2) the exact slope is 2.1545 against the
+  Euclidean 0.4457: a 4.8x-wide wedge. At `etabar = eta` (associated) it is
+  4.3089, about **ten times** the Euclidean cone, and the union keeps the
+  Euclidean answer at every one of these.
+
+So a dilatant leg of the very same deck apex-projected every trial in the wedge
+`eta*q <= p - p_apex < (K*etabar/G)*q`, whose correct return is to the cone
+FLANK. Symptoms, all of them misleading:
+
+* **no refusal, no message, no NaN** — the material reports success at every
+  Gauss point, because an apex projection always "works";
+* the committed stress at those Gauss points is `sigma_apex` with **zero
+  deviator** (on the ADR-95 cone that is 0.259 kPa hydrostatic in a 200 kPa
+  field), and under `tangent_type Continuum` the Gauss point also reports a
+  **zero tangent** — by design, since the apex stress cannot move;
+* the analysis therefore presents as "the element/mesh walls while still
+  hardening": the step size collapses, the load is still climbing, and every
+  refusal counter reads zero. Measured on the ADR-95 R3 gate deck at `h0 = 1.0`:
+  ASD associated crawled to s/B 0.016 in 773 s where the vanilla UW material
+  reached s/B 0.15 in 63 s with zero failed attempts.
+
+Rules that generalize:
+
+4. **Never union two classifications of the same region unless you have shown
+   which one is wider, in every regime the code will see.** Two tests of "am I
+   in region X" are not interchangeable with "am I in region X *or* Y". If one
+   of them is the exact test, it should REPLACE the other, not widen it — that
+   is what an opt-in trait like `yf_apex_elastic_metric` is for.
+5. **A silent wrong answer is harder to find than a loud refusal, and fixing a
+   refusal can create one.** wp/94f converted a refusal (435 `scalar Newton
+   exhausted` lines) into silence; the leg that then walled had *zero*
+   diagnostics. When a fix removes a failure mode, ask what it turns that
+   failure into on the decks it was not measured on.
+6. **A cone's apex test is flow-rule-dependent; its yield surface is not.** Two
+   legs that differ only in `DP_etabar` exercise genuinely different branches of
+   the return map, so a zero-dilatancy acceptance leg is not evidence about a
+   dilatant one. Run both — and note how low the crossover is (psi ~ 2.3 deg
+   here): "we only tested psi = 0" and "we tested the usual case" are not the
+   same sentence.
+
+## Narrowing an apex region hands the flank Newton states it can answer WRONG — the cohesion-softening deviator flip (ADR-94 addendum, F8)
+
+A consequence of the fix above, found by adversarial review of #836 and fixed in
+the same PR. Once the apex region is the exact (narrower, under dilatancy) one,
+near-boundary trials that used to be apex-projected are handed to the flank
+scalar Newton. That Newton's `dPhi/dlambda` carries the shipped yield function's
+`df/dk = -1` term for a cohesion internal variable **that `f` itself does not
+contain** (ADR-97 P0 header finding 2, pinned not fixed). With cohesion
+SOFTENING the inconsistency lets it converge — `|Phi| ~ 1e-7`, `rc = 0`, no
+exhaustion, no refusal — onto the WRONG ROOT: a state whose deviator points
+OPPOSITE the trial deviator, i.e. the map walked through the vertex and out the
+other side.
+
+Measured (`ScalarLinearHardeningParameter = -20000`, `etabar = eta`, the ADR-95
+cone, one Gauss point):
+
+| (p - p_apex)/q | HS = 0 (correct) | HS = -20000, pre-guard |
+|---|---|---|
+| 3.0 | p -0.189103, q 0.199762, `s_zz-s_xx` **+0.346** | p -0.478023, q 0.328548, `s_zz-s_xx` **-0.569** |
+| 4.3089 | the apex, q 1.0e-15 | p -0.838550, q 0.489254, `s_zz-s_xx` **-0.847** |
+
+Identical at `strict_convergence` 0 and 1.
+
+Three things this teaches:
+
+7. **A yield-function tolerance cannot certify a return map.** Both wrong states
+   sit ON the surface to 1e-7. The check that catches them is GEOMETRIC: a
+   Drucker-Prager return is a non-negative radial scaling of the trial RELATIVE
+   deviator `r = dev(sigma) - alpha` plus a pressure change, so
+   `dot(r_ret, r_tr) < 0` is inadmissible for any parameters. That guard is now
+   in `Backward_Euler`, reported through the existing `be_flank_failed` channel
+   so it inherits the apex fallback and the fail-loud refusal without adding an
+   exit.
+
+   **`r`, not `dev(sigma)` — the first version of this guard got that wrong**
+   (caught by review round 2), and the two are only the same statement when the
+   back stress is zero. With `alpha` antiparallel to the trial deviator, the
+   ABSOLUTE deviator can legitimately cross zero while `sqrt(J2(r))` stays
+   positive: `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`, associated, trials
+   `(q_tr, p_tr) = (0.05, 0.5103)` and `(0.02, 0.3810)`. (On those two trials the
+   guard is not what refuses — the apex CLASSIFICATION gets there first; see the
+   entry below. The guard would have been the next thing to be wrong, and is
+   fixed in the same variable at the same time.) The general
+   lesson: **a guard written from a picture of the surface must be written in the
+   surface's own variables**, and for any kinematically hardening model that is
+   the relative stress, never the raw one.
+
+   Two things the guard cannot see, by construction: a flip whose returned
+   relative deviator is smaller than `f_absolute_tol` (that is the scale at which
+   the integrator stops distinguishing states at all, so the floor is not a
+   tuning knob), and anything at a yield function that does not declare
+   `yf_apex_elastic_metric`.
+8. **`strict_convergence` is not the safety net people assume.** `be_exhausted`
+   — one of layer (b)'s only two triggers — is computed **only** when strict is
+   on, and strict is OFF by default. A failure mode that CONVERGES is invisible
+   to both.
+9. **Narrowing a classification is not automatically conservative.** It moves
+   states from a branch that always "works" (a vertex projection cannot fail)
+   onto one that can be wrong in a new way. Ask what the newly-routed states do,
+   not only whether the classification is now exact.
+
+## The apex region is in the RELATIVE deviator `r = s - alpha`; two of the three places that decide it were not (one fixed, one pinned)
+
+Drucker-Prager's surface is written in `r = dev(sigma) - alpha`, so every test
+about where a trial sits relative to the vertex has to be written in `r` too.
+Three places decide that, and they did not agree:
+
+| | measured in | status |
+|---|---|---|
+| `DruckerPrager_YF::check_apex_region` (Euclidean) | **`r`** — correct variable, wrong metric | unchanged |
+| `cp_apex_region` (elastic metric, the one the integrator uses) | `dev(sigma)` | **FIXED, F8 round 2** |
+| `DruckerPrager_YF::apex_stress()` | ignores `alpha` entirely | **pinned, not fixed** |
+
+The consequence, measured with `alpha = (0.02, 0.02, -0.04, 0, 0, 0)`, `Ht = 0`,
+associated, trial `(q_tr, p_tr) = (0.02, 0.3810)`: the raw-deviator flip test
+classifies it APEX although its exact return is the cone point
+`sqrt(J2(r)) = 0.017321`, `p = 0.220190`. `be_apex_project` is then asked for a
+vertex the yield function cannot supply — `apex_stress()` returns `p_apex*I`,
+whose `|f|` is exactly `sqrt(J2(alpha))` = **0.034641**, not zero — so its own
+`|f(sigma_apex)| <= tol_yf` guard fires and the step is **refused** (`rc = -3`,
+both `strict_convergence` settings). An admissible return, reported impossible.
+
+This is **older than F8** and is not the union's doing: the Euclidean test also
+over-classifies this trial (`p - p_apex = 0.1220 >= eta*q_rel = 0.0244`), so
+every arrangement since wp/94c made the apex projection live — Euclidean alone,
+Euclidean OR elastic-metric, or elastic-metric alone — reached the same refusal.
+What F8 round 2 changed is the one of the three that the integrator now relies
+on: `cp_apex_region` measures in `r`, the trial classifies CONE, and the state
+returns to the closed-form cone point (verified to 1e-6, `rc = 0`, both strict
+settings).
+
+**Still pinned:** `apex_stress()`. The vertex of this surface is at
+`sigma = alpha + p_apex*I`, not `p_apex*I`, so a state that genuinely IS in the
+apex region with `alpha != 0` still hits the `|f(sigma_apex)|` guard and is
+refused rather than projected. Refusing is the safe half of wrong — the guard
+exists exactly so a bad vertex is never committed — but the fix is one line in a
+vanilla yield function that also changes `Closest_Point`'s apex return, so it
+belongs in its own WP with its own gate. Both tests here use zero back stress in
+every other case, which is why nothing else moved.
+
+It also falsifies a comment that stood in `ASDPlasticMaterial3D.h`'s
+`be_apex_project`: "every yield function that opts into `yf_has_apex` today is
+perfectly plastic (Null hardening)". `DruckerPrager_YF` opts in with
+`AlphaHardeningType` / `CohesionHardeningType` template parameters and the
+registered specializations include both linear tensor and linear scalar
+hardening. The comment is corrected in the same PR.
+
+It also falsifies a comment that stood in `ASDPlasticMaterial3D.h`'s
+`be_apex_project`: "every yield function that opts into `yf_has_apex` today is
+perfectly plastic (Null hardening)". `DruckerPrager_YF` opts in with
+`AlphaHardeningType` / `CohesionHardeningType` template parameters and the
+registered specializations include both linear tensor and linear scalar
+hardening. The comment is corrected in the same PR.
 ### `Domain::commit()` discards element commit returns — a material cannot refuse at commit; `LadrunoQuad` propagates any nonzero update code, `LadrunoBrick` only the sentinel
 - **Bites:** you write a material that detects, at `commitState()`, that the step
   it is being asked to commit is not integrable — and you return a failure code.

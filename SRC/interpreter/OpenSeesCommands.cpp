@@ -1024,6 +1024,13 @@ OpenSeesCommands::wipeAnalysis()
     thePFEMAnalysis = 0;
     theTest = 0;
 
+    // Ladruno (WP-101 r2): an ADR-41 held-load augmentation sweep is analysis-scoped, and
+    // while its flag is ON Domain::commit() is recorder-silent. A deck that forgets
+    // ladrunoEndAugment and then rebuilds its analysis would otherwise carry the silence into
+    // the new one and lose every later recorder sample. Domain::clearAll() covers `wipe`;
+    // this covers `wipeAnalysis`.
+    if (theDomain != 0)
+        theDomain->setContactAugmenting(false);
 }
 
 void

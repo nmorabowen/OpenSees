@@ -2,7 +2,7 @@
 title: "LadrunoKinematicCoupling — RBE2 / Kinematic-Coupling Element"
 project: Ladruno
 type: reference / user guide
-status: v1 shipped (rigid driver, U + rotation, -dof component select, penalty/AL, derived K_r, bipenalty default-off, g0 birth, 2D+3D); built + 16/16 Zone-A + 4-lens code review; MERGED to ladruno (PR #221, 2026-06-09)
+status: v1 shipped (rigid driver, U + rotation, -dof component select, penalty/AL, derived K_r, bipenalty default-off, g0 birth, 2D+3D); built + 16/16 Zone-A + 4-lens code review; MERGED to ladruno (PR #221, 2026-06-09). v1.1 (WP-101, PR #839): the within-step route is the ADR-41 held-load augmentation sweep with the DEFAULT `-alUpdate commit` (measured to close the gate for every algorithm × integrator); `-alUpdate iter` is opt-in and guarded to full Newton + LoadControl; committed-λ revert; K_t selection rule + conditioning guard; augmentation-sweep hygiene (double-Begin warning, flag cleared by wipe/wipeAnalysis); battery 55/55
 element: element LadrunoKinematicCoupling
 classTag: 33012 (element)
 related:
@@ -25,7 +25,7 @@ tags:
   - penalty-method
   - augmented-lagrangian
   - explicit-dynamics
-updated: 2026-06-10
+updated: 2026-09-14
 ---
 
 # LadrunoKinematicCoupling — RBE2 / kinematic coupling
@@ -183,6 +183,7 @@ element LadrunoKinematicCoupling $tag $refNode $N $s1 ... $sN
         [-k {$Kt | auto}] [-kAlpha $a] [-host $eleTag]   # auto needs a representative -host
         [-kr $Kr]                        # rotational-tie penalty (default DERIVED K_t·ℓ²)
         [-enforce {penalty | al}]        # default penalty
+        [-alUpdate {commit | iter}]      # AL Uzawa cadence; default commit (see §4.2)
         [-bipenalty {-dtcr $dt | -wcap $beta}]   # default OFF (R is often massed)
         [-absolute]                      # opt out of g0 initial-gap (offset) capture
 ```
@@ -197,6 +198,7 @@ element LadrunoKinematicCoupling $tag $refNode $N $s1 ... $sN
 | `-host $eleTag` | one **representative** slave-side element, used only to scale `-k auto` / `-wcap` | none |
 | `-kr $Kr` | rotational-tie penalty; omit to **derive** `K_r = K_t · ℓ²` (floored) | derived |
 | `-enforce` | `penalty` or `al` (augmented Lagrangian, implicit) | `penalty` |
+| `-alUpdate` | where the AL Uzawa recursion advances: `commit` = once per **committed step** (λ frozen inside a step ⇒ safe with **every** algorithm and integrator, and the cadence the §4.3 augmentation sweep turns into a true outer Uzawa loop); `iter` = once per **equilibrium iteration** — **opt-in, expert, refused outside full Newton + LoadControl** (§4.4). Ignored (with a warning) without `-enforce al` | `commit` |
 | `-bipenalty` | explicit critical-step control (see §5); **needs** `-dtcr`/`-wcap` budget | **off** |
 | `-absolute` | keep the **absolute** tie (skip stress-free `g0` capture); `-noInitGap` alias | off (capture on) |
 
@@ -215,6 +217,84 @@ representative slave-side host element's initial-stiffness diagonal,
 **`-host`** because an RBE2 set has **no single host element**. Without `-host`, use a numeric
 `-k`.
 
+> [!important] What `-k auto -host` is FOR — and what it is NOT
+> `-k auto` is a **conditioning** control, inherited from
+> [[LadrunoEmbeddedNode_guide]] §3 where it was introduced: `K_u = a·max_i|K_host(i,i)|`
+> off `host->getInitialStiff()`, the max-absolute diagonal (which already carries `~E·l_ch`
+> units), default `a = 1e3`. Its stated job there is to make the penalty **mesh- and
+> material-independent in conditioning** — "a coarse stiff host and a fine soft host both get
+> a well-scaled tie" — and the same guide warns explicitly against passing ASD's `1e18` as
+> `a` ("not `E`-scaled — condition-number blow-up"). That is the property you want in an
+> **explicit / dynamic** run, where an over-stiff tie collapses `dt_cr`, and in an
+> **embedded** use where the tie must not dominate the host it lives inside. [[29_ladruno_kinematic_coupling_rbe2_adr|ADR 29]] §6
+> carries it over to RBE2 with one restriction: "**`-k auto` is undefined for a node set**
+> (no host element). Default to numeric `-k`; `-k auto` only with an explicit representative
+> `-host` element among the slaves' parents" — hence the parse-time refusal of bare `-k auto`.
+>
+> **It is therefore NOT a rigidity setting, and it cannot hold a rigid footing.** By
+> construction it pins `K_t` to the *host's* order of magnitude, which is exactly the order at
+> which the penalty tie is *comparable* to the structure it is tying — the regime where the
+> residual gap is largest. Measured: on the TIMs strip's elastic rigidity gate (master-node
+> push vs a direct footprint push, tol `1e-6`) `-k auto -host <soil element>` left
+> **`1.4e-4`** of the push un-transmitted, versus `5.7e-8` for the flat default `1e12`. The
+> Zone-A gate (§9, a 2×2×2 block of the same soil) reproduces the mechanism: `-k auto`
+> resolves to `K_t ≈ 7.9e6` and leaves `2.1e-3`. If the footing must genuinely be rigid,
+> either raise `-k` (§3.1) or — better — keep the conditioning-friendly `K_t` and add
+> `-enforce al` (§4.2), which converges the constraint *at* that moderate stiffness.
+
+### 3.1 Choosing `K_t` — the rigidity/conditioning trade-off
+
+Two effects run in opposite directions, and both are measurable:
+
+**Rigidity error falls as `1/K_t`.** With the master's motion prescribed, the only thing
+resisting the tie is the host, so the residual gap is the tie force divided by the penalty:
+
+```
+err  ≡  max_i |g_i| / |push|  ≈  c / K_t
+```
+
+`c` is a property of the model (host stiffness × footprint), not a tolerance. On the Zone-A
+gate (2×2×2 `stdBrick`, `E = 45 000 kPa`, `ν = 0.3`, `B = 1.5 m`) `c = 1.66e4`, constant to
+five digits over `K_t = 1e6 … 1e12`. The TIMs strip shows the same law with its own `c`:
+`K_t = 5e9 → 6.7e-7`, and `K_t = 1e12 → 5.7e-8` — the last point is no longer on the line
+because it has hit the round-off floor of the assembled solve, which is the first sign you
+have gone too far.
+
+**Conditioning degrades linearly in `K_t`.** The tie contributes `K_t·BᵀB` to the global
+matrix; once that block is many orders above everything else, the matrix is numerically
+singular even though it is formally non-singular. Measured on the TIMs strip
+(**101 583 DOF**): at `K_t = 1e12` **Pardiso limped on perturbed pivots and then died**, and
+**SuperLU failed its first factorisation**; at `K_t = 5e9` the *same leg* ran to a clean
+plateau. The flat default `1e12` is a small-fixture default, not a production one.
+
+**The rule.** Express the band relative to the host element's diagonal stiffness scale
+`k_host = max_i |K_host(i,i)|` (what `-k auto` reads):
+
+| `K_t / k_host` | What you get |
+|---|---|
+| `≲ 1e1` | the "rigid" patch is visibly soft — the tie is a spring, not a constraint |
+| **`1e2 … 1e4`** | **recommended.** Rigidity error `1e-3 … 1e-5` of the push, conditioning untouched. Pair with `-enforce al` (§4.2) to take the error to round-off *without* leaving the band |
+| `1e4 … 1e6` | works, tightening; watch the solver's pivot warnings on large models |
+| `> 1e6` | **warned.** Rigidity stops improving (round-off floor) while the factorisation degrades. This is the regime that killed the 101 583-DOF leg |
+
+**Worked example — the TIMs strip.** Soil `E = 45 000 kPa`, footing `B = 1.5 m`, elements
+~`0.2 m`, so `k_host ~ E·l_ch ~ 1e4`. The band is then `K_t ≈ 1e6 … 1e8`; `5e9` (`~5e5·k_host`)
+is at the tight end and was the value that carried the leg to a clean plateau at `6.7e-7`;
+`1e12` (`~1e8·k_host`) is two decades past the warning and is the value that made the system
+near-singular. With `-enforce al` the *same* strip would be run at `~1e6–1e7` and reach the
+tolerance exactly (§4.2) — that is the recommended production setting.
+
+> [!note] Why the warning is not at parse time
+> With a numeric `-k` **and** a `-host` named, the element warns once when
+> `K_t > 1e6 · k_host`. The check lives in `resolveAutoKt()` (first use, `ktResolved`-guarded)
+> rather than in the parser because it needs `host->getInitialStiff()`: at parse time the host
+> element may not be in the domain yet (element order in a deck is free) and, if it is, may not
+> have had `setDomain()` called — calling `getInitialStiff()` there is a null-node dereference
+> waiting to happen. `resolveAutoKt()` is the first point where the value genuinely exists, and
+> it still runs before the first factorisation. **No `-host`, no warning** — there is nothing
+> to compare against, which is itself a reason to name a representative `-host` even when you
+> are passing a numeric `-k`.
+
 The **rotational** penalty `K_r` is, by default, **derived** from `K_t` and the geometry:
 
 ```
@@ -232,16 +312,191 @@ the explicit step). For the flat-face fixture (`a = 1`, all `|d_i|² = 2`), `ℓ
 
 ### 4.1 `penalty` (default)
 The gaps are driven toward zero by `K_t`/`K_r`; the **force/moment transfer is exact for any
-penalty** (§1.3), and the residual *kinematic* gap is `O(1/K)`. For most rigid-tie use the
-default `1e12` is stiff enough that the region is rigid to round-off.
+penalty** (§1.3), and the residual *kinematic* gap is `O(1/K)` — precisely `c/K_t`, see §3.1.
+On a small fixture the default `1e12` is stiff enough that the region is rigid to round-off;
+on a production-size model it is **not** a safe default (§3.1, the 101 583-DOF case).
 
 ### 4.2 `al` (augmented Lagrangian)
-Adds per-gap-row multipliers `λ` (size `nGap`) updated by a per-step Uzawa recursion in
-`commitState` (`λ += D g`), recovering near-exact rigidity at **moderate** stiffness — use
-when a very high `K_t` is hurting conditioning but you still need the tie tight.
-**Implicit only**: under an explicit integrator the per-sub-step Uzawa update has no
-equilibrium iteration to converge against; combining `-enforce al` with `-bipenalty` is
-**refused at parse** (the bipenalty flag is dropped with a warning).
+
+Adds per-gap-row multipliers `λ` (size `nGap`) carried on the **same** tangent, with the
+traction `t = D g + λ`. The Uzawa recursion is `λ ← λ + D g`; **where it advances** is
+`-alUpdate`, and that choice is not cosmetic — it decides whether the residual is still a
+function of the displacements.
+
+**`-alUpdate commit` (DEFAULT).** One update per **committed step**. Inside a step `λ` is
+**frozen**, so the residual `r(u) = f − S u − Bᵀ(λ + D B u)` is a genuine function of `u` and
+the tangent `S + BᵀDB` is its exact Jacobian. Every algorithm and every integrator works,
+because that is the contract each of them assumes. Across steps it is a first-order Uzawa: a
+multi-step push tightens the tie step by step (measured on the §9 gate, 5 DisplacementControl
+steps: `1.63e-2 → 3.33e-3`), but a **single** step is exactly the penalty answer.
+
+**To close the constraint inside one step, do not change the cadence — add an outer loop.**
+See §4.3.
+
+### 4.3 Closing the constraint **within** a step — the held-load augmentation sweep
+
+The consistent way to drive `g → 0` inside a step is an **outer Uzawa loop whose inner solve
+sees a fixed residual**: converge at frozen `λ`, update `λ`, repeat. The fork already ships
+that mechanism — [[41_ladruno_mortar_contact_adr|ADR-41]] D1's held-load augmentation sweep —
+and `LadrunoKinematicCoupling` participates in it **with no new hook**: `Domain::commit()`
+still runs every element's `commitState()` during the sweep (`Domain::contactAugmenting` only
+suppresses the recorder loop and the `commitTag` bump), and with `-alUpdate commit` that
+`commitState` **is** the outer update.
+
+```python
+ops.element('LadrunoKinematicCoupling', 1, ref, n, *skin,
+            '-dof', 1, 2, 3, '-k', 1.0e6, '-enforce', 'al')      # -alUpdate commit = default
+
+ops.integrator('LoadControl', 1.0)
+ops.analyze(1)                                   # the real step (any algorithm/integrator)
+
+ops.ladrunoBeginAugment()                        # recorders + commitTag frozen
+ops.integrator('LoadControl', 0.0)               # HOLD everything, whatever drove the step
+for _ in range(10):
+    ops.analyze(1)                               # inner solve at FIXED lambda ...
+    if ops.eleResponse(1, 'constraintViolation')[0] < tol:
+        break                                    # ... then commitState does lambda += D g
+ops.ladrunoEndAugment()
+```
+
+> [!danger] Every `ladrunoBeginAugment` MUST be paired with a `ladrunoEndAugment`
+> While the flag is on, `Domain::commit()` fires **no recorders** and bumps **no commitTag** —
+> that is what keeps the held-load passes out of the output stream. Forgetting to close it
+> therefore does **not** fail: the next ordinary step returns `ok = 0` and advances time
+> normally, and **every recorder sample from then on is silently lost** (measured: next step
+> `ok=0`, time `1 → 2`, recorder file **empty**). Since WP-101 a second `ladrunoBeginAugment`
+> without an intervening `End` **warns**, and the flag is cleared by `wipe` and `wipeAnalysis`
+> — but inside one analysis nothing else will tell you. Use `try: … finally:
+> ops.ladrunoEndAugment()`.
+
+> [!note] The held passes HOLD THE LOAD, not the control DOF
+> `LoadControl 0.0` freezes the load factor; it does not pin a `DisplacementControl` target.
+> So under a displacement-driven step the control DOF is **released** during the sweep and
+> drifts a little as the tie stops leaking — measured **1.08 %** of the push on the §9 gate
+> while the gap fell from `1.63e-2` to `9.5e-10`. That is physically right (the tie is taking
+> up load the soil was carrying), but if your post-processing keys on an exact target
+> displacement, read it back after `ladrunoEndAugment` rather than assuming it. A master
+> prescribed with `sp` (the `LoadControl` column below) cannot drift at all — the constraint
+> holds it — which is the cleaner fixture. Both are pinned in the battery.
+
+Use `LoadControl 0.0` for the held passes **whatever drove the real step** — a zero-increment
+`DisplacementControl` is degenerate (vanilla: its `dLambda = −dUabar/dUahat` correction is
+unbounded at a zero increment — see [[LEDGER_quirks]]). Measured on the §9 gate at a moderate
+`K_t = 1e6`
+(`≈1.3e2 · k_host`, where the penalty alone leaves `1.63e-2`), **20/20 cells converge**:
+
+| driving integrator | algorithms | passes | final `max|g|/push` |
+|---|---|---|---|
+| `LoadControl` | Newton, ModifiedNewton, KrylovNewton, BFGS, Broyden | 5 | `6.14e-11` |
+| `DisplacementControl` | Newton, ModifiedNewton, KrylovNewton, BFGS, Broyden | 4 | `9.53e-10` |
+
+(both convergence tests, `NormUnbalance 1e-6` and `NormDispIncr 1e-12`, give the same cells).
+This is the **supported** within-step route: it costs a handful of extra linear solves, it is
+algorithm- and integrator-agnostic, and each inner solve is an ordinary penalty problem.
+
+### 4.4 `-alUpdate iter` — opt-in, expert, and narrowly valid
+
+`iter` advances the recursion inside `update()`, once per equilibrium iteration:
+
+```
+λ_{k+1} = λ_k + D g(u_k)                                   # in update()
+r_k     = f − S u_k − Bᵀ( λ_{k+1} + D g(u_k) )
+T       = S + BᵀDB                                          # tangent unchanged
+```
+
+The fixed point is still exact (`Δu = 0 ⇒ Δλ = 0 ⇒ D g = 0`) and under **full Newton +
+LoadControl** it reaches it in a single step. But `update()` advances `λ` **before** the force
+is formed, so the tie force carries `λ_k + 2·D·g(u_k)` against a tangent that linearises a
+single `D·g`, and `λ_k` is **path-dependent**. The residual is therefore **not a function of
+`u`**, and every secant / accelerated / re-solving method is fed `(δu, δr)` pairs that describe
+no Jacobian. Full Newton survives only because its contraction on this gate happens to be
+~0.008.
+
+Measured on the §9 gate (linear elastic, `K_t = 1e6`) — each cell is the number of **failed
+steps**:
+
+| algorithm | `LoadControl` (1 step) | `DisplacementControl` (5 steps) |
+|---|---|---|
+| **Newton** | **0 — `err = 1.3e-12`** | 5 (all) |
+| ModifiedNewton | refused | 5 (all) |
+| KrylovNewton | refused | 5 (all) |
+| BFGS | refused | 5 (all) |
+| Broyden | refused | 5 (all) |
+
+Before the guard, those cells did not refuse — they *failed*: `DisplacementControl` stagnated
+geometrically (residual `78.85 → 70.62 → 62.17`, ratio 0.978, no `maxIter` rescues it, because
+it re-solves `dLambda` every iterate against a residual that moves independently of `u`);
+KrylovNewton diverged (`87.99 → 864.8 → 7267.9`) or, at a loose `1e-6`, "converged" to a gap
+`1e3×` worse than Newton's; Broyden reached `2.5e275`. ModifiedNewton survives *this linear*
+model but fails 10/10 on a `LadrunoBrick` bbar + `LadrunoJ2` host.
+
+So `iter` is **refused at the first `update()`** unless the active algorithm is full Newton
+**and** the active static integrator is `LoadControl` (read via `OPS_GetAlgorithm` /
+`OPS_GetStaticIntegrator` / `OPS_GetTransientIntegrator`; silent while no analysis exists, so
+the `Domain::addElement`-time `update()` does not trip it). The refusal is loud — the analysis
+fails and the message names the offending class tags and points at §4.3. The parser echoes the
+same window when `-alUpdate iter` is parsed.
+
+> [!warning] `iter` buys exactness at the price of iterations, and it tracks the *displacement*
+> tolerance — not the gap
+> "`g = 0` exactly" means "to the algorithm's convergence tolerance". Measured (Newton,
+> LoadControl, `K_t = 1e6`; penalty is `1.63e-2` at every row and converges in **2** iterations):
+>
+> | `NormDispIncr` tol | `iter` gap/push | `iter` iterations |
+> |---|---|---|
+> | `1e-14` | `2.98e-14` | 9 |
+> | `1e-10` | `5.87e-11` | 7 |
+> | `1e-8` | `2.68e-09` | 6 |
+> | `1e-6` | `1.25e-07` | 5 |
+>
+> and it needs the iteration budget: with `maxIter = 3` the `iter` leg **fails** while the
+> penalty leg converges in 2. Budget 5–9 iterations where penalty needs 1–2 (on a nonlinear
+> `LadrunoJ2` host the same ratio showed up as 553 vs 110 total iterations under
+> ModifiedNewton). §4.3's sweep costs extra *solves* instead, but keeps every inner solve a
+> well-posed penalty problem.
+
+### 4.5 AL under dynamics: fine implicitly, refused *by consequence* explicitly
+
+**Implicit transient is fine.** Newmark / HHT / GeneralizedAlpha all iterate to equilibrium, so
+the `commit`-cadence Uzawa behaves exactly as it does in statics. Measured on the §9 gate with
+mass (`Newmark 0.5 0.25` + Newton + `-enforce al`, `K_t = 1e6`): **0/10 steps failed**, final
+`max|g| = 1.5e-8`. The element says **nothing** here — an earlier cut of this WP warned on any
+transient integrator and so told users of this perfectly good configuration that it was
+"refused-by-consequence … singular". The check is now gated on the **explicit** integrator
+family by class tag (`CentralDifference*`, `ExplicitDifference*`, `ExplicitBathe*`,
+`CentralDifferenceSMS*`, `CentralDifferenceLadruno`, enumerated from `SRC/classTags.h`), and an
+unrecognised transient tag is treated as implicit so a new integrator never inherits a false
+warning.
+
+**Explicit is refused by consequence.** There is no equilibrium iteration for the recursion to
+converge against, and the combination is not merely useless but **unusable**: `-bipenalty` is
+refused together with `-enforce al` (the flag is dropped at parse with a warning), so a
+massless tied DOF has **no mass source at all** and the explicit step is singular. Measured on
+the §9 gate under `CentralDifferenceLadruno` (`analyze` return code):
+
+| | result |
+|---|---|
+| `-enforce penalty -bipenalty -dtcr 1e-6` | **0** (runs) |
+| `-enforce penalty`, no mass source | `−2` |
+| `-enforce al -bipenalty -dtcr 1e-6` | `−2` — `-bipenalty` was dropped at parse |
+
+`CentralDifference` and `ExplicitBathe` fail at step 0 the same way. **A parse-time refusal is
+impossible** — the integrator does not exist when the element is declared — so the element
+emits a one-time warning at the first `update()` when it sees an **explicit** integrator active
+with `-enforce al`. For explicit runs use `-enforce penalty` with `-bipenalty` (§5).
+
+### 4.6 Bookkeeping (both cadences)
+
+- `λ` is snapshotted at `commitState` (`lambdaCommitted`) and **rolled back by
+  `revertToLastCommit`** — a failed/retried step must not inherit the multipliers of a
+  discarded trial state. (Before WP-101 `revertToLastCommit` was a bare `return 0`, correct
+  only while `λ` never moved inside a step.)
+- `Domain::revertToLastCommit()`, `Domain::revertToStart()` **and `Domain::recv()`** all call
+  `update()` right after they change the state, so a one-shot latch keeps `λ` from advancing on
+  the just-reverted / just-restored state (see [[LEDGER_quirks]]; the un-latched database
+  round-trip moved `λ` by `6.6e-9`).
+- `sendSelf`/`recvSelf` carry `alUpdate` and `lambdaCommitted` (header version 2 — a newer
+  payload is now **refused** rather than mis-read), payload `3·nGap`.
 
 ---
 
@@ -366,7 +621,8 @@ components (e.g. `6N` for a full rigid 3D tie of `N` 6-DOF slaves, `3N` for tran
 | Geometry + ragged layout | `resolveGeometry()` (`d_i = x_i − x_R`, `gapNode`/`gapDof`/`gapIsRot`, floored `ℓ²`, self-tie/duplicate refusals) — resolved **once** at `setDomain` from `getCrds()` |
 | Constant gap operator | `buildB()` → `Matrix* B` (`nGap × nDOF`); `g = B·u − g0`; transport block `+[d_i]_×` (**sign-flipped** vs RBE3) |
 | Residual / tangent | `getResistingForce` (`Bᵀt`), `getTangentStiff` (`BᵀDB`); `getInitialStiff ≡` tangent; per-row penalty via `rowPenalty(row) = gapIsRot(row) ? Kr : Kt` |
-| Auto / derived penalties | `resolveAutoKt()` (`-k auto` off `-host`, derive `K_r = K_t·ℓ²`) |
+| Auto / derived penalties | `resolveAutoKt()` (`-k auto` off `-host`, derive `K_r = K_t·ℓ²`, **and the `K_t > 1e6·k_host` conditioning warning** — §3.1) |
+| AL multipliers | `commitState()` (the DEFAULT `commit` cadence + the `lambdaCommitted` snapshot; this is also the outer update of the §4.3 augmentation sweep), `update()` (the opt-in `iter` cadence **and** its `refuseIterCadence()` guard + the AL-under-transient note), `revertToLastCommit()` / `recvSelf()` (roll back / restore + arm the one-shot latch) — §4.2–§4.6 |
 | Damping bypass | `getDamp` / `getRayleighDampingForces` return element-owned **zeroed** `C0`/`dampF` (a no-op `setRayleighDampingFactors` alone would crash transient — see [[LEDGER_quirks]]) |
 | Explicit | `getMass` (`M0` diagonal, massless-scan lumps), `resolveBipenalty()` (Gershgorin row-sum over R **and** slaves), `getResistingForceIncInertia`, `getExplicitCriticalTimeStep` |
 | Serialization | `sendSelf`/`recvSelf` carry `dofSel`/weights flags/`λ`/`g0` + options; geometry, ragged layout & `B` **recomputed** on recv from coords |
@@ -393,7 +649,10 @@ components (e.g. `6N` for a full rigid 3D tie of `N` 6-DOF slaves, `3N` for tran
 
 ## 9. Validation
 
-Zone-A battery `tests/test_ladrunoKinematicCoupling_element.py` — **16/16**, plus full
+Zone-A battery `tests/test_ladrunoKinematicCoupling_element.py` — **52/52** (16 at v1, +3 at
+the 2026-09-07 u-p refusal, +7 at WP-101, +26 at the WP-101 review round 1: the 12-cell
+algorithm × integrator × test sweep, the 10-cell augmentation sweep, and 7 guard cases —
+including implicit-transient silence and the augmentation-sweep hygiene pair), plus full
 Zone-A 633-pass no-regression and a 4-lens adversarial **code** review (2 CRITICAL + 6 MAJOR
 folded in; ADR 29). The kinematic tests exploit a clean fact: with the slaves otherwise free,
 their only stiffness is the penalty tie, so equilibrium drives each slave **exactly** onto R's
@@ -412,6 +671,24 @@ rigid prediction (gap → 0, independent of `K`).
   (`dtcr == 0`); **transient-Newmark smoke** (the `getDamp` regression guard).
 - **Serialization:** FE_Datastore `sendSelf`/`recvSelf` round-trip (probes geometry-derived
   `kr` + `tiedDOFs` → fails if recv didn't reconstruct the element from coords).
+- **Algorithm × integrator × test sweep (WP-101 r1)** — `Newton / ModifiedNewton /
+  KrylovNewton` × `LoadControl / DisplacementControl` × `NormUnbalance / NormDispIncr`, 12
+  cells, asserting per cell that **penalty** converges, that **`commit`** converges and equals
+  penalty under `LoadControl`, and that **`iter`** either meets `1e-8` (full Newton +
+  LoadControl only) or is **refused** — never a silent wrong answer. This sweep is nine lines
+  and it is what the first cut of WP-101 was missing.
+- **Augmentation sweep (WP-101 r1)** — §4.3 driven for 5 algorithms × 2 integrators, asserting
+  `max|g|/push ≤ 1e-8` within one step and a bounded pass count.
+- **Rigidity gate (WP-101)** — a 2×2×2 `stdBrick` block (`E = 45 000 kPa`, `ν = 0.3`,
+  `B = 1.5 m`, base fixed) whose 9 top-face nodes are a footing skin driven by a fully
+  prescribed 6-DOF master; the metric is `max|g| / |push|`, cross-checked against a **direct
+  push of the same footprint** (leg B). It pins: the penalty law `err = c/K_t` over three
+  decades (`c = 1.66e4`, constant to 5 %); `-enforce al` closing to `2.98e-14` in **one** step
+  at `K_t = 1e6` where penalty leaves `1.63e-2`, with the base reaction matching leg B to
+  `1e-9`; `-alUpdate commit` reproducing the penalty gap exactly (the legacy pin); `-k auto
+  -host` measured **not** rigid (`K_t ≈ 7.9e6`, `err = 2.1e-3`); `λ` restored after a
+  deliberately failed step; and both new warnings (over-stiff `K_t` vs `-host`, `-alUpdate`
+  without `-enforce al`).
 
 ---
 
@@ -493,6 +770,23 @@ API surface (cf. ADR 24 §6 and the RBE3 `mode='distributing'` sibling).
 - **Reference node built with too few DOFs** (e.g. `ndf 3` in 3D) → refused at `setDomain`.
   Build it `ndf 6` (3D) / `ndf 3` (2D).
 - **`-k auto` without `-host`** → refused (no single host for a node set); use a numeric `-k`.
+- **Expecting `-k auto` to make the patch rigid** → it won't; it is a *conditioning* control
+  and pins `K_t` to the host's own order (§3, measured `1.4e-4` of the push left on the TIMs
+  gate). Raise `-k` into the §3.1 band, or add `-enforce al`.
+- **Reaching for `-k 1e12` on a production model** → the rigidity error stops improving
+  (round-off floor) while the factorisation degrades; a 101 583-DOF strip went near-singular
+  (Pardiso perturbed pivots → failure; SuperLU failed its first factorisation) at `1e12` and
+  ran clean at `5e9`. Stay in `1e2…1e4 × k_host` and use `-enforce al` for tightness (§3.1).
+- **Expecting `-enforce al` to converge the tie in ONE step on its own** → it does not: the
+  default `-alUpdate commit` updates `λ` once per *committed* step, so a single push returns
+  the plain penalty gap. Wrap the step in the §4.3 held-load augmentation sweep — that is the
+  supported within-step route and it works with every algorithm and integrator.
+- **Reaching for `-alUpdate iter` to avoid the sweep** → it is refused outside full Newton +
+  LoadControl, and for good reason: it makes the residual path-dependent, so
+  `DisplacementControl` fails 5/5 steps with every algorithm and KrylovNewton / BFGS / Broyden
+  diverge (§4.4).
+- **`-enforce al` in an explicit run** → refused by consequence: `-bipenalty` is dropped when
+  `-enforce al` is given, leaving a massless tied DOF with no mass source (§4.5).
 - **Single penalty across translation and rotation** → don't override `-kr` with `K_t`; the
   derived `K_t·ℓ²` is there for a reason (§3).
 - **Bipenalty default surprise** → unlike RBE3, RBE2 bipenalty is **off** by default (R is
@@ -514,5 +808,3 @@ API surface (cf. ADR 24 §6 and the RBE3 `mode='distributing'` sibling).
   §7 the explicit zero-mass-rotational trap.
 - **Nastran** RBE2 · **Abaqus** `*COUPLING, kinematic` · **LS-DYNA**
   `*CONSTRAINED_NODAL_RIGID_BODY`.
-</content>
-</invoke>

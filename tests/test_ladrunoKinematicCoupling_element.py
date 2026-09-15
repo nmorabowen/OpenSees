@@ -374,3 +374,484 @@ def test_ndf3_and_ndf6_slaves_default_still_accepted():
     for ndf in (3, 6):
         _face(slave_ndf=ndf)                                  # default component list
         assert 1 in ops.getEleTags()
+
+
+# ===================================================================== WP-101
+# The RIGIDITY GATE: a real elastic block with a rigid footing skin driven by a
+# master node.  This is the configuration the penalty formulation is actually
+# asked to hold rigid (a footing on soil), and the one on which the pre-WP-101
+# `-enforce al` was measured to be no better than plain penalty: its Uzawa
+# recursion advanced ONCE PER COMMITTED STEP, so within a single push the tie
+# was penalty-only and the constraint never converged.
+#
+# Metric: err = max |gap| over the footprint / |push|.  With the master's 6 DOFs
+# prescribed the only thing resisting the tie is the soil, so the residual gap is
+# exactly the tie force divided by K_t => err = c / K_t, c a property of the
+# fixture (measured below: c ~ 1.66e4 for this block).
+#
+# Model: 2x2x2 stdBrick cube, B = 1.5 m, E = 45 000 kPa / nu = 0.3 (the TIMs
+# strip's soil), base fixed, the 9 top-face nodes are the footing skin.
+_E, _NU, _B, _N = 45000.0, 0.3, 1.5, 2
+_PUSH = -0.005
+_MASTER = 90001
+_COUPLE = 90002
+
+
+def _bn(i, j, k):
+    return 1000 + (k * (_N + 1) + j) * (_N + 1) + i
+
+
+def _soil_block(density=0.0):
+    """Elastic block, base fixed. Returns (skin node tags, representative host ele tag)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU, density)
+    h = _B / _N
+    for k in range(_N + 1):
+        for j in range(_N + 1):
+            for i in range(_N + 1):
+                ops.node(_bn(i, j, k), i * h, j * h, k * h)
+    ele = 1
+    for k in range(_N):
+        for j in range(_N):
+            for i in range(_N):
+                ops.element("stdBrick", ele,
+                            _bn(i, j, k), _bn(i + 1, j, k), _bn(i + 1, j + 1, k), _bn(i, j + 1, k),
+                            _bn(i, j, k + 1), _bn(i + 1, j, k + 1), _bn(i + 1, j + 1, k + 1),
+                            _bn(i, j + 1, k + 1), 1)
+                ele += 1
+    for j in range(_N + 1):
+        for i in range(_N + 1):
+            ops.fix(_bn(i, j, 0), 1, 1, 1)
+    skin = [_bn(i, j, _N) for j in range(_N + 1) for i in range(_N + 1)]
+    return skin, 1
+
+
+_TOL = {"NormUnbalance": 1.0e-6, "NormDispIncr": 1.0e-12}
+
+
+def _build_gate(kt="auto", enforce=None, alupdate=None, host=False, host_first=True):
+    """Elastic block + footing skin tied to a 6-DOF master. Returns the skin node tags."""
+    skin, hostele = _soil_block()
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    args = ["LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin)] + skin
+    args += ["-dof", 1, 2, 3, "-k", kt]
+    if host or kt == "auto":
+        args += ["-host", hostele]
+    if enforce is not None:
+        args += ["-enforce", enforce]
+    if alupdate is not None:
+        args += ["-alUpdate", alupdate]
+    ops.element(*args)
+    return skin
+
+
+def _drive(integ="LoadControl", push=_PUSH):
+    """Prescribe the master (LoadControl) or load it for DisplacementControl."""
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    if integ == "LoadControl":
+        for d, v in enumerate((0.0, 0.0, push, 0.0, 0.0, 0.0)):
+            ops.sp(_MASTER, d + 1, v)
+    else:
+        for d in (1, 2, 4, 5, 6):
+            ops.sp(_MASTER, d, 0.0)
+        ops.load(_MASTER, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0)
+
+
+def _gap_err(push=_PUSH):
+    g = ops.eleResponse(_COUPLE, "gap")
+    return max(abs(v) for v in g) / abs(push)
+
+
+def _reaction_z():
+    ops.reactions()
+    return sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
+
+
+def _gate(kt="auto", enforce=None, alupdate=None, host=False, push=_PUSH):
+    """Build the gate, push the MASTER by `push`, return (analyze status, err, sum Rz)."""
+    _build_gate(kt, enforce, alupdate, host)
+    _drive("LoadControl", push)
+    ok = _solve_static_gate()
+    return ok, _gap_err(push), _reaction_z()
+
+
+def _solve_static_gate(tol=1e-14, maxiter=60, algo="Newton", integ="LoadControl",
+                       testname="NormDispIncr", nsteps=1, push=_PUSH):
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test(testname, tol, maxiter, 0)
+    ops.algorithm(algo)
+    if integ == "LoadControl":
+        ops.integrator("LoadControl", 1.0)
+    else:
+        ops.integrator("DisplacementControl", _MASTER, 3, push / nsteps)
+    ops.analysis("Static")
+    return sum(1 for _ in range(nsteps) if ops.analyze(1) != 0)     # number of FAILED steps
+
+
+def _augment_sweep(algo="Newton", integ="LoadControl", testname="NormDispIncr",
+                   kt=1.0e6, n_aug=12, augtol=1.0e-9):
+    """The ADR-41 D1 held-load within-step augmentation sweep = an OUTER Uzawa loop.
+
+    Each held-load analyze() is an inner solve at FIXED lambda (so the residual is a
+    genuine function of u and every algorithm works); the Domain::commit() that ends it
+    performs the outer update lambda += D g via the element's commitState.
+    """
+    _build_gate(kt, "al", "commit")
+    _drive(integ)
+    if _solve_static_gate(_TOL[testname], 60, algo, integ, testname, 1) != 0:
+        return -1, _gap_err(), 0
+    u0 = ops.nodeDisp(_MASTER, 3)
+    ops.ladrunoBeginAugment()
+    ops.integrator("LoadControl", 0.0)          # hold EVERYTHING, whatever drove the step
+    npass = 0
+    for _ in range(n_aug):
+        if ops.analyze(1) != 0:
+            ops.ladrunoEndAugment()
+            return -2, _gap_err(), npass, 0.0
+        npass += 1
+        if _gap_err() <= augtol:
+            break
+    ops.ladrunoEndAugment()
+    drift = abs(ops.nodeDisp(_MASTER, 3) - u0) / abs(u0) if u0 != 0.0 else 0.0
+    return 0, _gap_err(), npass, drift
+
+
+def _direct_push_reaction():
+    """Leg B: push the SAME footprint nodes directly (no coupling element)."""
+    skin, _ = _soil_block()
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in skin:
+        ops.sp(n, 1, 0.0)
+        ops.sp(n, 2, 0.0)
+        ops.sp(n, 3, _PUSH)
+    assert _solve_static_gate() == 0
+    ops.reactions()
+    return sum(ops.nodeReaction(_bn(i, j, 0))[2] for j in range(_N + 1) for i in range(_N + 1))
+
+
+# ------------------------- 20. penalty rigidity error is exactly c/K_t
+def test_penalty_rigidity_error_scales_as_inverse_k():
+    """err = c/K_t over three decades — the reason a "rigid" penalty tie needs a
+    K_t nobody can condition. c is a fixture property, not a tolerance."""
+    cs = []
+    for kt in (1.0e6, 1.0e7, 1.0e8):
+        ok, err, _ = _gate(kt=kt)
+        assert ok == 0
+        cs.append(err * kt)
+    for c in cs[1:]:
+        assert c == pytest.approx(cs[0], rel=0.05)             # err*K_t constant
+    assert 1.0e4 < cs[-1] < 1.0e5                              # measured c ~ 1.66e4
+
+
+# ------------------------- 21. -enforce al closes the constraint WITHIN one step (WP-101)
+def test_al_closes_constraint_within_one_step():
+    """THE WP-101 gate. At a MODERATE, host-order K_t = 1e6 (~1.3e2 x the host
+    element's diagonal stiffness) the penalty alone leaves ~1.6e-2 of the push
+    un-transmitted. With the per-iteration Uzawa update `-enforce al` drives the
+    same gap below 1e-8 in ONE step, and the reaction matches a direct push of
+    the same footprint exactly. `iter` is OPT-IN and only valid here because this
+    fixture uses full Newton under LoadControl -- see test_iter_cadence_refused."""
+    ok_p, err_p, _ = _gate(kt=1.0e6)
+    assert ok_p == 0 and err_p > 1.0e-3                        # penalty: ~1.6e-2
+
+    ok_a, err_a, rz_a = _gate(kt=1.0e6, enforce="al", alupdate="iter")
+    assert ok_a == 0
+    assert err_a <= 1.0e-8, f"AL left gap/push = {err_a:.3e} after one step"
+    assert err_a < err_p / 1.0e5                               # >5 decades better
+
+    rz_direct = _direct_push_reaction()
+    assert rz_a == pytest.approx(rz_direct, rel=1e-9)
+
+
+# ------------------------- 22. -alUpdate commit reproduces the legacy (pre-WP-101) behaviour
+def test_al_update_commit_reproduces_penalty_within_a_step():
+    """`-alUpdate commit` is the pre-WP-101 cadence: one Uzawa step per COMMITTED
+    step, so within a single push the tie is penalty-only and the gap is exactly
+    the penalty gap. This pins the escape hatch AND documents the defect."""
+    _, err_pen, _ = _gate(kt=1.0e7)
+    ok, err_commit, _ = _gate(kt=1.0e7, enforce="al", alupdate="commit")
+    assert ok == 0
+    assert err_commit == pytest.approx(err_pen, rel=1e-9)
+    # ...and `commit` is the DEFAULT, so a bare -enforce al matches it
+    ok_d, err_default, _ = _gate(kt=1.0e7, enforce="al")
+    assert ok_d == 0
+    assert err_default == pytest.approx(err_commit, rel=1e-12)
+
+
+# ------------------------- 23. -k auto -host cannot hold a rigid footing
+def test_k_auto_host_cannot_hold_a_rigid_footing():
+    """`-k auto` scales K_t to the HOST's stiffness (kAlpha=1e3 x max|K_host(i,i)|)
+    — that is its job: a tie that does not wreck conditioning. It is NOT a rigidity
+    setting: on this gate it resolves to ~8e6 and leaves ~2e-3 of the push
+    un-transmitted, 5 decades short of rigid. Use -enforce al (or a larger -k)
+    when the footing must actually be rigid."""
+    ok, err, _ = _gate(kt="auto")
+    assert ok == 0
+    kt = ops.eleResponse(_COUPLE, "kt")[0]
+    assert 1.0e6 < kt < 1.0e8                                  # host-order, not 1e12
+    assert err > 1.0e-4, f"-k auto unexpectedly rigid ({err:.3e})"
+
+
+# ------------------------- 24. a failed step must not keep the trial-state multipliers
+def test_al_lambda_reverts_on_failed_step():
+    """With the per-iteration recursion lambda moves INSIDE the step, so
+    revertToLastCommit (previously a bare `return 0`) must roll it back — otherwise
+    a retried step inherits the multipliers of a discarded trial state."""
+    assert _gate(kt=1.0e6, enforce="al", alupdate="iter")[0] == 0
+    lam0 = list(ops.eleResponse(_COUPLE, "lambda"))
+    assert max(abs(v) for v in lam0) > 0.0                     # AL is actually live
+
+    # a second step that CANNOT converge (1 iteration, impossible tolerance)
+    ops.sp(_MASTER, 3, 2.0 * _PUSH)
+    ops.test("NormDispIncr", 1.0e-30, 1, 0)
+    assert ops.analyze(1) != 0                                 # fails -> domain reverts
+    lam1 = list(ops.eleResponse(_COUPLE, "lambda"))
+    assert lam1 == pytest.approx(lam0, rel=1e-12, abs=1e-12)
+
+
+# ------------------------- 25. conditioning guard: a huge K_t against a named -host warns
+def test_high_kt_against_host_warns(capfd):
+    """K_t far above the host's stiffness scale buys no rigidity (the error floors
+    on round-off) and costs conditioning. With a -host named, say so."""
+    ok, _, _ = _gate(kt=1.0e12, host=True)
+    assert ok == 0
+    text = "".join(capfd.readouterr())
+    assert "x the -host element's stiffness scale" in text, text
+
+    # ...and stay quiet inside the recommended band
+    ok, _, _ = _gate(kt=1.0e6, host=True)
+    assert ok == 0
+    assert "stiffness scale" not in "".join(capfd.readouterr())
+
+
+# ------------------------- 26. -alUpdate without -enforce al is called out
+def test_al_update_without_al_warns(capfd):
+    _face(kt=1.0e7)                                            # fresh model
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0, "-ndf", 6)
+    ops.node(2, 1.0, 0.0, 0.0)
+    ops.element("LadrunoKinematicCoupling", 1, 1, 1, 2, "-k", 1.0e7, "-alUpdate", "commit")
+    text = "".join(capfd.readouterr())
+    assert "-alUpdate has no effect without -enforce al" in text, text
+    assert 1 in ops.getEleTags()                               # warned, not refused
+
+# ------------------------- 27. algorithm x integrator x test sweep (WP-101 review r1)
+@pytest.mark.parametrize("algo", ["Newton", "ModifiedNewton", "KrylovNewton"])
+@pytest.mark.parametrize("integ", ["LoadControl", "DisplacementControl"])
+@pytest.mark.parametrize("testname", ["NormUnbalance", "NormDispIncr"])
+def test_enforcement_sweep(algo, integ, testname):
+    """The 12-cell sweep that the first cut of WP-101 did not have, and which caught
+    two hard regressions. Per cell:
+      penalty  -- converges (0 failed steps), error at the c/K_t floor;
+      commit   -- converges, and under LoadControl matches penalty exactly (one step,
+                  one Uzawa update at the END of it, so the step itself is penalty);
+      iter     -- EITHER converges to <=1e-8 (full Newton + LoadControl only) OR is
+                  refused (the analysis fails loudly) -- never a silent wrong answer.
+    """
+    nsteps = 1 if integ == "LoadControl" else 5
+    tol = _TOL[testname]
+
+    _build_gate(1.0e6)
+    _drive(integ)
+    nfail_pen = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    err_pen = _gap_err()
+    assert nfail_pen == 0, f"penalty failed {nfail_pen}/{nsteps} steps"
+    assert err_pen > 1.0e-3                                  # the c/K_t floor, ~1.6e-2
+
+    _build_gate(1.0e6, "al", "commit")
+    _drive(integ)
+    nfail_com = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    err_com = _gap_err()
+    assert nfail_com == 0, f"-alUpdate commit failed {nfail_com}/{nsteps} steps"
+    if integ == "LoadControl":
+        assert err_com == pytest.approx(err_pen, rel=1e-9)   # one step => penalty exactly
+    else:
+        assert err_com <= err_pen                            # across-step Uzawa, 5 steps
+
+    _build_gate(1.0e6, "al", "iter")
+    _drive(integ)
+    nfail_it = _solve_static_gate(tol, 60, algo, integ, testname, nsteps)
+    supported = (algo == "Newton" and integ == "LoadControl")
+    if supported:
+        assert nfail_it == 0
+        assert _gap_err() <= 1.0e-8
+    else:
+        assert nfail_it == nsteps, (
+            f"-alUpdate iter must be REFUSED under {algo}/{integ}; it 'succeeded' "
+            f"({nfail_it}/{nsteps} failed) with gap {_gap_err():.3e}"
+        )
+
+
+# ------------------------- 28. the SUPPORTED within-step route: the ADR-41 augment sweep
+@pytest.mark.parametrize("algo", ["Newton", "ModifiedNewton", "KrylovNewton", "BFGS", "Broyden"])
+@pytest.mark.parametrize("integ", ["LoadControl", "DisplacementControl"])
+def test_augment_sweep_closes_constraint(algo, integ):
+    """The consistent way to close the constraint within a step: an OUTER Uzawa loop
+    with a FIXED residual per inner solve. The fork already ships the mechanism
+    (ADR-41 D1: ladrunoBeginAugment / held-load analyze / ladrunoEndAugment), and
+    LadrunoKinematicCoupling participates with NO new hook -- Domain::commit() still
+    runs every element's commitState() during the sweep (contactAugmenting only
+    suppresses the recorder loop and the commitTag bump), and with -alUpdate commit
+    that commitState IS the outer update lambda += D g.
+
+    Unlike -alUpdate iter this works with EVERY algorithm and integrator, because
+    lambda is frozen inside each inner solve."""
+    status, err, npass, drift = _augment_sweep(algo=algo, integ=integ)
+    assert status == 0, f"augment sweep failed (status {status}) after {npass} passes"
+    assert err <= 1.0e-8, f"augment sweep left gap/push = {err:.3e} after {npass} passes"
+    assert 1 <= npass <= 10
+    # The held passes run under LoadControl 0.0, which HOLDS THE LOAD, not the control DOF:
+    # a DisplacementControl target is released while lambda tightens, so the master drifts a
+    # little as the tie stops leaking. Bounded, and zero for a prescribed (sp) master.
+    if integ == "LoadControl":
+        assert drift == pytest.approx(0.0, abs=1e-12)     # sp-prescribed: cannot drift
+    else:
+        assert drift < 0.05, f"control DOF drifted {drift*100:.2f}% during the held passes"
+
+
+# ------------------------- 29. iter is refused, loudly, outside its validity window
+def test_iter_cadence_refused(capfd):
+    """-alUpdate iter makes the residual path-dependent, so it is refused anywhere but
+    full Newton + LoadControl. The refusal must be LOUD (the analysis fails) rather than
+    a silently wrong answer."""
+    _build_gate(1.0e6, "al", "iter")
+    _drive("DisplacementControl")
+    nfail = _solve_static_gate(_TOL["NormDispIncr"], 60, "KrylovNewton",
+                               "DisplacementControl", "NormDispIncr", 2)
+    assert nfail == 2
+    text = "".join(capfd.readouterr())
+    assert "-alUpdate iter is REFUSED" in text, text
+    assert "ladrunoBeginAugment" in text                     # points at the supported route
+
+
+# ------------------------- 30. -alUpdate iter echoes its validity window at parse time
+def test_iter_echo_at_parse(capfd):
+    _build_gate(1.0e6, "al", "iter")
+    text = "".join(capfd.readouterr())
+    assert "EXPERT/opt-in" in text and "LoadControl" in text, text
+
+
+# ------------------------- 31. declaring the coupling BEFORE its -host must still resolve
+def test_host_declared_after_coupling_still_resolves(capfd):
+    """Domain::addElement calls update() -> resolveAutoKt() at DECLARATION time. Latching
+    ktResolved on that failed host lookup left `-k auto` silently at the 1e12 default and
+    made the conditioning warning unreachable. The lookup must be retried, not latched."""
+    # coupling FIRST, host element only afterwards
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    h = _B / _N
+    for k in range(_N + 1):
+        for j in range(_N + 1):
+            for i in range(_N + 1):
+                ops.node(_bn(i, j, k), i * h, j * h, k * h)
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    skin = [_bn(i, j, _N) for j in range(_N + 1) for i in range(_N + 1)]
+    ops.element("LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin), *skin,
+                "-dof", 1, 2, 3, "-k", "auto", "-host", 1)          # host ele 1 does not exist yet
+    e = 1
+    for k in range(_N):
+        for j in range(_N):
+            for i in range(_N):
+                ops.element("stdBrick", e, _bn(i, j, k), _bn(i + 1, j, k), _bn(i + 1, j + 1, k),
+                            _bn(i, j + 1, k), _bn(i, j, k + 1), _bn(i + 1, j, k + 1),
+                            _bn(i + 1, j + 1, k + 1), _bn(i, j + 1, k + 1), 1)
+                e += 1
+    for j in range(_N + 1):
+        for i in range(_N + 1):
+            ops.fix(_bn(i, j, 0), 1, 1, 1)
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    kt = ops.eleResponse(_COUPLE, "kt")[0]
+    assert 1.0e6 < kt < 1.0e8, f"-k auto did not resolve off the late -host (K_t = {kt:.3e})"
+
+
+# ------------------------- 32. round-trip must preserve the AL multiplier
+def test_database_roundtrip_preserves_lambda():
+    """The v1 round-trip probed kr + tiedDOFs only. lambda is now ALSO committed state
+    (and lambdaCommitted rides the payload), and Domain::recv() calls update() right
+    after recvSelf -- which under `iter` used to advance lambda by ~6.6e-9 on the
+    just-restored state. Probe lambda so both are pinned."""
+    def build():
+        _build_gate(1.0e6, "al", "commit")
+        _drive("LoadControl")
+        assert _solve_static_gate() == 0
+
+    database_roundtrip(
+        build, probe_nodes=[_MASTER], ndf=6,
+        probe_fn=lambda: list(ops.eleResponse(_COUPLE, "lambda")),
+    )
+
+# ------------------------- 33. IMPLICIT transient + al must be silent AND work (review r2)
+def test_al_under_newmark_is_silent_and_works(capfd):
+    """The r1 cut warned on `TransientIntegrator != 0`, which also caught IMPLICIT transient
+    integrators -- and `-enforce al` under Newmark + Newton works perfectly. That warning told
+    the user a working configuration was "refused-by-consequence ... singular". The warning is
+    now gated on the EXPLICIT integrator family only (classTag enumeration)."""
+    skin, _ = _soil_block(density=2.0)                     # element mass from the density
+    ops.node(_MASTER, _B / 2.0, _B / 2.0, _B, "-ndf", 6)
+    ops.element("LadrunoKinematicCoupling", _COUPLE, _MASTER, len(skin), *skin,
+                "-dof", 1, 2, 3, "-k", 1.0e6, "-enforce", "al")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(_MASTER, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    nfail = sum(1 for _ in range(10) if ops.analyze(1, 1.0e-3) != 0)
+    assert nfail == 0
+    g = ops.eleResponse(_COUPLE, "gap")
+    assert max(abs(v) for v in g) < 1.0e-6
+    text = "".join(capfd.readouterr())
+    assert "EXPLICIT integrator" not in text, text        # no false warning
+    assert "refused-by-consequence" not in text, text
+
+
+# ------------------------- 34. forgetting ladrunoEndAugment is a SILENT recorder void
+def test_double_begin_augment_warns(capfd):
+    """While the augmentation flag is on, Domain::commit() fires no recorders and bumps no
+    commitTag -- so a missing ladrunoEndAugment does not fail, it silently voids every later
+    recorder sample. A second Begin without an intervening End is that mistake's signature."""
+    _build_gate(1.0e6, "al", "commit")
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    ops.ladrunoBeginAugment()
+    capfd.readouterr()
+    ops.ladrunoBeginAugment()
+    text = "".join(capfd.readouterr())
+    assert "ALREADY open" in text and "ladrunoEndAugment" in text, text
+    ops.ladrunoEndAugment()
+
+
+def test_wipe_analysis_clears_augment_flag(tmp_path):
+    """...and the flag must not survive a wipeAnalysis: a deck that forgets EndAugment and
+    rebuilds its analysis would otherwise carry the recorder silence into the new one."""
+    _build_gate(1.0e6, "al", "commit")
+    _drive("LoadControl")
+    assert _solve_static_gate() == 0
+    ops.ladrunoBeginAugment()                              # deliberately never closed
+    ops.wipeAnalysis()
+
+    rec = str(tmp_path / "wp101.out")
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    ops.recorder("Node", "-file", rec, "-time", "-node", _MASTER, "-dof", 3, "disp")
+    assert ops.analyze(1) == 0
+    ops.remove("recorders")
+    import os
+    assert os.path.exists(rec) and os.path.getsize(rec) > 0, "recorder stream was still silent"

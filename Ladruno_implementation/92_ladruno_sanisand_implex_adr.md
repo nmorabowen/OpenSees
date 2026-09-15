@@ -448,6 +448,46 @@ decision.
 
 ## Log
 
+- **2026-09-14 — F10, the SELF-WEIGHT wall: `-implexControl` is what stops the deck.**
+  `[[92b_implex_selfweight_wall_note]]` (WP-102, engine `9c2f964`, no C++; rewritten after an
+  adversarial review that MERGE-BLOCKED the first verdict). TIMs' report — the control refusing
+  from the first push step and the harness floor reached at `s/B = 0.0125` on a self-weight
+  strip — is reproduced (`FLOOR` at 0.0085, 724 refusals, **all** in the `control` bucket,
+  `implexGuards[0] = 0`, companion 0). **The decisive arm is the one with the control OFF:**
+  bare `-implex`, the same doubling controller, everything else identical, reaches the target
+  `s/B = 0.0500` in **104 steps, 0 subdivisions, 0 failed attempts, 58 s**, refusal ledger
+  `0/0/0/0` with the **companion bucket verified zero** — which is how the ADR-95 campaign that
+  reached `s/B = 0.15` was run (`sanisand_path_diag.py` passes only `-implex`). **That is a
+  TERMINATION result and it is scoped:** `implexRefusals[3] = 0` on B, C, D, E, K, L, N, N1 and
+  `<= 42` anywhere (M 42, F1 29, I 12, H 6, F3 3, J 2), so on this deck the companion — §3's
+  actual concern, answered by `-maxSubsteps` plus a watched bucket — never failed. (Since WP-99 /
+  PR #838, merged as `c75edc95c`, that bucket read is belt-and-braces: a capped companion commit
+  now aborts the run with `analyze() = -4`. The F10 campaign ran on `9c2f964`, which predates it,
+  so on ITS engine the read was the only thing that would have caught one.) It leaves
+  **§8's ACCURACY claim untouched**, and the deck sits inside that claim's range rather than
+  outside it: minimum `p'` 6.374 kPa is 1.27x the P0 corner's 5 kPa, leg N's strain increment
+  crosses `d_eps = 5e-4` at `s/B = 0.0012` and runs at 2.6-4x the corner to the target, and there
+  is no implicit anchor past `s/B = 0.00227`. No general "the control is not a low-confinement
+  requirement" is claimed.
+  With the control ON, two mechanisms: (a) the refusal COUNT is set by the harness's growth rule
+  — ×2 → 724 refusals, ×1.25 → 253, ×1.0 → **6** — because `implexError` is first order in the
+  step and the control bounds it absolutely; (b) the `FLOOR` itself is the control's own
+  `implexPrimed` bare `> 0.0` test (`:3021`): points whose committed plastic history is
+  1e-12…1e-21 forfeit the un-primed exemption and are refused on an error that does **not** decay
+  with `dt` (0.2243 at `|dt| = 4e-5` → 0.2143 at `2e-5`), the exact asymptote `:3005`-`:3014`
+  documents. Of the three candidates the act named: the dilatant-at-rest state is an
+  **aggravator of the error field** (100 % of points confirmed) but not the wall — the same field
+  with the control off refuses nothing; the substepper is **exonerated** and candidate (2)
+  becomes "the CONTROL's error control, not the substepper's"; the `nu*` device is **refuted**
+  (at `K0 = 0.455` `nu*` IS the material's own `nu`; the leg-`C` half of that argument is
+  withdrawn as not one-variable). **`tol = 0.5` agrees with the control-off arm to 0.395 % mean /
+  1.625 % max over `0.002 ≤ s/B ≤ 0.05`, i.e. it makes the control nearly inert on this deck.**
+  Two defects recorded, not fixed — `implexPrimed`'s sign test (now the named mechanism of the
+  FLOOR, fix shape = P2-5b's relative test), and the P2-2 `f = 0` guard fighting the control
+  (30 of 49 throttled refusal lines are at `f = 0`); §10 of the note states the design question
+  for this ADR to settle. Reporting hygiene added: a refuse/halve/regrow path **stiffens** the
+  curve (+19.4 % at the settlement where leg B dies), so no `q` from a refusing leg is
+  comparable.
 - **2026-09-05 (later)** — P0 complete (`[[_adr92_p0_oracle_results]]`): G0 PASS to
   round-off, G1 order 1.7–2.1, G5 `5.7e-11`; **D1 = A** (18–22x over `dGamma` on scheme 1);
   **D3 reversed** (scheme 2 is explicit at low `p`, `:2264`); **floor clamp added to P1**;

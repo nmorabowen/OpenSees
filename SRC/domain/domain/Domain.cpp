@@ -1117,6 +1117,11 @@ Domain::clearAll(void) {
     theContactDomain = 0;
   }
 
+  // Ladruno (WP-101 r2): clear a held-load augmentation sweep that was never closed. While
+  // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
+  // `wipe` into the next model would silently produce empty recorder files there.
+  contactAugmenting = false;
+
   // set the time back to 0.0
   currentTime = 0.0;
   committedTime = 0.0;
