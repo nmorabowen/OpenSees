@@ -140,6 +140,18 @@ control stops at 1.6x with a 39 % tail.  Reaching s/B = 0.15 is not affordable
 at this budget and MUST NOT be bought by lowering `SUBDIV_BUDGET` (that is the
 note-71 trap) or by moving the target down to meet the run (that is the same
 trap wearing a different hat).
+
+THE SAME DECK ON THE FORK'S OTHER DRUCKER-PRAGER
+------------------------------------------------
+ADR-94 addendum / F8: `_run_leg` takes `material="UW"` (the default, the vanilla
+`nDMaterial DruckerPrager` every leg above uses) or `"ASD"`
+(`ASDPlasticMaterial3D` with `DruckerPrager_YF`/`DruckerPrager_PF`), and a
+read-only `gp_probe` hook called once per converged step.  Nothing in this file
+passes either, so every leg above builds and runs exactly what it always did.
+The companion `tests/test_r3_prandtl_asd_associated.py` (slow tier) uses them to
+run this deck's ASSOCIATED control on BOTH materials in one session -- the leg on
+which the two implementations of one cone were measured to disagree, and now do
+not (1.9321 vs 1.9348 at h0 = 1.0).
 """
 
 import csv

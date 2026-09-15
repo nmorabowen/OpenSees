@@ -94,6 +94,12 @@ All four legs below are the **same mesh, same deck, same session**
 | **ASD associated, POST-fix** | `3324485f7` | 268.38 | **1.9321** | BUDGET | 0.163 | 2500 | **yes** | 1528 / 81 | 1122 |
 | ASD psi = 0, PRE-fix | `9c2f964ea` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 72 |
 | ASD psi = 0, POST-fix | `3324485f7` | 150.71 | 1.0850 | TARGET | 0.001 | 5000 | yes | 0 / 0 | 107 |
+| **UW psi = 0** (the gate's own leg, refactor + fix regression) | `3324485f7` | 150.71 | **1.0850** | TARGET | 0.001 | 4400 | yes | 0 / 0 | 41 |
+
+The last row is the check that the material factoring and the `gp_probe` hook
+change nothing the gate builds, and that the C++ change does not reach the
+vanilla `DruckerPrager`: the gate's own `h1.0_nonassoc` record is **1.0849**
+(module docstring) / 1.0850 on the repaired material (ADR-95 §4).
 
 `BUDGET` is the gate's own "capacity WITH A NAMED ALLOWANCE" (all three of its
 non-associated legs end there too): the load had been flat for the last tenth of
