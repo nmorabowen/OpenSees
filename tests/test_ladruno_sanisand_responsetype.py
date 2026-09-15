@@ -49,9 +49,14 @@ _EXPECTED = {
         "implexDetail_total", "implexDetail_dev", "implexDetail_vol",
         "implexDetail_clampFired", "implexDetail_clampCount", "implexDetail_f",
     ],
+    # WP-99 (F7) widened this 4 -> 6: slot 4 `commitLatched` is the only
+    # PER-INSTANCE entry (1 while THIS point is refusing every update), slot 5
+    # `latched` counts POST-latch refusals process-wide and is deliberately NOT
+    # folded into `_total`, which keeps meaning "genuine refusals".
     "implexRefusals": [
         "implexRefusals_total", "implexRefusals_signChange",
         "implexRefusals_control", "implexRefusals_companion",
+        "implexRefusals_commitLatched", "implexRefusals_latched",
     ],
     "psi": ["psi"],
     "yieldDistance": ["yieldDistance"],
@@ -95,6 +100,14 @@ def test_implex_named_responses_exist_without_implex():
     for name in ("implexError", "avgImplexError", "implexDetail",
                  "implexRefusals"):
         r = ops.eleResponse(1, "material", 1, name)
+        # WIDTH only, never the values. `implexRefusals` slots 0-3 and 5 are
+        # PROCESS-WIDE statics on LadrunoImplexGlobals that no deck teardown
+        # resets, so in a Zone-A run they arrive carrying whatever earlier
+        # tests in the same process accumulated (measured on the WP-99 branch:
+        # [255, 8, 240, 7, 0, 49]). That is the documented contract, not a
+        # leak to be asserted away -- see this file's counterpart notes in
+        # test_ladruno_sanisand_implex.py. What this test pins is that the
+        # registration exists and is correctly SHAPED with -implex off.
         assert len(r) == len(_EXPECTED[name]), (name, r)
 
     out_dir_case = "implexDetail"

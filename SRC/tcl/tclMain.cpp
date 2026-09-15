@@ -205,6 +205,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
 "        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
 "        • ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)\n"
+"        • IMPL-EX commit-time refusal latch — no silent partial commits\n"
 "\n";
     // FEATURES-END
 
