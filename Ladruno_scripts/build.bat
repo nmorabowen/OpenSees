@@ -318,12 +318,17 @@ if defined LADRUNO_CMS_BUILD (
 REM Ladruno WP-107 (ADR-75b L3-1): the threaded Domain::update element loop is
 REM compiled IN by default here, and is still a no-op at runtime because the
 REM thread count defaults to 1 (`ladrunoThreads` / LADRUNO_THREADS opt in).
-REM DECISION, recorded so it is not re-litigated: the CMake option defaults OFF
-REM (a build of this tree from bare cmake stays vanilla-shaped), but build.bat
-REM turns it ON, because a capability that has to be recompiled to be tried is a
-REM capability nobody tries -- and the serial path is byte-identical with the
-REM option compiled in: WP-107 built this tree both ways and compared curves at
-REM 1 thread on an elastic and a SANISAND deck, byte-identical both times
+REM DECISION, AMENDED by the PR #843 CI fix (2026-09-16): the CMake option now
+REM defaults ON in CMakeLists.txt itself, so EVERY configure of this tree gets
+REM the feature -- build.bat, a developer's bare cmake, and Zone-A's raw
+REM `cmake -S . -B build/Release` (which never calls this script and therefore
+REM used to produce a CI binary with the feature compiled OUT, turning 10 cases
+REM of tests/test_wp107_threaded_update.py red). The original half of the
+REM decision still holds and is why the default is ON rather than OFF: a
+REM capability that has to be recompiled to be tried is a capability nobody
+REM tries -- and the serial path is byte-identical with the option compiled in:
+REM WP-107 built this tree both ways and compared curves at 1 thread on an
+REM elastic and a SANISAND deck, byte-identical both times
 REM (Ladruno_files/testbed/perf/wp107/RESULTS.md section 4).
 REM Set LADRUNO_NO_OPENMP=1 to build it out.
 REM Passed EXPLICITLY both ways so a prior configure never sticks in the cache.

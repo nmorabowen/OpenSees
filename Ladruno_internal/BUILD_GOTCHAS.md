@@ -755,6 +755,38 @@ imports matplotlib at module scope). That is a genuinely missing dependency in
 the bare `python3.12`, not a handle artefact — `pip install matplotlib` or
 `--ignore` those two modules.
 
+## 15. A build default that lives only in `build.bat` is INVISIBLE to Zone-A
+
+**The fork has two configure paths, not one, and only one of them is `build.bat`.**
+`build.bat` is the only Windows build recipe (CLAUDE.md) — but `.github/workflows/`
+`ladruno.yml`'s Zone-A job runs on Ubuntu and configures with a raw
+
+```
+cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=… -DCMAKE_BUILD_TYPE=Release …
+```
+
+which **never sources `build.bat` or any of its `-D` flags**. So any feature whose
+default is expressed as "`build.bat` passes `-DFOO=ON`" is compiled **OUT on CI**,
+silently, while every developer sees it ON.
+
+**Measured 2026-09-16 (PR #843, WP-107).** `option(LADRUNO_OPENMP … OFF)` +
+`build.bat` passing ON meant Zone-A built the threaded element loop out;
+`ops.ladrunoThreads(n)` stayed serial there and the WP's own warrant file failed
+**10 of 18** with *"this binary was built WITHOUT LADRUNO_OPENMP"* (run
+35160539366) — i.e. the feature's gate could not execute on the gate.
+
+**Rule.** Put the default in `CMakeLists.txt`'s `option(...)`, which *both* paths
+cross. Keep `build.bat` passing the value **explicitly, in both directions**
+(`-DFOO=ON` / `-DFOO=OFF`) — that is about a stale Conan cache never deciding it,
+not about setting the default. `LADRUNO_OPENMP` now defaults **ON** there; the
+runtime default is still 1 thread, so nothing threads until asked.
+
+**Corollary for tests.** A test file that depends on a compile option must probe
+for it and skip with a reason, and the probe must be biased to **RUN** on every
+ambiguous outcome (see `tests/test_wp107_threaded_update.py`). A probe that skips
+when unsure converts a red CI into a green one that tests nothing — strictly worse
+than the failure it was meant to tidy away.
+
 ## `ops.ladrunoBuild()` lags after an incremental rebuild
 
 `CMakeLists.txt:200-207` captures the git hash with

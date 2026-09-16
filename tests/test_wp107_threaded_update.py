@@ -60,7 +60,64 @@ if os.path.isdir(_DIST_BIN) and _DIST_BIN not in sys.path:
 from _testbed import ops                        # noqa: E402
 from _testbed.subprocess_run import run_python_script   # noqa: E402
 
-pytestmark = [pytest.mark.zone_a]
+
+# ---------------------------------------------------------------------------
+#  IS THE FEATURE COMPILED INTO THIS BINARY AT ALL?   (added by the PR #843
+#  CI fix, 2026-09-16)
+# ---------------------------------------------------------------------------
+#  `LADRUNO_OPENMP` is a BUILD option.  In a binary built without it,
+#  `ladrunoThreads(n)` stores n, warns, and the element loop stays serial --
+#  so every threading assertion below fails for a reason that has nothing to
+#  do with the code under test.  That is not hypothetical: it is exactly how
+#  this file went red on Zone-A (run 35160539366, 10 failed), because CI
+#  configures with a bare `cmake` and the option then defaulted OFF.
+#
+#  The option now defaults ON in CMakeLists.txt, so CI RUNS these tests.  This
+#  probe exists for the other direction: a developer who deliberately builds
+#  with `-DLADRUNO_OPENMP=OFF` (or `set LADRUNO_NO_OPENMP=1`) gets a clean
+#  skip instead of 10 misleading failures.
+#
+#  THE PROBE ASKS THE BINARY, and it is biased to RUN rather than to skip.
+#  There is no `ladrunoOpenMP` query verb -- the honest signal the binary
+#  already emits is the `ladrunoThreads` warning itself, so that is what is
+#  read.  Every ambiguous outcome (child crashed, no marker, a box with a
+#  single hardware thread where the warning cannot fire) resolves to "run the
+#  tests", because a file that silently skips on CI is worth less than one
+#  that fails loudly: the skip must never become the way this WP stops being
+#  gated.  A child process is used so the probe cannot perturb the in-process
+#  thread count the tests below depend on.
+_OPENMP_PROBE = (
+    "import sys; sys.path.insert(0, %r)\n"
+    "import opensees as ops\n"
+    "print('LADRUNO_PROBE_HW', ops.ladrunoThreads(1 << 20))\n"
+)
+_OPENMP_ABSENT_MARKER = "built WITHOUT LADRUNO_OPENMP"
+
+
+def _probe_openmp_compiled_in():
+    """-> (compiled_in, why). `why` is the skip reason when compiled_in is False."""
+    try:
+        code, out = run_python_script(_OPENMP_PROBE % _DIST_BIN)
+    except Exception:                      # the probe must never break collection
+        return True, ""
+    if code != 0 or "LADRUNO_PROBE_HW" not in out:
+        return True, ""                    # ambiguous -> run, and fail loudly
+    if _OPENMP_ABSENT_MARKER in out:
+        return False, (
+            "this binary was built with LADRUNO_OPENMP=OFF, so `ladrunoThreads`"
+            " cannot thread anything and WP-107 has no threaded path to test."
+            " Rebuild with -DLADRUNO_OPENMP=ON -- it is the CMakeLists default"
+            " since the PR #843 CI fix, and `Ladruno_scripts\\build.bat` passes"
+            " it explicitly. (Zone-A builds with it ON; these tests RUN there.)")
+    return True, ""
+
+
+_OPENMP_IN, _OPENMP_SKIP_WHY = _probe_openmp_compiled_in()
+
+pytestmark = [
+    pytest.mark.zone_a,
+    pytest.mark.skipif(not _OPENMP_IN, reason=_OPENMP_SKIP_WHY),
+]
 
 E, NU, RHO = 30000.0, 0.25, 2.4
 H = 0.25

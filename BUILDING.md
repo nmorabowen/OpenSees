@@ -77,6 +77,24 @@ setup_env.bat   →   build.bat [mode]
 | `rebuild` | Wipes `build/` only (keeps Conan/MUMPS caches), full rebuild | Faster reset than `clean`; reuses MUMPS and Conan downloads |
 | `<target>` | Builds just one target. Valid: `OpenSees`, `OpenSeesSP`, `OpenSeesMP`, `OpenSeesPy` | Quick iteration on a single front end |
 
+### The fork builds **with OpenMP on** (WP-107 / ADR-75b L3-1)
+
+`LADRUNO_OPENMP` defaults **ON** in `CMakeLists.txt`, so *every* configure of this
+tree compiles in the threaded `Domain::update()` element loop — `build.bat`, a bare
+`cmake`, and CI's Zone-A job alike. The default lives in CMake rather than in
+`build.bat` on purpose: Zone-A configures with a raw `cmake -S . -B build/Release …`
+and never runs `build.bat`, so a build.bat-only default meant the gate built the
+feature out and the WP's own tests went red on it (PR #843).
+
+**Compiled in is not threaded.** The runtime default is still **1 thread**, at which
+the loop takes the byte-identical serial path; you opt in per run with
+`ladrunoThreads <n>` / `ops.ladrunoThreads(n)` or the `LADRUNO_THREADS` env var. The
+compile flag is PRIVATE to `OPS_Domain` + `OPS_Utilities` (never `OPS_Element`, whose
+dormant PFEM `#pragma omp` lines must stay dead), and every MPI target refuses the
+threaded loop outright. To build it out: `set LADRUNO_NO_OPENMP=1` before `build.bat`
+(or `-DLADRUNO_OPENMP=OFF` from cmake) — `tests/test_wp107_threaded_update.py` then
+skips itself with a reason rather than failing.
+
 ## Output
 
 ```

@@ -745,7 +745,31 @@ add_library(OPS_SysOfEqnPython     OBJECT)
 # coordinated thread-count policy" is implemented as an explicit num_threads(n)
 # clause (SRC/utility/LadrunoThreads.h) rather than omp_set_num_threads().
 # ---------------------------------------------------------------------------
-option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" OFF)
+# DEFAULT IS **ON** -- Ladruno WP-107, amended by the PR #843 CI fix (2026-09-16).
+# The first cut defaulted this option OFF and had `Ladruno_scripts\build.bat` pass
+# -DLADRUNO_OPENMP=ON, so "the fork's build" was ON but "a cmake build of the
+# fork's tree" was OFF. That split is not a preference, it is a MEASURED defect:
+# Zone-A (.github/workflows/ladruno.yml) configures the Ubuntu build with a bare
+# `cmake -S . -B build/Release ...` and never goes through build.bat, so CI built
+# the feature OUT, `ladrunoThreads(n)` stayed serial, and all 10 threading cases
+# of tests/test_wp107_threaded_update.py went red on the one build that is
+# supposed to gate them (run 35160539366).
+#
+# So the default moves HERE, to the single configure-time knob that BOTH paths
+# cross -- CI's raw cmake, a developer's bare cmake, and build.bat (which keeps
+# passing the value explicitly, in both directions, so a stale cache never
+# decides it). Three facts make ON safe as a default, each measured on this
+# branch and recorded in Ladruno_files/testbed/perf/wp107/RESULTS.md section 4:
+#   1. the RUNTIME default is still 1 thread (ADR-40's "OpenMP-by-default" is an
+#      anti-goal; only `ladrunoThreads` / LADRUNO_THREADS opts in),
+#   2. at 1 thread Domain::update takes the byte-identical serial path -- not a
+#      one-thread parallel region -- and an ON build is byte-identical to the
+#      634824e1f OFF baseline binary on an elastic and a SANISAND deck,
+#   3. every MPI target refuses the threaded loop outright (LadrunoParallelBuild.cpp).
+# If OpenMP is not found the option degrades to a warning and compiles out, so a
+# toolchain without it still configures. Build it out with -DLADRUNO_OPENMP=OFF
+# (or `set LADRUNO_NO_OPENMP=1` for build.bat).
+option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" ON)
 set(LADRUNO_OPENMP_ACTIVE OFF)
 if(LADRUNO_OPENMP)
   find_package(OpenMP)

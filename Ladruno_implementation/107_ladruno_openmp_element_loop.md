@@ -79,14 +79,54 @@ identical order. So:
 
 ### 3.1 Build
 
-`option(LADRUNO_OPENMP … OFF)`. `Ladruno_scripts\build.bat` passes
-`-DLADRUNO_OPENMP=ON` (override with `set LADRUNO_NO_OPENMP=1`).
+`option(LADRUNO_OPENMP … ON)`. `Ladruno_scripts\build.bat` also passes
+`-DLADRUNO_OPENMP=ON` explicitly, both ways, so a stale cache never decides it
+(override with `set LADRUNO_NO_OPENMP=1`, or `-DLADRUNO_OPENMP=OFF` from cmake).
 
-**Decision, recorded so it is not re-litigated:** the CMake option defaults OFF so
-a bare `cmake` build of this tree stays vanilla-shaped, but build.bat turns it ON,
-because a capability that must be recompiled to be tried is a capability nobody
-tries — and with the runtime default at 1 thread the serial path is byte-identical
-anyway (verified both at 1 thread and with the option compiled out).
+**Decision, AMENDED 2026-09-16 by the PR #843 CI fix — this is the item ADR-75b
+§14 left open ("decide whether build.bat turns it ON").** The answer is *neither
+build.bat alone nor a bare cmake*: **the CMake option itself defaults ON.**
+
+The first cut split the two — option default OFF, build.bat passing ON — on the
+reasoning that a bare `cmake` build of the tree should stay vanilla-shaped. That
+reasoning has a measured counter-example, and it is the fork's own gate:
+`.github/workflows/ladruno.yml`'s Zone-A job configures the Ubuntu build with a
+bare `cmake -S . -B build/Release …` and **never calls build.bat** (build.bat is
+Windows-only). So the split did not mean "developers who want vanilla get
+vanilla" — it meant **CI built the feature OUT**, `ladrunoThreads(n)` stayed
+serial there, and all 10 threading cases of `tests/test_wp107_threaded_update.py`
+failed on the one build that is supposed to gate them (run 35160539366:
+`10 failed, 2489 passed`, every failure quoting *"this binary was built WITHOUT
+LADRUNO_OPENMP"*). A capability whose warrant cannot run on the gate is not
+gated at all.
+
+The default therefore lives at the **single configure-time knob every path
+crosses** — CI's raw cmake, a developer's bare cmake, and build.bat. The original
+half of the argument is what makes ON (rather than OFF everywhere) right: a
+capability that has to be recompiled to be tried is a capability nobody tries.
+Three measured facts make it safe:
+
+1. the **runtime** default is still **1 thread** — ADR-40's "OpenMP-by-default"
+   anti-goal is about *threads*, not about *compiling the loop in*, and nothing
+   threads until `ladrunoThreads` / `LADRUNO_THREADS` says so;
+2. at 1 thread `Domain::update` takes the byte-identical **serial** path, and an
+   ON build is byte-identical to the `634824e1f` OFF baseline binary on both an
+   elastic and a SANISAND deck (§4 / RESULTS.md §4);
+3. every MPI target **refuses** the threaded loop outright (`LadrunoParallelBuild.cpp`,
+   §14.3), so SP/MP/PyMP are unaffected by the default.
+
+If `find_package(OpenMP)` fails the option degrades to a warning and compiles
+out, so a toolchain without OpenMP still configures.
+
+**And the tests now state the dependency themselves.**
+`tests/test_wp107_threaded_update.py` carries a module-level `skipif` driven by a
+child-process probe that asks the binary (via the `ladrunoThreads` warning the
+binary already emits) whether `LADRUNO_OPENMP` is compiled in. A deliberate
+`-DLADRUNO_OPENMP=OFF` build now **skips with a reason** instead of producing 10
+misleading failures. The probe is deliberately **biased to RUN**: a crashed
+child, a missing marker, or a single-hardware-thread box all resolve to "run the
+tests", because a file that silently skips on CI would quietly un-gate this WP —
+the exact failure mode being fixed.
 
 **The compile flag is scoped to `OPS_Domain` + `OPS_Utilities`, PRIVATE.** It is
 deliberately NOT global. The fork carries 7 pre-existing `#pragma omp` lines in
