@@ -984,8 +984,43 @@ ManzariDafalias::getAlpha_in()
 }
 
 
+
+// ===== WP-107 TEMPORARY BISECT SCAFFOLDING -- remove before merge ============
+#include <mutex>
+namespace {
+int ladrunoBisectLevel(void)
+{
+    static int lvl = -1;
+    if (lvl < 0) {
+        const char *e = getenv("LADRUNO_WP107_BISECT");
+        lvl = 0;
+        if (e) {
+            if      (!strcmp(e, "integrate")) lvl = 1;
+            else if (!strcmp(e, "explicit"))  lvl = 2;
+            else if (!strcmp(e, "me"))        lvl = 3;
+            else if (!strcmp(e, "corr"))      lvl = 4;
+            else if (!strcmp(e, "cep"))       lvl = 6;
+        }
+    }
+    return lvl;
+}
+std::recursive_mutex &ladrunoBisectMutex(void)
+{
+    static std::recursive_mutex m;
+    return m;
+}
+struct LadrunoBisectLock {
+    bool on;
+    explicit LadrunoBisectLock(int want) : on(ladrunoBisectLevel() == want)
+    { if (on) ladrunoBisectMutex().lock(); }
+    ~LadrunoBisectLock() { if (on) ladrunoBisectMutex().unlock(); }
+};
+}
+// ===== end WP-107 scaffolding ==============================================
+
 void ManzariDafalias::integrate() 
 {
+    LadrunoBisectLock _wp107_b1(1);
     // Ladruno (ADR-86b): reset the ModifiedEuler substep accounting for THIS
     // material update. Both are reset HERE rather than inside ModifiedEuler()
     // because MaxEnergyInc/MaxStrainInc call ModifiedEuler SEVERAL times inside
@@ -1026,10 +1061,12 @@ void ManzariDafalias::integrate()
                 mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio, mG, 
                 mK, mCe, mCep, mCep_Consistent);
         // explicit schemes
-        else
+        else {
+            LadrunoBisectLock _wp107_b2(2);
             explicit_integrator(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,
                 mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio, mG, 
                 mK, mCe, mCep, mCep_Consistent);
+        }
     }
 }
 
@@ -1098,6 +1135,11 @@ ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
     //
     // See Ladruno_implementation/107_ladruno_openmp_element_loop.md section 5 and
     // LEDGER_quirks.md ("a static grep is not a re-entrancy proof").
+    //
+    // WP-107 TEMPORARY: LADRUNO_WP107_BISECT re-allows the family so the bisect
+    // scaffolding above can actually reach a threaded loop. Remove with it.
+    if (getenv("LADRUNO_WP107_BISECT") != 0)
+        return (mScheme == INT_ModifiedEuler);
     return false;
 }
 
@@ -1450,6 +1492,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         Vector& NextElasticStrain, Vector& NextStress, Vector& NextAlpha, Vector& NextFabric,
         double& NextDGamma, double& NextVoidRatio,  double& G, double& K, Matrix& aC, Matrix& aCep, Matrix& aCep_Consistent) 
 {    
+    LadrunoBisectLock _wp107_b3(3);
     double dVolStrain;
     Vector n(6), d(6), b(6), R(6), dDevStrain(6), r(6), dStrain(6), tmp0(6), tmp1(6), tmp2(6), tmp3(6);
     double Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0,A, B, C, D, p, Kp;
@@ -1875,15 +1918,21 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             NextAlpha  = nAlpha;
             NextFabric = nFabric;
 
-            Stress_Correction(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, NextElasticStrain, NextStress,
-                NextAlpha, NextFabric, NextDGamma, NextVoidRatio, G, K, aC, aCep, aCep_Consistent);
+            {
+                LadrunoBisectLock _wp107_b4(4);
+                Stress_Correction(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, NextElasticStrain, NextStress,
+                    NextAlpha, NextFabric, NextDGamma, NextVoidRatio, G, K, aC, aCep, aCep_Consistent);
+            }
             
             T += dT;
 
             // aCep_thisStep = 0.5 * (aCep1 + aCep2);
 			aCep_thisStep = aCep1; aCep_thisStep += aCep2;
 			aCep_thisStep *= 0.5;
-            aCep_Consistent = aCep_thisStep * (aD * aCep_Consistent + T * mIImix);
+            {
+                LadrunoBisectLock _wp107_b6(6);
+                aCep_Consistent = aCep_thisStep * (aD * aCep_Consistent + T * mIImix);
+            }
         
             q = fmax(0.8 * sqrt(TolE / curStepError), 0.5);
             dT = fmax(q * dT, dT_min);
