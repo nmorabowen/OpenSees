@@ -2602,6 +2602,18 @@ Domain::ladrunoThreadedUpdate(int &ok)
   // firstFailIdx makes the DIAGNOSTIC deterministic too: whichever element
   // fails, the tag reported is the one with the lowest index in serial
   // iteration order, not whichever thread happened to get there first.
+  // Announce the FIRST threaded loop, once. Fail-loud in BOTH directions is the
+  // point: every refusal above already prints, so without this a run that was
+  // quietly serial (because some element was not on the allowlist) and a run
+  // that was threaded but had no payoff look identical in a bench table. They
+  // are very different results.
+  static bool announced = false;
+  if (!announced) {
+    announced = true;
+    opserr << "ladrunoThreads: element update loop THREADED on " << nThreads
+           << " threads (" << nEle << " elements)\n";
+  }
+
   // NOTE on the min: MSVC implements OpenMP 2.0 only, where `reduction(min:)`
   // does not exist (3.1+). A critical section is used instead -- it is entered
   // ONLY on a failing element, so it costs nothing on the hot path.

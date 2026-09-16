@@ -53,11 +53,14 @@ _B_HALF = 1.0               # half footing width [m]
 _XMAX = 6.0
 _ZMIN = -6.0
 
+# Substep cap 1000, as the deck this is derived from uses. UNCAPPED (0) is the
+# vanilla default and it HANGS this deck: a badly conditioned integration point
+# substeps down to dT_min = 1e-6, i.e. up to a million substeps at ONE point.
 _MAXSUBSTEPS = 1000
 _PMIN = 0.0101
 
-_DS = 0.002                 # prescribed settlement increment [m/step]
-_TOL = 1.0e-6
+_DS = 0.0005                # prescribed settlement increment [m/step]
+_TOL = 1.0e-4
 _MAXITER = 40
 _N_GRAV = 5
 
@@ -118,7 +121,8 @@ def build(h, mat, scheme, tangent, implex):
         ops.fix(n, m[0], m[1])
 
     footing = [nodes[(i, nz)] for i in range(nx + 1) if i * h <= _B_HALF + 1e-9]
-    return nodes, footing, eid - 1
+    top = [nodes[(i, nz)] for i in range(nx + 1)]
+    return nodes, footing, top, eid - 1
 
 
 def _analysis(dlambda, system):
@@ -133,6 +137,7 @@ def _analysis(dlambda, system):
 
 
 def main(argv=None):
+    global _DS, _MAXSUBSTEPS, _TOL
     ap = argparse.ArgumentParser()
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--h", type=float, default=0.25, help="element size [m]")
@@ -143,23 +148,42 @@ def main(argv=None):
     ap.add_argument("--implex", action="store_true",
                     help="turn -implex ON (WP-107 then REFUSES to thread; that is the point)")
     ap.add_argument("--system", default="BandGeneral")
+    ap.add_argument("--load", default="oedometer",
+                    choices=("oedometer", "footing"))
     ap.add_argument("--profile", default=None,
                     help="write a DEEP profiler report here. Deep profiling and "
                          "threading are mutually exclusive by design (hazard H6), "
                          "so use this on the 1-thread baseline only.")
+    ap.add_argument("--ds", type=float, default=_DS)
+    ap.add_argument("--maxsub", type=int, default=_MAXSUBSTEPS)
+    ap.add_argument("--tol", type=float, default=_TOL)
     ap.add_argument("--out", default="wp107_bench.csv")
     args = ap.parse_args(argv)
+
+    _DS, _MAXSUBSTEPS, _TOL = args.ds, args.maxsub, args.tol
 
     print("build:", ops.ladrunoBuild().strip().splitlines()[0])
     got = ops.ladrunoThreads(args.threads)
     print("ladrunoThreads requested=%d stored=%s  MKL_NUM_THREADS=%s"
           % (args.threads, got, os.environ.get("MKL_NUM_THREADS")))
 
-    nodes, footing, nele = build(args.h, args.mat, args.scheme, args.tangent,
-                                 args.implex)
+    nodes, footing, top, nele = build(args.h, args.mat, args.scheme,
+                                      args.tangent, args.implex)
+    # WHY THE DEFAULT LOAD CASE IS THE CONFINED ONE. A strip FOOTING on a free
+    # surface drives the corner Gauss points into tension (p < 0), which is the
+    # zero-confinement wall ADR-93 is about: the material clamps to p_min,
+    # ModifiedEuler substeps to its cap, and the step refuses. That is a real and
+    # interesting failure -- it is just not an instrument. This WP has to measure
+    # element-loop THROUGHPUT and BIT-IDENTITY on the same element + material, so
+    # the default is a laterally confined compression (`oedometer`): rollers on
+    # both sides, pinned base, uniform prescribed settlement on the WHOLE top
+    # surface. p rises monotonically, every Gauss point integrates, nothing
+    # refuses, and the kernel exercised is identical. `--load footing` keeps the
+    # original path for anyone who wants it.
+    driven = top if args.load == "oedometer" else footing
     ngp = nele * 4
-    print("elements: %d   Gauss points: %d   footing nodes: %d   dof ~ %d"
-          % (nele, ngp, len(footing), 2 * len(nodes)))
+    print("elements: %d   Gauss points: %d   driven nodes: %d   dof ~ %d   load=%s"
+          % (nele, ngp, len(driven), 2 * len(nodes), args.load))
 
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
@@ -178,7 +202,7 @@ def main(argv=None):
 
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
-    for n in footing:
+    for n in driven:
         ops.sp(n, 2, -1.0)
     ops.integrator("LoadControl", _DS)
 
@@ -192,8 +216,8 @@ def main(argv=None):
         rc = ops.analyze(1)
         t_steps.append(time.perf_counter() - t0)
         ops.reactions()
-        q = sum(ops.nodeReaction(n, 2) for n in footing)
-        w = -ops.nodeDisp(footing[0], 2)
+        q = sum(ops.nodeReaction(n, 2) for n in driven)
+        w = -ops.nodeDisp(driven[0], 2)
         rows.append((s + 1, rc, w, -q))
         if rc != 0:
             print("STOPPED at step %d (rc=%d)" % (s + 1, rc))
@@ -214,13 +238,16 @@ def main(argv=None):
     tot = sum(t_steps)
     print("gravity wall  : %.3f s (%d steps)" % (t_grav, _N_GRAV))
     print("settle wall   : %.3f s over %d steps" % (tot, len(t_steps)))
-    print("per-step wall : %.4f s (mean), %.4f s (min)"
-          % (tot / max(1, len(t_steps)), min(t_steps) if t_steps else 0.0))
+    print("per-step wall : %.4f s (mean), %.4f s (min), %.4f s (median)"
+          % (tot / max(1, len(t_steps)), min(t_steps) if t_steps else 0.0,
+             sorted(t_steps)[len(t_steps) // 2] if t_steps else 0.0))
+    print("per-step list : " + " ".join("%.4f" % t for t in t_steps))
     print("wrote %s (%d rows)" % (args.out, len(rows)))
     print("WALLLINE threads=%d h=%s mat=%s scheme=%d tan=%d nele=%d "
-          "grav=%.4f settle=%.4f perstep=%.5f"
+          "grav=%.4f settle=%.4f perstep=%.5f median=%.5f"
           % (args.threads, args.h, args.mat, args.scheme, args.tangent, nele,
-             t_grav, tot, tot / max(1, len(t_steps))))
+             t_grav, tot, tot / max(1, len(t_steps)),
+             sorted(t_steps)[len(t_steps) // 2] if t_steps else 0.0))
 
 
 if __name__ == "__main__":
