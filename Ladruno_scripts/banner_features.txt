@@ -74,3 +74,4 @@ LadrunoShellModifier — ETABS-style shell stiffness modifiers
 ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)
 ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)
 IMPL-EX commit-time refusal latch — no silent partial commits
+LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)
