@@ -548,6 +548,33 @@ apart, so the declaration has to arrive out of band. That is exactly what the co
   path, so a reversal is not detected on the extrapolated state. Monotonic pushover is the
   measured target; cyclic use needs its own reversal test before being trusted.
 
+### `IntScheme 2` (BackwardEuler_CPPM) -- qualified per increment, refuted as the BVP integrator -- WP-105 (F12)
+
+Scheme 2 is **not** a drop-in replacement for the deck default, and it is not simply worse either --
+it depends entirely on whether the strain increment is *given* or *proposed*. On a replayed strain
+path (zero free DOF, the increment supplied rather than found by a global Newton) scheme 2
+integrates the **same model to the same limit** as scheme 1 -- `1.3e-3` / `2.9e-3` maximum relative
+stress deviation over the whole path at `dEz = 1e-5` (`p0 = 100` / `20 kPa`), terminal `eta` within
+`4.2e-4` / `2.0e-4` -- and at the campaign's own increment (`dEz = 1e-4`) it is **3.7-4.3x more
+accurate and 4.2-7.6x cheaper** than scheme 1; at `4.6e-4`, **7-30x more accurate and 10-13x
+cheaper**, with scheme 1 itself the one leaving its own bounding surface at `p0 = 20 kPa`
+(`eta/M^b = 1.056`). **It is refuted as the primary integrator of a load-controlled BVP.** Under a
+global Newton at `dEz >= 1e-4` it stalls in **8 of 8** free-standing drained-triaxial arms (scheme 1
+stalls in 1 of 8), and each failing step burns **12-134 s** grinding `BackwardEuler_CPPM`'s
+recursive-halving ladder against a 30 ms normal step -- up to **4400x**. On the real CP1/ADR-95
+bearing leg (`x10z8`, `h1.0_e0.6944`, 1200 s budget) it committed 11 steps to `s/B = 4e-5` against
+the scheme-1 baseline's 51 steps to `s/B = 0.019` in the same wall clock -- **475x shallower for the
+same wall clock** -- with `ds` pinned at 25x the subdivision floor and every one of its committed
+steps on the relaxed rung 3. **Use it where the increment is already given** -- a prescribed-strain
+material-point study, or (open question) as the commit-time `-implex` companion itself, which runs
+at `commitState` on an increment nothing proposes off-path and therefore sits in the regime where
+scheme 2 wins; `-implex` was OFF in every WP-105 arm, so that companion question is unresolved, not
+answered favourably. Do not reach for scheme 2 as the strip's primary integrator on this evidence.
+Full numbers, the replay/free-standing/floor/bearing tables, and the "could not verify" list:
+[[Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md]] (also see
+`LEDGER_quirks.md` for the two related defects this same study found: the `-maxSubsteps` inertness
+warning is wrong for scheme 2, and a CPPM non-convergence is invisible end to end).
+
 ## 10. Verification
 
 `tests/test_ladruno_sanisand_implex.py`. Mutation-gated as part of ADR-87 D2 — PASSED at score
