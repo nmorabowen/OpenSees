@@ -11560,20 +11560,17 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
   if (argc >= 2) {
     int n = 1;
     if (Tcl_GetInt(interp, argv[1], &n) != TCL_OK) {
-      opserr << "WARNING ladrunoThreads: could not read the thread count
-";
+      opserr << "WARNING ladrunoThreads: could not read the thread count\n";
       return TCL_ERROR;
     }
     if (n < 1)
       opserr << "WARNING ladrunoThreads: count " << n
-             << " is < 1 -- clamped to 1 (serial)
-";
+             << " is < 1 -- clamped to 1 (serial)\n";
     int stored = ladruno_setNumThreads(n);
     if (stored > 1 && !ladruno_openmpCompiledIn())
       opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
              << "LADRUNO_OPENMP, so the element loop stays SERIAL no matter "
-             << "what is requested.
-";
+             << "what is requested.\n";
   }
 
   snprintf(buffer, sizeof(buffer), "%d", ladruno_getNumThreads());

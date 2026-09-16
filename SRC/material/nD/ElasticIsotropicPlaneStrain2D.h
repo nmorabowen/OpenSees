@@ -60,6 +60,16 @@ class ElasticIsotropicPlaneStrain2D : public ElasticIsotropicMaterial
     const Vector &getStrain (void);
     double getStressZZ (void);   // Ladruno: sigma_zz = lambda*(eps_xx + eps_yy)
 
+    // Ladruno WP-107 (ADR-75b L3-1): re-entrant. setTrialStrain writes only the
+    // instance's own `epsilon`; getTangent/getInitialTangent/getStress write
+    // only the instance's own `D`/`sigma`; nothing here touches a static, a
+    // global, or Matrix::Solve/Invert. The only function-scope statics in this
+    // file are the sendSelf/recvSelf buffers, which are off the update path.
+    // Declared on this LEAF class rather than on ElasticIsotropicMaterial on
+    // purpose -- the base has thermal and incremental subclasses that have not
+    // been audited, and a base-class `true` would fail OPEN for them.
+    virtual bool ladrunoThreadSafeUpdate(void) const { return true; }   // Ladruno WP-107
+
     int commitState (void);
     int revertToLastCommit (void);
     int revertToStart (void);

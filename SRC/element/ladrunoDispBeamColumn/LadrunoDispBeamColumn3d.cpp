@@ -53,7 +53,7 @@
 #include <string>
 
 // Ladruno (ADR 32): active element for crack-band materials (see 2D sibling).
-extern Element *ops_TheActiveElement;
+extern thread_local Element *ops_TheActiveElement;   // Ladruno WP-107: thread_local, see Element.cpp
 
 Matrix LadrunoDispBeamColumn3d::K(12,12);
 Vector LadrunoDispBeamColumn3d::P(12);
