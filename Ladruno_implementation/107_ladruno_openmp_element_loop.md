@@ -255,6 +255,24 @@ nothing.*
 | `opserr` from inside the region | `-Pmin 1e-8`, so the clamp never warns | crashes with **zero** warnings emitted |
 | the element | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** |
 
+A bounded second round excluded three more hypotheses, and one of them reframes
+the problem — the full table is in [[75b_ladruno_threaded_assembly_adr]] §14.1:
+
+| test | result |
+|---|---|
+| mutex around the **whole `ManzariDafalias::integrate()`** | 0/4 clean |
+| `#pragma omp critical` around the **whole `theEle->update()`** | **0/4 clean** |
+| `OMP_STACKSIZE` / `KMP_STACKSIZE` = 256M | 0/4 clean |
+
+Serializing the entire element update means the threads exist and enter the
+region but **never run an update concurrently** — and it still faults. **So this
+is not a data race between element updates**, which is what every hypothesis
+before it had assumed. What is left is something about running this particular
+update path on an OpenMP worker thread at all; the elastic path on the same
+worker thread, same element, same counts, is clean 6/6. The blocker on getting
+further was tooling: no `cdb`/`WinDbg`/`procdump` on the box and **no PDBs** in a
+Release build, so no faulting frame could be obtained.
+
 Root cause **not located**, so the family is refused. A located-but-unfixed
 hazard is strictly worse than an un-audited one, because the audit manufactures
 confidence. The next tool is **ThreadSanitizer**, which ADR-75b §7's correctness

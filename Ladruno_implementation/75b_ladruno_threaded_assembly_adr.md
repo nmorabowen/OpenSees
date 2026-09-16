@@ -1014,3 +1014,49 @@ buffers first (§5.4-H1), which is the real bill.
 
 **Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
 verdicts. Nothing here is evidence about the cluster regime.
+
+### 14.1 The follow-up hunt — what the defect is NOT (WP-107, second round)
+
+A bounded second round was spent locating §5.1's segfault. It was not located,
+but four hypotheses are now **excluded by experiment**, which is worth more than
+the prose that preceded them. Reproducer throughout: vanilla
+`nDMaterial ManzariDafalias` IntScheme 1 + `LadrunoQuad -bbar`, 6 400 elements,
+`--threads 4`, `ds = 0.02` (enough plasticity to trigger it), 4 runs per cell.
+
+| # | test | result | what it excludes |
+|---|---|---|---|
+| 0 | baseline | **0/4 clean** | — |
+| 1 | `std::recursive_mutex` around the **whole `ManzariDafalias::integrate()`** | **0/4 clean** | the entire material algorithm: `explicit_integrator`, `ModifiedEuler`, `Stress_Correction`, `GetElastoPlasticTangent`, and every `Matrix`/`Vector` temporary they build |
+| 2 | `#pragma omp critical` around the **whole `theEle->update()`** in `Domain::ladrunoThreadedUpdate` | **0/4 clean** | **concurrency itself.** Threads enter the region and run updates strictly one at a time, and it still faults |
+| 3 | `OMP_STACKSIZE=256M`, then `KMP_STACKSIZE=256M` (libiomp5md is the runtime, so both are honoured) | **0/4 clean** | worker-thread stack exhaustion |
+| 4 | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** | `LadrunoQuad`, the iterator snapshot, the `Node` pre-pass, `thread_local ops_TheActiveElement`, and the OpenMP region as such |
+
+**Test 2 is the one that reframes the problem.** With the update serialized the
+loop is, semantically, a serial loop that happens to be driven from worker
+threads — and it still segfaults. So this is **not a data race between element
+updates**. What remains is something about executing *this particular update
+path* on an OpenMP worker thread at all, where the elastic path on the same
+thread is fine. The obvious difference between the two is the volume of
+`Vector`/`Matrix` construction and destruction: ModifiedEuler builds and destroys
+~50 of them per substep over thousands of substeps, the elastic integrator
+almost none.
+
+**Where the next agent should start, in order:**
+
+1. **Get the stack.** This round could not: the box has no `cdb`/`WinDbg`/
+   `procdump`, and the Release build carries **no PDBs** (`CMAKE_BUILD_TYPE=Release`,
+   no `/Zi`), so even a vectored-exception-handler backtrace would have been
+   unsymbolized addresses in one statically-linked module. Configure
+   `RelWithDebInfo` (or add `/Zi /DEBUG`) and install the SDK Debugging Tools,
+   then `cdb -g -G -c ".ecxr;kb 40;~*kb 20;q"`. One faulting frame ends this.
+2. **ThreadSanitizer on Linux/Esmeralda** — ADR-75b §7's protocol item 1, which
+   §5.1 has now shown to be load-bearing rather than belt-and-braces.
+3. **Suspect the container allocation path, not the algorithm.** Tests 1 and 2
+   exonerate the algorithm; `Matrix`'s class-wide `matrixWork`/`intWork`/
+   `sizeDoubleWork` (`Matrix.cpp:48-52`) are still the only shared mutable state
+   on the path, reached from the constructors (lazy first-touch) and from
+   `Solve`/`Invert`/`addMatrixTripleProduct` — the latter three are **not** on
+   the IntScheme-1 path, which is what makes this puzzling rather than obvious.
+   Worth confirming with an allocation-counting build before theorising further.
+
+Until then the family stays refused, and the refusal is loud.

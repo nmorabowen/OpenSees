@@ -7310,6 +7310,21 @@ What the experiments rule out, none of which changed the outcome:
 Root cause **not located**. The family is therefore refused by
 `ManzariDafalias::ladrunoThreadSafeUpdate()` returning false unconditionally.
 
+**A second round excluded three more hypotheses** (full table in
+[[75b_ladruno_threaded_assembly_adr]] §14.1), and one of them reframes the
+problem: serializing the **entire `theEle->update()`** with `#pragma omp critical`
+— so the threads exist and enter the region but never run an update concurrently
+— **still faults 0/4**. Serializing the whole of `ManzariDafalias::integrate()`
+likewise changes nothing, and `OMP_STACKSIZE`/`KMP_STACKSIZE` at 256 MB changes
+nothing. **So this is not a data race between element updates**, which is what
+every hypothesis up to that point had assumed. What is left is something about
+running this particular update path on an OpenMP worker thread at all — the
+elastic path on the same worker thread, same element, same counts, is clean 6/6.
+
+The practical blocker for going further on this box: no `cdb`/`WinDbg`/`procdump`
+is installed and the Release build emits **no PDBs**, so a faulting frame could
+not be obtained. That is the first thing to fix next time, not another hypothesis.
+
 Three things to carry forward:
 
 1. **A located-but-unfixed hazard is worse than an un-audited one**, because the
