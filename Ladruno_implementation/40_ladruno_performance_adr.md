@@ -339,5 +339,51 @@ Per-rank grounding is curated in the `opensees-performance` skill →
   stiffness" is state-dependent for most solid element/material pairs and `-initial` on such models
   silently IS full Newton. Any future reuse predicate must default false (its Appendix A.4).
 
+- **2026-09-15 — WP-107: the shared-memory axis opens, DESKTOP-SCOPED ONLY**
+  ([[107_ladruno_openmp_element_loop]], implementing [[75b_ladruno_threaded_assembly_adr]]
+  stage L3-1). Until now the fork had **no shared-memory parallelism of its own**: the only
+  multicore work in a serial build was MKL's threaded BLAS inside PARDISO, and the 7
+  `#pragma omp` lines in `SRC/element/PFEMElement/` were compiler-ignored no-ops because
+  nothing ever passed `/openmp`. That is no longer true for exactly one loop —
+  `Domain::update()`'s element state-determination loop.
+
+  **This does NOT reopen Lane 3 in general.** ADR-75b §13 closed it for the
+  production/cluster path on a measurement (loop A = **0.26% of step at 540 675 DOF**
+  under MUMPS; the >40% gate failed by ~42x and gets *worse* with N), and that verdict
+  stands. WP-107 takes only the case §13 explicitly left open — "a desktop-only
+  optimization on models ≲136k DOF" — for a deck whose element kernel is a **substepping
+  critical-state model** (LadrunoSANISAND) rather than the `J2Plasticity` G-L3 measured.
+  The gate has to be re-measured in that regime, and the WP-107 results table, not this
+  entry, is what authorizes using it.
+
+  **Three program-level points worth reading even if you never touch threading:**
+  1. **The default stays off, twice over.** The build flag is on; the *thread count* is 1,
+     so every existing deck takes the serial path. ADR-40's "OpenMP-by-default is an
+     anti-goal" is unweakened.
+  2. **Bit-identical is a structural property here, not a tolerance.** `Domain::update()`
+     has **no reduction into the SOE**, so the threaded loop does the identical arithmetic
+     in the identical order and the fork's existing byte-identical oracles gate it
+     unchanged (ADR-75b §2.1). Every *other* assembly loop reduces, and none of them is
+     threaded.
+  3. **The allowlist defaults to empty, and that is the whole safety argument.**
+     `Element::ladrunoThreadSafeUpdate()` and `Material::ladrunoThreadSafeUpdate()` return
+     `false` in their base classes; one un-audited element in the domain sends the whole
+     loop back to serial with its tag named. ADR-75 §11.1's "one missed `static` = silent,
+     thread-count-dependent wrong answers" is thereby a **per-class opt-in** rather than a
+     whole-codebase invariant. Four classes are on it today.
+
+  **What did NOT ship, and why it is a program-level fact rather than a scoping excuse:**
+  the two reducing loops (`formTangent`/`formUnbalance`) are blocked on
+  `FE_Element::theTangent` being a **class-wide pool** — a 100% collision that no element
+  allowlist can mitigate (ADR-75b §5.4-H1) — plus the same problem one level down in
+  `LadrunoQuad::K`/`::P`. De-pooling both is this ADR's **rank-7** item and carries a
+  **serial** memory cost of order 1-4 GB at 325k elements (ADR-75b §11 q9), paid on every
+  run. So rank 7 has acquired a second customer, and its price is now known.
+
+  **A new banked hazard class, in [[LEDGER_quirks]]:** `Matrix::Solve`/`Invert` run on the
+  process-wide `Matrix::matrixWork`, which they **free and reallocate**. Any threaded path
+  reaching them is a use-after-free, not a race — and it is invisible to a `static` grep of
+  the element or material file, because the static lives in `SRC/matrix/`.
+
 *(filled in as items execute; per-item detail moves to its sub-ADR and to
 `Ladruno_internal/` on completion.)*

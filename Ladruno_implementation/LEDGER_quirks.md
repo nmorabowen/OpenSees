@@ -7186,3 +7186,86 @@ hardening. The comment is corrected in the same PR.
   the right first check for a *grossly* stale build (see the memory entry
   "ladrunoBuild provenance command"); it just cannot resolve one commit.
   See `Ladruno_internal/BUILD_GOTCHAS.md`.
+
+## Threading the element loop — five things a `static` grep will not find (WP-107, ADR-75b L3-1)
+
+### `Matrix::Solve` and `Matrix::Invert` run on a PROCESS-WIDE scratch buffer that they FREE AND REALLOCATE
+
+`Matrix::matrixWork` / `Matrix::intWork` (`SRC/matrix/Matrix.cpp:51-52`) are class
+statics. `Matrix::Solve(Vector&,Vector&)` (`:373`), `Solve(Matrix&,Matrix&)`
+(`:461`) and `Invert` (`:567`) each contain the same block: if the matrix is
+bigger than the fixed work area, `delete [] matrixWork; matrixWork = new
+double[dataSize];` — then they copy `data` into it and factor in place.
+
+So any code path reachable from a threaded loop that calls either method is not
+merely a data race on a shared buffer: it is a **use-after-free**, because one
+thread can free the buffer another thread is mid-factorization on. A grep for
+`static` inside the element or material file finds nothing — the static is three
+directories away in `SRC/matrix/`.
+
+This is the concrete reason WP-107's allowlist refuses `ManzariDafalias`
+`IntScheme 2` / `4` (their `NewtonSol*`/`NewtonIter*` call both) and
+`LadrunoQuad -formulation eas` (its static condensation inverts `Kaa`), even
+though nothing about those paths *looks* shared. The `Matrix` **constructors**
+also lazily allocate that buffer, which is benign in practice only because
+thousands of `Matrix` objects are built during model construction on the master
+thread — do not rely on that if a threaded phase is ever added before model
+build completes.
+
+### Re-entrancy of an element is a property of its whole call graph, and of its CONFIGURATION — not of its class
+
+Two traps that the obvious "audit the element class" framing misses:
+
+1. **The material decides.** `ManzariDafalias` is re-entrant under `IntScheme 1`
+   (ModifiedEuler: no static work arrays, no `Matrix::Invert`) and is NOT under
+   `IntScheme 2` or `4`. Same class, same object, opposite answers — which is why
+   WP-107 made the allowlist a **runtime virtual** (`ladrunoThreadSafeUpdate()`)
+   rather than a class-tag table. The same holds one level up: `LadrunoQuad` is
+   re-entrant for `std`/`bbar`/`ssp` under `-geom linear` and is not for `eas` or
+   `-geom finite`.
+2. **A diagnostic ledger can block threading even when the physics is clean.**
+   `LadrunoSANISAND` under `-implex` keeps a process-wide accumulator
+   (`LadrunoImplexGlobals`) whose `sumError`/`maxError` are **floating point**.
+   Adding an atomic does not fix it: a threaded sum changes the reported average's
+   last bits with the thread count, which is exactly the determinism the threaded
+   loop exists to preserve. The right answer was to refuse, not to "make it
+   thread-safe".
+
+### `Node`'s trial-state GETTERS allocate
+
+`Node::getTrialDisp()` (`Node.cpp:590`), `getTrialVel()`, `getTrialAccel()` and
+friends lazily call `createDisp()` / `createVel()` / `createAccel()`, which
+`new` a `4*numberDOF` array and build four `Vector`s over it. A read-only-looking
+`const Vector &d = theNodes[a]->getTrialDisp();` in an element's `update()` is
+therefore a **write** the first time it runs on a node. Two elements sharing a
+fresh node both allocate: last-writer-wins, the other allocation leaks, and a
+`const Vector&` already handed out points into the freed buffer.
+
+Exactly three `create*` functions exist and all lazy getters funnel through them,
+so a serial pre-pass touching those three getters on every node closes the hazard
+completely — which is what `Domain::ladrunoThreadedUpdate()` does before entering
+its parallel region.
+
+### An `extern` redeclaration in a `.cpp` breaks when the definition becomes `thread_local`
+
+Making `ops_TheActiveElement` `thread_local` compiled everywhere that included
+`OPS_Globals.h` / `G3Globals.h`, and failed with MSVC **C2370 "redefinition;
+different storage class"** in the two files that had declared it themselves:
+`LadrunoDispBeamColumn2d.cpp:60` and `3d.cpp:56`. If you change the storage class
+of a global in this tree, grep for local `extern` copies of it — the headers are
+not the whole story.
+
+### The profiler's deep gate cannot be on while the loop is threaded
+
+`OPS_PROFILE_SCOPE_DEEP_NAMED` is gated on `enabled() && deep()`
+(`ProfilerMacros.h:90-93`), and every `~ElemScope` does a lazy `std::map` insert
+plus counter read-modify-writes on the node the master thread built
+(`Profiler.cpp:115-124`). Concurrent `std::map` insertion is undefined behaviour,
+and `Profiler.h:59-63` states the precondition ("each thread owns its own tree")
+that this violates. So `Domain::ladrunoThreadedUpdate()` **refuses** to thread
+while the deep gate is armed.
+
+The practical consequence for anyone benchmarking: the per-loop *fraction* is a
+property of the SERIAL baseline, so measure it with the deep profiler at 1
+thread, and measure the threaded runs on wall time with the profiler off. Trying
+to profile a threaded run deeply gets you a serial run and a confusing table.

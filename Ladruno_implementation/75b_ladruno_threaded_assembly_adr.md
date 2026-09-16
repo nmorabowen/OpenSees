@@ -1,7 +1,7 @@
 ---
 title: ADR-75b — Lane 3, threaded element assembly (shared-memory OpenMP)
 project: Ladruno
-status: CLOSED for the production/cluster path — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
+status: CLOSED for the production/cluster path; stage L3-1 IMPLEMENTED desktop-scoped by WP-107 (see section 14) — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
 priority: medium
 owner: nmora
 amends: 75_ladruno_sparse_direct_strategy_adr
@@ -944,3 +944,73 @@ that live on the cluster. Its addressable scope has collapsed.
 **Decision: CLOSE Lane 3 for the production/cluster path.** §2's five-loop taxonomy,
 §3's determinism policy and §4's scatter remedy remain correct and are the reusable
 assets; they should be cited, not re-derived, if a desktop-scoped case is ever made.
+
+---
+
+## 14. Stage L3-1 IMPLEMENTED, desktop-scoped — WP-107 (2026-09-15)
+
+*(Does not reopen the lane. §13's CLOSE for the production/cluster path stands
+verbatim; this section records that §13's own final paragraph — "Lane 3 is at best a
+desktop-only optimization on models ≲136k DOF … cited, not re-derived, if a
+desktop-scoped case is ever made" — has been taken up, for one loop.)*
+
+Full design, audit tables and results: [[107_ladruno_openmp_element_loop]].
+
+**Scope taken:** loop A (`Domain::update()`) only, on a plane-strain
+`LadrunoQuad -bbar` + `LadrunoSANISAND` strip. The case differs from G-L3's in the
+one way §13 said could matter: the element kernel is a **substepping critical-state
+model**, not `stdBrick`/`J2Plasticity`, and the solve is a desktop factorization
+rather than a 40.2 s MUMPS one.
+
+**What this ADR contributed, and how each item was consumed:**
+
+| This ADR | How WP-107 used it |
+|---|---|
+| §2.1 loop A has no FP reduction | The whole safety argument. Bit-identical by construction; no new CI mode, no ordered/fast split. `ok` is an integer `reduction(+:)`. |
+| §2.1b the exclusion list is exactly `LadrunoRigidBody` + `ZeroLengthVG_HG` | Excluded automatically — nothing is on the allowlist unless it opts in. |
+| §3 P-1 threading stays off by default | Build flag on, **thread count 1**. |
+| §3 P-5 one coordinated thread knob | `ladrunoThreads` + `LADRUNO_THREADS`, `SRC/utility/LadrunoThreads.{h,cpp}`. Nothing calls `omp_set_num_threads()`; the count reaches exactly one `num_threads(n)` clause — which also keeps PFEM's dormant pragmas dormant. |
+| §3 P-6 pin `MKL_NUM_THREADS=1` for identity runs | The bench harness pins it before the module loads. |
+| §5.3 / §5.4-H7 `ops_TheActiveElement` | `thread_local`. |
+| §5.4-H2 element kernel statics | `Element::ladrunoThreadSafeUpdate()`, **default false**, all-or-nothing. `LadrunoQuad`'s `shp`/`shpBar` → `thread_local`; `update()`'s three function-scope statics → stack-backed non-owning `Vector`/`Matrix`. |
+| §5.4-H3 shared mutable cursor | Snapshot into a `std::vector` before the region. |
+| §5.4-H4 `Node`'s lazy getters | Serial pre-pass over all three `create*` paths. |
+| §5.4-H6 the profiler instrument races | **Refuse** while `deep()` is armed. This closes §5.4-H6's "aggravator" cleanly: the loop-A *fraction* is measured on the serial baseline, where deep profiling is safe, and the threaded runs are timed on wall clock. |
+| §7 P-c index-addressable accessor | Solved by the snapshot, without changing `SRC/tagged/storage/`. |
+| §7 P-e per-thread profiler scopes | **Not needed** — superseded by the H6 refusal. |
+
+**Three prerequisites this ADR listed were NOT needed, because they belong to loops
+B/C rather than to loop A:** P-a (de-static the `FE_Element`/`DOF_Group` pools),
+§4's scatter remedy, and §4.2's ordered gather. Loop A touches none of them.
+
+**§4.2's anti-goal on `thread_local` is narrowed, not violated.** The anti-goal reads
+"`thread_local` statics as the de-statication strategy — fixes the race, forecloses
+exact gather (§4.2)". That objection is specific to loops B/C, where an exact ordered
+gather needs every element's matrix live simultaneously. Loop A has no gather, so
+nothing is foreclosed — and `thread_local` costs **0 bytes per element** where §11 q9
+prices per-element buffers at **1-4 GB of SERIAL memory** at production element counts.
+For loop A, `thread_local` is the cheaper *and* the safer answer.
+
+**§11 q7 ("does any element alias rather than `getCopy()` a material?") is answered
+for the allowlisted set only:** `LadrunoQuad` calls `m.getCopy(type)` per integration
+point (`LadrunoQuad.cpp:110`). The general question is untouched.
+
+**New hazard this ADR did not have, and it is the sharpest one:**
+`Matrix::Solve`/`Invert` run on the process-wide `Matrix::matrixWork`, which they
+**free and reallocate** when the matrix exceeds the fixed work area. A threaded path
+reaching them is a **use-after-free**, not a race — and it is invisible to §5.1's
+scoped `static` count because the static lives in `SRC/matrix/`. It is the decisive
+reason `ManzariDafalias IntScheme 2`/`4` and `LadrunoQuad -eas` are refused. Banked in
+[[LEDGER_quirks]].
+
+**If loops B/C are ever revisited at desktop scale, the design is not §4.1's atomic
+scatter.** For a bounded-size deck the cheap exact form is a **chunked ordered
+gather**: compute a chunk of `C` FE_Elements in parallel into `C` per-slot buffers,
+then replay `addA`/`addB` over that chunk in serial `(FE index, i, j)` order (§4.2(i)'s
+triple), then advance. Storage is `C × idSize²` — bounded and small — instead of
+`Σ idSize²`'s projected 1.5 GB at 1M DOF, and it is bit-identical because the replay
+order *is* the serial order. It still requires per-instance `FE_Element` and element
+buffers first (§5.4-H1), which is the real bill.
+
+**Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
+verdicts. Nothing here is evidence about the cluster regime.
