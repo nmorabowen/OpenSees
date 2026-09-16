@@ -70,7 +70,11 @@ def summarise(path, base=None):
     subs = 0.0
     caps = 0
     for r in rows:
-        sig = [r[f"sig{i}"] for i in range(6)]
+        # `eleResponse(... "stress")` is the ELEMENT convention (tension
+        # positive); the material's own invariants are compression positive, so
+        # negate. A whole-tensor sign flip leaves q and |cos3theta| alone and
+        # only makes p positive, which is what the p <= 0 guard below needs.
+        sig = [-r[f"sig{i}"] for i in range(6)]
         p, q, sn, cos3t = invariants(sig)
         if p <= 1e-12:
             continue
