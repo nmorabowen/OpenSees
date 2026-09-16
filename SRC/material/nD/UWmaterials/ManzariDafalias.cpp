@@ -4895,6 +4895,13 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
     // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
     // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
     // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
@@ -4952,6 +4959,13 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
     // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
     // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
@@ -4987,6 +5001,13 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
     // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
     // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
     // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 

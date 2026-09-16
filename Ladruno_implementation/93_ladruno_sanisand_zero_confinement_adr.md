@@ -533,11 +533,22 @@ stage flipped to 1 but nothing re-initialised and no strain seen — still repor
 operator; that is vanilla's behaviour at `pRe = 0` as well, and `-pRe` neither creates nor widens
 it.
 
+**One further measurement the review forced.** The "`+ m_PreElastic` BEFORE the `m_Pmin` clamp"
+ordering — which §7.1 and the PR body called decisive — is **behaviourally unobservable**. A
+clamp-then-add build was compiled (all three overloads) and run: byte-identical to the correct
+build on the gate deck and on `-Pmin` 10.0 / 30.0 variants. The clamp inside `GetElasticModuli`
+never fires on a staged deck — at stage 0 the branch that reads `pn` is not taken, and at stage 1
+`Stress_Correction`'s low-`p` rescue holds committed `p` at or above `m_Pmin` from the first
+plastic step (at `-Pmin 10` the only sub-`p_min` steps are the five stage-0 ones; `p` jumps
+5.725 → 11.15 at the flip). The ordering therefore rests on **oracle provenance** — it is what
+`sanisand_implex_oracle.py::elastic_moduli` does, and that oracle produced every II.1 number — and
+not on measured behaviour. It is pinned in the SOURCE (the seam line must appear exactly three
+times; no unfloored `pn` line may survive), which is the only place it is observable.
+
 **Also from the review, now on the branch:** the gate's ON-side assertions were one-sided
-inequalities, so the committed stress is now **pinned** at `pRe = 1.0` to 1e-6 relative and the
-"floor applied after the `m_Pmin` clamp" mutant is run as `pRe = 1 + p_min` and shown to be
-rejected (it sits 2.778e-4 away); the dead 7-argument overload is pinned in the source instead of
-by a deck; the parser refuses a repeated `-pRe`, warns above `0.1*P_atm` and prints a NOTE when
+inequalities, so the committed stress is now **pinned** at `pRe = 1.0` to 1e-6 relative on both
+`getCopy` branches, with a 1 %-perturbed leg beside it to fix the pin's resolution (2.778e-4, 278x
+outside the pin); the parser refuses a repeated `-pRe`, warns above `0.1*P_atm` and prints a NOTE when
 `pRe <= p_min` (where the clamp already dominates as `p -> 0`, so the ring gains nothing while `G`
 is still perturbed wherever `p ~ pRe`); and §7.6's reframing is stated as the same algebra as the
 `+6–8 %` curve rather than as a trade.

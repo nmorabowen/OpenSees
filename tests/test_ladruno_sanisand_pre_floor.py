@@ -34,10 +34,14 @@ What this module gates, in the order a reviewer should read it:
    already dominates as `p -> 0`, so the ring gains nothing); the construction
    echo names the floor and says which side of the model it touches.
 7. **It is PINNED, not merely "different".** `_PIN_3D_PRE1` / `_PIN_PS_PRE1`
-   fix the committed stress at `pRe = 1.0` to 1e-6 relative. A one-sided
-   `> 1e-6` inequality passes for any non-zero wiring, including the wrong one;
-   the pin is what kills the "floor applied AFTER the `m_Pmin` clamp" mutant,
-   whose nearest proxy on this deck (`pRe = 1 + p_min`) sits 2.778e-4 away.
+   fix the committed stress at `pRe = 1.0` to 1e-6 relative, on both
+   `getCopy(const char*)` branches. A one-sided `> 1e-6` inequality passes for
+   any non-zero wiring; the pin fixes the value, and the `_PERTURBED` leg beside
+   it fixes the resolution. **One named mutant it does NOT kill** -- "the floor
+   applied AFTER the `m_Pmin` clamp" -- was built and run and is byte-identical
+   to the correct build, because that clamp never fires on a staged deck. See
+   `test_pre_floor_value_is_pinned_not_merely_different`; the ordering is pinned
+   in the SOURCE instead.
 8. **The initial elastic operator scales with the floor** —
    `eigen` on an unstrained brick at `pRe = 3*P_atm` is exactly 2x the unfloored
    one, mode by mode, once the material is at stage 1. That is the only
@@ -53,10 +57,12 @@ Deck and helpers are imported from `test_ladruno_sanisand`, deliberately: this
 file must exercise the SAME strain path the p_residual gates use, or "pRe moves
 the answer by X and p_r by Y" is a comparison of two different things.
 
-WALL TIME (conftest.py's `slow` contract): the default tier runs in ~11 s; the
-one `slow` case, `test_pre_floor_moves_stiffness_far_more_than_strength`, is
-**103.7 s measured** (`--durations`, two 1200-step low-`p` triaxial legs through
-`_drained_triaxial`), so `--runslow` costs ~115 s for this module.
+WALL TIME (conftest.py's `slow` contract): the default tier is **0.2 s** of test
+time (14 passed); the one `slow` case,
+`test_pre_floor_moves_stiffness_far_more_than_strength`, is **~104 s measured**
+(103.7 s and 104.3 s on two `--durations` runs; two 1200-step low-`p` triaxial
+legs through `_drained_triaxial`), so `--runslow` costs **104.6 s** for the
+module.
 """
 import math
 import os
@@ -86,12 +92,10 @@ def _opts(pre=None):
 #
 #  Why pinned and not just "different": every ON-side assertion in the original
 #  draft of this file was a one-sided inequality, so ANY non-zero wiring passed
-#  it -- including a floor applied AFTER the `m_Pmin` clamp, the one semantic
-#  choice the WP body calls decisive.  Its nearest reachable proxy on this deck
-#  is `pRe = 1 + p_min` (the clamp can raise the argument by at most `p_min`),
-#  which sits `2.778e-4` relative away from the correct answer.  A 1e-6 pin is
-#  400x tighter than that gap and still 1000x looser than the run-to-run noise
-#  on this deck (the OFF leg reproduces to 0.0 exactly).
+#  it.  The pin fixes the VALUE and, with the `_PERTURBED` leg beside it, the
+#  RESOLUTION: a 1 % change in the request lands `2.778e-4` away, 278x outside
+#  the pin, and 1e-6 is still 1000x looser than the run-to-run noise on this
+#  deck (the OFF leg reproduces to 0.0 exactly).
 #
 #  Cross-platform: these are committed stresses after 25 Newton-converged steps
 #  at `NormDispIncr 1e-13`, i.e. the solver tolerance -- not bit patterns.  1e-6
@@ -106,8 +110,11 @@ _PIN_3D_PRE1 = (-4.036730510440e+00, -4.036730510440e+00, -3.405550151613e+01)
 #: `S._drive_ps(tag, _opts(1.0))` -- the PlaneStrain wrapper's 3-vector, in-plane
 #: normal components.
 _PIN_PS_PRE1 = (-1.018711858576e+01, -4.395168700731e+01)
-#: The "applied AFTER the m_Pmin clamp" mutant's upper bound as a live `-pRe`.
-_AFTER_CLAMP_PROXY = 1.0 + _PMIN
+#: A 1 % perturbation of the request (numerically, the upper bound of what the
+#: "applied after the m_Pmin clamp" mutant could ever shift `pn` by). Used to
+#: demonstrate the pin's RESOLUTION -- see the test docstring for why that
+#: mutant itself is unobservable at run time.
+_PERTURBED = 1.0 + _PMIN
 
 
 def _worst_rel(measured, pinned):
@@ -154,23 +161,36 @@ def test_pre_floor_reaches_the_planestrain_lane():
 #  7 -- the VALUE is pinned, so a wrongly-wired floor cannot pass
 # ---------------------------------------------------------------------------
 
-def test_pre_floor_value_is_pinned_and_kills_the_after_the_clamp_mutant():
+def test_pre_floor_value_is_pinned_not_merely_different():
     """`-pRe 1.0` must reproduce a MEASURED stress, not merely move it.
 
-    Mutants this pin kills, and how:
+    Mutants this pin kills:
 
-    * **`+ m_PreElastic` applied AFTER the `m_Pmin` clamp** (i.e.
-      `pn = max(p, p_min) + pRe` instead of `max(p + pRe, p_min)`). The two
-      differ by at most `p_min`, so `pRe = 1 + p_min` is that mutant's upper
-      bound expressed as a legal input; it lands `2.778e-4` from the correct
-      answer, 278x outside the pin. The second half of this test runs it and
-      asserts the pin REJECTS it, so the kill is demonstrated, not claimed.
     * **the floor applied to `K` only or to `G` only.** `K` is derived from `G`
       one line later, so either mutation rescales the two independently and the
       committed stress moves far more than 1e-6. (The eigen test below pins the
       same thing structurally: every mode scales by the *same* factor.)
     * **the request dropped in one `getCopy(const char*)` branch.** The 3D and
       PlaneStrain pins are separate values from separate wrappers.
+    * **any magnitude error** -- the second half runs `pRe = 1 + p_min`, a
+      perturbation of 2.778e-4, and asserts the pin rejects it. That fixes the
+      pin's *resolution*, which is the property a one-sided `> 1e-6` inequality
+      never had.
+
+    A mutant this pin does NOT kill, and no runtime pin can:
+    **`+ m_PreElastic` applied AFTER the `m_Pmin` clamp.** It was BUILT and RUN
+    (all three overloads changed to `pn = ((pn - m_PreElastic) <= m_Pmin) ?
+    (m_Pmin + m_PreElastic) : pn;`, binary rebuilt) and it is byte-identical to
+    the correct build on this deck and on `-Pmin` 10.0 / 30.0 variants. Reason,
+    measured: the clamp inside `GetElasticModuli` never fires on a staged deck.
+    At stage 0 the branch that reads `pn` is not taken at all; at stage 1
+    `Stress_Correction`'s low-`p` rescue holds the committed `p` at or above
+    `m_Pmin` from the first plastic step (at `-Pmin 10` the five sub-`p_min`
+    steps are all stage-0 ones, and `p` jumps 5.725 -> 11.15 at the flip). So
+    the ordering is a PROVENANCE choice -- it matches the ADR-93 numpy oracle,
+    which is where every II.1 number came from -- and not a behavioural one.
+    `test_the_seam_is_at_every_getelasticmoduli_overload` pins it in the source,
+    which is the only place it is observable.
     """
     floored = S._drive('LadrunoSANISAND', 161, _opts(1.0))
     worst = _worst_rel(floored[:3], _PIN_3D_PRE1)
@@ -178,12 +198,12 @@ def test_pre_floor_value_is_pinned_and_kills_the_after_the_clamp_mutant():
         f'-pRe 1.0 no longer reproduces the pinned stress (worst {worst:.3e} '
         f'> {_PIN_TOL:.0e}); measured {floored[:3]}, pinned {_PIN_3D_PRE1}')
 
-    mutant = S._drive('LadrunoSANISAND', 162, _opts(_AFTER_CLAMP_PROXY))
+    mutant = S._drive('LadrunoSANISAND', 162, _opts(_PERTURBED))
     mutant_worst = _worst_rel(mutant[:3], _PIN_3D_PRE1)
     assert mutant_worst > _MUTANT_BAR, (
-        'the after-the-clamp mutant proxy is indistinguishable from the correct '
-        f'build at this pin ({mutant_worst:.3e}) -- the pin has been loosened '
-        'past the thing it exists to catch')
+        f'a 1 % change in pRe is indistinguishable at this pin '
+        f'({mutant_worst:.3e}) -- the pin has been loosened past the resolution '
+        'it exists to provide')
 
     ps = S._drive_ps(163, _opts(1.0))
     ps_worst = _worst_rel(ps[:2], _PIN_PS_PRE1)
@@ -191,7 +211,7 @@ def test_pre_floor_value_is_pinned_and_kills_the_after_the_clamp_mutant():
         f'PlaneStrain: -pRe 1.0 no longer reproduces the pinned stress '
         f'(worst {ps_worst:.3e}); measured {ps[:2]}, pinned {_PIN_PS_PRE1}')
 
-    ps_mutant = S._drive_ps(164, _opts(_AFTER_CLAMP_PROXY))
+    ps_mutant = S._drive_ps(164, _opts(_PERTURBED))
     assert _worst_rel(ps_mutant[:2], _PIN_PS_PRE1) > _MUTANT_BAR, (
         'PlaneStrain: the after-the-clamp proxy passes the pin')
 
@@ -335,7 +355,8 @@ def test_pre_floor_moves_stiffness_far_more_than_strength():
     changes the elastic predictor, so it changes WHICH point on the path the
     same number of steps reaches, and that is not a strength change.
 
-    Wall time **103.7 s measured** (`--durations=10`), hence `slow`: two
+    Wall time **~104 s measured** (103.7 s and 104.3 s on two `--durations`
+    runs), hence `slow`: two
     `_drained_triaxial` legs of `_LOWP_STEPS = 1200` steps each at
     `NormDispIncr 1e-8`. (An earlier draft of this docstring said "~40 s (two
     800-step legs)" -- both numbers were wrong; the step count is read from
