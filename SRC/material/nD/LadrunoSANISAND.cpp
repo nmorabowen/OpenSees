@@ -1692,10 +1692,6 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 //  vanilla footprint ZERO).
 // ===========================================================================
 
-// Process-wide IMPL-EX error accounting, on the
-// `ASDConcrete3DMaterial::GlobalParameters` template (:307-342). Anonymous
-// namespace: this is one process's diagnostic accumulator, not an interface, and
-// nothing outside this translation unit may reach it.
 // Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in LadrunoSANISAND.h.
 bool
 LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
@@ -1719,6 +1715,12 @@ LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 }
 
 
+// Process-wide IMPL-EX error accounting, on the
+// `ASDConcrete3DMaterial::GlobalParameters` template (:307-342). Anonymous
+// namespace: this is one process's diagnostic accumulator, not an interface, and
+// nothing outside this translation unit may reach it.
+// (Red-team N3: WP-107 had spliced its ladrunoThreadSafeUpdate() between this
+// paragraph and the `namespace {` it documents. Restored.)
 namespace {
 
 class LadrunoImplexGlobals                                    // Ladruno (ADR-92 P1)

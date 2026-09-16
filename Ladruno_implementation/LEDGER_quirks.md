@@ -7270,6 +7270,64 @@ property of the SERIAL baseline, so measure it with the deep profiler at 1
 thread, and measure the threaded runs on wall time with the profiler off. Trying
 to profile a threaded run deeply gets you a serial run and a confusing table.
 
+### A process-wide `static bool` "warn once" latch makes every model after the first MUTE (WP-107, red-team S3)
+
+The pattern is everywhere in this codebase and it is wrong whenever the message
+describes a **per-model** decision rather than a per-process one:
+
+```cpp
+static bool warned = false;
+if (!warned) { warned = true; opserr << "WARNING ..."; }
+```
+
+WP-107's threaded element loop re-audits the domain on *every* `Domain::update()`,
+so `wipe` + rebuild, a runtime `element`, and `remove element` were all handled
+correctly — but with three such latches, only the FIRST model in the process ever
+said what it had decided. Measured: clean deck announces THREADED; `wipe` + a deck
+with a bad element 7 refuses correctly and says so; `wipe` + a deck with a bad
+element 33 refuses **silently**; `wipe` + a clean deck threads **silently**. A run
+that quietly went serial and a run that stayed threaded then look identical, which
+is the exact confusion the message exists to prevent. A one-process-per-run bench
+driver hides it; pytest, apeGmsh and any in-process parameter study do not.
+
+**Rule:** latch per *(owning object, outcome, identifying tag, parameter)*, not per
+process, and give the owning object a generation counter that its mutators bump
+(`Domain::addElement` / `removeElement` / `clearAll` here). Keep the steady-state
+quiet so the message cannot become per-iteration spam — both failure modes are
+real, and the test file asserts both directions.
+
+### A speed-up above your own Amdahl ceiling is a measurement defect, not a result (WP-107, red-team S4)
+
+WP-107 reported 1.11x at 8 threads on a deck whose loop-A fraction it had itself
+measured at 7.80 %, i.e. a computed ceiling of **1.08x**. The number was above the
+ceiling in the same document and nobody flagged it. Re-measured on an idle box:
+1.03x / 1.03x / **0.94x** at 2/4/8 threads — 8 threads is a *regression*.
+
+Two traps in one:
+
+1. **Check every measured speed-up against the ceiling you derived.** Exceeding it
+   is proof the measurement is noise (or that the fraction is wrong); it is never
+   good news.
+2. **"The box was busy, so this is a lower bound" is a sign error as often as not.**
+   Contention inflates the serial baseline *and* suppresses the oversubscription
+   penalty of the wide thread counts. Whether the bias helps or hurts depends on
+   the deck, so the caveat is never a substitute for re-running idle.
+
+### A whole-file CRLF→LF rewrite of a vanilla file is invisible in review and permanent in `git blame` (WP-107, red-team S1)
+
+An editor helpfully normalised `SRC/material/nD/UWmaterials/ManzariDafalias.{cpp,h}`
+while making a 78-line change. Both files are pinned `-text` in `.gitattributes`, so
+git stores the bytes verbatim and nothing normalised them back: the PR diff read
+**5635/5584 and 431/410**, ~11,000 of its 11,474 additions were line-ending noise,
+the review surface was inflated ~50x, `git blame` pointed the entire file at the WP,
+and a concurrent PR touching the same file conflicted **wholesale** (`git merge-tree`
+confirmed both before and after the fix).
+
+**Check before every PR on this fork:** `git diff origin/ladruno..HEAD --numstat` —
+any file whose additions ≈ deletions ≈ its own line count is a conversion, not a
+change. `git diff -w --ignore-cr-at-eol` shows what really changed. The fix is to
+rewrite the file with its original endings and re-commit; the content is unaffected.
+
 ### A `static` grep is an audit, not a re-entrancy proof — measured on ManzariDafalias (WP-107)
 
 This is the most useful thing WP-107 found, and it cost the WP its headline

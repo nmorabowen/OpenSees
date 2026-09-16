@@ -166,6 +166,7 @@ Ladruno_files/testbed/hypo_bearing/*.ladruno
 Ladruno_files/testbed/contact_p4/_out/
 Ladruno_files/testbed/contact_p2/_out/
 Ladruno_files/testbed/contact_parallel/_out/
-build_wp107.log
+# WP-107 build logs (one per rebuild round; derived, never committed).
+build_wp107*.log
+build_mut.log
 wp107_build_retry.bat
-build_wp107_off.log

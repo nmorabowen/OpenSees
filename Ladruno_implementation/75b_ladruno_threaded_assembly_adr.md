@@ -1012,8 +1012,44 @@ triple), then advance. Storage is `C × idSize²` — bounded and small — inst
 order *is* the serial order. It still requires per-instance `FE_Element` and element
 buffers first (§5.4-H1), which is the real bill.
 
-**Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
-verdicts. Nothing here is evidence about the cluster regime.
+### 14.0 Performance, as re-measured on an idle box (red-team S4 — supersedes the first table)
+
+| threads | per-step wall (s, min of 3) | mean of 3 | speed-up | full field bit-identical |
+|---|---|---|---|---|
+| 1 | 0.16014 | 0.17301 | 1.00x | YES |
+| 2 | 0.15550 | 0.16865 | **1.03x** | YES |
+| 4 | 0.15474 | 0.17034 | **1.03x** | YES |
+| 8 | 0.17050 | 0.19819 | **0.94x — a REGRESSION** | YES |
+
+Elastic deck, 14 400 `LadrunoQuad -bbar`, 12 steps, `system Pardiso`,
+`MKL_NUM_THREADS=1`, box idle. One distinct full-field md5 across all twelve runs.
+
+**Say the 8-thread number plainly: on this deck 8 threads is SLOWER than serial.**
+Loop A is 7.80 % of this step, so §13's Amdahl arithmetic caps the whole-step prize
+at 1.08x — and per-region fork/join plus `schedule(dynamic,8)` queue contention,
+paid on *every Newton iteration* together with the serial snapshot + O(nEle)
+allowlist re-audit + 3·O(nNode) `Node` pre-pass in front of the loop, costs more
+than that at 8 threads on 24 logical CPUs whose cores are already carrying the
+sequential-MKL solve.
+
+The table this replaces reported **1.11x at 8 threads, above the 1.08x ceiling the
+same paragraph computed**, measured while two sibling wp/106 jobs shared the box
+and captioned "speed-ups are lower bounds". Both halves were wrong, and the
+**"lower bound" caveat is withdrawn**: contention was suppressing the
+oversubscription penalty as much as it inflated the serial baseline, so idle the
+numbers get *worse*. The standing rule: a speed-up above your own Amdahl ceiling
+is a measurement defect, not a result.
+
+Two further things this stage does NOT establish:
+
+* **The threaded failure path is unreachable** with today's allowlist (red-team
+  S5). The lowest-serial-index `critical`, the extra diagnostic line and step-cut
+  parity have never executed at any thread count, because the only allowlisted
+  material's `setTrialStrain*` overloads all `return 0` unconditionally.
+  §7's correctness-protocol item "deterministic failure reporting under N
+  threads" is therefore answered by construction and by reading, not by
+  experiment, until a second material is allowlisted.
+* **MPI is fenced out, not measured.** §11 q6 stays deferred — see §14.3.
 
 ### 14.1 The follow-up hunt — what the defect is NOT (WP-107, second round)
 
@@ -1060,3 +1096,33 @@ almost none.
    Worth confirming with an allocation-counting build before theorising further.
 
 Until then the family stays refused, and the refusal is loud.
+
+
+### 14.3 The MPI fence (red-team B2) — `_PARALLEL_INTERPRETERS` is NOT covered by the `PartitionedDomain` override
+
+The first version of §14 recorded "`PartitionedDomain`/`Subdomain` refuse outright,
+so SP/MP are untouched". **Only SP was.** Under `_PARALLEL_INTERPRETERS` —
+`OpenSeesMP` / `OpenSeesPyMP`, the fork's dominant parallel idiom — every rank
+holds a **plain `Domain`**, so the overrides never fire, the loop was live on every
+rank, and because the thread count is seeded from an environment variable that
+`mpiexec` propagates, one `LADRUNO_THREADS=8` in a job script would have turned an
+np-8 run into 64-way oversubscription with the single per-process announcement
+lost in rank-interleaved stdout. §11 q6 defers hybrid MPI+threads; the stage had
+shipped it by accident.
+
+WP-107 now refuses on **any** parallel build, checked before every other gate, on
+the compile definition rather than on `MPI_Comm_size` (np == 1 under OpenSeesMP is
+still the parallel code path, not the desktop case this stage measured). The check
+lives in its own per-target translation unit, `SRC/utility/LadrunoParallelBuild.cpp`:
+`OPS_Domain` is a single OBJECT library compiled once with neither parallel define,
+so an `#ifdef _PARALLEL_*` written in `Domain.cpp` compiles to nothing in all five
+targets — the trap ADR-78 P1 measured and documented in `LadrunoContactAbort.h`.
+
+`/openmp` cannot be compiled *out* of SP/MP/PyMP for the same structural reason
+(they link the same OBJECT libraries), so those three targets also get
+`${OpenMP_CXX_LIBRARIES}` on their link lines: empty on MSVC, where the runtime
+arrives via the object's `/DEFAULTLIB` directive, but not on gcc/clang — i.e.
+Esmeralda.
+
+**Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
+verdicts. Nothing here is evidence about the cluster regime.

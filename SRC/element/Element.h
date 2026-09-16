@@ -114,12 +114,32 @@ class Element : public DomainComponent
     // falls back to the serial loop, loudly and once, if ANY element in the
     // domain answers false.
     //
-    // To answer true a class must be re-entrant TRANSITIVELY: no shared
-    // function-scope or class-scope scratch anywhere in the update() call
-    // graph (ADR-75b section 5.4-H2/H5), no writes to node state shared with
-    // another element (section 2.1b -- LadrunoRigidBody and ZeroLengthVG_HG
-    // are hard exclusions), and every material it holds must itself answer
-    // Material::ladrunoThreadSafeUpdate() true.
+    // To answer true a class must be re-entrant TRANSITIVELY, on the whole
+    // update() call graph and not just in its own body:
+    //
+    //   1. No shared function-scope or class-scope scratch anywhere on that
+    //      call graph (ADR-75b section 5.4-H2/H5). Note that a class-wide
+    //      buffer is fine if the update() path never reaches the method that
+    //      writes it -- the claim is about the PATH, not the class (see
+    //      ElasticIsotropicPlaneStrain2D.h, whose D/sigma are class-wide and
+    //      whose allowlisting is still sound).
+    //   2. No writes to node state shared with another element (section 2.1b
+    //      -- LadrunoRigidBody and ZeroLengthVG_HG are hard exclusions).
+    //   3. Every material it holds must itself answer
+    //      Material::ladrunoThreadSafeUpdate() true.
+    //   4. It MUST NOT WRITE TO `opserr` FROM update(). (Red-team S8.)
+    //      `opserr` is one shared OPS_Stream: two threads formatting into it
+    //      interleave at best and corrupt its internal state at worst, and any
+    //      warn-once counter behind it is an unsynchronised read-modify-write.
+    //      This WP had to promote two ManzariDafalias warn counters to
+    //      std::atomic for exactly this reason. A class that warns on a
+    //      degenerate Jacobian, a clamped parameter or a substep cap is
+    //      therefore NOT allowlistable as written -- make the diagnostic
+    //      per-instance and report it after the loop.
+    //   5. It must not THROW out of update(). An exception escaping a
+    //      structured block is undefined behaviour under MSVC's OpenMP, so a
+    //      throwing class cannot be allowlisted even if it is otherwise
+    //      re-entrant. (Red-team N2; nothing on today's allowlist throws.)
     virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
 
     virtual bool isSubdomain(void);

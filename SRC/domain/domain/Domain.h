@@ -222,6 +222,23 @@ class Domain
     // must fall back to the serial loop. Always false when compiled without
     // LADRUNO_OPENMP, or at 1 thread.
     bool ladrunoThreadedUpdate(int &ok);
+
+    // Ladruno WP-107 red-team S3. The audit outcome that was last ANNOUNCED for
+    // this domain. Every Domain::update() re-runs the audit itself (that part
+    // was always correct), but the message used to be latched behind three
+    // process-wide `static bool`s, so only the FIRST model in a process ever
+    // said anything: `wipe` + rebuild, a second refusing element, a runtime
+    // `element` added after a threaded step, all went silent. A silently-serial
+    // run and a threaded one then look identical in a bench table -- which is
+    // the exact failure the announcement exists to prevent.
+    enum LadrunoThreadAudit {
+      LADRUNO_TA_NONE = 0,      // nothing announced yet
+      LADRUNO_TA_THREADED,      // the loop ran threaded
+      LADRUNO_TA_PARALLEL_BUILD,// refused: SP/MP/PyMP binary (red-team B2)
+      LADRUNO_TA_PARTITIONED,   // refused: PartitionedDomain / Subdomain
+      LADRUNO_TA_PROFILER,      // refused: deep profiler armed
+      LADRUNO_TA_ELEMENT        // refused: an element is not on the allowlist
+    };
     virtual  int  updateParameter(int tag, int value);
     virtual  int  updateParameter(int tag, double value);    
     
@@ -300,6 +317,26 @@ class Domain
     int numRecorders;    
 
   private:
+    // Ladruno WP-107 red-team S3: per-DOMAIN announcement state, replacing the
+    // process-wide `static bool` latches. In-class initialisers so every one of
+    // Domain's constructors picks them up.
+    //
+    // ladrunoEleGeneration is bumped by addElement / removeElement / clearAll.
+    // An announcement is emitted whenever the (generation, outcome, tag,
+    // threads) tuple differs from the one last announced, so: a new model after
+    // `wipe` speaks again, a DIFFERENT refusing element is named, a change of
+    // thread count is reported, and a repeated identical outcome inside one
+    // unchanged model stays quiet (a Newton iteration must not print).
+    int ladrunoEleGeneration       = 0;
+    int ladrunoAnnouncedGeneration = -1;
+    int ladrunoAnnouncedOutcome    = LADRUNO_TA_NONE;
+    int ladrunoAnnouncedTag        = 0;
+    int ladrunoAnnouncedThreads    = 0;
+
+    // Returns true when this outcome has NOT already been announced for the
+    // current element generation, and records it. See the enum above.
+    bool ladrunoAnnounceAudit(int outcome, int tag, int nThreads);
+
     double currentTime;               // current pseudo time
     double committedTime;             // the committed pseudo time
     double dT;                        // difference between committed and current time

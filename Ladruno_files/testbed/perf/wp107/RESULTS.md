@@ -11,9 +11,14 @@ gravity then prescribed settlement. Default load case is the **laterally confine
 one (`--load oedometer`); see the note in the bench about why the footing case is
 not an instrument.
 
-> **Caveat on every wall number below:** the box was concurrently running two
-> sibling wp/106 SANISAND jobs. Speed-ups are therefore lower bounds, and the
-> bit-identity results (which are what actually gate the WP) are unaffected.
+> **The wall numbers in §2 were RE-MEASURED on an idle box** after the red-team
+> review (finding S4) and the first table was withdrawn. The original run was
+> taken while two sibling wp/106 SANISAND jobs were on the box and was captioned
+> "speed-ups are therefore lower bounds" — which has the **wrong sign**: on an
+> idle box the numbers get *worse*, not better, because contention was suppressing
+> the 8-thread oversubscription penalty as much as it was inflating the serial
+> baseline. §2 below is the idle-box re-measure. Bit-identity (which is what
+> actually gates the WP) was unaffected either way.
 
 ---
 
@@ -46,24 +51,67 @@ at **7.70 µs/ele** in loop A on the SANISAND deck, against a barrier cost ADR-7
 
 ## 2. Bit-identity and speed-up — `ElasticIsotropicPlaneStrain2D` (allowlisted)
 
-14 400 elements / 57 600 Gauss points, 12 steps, 3 repeats per thread count.
-Curves compared as an exact string compare of `repr()`'d doubles.
+14 400 elements / 57 600 Gauss points, 12 steps, 3 repeats per thread count,
+**idle box**, `MKL_NUM_THREADS=1`, `system Pardiso`, `--h 0.05 --steps 12
+--mat elastic`. Re-measured after red-team S4; see the caveat at the top of this
+file for why the original table was withdrawn.
 
-| threads | per-step wall (s, min of 3) | speed-up | curve bit-identical | max abs diff | refused? |
+| threads | per-step wall (s, min of 3) | mean of 3 | speed-up | full field bit-identical | announced THREADED |
 |---|---|---|---|---|---|
-| 1 | 0.16557 | 1.00x | YES | 0.000e+00 | no |
-| 2 | 0.16518 | 1.00x | YES | 0.000e+00 | no |
-| 4 | 0.15146 | 1.09x | YES | 0.000e+00 | no |
-| 8 | 0.14872 | 1.11x | YES | 0.000e+00 | no |
+| 1 | 0.16014 | 0.17301 | 1.00x | YES | no (serial path, by design) |
+| 2 | 0.15550 | 0.16865 | **1.03x** | YES | yes |
+| 4 | 0.15474 | 0.17034 | **1.03x** | YES | yes |
+| 8 | 0.17050 | 0.19819 | **0.94x — a REGRESSION** | YES | yes |
 
-**12/12 runs bit-identical, `maxdiff` exactly 0.000e+00.** The threaded loop
-demonstrably ran (the one-time `ladrunoThreads: element update loop THREADED on N
-threads` line is present, and absent at 1 thread).
+**12/12 runs bit-identical**, and the oracle is now the FULL FIELD (red-team S6):
+one md5 per step over every node's `nodeDisp` and `nodeReaction` at `repr()`
+precision plus one element's stress vector. Across all twelve runs there is
+exactly **one distinct digest**, `2ddbd45b00ffcc207b374600bbe43195`.
 
-The speed-up is ~1.1x and that is the **correct** answer: loop A is 7.80 % of this
-deck, so Amdahl caps it at **1.08x (8T)**. Threading buys nothing here because
-there is nothing to buy. Reported to make the point that the mechanism is sound
-and the *deck* decides whether it pays.
+### 2.1 Say the 8-thread result plainly: on this deck, 8 threads is slower than serial
+
+It is **0.94x**, i.e. a 6 % regression on the min-of-3 and 15 % on the mean, and
+it is reproducible (the red team measured 0.98x independently on the same deck).
+Two effects, both structural:
+
+* **Loop A is only 7.80 % of this deck's step** (§1). Amdahl therefore caps the
+  whole-step win at **1.08x** no matter how many threads are thrown at it — so
+  the entire available prize is ~8 %, and anything that costs more than that in
+  overhead turns the exercise negative.
+* **Per-region OpenMP overhead grows with the thread count, and the region is
+  entered on every Newton iteration.** Fork/join plus the `schedule(dynamic,8)`
+  work-queue contention across 8 threads is a fixed per-iteration tax that is not
+  amortised by 14 400 cheap elastic elements; at 24 logical CPUs the last threads
+  land on SMT siblings and on cores already carrying the (sequential-MKL) solve.
+  The serial pre-work in front of the loop — the element snapshot, the O(nEle)
+  virtual allowlist re-audit, and the 3·O(nNode) `Node` trial-state pre-pass — is
+  paid once per iteration regardless of thread count (red-team N5) and eats into
+  the 8 % as well.
+
+The original table reported **1.11x at 8 threads, which exceeds this deck's own
+Amdahl ceiling of 1.08x** and should have been flagged as noise when it was
+written. It was not, and that is the lesson worth banking: a speed-up above the
+ceiling you computed yourself is a measurement defect, not a result.
+
+The honest summary of §2 is therefore: **the mechanism is correct and costs
+nothing at 1 thread, and on the only deck it is allowed to run today it buys
+about 3 % at 2–4 threads and loses money at 8.** The deck that would pay
+(51.2 % loop A, §1) is refused by §3.
+
+### 2.2 What is NOT measured here, and cannot be — the threaded failure path
+
+Red-team S5. `Domain::ladrunoThreadedUpdate()` carries a deterministic
+failure-reporting path: a `critical` that tracks the lowest serial index among
+failing elements, an extra diagnostic line, and step-cut parity with the serial
+loop. **None of it has ever executed at any thread count, and no deck can make it
+execute today.** The only allowlisted material is `ElasticIsotropicPlaneStrain2D`,
+whose four `setTrialStrain*` overloads `return 0` unconditionally, and
+`LadrunoQuad::update()` returns nothing but the sum of those codes. The path is
+therefore **dead code until a second material is allowlisted**, and review item 3
+("is failure reporting deterministic under 4 threads?") is answered by
+construction and by reading, not by experiment. Recorded rather than papered
+over; the cheapest way to close it later is a test-only always-failing
+allowlisted `NDMaterial`.
 
 ---
 
@@ -139,6 +187,8 @@ clang/gcc — Esmeralda, not this desktop.
 | OFF vs ON at 1 thread, SANISAND deck (6 400 ele) | **byte-identical** |
 | `ladrunoThreads` query / set / clamp-at-1 | correct; `0` clamps to 1 with a warning |
 | pytest `test_ladruno_sanisand{,_integrator,_responses,_responsetype,_implex}`, `test_ladrunoQuad_eas`, `test_ladrunoquad_finite`, `test_fourNodeQuad_T0`, `test_quad_tri_rho_db_restart`, `test_ladrunoQuad_sanisand_implex_commit_refusal`, `test_ladrunoTie_mortar_quad8` | **128 passed, 2 skipped, 2 xfailed** |
+| pytest `tests/test_wp107_threaded_update.py` (NEW — the WP-107 warrant, red-team B1) | **18 passed** |
+| mutation gate: `LadrunoQuad::shp`/`shpBar` `thread_local` → `static`, rebuilt | pre-existing suite **128 passed** (blind to it); new file **7 failed** |
 
 ## 5. Not measured / not run
 
@@ -153,4 +203,11 @@ clang/gcc — Esmeralda, not this desktop.
 - **Loops B/C were not threaded**, so there is no "update+formTangent" table and no
   measured serialised-assembly cap. The blocker is structural (`FE_Element::theTangent`
   is a class-wide pool) and is argued in the WP note §4, not measured here.
-- **Wall times are contended.** Two sibling wp/106 jobs ran throughout.
+- ~~**Wall times are contended.**~~ WITHDRAWN and re-measured on an idle box
+  after red-team S4 — see §2 and the caveat at the top. The "lower bound" framing
+  was wrong in sign.
+- **The threaded failure path is unreachable** with the current allowlist, so it
+  is untested and untestable — §2.2 (red-team S5).
+- **No MPI measurement, and none is possible:** WP-107 now REFUSES to thread on
+  any `_PARALLEL_INTERPRETERS` / `_PARALLEL_PROCESSING` binary (red-team B2), so
+  OpenSeesSP / OpenSeesMP / OpenSeesPyMP run the serial loop unconditionally.

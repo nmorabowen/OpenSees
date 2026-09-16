@@ -138,6 +138,25 @@ how a bench lies.
 Nothing in the fork ever calls `omp_set_num_threads()`. The count reaches exactly
 one `#pragma omp parallel for … num_threads(n)`.
 
+**Every rejected value is announced** (red-team S7). It used to fail silently on
+the env path — the one a bench harness and every job script actually use — which
+is precisely how a bench lies:
+
+| `LADRUNO_THREADS` | before | now |
+|---|---|---|
+| `abc` | ran SERIAL, **no message at all** | `WARNING … "abc" is not an integer -- IGNORED … SERIAL (1 thread).` |
+| `2.7`, `4x` | ran SERIAL, no message | `WARNING … has trailing text after the number -- IGNORED …` |
+| `0`, `-3` | ran SERIAL, no message | `WARNING … requested 0 threads, which is < 1 -- using 1 (SERIAL).` |
+| `99999` | honoured as **1024 threads**, announced as a threaded run, measured **5x slower than serial** | `WARNING … requested 99999 threads but this box reports 24 hardware threads (OpenMP max 24) -- CLAMPED to 24.` |
+
+The ceiling is `omp_get_num_procs()` (falling back to
+`std::thread::hardware_concurrency()`, and clamping nothing when neither can
+answer) — deliberately NOT `omp_get_max_threads()`, which reports `OMP_NUM_THREADS`
+if the environment set it: that is a policy, not the hardware, and silently
+clamping a deliberate `ladrunoThreads 8` down to a stray `OMP_NUM_THREADS=2`
+would be its own surprise. Both interpreter verbs clamp through the same helper,
+so the env path and the verbs say the same thing in the same words.
+
 ### 3.3 The loop and the five hazards ADR-75b §5.4 said grep could not see
 
 | ADR-75b hazard | What WP-107 does |
@@ -291,14 +310,53 @@ until the defect is found.
 
 ### What refuses at the loop level (not the class level)
 
-- a `PartitionedDomain` or a `Subdomain` (SP/MP builds);
+- an **MPI binary** — `OpenSeesSP`, `OpenSeesMP`, `OpenSeesPyMP` — checked first
+  and widest (see the box below);
+- a `PartitionedDomain` or a `Subdomain`;
 - the **deep** profiler gate being armed;
 - a thread count of 1 (the default);
 - a binary built without `LADRUNO_OPENMP`;
 - a domain with fewer than 2 elements.
 
-Every one of these prints **once** and runs the serial loop. None of them is
-silent.
+Every one of these prints and runs the serial loop. None of them is silent.
+
+> **The MPI fence is separate from the `PartitionedDomain` one, and it has to be**
+> (red-team B2). The first version of this WP claimed "`PartitionedDomain` /
+> `Subdomain` refuse outright, so SP/MP are untouched". Only SP was. Under
+> `_PARALLEL_INTERPRETERS` — the `OpenSeesMP.exe` / `openseesmp.pyd` build, and
+> the fork's dominant parallel idiom — every rank holds a **plain `Domain`**
+> (`SRC/tcl/commands.cpp`'s `#elif _PARALLEL_INTERPRETERS → Domain theDomain;`
+> and `SRC/interpreter/OpenSeesCommands.cpp`'s `theDomain = new Domain;`), so the
+> overrides never fire and the loop was live on every rank. The count is seeded
+> from an environment variable and `mpiexec` propagates the environment, so one
+> `set LADRUNO_THREADS=8` in a job script turned an np-8 run into 64-way
+> oversubscription, with the one announcement line per process lost in
+> rank-interleaved stdout. ADR-75b §11 q6 defers hybrid MPI+threads; this WP had
+> shipped it by accident.
+>
+> The fence keys on the **build**, not on `MPI_Comm_size`: `np == 1` under
+> OpenSeesMP is still the parallel code path and is not the desktop case this WP
+> measured. It lives in its own per-target translation unit,
+> `SRC/utility/LadrunoParallelBuild.cpp`, because `OPS_Domain` is a single OBJECT
+> library compiled once with neither parallel define — an `#ifdef _PARALLEL_*`
+> written in `Domain.cpp` compiles to **nothing in all five targets**. ADR-78 P1
+> measured that trap (`LadrunoContactAbort.h`) and this file copies its answer.
+
+### Announcements are per DOMAIN, not per process
+
+Red-team S3. The audit itself always re-ran on every `Domain::update()`, so
+`wipe` + rebuild, a runtime `element`, and `remove element` were handled
+correctly from the start — but the **messages** were latched behind three
+process-wide `static bool`s, so only the first model in a process ever said
+anything. A second model that quietly went serial and one that stayed threaded
+looked identical, which is exactly what the announcement exists to prevent; the
+perf sweep driver was safe only because it forks one process per run, while
+pytest, apeGmsh and any in-process parameter study sat squarely in the blind
+spot. The gate is now keyed on `(element generation, outcome, tag, thread
+count)`, where the generation is bumped by `addElement` / `removeElement` /
+`clearAll`. A changed element set, a different refusing tag, or a changed thread
+count speaks again; a steady state stays quiet, so a Newton iteration prints
+nothing.
 
 ### Two things a future auditor must check, which a `static` grep will not show
 
@@ -330,12 +388,31 @@ Full tables: **`Ladruno_files/testbed/perf/wp107/RESULTS.md`**. Headline:
   withdrawn. No tolerance was used anywhere.
 - **The payoff is not available**, because the material that makes loop A 51 % of
   step is the one §5.1 shows is not thread-safe. On the allowlisted elastic deck
-  loop A is 7.8 % of step, so Amdahl caps the win at 1.08x and the measured 1.11x
-  is that cap. The mechanism is sound; the deck decides whether it pays, and the
+  loop A is 7.8 % of step, so Amdahl caps the win at **1.08x** — and the idle-box
+  re-measure (red-team S4) returns **1.03x at 2 and 4 threads and 0.94x at 8, a
+  regression**. The mechanism is sound; the deck decides whether it pays, and the
   deck that would pay cannot use it yet.
+
+  The first version of this line reported **1.11x at 8 threads, above the 1.08x
+  ceiling this same paragraph computes**, taken on a box running two sibling
+  wp/106 jobs and captioned "speed-ups are lower bounds". Both halves were wrong:
+  a number above your own Amdahl ceiling is a measurement defect, and contention
+  moves this deck's numbers the other way — idle, 8 threads gets *worse*, because
+  per-region fork/join and work-queue overhead (paid on every Newton iteration,
+  along with the serial snapshot + O(nEle) re-audit + O(nNode) pre-pass in front
+  of the loop) is a fixed tax against a prize that is only 8 % to begin with.
 - **The serial path is untouched**: `LADRUNO_OPENMP=OFF` vs `ON` at 1 thread is
   byte-identical on both decks, and the affected pytest suites are 128 passed /
-  2 skipped / 2 xfailed.
+  2 skipped / 2 xfailed — plus the 18 new cases in
+  `tests/test_wp107_threaded_update.py`, which are the WP's mutation gate
+  (red-team B1): with `LadrunoQuad::shp`/`shpBar` reverted to plain `static` the
+  pre-existing 128 stay **green** and the new file goes **red, 7 of 18**.
+- **The threaded failure path is unreachable** with today's allowlist and
+  therefore untested (red-team S5) — see `testbed/perf/wp107/RESULTS.md` §2.2.
+- **MPI binaries refuse outright** (red-team B2): `_PARALLEL_INTERPRETERS` gives
+  every OpenSeesMP / OpenSeesPyMP rank a plain `Domain`, so the
+  `PartitionedDomain`/`Subdomain` overrides never fire there and an inherited
+  `LADRUNO_THREADS` would have oversubscribed the whole job silently.
 
 The standing rule from ADR-75b's correctness protocol applies to every number
 reported there: **pin `MKL_NUM_THREADS=1`** for identity runs, or the solver's own

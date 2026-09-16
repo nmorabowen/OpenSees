@@ -757,6 +757,22 @@ if(LADRUNO_OPENMP)
   endif()
 endif()
 
+# WP-107 red-team B2. THE OPTION CANNOT BE "COMPILED OUT OF SP/MP/PyMP", and
+# the reason is structural: OPS_Domain and OPS_Utilities are OBJECT libraries
+# built ONCE and folded into all five targets, so there is no per-target
+# variant of Domain.cpp to leave /openmp off. Two consequences, both handled:
+#
+#   1. SP/MP/PyMP DO contain the OpenMP-compiled OPS_Domain/OPS_Utilities
+#      objects, so they need the OpenMP runtime on their link lines too. It is
+#      added there (empty unless LADRUNO_OPENMP=ON, and empty on MSVC even then
+#      because OpenMP_CXX_LIB_NAMES is blank and the runtime arrives through
+#      the object's /DEFAULTLIB directive -- but NOT empty on gcc/clang, i.e.
+#      Esmeralda, where leaving it off would be a link error waiting to happen).
+#   2. The threaded loop must therefore refuse at RUNTIME on those binaries
+#      rather than be absent from them. That is
+#      SRC/utility/LadrunoParallelBuild.cpp, listed in
+#      OPS_MPI_PER_TARGET_SOURCES so it is the one file that DOES get compiled
+#      per target and can see _PARALLEL_INTERPRETERS / _PARALLEL_PROCESSING.
 if(LADRUNO_OPENMP_ACTIVE)
   # PRIVATE on purpose: OBJECT libraries propagate usage requirements to their
   # consumers, and the whole point above is that /openmp must NOT reach
@@ -958,9 +974,15 @@ set(OPS_INTERP_TCL_PER_TARGET_SOURCES
 #                               contributed, so under MPI every rank sized its
 #                               penalty from rank-local stiffness and the ranks
 #                               sharing an interface constraint disagreed on it.
+# Ladruno: sources that MUST see the consuming target's _PARALLEL_PROCESSING /
+# _PARALLEL_INTERPRETERS define. Everything in an OBJECT library is compiled
+# once with neither define, so an `#ifdef _PARALLEL_*` written there is dead in
+# every build (ADR-78 P1 measured this). Files listed here are compiled once per
+# target instead, which is why each is kept to ~one function.
 set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
     ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
+    ${OPS_SRC_DIR}/utility/LadrunoParallelBuild.cpp   # Ladruno WP-107 red-team B2 (MPI fence)
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
@@ -1294,6 +1316,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
     )
 
 endif()
@@ -1370,6 +1393,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
     )
 
     if(LADRUNO_CMS)
@@ -1486,6 +1510,7 @@ target_link_libraries(OpenSeesPyMP
    ${SCALAPACK_LIBRARIES}
    ${MPI_Fortran_LIBRARIES}
    ${MPI_CXX_LINK_FLAGS}
+   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
 )
 
 if(LADRUNO_CMS)

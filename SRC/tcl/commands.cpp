@@ -11560,12 +11560,13 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
   if (argc >= 2) {
     int n = 1;
     if (Tcl_GetInt(interp, argv[1], &n) != TCL_OK) {
-      opserr << "WARNING ladrunoThreads: could not read the thread count\n";
+      opserr << "WARNING ladrunoThreads: could not read the thread count as an "
+             << "integer -- ignored, the count is unchanged.\n";
       return TCL_ERROR;
     }
-    if (n < 1)
-      opserr << "WARNING ladrunoThreads: count " << n
-             << " is < 1 -- clamped to 1 (serial)\n";
+    // The < 1 and > hardware-concurrency warnings live in
+    // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
+    // interpreter verbs say the same thing in the same words.
     int stored = ladruno_setNumThreads(n);
     if (stored > 1 && !ladruno_openmpCompiledIn())
       opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "

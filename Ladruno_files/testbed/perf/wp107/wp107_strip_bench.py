@@ -31,6 +31,7 @@ serial baseline, with MKL_NUM_THREADS pinned to 1 so the solver's own ~1 ULP
 jitter (ADR-75b section 3 P-6) cannot masquerade as an assembly race.
 """
 import argparse
+import hashlib
 import os
 import sys
 import time
@@ -215,6 +216,23 @@ def main(argv=None):
     if args.profile:
         ops.profiler("start", "-deep", "-perStep")
 
+    # --- the identity oracle (red-team S6) -----------------------------------
+    # The first version of this harness gated bit-identity on the two numbers
+    # below: `settlement_m`, which is `-nodeDisp(driven[0], 2)` -- a PRESCRIBED
+    # `sp` value, identical by construction at every thread count -- and
+    # `footing_load`, a SUM of reactions over the driven nodes, in which a
+    # per-element scramble that cancels is invisible. Interior displacements
+    # were never compared at all. So the gate could have passed while the field
+    # was wrong.
+    #
+    # Now the oracle is the FULL FIELD at every step: md5 over every node's
+    # `nodeDisp` and `nodeReaction` at repr() precision (every bit of every
+    # double), plus one element's stress vector. `fieldmd5` goes in the CSV
+    # per step, and a running digest over all steps is printed as FIELDMD5 so a
+    # sweep can diff one string per run.
+    all_field = hashlib.md5()
+    probe_ele = 1
+
     rows = []
     t_steps = []
     for s in range(args.steps):
@@ -222,9 +240,23 @@ def main(argv=None):
         rc = ops.analyze(1)
         t_steps.append(time.perf_counter() - t0)
         ops.reactions()
+
+        step_field = hashlib.md5()
+        for n in sorted(nodes.values()):
+            step_field.update(("%d|%s|%s" % (n, repr(ops.nodeDisp(n)),
+                                             repr(ops.nodeReaction(n)))).encode())
+        sig = ops.eleResponse(probe_ele, "stress")
+        if not sig:
+            raise SystemExit(
+                "eleResponse(%d,'stress') is empty -- the element term of the "
+                "identity oracle would be a constant (red-team S6)" % probe_ele)
+        step_field.update(repr(list(sig)).encode())
+        fmd5 = step_field.hexdigest()
+        all_field.update(fmd5.encode())
+
         q = sum(ops.nodeReaction(n, 2) for n in driven)
         w = -ops.nodeDisp(driven[0], 2)
-        rows.append((s + 1, rc, w, -q))
+        rows.append((s + 1, rc, w, -q, fmd5))
         if rc != 0:
             print("STOPPED at step %d (rc=%d)" % (s + 1, rc))
             break
@@ -237,9 +269,10 @@ def main(argv=None):
     # repr(), not %g: the gate is BIT-identity, so every bit has to survive the
     # round trip through the file.
     with open(args.out, "w", newline="\n") as fh:
-        fh.write("step,rc,settlement_m,footing_load_kN_per_m\n")
+        fh.write("step,rc,settlement_m,footing_load_kN_per_m,fieldmd5\n")
         for r in rows:
-            fh.write("%d,%d,%s,%s\n" % (r[0], r[1], repr(r[2]), repr(r[3])))
+            fh.write("%d,%d,%s,%s,%s\n"
+                     % (r[0], r[1], repr(r[2]), repr(r[3]), r[4]))
 
     tot = sum(t_steps)
     print("gravity wall  : %.3f s (%d steps)" % (t_grav, _N_GRAV))
@@ -249,6 +282,9 @@ def main(argv=None):
              sorted(t_steps)[len(t_steps) // 2] if t_steps else 0.0))
     print("per-step list : " + " ".join("%.4f" % t for t in t_steps))
     print("wrote %s (%d rows)" % (args.out, len(rows)))
+    print("FIELDMD5 threads=%d mat=%s h=%s steps=%d field=%s"
+          % (args.threads, args.mat, args.h, len(rows),
+             all_field.hexdigest()))
     print("WALLLINE threads=%d h=%s mat=%s scheme=%d tan=%d nele=%d "
           "grav=%.4f settle=%.4f perstep=%.5f median=%.5f"
           % (args.threads, args.h, args.mat, args.scheme, args.tangent, nele,
