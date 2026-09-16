@@ -322,8 +322,10 @@ REM DECISION, recorded so it is not re-litigated: the CMake option defaults OFF
 REM (a build of this tree from bare cmake stays vanilla-shaped), but build.bat
 REM turns it ON, because a capability that has to be recompiled to be tried is a
 REM capability nobody tries -- and the serial path is byte-identical with the
-REM option compiled in (verified in the WP-107 PR at 1 thread AND with
-REM LADRUNO_OPENMP=OFF). Set LADRUNO_NO_OPENMP=1 to build it out.
+REM option compiled in: WP-107 built this tree both ways and compared curves at
+REM 1 thread on an elastic and a SANISAND deck, byte-identical both times
+REM (Ladruno_files/testbed/perf/wp107/RESULTS.md section 4).
+REM Set LADRUNO_NO_OPENMP=1 to build it out.
 REM Passed EXPLICITLY both ways so a prior configure never sticks in the cache.
 if defined LADRUNO_NO_OPENMP (
     set "OMP_FLAGS=-DLADRUNO_OPENMP=OFF"

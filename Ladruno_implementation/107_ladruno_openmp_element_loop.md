@@ -299,9 +299,25 @@ silent.
 
 ## 6. Measurement
 
-See §7 of this file's PR and `Ladruno_files/testbed/perf/wp107/` for the numbers:
-the load–settlement identity check at 1/4/8 threads, the per-phase wall split, and
-the Amdahl ceiling implied by the measured loop-A fraction.
+Full tables: **`Ladruno_files/testbed/perf/wp107/RESULTS.md`**. Headline:
+
+- **The gate PASSES in this regime.** Loop A is **51.2 % of step** on the
+  `LadrunoQuad -bbar` + `LadrunoSANISAND` deck (6 400 elements, `system Pardiso`),
+  against **0.26 %** for G-L3's cluster deck at 540 675 DOF. §1's premise — that
+  desktop scale plus a substepping critical-state kernel is a different regime —
+  is confirmed, not assumed.
+- **Bit-identity holds wherever the loop actually threads.** 12/12 runs at
+  1/2/4/8 threads with `maxdiff` exactly `0.000e+00` on the allowlisted elastic
+  deck (14 400 elements), and the same on the SANISAND deck before it was
+  withdrawn. No tolerance was used anywhere.
+- **The payoff is not available**, because the material that makes loop A 51 % of
+  step is the one §5.1 shows is not thread-safe. On the allowlisted elastic deck
+  loop A is 7.8 % of step, so Amdahl caps the win at 1.08x and the measured 1.11x
+  is that cap. The mechanism is sound; the deck decides whether it pays, and the
+  deck that would pay cannot use it yet.
+- **The serial path is untouched**: `LADRUNO_OPENMP=OFF` vs `ON` at 1 thread is
+  byte-identical on both decks, and the affected pytest suites are 128 passed /
+  2 skipped / 2 xfailed.
 
 The standing rule from ADR-75b's correctness protocol applies to every number
 reported there: **pin `MKL_NUM_THREADS=1`** for identity runs, or the solver's own
