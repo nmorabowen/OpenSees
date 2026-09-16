@@ -1,0 +1,71 @@
+=== pRe = 0 ===
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running cc4aa6db01c7ae86155b425182021722ab55db50); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : cc4aa6db01c7ae86155b425182021722ab55db50
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\Ladruno_files\testbed\hypo_bearing\wp106_bvp\pRe0
+    date                        : 2026-09-15T23:40:35
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 7.65
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2000 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 7.65 kPa on the free surface outside the footing: 218.0250 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   33.554 ds=0.3200mm t=   20.3s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=63.864 kPa, w2(z=-0.625)=6.0577 m, yield 94 ele / 123.553 m3, t=38s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=136.206 kPa, w2(z=-0.625)=7.9961 m, yield 157 ele / 298.523 m3, t=118s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=258.801 kPa, w2(z=-0.625)=9.6683 m, yield 194 ele / 516.950 m3, t=283s
+    [h1.0_e0.6944]    50 s/B=0.02030 q=  495.119 ds=5.0000mm t=  600.6s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=495.119 kPa, w2(z=-0.625)=11.3082 m, yield 198 ele / 567.544 m3, t=601s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.04: q=951.075 kPa, w2(z=-0.625)=12.7128 m, yield 200 ele / 600.000 m3, t=1244s
+    *** INADMISSIBLE: terminated in SEIZURE mode WALL -- q_max = 1392.941 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.06030; [h1.0_e0.6944] mode=WALL (WALL-CLOCK budget spent at s/B = 0.06030); ended s/B=0.06030 of target 0.250; plateau=NO / peaked=NO (tail 65.793 % of initial); free-advance=yes (25000.0x floor); subdivisions 0/80; 66 steps, 55 failed, 20 relaxed, 2075 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 8.94e-04
+    width: w2(z=-0.625) = 13.3173 m, w2(z=-1.375) = 12.4591 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== pRe = 1.0 ===
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running cc4aa6db01c7ae86155b425182021722ab55db50); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : cc4aa6db01c7ae86155b425182021722ab55db50
+    openseespy module           : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\wp-106-sanisand-pre\Ladruno_files\testbed\hypo_bearing\wp106_bvp\pRe1.0
+    date                        : 2026-09-16T00:15:11
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    surcharge (kPa, outside foot): 7.65
+    domain (xlim, zbot)         : R3 30.0, R3 20.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 2000 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+    surcharge 7.65 kPa on the free surface outside the footing: 218.0250 kN, base reaction identity 4.44e-16
+    [h1.0_e0.6944]    25 s/B=0.00106 q=   36.051 ds=0.3200mm t=   19.0s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=68.193 kPa, w2(z=-0.625)=8.7417 m, yield 108 ele / 169.909 m3, t=42s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=145.290 kPa, w2(z=-0.625)=11.0645 m, yield 174 ele / 367.083 m3, t=142s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.01: q=275.181 kPa, w2(z=-0.625)=12.6919 m, yield 194 ele / 516.950 m3, t=317s
+    [h1.0_e0.6944]    50 s/B=0.02030 q=  521.006 ds=5.0000mm t=  653.4s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.02: q=521.006 kPa, w2(z=-0.625)=14.2980 m, yield 198 ele / 567.544 m3, t=653s
+    [h1.0_e0.6944]    75 s/B=0.02983 q=  754.410 ds=0.3125mm t= 1155.6s
+    [h1.0_e0.6944]   100 s/B=0.03366 q=  849.618 ds=0.1562mm t= 1339.7s
+    [h1.0_e0.6944]   125 s/B=0.03686 q=  932.523 ds=0.3125mm t= 1762.6s
+    *** INADMISSIBLE: terminated in SEIZURE mode WALL -- q_max = 991.486 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.03889; [h1.0_e0.6944] mode=WALL (WALL-CLOCK budget spent at s/B = 0.03889); ended s/B=0.03889 of target 0.250; plateau=NO / peaked=NO (tail 74.104 % of initial); free-advance=yes (1562.5x floor); subdivisions 16/80; 137 steps, 245 failed, 91 relaxed, 2004 s
+    controls: resultant 4.44e-16, patch 1.15e-13, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 10, base-foot 9.56e-04
+    width: w2(z=-0.625) = 16.5481 m, w2(z=-1.375) = 11.3310 m, yielding 200 ele / 600.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+WP106 BVP DONE

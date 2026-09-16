@@ -530,6 +530,43 @@ def _plastic_field(n_hex):
     return epsq
 
 
+def _substep_census(n_hex, ring):
+    """Ladruno (ADR-93 II.1 / WP-106): the ModifiedEuler substep cost of the step
+    that has just been committed, read from the material's own ADR-86b response.
+
+    `substeps` is per Gauss point and reports the LAST update at that point, so
+    this must be called immediately after the step converged and before anything
+    else touches the material.  Returns
+
+        (total over the whole mesh, max over any point, element of that max,
+         total over `ring`, max over `ring`)
+
+    where `ring` is the free-surface row of elements just outboard of the footing
+    edge -- the points ADR 93 is about, which have no confinement to resist with
+    and whose substep count is the seizure the elastic floor is supposed to
+    remove.  Cost is one `eleResponse` per Gauss point per step; on the coarse
+    leg that is ~5k calls, which is noise beside the return maps themselves.
+    """
+    tot = ring_tot = 0.0
+    mx = ring_mx = 0.0
+    mx_ele = 0
+    for e in range(1, n_hex + 1):
+        in_ring = e in ring
+        for gp in range(1, 9):
+            r = ops.eleResponse(e, "material", gp, "substeps")
+            if not r:
+                continue
+            v = float(r[0])
+            tot += v
+            if v > mx:
+                mx, mx_ele = v, e
+            if in_ring:
+                ring_tot += v
+                if v > ring_mx:
+                    ring_mx = v
+    return tot, mx, mx_ele, ring_tot, ring_mx
+
+
 def _implex_globals(implex):
     """Read the process-wide IMPL-EX diagnostics (ADR-92 P1 review B4 items 2/4).
 
@@ -643,6 +680,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             test_type=PUSH_TEST, verbose=True, surcharge=0.0,
             predictor=False, implex=False, implex_control=None,
             implex_factor="fixed",  # Ladruno ADR-92 P2-9
+            pre=0.0,                # Ladruno (ADR-93 II.1 / WP-106): -pRe
             xlim=None, zbot=None, build=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
@@ -682,6 +720,29 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     hz = p_nod[:, :, 2].max(axis=1) - p_nod[:, :, 2].min(axis=1)
     vol = hx * hz * r3.THICK
 
+    # Ladruno (ADR-93 II.1 / WP-106): the FREE-SURFACE RING census region.
+    #
+    # WHAT IT ACTUALLY SELECTS, checked against the h0 = 1.0 mesh rather than
+    # assumed: the depth test uses `hz.max()`, which on this GRADED mesh is the
+    # deepest element's height (4.59 m at h0 = 1.0), not the surface row's -- so
+    # the region is the two element COLUMNS immediately outboard of the footing
+    # edge (x = 1.5 m and 2.639 m for B = 2 m), from the free surface down to
+    # z ~ -5.3 m: elements 116-120 and 126-130, ten of the 200.  That is a
+    # near-surface BAND beside the footing, not a single row.  Left as written
+    # because both WP-106 arms were measured with it and a comparison must not
+    # move its own region; if you tighten it to the surface row, re-run BOTH arms.
+    #
+    # Chosen by GEOMETRY, which is exactly the limitation the ADR-93 P0 replay
+    # hit -- so the census also reports the whole-mesh max and the element it
+    # sits on, and a seizure anywhere else cannot hide behind a band that turns
+    # out to be confined.  (On the WP-106 runs the whole-mesh worst point WAS in
+    # this band, element 120 at x = 1.5 m, z = -0.5 m.)
+    _ztop = zc.max()
+    _ring = set((np.nonzero(
+        (zc > _ztop - 1.0001 * hz.max())
+        & (xc > 0.5 * r3.B_FOOT)
+        & (xc < 1.5 * r3.B_FOOT))[0] + 1).tolist())
+
     # ---- model ----------------------------------------------------------
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
@@ -696,6 +757,11 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                    INT_SCHEME, tan_type, JACO_TYPE, TOL_F, TOL_R,
                    "-Presidual", OPT_PRESIDUAL, "-Pmin", OPT_PMIN,
                    "-honorTolR", 0, "-maxSubsteps", int(max_substeps),
+                   # Ladruno (ADR-93 II.1 / WP-106): the elastic-only
+                   # confinement floor. Emitted ONLY when non-zero, so every
+                   # existing leg's material command stays byte-identical --
+                   # the same rule -implexFactor "fixed" follows above.
+                   *(("-pRe", float(pre)) if pre else ()),
                    *(("-implex",) if implex else ()),
                    *(("-implexControl", float(implex_control[0]), float(implex_control[1]))
                      if (implex and implex_control) else ()),
@@ -850,7 +916,10 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     w.writerow(["s_m", "s_over_B", "q_foot_kPa", "q_base_kPa", "ds_mm",
                 "relaxed", "wall_s", "implex_err_avg", "implex_refusals",
                 "guard_floor", "guard_f0", "guard_hold", "guard_res",
-                "guard_ctlf"])  # Ladruno ADR-92 P2-9
+                "guard_ctlf",   # Ladruno ADR-92 P2-9
+                # Ladruno (ADR-93 II.1 / WP-106)
+                "substeps_tot", "substeps_max", "substeps_max_ele",
+                "substeps_ring_tot", "substeps_ring_max", "wall_step_s"])
 
     rows, ds, good = [], DS_BASE, 0
     guard_prev = _implex_guards(implex)
@@ -914,10 +983,18 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         guard_cum = _implex_guards(implex)
         guard_delta = tuple(c - p for c, p in zip(guard_cum, guard_prev))
         guard_prev = guard_cum
+        # Ladruno (ADR-93 II.1 / WP-106): read the substep census BEFORE any
+        # further analysis touches the materials -- `substeps` reports the LAST
+        # update at each Gauss point.
+        sub_tot, sub_mx, sub_mx_ele, sub_ring, sub_ring_mx =             _substep_census(n_hex, _ring)
+        _t_now = time.time() - t0
+        _wall_step = _t_now - (rows[-1][6] if rows else 0.0)
         rows.append((s, s / r3.B_FOOT, qf, qb, ds * 1000.0, relaxed,
-                     time.time() - t0, implex_err_avg, float(implex_refusals_cum),
+                     _t_now, implex_err_avg, float(implex_refusals_cum),
                      guard_delta[0], guard_delta[1], guard_delta[2], guard_delta[3],
-                     guard_delta[4]))  # Ladruno ADR-92 P2-9: guard_ctlf
+                     guard_delta[4],  # Ladruno ADR-92 P2-9: guard_ctlf
+                     sub_tot, sub_mx, float(sub_mx_ele), sub_ring, sub_ring_mx,
+                     _wall_step))  # Ladruno (ADR-93 II.1 / WP-106)
         w.writerow([f"{v:.9g}" for v in rows[-1]])
         fh.flush()
         if verbose and len(rows) % 25 == 0:
@@ -953,7 +1030,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                 date=datetime.datetime.now().isoformat(timespec="seconds"),
                 partial=True, solver=solver, nodes=n_nodes, hexes=n_hex,
                 dof=3 * n_nodes, gamma=GAMMA, K0=K0, M_c=M_C,
-                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot, push_tol=tol,
+                presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, pre=pre, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot, push_tol=tol,
                 push_test=test_type, tan_type=tan_type, ds_max=ds_max,
                 max_substeps=int(max_substeps),
                 subdiv_budget=SUBDIV_BUDGET, sfrac_target=sfrac,
@@ -1084,7 +1161,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, pre=pre, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -1183,6 +1260,12 @@ def main(argv=None):
     ap.add_argument("--maxsubsteps", type=int, default=MAX_SUBSTEPS,
                     help="ADR-86b ModifiedEuler substep-count cap; 0 = uncapped "
                          "(the original GATE U configuration)")
+    ap.add_argument("--pRe", type=float, default=0.0,
+                    help="Ladruno ADR-93 II.1 (WP-106): -pRe, the ELASTIC-ONLY "
+                         "confinement floor in kPa. 0 (default) omits the flag "
+                         "entirely, so every pre-WP-106 leg is byte-identical. "
+                         "It floors G, K only -- it adds NO strength and is NOT "
+                         "-Presidual; see 93_..._adr.md section 7")
     ap.add_argument("--tantype", type=int, default=TAN_TYPE,
                     choices=(0, 1, 2),
                     help="ManzariDafalias TanType: 0 elastic (the PARSER DEFAULT, and a trap), 1 continuum ep, 2 consistent ep")
@@ -1230,6 +1313,7 @@ def main(argv=None):
                         surcharge=args.surcharge, predictor=args.predictor,
                         implex=args.implex, implex_control=args.implex_control,
                         implex_factor=args.implex_factor,  # Ladruno ADR-92 P2-9
+                        pre=args.pRe,   # Ladruno (ADR-93 II.1 / WP-106)
                         xlim=args.xlim, zbot=args.zbot, build=build)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)

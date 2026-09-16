@@ -228,8 +228,53 @@ class ManzariDafalias : public NDMaterial
 	int     mSubstepsTakenInME;
 	bool    mSubstepCapHitInME;
 	double	mEPS;			// machine epsilon (for FD jacobian)
+	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
+	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,
+	// K, G) has NO live caller anywhere in the fork -- both candidate call sites
+	// (ManzariDafalias.cpp :2614, :4587) are commented out. It carries the
+	// `+ m_PreElastic` seam anyway so the three cannot drift apart, but "three
+	// sites" is two live ones and one dead overload; no runtime test can reach
+	// the third, and the gate pins it by counting the seam in the source instead.
 	double	m_Pmin;			// Minimum allowable mean effective stress
     double  m_Presidual;    // small residual pressure (due to cohesion)
+	// Ladruno (ADR-93 II.1): an ELASTIC-ONLY confinement floor, read at EXACTLY
+	// the three GetElasticModuli overloads as `p + m_PreElastic` and NOWHERE
+	// else -- the VARIABLE appears in no other expression in this class: not in
+	// GetF, not in psi / M^b / M^d / D, not in the D_factor sigmoid, not in the
+	// m_Pmin clamp, not in the text of any stress correction. It is a STIFFNESS
+	// floor, not a cohesion: `m_Presidual` above floors STRENGTH and never
+	// reaches the moduli (that asymmetry IS ADR 93 section 1 row 1), and this
+	// member is its elastic counterpart, kept independent on purpose so a deck
+	// can put a floor under G, K without moving the strength calibration
+	// (G0 = 264.32 et al. were fitted with p_r = 1.01 and the moduli unfloored).
+	//
+	// READ THE SCOPE OF THAT CLAIM CORRECTLY (blue team on #842): "elastic-only"
+	// describes WHERE THE VARIABLE IS READ, not where its effect stops. K and G
+	// leave GetElasticModuli by reference and are then used by the PLASTIC
+	// machinery of this same class -- Stress_Correction (including the low-p
+	// rescue NextDLambda = (m_Pmin - p)/K and the J11..J22 Newton block),
+	// IntersectionFactor / IntersectionFactor_Unloading, GetElastoPlasticTangent,
+	// and the plastic multiplier
+	//   NextDGamma = (2G n:de_dev - K de_v (n:r))
+	//                / (Kp + 2G(B - C tr(n^3)) - K D (n:r)),   Kp UNfloored.
+	// So a floored deck walks a different path (+41 % on G at p' = 1 kPa, +9.5 %
+	// at 5 kPa, ~+6-8 % on a strip footing's load-settlement curve at working
+	// settlements) and arrives at the same place: eta = M^b at the bounding state
+	// is a strength identity in which the moduli do not appear, and WP-106
+	// measured eta/M^b moving < 1e-5 where `-Presidual 1.01` moves it +18.1 %.
+	// Capacity-neutral, NOT path-neutral.
+	//
+	// AND IT IS DEAD IN THE ELASTIC STAGE. Where `mElastFlag == 0` all three
+	// overloads below take the branch WITHOUT the `sqrt(pn/P_atm)` factor, so
+	// `pn` -- and therefore this member, and `m_Pmin` with it -- is computed and
+	// unused. A gravity/K0 leg is bit-identical at any value of either.
+	//
+	// `initialize()` sets it to 0.0, which keeps every vanilla path
+	// bit-identical (`p + 0.0` is the identity on a finite double); only
+	// LadrunoSANISAND::applyLadrunoConstants() ever writes a non-zero value,
+	// from the deck's `-pRe`. `updateParameter()` never re-runs `initialize()`,
+	// so no runtime parameter change can drop the seam.
+	double  m_PreElastic;   // Ladruno (ADR-93 II.1)
 	static char unsigned mElastFlag;	// 1: enforce elastic response
 
 	static Vector mI1;			// 2nd Order Identity Tensor

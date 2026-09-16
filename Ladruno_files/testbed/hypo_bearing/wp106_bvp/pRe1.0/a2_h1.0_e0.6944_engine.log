@@ -1,0 +1,1367 @@
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 1 (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm); yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1), p_min = 0.101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.132437 (max: 0.11772, Norm deltaX: 2.68776e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.156315 (max: 0.11772, Norm deltaX: 3.1109e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0190694
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.162901 (max: 0.11772, Norm deltaX: 3.22538e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0197094
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.148985 (max: 0.11772, Norm deltaX: 3.15045e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0203494
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.173639 (max: 0.11772, Norm deltaX: 3.67063e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0209894
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.379384 (max: 0.11772, Norm deltaX: 7.2518e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0222694
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.417969 (max: 0.11772, Norm deltaX: 7.88228e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0235494
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.424896 (max: 0.11772, Norm deltaX: 8.5098e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0248294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.490607 (max: 0.11772, Norm deltaX: 9.27057e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0261094
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.495695 (max: 0.11772, Norm deltaX: 9.88717e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0273894
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.509777 (max: 0.11772, Norm deltaX: 1.01833e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0286694
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.00851 (max: 0.11772, Norm deltaX: 2.13806e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0312294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.435897 (max: 0.11772, Norm deltaX: 3.98532e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0312294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.26373 (max: 0.11772, Norm deltaX: 2.58358e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0337894
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.908231 (max: 0.11772, Norm deltaX: 3.43669e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0337894
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.2298 (max: 0.11772, Norm deltaX: 2.369e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0363494
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.0804 (max: 0.11772, Norm deltaX: 2.27061e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0389094
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.12038 (max: 0.11772, Norm deltaX: 2.20955e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0414694
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.07094 (max: 0.11772, Norm deltaX: 2.41908e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0440294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.23146 (max: 0.11772, Norm deltaX: 4.76663e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0490294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.896623 (max: 0.11772, Norm deltaX: 3.14825e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0490294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.8608 (max: 0.11772, Norm deltaX: 5.8529e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0540294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.117723 (max: 0.11772, Norm deltaX: 4.06648e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0540294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.875928, dT = 6.36617e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.87108, dT = 6.23894e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0590294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.875928, dT = 6.36617e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.87108, dT = 6.23894e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0590294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 3.22174 (max: 0.11772, Norm deltaX: 6.53552e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0640294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.778944, dT = 5.56929e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 80: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.781425, dT = 5.62865e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.777598, dT = 5.48471e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 80: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 4). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.78017, dT = 5.55094e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0640294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.10097 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.188589, dT = 9.43148e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100971 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.185237, dT = 9.26385e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias: further ModifiedEuler() substep-cap warnings suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.10097 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100971 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100968 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100968 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100985 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100986 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0665294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100985 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: mean stress p = 0.100986 is below the floor m_Pmin + m_Presidual = 0.101; CLAMPING the stress to p = 0.101 (deviator preserved). The result at this integration point is set by the clamp, not by the model.
+WARNING ManzariDafalias: further ModifiedEuler() low-p clamp warnings suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0665294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING LadrunoBrick::update - element 130: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick: further trial-strain refusal reports suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0665294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0652794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0652794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0652794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0646544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0646544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.790941 (max: 0.11772, Norm deltaX: 1.04221e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0652794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.991085 (max: 0.11772, Norm deltaX: 3.30606e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0652794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.802138 (max: 0.11772, Norm deltaX: 9.84258e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0659044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.68982 (max: 0.11772, Norm deltaX: 5.30257e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0659044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.898289 (max: 0.11772, Norm deltaX: 1.33026e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0665294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.725422 (max: 0.11772, Norm deltaX: 5.65559e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0665294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.814269 (max: 0.11772, Norm deltaX: 1.13526e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0671544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.701541 (max: 0.11772, Norm deltaX: 0.000235521)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0671544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.843684 (max: 0.11772, Norm deltaX: 1.04261e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0677794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.87473 (max: 0.11772, Norm deltaX: 2.40867e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0677794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.848515 (max: 0.11772, Norm deltaX: 1.18204e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0684044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0684044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.877336 (max: 0.11772, Norm deltaX: 1.48882e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0690294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.833661 (max: 0.11772, Norm deltaX: 1.08437e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0696544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0696544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.795872 (max: 0.11772, Norm deltaX: 1.7308e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0702794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0702794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0702794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.61955 (max: 0.11772, Norm deltaX: 6.83444e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0699669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0699669
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.633577 (max: 0.11772, Norm deltaX: 8.71975e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0702794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.483431 (max: 0.11772, Norm deltaX: 9.38854e-07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0702794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.887254 (max: 0.11772, Norm deltaX: 1.05617e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0705919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0705919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.622195 (max: 0.11772, Norm deltaX: 1.22142e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0709044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0709044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0712169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0712169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0715294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0715294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0721544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0721544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0721544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0718419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0718419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0721544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0721544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0724669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0724669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0724669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0723106
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0723106
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.5835 (max: 0.11772, Norm deltaX: 5.81333e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0724669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0724669
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.445888 (max: 0.11772, Norm deltaX: 4.63805e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0726231
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.308473 (max: 0.11772, Norm deltaX: 2.92388e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0726231
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.511614 (max: 0.11772, Norm deltaX: 6.12822e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0727794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.507171 (max: 0.11772, Norm deltaX: 0.000338801)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0727794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.397723 (max: 0.11772, Norm deltaX: 5.45356e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0729356
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0729356
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.408985 (max: 0.11772, Norm deltaX: 4.63822e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0730919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.077 (max: 0.11772, Norm deltaX: 2.96686e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0730919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.658271 (max: 0.11772, Norm deltaX: 1.48685e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0734044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0734044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0737169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0737169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0740294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0740294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.539468 (max: 0.11772, Norm deltaX: 8.90768e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0743419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0743419
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.986444 (max: 0.11772, Norm deltaX: 7.26121e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0746544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0746544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0749669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0749669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0755919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0755919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0762169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0762169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0762169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0759044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0759044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0762169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0762169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0765294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0765294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0768419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0768419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0771544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0771544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0774669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0774669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0780919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0780919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0780919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0777794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0777794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0780919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0780919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0784044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0784044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0787169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0787169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0790294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0790294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0793419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0793419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0799669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0799669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0799669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0796544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0796544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0799669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0799669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0802794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0802794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0805919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0805919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0805919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.62533 (max: 0.11772, Norm deltaX: 8.50082e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0804356
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.45231 (max: 0.11772, Norm deltaX: 1.95359e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0804356
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.873389 (max: 0.11772, Norm deltaX: 6.88131e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0805919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0805919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.695844 (max: 0.11772, Norm deltaX: 6.49672e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0807481
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0807481
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0809044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0809044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0810606
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0810606
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.750928 (max: 0.11772, Norm deltaX: 3.65755e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0812169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0812169
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.703943 (max: 0.11772, Norm deltaX: 7.90942e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0815294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0815294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0815294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.753387 (max: 0.11772, Norm deltaX: 5.1898e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0813731
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0813731
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.473814 (max: 0.11772, Norm deltaX: 8.07408e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0815294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0815294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.711002 (max: 0.11772, Norm deltaX: 4.35046e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0816856
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0816856
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.49719 (max: 0.11772, Norm deltaX: 5.14874e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0818419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0818419
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.505863 (max: 0.11772, Norm deltaX: 4.75984e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0819981
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0819981
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.619407 (max: 0.11772, Norm deltaX: 1.20902e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0821544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0821544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0824669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0824669
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.680933 (max: 0.11772, Norm deltaX: 7.6808e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0827794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.43582 (max: 0.11772, Norm deltaX: 7.61862e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0827794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0830919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0830919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.738357 (max: 0.11772, Norm deltaX: 8.1234e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0834044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0834044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0837169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0837169
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.742557 (max: 0.11772, Norm deltaX: 8.09318e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0840294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0840294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0846544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0846544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0846544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.75752 (max: 0.11772, Norm deltaX: 8.68351e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0843419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0843419
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.767388 (max: 0.11772, Norm deltaX: 9.77783e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0846544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0846544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.814467 (max: 0.11772, Norm deltaX: 9.32562e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0849669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0849669
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.781262 (max: 0.11772, Norm deltaX: 9.70246e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0852794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0852794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.827583 (max: 0.11772, Norm deltaX: 9.52159e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0855919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0855919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.539814 (max: 0.11772, Norm deltaX: 8.31248e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0859044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.519748 (max: 0.11772, Norm deltaX: 1.04945e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0859044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0865294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0865294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0865294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0862169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0862169
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.770034 (max: 0.11772, Norm deltaX: 8.24602e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0865294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0865294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.74065 (max: 0.11772, Norm deltaX: 8.52358e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0868419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0868419
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.903722 (max: 0.11772, Norm deltaX: 1.2813e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0871544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0871544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.604777 (max: 0.11772, Norm deltaX: 6.40583e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0874669
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0874669
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.786713 (max: 0.11772, Norm deltaX: 7.67872e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0877794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0877794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0884044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0884044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0884044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.790261 (max: 0.11772, Norm deltaX: 1.00572e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0880919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0880919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.745361 (max: 0.11772, Norm deltaX: 7.54335e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0884044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.748886 (max: 0.11772, Norm deltaX: 1.3842e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0884044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.864014 (max: 0.11772, Norm deltaX: 2.30255e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0887169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.707995 (max: 0.11772, Norm deltaX: 4.90087e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0887169
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.866002 (max: 0.11772, Norm deltaX: 1.30364e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0890294
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0890294
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.84987 (max: 0.11772, Norm deltaX: 1.08748e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0893419
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0893419
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.690036 (max: 0.11772, Norm deltaX: 7.73114e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0896544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0896544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0902794
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0902794
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.904586 (max: 0.11772, Norm deltaX: 5.04165e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0909044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0909044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0909044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.431684 (max: 0.11772, Norm deltaX: 1.01745e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0905919
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0905919
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.777043 (max: 0.11772, Norm deltaX: 7.01293e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0909044
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0909044
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.844738 (max: 0.11772, Norm deltaX: 1.19386e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0912169
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.79414 (max: 0.11772, Norm deltaX: 5.18339e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0912169
+OpenSees > analyze failed, returned: -3 error flag
