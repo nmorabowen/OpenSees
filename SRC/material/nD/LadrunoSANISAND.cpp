@@ -201,6 +201,9 @@ OPS_LadrunoSANISAND(void)
     double presidual = 0.0;    // Ladruno: default -- a cohesionless sand has no cohesion
     double preElastic = 0.0;   // Ladruno (ADR-93 II.1): default OFF -- no stiffness floor,
                                //          so every pre-ADR-93 deck is byte-identical
+    bool   sawPreElastic = false;   // Ladruno (ADR-93 II.1): a REPEATED -pRe is REFUSED,
+                               //          not silently last-wins -- the echo prints ONE
+                               //          value and a reader could not see which won
     double pmin      = -1.0;   // Ladruno: sentinel -- resolve to 1.0e-3 * P_atm in the ctor
     int    honorTolR = 0;      // Ladruno: default = vanilla's hardcoded ModifiedEuler
                                //          substep tolerance 1e-4 (ADR-86 PR-3)
@@ -283,6 +286,20 @@ OPS_LadrunoSANISAND(void)
                  strcmp(argTok, "-Pre") == 0 || strcmp(argTok, "-PRe") == 0 ||
                  strcmp(argTok, "-Pelastic") == 0 || strcmp(argTok, "-pelastic") == 0) {
             seenFlag = true;
+            // Ladruno (ADR-93 II.1, blue-team SHOULD-4): a SECOND -pRe is refused.
+            // Every other flag in this parser silently last-wins, which is
+            // survivable for a diagnostic switch; it is not for a constitutive
+            // constant, because the echo prints exactly one value and a deck that
+            // says `-pRe 1 ... -pRe 5` reads as if it asked for 1.
+            if (sawPreElastic) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe (or a synonym) given more than once. It is a"
+                          " constitutive constant, not a switch -- the echo can only"
+                          " report one value, so a silent last-wins would misreport"
+                          " the material. Give it once." << endln;
+                return 0;
+            }
+            sawPreElastic = true;
             numData  = 1;
             if (OPS_GetDoubleInput(&numData, &preElastic) != 0) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
@@ -299,6 +316,25 @@ OPS_LadrunoSANISAND(void)
                        << "). It is a STIFFNESS floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm)."
                           " It adds NO strength -- use -Presidual for that." << endln;
                 return 0;
+            }
+            // Ladruno (ADR-93 II.1, blue-team SHOULD-4): an UPPER sanity bound, as a
+            // warning and not a refusal. Unlike -Presidual (which the yield surface
+            // bounds), the floor perturbs G at EVERY confinement by
+            // sqrt((p + pRe)/p), so a large value does not "floor the ring" -- it
+            // stiffens the whole model. WP-106 measured 1 kPa (= 0.01*P_atm) as
+            // already a 7 % move on G at the live ring; 0.1*P_atm is an order of
+            // magnitude above anything it measured, so that is where the warning
+            // starts. dData[8] is P_atm (positional 9).
+            if (preElastic > 0.1 * dData[8]) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe = " << preElastic << " is above 0.1*P_atm = "
+                       << 0.1 * dData[8] << ". The floor is NOT local to the"
+                          " free-surface ring -- it multiplies G, K by"
+                          " sqrt((p + pRe)/p) at every Gauss point (a factor "
+                       << sqrt((dData[8] + preElastic) / dData[8])
+                       << " at p = P_atm itself), and it shortens the explicit"
+                          " critical dt in the same proportion. Accepted; declare it."
+                       << endln;
             }
         }
         else if (strcmp(argTok, "-Pmin") == 0 || strcmp(argTok, "-pmin") == 0) {
@@ -1066,8 +1102,35 @@ LadrunoSANISAND::applyLadrunoConstants(void)
 // constructor runs first by language rule. With `-pRe` on, that operator is the
 // UNFLOORED one, and anything that reads the tangent before the first
 // setTrialStrain (getInitialTangent, an eigenvalue analysis, a Gauss point that
-// is never strained) would see a stiffness the deck did not ask for. This redoes
-// the base's own three lines, from the same p = P_atm diagonal.
+// is never strained) would read a stiffness the deck did not ask for. This redoes
+// the base's own three lines, from the same p = P_atm diagonal, so mCe is the
+// operator GetElasticModuli itself would return at sigma = P_atm*I.
+//
+// WHEN IT IS OBSERVABLE, exactly (blue-team BLOCK-1, measured -- do NOT re-derive
+// this by reading GetElasticModuli alone):
+//
+//   `mElastFlag` is a STATIC on the base, 0 in every constructor and flipped to 1
+//   by `updateMaterialStage ... 1`. In the mElastFlag == 0 branch of all three
+//   GetElasticModuli overloads the `sqrt(pn / P_atm)` factor is DROPPED
+//   (ManzariDafalias.cpp :4922 / :4951 / :4980) -- the gravity stage runs a
+//   pressure-INDEPENDENT G = G0*P_atm*(2.97-e)^2/(1+e). So `pn` is computed and
+//   not used there, and neither this function nor -pRe nor -Pmin can move the
+//   stage-0 answer by one bit. That is correct, not a defect: there is no
+//   confinement dependence at stage 0 for a confinement floor to floor, and the
+//   stage-0 value happens to coincide with G(p = P_atm), which is the reference
+//   point this function uses.
+//
+//   With mElastFlag == 1 the factor is live and so is this function: after
+//   `updateMaterialStage ... 1` + `revertToStart` (ops.reset()), the initial
+//   tangent -- and any `eigen` formed from it -- scales by exactly
+//   sqrt((P_atm + pRe)/P_atm). Measured 2.000000000 at pRe = 3*P_atm and pinned
+//   in tests/test_ladruno_sanisand_pre_floor.py
+//   (test_pre_floor_scales_the_initial_elastic_operator).
+//
+//   The remaining window -- stage flipped to 1 but nothing re-initialised and no
+//   strain seen yet -- still reports the stage-0 operator. That is vanilla's own
+//   behaviour (vanilla leaves the same stale mCe there) and -pRe neither creates
+//   nor widens it.
 //
 // Guarded on the REQUEST (`mPreElasticInput`), not on `m_PreElastic`, so that at
 // the default 0.0 not one floating-point operation is re-executed: the
@@ -1173,6 +1236,21 @@ LadrunoSANISAND::echoLadrunoConstants(void)
     else
         opserr << " (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm);"
                   " yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1)";
+
+    // Ladruno (ADR-93 II.1, blue-team SHOULD-4): the one interaction between the
+    // two low-stress constants that a deck cannot see from either value alone.
+    // Unfloored the moduli argument is max(p, p_min); floored it is
+    // max(p + pRe, p_min). At the free-surface ring, p -> 0, so the floored
+    // argument tends to max(pRe, p_min): if pRe <= p_min the m_Pmin STRESS clamp
+    // already supplies the larger number and the floor buys NOTHING exactly where
+    // it was asked to buy something -- while still perturbing G by
+    // sqrt((p + pRe)/p) everywhere p is finite. That is the worst of both and it
+    // is silent, so say it.
+    if (mPreElasticInput > 0.0 && mPreElasticInput <= m_Pmin)
+        opserr << " [NOTE: pRe <= p_min = " << m_Pmin
+               << ", so as p -> 0 the p_min stress clamp already dominates the floor"
+                  " and the ring gains NO stiffness; the floor still perturbs G, K"
+                  " wherever p is comparable to pRe. Raise pRe above p_min, or drop it]";
 
     opserr << ", p_min = " << m_Pmin;
     if (mPminInput < 0.0)

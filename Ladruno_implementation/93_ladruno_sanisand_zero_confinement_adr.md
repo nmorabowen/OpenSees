@@ -2,7 +2,7 @@
 title: "ADR 93 — LadrunoSANISAND at zero confinement: what the model should do once p reaches the floor"
 project: Ladruno
 type: adr
-status: "II.1 BUILT (WP-106, draft #842), MEASURED at the Gauss point AND on the BVP — see sections 7.1-7.9. Verdict: the mechanism works where a point reaches the floor (324x at p0 = 0.5 kPa) and is REFUTED on the campaign deck at its 7.65 kPa surcharge, where the ring is confined at p ~ 6.25 kPa (1.93x the substeps, +5.9% on the curve). Available, not adopted; the owner decides. Sections 1-5 remain the brainstorm they were."
+status: "II.1 BUILT (WP-106, draft #842), MEASURED at the Gauss point AND on the BVP — see sections 7.1-7.10 (7.10 = the red/blue review of #842: the floor is INERT in the elastic stage because vanilla's mElastFlag==0 branch is pressure-independent -- kept and pinned, with -Pmin as the control -- and refreshInitialElasticOperator() is live and exact at stage 1, eigen x2.000000000 at pRe = 3*P_atm). Verdict: the mechanism works where a point reaches the floor (324x at p0 = 0.5 kPa) and is REFUTED on the campaign deck at its 7.65 kPa surcharge, where the ring is confined at p ~ 6.25 kPa (1.93x the substeps, +5.9% on the curve). Available, not adopted; the owner decides. Sections 1-5 remain the brainstorm they were."
 priority: high
 owner: nmora
 related:
@@ -381,6 +381,15 @@ only where the feature is off — so it is the wrong acceptance test for this ca
 capacity-neutrality gate (strength unmoved) is the right one. Recording this because the WP was
 given the tolerance framing and it should fail loudly rather than be quietly reinterpreted.
 
+**In one line, because the reframing and the `+6–8 %` curve are the SAME fact and not a trade:**
+the floored `K, G` enter the plastic multiplier
+`NextDGamma = (2G n:de_dev − K de_v (n:r)) / (Kp + 2G(B − C tr(n³)) − K D (n:r))` with `Kp`
+unfloored, so `L` changes by `λE/(Kp + λE)` against `E/(Kp + E)` with `λ = sqrt((p + pRe)/p)` —
+non-zero everywhere except in the limit `b:n → 0`, i.e. **at the bounding surface**. A stiffness
+floor is therefore path-changing everywhere and capacity-neutral exactly where capacity is
+defined; "curve inside the certificate tolerance" is unsatisfiable by *any* working version of
+II.1, while "capacity-neutral" is the property II.1 actually promises.
+
 ### 7.7 What was NOT run
 
 - ~~**The BVP leg.**~~ **RUN — see §7.9**, which was written after this list and answers it:
@@ -481,6 +490,57 @@ is unlikely to flip between 6.25 and 5 kPa, but that is an inference, not a meas
 Artifacts: `Ladruno_files/testbed/hypo_bearing/wp106_bvp/{pRe0,pRe1.0}/` (curve CSVs with the six
 new columns, leg JSON, field dumps, engine logs) and `wp106_bvp.log`; roll-up
 `Ladruno_implementation/wp106_pre_floor/bvp_summary.py`.
+
+### 7.10 Red/blue review of #842 — where the floor is live, and where it is not
+
+An adversarial re-run of §7.1–§7.9 on the branch binary reproduced every number above and found
+one thing the WP had claimed and not measured: **`-pRe` does not move a stage-0 (gravity / K0)
+leg, or the initial tangent read before the stage flip, at any magnitude.** `pRe = 1e6` — a floor
+that multiplies `G` by 99.5 — leaves an elastic-stage leg bit-identical, and
+`refreshInitialElasticOperator()`, documented in three places as load-bearing, appeared to deliver
+nothing.
+
+**Cause, and why it is not a defect.** `mElastFlag` is a static on `ManzariDafalias`, `0` in every
+constructor and flipped by `updateMaterialStage ... 1`. At `0`, all three `GetElasticModuli`
+overloads take the branch
+
+```
+G = G0 * P_atm * (2.97 - e)^2 / (1 + e);          // NO sqrt(pn / P_atm) factor
+```
+
+so the elastic stage is **pressure-independent** and `pn` is computed and unused. `-Pmin` — the
+clamp on the line below the seam — is inert there for the same reason: `0.0101` vs `10.0` kPa, a
+31× move on `G` if the branch were live, is bit-identical too. There is no confinement dependence
+at stage 0 for a **confinement** floor to floor. Forcing one in would not remove a stage-flip
+stiffness switch — vanilla's own switch (a fixed `G(P_atm)` for gravity, then the real law) is
+larger and is the entire point of the staged idiom — it would silently restate the `G0`
+calibration in the gravity leg of every `-pRe` deck. **Decision: the elastic-stage inertness is
+kept, documented, and pinned**, with `-Pmin` as the control so the pin records a property of the
+vanilla stage rather than an assertion about this flag.
+
+**`refreshInitialElasticOperator()` is live, and exact.** It is unobservable only inside that same
+`mElastFlag == 0` regime. At `mElastFlag == 1` — `updateMaterialStage ... 1` followed by
+`revertToStart` (`ops.reset()`), which is the path `initialize()` is on — the initial elastic
+operator, and any `eigen` formed from it, scales by exactly `sqrt((P_atm + pRe)/P_atm)`:
+
+| `pRe` | predicted factor | measured, all six modes of an unstrained `stdBrick` |
+|---|---|---|
+| `3*P_atm` = 303 kPa | `sqrt(404/101)` = **2** | **2.000000000** (λ₁ 67443.766571864 → 134887.53314373) |
+
+Both facts are now `zone_a` gates (`test_pre_floor_scales_the_initial_elastic_operator`,
+`test_pre_floor_is_inert_in_the_elastic_stage_and_that_is_correct`). The one remaining window —
+stage flipped to 1 but nothing re-initialised and no strain seen — still reports the stage-0
+operator; that is vanilla's behaviour at `pRe = 0` as well, and `-pRe` neither creates nor widens
+it.
+
+**Also from the review, now on the branch:** the gate's ON-side assertions were one-sided
+inequalities, so the committed stress is now **pinned** at `pRe = 1.0` to 1e-6 relative and the
+"floor applied after the `m_Pmin` clamp" mutant is run as `pRe = 1 + p_min` and shown to be
+rejected (it sits 2.778e-4 away); the dead 7-argument overload is pinned in the source instead of
+by a deck; the parser refuses a repeated `-pRe`, warns above `0.1*P_atm` and prints a NOTE when
+`pRe <= p_min` (where the clamp already dominates as `p -> 0`, so the ring gains nothing while `G`
+is still perturbed wherever `p ~ pRe`); and §7.6's reframing is stated as the same algebra as the
+`+6–8 %` curve rather than as a trade.
 
 ## Log
 
@@ -786,3 +846,16 @@ new columns, leg JSON, field dumps, engine logs) and `wp106_bvp.log`; roll-up
   removed that state. **Both arms are WALL-terminated — neither `q` is a capacity.** Not run:
   the finer meshes (`h0 = 0.5`, `0.25`) and the `p' ~ 5 kPa` surface row the F13 request aimed
   at, which needs them. II.1 stays available and stays unadopted.
+- 2026-09-16 — **Red/blue review of #842 (§7.10).** The red team reproduced every §7 number and
+  found one unmeasured claim: `-pRe` moves neither a stage-0 leg nor the initial tangent, at any
+  magnitude. Root cause: `mElastFlag == 0` selects the branch of `GetElasticModuli` WITHOUT the
+  `sqrt(pn/P_atm)` factor, so the gravity stage is pressure-independent and `pn` — with `-Pmin`
+  alongside it — is computed and unused. A confinement floor has nothing to floor there.
+  **Kept and pinned rather than "fixed":** forcing the floor into stage 0 would restate the `G0`
+  calibration in every `-pRe` deck's gravity leg and would not remove vanilla's own (larger)
+  stage-flip switch. `refreshInitialElasticOperator()` is NOT dead — at `mElastFlag == 1` it
+  scales the initial tangent by exactly `sqrt((P_atm + pRe)/P_atm)`, measured `2.000000000` on
+  all six modes at `pRe = 3*P_atm`. Committed stress at `pRe = 1.0` is now pinned to 1e-6 with
+  the after-the-clamp mutant proxy run and rejected; the parser refuses a repeated `-pRe`, warns
+  above `0.1*P_atm` and NOTEs `pRe <= p_min`; the docs now scope "elastic-only" to the VARIABLE
+  and state that §7.6's reframing and the `+6–8 %` curve are one fact. Gate 7/1 -> 13/1.

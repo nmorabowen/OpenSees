@@ -4881,14 +4881,20 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
 // Calculates G, K
 {
     // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
-    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
-    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
     // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
     // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
     // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
     // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
     // and the low-p integrator guards all keep reading `p + m_Presidual` and are
-    // untouched.
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
@@ -4932,14 +4938,20 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
 // Calculates G, K
 {
     // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
-    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
-    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
     // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
     // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
     // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
     // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
     // and the low-p integrator guards all keep reading `p + m_Presidual` and are
-    // untouched.
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
@@ -4961,14 +4973,20 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double 
 // Calculates G, K
 {
     // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
-    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
-    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
     // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
     // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
     // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
     // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
     // and the low-p integrator guards all keep reading `p + m_Presidual` and are
-    // untouched.
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
     double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
