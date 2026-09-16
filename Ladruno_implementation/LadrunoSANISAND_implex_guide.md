@@ -70,7 +70,7 @@ traded reach for a bounded refusal count rather than an unbounded ladder (§7 be
 
 ```tcl
 nDMaterial LadrunoSANISAND $tag  <23 constants>  \
-    -Presidual $pr -Pmin $pmin -honorTolR $h -maxSubsteps $N \
+    -Presidual $pr -pRe $pre -Pmin $pmin -honorTolR $h -maxSubsteps $N \
     -implex  <-implexControl $tol $reductionLimit>  <-implexAlpha $a> \
     <-implexDt pseudo|strain|user <$dt>>  \
     <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>  \
@@ -101,6 +101,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
 | `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
 | `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
+| `-pRe $p` | **elastic-only** confinement floor (ADR-93 II.1): the three `GetElasticModuli` overloads read `G, K ~ sqrt(max(p + $p, p_min)/P_atm)` and **nothing else in the model changes** | `0` = OFF | not IMPL-EX-specific and not gated on `-implex`; `-Pelastic` is accepted as a synonym. `>= 0`, refused otherwise. See section 3.1 |
 | `-implexFactor fixed\|control\|controlIter` | how `f` is CHOSEN: `fixed` = the clock ratio `alpha*dt_{n+1}/dt_n` (the pre-P2-9 operator, and the only mode gate-passed); `control` = the closed-form minimiser of `\|\|sigma~(f) - sigma_impl\|\|`, computed ONCE at the first trial of the step and frozen — **R3 REFUTED** (biased by the elastic-predictor first iterate); `controlIter` = the same minimiser recomputed at EVERY trial from that iterate's own `d_eps` — **R3 PASSES**, at a wall-time/Newton-churn cost; both control modes keep the clock ratio as the upper bound `f_max` | `fixed` | ADR-92 P2-9; **requires `-implexControl`** (refused without it, not silently downgraded); see §12 |
 
 ## 2. What the nine words mean
@@ -169,6 +170,38 @@ the analysis to stop.
 **At COMMIT time no element propagates anything**, because `Domain::commit()` is a bare
 `elePtr->commitState();`. That is why a commit-time companion failure LATCHES the material
 instead — see §9.
+
+### 3.1 `-pRe` — a stiffness floor, and the three things it is not (ADR-93 II.1)
+
+A cohesionless sand has no stiffness at zero confinement, so at the free-surface ring beside a
+footing `G, K -> 0` and the substep controller spends thousands of substeps proving a stress
+that carries nothing to relative tolerance. `-pRe $p` puts a declared floor under the ELASTIC
+moduli only: `pn = tr(sigma)/3 + pRe` inside the three `GetElasticModuli` overloads, clamped at
+`m_Pmin` after the addition, so the effective floor is `sqrt(max(p + pRe, p_min)/P_atm)`.
+
+**It is not `-Presidual`**, which floors the STRENGTH side (`GetF`, `psi`, `M^b`, `M^d`, `D`,
+the `D_factor` sigmoid, the low-`p` integrator guards) and never reached the moduli at all —
+the asymmetry ADR 93 §1 row 1 measured. **It is not a cohesion**: it adds no strength and does
+not move the critical-state line. **It is not `-Pmin`**, which is a clamp on the STRESS; `-pRe`
+changes no stress, only the tangent the stress is integrated with. Default `0` is
+byte-identical: the parameter enters as `+ 0.0`, and the one derived quantity recomputed for it
+(the initial `mCe` at `p = P_atm`, which the base fixes before the fork's last write lands) sits
+behind an early return.
+
+**What WP-106 measured, so you know what to expect — this is not free speed.** On the ADR-93
+ring path the floor cuts NOTHING: that dumped point is confined (min `p` 6.4–6.5 kPa), the
+substep count moves under 1 % and in the WRONG direction, and committed stress moves ~3.5–4 % at
+`pRe = 1` kPa — because `sqrt((6.5 + 1)/6.5) = 1.074` is a 7 % move on `G` wherever `p` is
+small-ish, not only where the model has no answer. Adopting a value is a declared modelling
+statement about small-strain stiffness at low confinement, and it has to be paid for on the deck
+that uses it: report the substep census (the `substeps` response) and the peak resultant on both
+arms first. The WP-106 numbers are in `93_ladruno_sanisand_zero_confinement_adr.md` §7, with
+the instruments in `Ladruno_implementation/wp106_pre_floor/`.
+
+**Parallel / restore.** The request crosses the fork wire (`Vector(35)`, slot 34) and is carried
+by `getCopy(const char*)` to every Gauss point, so an MP rank and a database-restored material
+run the same elastic law as the process that wrote them — the ADR-86 §3 defect, which is what
+this family of flags exists to make impossible.
 
 ## 4. The stage rule
 
