@@ -93,6 +93,11 @@ def build(h, mat, scheme, tangent, implex):
         if implex:
             opts += ["-implex"]
         ops.nDMaterial("LadrunoSANISAND", _MAT_TAG, *_PARAMS, *pos, *opts)
+    elif mat == "manzari":
+        # VANILLA ManzariDafalias, same positional integration args. Used to ask
+        # whether a threading defect lives in the fork's subclass or in the base.
+        pos = [scheme, tangent, 1, 1.0e-7, 1.0e-7]
+        ops.nDMaterial("ManzariDafalias", _MAT_TAG, *_PARAMS, *pos)
     elif mat == "elastic":
         ops.nDMaterial("ElasticIsotropic", _MAT_TAG, 60000.0, 0.3, _RHO)
     else:
@@ -137,12 +142,12 @@ def _analysis(dlambda, system):
 
 
 def main(argv=None):
-    global _DS, _MAXSUBSTEPS, _TOL
+    global _DS, _MAXSUBSTEPS, _TOL, _PMIN
     ap = argparse.ArgumentParser()
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--h", type=float, default=0.25, help="element size [m]")
     ap.add_argument("--steps", type=int, default=10)
-    ap.add_argument("--mat", default="sanisand", choices=("sanisand", "elastic"))
+    ap.add_argument("--mat", default="sanisand", choices=("sanisand", "manzari", "elastic"))
     ap.add_argument("--scheme", type=int, default=1, help="SANISAND IntScheme")
     ap.add_argument("--tangent", type=int, default=0, help="SANISAND TanType")
     ap.add_argument("--implex", action="store_true",
@@ -157,10 +162,11 @@ def main(argv=None):
     ap.add_argument("--ds", type=float, default=_DS)
     ap.add_argument("--maxsub", type=int, default=_MAXSUBSTEPS)
     ap.add_argument("--tol", type=float, default=_TOL)
+    ap.add_argument("--pmin", type=float, default=_PMIN)
     ap.add_argument("--out", default="wp107_bench.csv")
     args = ap.parse_args(argv)
 
-    _DS, _MAXSUBSTEPS, _TOL = args.ds, args.maxsub, args.tol
+    _DS, _MAXSUBSTEPS, _TOL, _PMIN = args.ds, args.maxsub, args.tol, args.pmin
 
     print("build:", ops.ladrunoBuild().strip().splitlines()[0])
     got = ops.ladrunoThreads(args.threads)
@@ -188,7 +194,7 @@ def main(argv=None):
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     _analysis(1.0 / _N_GRAV, args.system)
-    if args.mat == "sanisand":
+    if args.mat in ("sanisand", "manzari"):
         ops.updateMaterialStage("-material", _MAT_TAG, "-stage", 0)
     t_grav = time.perf_counter()
     for s in range(_N_GRAV):
@@ -197,7 +203,7 @@ def main(argv=None):
             raise SystemExit("gravity step %d failed (rc=%d)" % (s + 1, rc))
     t_grav = time.perf_counter() - t_grav
     ops.loadConst("-time", 0.0)
-    if args.mat == "sanisand":
+    if args.mat in ("sanisand", "manzari"):
         ops.updateMaterialStage("-material", _MAT_TAG, "-stage", 1)
 
     ops.timeSeries("Linear", 2)

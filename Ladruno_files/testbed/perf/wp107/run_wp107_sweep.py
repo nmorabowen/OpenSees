@@ -69,6 +69,8 @@ def main():
     ap.add_argument("--scheme", type=int, default=1)
     ap.add_argument("--system", default="BandGeneral")
     ap.add_argument("--implex", action="store_true")
+    ap.add_argument("--ds", type=float, default=0.002)
+    ap.add_argument("--load", default="oedometer")
     ap.add_argument("--label", default="")
     ap.add_argument("--pyd", default=None, help="dist/bin to put on PYTHONPATH")
     args = ap.parse_args()
@@ -81,7 +83,8 @@ def main():
 
     extra = ["--h", str(args.h), "--steps", str(args.steps),
              "--mat", args.mat, "--tangent", str(args.tangent),
-             "--scheme", str(args.scheme), "--system", args.system]
+             "--scheme", str(args.scheme), "--system", args.system,
+             "--ds", str(args.ds), "--load", args.load]
     if args.implex:
         extra.append("--implex")
 

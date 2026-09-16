@@ -94,13 +94,26 @@ PFEM (ADR-75b §1) that have always been compiler-ignored no-ops. Putting `/open
 on `OPS_Element` would silently activate untested PFEM threading as a side effect
 of this WP. Keeping the flag off that target leaves them dead.
 
-**Known caveat — two OpenMP runtimes.** The serial targets already link
-`mkl_intel_thread` + `libiomp5md` for desktop PARDISO (ADR-75 P1b). With MSVC
-`/openmp` the objects also pull `vcomp`. Two OpenMP runtimes then coexist, each
-with its own pool. They are used in **disjoint phases** (our element loop; MKL's
-factorization), so this is a performance caveat, not a correctness one. It is also
-the reason the thread-count policy below is implemented as an explicit
-`num_threads(n)` clause rather than `omp_set_num_threads()`.
+**The OpenMP runtime is `libiomp5md`, not `vcomp` — checked, not assumed.** The
+serial targets already link `mkl_intel_thread` + `libiomp5md` for desktop PARDISO
+(ADR-75 P1b), and MSVC `/openmp` emits `_vcomp_*` calls plus a `vcomp.lib`
+default-lib directive, so the expectation was two coexisting OpenMP runtimes. It
+is not what happens: `dumpbin /DEPENDENTS distin\opensees.pyd` lists
+`libiomp5md.dll`, `mkl_intel_thread.3.dll`, `mkl_core.3.dll` and **no
+`vcomp140.dll`** — Intel's runtime exports the Microsoft OpenMP ABI, so the
+linker resolved our `_vcomp_*` references against it and there is exactly **one**
+runtime in the process.
+
+That is the good outcome, and it is load-bearing enough to re-check after any
+change to the MKL link: if `vcomp140.dll` ever appears in that list, the process
+has two thread pools, and `KMP_*`/`OMP_*` environment settings will then apply to
+only one of them. Note also that this is why `KMP_STACKSIZE` is a valid knob for
+our worker threads (used as a diagnostic in §5.1).
+
+The thread count is still applied through an explicit `num_threads(n)` clause and
+never `omp_set_num_threads()` — that is about not disturbing MKL's own threading
+and not waking PFEM's dormant pragmas, and it holds regardless of which runtime
+is linked.
 
 ### 3.2 Runtime knob — there is exactly one
 
@@ -212,12 +225,51 @@ back to serial with a named tag in the warning. Only the classes below opt in.
 
 | Class | Threaded? | Why |
 |---|---|---|
-| **`ManzariDafalias`** (and `…3D` / `…PlaneStrain`) with **`IntScheme 1`** (ModifiedEuler) | **YES** | Audited: the `ModifiedEuler → GetElastoPlasticTangent` path has **no** function-scope `static Vector`/`Matrix` work arrays and **no** `Matrix::Solve`/`Invert`. Its two warn budgets are now `std::atomic<int>` — their own THREAD-SAFETY note asked for exactly that "if Lane 3 lands". |
-| `ManzariDafalias` with `IntScheme 2` (BackwardEuler_CPPM) | **NO** | `NewtonIter()`'s `sol/R/R2/dX/norms/jaco/jInv` are function-scope statics shared by every instance, and `NewtonSol*`/`NewtonIter*` call `Matrix::Invert`/`Solve`. |
-| `ManzariDafalias` with `IntScheme 4` (RungeKutta45) | **NO** | ~20 function-scope static `Vector`/`Matrix` work arrays plus a `static bool do_once`. |
-| `ManzariDafalias` with `IntScheme 3 / 5` and the MaxStrainInc / MaxEnergyInc family | **NO** | Not audited. |
-| **`LadrunoSANISAND`** (and its wrappers) | **YES**, only when the base scheme qualifies **AND `-implex` is OFF** | Under `-implex` the diagnostics are a **process-wide ledger** (`LadrunoImplexGlobals`: `maxError`, `sumError`, `count`, four refusal buckets). Two accumulators are **floating point**, so this is not fixable by adding an atomic — a threaded sum would change the reported average's last bits with the thread count, which is precisely the determinism this WP exists to preserve. Refusing keeps the ledger exact. |
+| **`ManzariDafalias`** (and `…3D` / `…PlaneStrain`), **every** `IntScheme` | **NO — measured, see §5.1** | `IntScheme 1` was allowlisted on a complete static audit and **segfaults anyway**. `IntScheme 2` additionally has `NewtonIter()`'s shared static work arrays and calls `Matrix::Invert`/`Solve`; `IntScheme 4` has ~20 static work arrays plus a `static bool do_once`; `3/5` and the MaxStrain/MaxEnergy family are un-audited. Its two `ModifiedEuler` warn budgets are `std::atomic<int>` regardless — their own THREAD-SAFETY note asked for that "if Lane 3 lands", and it is correct independent of this refusal. |
+| **`LadrunoSANISAND`** (and its wrappers) | **NO** | Two independent refusals. (1) The base refuses (above). (2) Under `-implex` the diagnostics are a **process-wide ledger** (`LadrunoImplexGlobals`: `maxError`, `sumError`, `count`, four refusal buckets); two accumulators are **floating point**, so this is not fixable with an atomic — a threaded sum would change the reported average's last bits with the thread count, which is precisely the determinism this WP exists to preserve. (2) is kept explicit because it survives any fix to (1). |
 | **every other material** | **NO** | Not audited. |
+
+### 5.1 The measurement that removed SANISAND from the allowlist
+
+This is the result that cost WP-107 its intended payoff, and it is the most
+transferable thing in the WP.
+
+`ManzariDafalias` under `IntScheme 1` (ModifiedEuler) has **no function-scope
+static anywhere on its update call graph** — every `static Vector`/`Matrix` in
+that file is in `RungeKutta45`, `NewtonIter`, `getPStrain` or
+`sendSelf`/`recvSelf`, all off that path — and no `Matrix::Solve`/`Invert` on it
+either. It was allowlisted on exactly that basis, and the first sweep returned
+**12/12 runs bit-identical at 1/2/4/8 threads, `maxdiff = 0.000e+00`**.
+
+Then a harder load path was tried, and it **segfaults**: 4/4 at 4 threads on a
+6400-element deck, as soon as the PLASTIC branch is exercised in volume. The
+elastic branch is clean, which is exactly why the first sweep passed — it had
+barely entered plasticity. *A clean threaded run on a mild load path proves
+nothing.*
+
+| hypothesis | test | result |
+|---|---|---|
+| the fork's subclass | vanilla `nDMaterial ManzariDafalias` | crashes identically, 4/4 |
+| solver interaction | `BandGeneral` vs `Pardiso` | both crash |
+| worker-thread stack overflow | `KMP_STACKSIZE=64M` (libiomp5 is the runtime) | no change |
+| `opserr` from inside the region | `-Pmin 1e-8`, so the clamp never warns | crashes with **zero** warnings emitted |
+| the element | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** |
+
+Root cause **not located**, so the family is refused. A located-but-unfixed
+hazard is strictly worse than an un-audited one, because the audit manufactures
+confidence. The next tool is **ThreadSanitizer**, which ADR-75b §7's correctness
+protocol already names as "the only tool that finds the misses `grep` cannot" —
+this is the measurement that makes that protocol item load-bearing rather than
+belt-and-braces. TSan needs clang/gcc, so it is Esmeralda/Linux work, not MSVC
+desktop work.
+
+**Consequence for the WP's own gate.** Loop A was measured at **51.2 % of step**
+on the SANISAND deck — it passes ADR-75b's >40 % single-loop gate that G-L3
+failed by ~42x at cluster scale, so the *desktop-scoped premise of §1 is
+confirmed*. What is not available is the payoff, because the only material that
+makes loop A that large is the one now refused. The mechanism is shipped,
+default-off, with a correct allowlist; the deck that motivated it cannot use it
+until the defect is found.
 
 ### What refuses at the loop level (not the class level)
 

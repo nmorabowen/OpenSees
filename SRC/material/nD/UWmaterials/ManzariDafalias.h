@@ -105,23 +105,24 @@ class ManzariDafalias : public NDMaterial
 	virtual const Vector& getPStrain();
 
 	// Ladruno WP-107 (ADR-75b L3-1): may two instances integrate concurrently?
-	// The answer is per CONFIGURATION, not per class, and the discriminator is
-	// the integration scheme:
-	//   IntScheme 1 (ModifiedEuler)          -> YES. Audited: the whole
-	//       ModifiedEuler -> GetElastoPlasticTangent path carries no
-	//       function-scope static Vector/Matrix work arrays, and no
-	//       Matrix::Solve/Invert (both of which run on the process-wide
-	//       Matrix::matrixWork scratch, which they may even free and
-	//       reallocate mid-call).
-	//   IntScheme 2 (BackwardEuler_CPPM)     -> NO. NewtonIter()'s work arrays
+	// MEASURED ANSWER: NO, for every integration scheme -- this always returns
+	// false. IntScheme 1 (ModifiedEuler) was allowlisted on the strength of a
+	// complete function-scope-static audit that finds nothing on its call graph,
+	// and a threaded run SEGFAULTED anyway once the plastic branch was exercised
+	// in volume. The full experiment log and what it rules out are in the
+	// definition in ManzariDafalias.cpp; the lesson -- a static grep is not a
+	// re-entrancy proof -- is in LEDGER_quirks.md.
+	//
+	// The audited-and-rejected schemes are recorded separately, because they stay
+	// rejected even if the IntScheme-1 defect is ever found and fixed:
+	//   IntScheme 2 (BackwardEuler_CPPM) -> NewtonIter()'s work arrays
 	//       `sol/R/R2/dX/norms/jaco/jInv` are function-scope statics shared by
 	//       every instance, and NewtonSol*/NewtonIter* call Matrix::Invert and
-	//       Matrix::Solve.
-	//   IntScheme 4 (RungeKutta45)           -> NO. ~20 function-scope static
-	//       Vector/Matrix work arrays plus a `static bool do_once`.
-	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> NOT AUDITED, so NO.
-	// Everything not proven re-entrant answers false, per the ADR's
-	// "un-audited is never threaded" rule.
+	//       Matrix::Solve, which run on the process-wide Matrix::matrixWork
+	//       scratch that they FREE AND REALLOCATE (a use-after-free, not a race).
+	//   IntScheme 4 (RungeKutta45) -> ~20 function-scope static Vector/Matrix
+	//       work arrays plus a `static bool do_once`.
+	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> not audited.
 	virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
 
 

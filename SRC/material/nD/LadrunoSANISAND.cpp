@@ -1700,8 +1700,21 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 bool
 LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 {
+    // TWO independent refusals, and the base's is currently the binding one.
+    //
+    // (1) -implex: the diagnostics are a process-wide ledger (LadrunoImplexGlobals
+    //     below) with FLOATING-POINT accumulators, so threading would make the
+    //     reported average depend on the thread count -- not fixable with an
+    //     atomic, and exactly the determinism WP-107 exists to preserve.
+    // (2) the base class refuses outright: a threaded IntScheme-1 integration
+    //     SEGFAULTS once the plastic branch is exercised in volume, with no
+    //     function-scope static anywhere on its call graph. See the long note on
+    //     ManzariDafalias::ladrunoThreadSafeUpdate().
+    //
+    // (1) is kept explicit even though (2) already refuses everything, because
+    // (1) is a DESIGN constraint that survives any fix to (2).
     if (mImplexOpt.enabled)
-        return false;                 // process-wide IMPL-EX ledger, see the header
+        return false;
     return this->ManzariDafalias::ladrunoThreadSafeUpdate();
 }
 

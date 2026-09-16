@@ -1066,7 +1066,39 @@ void ManzariDafalias::elastic_integrator(const Vector& CurStress, const Vector& 
 bool
 ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 {
-    return (mScheme == INT_ModifiedEuler);
+    // REFUSED, unconditionally -- and the reason is the most useful thing WP-107
+    // found, so it is recorded here rather than in a ledger only.
+    //
+    // The first version of this returned `mScheme == INT_ModifiedEuler`, on the
+    // strength of a COMPLETE function-scope-static audit of the
+    //   integrate -> explicit_integrator -> ModifiedEuler
+    //             -> {GetElastoPlasticTangent, Stress_Correction,
+    //                 IntersectionFactor, GetStateDependent, GetStiffness}
+    // call graph, which finds NONE (every static Vector/Matrix in this file is in
+    // RungeKutta45, NewtonIter, getPStrain or sendSelf/recvSelf -- all off the
+    // IntScheme-1 path), plus no Matrix::Solve/Invert anywhere on it.
+    //
+    // That audit is not a proof, and the measurement says so. On a 6400-element
+    // LadrunoQuad -bbar plane-strain deck:
+    //   * IntScheme 1, threads > 1, with the ELASTIC branch only (gravity stage,
+    //     mElastFlag == 0): clean, bit-identical.
+    //   * IntScheme 1, threads > 1, once the PLASTIC branch is exercised in
+    //     volume: segfaults, 4/4 at 4 threads.
+    // Ruled out by experiment, none of which changed the outcome: the fork's
+    // subclass (vanilla ManzariDafalias crashes identically), the linear solver
+    // (BandGeneral and Pardiso both), worker-thread stack size
+    // (KMP_STACKSIZE=64M), and the warning path (it faults with zero warnings
+    // emitted). The same element with ElasticIsotropicPlaneStrain2D is clean
+    // 6/6 at 8 threads on 10 000 elements, so the element half is not at fault.
+    //
+    // WP-107's rule is "un-audited is never threaded". A located-but-unfixed
+    // hazard is strictly worse than an un-audited one, so this family is refused
+    // until someone finds it. A threaded run on a ManzariDafalias-family deck
+    // therefore falls back to the serial loop, loudly, naming the element tag.
+    //
+    // See Ladruno_implementation/107_ladruno_openmp_element_loop.md section 5 and
+    // LEDGER_quirks.md ("a static grep is not a re-entrancy proof").
+    return false;
 }
 
 void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector& CurStrain, const Vector& CurElasticStrain,
