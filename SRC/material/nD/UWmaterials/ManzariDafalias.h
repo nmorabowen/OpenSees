@@ -230,6 +230,20 @@ class ManzariDafalias : public NDMaterial
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	double	m_Pmin;			// Minimum allowable mean effective stress
     double  m_Presidual;    // small residual pressure (due to cohesion)
+	// Ladruno (ADR-93 II.1): an ELASTIC-ONLY confinement floor, read at EXACTLY
+	// the three GetElasticModuli overloads as `p + m_PreElastic` and NOWHERE
+	// else -- not in GetF, not in psi / M^b / M^d / D, not in the D_factor
+	// sigmoid, not in the m_Pmin clamp, not in any stress correction. It is a
+	// STIFFNESS floor, not a cohesion: `m_Presidual` above floors STRENGTH and
+	// never reaches the moduli (that asymmetry IS ADR 93 section 1 row 1), and
+	// this member is its elastic counterpart, kept independent on purpose so a
+	// deck can put a floor under G, K without moving the strength calibration
+	// (G0 = 264.32 et al. were fitted with p_r = 1.01 and the moduli unfloored).
+	// `initialize()` sets it to 0.0, which keeps every vanilla path
+	// bit-identical (`p + 0.0` is the identity on a finite double); only
+	// LadrunoSANISAND::applyLadrunoConstants() ever writes a non-zero value,
+	// from the deck's `-pRe`.
+	double  m_PreElastic;   // Ladruno (ADR-93 II.1)
 	static char unsigned mElastFlag;	// 1: enforce elastic response
 
 	static Vector mI1;			// 2nd Order Identity Tensor

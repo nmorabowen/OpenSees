@@ -47,6 +47,16 @@
 // NTUASand02 (Gorini): p_residual = 0 (a cohesionless sand has no cohesion) and
 // p_min = 1.0e-3 * P_atm.
 //
+// Ladruno (ADR-93 II.1) adds a THIRD low-stress constant, `-pRe`, and it is the
+// mirror image of p_residual rather than another of it: p_residual floors
+// STRENGTH (it reaches ~30 plastic-side mean-stress sites and never the moduli),
+// `-pRe` floors STIFFNESS (it reaches the three GetElasticModuli overloads and
+// nothing else). The default is 0.0 = OFF, so every pre-ADR-93 deck is
+// byte-identical; a non-zero value declares a small non-vanishing small-strain
+// stiffness at zero confinement -- what ADR 93 needs at the free-surface ring,
+// where `G, K -> 0` today and the integrator spends thousands of substeps
+// proving to relative tolerance a stress that carries nothing.
+//
 // DESIGN NOTE (do not "clean up"):
 //   `m_Presidual` and `m_Pmin` are PROTECTED DATA read at run time by every base
 //   integrator, so this subclass never has to override an integrator -- it only
@@ -64,8 +74,13 @@
 //   those shadows into overrides and make every existing RO deck run
 //   Ramberg-Osgood elasticity from inside the base integrators.
 //
-// Vanilla `ManzariDafalias` is not edited.
-// See Ladruno_implementation/86_ladruno_sanisand_adr.md.
+// Vanilla `ManzariDafalias` is edited ONLY where the seams live -- as of ADR-93
+// II.1 that is the member `m_PreElastic`, its 0.0 initialisation in
+// `initialize()`, and the `+ m_PreElastic` in the three `GetElasticModuli`
+// overloads (LEDGER_vanilla_files.md). Every one of those is inert at the
+// default, so vanilla `ManzariDafalias` decks stay bit-identical.
+// See Ladruno_implementation/86_ladruno_sanisand_adr.md and
+// 93_ladruno_sanisand_zero_confinement_adr.md.
 // classTags 33019 (base) / 33020 (3D) / 33021 (PlaneStrain).
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
@@ -216,9 +231,12 @@ class LadrunoSANISAND : public ManzariDafalias
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
                     double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
-                    int flipAlphaInMode = 1);        // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
+                    int flipAlphaInMode = 1,         // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
                                                       //   1 = vanilla (DEFAULT -- RC14 reversed;
                                                       //   see the FlipAlphaInMode note below)
+                    double PreElastic = 0.0);        // Ladruno (ADR-93 II.1): -pRe, the
+                                                      //   elastic-only confinement floor.
+                                                      //   0.0 = OFF = byte-identical.
 
     // full constructor, classTag defaults to ND_TAG_LadrunoSANISAND.
     // Defaults of the five optional integration args match the base's
@@ -232,9 +250,12 @@ class LadrunoSANISAND : public ManzariDafalias
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
                     double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
-                    int flipAlphaInMode = 1);        // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
+                    int flipAlphaInMode = 1,         // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
                                                       //   1 = vanilla (DEFAULT -- RC14 reversed;
                                                       //   see the FlipAlphaInMode note below)
+                    double PreElastic = 0.0);        // Ladruno (ADR-93 II.1): -pRe, the
+                                                      //   elastic-only confinement floor.
+                                                      //   0.0 = OFF = byte-identical.
 
     // specific-type null constructor (used by the wrappers' null constructors)
     LadrunoSANISAND(int classTag);
@@ -258,9 +279,9 @@ class LadrunoSANISAND : public ManzariDafalias
     NDMaterial *getCopy(void);
     NDMaterial *getCopy(const char *type);
 
-    // Base Vector(97) wire format unchanged; one extra Vector(26) follows it
+    // Base Vector(97) wire format unchanged; one extra Vector(35) follows it
     // (Vector(4) at ADR-86, 5 at ADR-86b, 22 at ADR-92 P1, 25 at ADR-92 P2,
-    // 26 at ADR-92 P2-5).
+    // 26 at ADR-92 P2-5, ... 34 at WP-99/F7, 35 at ADR-93 II.1).
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -325,6 +346,24 @@ class LadrunoSANISAND : public ManzariDafalias
     int ladrunoUpdateStatus(void) const;   // Ladruno
 
     double mPresidualInput;   // Ladruno: p_residual as given by the user (>= 0)
+    // Ladruno (ADR-93 II.1): `-pRe`, the DECK-LEVEL request for the elastic-only
+    // confinement floor, in the deck's stress units (>= 0). Two names on purpose,
+    // the same convention as mHonorTolR / mHonorTolRInME: this is the request,
+    // the base's `m_PreElastic` is the seam it acts on, and
+    // applyLadrunoConstants() is the one writer.
+    //
+    // 0.0 is the DEFAULT and it is load-bearing: at 0.0 the three
+    // GetElasticModuli overloads compute `p + 0.0`, so every existing SANISAND
+    // deck is byte-identical to the pre-ADR-93 build.
+    //
+    // What it is NOT: a cohesion. `mPresidualInput` (p_r) enters ~30 PLASTIC-side
+    // mean-stress sites -- the yield function, psi, M^b, M^d, D, the D_factor
+    // sigmoid -- and never reached the moduli; this one is its exact mirror
+    // image, reaching ONLY the moduli. Raising it puts a floor under G, K at the
+    // free-surface ring (ADR 93's whole subject) and adds no strength, which is
+    // what makes it calibratable separately from everything the strength
+    // calibration used.
+    double mPreElasticInput;  // Ladruno (ADR-93 II.1)
     double mPminInput;        // Ladruno: p_min as given; < 0 is the SENTINEL for
                               //          "resolve to 1.0e-3 * P_atm" (P_atm is not
                               //          known until the base ctor has run)
@@ -739,6 +778,13 @@ class LadrunoSANISAND : public ManzariDafalias
 
     // Per-construction echo (NOT latched -- see ADR 86 section 4.4).
     void echoLadrunoConstants(void);    // Ladruno
+
+    // Ladruno (ADR-93 II.1): re-derive mK/mG/mCe/mCep/mCep_Consistent at
+    // p = P_atm with `-pRe` applied. A no-op (early return, no arithmetic) when
+    // the request is the default 0.0. Called from initialize() and from
+    // getCopy(const char*), the two places a fresh object's initial elastic
+    // operator is fixed before any strain has been seen.
+    void refreshInitialElasticOperator(void);   // Ladruno (ADR-93 II.1)
 
     // Ladruno (ADR-86 PR-3): the three input checks, in one place rather than
     // copied into both full constructors. Called before applyLadrunoConstants().

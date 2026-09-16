@@ -171,7 +171,7 @@ OPS_LadrunoSANISAND(void)
         opserr << "Want: nDMaterial LadrunoSANISAND tag? G0? nu? e_init? Mc? c? lambda_c? e0? ksi?"
                << " P_atm? m? h0? Ch? nb? A0? nd? z_max? cz? Rho?"
                << " <IntScheme? TanType? JacoType? TolF? TolR?>"
-               << " <-Presidual pr?> <-Pmin pmin?> <-honorTolR 0|1>"
+               << " <-Presidual pr?> <-pRe pre?> <-Pmin pmin?> <-honorTolR 0|1>"
                << " <-maxSubsteps n?>"
                << " <-implex> <-implexControl tol? reductionLimit?>"
                << " <-implexAlpha a?> <-implexDt pseudo|strain|user <dt?>>"     // Ladruno (ADR-92)
@@ -199,6 +199,8 @@ OPS_LadrunoSANISAND(void)
     oData[4] = 1.0e-7;     // TolR        )
 
     double presidual = 0.0;    // Ladruno: default -- a cohesionless sand has no cohesion
+    double preElastic = 0.0;   // Ladruno (ADR-93 II.1): default OFF -- no stiffness floor,
+                               //          so every pre-ADR-93 deck is byte-identical
     double pmin      = -1.0;   // Ladruno: sentinel -- resolve to 1.0e-3 * P_atm in the ctor
     int    honorTolR = 0;      // Ladruno: default = vanilla's hardcoded ModifiedEuler
                                //          substep tolerance 1e-4 (ADR-86 PR-3)
@@ -268,6 +270,34 @@ OPS_LadrunoSANISAND(void)
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": -Presidual must be >= 0 (got " << presidual
                        << "). p_residual is an apparent cohesion c = p_r*tan(phi)." << endln;
+                return 0;
+            }
+        }
+        // Ladruno (ADR-93 II.1): the ELASTIC-ONLY confinement floor.
+        // `-Pelastic` is accepted as a synonym because that is the spelling the
+        // ADR-93 decision memo (_adr93_decision_2026-09-07.md, D2) wrote down
+        // before the flag was built; `-pRe` is the name the parameter carries in
+        // the ADR text itself (`p_r,e`) and in the numpy oracle, and is the one
+        // the echo, Print and the guide use.
+        else if (strcmp(argTok, "-pRe") == 0 || strcmp(argTok, "-pre") == 0 ||
+                 strcmp(argTok, "-Pre") == 0 || strcmp(argTok, "-PRe") == 0 ||
+                 strcmp(argTok, "-Pelastic") == 0 || strcmp(argTok, "-pelastic") == 0) {
+            seenFlag = true;
+            numData  = 1;
+            if (OPS_GetDoubleInput(&numData, &preElastic) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe wants one value (the elastic-only confinement floor,"
+                          " in this deck's stress units)" << endln;
+                return 0;
+            }
+            if (preElastic < 0.0) {
+                // A stiffness floor below zero is not "a smaller floor": it lowers
+                // the modulus argument below the stress and, past -p, pins the whole
+                // model at m_Pmin. Refuse, the same way -Presidual refuses.
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe must be >= 0 (got " << preElastic
+                       << "). It is a STIFFNESS floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm)."
+                          " It adds NO strength -- use -Presidual for that." << endln;
                 return 0;
             }
         }
@@ -713,7 +743,7 @@ OPS_LadrunoSANISAND(void)
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": unrecognized option '" << argTok << "'."
                        << " Expected a numeric positional optional or one of"
-                       << " -Presidual / -Pmin / -honorTolR / -maxSubsteps /"
+                       << " -Presidual / -pRe / -Pmin / -honorTolR / -maxSubsteps /"
                        << " -implex / -implexControl / -implexAlpha / -implexDt /"
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
@@ -773,7 +803,8 @@ OPS_LadrunoSANISAND(void)
                             (int)oData[0], (int)oData[1], (int)oData[2], oData[3], oData[4],
                             presidual, pmin, honorTolR, maxSubsteps, reversalTol,
                             reversalRel,     // Ladruno ADR-92 P2-5b
-                            flipAlphaInMode);   // Ladruno ADR-92 P2-7
+                            flipAlphaInMode, // Ladruno ADR-92 P2-7
+                            preElastic);     // Ladruno (ADR-93 II.1)
 
     if (theMaterial == 0) {
         opserr << "WARNING ran out of memory for nDMaterial LadrunoSANISAND material with tag: "
@@ -811,10 +842,11 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel, int flipAlphaInMode)
+    double reversalRel, int flipAlphaInMode, double PreElastic)
   : ManzariDafalias(tag, classTag, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, ch,
                     nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType, JacoType, TolF, TolR),
     mPresidualInput(Presidual),
+    mPreElasticInput(PreElastic),                                                     // Ladruno (ADR-93 II.1)
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
@@ -840,11 +872,12 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel, int flipAlphaInMode)
+    double reversalRel, int flipAlphaInMode, double PreElastic)
   : ManzariDafalias(tag, ND_TAG_LadrunoSANISAND, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm,
                     m, h0, ch, nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType,
                     JacoType, TolF, TolR),
     mPresidualInput(Presidual),
+    mPreElasticInput(PreElastic),                                                     // Ladruno (ADR-93 II.1)
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
@@ -869,6 +902,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
 LadrunoSANISAND::LadrunoSANISAND(int classTag)
   : ManzariDafalias(classTag),
     mPresidualInput(0.0),
+    mPreElasticInput(0.0),                                                            // Ladruno (ADR-93 II.1)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
@@ -888,6 +922,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
 LadrunoSANISAND::LadrunoSANISAND()
   : ManzariDafalias(ND_TAG_LadrunoSANISAND),
     mPresidualInput(0.0),
+    mPreElasticInput(0.0),                                                            // Ladruno (ADR-93 II.1)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
@@ -927,6 +962,16 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
         opserr << "WARNING LadrunoSANISAND tag " << tag << ": p_residual = " << mPresidualInput
                << " < 0 is meaningless; using 0." << endln;
         mPresidualInput = 0.0;
+    }
+    // Ladruno (ADR-93 II.1): same rule as p_residual just above. A NEGATIVE
+    // elastic floor would LOWER the moduli below what the stress says -- and
+    // below `-p` it would drive the argument of the sqrt through the m_Pmin
+    // clamp from the wrong side, i.e. silently pin every Gauss point in the model
+    // at the floor stiffness. Refuse rather than widen.
+    if (mPreElasticInput < 0.0) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": pRe = " << mPreElasticInput
+               << " < 0 is meaningless (it is a STIFFNESS floor); using 0." << endln;
+        mPreElasticInput = 0.0;
     }
     if (mPminInput == 0.0) {
         opserr << "WARNING LadrunoSANISAND tag " << tag
@@ -1002,9 +1047,46 @@ void
 LadrunoSANISAND::applyLadrunoConstants(void)
 {
     m_Presidual     = mPresidualInput;
+    // Ladruno (ADR-93 II.1): the elastic-only floor, on the SAME "win the last
+    // write" rule as the two lines around it -- the base's initialize() resets it
+    // to 0.0 (and revertToStart routes through initialize), so a seam asserted
+    // anywhere else would silently revert mid-analysis.
+    m_PreElastic    = mPreElasticInput;    // Ladruno (ADR-93 II.1)
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
     mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
+}
+
+// Ladruno (ADR-93 II.1): re-derive the INITIAL elastic operator with the floor in
+// place.
+//
+// `ManzariDafalias::initialize()` computes mK, mG, mCe (= mCep =
+// mCep_Consistent) at p = P_atm at the foot of its body -- BEFORE
+// applyLadrunoConstants() has restored `m_PreElastic`, because the base
+// constructor runs first by language rule. With `-pRe` on, that operator is the
+// UNFLOORED one, and anything that reads the tangent before the first
+// setTrialStrain (getInitialTangent, an eigenvalue analysis, a Gauss point that
+// is never strained) would see a stiffness the deck did not ask for. This redoes
+// the base's own three lines, from the same p = P_atm diagonal.
+//
+// Guarded on the REQUEST (`mPreElasticInput`), not on `m_PreElastic`, so that at
+// the default 0.0 not one floating-point operation is re-executed: the
+// byte-identity of an existing deck is then a property of the control flow, not
+// an argument about `x + 0.0`.
+void
+LadrunoSANISAND::refreshInitialElasticOperator(void)
+{
+    if (mPreElasticInput == 0.0)
+        return;
+
+    Vector mSigAtm(6);
+    mSigAtm(0) = m_P_atm;
+    mSigAtm(1) = m_P_atm;
+    mSigAtm(2) = m_P_atm;
+    this->GetElasticModuli(mSigAtm, mVoidRatio, mK, mG);
+    mCe             = this->GetStiffness(mK, mG);
+    mCep            = mCe;
+    mCep_Consistent = mCe;
 }
 
 // Ladruno (ADR-86 PR-3): does this deck's IntScheme actually reach the code that
@@ -1080,6 +1162,17 @@ LadrunoSANISAND::echoLadrunoConstants(void)
         opserr << " (default, cohesionless)";
     else
         opserr << " (user)";
+
+    // Ladruno (ADR-93 II.1): echoed next to p_residual because the pair is the
+    // whole point -- p_residual floors STRENGTH and never the moduli, pRe floors
+    // STIFFNESS and never the strength. Named with what it does, so a reader
+    // cannot mistake it for a second cohesion.
+    opserr << ", pRe = " << m_PreElastic;
+    if (mPreElasticInput == 0.0)
+        opserr << " (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor)";
+    else
+        opserr << " (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm);"
+                  " yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1)";
 
     opserr << ", p_min = " << m_Pmin;
     if (mPminInput < 0.0)
@@ -1221,6 +1314,9 @@ LadrunoSANISAND::initialize()
 {
     ManzariDafalias::initialize();   // the base must still run its own init
     this->applyLadrunoConstants();   // Ladruno: and we take the last write
+
+    this->refreshInitialElasticOperator();   // Ladruno (ADR-93 II.1)
+
     // Ladruno (ADR-92 P1): a revertToStart puts the material back at step 0, so
     // the extrapolation history has to go with it -- d_eps_p(n) from a discarded
     // load path is the single most misleading thing this class could carry
@@ -1311,6 +1407,18 @@ LadrunoSANISAND::getCopy(const char *type)
         // clone made AFTER this instance's own flip must not re-run the
         // once-per-flip handling either.
         clone->mFlipSeen        = mFlipSeen;                                        // Ladruno ADR-92 P2-7c
+        // Ladruno (ADR-93 II.1): -pRe is not a WRAPPER constructor argument (the
+        // wrappers' signatures stop at maxSubsteps, exactly as they do for
+        // mReversalTol above), so it is transferred here and then re-asserted on
+        // the base seam. applyLadrunoConstants() is the only writer of
+        // m_PreElastic, and the clone's own constructor has already run it once
+        // with the wrapper default 0.0 -- so it MUST run again here, after the
+        // request has been copied, or every Gauss point would silently run with
+        // the floor OFF while the deck-level prototype echoed it ON. That is the
+        // ADR-86 section 3 defect, in a new variable.
+        clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
+        clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1324,6 +1432,18 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
         clone->mFlipAlphaInMode = mFlipAlphaInMode;                                  // Ladruno ADR-92 P2-7
         clone->mFlipSeen        = mFlipSeen;                                        // Ladruno ADR-92 P2-7c
+        // Ladruno (ADR-93 II.1): -pRe is not a WRAPPER constructor argument (the
+        // wrappers' signatures stop at maxSubsteps, exactly as they do for
+        // mReversalTol above), so it is transferred here and then re-asserted on
+        // the base seam. applyLadrunoConstants() is the only writer of
+        // m_PreElastic, and the clone's own constructor has already run it once
+        // with the wrapper default 0.0 -- so it MUST run again here, after the
+        // request has been copied, or every Gauss point would silently run with
+        // the floor OFF while the deck-level prototype echoed it ON. That is the
+        // ADR-86 section 3 defect, in a new variable.
+        clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
+        clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1485,7 +1605,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
+    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1536,6 +1656,15 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // Ladruno WP-99 (F7)
     ladrunoData(33) = mImplexCommitRefusedLatch ? 1.0 : 0.0;
 
+    // Ladruno (ADR-93 II.1): the deck's -pRe request. It MUST cross for exactly
+    // the reason mPresidualInput does (ADR 86 section 3, the defect this class was
+    // written about): an MP worker or a database-restored material that starts
+    // with the floor at 0 while the rank beside it runs a floored one is running
+    // a DIFFERENT elastic law, silently. The base seam m_PreElastic is not sent
+    // separately -- it is not on the vanilla Vector(97) and recvSelf re-derives it
+    // through applyLadrunoConstants(), which is the only writer.
+    ladrunoData(34) = mPreElasticInput;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1555,7 +1684,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
+    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1565,6 +1694,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     }
 
     mPresidualInput = ladrunoData(0);
+    mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -4270,6 +4400,12 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     s << "  p_residual = " << m_Presidual
       << "   (input " << mPresidualInput
       << (mPresidualInput == 0.0 ? ", default: cohesionless)" : ", user)") << endln;
+    // Ladruno (ADR-93 II.1): the elastic-only confinement floor.
+    s << "  pRe        = " << m_PreElastic
+      << (mPreElasticInput == 0.0
+            ? "   (default 0: OFF, no stiffness floor)"
+            : "   (user: ELASTIC-ONLY floor, G,K ~ sqrt(max(p+pRe,p_min)/P_atm);"
+              " strength side untouched)") << endln;
     s << "  p_min      = " << m_Pmin;
     if (mPminInput < 0.0)
         s << "   (default = 1e-3*P_atm, P_atm = " << m_P_atm << ")" << endln;

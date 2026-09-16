@@ -917,6 +917,18 @@ ManzariDafalias::initialize()
     // set minimum allowable p
     m_Pmin      = 1.0e-4 * m_P_atm;
     m_Presidual = 1.0e-2 * m_P_atm;
+    // Ladruno (ADR-93 II.1): the elastic-only confinement floor. Vanilla value is
+    // ZERO, so every base-class path stays bit-identical (`p + 0.0` is the
+    // identity on a finite double, and on `-0.0` it only turns the sum into
+    // `+0.0`, which the very next `<= m_Pmin` test already maps to m_Pmin).
+    // Set HERE and not in the four constructor bodies because initialize() is the
+    // one site all four reach AND the site revertToStart() re-runs -- the same
+    // rule m_Pmin/m_Presidual above follow. It must precede the GetElasticModuli
+    // call at the foot of this function, which reads it.
+    // LadrunoSANISAND::initialize() calls this first and then
+    // applyLadrunoConstants(), which takes the last write (the class's whole
+    // design note, LadrunoSANISAND.h).
+    m_PreElastic = 0.0;   // Ladruno (ADR-93 II.1)
 
     // strain and stress terms
     mEpsilon.Zero();
@@ -4868,7 +4880,16 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
                 const Vector& cEStrain, double &K, double &G)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
+    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // this part could make problems
@@ -4910,7 +4931,16 @@ void
 ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double &K, double &G, const double& D)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
+    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
@@ -4930,7 +4960,16 @@ void
 ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double &K, double &G)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of exactly THREE sites in this file (the three GetElasticModuli
+    // overloads). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
