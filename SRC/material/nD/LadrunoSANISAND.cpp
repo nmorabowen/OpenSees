@@ -146,13 +146,14 @@ static int numLadrunoSANISANDMaterials = 0;
 // Ladruno (ADR-86 PR-3): IntScheme numbers, re-declared here because
 // ManzariDafalias's own INT_* macros are defined in ManzariDafalias.cpp (:38-49)
 // and are therefore not visible outside that TU. Prefixed so they can never
-// collide with the base's if that ever changes. Only the three this file needs.
+// collide with the base's if that ever changes. Only the four this file needs.
 // KEEP IN SYNC with ManzariDafalias.cpp:38-49 -- there is no compile-time link
 // between the two, which is why schemeReachesModifiedEuler() spells out the
 // dispatch it is asserting rather than trusting the names.
-#define INT_LSANISAND_MAXENE_MFE     0    // ManzariDafalias INT_MAXENE_MFE
-#define INT_LSANISAND_ModifiedEuler  1    // ManzariDafalias INT_ModifiedEuler
-#define INT_LSANISAND_RungeKutta45  45    // ManzariDafalias INT_RungeKutta45
+#define INT_LSANISAND_MAXENE_MFE      0    // ManzariDafalias INT_MAXENE_MFE
+#define INT_LSANISAND_ModifiedEuler   1    // ManzariDafalias INT_ModifiedEuler
+#define INT_LSANISAND_BackwardEuler   2    // ManzariDafalias INT_BackwardEuler -- Ladruno (WP-108)
+#define INT_LSANISAND_RungeKutta45   45    // ManzariDafalias INT_RungeKutta45
 
 void *
 OPS_LadrunoSANISAND(void)
@@ -1166,7 +1167,19 @@ LadrunoSANISAND::refreshInitialElasticOperator(void)
 //   scheme  1  INT_ModifiedEuler  explicit_integrator -> ModifiedEuler      REACHES
 //   scheme  0  INT_MAXENE_MFE     MaxEnergyInc        -> ModifiedEuler      REACHES
 //   anything not in {0..9, 45}    explicit_integrator -> default:           REACHES
-//   scheme  2  INT_BackwardEuler  integrate() branches to BackwardEuler_CPPM  no
+//   scheme  2  INT_BackwardEuler  integrate() tries BackwardEuler_CPPM first;    REACHES,
+//              on non-convergence its own retry ladder (ManzariDafalias.cpp     conditionally
+//              ~2472-2588) falls back to explicit_integrator, whose switch does
+//              not enumerate INT_BackwardEuler, so THAT call hits `default:` ->
+//              ModifiedEuler. Ladruno (WP-108): this row used to say "no" -- it
+//              was wrong. WP-105/F12 measured it directly: a `-maxSubsteps 100`
+//              cap on scheme 2 turned a run that completed 40 of 40 uncapped
+//              into one that refuses at step 18 (Ladruno_files/testbed/
+//              hypo_bearing/adr92_f12/F12_intscheme2_verdict.md, section 6).
+//              Unlike schemes 0/1 (which call ModifiedEuler unconditionally,
+//              every step), scheme 2 only routes there on the fallback path --
+//              but "sometimes reaches it" is not "never reaches it", and the
+//              warning below claimed the latter.
 //   scheme  3  INT_RungeKutta                         -> RungeKutta4          no
 //   scheme  5  INT_ForwardEuler                       -> ForwardEuler         no
 //   scheme 45  INT_RungeKutta45                       -> RungeKutta45         no  (it
@@ -1184,6 +1197,19 @@ LadrunoSANISAND::schemeReachesModifiedEuler(void) const
     // a guard.
     const int s = (int)mScheme;
     if (s == INT_LSANISAND_ModifiedEuler || s == INT_LSANISAND_MAXENE_MFE)
+        return true;
+    // Ladruno (WP-108): scheme 2's implicit retry ladder (BackwardEuler_CPPM,
+    // ManzariDafalias.cpp ~2472-2588) falls back to explicit_integrator on
+    // non-convergence or ladder exhaustion, and that switch does not enumerate
+    // INT_BackwardEuler, so it hits `default:` -> ModifiedEuler -- the same
+    // seam -maxSubsteps/-honorTolR read. schemeReachesModifiedEuler() answers
+    // "can this deck's cap ever bind", not "does every step of this scheme
+    // call ModifiedEuler", so scheme 2's conditional (fallback-only) routing
+    // still earns `true`: measured on WP-105/F12, a `-maxSubsteps 100` cap
+    // turned a completing 40/40 run into a refusal at step 18. Returning
+    // `false` here made the constructor and print() warnings below claim the
+    // cap has NO EFFECT on scheme 2, which is false -- see LEDGER_quirks.md.
+    if (s == INT_LSANISAND_BackwardEuler)
         return true;
     // Scheme numbers the base's switch does not enumerate fall through
     // explicit_integrator's `default:`, which is ModifiedEuler.
@@ -4524,8 +4550,12 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     // a scheme that never routes there the cap is stored, echoed, wired -- and does
     // nothing. NB IntScheme 7 is called INT_MAXSTR_MFE and does NOT reach
     // ModifiedEuler: MaxStrainInc has no case for it and falls through to
-    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name;
-    // schemeReachesModifiedEuler() encodes the switch and is correct as written.
+    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name.
+    // Ladruno (WP-108): schemeReachesModifiedEuler() used to also get scheme 2
+    // wrong by the same "read the switch" rule -- BackwardEuler_CPPM's own
+    // fallback ladder ends in explicit_integrator's `default:` -> ModifiedEuler,
+    // so the cap DOES bind there (conditionally). Fixed; see the function's
+    // header comment and LEDGER_quirks.md.
     if (mMaxSubsteps != 0 && !this->schemeReachesModifiedEuler())
         s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
              " ModifiedEuler(), so -maxSubsteps is INERT on this deck." << endln;

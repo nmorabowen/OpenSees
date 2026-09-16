@@ -126,11 +126,27 @@ not" defect this fork's parsers exist to make impossible).
   refusal**. The companion runs at `commitState`, where no global Newton is left to react if it
   seizes — it must be able to *fail* rather than force-accept at `dT_min = 1e-6`, which is
   precisely what `-maxSubsteps` (ADR-86b / #792 T1) buys.
-- **Scheme 2 (`BackwardEuler_CPPM`).** *Permitted* but not the default — P0 measured 58–74 % of
-  its calls on the low-confinement corner path taking the low-`p` branch, whose Newton is
-  disabled by a literal `errFlag = 0` (`ManzariDafalias.cpp:2264`), so it silently falls through
-  to `explicit_integrator` (i.e. `ModifiedEuler` again) and costs a 19-unknown Newton everywhere
-  else it doesn't. Same `-maxSubsteps > 0` requirement applies, refused the same way.
+- **Scheme 2 (`BackwardEuler_CPPM`).** *Permitted* but not the default. Same `-maxSubsteps > 0`
+  requirement applies, refused the same way (`LadrunoSANISAND.cpp:2039-2048`, current line numbers -- see the source, not this note, if they move again) — and, as of WP-108,
+  the constructor's own "`-maxSubsteps` has NO EFFECT with IntScheme 2" warning no longer prints,
+  because it was **false** (WP-105 / F12; `schemeReachesModifiedEuler()` used to answer `false` for
+  `s == 2`, see `LEDGER_quirks.md`). `BackwardEuler_CPPM`'s own retry ladder
+  (`ManzariDafalias.cpp` ~2472-2588) falls back to `explicit_integrator` on non-convergence or
+  ladder exhaustion, and that switch does not enumerate `INT_BackwardEuler` — it hits `default:` ->
+  `ModifiedEuler`, the same seam `-maxSubsteps`/`-honorTolR` read. WP-105 measured what scheme 2
+  buys and what it costs at a material point on a GIVEN strain increment (the commit-time companion's
+  own regime): **3.7–4.3x less discretisation error and 4.2–7.6x less wall time** than scheme 1 at
+  `dEz = 1e-4`, rising to 7–30x / 10–13x at `4.6e-4`; the low-`p` explicit fallback fires on **0 %**
+  of steps until the point is pinned at `p_min`, where it fires on ~53 % and both schemes become the
+  same operator. What it costs UNDER A GLOBAL NEWTON (an increment merely proposed, not given): a
+  CPPM step that cannot return recurses through up to 512 half-increments before falling back,
+  **silently** — `integrate()` discards the return value, `debugFlag` is compiled off, and nothing
+  refuses. Measured at 12–134 s for a single failing step and at outright stalls (8 of 8 arms) where
+  scheme 1 completes (1 of 8); on the CP1/ADR-95 bearing leg it reached `s/B = 4e-5` in 1347 s
+  against the baseline's `0.019` in 1267 s, with `ds` pinned at 25x the subdivision floor. **Use it
+  where the increment is given (a companion return, a prescribed-strain probe); do not make it the
+  primary integrator of a load- or displacement-controlled BVP without a cap on the ladder.** Full
+  tables: `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
 - **Every other scheme (0/3/4/5/6/7/8/9/45) is refused with a sentence.** They carry no
   error-controlled substepping, so the companion could not report a failed return and
   `-implexControl` would have nothing to refuse.
