@@ -105,6 +105,14 @@ class LadrunoQuad : public Element
     int revertToStart(void);
     int update(void);
 
+    // Ladruno WP-107 (ADR-75b L3-1). True for the STD / BBAR / SSP formulations
+    // under -geom linear, with every material also declaring itself re-entrant.
+    // False for EAS (formEAStrue runs on ~12 shared function-scope statics AND
+    // condenses through Matrix inversion, which uses the process-wide
+    // Matrix::matrixWork scratch) and for -geom finite (updateFinite's
+    // `static Matrix Fm`).
+    virtual bool ladrunoThreadSafeUpdate(void) const;
+
     // stiffness / mass / residual
     const Matrix &getTangentStiff(void);
     const Matrix &getInitialStiff(void);
@@ -158,8 +166,23 @@ class LadrunoQuad : public Element
     double bulkVisc_b2;
     int planeType;                     // 1 = PlaneStrain, 2 = PlaneStress
 
-    static double shp[3][4];           // shp[0/1] = dN/dx,dN/dy ; shp[2] = N
-    static double shpBar[2][4];        // element-mean gradients (B-bar)
+    // Ladruno WP-107 (ADR-75b L3-1, hazard H2): thread_local. These two are
+    // class-wide scratch written by shapeFunction()/computeShapeBar() and read
+    // by formB() and most of the form* methods, i.e. ONE buffer shared by every
+    // LadrunoQuad in the model. Under a threaded Domain::update that is a
+    // guaranteed collision.
+    //
+    // thread_local rather than per-element buffers ON PURPOSE, and the choice is
+    // narrower than ADR-75b section 4.2's anti-goal ("thread_local statics as
+    // the de-statication strategy ... forecloses exact gather"). That objection
+    // is about loops B/C, where an EXACT ordered gather needs every element's
+    // matrix live at once. Loop A has no gather and no reduction, so nothing is
+    // foreclosed -- and thread_local costs 0 bytes per element, where ADR-75b
+    // section 11 q9 prices per-element buffers at 1-4 GB of SERIAL memory at
+    // production element counts. Both are POD arrays with static
+    // initialisation, so there is no TLS guard on the access path.
+    static thread_local double shp[3][4];    // shp[0/1] = dN/dx,dN/dy ; shp[2] = N
+    static thread_local double shpBar[2][4]; // element-mean gradients (B-bar)
     static double pts[4][2];           // gauss points
     static double wts[4];              // gauss weights
 

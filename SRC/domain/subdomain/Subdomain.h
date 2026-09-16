@@ -93,6 +93,9 @@ class Subdomain: public Element, public Domain
     virtual int update(void);
     virtual int update(double newTime, double dT);
 
+    // Ladruno WP-107: never thread the element loop inside a Subdomain.
+    virtual bool ladrunoThreadedUpdateAllowed(void) const { return false; }
+
 //#ifdef _PARALLEL_PROCESSING
     virtual  int barrierCheckIN(void) {return 0;};
     virtual  int barrierCheckOUT(int) {return 0;};

@@ -104,6 +104,26 @@ class ManzariDafalias : public NDMaterial
 	virtual const Vector& getEStrain();
 	virtual const Vector& getPStrain();
 
+	// Ladruno WP-107 (ADR-75b L3-1): may two instances integrate concurrently?
+	// The answer is per CONFIGURATION, not per class, and the discriminator is
+	// the integration scheme:
+	//   IntScheme 1 (ModifiedEuler)          -> YES. Audited: the whole
+	//       ModifiedEuler -> GetElastoPlasticTangent path carries no
+	//       function-scope static Vector/Matrix work arrays, and no
+	//       Matrix::Solve/Invert (both of which run on the process-wide
+	//       Matrix::matrixWork scratch, which they may even free and
+	//       reallocate mid-call).
+	//   IntScheme 2 (BackwardEuler_CPPM)     -> NO. NewtonIter()'s work arrays
+	//       `sol/R/R2/dX/norms/jaco/jInv` are function-scope statics shared by
+	//       every instance, and NewtonSol*/NewtonIter* call Matrix::Invert and
+	//       Matrix::Solve.
+	//   IntScheme 4 (RungeKutta45)           -> NO. ~20 function-scope static
+	//       Vector/Matrix work arrays plus a `static bool do_once`.
+	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> NOT AUDITED, so NO.
+	// Everything not proven re-entrant answers false, per the ADR's
+	// "un-audited is never threaded" rule.
+	virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+
 
   protected:
 

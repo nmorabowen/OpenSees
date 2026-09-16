@@ -1696,6 +1696,16 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 // `ASDConcrete3DMaterial::GlobalParameters` template (:307-342). Anonymous
 // namespace: this is one process's diagnostic accumulator, not an interface, and
 // nothing outside this translation unit may reach it.
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in LadrunoSANISAND.h.
+bool
+LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+    if (mImplexOpt.enabled)
+        return false;                 // process-wide IMPL-EX ledger, see the header
+    return this->ManzariDafalias::ladrunoThreadSafeUpdate();
+}
+
+
 namespace {
 
 class LadrunoImplexGlobals                                    // Ladruno (ADR-92 P1)

@@ -40,6 +40,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 
 #include <elementAPI.h>
 #include <Ladruno_mutation.h>                  // Ladruno: ADR-87 D2 mutation gates
+#include <LadrunoThreads.h>                    // Ladruno: WP-107 thread-count knob
 #include <cstring>                             // Ladruno: ADR-87 D2 (strncat/strncpy)
 #include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
 #include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
@@ -1599,6 +1600,53 @@ int OPS_LadrunoBuild()   // Ladruno
 #endif
     if (OPS_SetString(build) < 0) {
         opserr << "WARNING ladrunoBuild: failed to set build string\n";
+        return -1;
+    }
+    return 0;
+}
+
+
+// Ladruno WP-107 (ADR-75b L3-1): `ladrunoThreads` -- the ONE knob for the
+// element state-determination loop's thread count (ADR-75b P-5: MKL solver
+// threads x assembly threads x MPI ranks oversubscribe and make every bench
+// lie, so there is exactly one verb).
+//
+//   ladrunoThreads          -> query; returns the current count
+//   ladrunoThreads <n>      -> request n threads; returns what was stored
+//
+// Default is 1 (ADR-40's standing "OpenMP-by-default is an anti-goal"), seeded
+// from the LADRUNO_THREADS environment variable. Asking for n > 1 in a binary
+// built without LADRUNO_OPENMP is NOT silently accepted -- it warns, because a
+// silently-serial "threaded" run is how a bench lies.
+int OPS_LadrunoThreads()   // Ladruno WP-107
+{
+    int numArgs = OPS_GetNumRemainingInputArgs();
+
+    if (numArgs >= 1) {
+        int n = 1;
+        int numData = 1;
+        if (OPS_GetIntInput(&numData, &n) < 0) {
+            opserr << "WARNING ladrunoThreads: could not read the thread count\n";
+            return -1;
+        }
+        if (n < 1) {
+            opserr << "WARNING ladrunoThreads: count " << n
+                   << " is < 1 -- clamped to 1 (serial)\n";
+        }
+        int stored = ladruno_setNumThreads(n);
+        if (stored > 1 && !ladruno_openmpCompiledIn()) {
+            opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
+                   << "LADRUNO_OPENMP, so the element loop stays SERIAL no "
+                   << "matter what is requested. Rebuild with "
+                   << "-DLADRUNO_OPENMP=ON (Ladruno_scripts\\build.bat does "
+                   << "this by default).\n";
+        }
+    }
+
+    int cur = ladruno_getNumThreads();
+    int numData = 1;
+    if (OPS_SetIntOutput(&numData, &cur, true) < 0) {
+        opserr << "WARNING ladrunoThreads: failed to set the output\n";
         return -1;
     }
     return 0;

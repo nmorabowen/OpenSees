@@ -208,6 +208,20 @@ class Domain
     virtual  int  revertToStart(void);    
     virtual  int  update(void);
     virtual  int  update(double newTime, double dT);
+
+    // Ladruno WP-107 (ADR-75b L3-1). May update()'s element loop be threaded on
+    // THIS domain? Plain Domain: yes (subject to the per-element allowlist and
+    // the thread count). PartitionedDomain and Subdomain override to false --
+    // the WP is desktop/shared-memory-scoped, cluster runs stay exactly as they
+    // were, and the ADR's hybrid MPI+threads question (section 11 q6) is
+    // untouched and still deferred.
+    virtual  bool ladrunoThreadedUpdateAllowed(void) const { return true; }
+
+    // Ladruno WP-107. Runs the threaded loop-A if every precondition holds and
+    // returns true (ok then carries the result); returns false when the caller
+    // must fall back to the serial loop. Always false when compiled without
+    // LADRUNO_OPENMP, or at 1 thread.
+    bool ladrunoThreadedUpdate(int &ok);
     virtual  int  updateParameter(int tag, int value);
     virtual  int  updateParameter(int tag, double value);    
     

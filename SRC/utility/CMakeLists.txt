@@ -12,12 +12,14 @@ target_sources(OPS_Utilities
     SimulationInformation.cpp 
     StringContainer.cpp
     PeerNGA.cpp
+    LadrunoThreads.cpp
     PUBLIC
-    Timer.h 
-    FileIter.h 
-    File.h 
-    SimulationInformation.h 
-    StringContainer.h 
+    Timer.h
+    FileIter.h
+    File.h
+    SimulationInformation.h
+    StringContainer.h
+    LadrunoThreads.h
 )
 
 target_include_directories(OPS_Utilities PUBLIC ${CMAKE_CURRENT_LIST_DIR})

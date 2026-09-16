@@ -501,6 +501,12 @@ static int Tcl_ops_LadrunoBuild(ClientData clientData, Tcl_Interp *interp, int a
     return TCL_OK;
 }
 
+static int Tcl_ops_LadrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno WP-107 element-loop thread count
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoThreads() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
 static int Tcl_ops_LadrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-87 D2 mutation query
     wrapper->resetCommandLine(argc, 1, argv);
     if (OPS_LadrunoMutation() < 0) return TCL_ERROR;
@@ -1983,6 +1989,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"ladrunoBeginAugment", &Tcl_ops_LadrunoBeginAugment);            // Ladruno ADR-41 D1
     addCommand(interp,"ladrunoEndAugment", &Tcl_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1
     addCommand(interp,"ladrunoBuild", &Tcl_ops_LadrunoBuild);                          // Ladruno build-stamp query
+    addCommand(interp,"ladrunoThreads", &Tcl_ops_LadrunoThreads);                      // Ladruno WP-107 element-loop thread count
     addCommand(interp,"ladrunoMutation", &Tcl_ops_LadrunoMutation);                    // Ladruno ADR-87 D2 mutation-gate query
     addCommand(interp,"ladrunoContactForce", &Tcl_ops_LadrunoContactForce);  // Ladruno ADR-39 B3
     addCommand(interp,"eigen", &Tcl_ops_eigen);

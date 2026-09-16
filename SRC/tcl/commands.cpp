@@ -32,6 +32,7 @@
 
 #include <classTags.h>
 #include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gates
+#include <LadrunoThreads.h>     // Ladruno WP-107: element-loop thread count
 
 #include <DOF_Group.h>
 
@@ -732,6 +733,9 @@ version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int
 ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
+
+int
+ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-107 element-loop thread count
 
 int
 ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno ADR-87 D2 mutation-gate query
@@ -1581,6 +1585,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "version", &version,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "ladrunoBuild", &ladrunoBuild,   // Ladruno build-stamp query
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "ladrunoThreads", &ladrunoThreads,   // Ladruno WP-107 element-loop thread count
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "ladrunoMutation", &ladrunoMutation,   // Ladruno ADR-87 D2 mutation-gate query
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -11539,6 +11545,39 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 #endif
   Tcl_SetResult(interp, buffer, TCL_VOLATILE);
 
+  return TCL_OK;
+}
+
+// Ladruno WP-107 (ADR-75b L3-1): classic-Tcl twin of `ladrunoThreads`. The ONE
+// knob for the element state-determination loop's thread count.
+//   ladrunoThreads       -> query
+//   ladrunoThreads <n>   -> request n (clamped to >= 1); returns what was stored
+int
+ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  char buffer[32];
+
+  if (argc >= 2) {
+    int n = 1;
+    if (Tcl_GetInt(interp, argv[1], &n) != TCL_OK) {
+      opserr << "WARNING ladrunoThreads: could not read the thread count
+";
+      return TCL_ERROR;
+    }
+    if (n < 1)
+      opserr << "WARNING ladrunoThreads: count " << n
+             << " is < 1 -- clamped to 1 (serial)
+";
+    int stored = ladruno_setNumThreads(n);
+    if (stored > 1 && !ladruno_openmpCompiledIn())
+      opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
+             << "LADRUNO_OPENMP, so the element loop stays SERIAL no matter "
+             << "what is requested.
+";
+  }
+
+  snprintf(buffer, sizeof(buffer), "%d", ladruno_getNumThreads());
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
   return TCL_OK;
 }
 

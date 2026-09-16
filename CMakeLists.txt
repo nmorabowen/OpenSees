@@ -714,6 +714,59 @@ add_library(OPS_Domain             OBJECT)
 add_library(OPS_SysOfEqn           OBJECT)
 add_library(OPS_SysOfEqnPython     OBJECT)
 
+# ---------------------------------------------------------------------------
+# Ladruno WP-107 (ADR-75b stage L3-1, DESKTOP-SCOPED): OpenMP for the element
+# state-determination loop in Domain::update() -- "loop A", the one assembly
+# loop of ADR-75b section 2 that carries NO floating-point reduction and is
+# therefore bit-identical when threaded.
+#
+# SCOPE, stated up front because ADR-75b section 13 CLOSED this lane for the
+# production/cluster path: G-L3 measured loop A at 0.26% of step at 540 675 DOF
+# under MUMPS -- the gate failed by ~42x and the trend is monotonic in N. What
+# section 13 left standing is "Lane 3 is at best a desktop-only optimization on
+# models <= ~136k DOF". That is exactly the TIMs plane-strain strip regime
+# (LadrunoQuad -bbar + LadrunoSANISAND, tens of thousands of Gauss points, a
+# desktop PARDISO solve), so this option exists for that case and no other.
+#
+# THE COMPILE FLAG IS DELIBERATELY NOT GLOBAL. It goes on OPS_Domain and
+# OPS_Utilities only -- NOT on OPS_Element. The fork carries 7 pre-existing
+# `#pragma omp` lines in PFEM (ADR-75b section 1) that have always been
+# compiler-ignored no-ops because nothing passed /openmp. Putting /openmp on
+# the element library would silently ACTIVATE untested PFEM threading as a side
+# effect of this WP. Keeping the flag off OPS_Element leaves them dead, exactly
+# as before.
+#
+# DUAL OpenMP RUNTIME, a known and accepted caveat. The serial targets already
+# link mkl_intel_thread + libiomp5md for desktop PARDISO (ADR-75 P1b, above).
+# With MSVC /openmp the objects also pull vcomp. Two OpenMP runtimes then
+# coexist in one process, each with its own pool. They are used in disjoint
+# phases (our element loop; MKL's factorization) so this is a performance
+# caveat, not a correctness one -- and it is the reason ADR-75b P-5's "one
+# coordinated thread-count policy" is implemented as an explicit num_threads(n)
+# clause (SRC/utility/LadrunoThreads.h) rather than omp_set_num_threads().
+# ---------------------------------------------------------------------------
+option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" OFF)
+set(LADRUNO_OPENMP_ACTIVE OFF)
+if(LADRUNO_OPENMP)
+  find_package(OpenMP)
+  if(OpenMP_CXX_FOUND)
+    set(LADRUNO_OPENMP_ACTIVE ON)
+    message(STATUS "Ladruno WP-107: OpenMP element loop ENABLED (${OpenMP_CXX_FLAGS}); runtime default is still 1 thread")
+  else()
+    message(WARNING "Ladruno WP-107: LADRUNO_OPENMP=ON but no OpenMP found -- the threaded element loop is compiled OUT")
+  endif()
+endif()
+
+if(LADRUNO_OPENMP_ACTIVE)
+  # PRIVATE on purpose: OBJECT libraries propagate usage requirements to their
+  # consumers, and the whole point above is that /openmp must NOT reach
+  # OPS_Element (PFEM's dormant pragmas).
+  foreach(_ladruno_omp_tgt OPS_Domain OPS_Utilities)
+    target_compile_options(${_ladruno_omp_tgt}     PRIVATE ${OpenMP_CXX_FLAGS})
+    target_compile_definitions(${_ladruno_omp_tgt} PRIVATE _LADRUNO_OPENMP)
+  endforeach()
+endif()
+
 # Ladruno ADR 1000: declare the target before final MP targets are linked;
 # SRC/system_of_eqn/ladrunoCMS supplies its sources later in the configure pass.
 if(LADRUNO_CMS)
@@ -1146,6 +1199,7 @@ target_link_libraries(OpenSees
   ZLIB::ZLIB
   Eigen3::Eigen
   ${PARDISO_MKL_LIBRARIES}   # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
+  ${OpenMP_CXX_LIBRARIES}    # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
 )
 
 # Ladruno ADR-75 P1d: `system Pardiso` in the TCL chain (SRC/tcl/commands.cpp,
@@ -1351,6 +1405,7 @@ target_link_libraries(OpenSeesPy
    Eigen3::Eigen
    ${Python_LIBRARIES}
    ${PARDISO_MKL_LIBRARIES}  # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
+   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
 )
 
 

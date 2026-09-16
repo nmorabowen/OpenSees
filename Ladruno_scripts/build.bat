@@ -315,6 +315,21 @@ if defined LADRUNO_CMS_BUILD (
 ) else (
     set "CMS_FLAGS=-DLADRUNO_CMS=OFF -DLADRUNO_CMS_BUILD_TESTS=OFF"
 )
+REM Ladruno WP-107 (ADR-75b L3-1): the threaded Domain::update element loop is
+REM compiled IN by default here, and is still a no-op at runtime because the
+REM thread count defaults to 1 (`ladrunoThreads` / LADRUNO_THREADS opt in).
+REM DECISION, recorded so it is not re-litigated: the CMake option defaults OFF
+REM (a build of this tree from bare cmake stays vanilla-shaped), but build.bat
+REM turns it ON, because a capability that has to be recompiled to be tried is a
+REM capability nobody tries -- and the serial path is byte-identical with the
+REM option compiled in (verified in the WP-107 PR at 1 thread AND with
+REM LADRUNO_OPENMP=OFF). Set LADRUNO_NO_OPENMP=1 to build it out.
+REM Passed EXPLICITLY both ways so a prior configure never sticks in the cache.
+if defined LADRUNO_NO_OPENMP (
+    set "OMP_FLAGS=-DLADRUNO_OPENMP=OFF"
+) else (
+    set "OMP_FLAGS=-DLADRUNO_OPENMP=ON"
+)
 REM CMAKE_NINJA_FORCE_RESPONSE_FILE=ON: push include/object/library lists into .rsp files so a
 REM DEEP source path (e.g. a .claude\worktrees\<name> build tree) can't blow a cl.exe command line
 REM past the Windows ~32 KB CreateProcess limit ("CreateProcess failed. The parameter is incorrect"
@@ -327,6 +342,7 @@ cmake --preset conan-release ^
     -DMUMPS_DIR="%MUMPS_INSTALL%/lib" ^
     -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include" ^
     %CMS_FLAGS% ^
+    %OMP_FLAGS% ^
     -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON
 set "RC=%errorlevel%"
 popd
