@@ -2,7 +2,7 @@
 title: "ADR 93 — LadrunoSANISAND at zero confinement: what the model should do once p reaches the floor"
 project: Ladruno
 type: adr
-status: "II.1 BUILT (WP-106, draft #842) and MEASURED at the Gauss point — see section 7; the BVP leg and the owner's adoption decision are still open. Sections 1-5 remain the brainstorm they were."
+status: "II.1 BUILT (WP-106, draft #842), MEASURED at the Gauss point AND on the BVP — see sections 7.1-7.9. Verdict: the mechanism works where a point reaches the floor (324x at p0 = 0.5 kPa) and is REFUTED on the campaign deck at its 7.65 kPa surcharge, where the ring is confined at p ~ 6.25 kPa (1.93x the substeps, +5.9% on the curve). Available, not adopted; the owner decides. Sections 1-5 remain the brainstorm they were."
 priority: high
 owner: nmora
 related:
@@ -244,6 +244,11 @@ benchmark is a real footing or the idealised half-space.
 > NOT inside any certificate tolerance**, and on the ADR's own dumped ring path it cuts **nothing**
 > (0.994×, i.e. very slightly worse) because that point is confined. II.1's *mechanism* is
 > confirmed; II.1 as *the campaign's answer* is not, and this section says why with the numbers.
+> **§7.9 closes it on the BVP:** at the campaign's own 7.65 kPa surcharge the live free-surface
+> ring sits at `p ~ 6.25` kPa — confined — and the floor there costs **1.93× the substeps**, a
+> per-point worst of **18 831** against 1387, and **+5.9 %** on the load-settlement curve, while
+> reaching LESS settlement in the same wall budget. The embedment PM-01 D20 already prescribes
+> has removed the problem II.1 exists to solve.
 
 Built on `wp/106-sanisand-pre-elastic-floor` (draft PR #842), engine `cc4aa6db0`, against the
 pre-change binary at `634824e1f`. Instruments and raw dumps:
@@ -378,14 +383,11 @@ given the tolerance framing and it should fail loudly rather than be quietly rei
 
 ### 7.7 What was NOT run
 
-- **The BVP leg.** The strip control (`Ladruno_files/testbed/hypo_bearing/sanisand_tau0_band.py`,
-  which has `--surcharge` but no `--pRe`) and the ADR-95 `hypo_bearing` implicit deck at a
-  7.65 kPa surcharge were **not run**. So there is no ring-share, no `q(s)` overlay, and no
-  BVP-level capacity-neutrality number. Every number above is Gauss-point level. **This is the
-  owed next step and the only one that can decide whether II.1 is the campaign's answer** —
-  §7.5 says the floor helps where a point reaches the floor and §7.6 says the dumped ring point
-  never does, so the question "does a real footing's ring reach it" is still open and is a BVP
-  measurement.
+- ~~**The BVP leg.**~~ **RUN — see §7.9**, which was written after this list and answers it:
+  `--pRe` was added to `sanisand_tau0_band.py`, both arms were run at the campaign's 7.65 kPa
+  surcharge, and the floor is **refuted** on that deck (1.93× the substeps, +5.9 % on the curve,
+  less settlement in the same wall budget) because the live ring is confined at `p ~ 6.25` kPa.
+  Still not run at the finer meshes (`h0 = 0.5`, `0.25`) or at the `p' ~ 5 kPa` surface row.
 - The full Zone-A sweep (only the nine SANISAND/Manzari files + the new one were run).
 - A real two-rank MP run. The wire is gated by a FileDatastore round trip, not by MPI.
 - D5a / II.2 (the `D_factor` sigmoid at `p_r = 0`) — untouched, still open, still the material
@@ -404,7 +406,81 @@ it assumed:
    and 1.0 ran.
 
 A value is therefore a **declared, deck-level modelling statement that must be measured on the
-deck**, not a default anyone can inherit.
+deck**, not a default anyone can inherit. **§7.9 then measured it on the campaign's own deck and
+the answer there is no** — with PM-01 D20's 7.65 kPa embedment in place the ring is confined at
+`p ~ 6.25` kPa and the floor costs 1.93× the substeps for a +5.9 % change in the answer. II.1
+stays available, and stays for a deck whose ring genuinely reaches `p -> 0`.
+
+### 7.9 The BVP leg, run — and it REFUTES the cost case on a real footing
+
+§7.7 called this the owed measurement and the only one that could decide II.1 for the campaign.
+It is now run, and the answer is **no**.
+
+`--pRe` was added to `Ladruno_files/testbed/hypo_bearing/sanisand_tau0_band.py` (the fork's own
+strip driver, which already had `--surcharge`), together with a per-committed-step **substep
+census** — the ADR-86b `substeps` response summed over every Gauss point, plus the per-point max
+and its element, plus the same two over the free-surface band beside the footing edge. Six new
+curve columns; the flag is emitted only when non-zero, so every pre-WP-106 leg is byte-identical.
+
+**The two arms.** Plane-strain strip footing, `B = 2` m, implicit (no `-implex`), the campaign's
+`--surcharge 7.65` kPa (PM-01 D20's minimum-embedment pressure), IntScheme 1, TanType 2.
+**Coarsened on purpose and said out loud:** the COARSE leg only (`h0 = 1.0` m, Gorini's calibrated
+`e_init = 0.6944`, 200 hexes / 462 nodes), `--wall 2000` (33 min) per arm, `--maxsubsteps 20000`
+on **both** arms — GATE U measured every uncapped leg of this deck seizing, so uncapped both arms
+would have measured the wall budget rather than the material. Engine `cc4aa6db0`.
+
+**The ring is CONFINED at this surcharge.** `p_min` over the whole mesh after K0 gravity is
+**6.25 kPa** on both arms (the surcharge is on the free surface and the coarse mesh puts the
+top Gauss point ~0.2 m down). The `p' ~ 5 kPa` the F13 request aimed at needs a finer surface
+row; at `h0 = 1.0` it is 6.25, and that difference turns out to decide the result.
+
+| arm | mode | steps | `s/B` in ~2000 s | `q` at the end [kPa] | wall/step (median) | substeps total | /step (median) | **max @ any point** | band total | band /step (median) | band max | failed | subdivisions |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `pRe = 0` | WALL | 66 | **0.0603** | 1392.94 | **8.88 s** | 3 848 894 | **26 348** | **1 387** | 885 373 (23.0 %) | 6 847 | 1 387 | 55 | 0/80 |
+| `pRe = 1` | WALL | 137 | **0.0389** | 991.49 | **11.52 s** | 6 729 191 | **50 789** | **18 831** | 2 421 702 (36.0 %) | 19 816 | 16 792 | 245 | 16/80 |
+
+**The floor makes this deck worse on every axis it was supposed to improve.** Median substeps per
+step **1.93× higher**; the worst single Gauss point goes from 1387 to **18 831**, within 6 % of
+the 20 000 cap; the near-surface band's share of the mesh's substep cost rises from 23 % to 36 %;
+wall per step rises 30 %; the run reaches **less** settlement in the same budget (0.0389 vs
+0.0603) and needs 245 failed attempts and 16 subdivisions against 55 and 0. No material refusal
+fired on either arm.
+
+**Committed load–settlement delta** (interpolated onto a common `s/B` grid over the range both
+arms reached, 61 samples): **median +5.88 %, mean +5.99 %, max +7.96 %**; at the common end
+`s/B = 0.03889`, `q` 920.0 → 991.5 kPa (**+7.77 %**). The matched-settlement checkpoints the
+driver takes independently agree and show the wall cost too:
+
+| `s/B` | `q` `pRe 0` | `q` `pRe 1` | Δ | `t` `pRe 0` | `t` `pRe 1` |
+|---|---|---|---|---|---|
+| 0.002 | 63.864 | 68.193 | **+6.78 %** | 38 s | 42 s |
+| 0.005 | 136.206 | 145.290 | **+6.67 %** | 118 s | 142 s |
+| 0.010 | 258.801 | 275.181 | **+6.33 %** | 283 s | 317 s |
+| 0.020 | 495.119 | 521.006 | **+5.23 %** | 601 s | 653 s |
+| 0.040 | 951.075 | *(not reached)* | — | 1244 s | — |
+
+**Why, and it is the §7.6 mechanism one level up.** The census's worst Gauss point on the
+unfloored arm sits in **element 120, `x = 1.5` m, `z = -0.5` m** — the free-surface element
+immediately outboard of the footing edge, i.e. exactly the ADR's ring. It is at `p ~ 6 kPa`, not
+at the floor. Adding 1 kPa there is a `sqrt(7.25/6.25) = 1.077` bump on `G` at a point that had
+stiffness already; it stiffens the whole near-surface region, raises the load path by ~6 %, and
+drives the material harder per step — **more** substeps, not fewer. §7.5 said the floor pays only
+where the point *reaches* the floor; §7.6 said the dumped ring point does not; §7.9 now says the
+**live** ring point under the campaign's own surcharge does not either.
+
+**What this does and does not settle.** It settles II.1 for *this* deck at *this* surcharge: the
+7.65 kPa embedment PM-01 D20 already prescribes has removed the zero-confinement ring, so there is
+nothing left for an elastic floor to do and a floor is a 6 % strength-free change to the answer
+for a 1.9× substep bill. It does **not** settle a deck whose ring really does sit at `p -> 0` —
+the `p0 = 0.5` kPa Gauss-point leg (§7.5, 324× cheaper) is the existence proof that the mechanism
+works there. **Both arms are WALL-terminated, so neither `q` is a capacity** — 1392.94 and 991.49
+kPa are where the runs stopped. Not run at finer meshes (`h0 = 0.5`, `0.25`), and not run at the
+`p' ~ 5 kPa` surface row the request aimed at, which needs the finer mesh; the sign of the effect
+is unlikely to flip between 6.25 and 5 kPa, but that is an inference, not a measurement.
+
+Artifacts: `Ladruno_files/testbed/hypo_bearing/wp106_bvp/{pRe0,pRe1.0}/` (curve CSVs with the six
+new columns, leg JSON, field dumps, engine logs) and `wp106_bvp.log`; roll-up
+`Ladruno_implementation/wp106_pre_floor/bvp_summary.py`.
 
 ## Log
 
@@ -688,3 +764,25 @@ deck**, not a default anyone can inherit.
   added to `sanisand_tau0_band.py`) — it is the only measurement that can say whether a real
   footing's ring reaches the floor at all, which §7.6 shows the dumped one does not. Not adopted;
   default 0; owner's call.
+- 2026-09-16 (WP-106 F13, same branch / PR #842, engine `cc4aa6db0`) — **the BVP leg is RUN and
+  it REFUTES II.1 on the campaign's own deck.** §7.9. `--pRe` added to `sanisand_tau0_band.py`
+  (emitted only when non-zero, so every prior leg is byte-identical) together with a
+  per-committed-step **substep census** — the ADR-86b `substeps` response over every Gauss point,
+  the per-point max and its element, and the same two over the near-surface band beside the
+  footing edge (six new curve columns). Coarse leg only (`h0 = 1.0`, `e_init = 0.6944`, 200
+  hexes), `--surcharge 7.65`, `--maxsubsteps 20000` and `--wall 2000` on BOTH arms, implicit.
+  **`p_min` after K0 gravity is 6.25 kPa on both arms** — at this surcharge the live ring is
+  CONFINED, so there is nothing for an elastic floor to floor. Result: `pRe = 1` kPa costs
+  **1.93×** the median substeps per step (50 789 vs 26 348), takes the worst single Gauss point
+  from **1387 to 18 831** (within 6 % of the 20 000 cap), raises the band's share of the substep
+  bill from 23 % to 36 %, costs 30 % more wall per step, needs 245 failed attempts and 16
+  subdivisions against 55 and 0, reaches **less** settlement in the same budget (s/B 0.0389 vs
+  0.0603), and moves the committed load-settlement curve by **+5.88 % median / +7.96 % max**
+  (matched-settlement checkpoints agree: +6.78 / +6.67 / +6.33 / +5.23 % at s/B 0.002 / 0.005 /
+  0.01 / 0.02). The unfloored arm's worst point is **element 120, `x = 1.5` m, `z = -0.5` m** —
+  the free-surface element immediately outboard of the footing edge, i.e. the ADR's own ring,
+  measured at `p ~ 6` kPa rather than at the floor. So §7.5's rule holds one level up: the floor
+  pays only where the point REACHES the floor, and PM-01 D20's 7.65 kPa embedment has already
+  removed that state. **Both arms are WALL-terminated — neither `q` is a capacity.** Not run:
+  the finer meshes (`h0 = 0.5`, `0.25`) and the `p' ~ 5 kPa` surface row the F13 request aimed
+  at, which needs them. II.1 stays available and stays unadopted.

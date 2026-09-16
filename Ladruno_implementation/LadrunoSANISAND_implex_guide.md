@@ -192,7 +192,13 @@ behind an early return.
 ring path the floor cuts NOTHING: that dumped point is confined (min `p` 6.4–6.5 kPa), the
 substep count moves under 1 % and in the WRONG direction, and committed stress moves ~3.5–4 % at
 `pRe = 1` kPa — because `sqrt((6.5 + 1)/6.5) = 1.074` is a 7 % move on `G` wherever `p` is
-small-ish, not only where the model has no answer. Adopting a value is a declared modelling
+small-ish, not only where the model has no answer. **On a real strip footing it is worse:** at
+the campaign's own 7.65 kPa surcharge the live free-surface ring sits at `p ~ 6.25` kPa, and
+`pRe = 1` kPa there costs **1.93× the substeps per step**, takes the worst single Gauss point
+from 1387 to **18 831**, reaches LESS settlement in the same wall budget, and moves the
+load–settlement curve **+5.9 %**. The floor pays only where a point genuinely reaches `p -> 0`
+— at `p0 = 0.5` kPa it is 324× cheaper — and an embedment or surcharge that has already removed
+that state removes the reason for the floor with it. Adopting a value is a declared modelling
 statement about small-strain stiffness at low confinement, and it has to be paid for on the deck
 that uses it: report the substep census (the `substeps` response) and the peak resultant on both
 arms first. The WP-106 numbers are in `93_ladruno_sanisand_zero_confinement_adr.md` §7, with

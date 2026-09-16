@@ -720,12 +720,23 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
     hz = p_nod[:, :, 2].max(axis=1) - p_nod[:, :, 2].min(axis=1)
     vol = hx * hz * r3.THICK
 
-    # Ladruno (ADR-93 II.1 / WP-106): the FREE-SURFACE RING -- the top row of
-    # elements immediately outboard of the footing edge (x > B/2), out to one
-    # footing width.  Chosen by GEOMETRY, which is exactly the limitation the
-    # ADR-93 P0 replay hit; the census below therefore also reports the whole-mesh
-    # max and the element it sits on, so a seizure anywhere else is not hidden by
-    # a ring that turns out to be confined.
+    # Ladruno (ADR-93 II.1 / WP-106): the FREE-SURFACE RING census region.
+    #
+    # WHAT IT ACTUALLY SELECTS, checked against the h0 = 1.0 mesh rather than
+    # assumed: the depth test uses `hz.max()`, which on this GRADED mesh is the
+    # deepest element's height (4.59 m at h0 = 1.0), not the surface row's -- so
+    # the region is the two element COLUMNS immediately outboard of the footing
+    # edge (x = 1.5 m and 2.639 m for B = 2 m), from the free surface down to
+    # z ~ -5.3 m: elements 116-120 and 126-130, ten of the 200.  That is a
+    # near-surface BAND beside the footing, not a single row.  Left as written
+    # because both WP-106 arms were measured with it and a comparison must not
+    # move its own region; if you tighten it to the surface row, re-run BOTH arms.
+    #
+    # Chosen by GEOMETRY, which is exactly the limitation the ADR-93 P0 replay
+    # hit -- so the census also reports the whole-mesh max and the element it
+    # sits on, and a seizure anywhere else cannot hide behind a band that turns
+    # out to be confined.  (On the WP-106 runs the whole-mesh worst point WAS in
+    # this band, element 120 at x = 1.5 m, z = -0.5 m.)
     _ztop = zc.max()
     _ring = set((np.nonzero(
         (zc > _ztop - 1.0001 * hz.max())
