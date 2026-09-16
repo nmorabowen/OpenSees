@@ -155,6 +155,11 @@ _build_ladrunobrick.log
 Ladruno_scripts/_*.log
 Ladruno_scripts/patch_banner_backups/
 build_p1b*.log
+# WP-106 blue team: the habit was half-suppressed -- `build_p1b*.log` was ignored
+# while `build_p2b.log` / `build_wp106.log` were committed at the repo root. A
+# build transcript is a DERIVED artifact of one machine's toolchain; ignore the
+# whole family rather than one prefix.
+/build_*.log
 
 # ADR-79 bearing testbed: .ladruno recorder output is tens of MB of HDF5 and is
 # a DERIVED artifact — viewer_run.py + bearing_mesh.npz reproduce it exactly.

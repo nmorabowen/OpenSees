@@ -7398,3 +7398,156 @@ Three things to carry forward:
    load-bearing rather than belt-and-braces. TSan needs clang/gcc, so it means
    the Esmeralda/Linux path, not the MSVC desktop one.
 
+### `LadrunoSANISAND::schemeReachesModifiedEuler()` returned false for `IntScheme 2`, so the class printed a false "-maxSubsteps has NO EFFECT" warning — FIXED (WP-108)
+- **Note on provenance:** this defect was FOUND by WP-105 (F12, PR [#844](https://github.com/nmorabowen/OpenSees/pull/844), still open/unmerged as of this writing) and its own `LEDGER_quirks.md` row lives only on that branch, not on `ladruno` — this WP-108 branch was cut from `ladruno` before #844 merged, so that row could not be edited here; this is therefore a NEW row recording the same finding plus the fix. **When #844 merges, its own row ("schemeReachesModifiedEuler() returns false for IntScheme 2 ... MEASURED FALSE") should be updated to point at this fix (or merged into this row) rather than left saying "not fixed."**
+- **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
+  are inert on scheme 2 and skip capping it. WP-105 (F12) measured this false on the `p -> p_min`
+  floor path: a `-maxSubsteps 100` cap on scheme 2 turned a run that completed **40 of 40 uncapped**
+  into one that **refuses at step 18**. The warning was wrong; the seam was live all along.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND::schemeReachesModifiedEuler()`
+  (`LadrunoSANISAND.cpp:1035-1048`) returned `false` for `mScheme == 2`, which gated the
+  constructor's warning text (`:1206-1213`, "`-maxSubsteps N has NO EFFECT with IntScheme 2`") and
+  the identical claim for `-honorTolR` (`:1187-1199`). But `ManzariDafalias::explicit_integrator`'s
+  `switch (mScheme)` (`ManzariDafalias.cpp:1070-1101`) does not enumerate `INT_BackwardEuler`, so a
+  call into it falls to `default:` -> `ModifiedEuler`, exactly where both seams
+  (`mMaxSubstepsInME`, `mHonorTolR`) are read. Scheme 2 routes there whenever
+  `BackwardEuler_CPPM`'s own recursive-halving retry ladder (`ManzariDafalias.cpp` ~2472-2588)
+  falls back on non-convergence or ladder exhaustion — conditionally, not on every step the way
+  schemes 0/1 do, but "sometimes reaches it" is not "never reaches it", and the warning claimed the
+  latter. This directly contradicted `LadrunoSANISAND_implex_guide.md` §3, which REQUIRES
+  `-maxSubsteps > 0` on scheme 2 under `-implex` and refuses the deck without it
+  (`LadrunoSANISAND.cpp:2047-2058`, the `setLadrunoImplexOptions` `s == 2` branch) — one of the two
+  had to be wrong, and WP-105's measurement said it was the warning.
+- **Workaround/status (2026-09-16, WP-108):** FIXED. `schemeReachesModifiedEuler()` now returns
+  `true` for `mScheme == INT_LSANISAND_BackwardEuler` (2) as well as 0/1/>9-not-45, with the
+  function's header comment and a new `tests/test_ladruno_sanisand_intscheme2_maxsubsteps.py`
+  (reproducing WP-105's own floor-path control) pinning both that the false warning no longer
+  prints and that the cap actually fails a step on scheme 2. Scheme 1's output is unchanged
+  (byte-identical) — the fix only adds a branch for `s == 2`, ahead of the existing `s > 9` catch-all.
+  Full measurement: `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`
+  section 5.4/6 (WP-105).
+### `IntScheme 2` (BackwardEuler_CPPM) on `LadrunoSANISAND`/`ManzariDafalias` is QUALIFIED per prescribed increment and REFUTED as a BVP's primary integrator — WP-105 (F12)
+- **Bites:** scheme 2 looks like a strictly-better companion to scheme 1 (`ModifiedEuler`) if you
+  only run it at a given strain increment — and it IS, there. On a replayed strain path (zero free
+  DOF, the increment supplied rather than proposed) it integrates the **same model to the same
+  limit** as scheme 1: `1.3e-3` / `2.9e-3` maximum relative stress deviation over the path at
+  `dEz = 1e-5` (`p0 = 100` / `20 kPa`), terminal `eta` within `4.2e-4` / `2.0e-4`; at the campaign's
+  own increment (`dEz = 1e-4`) it is **3.7-4.3x more accurate and 4.2-7.6x cheaper**, and at
+  `4.6e-4`, **7-30x more accurate and 10-13x cheaper**, with scheme 1 the one leaving its own
+  bounding surface at `p0 = 20 kPa` (`eta/M^b = 1.056`, 160% wrong in stress norm). **Put it under a
+  global Newton instead — the increment now PROPOSED, not given — and it inverts.** Free-standing
+  drained-triaxial at `dEz >= 1e-4`: scheme 2 stalls in **8 of 8** arms (scheme 1 stalls in 1 of 8);
+  loosening the global tolerance `1e-9 -> 1e-7` does not rescue it. Each failing step costs
+  **12-134 s** against a 30 ms normal step (up to 4400x) grinding the recursive-halving ladder. On
+  the real CP1/ADR-95 bearing leg (`x10z8`, `h1.0_e0.6944`, 1200 s budget each) scheme 2 committed
+  11 steps to `s/B = 4e-5` against the scheme-1 baseline's 51 steps to `s/B = 0.019` — **475x
+  shallower for the same wall clock** — `ds` pinned at 25x the subdivision floor, 100% of its
+  committed steps on the relaxed rung 3.
+- **Why:** the failure is on off-path trial iterates a global Newton proposes, not on the solution
+  path — the replay arm (same path, same `dEz = 4.6e-4`, increment given) completes 40 of 40 in
+  1.7 ms/step on the identical model. A coarse-step trial iterate is a strain increment
+  `BackwardEuler_CPPM`'s 19-unknown Newton cannot return; it recurses (see the next two entries)
+  through up to 512 half-increments before giving up, and every one of those half-increments is
+  another 19-unknown Newton of up to 30 iterations. ADR-92 D3's own stated reason for keeping
+  scheme 1 as the default ("58-74% of scheme 2's calls take the low-`p` branch and integrate
+  explicitly") does NOT reproduce here: measured **0 of 1820** steps on every replayed
+  drained-triaxial path at `p0 = 100` and `20 kPa`, and **0 of 80** on the descent of a `p -> p_min`
+  path; the 58-74% figure reproduces (53%, `85/160` steps) only once the point is already pinned at
+  `p_min` with a zero deviator, i.e. on steps where nothing is being integrated.
+- **Workaround/status (2026-09-16):** D3's *conclusion* survives (scheme 1 + `-maxSubsteps` stays
+  the companion default) but its *stated reason* does not — see the amendment in
+  `92_ladruno_sanisand_implex_adr.md` and the new subsection in
+  `LadrunoSANISAND_implex_guide.md` §9. Use scheme 2 only where the increment is already given (a
+  prescribed-strain material-point study); do not make it the primary integrator of a load- or
+  displacement-controlled BVP without a cap on the ladder — none was tried. `-implex` was OFF in
+  every WP-105 arm, so whether scheme 2 is the better commit-time IMPL-EX companion (which runs at
+  `commitState` on an increment nothing proposes off-path — exactly the regime where scheme 2 wins)
+  is measured nowhere and remains open. Full tables and scripts:
+  `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
+
+### `ManzariDafalias::integrate()` discards `BackwardEuler_CPPM`'s return value, and the CPPM's own ladder can never fail anyway — a scheme-2 non-convergence is invisible in every channel
+- **Bites:** a CPPM step whose Newton diverged, whose Jacobian was singular, or which recursed
+  through up to 512 half-increments and then gave up looks EXACTLY like a clean implicit return —
+  no return code, no `opserr` line, no response. Measured cost of one such invisible failure on a
+  single-element drained triaxial at `dEz = 1e-4`: **133.75 s for one step against 30 ms for its
+  neighbours** (WP-105 / F12).
+- **Why (verified on `634824e1f`):** `ManzariDafalias.cpp:1023-1027` calls
+  `BackwardEuler_CPPM(...)` for `mScheme == INT_BackwardEuler` with no assignment — the return
+  value is simply discarded. It would not matter even if it were kept: the `while(errFlag != 1)`
+  ladder always terminates by falling through to `explicit_integrator` and setting
+  `errFlag = 1` (`:2584-2588`), and the low-`p` branch does the same (`errFlag = 0` then explicit
+  then `errFlag = 1`, on this checkout at `:2418`/`:2431`/`:2436` — the guide's §3 citation of
+  `:2264` for the low-`p` branch has moved on this build; WP-105 recorded the new lines rather than
+  editing the guide's prose, which is about the mechanism, not the line number). The recursion
+  itself increments `implicitLevel` at `:2538` and is capped at `implicitLevel > mMaxSubStep = 10`
+  (`:2352-2357`), i.e. up to `2^9` halvings, each its own 19-unknown Newton of up to 30 iterations
+  with a 19x19 solve. With `ManzariDafalias::debugFlag` a compile-time `const bool = false`
+  (`:57`), none of this prints. The only observable is the shipped `substeps` response
+  (`LadrunoSANISAND::setResponse`, `LadrunoSANISAND.cpp:4044-4058`), whose first component
+  `mSubstepsTakenInME` is non-zero **only if** `ModifiedEuler` ran — an exact detector of the CPPM
+  falling back on scheme 2, but silent whenever the ladder succeeds by substepping rather than by
+  falling through. The fork's only trial-time refusal for this material,
+  `LadrunoSANISAND::ladrunoUpdateStatus()` (`LadrunoSANISAND.cpp:3993-3996`), returns
+  `LADRUNO_MATERIAL_REFUSED` only via `mSubstepCapHitInME`, set at exactly one site inside
+  `ModifiedEuler()` (`ManzariDafalias.cpp:1578-1600`) and gated on `mMaxSubstepsInME` — so on scheme
+  2 a refusal can arise only AFTER the CPPM has already given up, and only if `-maxSubsteps > 0`
+  (next entry). The F7 element-refusal roster (this file, "element refusal roster", PR #838) is
+  irrelevant to a bare CPPM failure: there is nothing for the element to forward.
+- **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed. A fix would need
+  (a) `integrate()` to check `BackwardEuler_CPPM`'s return and (b) a way to surface it that does not
+  depend on `debugFlag` (compile-time off) or on the ladder actually falling through to
+  `ModifiedEuler`. Until then, treat any scheme-2 run through a global Newton as unauditable for
+  silent quality loss — measure cost and stall rate (this entry's numbers), not correctness,
+  because correctness has no channel to fail loudly through.
+
+### `LadrunoSANISAND::schemeReachesModifiedEuler()` returns false for `IntScheme 2`, so the class prints "`-maxSubsteps` has NO EFFECT" — MEASURED FALSE — fixed (WP-108, #845)
+- **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
+  are inert on scheme 2 and skip capping it. Measured on the `p -> p_min` floor path (WP-105 / F12):
+  a `-maxSubsteps 100` cap on scheme 2 turned a run that completed **40 of 40 uncapped** into one
+  that **refuses at step 18**. The seam is very much live.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND::schemeReachesModifiedEuler()`
+  (`LadrunoSANISAND.cpp:1035-1048`) returns `false` for `mScheme == 2`, and that false is what
+  gates the constructor's warning text at `:1206-1213` ("`-maxSubsteps N has NO EFFECT with
+  IntScheme 2`") and the identical claim for `-honorTolR` at `:1187-1199`. But
+  `ManzariDafalias::explicit_integrator`'s `switch (mScheme)` (`ManzariDafalias.cpp:1070-1101`)
+  does not enumerate `INT_BackwardEuler` among its cases, so it falls to `default:` ->
+  `ModifiedEuler`, which is exactly where both seams (`mMaxSubstepsInME`, `mHonorTolR`) are read.
+  Scheme 2 DOES route through `ModifiedEuler` whenever the CPPM falls back (the previous entry), so
+  both seams are live on it. This directly contradicts
+  `LadrunoSANISAND_implex_guide.md` §3, which REQUIRES `-maxSubsteps > 0` on scheme 2 under
+  `-implex` and refuses the deck without it (`LadrunoSANISAND.cpp:2047-2058`) — one of the two had
+  to be wrong, and the measurement says it is the warning, not the guide.
+- **Fixed (WP-108, PR [#845](https://github.com/nmorabowen/OpenSees/pull/845)):** the one-line fix
+  this row originally flagged as "not applied" has landed — `schemeReachesModifiedEuler()` now
+  returns `true` for `mScheme == 2`, ahead of the existing `s > 9` catch-all. See the earlier row in
+  this file ("... — FIXED (WP-108)") for the fix detail and verification. WP-105 / F12 itself made
+  no source edits; this row records the finding, and the fix is credited to WP-108.
+
+### `TanType 2` under `IntScheme 2` is a genuine algorithmic tangent — but any CPPM fallback silently overwrites it with `ModifiedEuler`'s chained tangent, with no diagnostic telling you which one you got
+- **Bites:** you ask for `-TanType 2` expecting the consistent (algorithmic) tangent of the CPPM's
+  own return map on every step. On any step where the CPPM instead fell back to
+  `ModifiedEuler` — which under a global Newton at the campaign increment is most of them, see the
+  first entry above — you silently get a different object: `ModifiedEuler`'s substep-chained
+  continuum tangent. Nothing distinguishes the two in any response or log.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND3D::getTangent()`
+  (`SRC/material/nD/LadrunoSANISAND3D.cpp:170-178`, shadowing the identical
+  `ManzariDafalias3D.cpp:134-141`) returns `mCep_Consistent` for `mTangType == 2`. Under scheme 2
+  that member is written at `ManzariDafalias.cpp:2609` (`Cep_Consistent = aCepConsistent;`) from
+  `NewtonIter2(...)` (`:2457`), which fills it in `NewtonSol` as the condensation of the 19x19 CPPM
+  Jacobian (`:3448-3472`, ending `Cep = -1.0 * CSigma;` at `:3472`) — a genuine algorithmic
+  tangent, one iterate stale (`NewtonIter2`'s loop tests convergence before the final `NewtonSol`
+  call, so the tangent is evaluated at the second-to-last iterate, not the converged one). But
+  every path out of the CPPM that reaches `explicit_integrator` — the low-`p` branch
+  (`:2431-2436`) or ladder exhaustion (`:2584-2588`) — OVERWRITES `aCepConsistent` with
+  `ModifiedEuler`'s own chained product (`:1835`,
+  `aCep_Consistent = aCep_thisStep * (aD * aCep_Consistent + T * mIImix)`). `TanType 2` is not
+  scheme-2-only: `ModifiedEuler` maintains its own `aCep_Consistent` (`:1490`, `:1835`), so the
+  option is meaningful on scheme 1 too (the deck `sanisand_tau0_band.py:349` already uses it) — the
+  two objects are different animals, a return-map Jacobian on scheme 2 versus a product of
+  continuum tangents over the substep chain on scheme 1, and scheme 2 silently degrades into the
+  latter on fallback. **Under `-implex` both are inert regardless:** the material hands out
+  `Ce(p_n)` and says so (`LadrunoSANISAND.cpp:2097-2099`, "TanType ... is INERT under -implex").
+- **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed; recorded as a
+  read-only finding. If you need to know which tangent a step actually used, cross-reference the
+  `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
+  `TanType 2` output — there is no dedicated flag for it.

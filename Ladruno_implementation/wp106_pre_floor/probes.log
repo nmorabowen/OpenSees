@@ -1,0 +1,830 @@
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/release-build-634824e1f/dist/bin --p0 20 --pRe 0 --nstep 50 --ez-max 0.020 --max-substeps 20000 --out data/cert_p20_PRE.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: 634824e1fbcf802bf27c7fbd29c113e5a2d63cb6
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 200 iterations  current Norm: 6.575e-08 (max: 1e-09, Norm deltaR: 14.135)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.0076
+OpenSees > analyze failed, returned: -3 error flag
+@@stalled at step 19
+@@build: 634824e1fbcf802bf27c7fbd29c113e5a2d63cb6
+@@out: data/cert_p20_PRE.csv
+@@steps: 18/50
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 20 --pRe 0 --nstep 50 --ez-max 0.020 --max-substeps 20000 --out data/cert_p20_POST.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0 (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 200 iterations  current Norm: 6.575e-08 (max: 1e-09, Norm deltaR: 14.135)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.0076
+OpenSees > analyze failed, returned: -3 error flag
+@@stalled at step 19
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/cert_p20_POST.csv
+@@steps: 18/50
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 20 --pRe 1.0 --nstep 50 --ez-max 0.020 --max-substeps 20000 --out data/tx_p20_pre1.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 1 (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm); yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p20_pre1.csv
+@@steps: 50/50
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/release-build-634824e1f/dist/bin --p0 0.5 --pRe 0 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/cert_p0.5_PRE.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: 634824e1fbcf802bf27c7fbd29c113e5a2d63cb6
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 200 iterations  current Norm: 1.00208e-08 (max: 1e-09, Norm deltaR: 0.346412)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.0056
+OpenSees > analyze failed, returned: -3 error flag
+@@stalled at step 14
+@@build: 634824e1fbcf802bf27c7fbd29c113e5a2d63cb6
+@@out: data/cert_p0.5_PRE.csv
+@@steps: 13/40
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 0.5 --pRe 0 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/tx_p0.5_pre0.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0 (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING: CTestNormDispIncr::test() - failed to converge 
+after: 200 iterations  current Norm: 1.00208e-08 (max: 1e-09, Norm deltaR: 0.346412)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.0056
+OpenSees > analyze failed, returned: -3 error flag
+@@stalled at step 14
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p0.5_pre0.csv
+@@steps: 13/40
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 0.5 --pRe 0.1 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/tx_p0.5_pre0p1.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0.1 (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm); yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373347, dT = 3.80385e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 1: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373394, dT = 0.000380384 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373347, dT = 3.80385e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373394, dT = 0.000380384 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373348, dT = 3.80385e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373395, dT = 0.000380384 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373347, dT = 3.80385e-05 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.373394, dT = 0.000380384 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor 0.0004
+OpenSees > analyze failed, returned: -3 error flag
+@@stalled at step 1
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p0.5_pre0p1.csv
+@@steps: 0/40
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 0.5 --pRe 1.0 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/tx_p0.5_pre1.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 1 (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm); yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p0.5_pre1.csv
+@@steps: 40/40
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 0.1 --pRe 0 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/tx_p0.1_pre0.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0 (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p0.1_pre0.csv
+@@steps: 40/40
+=== --bin C:/Users/nmb/Documents/Github/OpenSees/.claude/worktrees/wp-106-sanisand-pre/dist/bin --p0 0.1 --pRe 1.0 --nstep 40 --ez-max 0.016 --max-substeps 20000 --out data/tx_p0.1_pre1.csv
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: cc4aa6db01c7ae86155b425182021722ab55db50
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � LadrunoSANISAND � -pRe elastic-only stiffness floor (ADR-93 II.1)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 1 (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm); yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1), p_min = 0.0101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn vanilla (flip: alpha_in := alpha (vanilla, the DEFAULT: unchanged -- the base's own loading-reversal sign test decides, which Esmeralda measured is deterministic and correct on a real deck once the reversal-noise guard is confined to primed states -- see P2-7c)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+@@build: cc4aa6db01c7ae86155b425182021722ab55db50
+@@out: data/tx_p0.1_pre1.csv
+@@steps: 40/40
+ALL PROBES DONE

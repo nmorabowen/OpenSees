@@ -207,6 +207,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)\n"
 "        • IMPL-EX commit-time refusal latch — no silent partial commits\n"
 "        • ladrunoThreads — OpenMP element state-determination loop (opt-in)\n"
+"        • LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)\n"
 "\n";
     // FEATURES-END
 
