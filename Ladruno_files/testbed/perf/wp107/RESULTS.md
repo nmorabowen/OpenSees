@@ -54,7 +54,9 @@ at **7.70 µs/ele** in loop A on the SANISAND deck, against a barrier cost ADR-7
 14 400 elements / 57 600 Gauss points, 12 steps, 3 repeats per thread count,
 **idle box**, `MKL_NUM_THREADS=1`, `system Pardiso`, `--h 0.05 --steps 12
 --mat elastic`. Re-measured after red-team S4; see the caveat at the top of this
-file for why the original table was withdrawn.
+file for why the original table was withdrawn.  Raw data and the exact command:
+[`run2_idle_remeasure/`](run2_idle_remeasure/) (the superseded first run is kept in
+[`run1/`](run1/), because the discrepancy is the point).
 
 | threads | per-step wall (s, min of 3) | mean of 3 | speed-up | full field bit-identical | announced THREADED |
 |---|---|---|---|---|---|
