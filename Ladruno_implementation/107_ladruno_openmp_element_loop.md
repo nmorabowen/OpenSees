@@ -79,32 +79,52 @@ identical order. So:
 
 ### 3.1 Build
 
-`option(LADRUNO_OPENMP … ON)`. `Ladruno_scripts\build.bat` also passes
-`-DLADRUNO_OPENMP=ON` explicitly, both ways, so a stale cache never decides it
-(override with `set LADRUNO_NO_OPENMP=1`, or `-DLADRUNO_OPENMP=OFF` from cmake).
+`option(LADRUNO_OPENMP … OFF)`. `Ladruno_scripts\build.bat` passes
+`-DLADRUNO_OPENMP=ON` explicitly (and `=OFF` under `set LADRUNO_NO_OPENMP=1` —
+both ways, so a stale cache never decides it). **So the ON path is the
+Windows/MSVC canonical build and nothing else.**
 
-**Decision, AMENDED 2026-09-16 by the PR #843 CI fix — this is the item ADR-75b
-§14 left open ("decide whether build.bat turns it ON").** The answer is *neither
-build.bat alone nor a bare cmake*: **the CMake option itself defaults ON.**
+**Decision, SETTLED 2026-09-16 by the PR #843 CI fix — this is the item ADR-75b
+§14 left open ("decide whether build.bat turns it ON"). The ON-everywhere answer
+was tried and REVERTED; ADR-75b §14.4 carries the full record.**
 
-The first cut split the two — option default OFF, build.bat passing ON — on the
-reasoning that a bare `cmake` build of the tree should stay vanilla-shaped. That
-reasoning has a measured counter-example, and it is the fork's own gate:
+The split — option default OFF, build.bat passing ON — was first justified by "a
+bare `cmake` build of the tree should stay vanilla-shaped". That justification has
+a measured counter-example, and it is the fork's own gate:
 `.github/workflows/ladruno.yml`'s Zone-A job configures the Ubuntu build with a
 bare `cmake -S . -B build/Release …` and **never calls build.bat** (build.bat is
-Windows-only). So the split did not mean "developers who want vanilla get
-vanilla" — it meant **CI built the feature OUT**, `ladrunoThreads(n)` stayed
-serial there, and all 10 threading cases of `tests/test_wp107_threaded_update.py`
-failed on the one build that is supposed to gate them (run 35160539366:
-`10 failed, 2489 passed`, every failure quoting *"this binary was built WITHOUT
-LADRUNO_OPENMP"*). A capability whose warrant cannot run on the gate is not
-gated at all.
+Windows-only). So the split did not mean "developers who want vanilla get vanilla"
+— it meant **CI built the feature OUT**, and all 10 threading cases of
+`tests/test_wp107_threaded_update.py` failed on the one build that is supposed to
+gate them (run 35160539366: `10 failed, 2489 passed`, every failure quoting *"this
+binary was built WITHOUT LADRUNO_OPENMP"*).
 
-The default therefore lives at the **single configure-time knob every path
-crosses** — CI's raw cmake, a developer's bare cmake, and build.bat. The original
-half of the argument is what makes ON (rather than OFF everywhere) right: a
-capability that has to be recompiled to be tried is a capability nobody tries.
-Three measured facts make it safe:
+**But flipping the option default to ON crashes Linux.** Zone-A then got past the
+WP's own tests and **segfaulted**, deterministically, twice on the same commit
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)):
+
+```
+test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+Fatal Python error: Segmentation fault      → pytest exit 139
+```
+
+That is the **zero-mass `system Diagonal`** case, unrelated to this WP, crashing
+**at 1 thread** where `Domain::ladrunoThreadedUpdate()` returns `false` before
+touching anything — *not* the threaded loop, but gcc's `-fopenmp` codegen/link
+(libgomp, `-pthread`) turning the already-untrustworthy singular-mass failure path
+([[LEDGER_quirks]]) into a hard crash. It does not reproduce on MSVC.
+
+**So, by owner decision, the default stays OFF and the gcc crash is not chased
+here.** What that buys and what it costs:
+
+- Windows/MSVC via build.bat: feature ON, and **tested** (18/18).
+- **Zone-A does NOT exercise the threaded loop.** The test file skips itself with a
+  reason. This gap is knowing and temporary.
+- **The fork cannot currently be built with OpenMP on gcc** — its own Linux
+  ASAN/gdb work package. When that lands, flip this default to ON.
+
+Independent of the gcc defect, ON is safe *as a capability*, and this is what
+build.bat relies on:
 
 1. the **runtime** default is still **1 thread** — ADR-40's "OpenMP-by-default"
    anti-goal is about *threads*, not about *compiling the loop in*, and nothing
@@ -113,20 +133,21 @@ Three measured facts make it safe:
    ON build is byte-identical to the `634824e1f` OFF baseline binary on both an
    elastic and a SANISAND deck (§4 / RESULTS.md §4);
 3. every MPI target **refuses** the threaded loop outright (`LadrunoParallelBuild.cpp`,
-   §14.3), so SP/MP/PyMP are unaffected by the default.
+   §14.3), so SP/MP/PyMP are unaffected.
 
 If `find_package(OpenMP)` fails the option degrades to a warning and compiles
 out, so a toolchain without OpenMP still configures.
 
-**And the tests now state the dependency themselves.**
-`tests/test_wp107_threaded_update.py` carries a module-level `skipif` driven by a
-child-process probe that asks the binary (via the `ladrunoThreads` warning the
-binary already emits) whether `LADRUNO_OPENMP` is compiled in. A deliberate
-`-DLADRUNO_OPENMP=OFF` build now **skips with a reason** instead of producing 10
-misleading failures. The probe is deliberately **biased to RUN**: a crashed
-child, a missing marker, or a single-hardware-thread box all resolve to "run the
-tests", because a file that silently skips on CI would quietly un-gate this WP —
-the exact failure mode being fixed.
+**And the tests now state the dependency themselves — this is what keeps Zone-A
+green on an OFF build.** `tests/test_wp107_threaded_update.py` carries a
+module-level `skipif` driven by a child-process probe that asks the binary (via the
+`ladrunoThreads` warning the binary already emits) whether `LADRUNO_OPENMP` is
+compiled in. A build without it **skips with a reason** instead of producing 10
+misleading failures. The probe is deliberately **biased to RUN**: a crashed child, a
+missing marker, or a single-hardware-thread box all resolve to "run the tests",
+because a file that silently skips for the *wrong* reason would un-gate this WP
+without saying so. The one skip it is *expected* to produce — Zone-A, while the
+option defaults OFF — is recorded above rather than hidden.
 
 **The compile flag is scoped to `OPS_Domain` + `OPS_Utilities`, PRIVATE.** It is
 deliberately NOT global. The fork carries 7 pre-existing `#pragma omp` lines in

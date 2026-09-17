@@ -745,31 +745,49 @@ add_library(OPS_SysOfEqnPython     OBJECT)
 # coordinated thread-count policy" is implemented as an explicit num_threads(n)
 # clause (SRC/utility/LadrunoThreads.h) rather than omp_set_num_threads().
 # ---------------------------------------------------------------------------
-# DEFAULT IS **ON** -- Ladruno WP-107, amended by the PR #843 CI fix (2026-09-16).
-# The first cut defaulted this option OFF and had `Ladruno_scripts\build.bat` pass
-# -DLADRUNO_OPENMP=ON, so "the fork's build" was ON but "a cmake build of the
-# fork's tree" was OFF. That split is not a preference, it is a MEASURED defect:
-# Zone-A (.github/workflows/ladruno.yml) configures the Ubuntu build with a bare
-# `cmake -S . -B build/Release ...` and never goes through build.bat, so CI built
-# the feature OUT, `ladrunoThreads(n)` stayed serial, and all 10 threading cases
-# of tests/test_wp107_threaded_update.py went red on the one build that is
-# supposed to gate them (run 35160539366).
+# DEFAULT IS **OFF**, AND THAT IS A GCC DEFECT, NOT A PREFERENCE -- Ladruno
+# WP-107, settled by the PR #843 CI fix (2026-09-16). Read this before "tidying"
+# it to ON: the flip to ON WAS TRIED, and it broke Linux.
 #
-# So the default moves HERE, to the single configure-time knob that BOTH paths
-# cross -- CI's raw cmake, a developer's bare cmake, and build.bat (which keeps
-# passing the value explicitly, in both directions, so a stale cache never
-# decides it). Three facts make ON safe as a default, each measured on this
-# branch and recorded in Ladruno_files/testbed/perf/wp107/RESULTS.md section 4:
-#   1. the RUNTIME default is still 1 thread (ADR-40's "OpenMP-by-default" is an
-#      anti-goal; only `ladrunoThreads` / LADRUNO_THREADS opts in),
-#   2. at 1 thread Domain::update takes the byte-identical serial path -- not a
-#      one-thread parallel region -- and an ON build is byte-identical to the
-#      634824e1f OFF baseline binary on an elastic and a SANISAND deck,
-#   3. every MPI target refuses the threaded loop outright (LadrunoParallelBuild.cpp).
-# If OpenMP is not found the option degrades to a warning and compiles out, so a
-# toolchain without it still configures. Build it out with -DLADRUNO_OPENMP=OFF
-# (or `set LADRUNO_NO_OPENMP=1` for build.bat).
-option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" ON)
+# Where each path stands today:
+#   * `Ladruno_scripts\build.bat` passes -DLADRUNO_OPENMP=ON explicitly (and =OFF
+#     under LADRUNO_NO_OPENMP -- both ways, so a stale cache never decides it).
+#     The Windows/MSVC canonical build therefore ships the feature ON and TESTS
+#     it: tests/test_wp107_threaded_update.py runs and passes there, 18/18.
+#   * Zone-A (.github/workflows/ladruno.yml) configures the Ubuntu build with a
+#     bare `cmake -S . -B build/Release ...` and never goes through build.bat, so
+#     with this default OFF **CI does NOT exercise the threaded loop**. That gap
+#     is known and deliberate, not an oversight: the test file probes the binary
+#     at runtime and SKIPS with a reason rather than failing.
+#
+# WHY NOT SIMPLY DEFAULT ON (which is what a reader will want to do, and what
+# would let CI gate the feature). It was set to ON, and Zone-A then SEGFAULTED --
+# deterministically, twice, in code with nothing to do with this WP:
+#   test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+#   Fatal Python error: Segmentation fault ... exit 139
+#   https://github.com/nmorabowen/OpenSees/actions/runs/35164371356
+# The crash is the ZERO-MASS `system Diagonal` case, at 1 thread, where
+# Domain::ladrunoThreadedUpdate() returns false before touching anything -- so it
+# is NOT the threaded loop. It is gcc's `-fopenmp` codegen/link (libgomp,
+# -pthread) turning the already-untrustworthy singular-mass failure path
+# (LEDGER_quirks: "a free DOF with zero lumped mass makes the assembled M
+# singular", Full/Band silently returning success with garbage) into a hard
+# crash. It does not reproduce on MSVC. Locating it needs a Linux ASAN/gdb work
+# package; until that lands **the fork cannot be built with OpenMP on gcc**, and
+# defaulting ON here would crash every bare-cmake and CI build.
+#
+# So: ON via build.bat on Windows, OFF everywhere else, UNTIL the gcc defect is
+# fixed -- at which point this default should flip to ON so Zone-A gates the
+# feature. ADR-75b section 14.4 records the whole decision and its reversal.
+#
+# Independent of all that, ON is safe as a CAPABILITY: the RUNTIME default is 1
+# thread (ADR-40's "OpenMP-by-default" is an anti-goal; only `ladrunoThreads` /
+# LADRUNO_THREADS opts in), at 1 thread Domain::update takes the byte-identical
+# serial path, an ON build matches the 634824e1f OFF baseline binary on an
+# elastic and a SANISAND deck (Ladruno_files/testbed/perf/wp107/RESULTS.md
+# section 4), and every MPI target refuses the threaded loop outright
+# (LadrunoParallelBuild.cpp).
+option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" OFF)
 set(LADRUNO_OPENMP_ACTIVE OFF)
 if(LADRUNO_OPENMP)
   find_package(OpenMP)

@@ -1127,40 +1127,71 @@ Esmeralda.
 **Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
 verdicts. Nothing here is evidence about the cluster regime.
 
-### 14.4 SETTLED — where the build default lives: **`CMakeLists.txt`, defaulting ON** (PR #843 CI fix, 2026-09-16)
+### 14.4 SETTLED — the default stays **OFF in CMake, ON via `build.bat`**, because **gcc + `-fopenmp` segfaults** (PR #843 CI fix, 2026-09-16)
 
 §14 shipped with one item deliberately left to the owner: *whether the fork's
 canonical build turns `LADRUNO_OPENMP` ON*, given that the first cut defaulted the
 CMake option OFF and had `Ladruno_scripts\build.bat` pass `-DLADRUNO_OPENMP=ON`.
 
-**It is settled by measurement, not by taste.** That split silently assumed
-build.bat *is* the fork's build path. It is for developers on Windows — but
-**Zone-A is not on it**: `.github/workflows/ladruno.yml` configures the Ubuntu job
-with a bare `cmake -S . -B build/Release …`. So the gate built the feature **OUT**,
+**Two things were measured, in this order. The second overrules the first.**
+
+**(a) The split does mean CI never gates the feature.** It silently assumed
+build.bat *is* the fork's build path. It is — for developers on Windows. **Zone-A is
+not on it**: `.github/workflows/ladruno.yml` configures the Ubuntu job with a bare
+`cmake -S . -B build/Release …`. So the gate built the feature **OUT**,
 `ladrunoThreads(n)` stayed serial on CI, and the WP's entire warrant —
 `tests/test_wp107_threaded_update.py`, which §14/B1 added precisely because the WP
 had shipped untested — failed **10 of 18** on it (run 35160539366), every failure
 quoting the binary's own *"built WITHOUT LADRUNO_OPENMP"* warning. A stage whose
 mutation gate cannot execute on the gate is not gated.
 
-**Resolution:** the default moves to the one configure-time knob *every* path
-crosses — `option(LADRUNO_OPENMP … ON)` in `CMakeLists.txt`. build.bat keeps
-passing the value explicitly in both directions so a stale Conan cache never
-decides it. What makes ON the right value rather than OFF-everywhere is the
-original argument, which still holds: a capability that must be recompiled to be
-tried is one nobody tries.
+**(b) Flipping the CMake default to ON was TRIED, and it CRASHES Linux.** With
+`option(LADRUNO_OPENMP … ON)` Zone-A got past the WP's own tests and then
+**segfaulted**, deterministically, twice on the same commit
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)):
 
-**This does not touch §3 P-1 ("threading stays off by default"), and the
-distinction is worth stating because it is the one that could be misread:** P-1 is
-about **threads**, not about **compiling the loop in**. The runtime default is
-still **1 thread**, at which `Domain::update` takes the byte-identical *serial*
-path — not a one-thread parallel region — and an ON build is byte-identical to the
-`634824e1f` OFF baseline binary on an elastic and a SANISAND deck. ADR-40's
-"OpenMP-by-default is an anti-goal" is satisfied by the runtime default, which is
-unchanged. Combined with §14.3's fence (every MPI target refuses outright), the
-build default is invisible to SP/MP/PyMP and to any run that does not ask.
+```
+test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+Fatal Python error: Segmentation fault      → pytest exit 139
+```
 
-Full rationale and the test-side companion (a module-level `skipif` probe so a
-deliberate `-DLADRUNO_OPENMP=OFF` build skips with a reason instead of failing 10
-times, biased to RUN on every ambiguous outcome so the skip can never quietly
-un-gate the WP): [[107_ladruno_openmp_element_loop]] §3.1.
+That test is the **zero-mass `system Diagonal`** case and has nothing to do with
+this WP. It crashes **at 1 thread**, where `Domain::ladrunoThreadedUpdate()` returns
+`false` before touching anything and `Domain::update()` runs the unchanged serial
+loop — so it is **not the threaded loop**. What remains is gcc's `-fopenmp` codegen
+and link (libgomp, `-pthread`) turning the already-untrustworthy singular-mass
+failure path into a hard crash; [[LEDGER_quirks]] has long recorded that a free DOF
+with zero lumped mass makes the assembled `M` singular and that Full/Band then
+*return success with garbage*. It does **not** reproduce on MSVC — the same source
+with OpenMP ON passes that file locally, 3/3.
+
+**Resolution (owner decision, 2026-09-16): do not chase the gcc crash in this PR.**
+The CMake option **stays OFF by default**; `build.bat` keeps passing
+`-DLADRUNO_OPENMP=ON` explicitly (and `=OFF` under `LADRUNO_NO_OPENMP` — both ways,
+so a stale Conan cache never decides it). The consequences, stated plainly so nobody
+has to rediscover them:
+
+- **Windows/MSVC (build.bat) ships the feature ON and TESTS it** — 18/18.
+- **Zone-A does NOT exercise the threaded loop.** The test file probes the binary at
+  runtime and **SKIPS with a reason** rather than failing. (a) is therefore *not*
+  satisfied, knowingly.
+- **The fork cannot currently be built with OpenMP on gcc.** That blocks the
+  Esmeralda/Linux path for this stage independently of its desktop scope, and it
+  needs its own Linux **ASAN/gdb** work package.
+- **When that lands, this default should flip to ON**, at which point Zone-A gates
+  the feature and (a) is satisfied too.
+
+**None of this touches §3 P-1 ("threading stays off by default"), and the
+distinction is the one most likely to be misread:** P-1 is about **threads**, not
+about **compiling the loop in**. The runtime default is still **1 thread**, at which
+`Domain::update` takes the byte-identical *serial* path — not a one-thread parallel
+region — and an ON build is byte-identical to the `634824e1f` OFF baseline binary on
+an elastic and a SANISAND deck. ADR-40's "OpenMP-by-default is an anti-goal" is
+satisfied by the runtime default, which is unchanged. Combined with §14.3's fence
+(every MPI target refuses outright), the build default is invisible to SP/MP/PyMP
+and to any run that does not ask.
+
+Test-side companion: a module-level `skipif` probe so a build without the option
+skips with a reason instead of failing 10 times — biased to **RUN** on every
+ambiguous outcome, so the skip can never quietly un-gate the WP beyond the one gap
+recorded above. See [[107_ladruno_openmp_element_loop]] §3.1.

@@ -7551,3 +7551,35 @@ Three things to carry forward:
   read-only finding. If you need to know which tangent a step actually used, cross-reference the
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
   `TanType 2` output — there is no dedicated flag for it.
+
+## gcc + `-fopenmp` SEGFAULTS the zero-mass `system Diagonal` path — the fork cannot be built with OpenMP on Linux
+
+- **Symptom.** Build the fork with `-DLADRUNO_OPENMP=ON` on gcc/Linux and
+  `tests/test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`
+  dies with `Fatal Python error: Segmentation fault`, taking the whole pytest process with it
+  (`Segmentation fault (core dumped)`, exit **139**) at the second test in the suite. Measured
+  twice on the same commit, byte-identical traceback both times:
+  [run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356) (PR #843).
+  The Python frame is `ops.analyze(1, 0.001)` inside `_run_massless(("Diagonal",), 0.0)`.
+- **It is NOT the threaded loop.** The runtime thread count defaults to 1, at which
+  `Domain::ladrunoThreadedUpdate()` returns `false` before touching anything and
+  `Domain::update()` runs the unchanged serial loop. No `ladrunoThreads` call appears anywhere
+  in the crashing file. Nor is it a dormant-pragma activation (`#pragma omp` / `_OPENMP` exist
+  only in PFEM — `OPS_Element`, deliberately un-flagged — the interpreter, and WP-107's own
+  code), nor an ODR/ABI split (no class layout is `#ifdef`-conditional).
+- **What is left is codegen/link.** `-fopenmp` on `OPS_Domain` + `OPS_Utilities`, plus libgomp
+  and `-pthread` on the link line, changes optimization and the glibc allocator's threading
+  path — enough to turn a **latent defect in the singular-mass failure path** into a hard crash.
+  That path is already on record two entries' worth: a free DOF with **zero lumped mass** makes
+  the assembled `M` singular, `Diagonal` aborts with `aii = 0`, and Full/Band **return success
+  with garbage**. The failure route also re-enters `Domain::update()` from
+  `Domain::revertToLastCommit()` on the shared element iterator — the recorded reentrancy trap.
+- **Does NOT reproduce on MSVC.** The same source with `LADRUNO_OPENMP=ON` passes that file
+  locally (3/3), and the whole WP-107 file passes 18/18.
+- **Workaround/status (2026-09-16, PR #843, owner decision — not fixed).** `option(LADRUNO_OPENMP … OFF)`
+  in `CMakeLists.txt`; `Ladruno_scripts\build.bat` turns it ON, so the ON path is the Windows/MSVC
+  canonical build and nothing else. Consequence to keep in view: **Zone-A does not exercise the
+  threaded element loop at all** — `tests/test_wp107_threaded_update.py` probes the binary and
+  skips with a reason. Fixing this needs a Linux build under **ASAN/valgrind + gdb** as its own
+  work package; when it lands, flip the CMake default to ON so CI gates the feature.
+  See ADR-75b §14.4, [[107_ladruno_openmp_element_loop]] §3.1, BUILD_GOTCHAS §15.
