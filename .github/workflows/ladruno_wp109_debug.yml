@@ -1,0 +1,93 @@
+# Ladruno WP-109 — DEBUG-ONLY workflow (workflow_dispatch, never on push/PR).
+# Reproduces the gcc + -fopenmp Zone-A segfault of PR #843
+# (test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer,
+# run 35164371356) on the SAME ubuntu-latest toolchain, under gdb and under ASAN.
+# The crash does not reproduce on esmeralda (gcc 11.4 / 22.04 / MKL LAPACK), so
+# the runner is the only faithful environment. Delete when WP-109 closes.
+name: Ladruno WP-109 gcc-openmp debug
+
+on:
+  workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: "pytest selection run under gdb/ASAN"
+        default: '-v -x -m zone_a'
+        required: false
+
+jobs:
+  repro:
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gdb, asan]
+    name: WP-109 ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-${{ runner.os }}-
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: wp109-${{ matrix.mode }}-${{ runner.os }}
+          max-size: 2G
+      - name: Toolchain report
+        run: |
+          gcc --version | head -1; g++ --version | head -1; gfortran --version | head -1
+          ldd --version | head -1; cmake --version | head -1; python --version
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdb > /dev/null
+          gdb --version | head -1
+      - name: Install conan
+        run: |
+          pip install conan pytest pyyaml numpy sympy scipy
+          conan profile detect --force
+      - name: Configure + build OpenSeesPy (LADRUNO_OPENMP=ON, ${{ matrix.mode }})
+        run: |
+          conan install . --build=missing
+          if [ "${{ matrix.mode }}" = "asan" ]; then
+            SAN="-fsanitize=address -fno-omit-frame-pointer"
+            EXTRA="-DCMAKE_CXX_FLAGS=-g -O1 $SAN -DCMAKE_C_FLAGS=-g -O1 $SAN -DCMAKE_Fortran_FLAGS=-g $SAN -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address"
+            cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DLADRUNO_OPENMP=ON \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              "-DCMAKE_CXX_FLAGS=-g -O1 $SAN" "-DCMAKE_C_FLAGS=-g -O1 $SAN" "-DCMAKE_Fortran_FLAGS=-g $SAN" \
+              -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address
+          else
+            cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DLADRUNO_OPENMP=ON \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              "-DCMAKE_CXX_FLAGS=-g" "-DCMAKE_C_FLAGS=-g"
+          fi
+          grep -n "WP-107\|LAPACK_LIBRARIES" build/Release/CMakeFiles/CMakeOutput.log 2>/dev/null | head -3 || true
+          grep -n "LADRUNO_OPENMP\|LAPACK_LIBRARIES\|CMAKE_CXX_FLAGS:" build/Release/CMakeCache.txt | head -6
+          cd build/Release
+          cmake --build . --target OpenSeesPy -j8
+          mv OpenSeesPy.so opensees.so
+          ldd opensees.so | grep -i "gomp\|asan\|lapack\|blas\|mkl" || true
+      - name: Run under ${{ matrix.mode }}
+        run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          cp build/Release/opensees.so tests/
+          cd tests
+          export LADRUNO_OPENSEES_QUIET=1
+          if [ "${{ matrix.mode }}" = "asan" ]; then
+            export LD_PRELOAD="$(gcc -print-file-name=libasan.so)"
+            export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:print_stats=0
+            python -X faulthandler -m pytest -p no:cacheprovider ${{ github.event.inputs.pytest_args }} 2>&1 | tail -150
+            echo "pytest exit ${PIPESTATUS[0]}"
+          else
+            gdb -q -batch -ex "set pagination off" -ex "handle SIGSEGV stop print" -ex run \
+              -ex "bt 40" -ex "info registers rip" -ex "x/6i \$pc" -ex "frame 0" -ex "info locals" -ex "frame 1" -ex "info locals" \
+              --args python -X faulthandler -m pytest -p no:cacheprovider ${{ github.event.inputs.pytest_args }} 2>&1 \
+              | grep -v "^\[New Thread\|^\[Thread\|libthread_db" | tail -200
+          fi
