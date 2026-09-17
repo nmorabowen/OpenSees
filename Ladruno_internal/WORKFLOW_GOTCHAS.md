@@ -454,3 +454,25 @@ Measured on **#783, 2026-09-05**: the branch merged cleanly locally, read
 `CONFLICTING` on GitHub, `gh pr checks` reported no checks at all, and a local
 merge of `origin/ladruno` followed by one push produced both a clean merge state
 and a running workflow.
+
+## 10. Debugging on the runner: `workflow_dispatch` is not registered until pushed, and `gh run view --log` refuses while the run is in progress (WP-109)
+
+- **Bites (1):** `gh workflow run <file>.yml --ref <branch>` on a brand-new workflow
+  file answers `HTTP 404: workflow … not found on the default branch`. GitHub only
+  registers a workflow after it has run once from a push. Give the debug workflow a
+  `push:` trigger scoped to the WP branch (and to the paths whose change should
+  re-run it) — the first push registers it, every later push re-runs it, and
+  `workflow_dispatch` works from then on.
+- **Bites (2):** `gh run view <run> --log` (and `--job <id> --log`) print *"run … is
+  still in progress; logs will be available when it is complete"* even for a job
+  that finished 20 minutes ago, if a sibling job is still running. The REST endpoint
+  does not care: `gh api --allow-escape-sequences
+  repos/nmorabowen/OpenSees/actions/jobs/<job-id>/logs > job.log` (job ids from
+  `gh run view <run> --json jobs`). Without `--allow-escape-sequences` gh refuses the
+  ANSI-coloured body outright. Strip colours with `sed 's/\x1b\[[0-9;]*m//g'`.
+- **Why it matters here:** the WP-109 segfault reproduced ONLY on ubuntu-latest
+  (gcc 13 / 24.04), not on esmeralda (gcc 11 / 22.04), so the runner was the
+  debugger: a dispatch-only workflow built with `-g`, installed gdb, ran the suite
+  under `gdb -batch -ex run -ex bt`, and the backtrace named the root cause
+  (BUILD_GOTCHAS §16). Delete such a workflow at closeout — a dead one in
+  `.github/workflows/` is clutter that a future agent will wonder about.

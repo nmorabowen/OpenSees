@@ -813,6 +813,90 @@ than the failure it was meant to tidy away. When a skip on CI is nevertheless th
 accepted state, as here, say so in the docs rather than letting a green check imply
 coverage that does not exist.
 
+**RESOLVED the next day (WP-109, 2026-09-17).** The "gcc defect" was this file's own
+`-static-libstdc++` EXE flag leaking through `FindOpenMP` into the shared Python
+module — §16 below. `option(LADRUNO_OPENMP … ON)` now, Zone-A gates the feature, and
+the WP-107 file runs on Linux. The pairing lesson above stands unchanged; the
+"gcc crash" half of the example is history, not a live constraint.
+
+## 16. `-static-libstdc++` in `CMAKE_EXE_LINKER_FLAGS` makes `FindOpenMP` hand you `libstdc++.a` — and it went into `opensees.so` (WP-109)
+
+**Symptom.** With `LADRUNO_OPENMP=ON` on gcc, the Python module segfaults at the
+first `opserr << <number>` that reaches `PythonStream` under some toolchains
+(ubuntu-latest gcc 13.3 / glibc 2.39: deterministic; esmeralda gcc 11.4 / 22.04:
+never), so it looked like a codegen defect in an unrelated solver path
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356), banked as §15's "exception"). gdb on the runner
+([run 35171085324](https://github.com/nmorabowen/OpenSees/actions/runs/35171085324)):
+
+```
+#0  std::codecvt<char16_t,char,__mbstate_t>::do_unshift(...) const   from tests/opensees.so
+#1  std::basic_ostream<char>::_M_insert<long>(long)                   from tests/opensees.so
+#2  PythonStream::err_out<int> (this=&sserr, err=0)                   SRC/interpreter/PythonStream.h:67
+#3  PythonStream::operator<< (this=&sserr, n=0)                       SRC/interpreter/PythonStream.cpp:48
+#4  DiagonalDirectSolver::solve                                       DiagonalDirectSolver.cpp:113   (opserr << i)
+#5  CentralDifferenceLadruno::newStep                                 CentralDifferenceLadruno.cpp:680 (starter solve)
+#6  DirectIntegrationAnalysis::analyzeStep / analyze
+#7  OPS_analyze -> Py_ops_analyze
+```
+
+**Mechanism.** The GNU branch sets `CMAKE_EXE_LINKER_FLAGS "-static-libgcc
+-static-libstdc++"` so the Tcl executable is self-contained. `FindOpenMP` probes with
+an *executable* `try_compile`, inherits that flag, sees `-Bstatic -lstdc++ -Bdynamic`
+on the verbose link line, and records the archive as an OpenMP implicit library:
+
+```
+$ grep ^OpenMP_ build/Release/CMakeCache.txt
+OpenMP_CXX_LIB_NAMES:STRING=libstdc++;gomp;pthread        <- "libstdc++", not "stdc++", so the
+OpenMP_libstdc++_LIBRARY:FILEPATH=/usr/lib/gcc/x86_64-linux-gnu/11/libstdc++.a   implicit-lib filter misses it
+OpenMP_pthread_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libpthread.a
+```
+
+WP-107 appended `${OpenMP_CXX_LIBRARIES}` to every target, so the **SHARED**
+`OpenSeesPy` module got a private static libstdc++ *and* still `DT_NEED`ed
+`libstdc++.so.6`. Two C++ runtimes, one process: `std::locale`'s facet ids and
+facet arrays are per copy, references bind to whichever copy the loader finds
+first per symbol, and an `ostream` built by one copy asks the other for its
+`num_put` facet and gets a `codecvt`. Whether that lines up or crashes depends on
+which archive members the link pulled in and on the load order — hence
+"gcc 13 crashes, gcc 11 doesn't".
+
+**Detect it in 30 seconds** (the module must say `0` and must NEED `libstdc++.so.6`):
+
+```bash
+nm -D --defined-only build/Release/OpenSeesPy.so | grep -c ' _ZNSt6locale\| _ZNSt8ios_base'
+readelf -d build/Release/OpenSeesPy.so | grep NEEDED | grep -i 'stdc\|gomp'
+tr ' ' '\n' < build/Release/CMakeFiles/OpenSeesPy.dir/link.txt | grep -n 'stdc++\|gomp\|pthread'
+LD_DEBUG=bindings python -c 'import opensees' 2>&1 | grep num_putIc   # two different "to" files = two runtimes
+```
+
+**Fix (in `CMakeLists.txt`, WP-109):** probe `FindOpenMP` with the EXE linker flags
+cleared, and link only `LADRUNO_OPENMP_LINK_LIBS` — `OpenMP_CXX_LIBRARIES` filtered
+to the OpenMP runtime (`gomp`/`omp`/`iomp5`), everything else dropped with a
+`STATUS` line and a `FATAL_ERROR` if a static C++/pthread runtime survives. The
+stale-cache path is why the filter exists in addition to the clean probe.
+Pinned by `tests/test_wp109_module_single_libstdcxx.py` (pure-Python ELF reader;
+red on the unfixed module with 179 leaked symbols, green after relink).
+
+**Rule.** Any `find_package` whose probe links an executable can return a *static
+system runtime* when `CMAKE_EXE_LINKER_FLAGS` carries `-static-*`. Never append a
+Find-module `_LIBRARIES` list to a `SHARED` target unread, and never let a Python
+module define libstdc++ symbols. Same trap for `MPI_CXX_LIBRARIES` /
+`Threads::Threads` on `OpenSeesPyMP`.
+
+**Debugging the runner itself is cheap and sometimes the only faithful option.** A
+`workflow_dispatch`-only workflow on the WP branch (`ladruno_wp109_debug.yml`,
+deleted at closeout) built the module with `-g` and ran pytest under `gdb -batch`
+on ubuntu-latest — the environment esmeralda could not mirror (no Docker, no
+g++-13). Its ASAN twin job never finished there: a `-fsanitize=address -O1 -j8`
+build of the whole tree gets the 16 GB hosted VM killed (*"runner has received a
+shutdown signal"*) in the ASDPlastic template set, twice; build one object library
+at a time or `-j2` if you ever need it. esmeralda's ASAN tree was clean. Two traps: GitHub does not register a `workflow_dispatch`
+workflow until it has run once from a push, so give it a push trigger scoped to
+the branch; and `gh run view --log` refuses while any job of the run is still in
+progress — fetch a finished job with
+`gh api --allow-escape-sequences repos/<owner>/<repo>/actions/jobs/<job-id>/logs`
+(WORKFLOW_GOTCHAS §10).
+
 ## `ops.ladrunoBuild()` lags after an incremental rebuild
 
 `CMakeLists.txt:200-207` captures the git hash with

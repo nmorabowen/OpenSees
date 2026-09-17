@@ -1,7 +1,7 @@
 ---
 title: WP-107 — threaded Domain::update element loop (OpenMP), desktop-scoped
 project: Ladruno
-status: implemented — default OFF, opt-in via `ladrunoThreads`
+status: implemented — compiled in by default (CMake `LADRUNO_OPENMP` ON since WP-109), threads opt-in via `ladrunoThreads`
 priority: medium
 implements: 75b_ladruno_threaded_assembly_adr (stage L3-1, desktop-scoped re-entry)
 amends: 40_ladruno_performance_adr
@@ -79,52 +79,38 @@ identical order. So:
 
 ### 3.1 Build
 
-`option(LADRUNO_OPENMP … OFF)`. `Ladruno_scripts\build.bat` passes
-`-DLADRUNO_OPENMP=ON` explicitly (and `=OFF` under `set LADRUNO_NO_OPENMP=1` —
-both ways, so a stale cache never decides it). **So the ON path is the
-Windows/MSVC canonical build and nothing else.**
+`option(LADRUNO_OPENMP … ON)` since [WP-109](https://github.com/nmorabowen/OpenSees/pull/846) (2026-09-17). `Ladruno_scripts\build.bat`
+still passes `-DLADRUNO_OPENMP=ON` explicitly (and `=OFF` under `set LADRUNO_NO_OPENMP=1`
+— both ways, so a stale cache never decides it); that is about caches, not the
+default. **Every build path — build.bat, a bare `cmake`, Zone-A — now compiles the
+loop in, and Zone-A runs this WP's warrant file on gcc.**
 
-**Decision, SETTLED 2026-09-16 by the PR #843 CI fix — this is the item ADR-75b
-§14 left open ("decide whether build.bat turns it ON"). The ON-everywhere answer
-was tried and REVERTED; ADR-75b §14.4 carries the full record.**
+**History, kept because it was expensive.** The first cut defaulted the option OFF
+("a bare `cmake` build should stay vanilla-shaped"). The PR #843 CI fix measured that
+this meant *CI built the feature OUT* — Zone-A configures with a bare `cmake` and
+never runs build.bat — so `tests/test_wp107_threaded_update.py` failed 10 of 18 on
+the one build meant to gate it (run 35160539366). Flipping the default to ON then
+**segfaulted** Zone-A, deterministically, in an unrelated test
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356); the zero-mass `system Diagonal` case, at 1 thread,
+not on MSVC), and #843 shipped with the default OFF, the test file skipping itself
+on CI, and the crash banked as "gcc `-fopenmp` codegen/link" for a Linux ASAN/gdb
+work package (ADR-75b §14.4).
 
-The split — option default OFF, build.bat passing ON — was first justified by "a
-bare `cmake` build of the tree should stay vanilla-shaped". That justification has
-a measured counter-example, and it is the fork's own gate:
-`.github/workflows/ladruno.yml`'s Zone-A job configures the Ubuntu build with a
-bare `cmake -S . -B build/Release …` and **never calls build.bat** (build.bat is
-Windows-only). So the split did not mean "developers who want vanilla get vanilla"
-— it meant **CI built the feature OUT**, and all 10 threading cases of
-`tests/test_wp107_threaded_update.py` failed on the one build that is supposed to
-gate them (run 35160539366: `10 failed, 2489 passed`, every failure quoting *"this
-binary was built WITHOUT LADRUNO_OPENMP"*).
+**That work package is WP-109, and the crash was this fork's own link line, not
+gcc.** The runner ran Zone-A under gdb: the fault is `std::codecvt<char16_t>::
+do_unshift` reached from `std::ostream::_M_insert<long>` inside
+`PythonStream::err_out<int>` — a stream asked its locale for `num_put` and got a
+`codecvt` facet, because `opensees.so` carried a private **static** libstdc++ *and*
+needed `libstdc++.so.6`. `FindOpenMP` probes with an executable `try_compile`, which
+inherits the GNU branch's `CMAKE_EXE_LINKER_FLAGS "-static-libstdc++"` and therefore
+reports `libstdc++.a` as an OpenMP implicit library (`OpenMP_CXX_LIB_NAMES =
+libstdc++;gomp;pthread`), and §3.1's original `${OpenMP_CXX_LIBRARIES}` on every
+target carried it into the shared Python modules. Fix: probe with the EXE flags
+cleared, and link only `LADRUNO_OPENMP_LINK_LIBS` (the OpenMP runtime, everything
+else dropped loudly); pinned by `tests/test_wp109_module_single_libstdcxx.py`. Full
+record: ADR-75b **§14.5**, BUILD_GOTCHAS §16.
 
-**But flipping the option default to ON crashes Linux.** Zone-A then got past the
-WP's own tests and **segfaulted**, deterministically, twice on the same commit
-([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)):
-
-```
-test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
-Fatal Python error: Segmentation fault      → pytest exit 139
-```
-
-That is the **zero-mass `system Diagonal`** case, unrelated to this WP, crashing
-**at 1 thread** where `Domain::ladrunoThreadedUpdate()` returns `false` before
-touching anything — *not* the threaded loop, but gcc's `-fopenmp` codegen/link
-(libgomp, `-pthread`) turning the already-untrustworthy singular-mass failure path
-([[LEDGER_quirks]]) into a hard crash. It does not reproduce on MSVC.
-
-**So, by owner decision, the default stays OFF and the gcc crash is not chased
-here.** What that buys and what it costs:
-
-- Windows/MSVC via build.bat: feature ON, and **tested** (18/18).
-- **Zone-A does NOT exercise the threaded loop.** The test file skips itself with a
-  reason. This gap is knowing and temporary.
-- **The fork cannot currently be built with OpenMP on gcc** — its own Linux
-  ASAN/gdb work package. When that lands, flip this default to ON.
-
-Independent of the gcc defect, ON is safe *as a capability*, and this is what
-build.bat relies on:
+Independent of all that, ON is safe *as a capability*:
 
 1. the **runtime** default is still **1 thread** — ADR-40's "OpenMP-by-default"
    anti-goal is about *threads*, not about *compiling the loop in*, and nothing
