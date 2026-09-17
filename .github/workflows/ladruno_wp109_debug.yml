@@ -7,6 +7,16 @@
 name: Ladruno WP-109 gcc-openmp debug
 
 on:
+  # push trigger scoped to the WP branch + code paths: GitHub only registers a
+  # workflow_dispatch workflow once it has run from a push, and every source
+  # change is a candidate fix that needs the same repro.
+  push:
+    branches: [wp/109-gcc-openmp-diagonal-segfault]
+    paths:
+      - '.github/workflows/ladruno_wp109_debug.yml'
+      - 'SRC/**'
+      - 'CMakeLists.txt'
+      - 'tests/test_adr30_projection_p0.py'
   workflow_dispatch:
     inputs:
       pytest_args:
