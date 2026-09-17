@@ -57,7 +57,7 @@
 // (Domain::update) before update() and read by crack-band materials inside
 // setTrialStrain via getCharacteristicLength(). Declared here for the defensive
 // re-assignment at the top of update().
-extern Element *ops_TheActiveElement;
+extern thread_local Element *ops_TheActiveElement;   // Ladruno WP-107: thread_local, see Element.cpp
 
 Matrix LadrunoDispBeamColumn2d::K(6,6);
 Vector LadrunoDispBeamColumn2d::P(6);

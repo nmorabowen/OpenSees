@@ -30,6 +30,7 @@
 
 #include <string.h>
 #include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
+#include <atomic>                  // Ladruno WP-107: the two ModifiedEuler warn budgets
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <algorithm>
@@ -1069,6 +1070,49 @@ void ManzariDafalias::elastic_integrator(const Vector& CurStress, const Vector& 
 }
 
 
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in ManzariDafalias.h
+// for the per-scheme audit this encodes. Only IntScheme 1 (ModifiedEuler) is
+// proven re-entrant; every other scheme -- audited-and-rejected or simply not
+// audited -- answers false, because the ADR's rule is "un-audited is never
+// threaded", not "not-known-bad is fine".
+bool
+ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+    // REFUSED, unconditionally -- and the reason is the most useful thing WP-107
+    // found, so it is recorded here rather than in a ledger only.
+    //
+    // The first version of this returned `mScheme == INT_ModifiedEuler`, on the
+    // strength of a COMPLETE function-scope-static audit of the
+    //   integrate -> explicit_integrator -> ModifiedEuler
+    //             -> {GetElastoPlasticTangent, Stress_Correction,
+    //                 IntersectionFactor, GetStateDependent, GetStiffness}
+    // call graph, which finds NONE (every static Vector/Matrix in this file is in
+    // RungeKutta45, NewtonIter, getPStrain or sendSelf/recvSelf -- all off the
+    // IntScheme-1 path), plus no Matrix::Solve/Invert anywhere on it.
+    //
+    // That audit is not a proof, and the measurement says so. On a 6400-element
+    // LadrunoQuad -bbar plane-strain deck:
+    //   * IntScheme 1, threads > 1, with the ELASTIC branch only (gravity stage,
+    //     mElastFlag == 0): clean, bit-identical.
+    //   * IntScheme 1, threads > 1, once the PLASTIC branch is exercised in
+    //     volume: segfaults, 4/4 at 4 threads.
+    // Ruled out by experiment, none of which changed the outcome: the fork's
+    // subclass (vanilla ManzariDafalias crashes identically), the linear solver
+    // (BandGeneral and Pardiso both), worker-thread stack size
+    // (KMP_STACKSIZE=64M), and the warning path (it faults with zero warnings
+    // emitted). The same element with ElasticIsotropicPlaneStrain2D is clean
+    // 6/6 at 8 threads on 10 000 elements, so the element half is not at fault.
+    //
+    // WP-107's rule is "un-audited is never threaded". A located-but-unfixed
+    // hazard is strictly worse than an un-audited one, so this family is refused
+    // until someone finds it. A threaded run on a ManzariDafalias-family deck
+    // therefore falls back to the serial loop, loudly, naming the element tag.
+    //
+    // See Ladruno_implementation/107_ladruno_openmp_element_loop.md section 5 and
+    // LEDGER_quirks.md ("a static grep is not a re-entrancy proof").
+    return false;
+}
+
 void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector& CurStrain, const Vector& CurElasticStrain,
         const Vector& CurAlpha, const Vector& CurFabric, const Vector& alpha_in, const Vector& NextStrain,
         Vector& NextElasticStrain, Vector& NextStress, Vector& NextAlpha, Vector& NextFabric,
@@ -1465,15 +1509,20 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // of stderr during ADR-86 PR-1. The throttle is therefore a PROCESS-WIDE budget:
         // the first 10 events print, then one suppression notice, then silence -- worst
         // case 11 lines for a mesh of any size. Diagnostics only; no numerics change.
-        static int ladrunoClampWarnCount = 0;                               // Ladruno
-        if (ladrunoClampWarnCount < 10) {                                   // Ladruno
+        // Ladruno WP-107: std::atomic, exactly as the THREAD SAFETY note on the
+        // sibling budget below asked for "if Lane 3 lands". ModifiedEuler is the
+        // one integration scheme WP-107 threads, so these two counters are the
+        // only ones in the threaded path. Still a diagnostic budget and nothing
+        // else: the print order across threads is not defined, only the count.
+        static std::atomic<int> ladrunoClampWarnCount(0);                   // Ladruno
+        if (ladrunoClampWarnCount.load() < 10) {                             // Ladruno
             opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                    << this->getTag() << ": mean stress p = " << p
                    << " is below the floor m_Pmin + m_Presidual = " << m_Pmin + m_Presidual
                    << "; CLAMPING the stress to p = " << m_Pmin
                    << " (deviator preserved). The result at this integration point is set "
                    << "by the clamp, not by the model." << endln;
-            if (++ladrunoClampWarnCount == 10)                              // Ladruno
+            if (ladrunoClampWarnCount.fetch_add(1) + 1 == 10)               // Ladruno
                 opserr << "WARNING ManzariDafalias: further ModifiedEuler() low-p clamp "
                        << "warnings suppressed (budget 10 per process)." << endln;
         }
@@ -1585,8 +1634,10 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             // job that affects the answer. Promote to std::atomic<int> if Lane 3
             // lands. Same note on the three sibling budgets (the two low-p clamps
             // here and LadrunoBrick's refusal reporter).
-            static int ladrunoSubstepCapWarnCount = 0;                  // Ladruno
-            if (ladrunoSubstepCapWarnCount < 10) {
+            // Ladruno WP-107: promoted to std::atomic<int>, as the note above
+            // said to do "if Lane 3 lands". It has.
+            static std::atomic<int> ladrunoSubstepCapWarnCount(0);      // Ladruno
+            if (ladrunoSubstepCapWarnCount.load() < 10) {
                 opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                        << this->getTag() << ": substep cap " << mMaxSubstepsInME
                        << " reached at T = " << T << ", dT = " << dT
@@ -1608,7 +1659,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
                        << " COMMIT time no element acts on it at all --"        // Ladruno WP-99 (F7)
                        << " Domain::commit() drops the return."                 // Ladruno WP-99 (F7)
                        << endln;
-                if (++ladrunoSubstepCapWarnCount == 10)
+                if (ladrunoSubstepCapWarnCount.fetch_add(1) + 1 == 10)
                     opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"
                            << " warnings suppressed (budget 10 per process)." << endln;
             }

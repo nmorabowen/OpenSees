@@ -1,0 +1,90 @@
+
+ ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+▀                                   ███    ███
+
+Ladruno OpenSees build: 03f5dff376f435bfa7d14c5d757a9e7b1580863f
+      Ladruno fork � active features:
+        � OpenSeesPyMP � import openseesmp (MPI-parallel Python)
+        � EnergyBalance recorder � per-region energy channels (-v2, MPI)
+        � ExplicitBathe � Noh-Bathe explicit (-lnvd damping, -sms scaling)
+        � CentralDifferenceLadruno � robust explicit central difference
+        � CentralDifferenceSMS � selective mass scaling (explicit)
+        � CentralDifferenceSMSConsistent � Olovsson mass scaling (explicit)
+        � HRZ mass-conserving lumping (-lump hrz) for dt_cr
+        � Queryable critical time step (dt_cr)
+        � BezierTri6 � quadratic Bezier triangle (Kadapa 2018)
+        � BezierTet10 � quadratic Bezier tetrahedron (Kadapa 2018)
+        � LadrunoBrick � unified hex (std/bbar/uri/ssp/eas + hourglass)
+        � LadrunoBrick20 � 20-node quadratic hex (std/uri/HRZ lumping)
+        � LadrunoQuad/CST/LST/CSTPair � 2D continuum (std/bbar/ssp/eas)
+        � Solid -geom methods � linear/corot/finite (F-bar)/hypo (UL rate)
+        � LadrunoJ2 � iso + Chaboche AF kinematic J2
+        � LadrunoJ2Finite � finite-strain J2, co-rotating backstress
+        � LadrunoUniaxialJ2 � uniaxial Chaboche AF J2 fiber/truss
+        � StagedDefGrad/InitDefGrad � stress-free staged activation (finite)
+        � StagedStrain � stress-free staged activation (small-strain)
+        � Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
+        � LadrunoIMKBeam � concentrated-plasticity IMK beam hinges
+        � LadrunoRebarBuckling � rebar buckling wrapper (cyclic)
+        � LadrunoRCConcrete � RC plastic-damage + MCFT softening (shell)
+        � LadrunoRCFiniteStrain � finite-strain (Hencky) RC plastic-damage
+        � LadrunoConcrete3D � CDPM2-grade solid concrete (Menetrey-Willam)
+        � LadrunoBondSlip � 1D bond-slip tau-s (CEB-FIP MC2010)
+        � LadrunoCohesiveHinge � cohesive moment-rotation hinge (Gf)
+        � LadrunoCohesiveHingeBiaxial � coupled Mz-My cohesive hinge
+        � LadrunoEmbeddedRebar � rebar in non-matching mesh (bond/AL)
+        � LadrunoEmbeddedNode � node-to-host embed tie (implicit+explicit)
+        � LadrunoDistributingCoupling � RBE3 distributing coupling
+        � LadrunoKinematicCoupling � RBE2 rigid kinematic coupling
+        � LadrunoArcLength � adaptive arc-length radius (Ramm)
+        � LadrunoDynamicRelaxation � quasi-static dynamic relaxation
+        � LadrunoIndirectControl � indirect/CMOD control (snap-back)
+        � LadrunoHHT � sensitivity/DDM HHT
+        � LadrunoGeneralizedAlpha � sensitivity/DDM generalized-alpha
+        � LadrunoStabilizedUnbalance � true-equilibrium test (-stabilize)
+        � LadrunoProjection � explicit constraint projection (equalDOF+)
+        � LadrunoTie � non-conforming mesh ties (collocation + mortar)
+        � LadrunoContact � NTS + mortar/ALM contact, friction, 2D + 3D
+        � contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
+        � stressesPlaneStrain � exact sigma_zz response (plane strain)
+        � Ladruno � modular HDF5 .ladruno recorder
+        � LadrunoMonitor � live SWMR-HDF5 analysis monitor
+        � LadrunoRigidBody � 6-DOF rigid body (finite-rotation slaving)
+        � LadrunoSolidShell � 8-node ANS/EAS solid-shell
+        � LadrunoComplexEigen � complex/state-space modal (QZ pencil)
+        � FeastEigen � band-targeted eigensolver (eigen -feast)
+        � LadrunoModalResponse � exact PWL modal-superposition transient
+        � Modal combination � SRSS/CQC/ABS/TenPercent response spectrum
+        � Modal frequency domain � FRF sweep, steady-state, random PSD
+        � LadrunoUP � Biot u-p saturated-porous element family
+        � LadrunoPorousOverlay � staggered u-p overlay pattern
+        � system Pardiso � threaded MKL sparse-direct (reuse, -krylov, -stats)
+        � system Mumps � distributed MUMPS (-BLR, -stats, half-storage)
+        � MohrCoulombTensionCutoff � MC + Rankine composite (ASDPlastic)
+        � LadrunoSANISAND � -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
+        � LadrunoLoadControl � -tangentPredictor for prescribed-disp paths
+        � LadrunoShellModifier � ETABS-style shell stiffness modifiers
+        � ASDPlasticMaterial3D � fail-loud, parser, Voigt+apex (ADR-94)
+        � ASDPlasticMaterial3D � Closest_Point return map (opt-in, ADR-97)
+        � IMPL-EX commit-time refusal latch � no silent partial commits
+        � ladrunoThreads � OpenMP element state-determination loop (opt-in)
+
+
+Suppress this banner with LADRUNO_OPENSEES_QUIET=1
+
+build: 03f5dff376f435bfa7d14c5d757a9e7b1580863f
+ladrunoThreads requested=1 stored=1  MKL_NUM_THREADS=1
+elements: 14400   Gauss points: 57600   driven nodes: 121   dof ~ 29282   load=oedometer
+gravity wall  : 0.755 s (5 steps)
+settle wall   : 2.045 s over 12 steps
+per-step wall : 0.1704 s (mean), 0.1468 s (min), 0.1631 s (median)
+per-step list : 0.2625 0.1699 0.1653 0.1615 0.1468 0.1482 0.1857 0.1631 0.1473 0.1484 0.1600 0.1866
+wrote run1\curve_el_elastic_t1_r0.csv (12 rows)
+WALLLINE threads=1 h=0.05 mat=elastic scheme=1 tan=0 nele=14400 grav=0.7554 settle=2.0453 perstep=0.17044 median=0.16313

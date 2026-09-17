@@ -60,6 +60,41 @@ class ElasticIsotropicPlaneStrain2D : public ElasticIsotropicMaterial
     const Vector &getStrain (void);
     double getStressZZ (void);   // Ladruno: sigma_zz = lambda*(eps_xx + eps_yy)
 
+    // Ladruno WP-107 (ADR-75b L3-1): re-entrant ON THE update() PATH, which is
+    // the only claim being made.
+    //
+    // CORRECTED after the red-team review (S2). The first version of this
+    // comment said "getTangent/getInitialTangent/getStress write only the
+    // instance's own D/sigma". That is FALSE and the contradiction was ten
+    // lines below it: `sigma` and `D` are CLASS-WIDE statics (see the private
+    // section, and their definitions at the top of the .cpp) and all three of
+    // those methods write them. Two instances calling getTangent() on two
+    // threads race, full stop.
+    //
+    // The conclusion survives, for a different and narrower reason: the loop
+    // WP-107 threads is Domain::update(), and LadrunoQuad::update() reaches
+    // exactly one method on this class -- setTrialStrain(), which writes only
+    // the instance's own `epsilon` (.cpp:51-77, four overloads, all
+    // unconditionally `return 0`). getTangent / getInitialTangent / getStress
+    // are called from getTangentStiff / getResistingForce, which run on the
+    // main thread in loops B/C and are NOT threaded by this WP.
+    //
+    // WHY THE DISTINCTION MATTERS RATHER THAN BEING PEDANTRY: the wrong reason
+    // licenses the next mistake. It would authorise allowlisting any element
+    // whose update() calls getStress()/getTangent() -- which `LadrunoQuad -eas`
+    // (formEAStrue) does, and which is precisely why -eas is NOT allowlisted.
+    // The banked lesson of this WP is "a `static` grep is an audit, not a
+    // re-entrancy proof"; here the grep had not even been run.
+    //
+    // So: safe because the update() call graph reaches ONLY setTrialStrain.
+    // `D` and `sigma` are class-wide and must never be touched on a worker
+    // thread. If loops B/C are ever threaded, this declaration is void.
+    //
+    // Declared on this LEAF class rather than on ElasticIsotropicMaterial on
+    // purpose -- the base has thermal and incremental subclasses that have not
+    // been audited, and a base-class `true` would fail OPEN for them.
+    virtual bool ladrunoThreadSafeUpdate(void) const { return true; }   // Ladruno WP-107
+
     int commitState (void);
     int revertToLastCommit (void);
     int revertToStart (void);

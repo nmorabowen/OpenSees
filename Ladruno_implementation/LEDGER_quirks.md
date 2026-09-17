@@ -7187,6 +7187,217 @@ hardening. The comment is corrected in the same PR.
   "ladrunoBuild provenance command"); it just cannot resolve one commit.
   See `Ladruno_internal/BUILD_GOTCHAS.md`.
 
+## Threading the element loop — five things a `static` grep will not find (WP-107, ADR-75b L3-1)
+
+### `Matrix::Solve` and `Matrix::Invert` run on a PROCESS-WIDE scratch buffer that they FREE AND REALLOCATE
+
+`Matrix::matrixWork` / `Matrix::intWork` (`SRC/matrix/Matrix.cpp:51-52`) are class
+statics. `Matrix::Solve(Vector&,Vector&)` (`:373`), `Solve(Matrix&,Matrix&)`
+(`:461`) and `Invert` (`:567`) each contain the same block: if the matrix is
+bigger than the fixed work area, `delete [] matrixWork; matrixWork = new
+double[dataSize];` — then they copy `data` into it and factor in place.
+
+So any code path reachable from a threaded loop that calls either method is not
+merely a data race on a shared buffer: it is a **use-after-free**, because one
+thread can free the buffer another thread is mid-factorization on. A grep for
+`static` inside the element or material file finds nothing — the static is three
+directories away in `SRC/matrix/`.
+
+This is the concrete reason WP-107's allowlist refuses `ManzariDafalias`
+`IntScheme 2` / `4` (their `NewtonSol*`/`NewtonIter*` call both) and
+`LadrunoQuad -formulation eas` (its static condensation inverts `Kaa`), even
+though nothing about those paths *looks* shared. The `Matrix` **constructors**
+also lazily allocate that buffer, which is benign in practice only because
+thousands of `Matrix` objects are built during model construction on the master
+thread — do not rely on that if a threaded phase is ever added before model
+build completes.
+
+### Re-entrancy of an element is a property of its whole call graph, and of its CONFIGURATION — not of its class
+
+Two traps that the obvious "audit the element class" framing misses:
+
+1. **The material decides.** `ManzariDafalias` is re-entrant under `IntScheme 1`
+   (ModifiedEuler: no static work arrays, no `Matrix::Invert`) and is NOT under
+   `IntScheme 2` or `4`. Same class, same object, opposite answers — which is why
+   WP-107 made the allowlist a **runtime virtual** (`ladrunoThreadSafeUpdate()`)
+   rather than a class-tag table. The same holds one level up: `LadrunoQuad` is
+   re-entrant for `std`/`bbar`/`ssp` under `-geom linear` and is not for `eas` or
+   `-geom finite`.
+2. **A diagnostic ledger can block threading even when the physics is clean.**
+   `LadrunoSANISAND` under `-implex` keeps a process-wide accumulator
+   (`LadrunoImplexGlobals`) whose `sumError`/`maxError` are **floating point**.
+   Adding an atomic does not fix it: a threaded sum changes the reported average's
+   last bits with the thread count, which is exactly the determinism the threaded
+   loop exists to preserve. The right answer was to refuse, not to "make it
+   thread-safe".
+
+### `Node`'s trial-state GETTERS allocate
+
+`Node::getTrialDisp()` (`Node.cpp:590`), `getTrialVel()`, `getTrialAccel()` and
+friends lazily call `createDisp()` / `createVel()` / `createAccel()`, which
+`new` a `4*numberDOF` array and build four `Vector`s over it. A read-only-looking
+`const Vector &d = theNodes[a]->getTrialDisp();` in an element's `update()` is
+therefore a **write** the first time it runs on a node. Two elements sharing a
+fresh node both allocate: last-writer-wins, the other allocation leaks, and a
+`const Vector&` already handed out points into the freed buffer.
+
+Exactly three `create*` functions exist and all lazy getters funnel through them,
+so a serial pre-pass touching those three getters on every node closes the hazard
+completely — which is what `Domain::ladrunoThreadedUpdate()` does before entering
+its parallel region.
+
+### An `extern` redeclaration in a `.cpp` breaks when the definition becomes `thread_local`
+
+Making `ops_TheActiveElement` `thread_local` compiled everywhere that included
+`OPS_Globals.h` / `G3Globals.h`, and failed with MSVC **C2370 "redefinition;
+different storage class"** in the two files that had declared it themselves:
+`LadrunoDispBeamColumn2d.cpp:60` and `3d.cpp:56`. If you change the storage class
+of a global in this tree, grep for local `extern` copies of it — the headers are
+not the whole story.
+
+### The profiler's deep gate cannot be on while the loop is threaded
+
+`OPS_PROFILE_SCOPE_DEEP_NAMED` is gated on `enabled() && deep()`
+(`ProfilerMacros.h:90-93`), and every `~ElemScope` does a lazy `std::map` insert
+plus counter read-modify-writes on the node the master thread built
+(`Profiler.cpp:115-124`). Concurrent `std::map` insertion is undefined behaviour,
+and `Profiler.h:59-63` states the precondition ("each thread owns its own tree")
+that this violates. So `Domain::ladrunoThreadedUpdate()` **refuses** to thread
+while the deep gate is armed.
+
+The practical consequence for anyone benchmarking: the per-loop *fraction* is a
+property of the SERIAL baseline, so measure it with the deep profiler at 1
+thread, and measure the threaded runs on wall time with the profiler off. Trying
+to profile a threaded run deeply gets you a serial run and a confusing table.
+
+### A process-wide `static bool` "warn once" latch makes every model after the first MUTE (WP-107, red-team S3)
+
+The pattern is everywhere in this codebase and it is wrong whenever the message
+describes a **per-model** decision rather than a per-process one:
+
+```cpp
+static bool warned = false;
+if (!warned) { warned = true; opserr << "WARNING ..."; }
+```
+
+WP-107's threaded element loop re-audits the domain on *every* `Domain::update()`,
+so `wipe` + rebuild, a runtime `element`, and `remove element` were all handled
+correctly — but with three such latches, only the FIRST model in the process ever
+said what it had decided. Measured: clean deck announces THREADED; `wipe` + a deck
+with a bad element 7 refuses correctly and says so; `wipe` + a deck with a bad
+element 33 refuses **silently**; `wipe` + a clean deck threads **silently**. A run
+that quietly went serial and a run that stayed threaded then look identical, which
+is the exact confusion the message exists to prevent. A one-process-per-run bench
+driver hides it; pytest, apeGmsh and any in-process parameter study do not.
+
+**Rule:** latch per *(owning object, outcome, identifying tag, parameter)*, not per
+process, and give the owning object a generation counter that its mutators bump
+(`Domain::addElement` / `removeElement` / `clearAll` here). Keep the steady-state
+quiet so the message cannot become per-iteration spam — both failure modes are
+real, and the test file asserts both directions.
+
+### A speed-up above your own Amdahl ceiling is a measurement defect, not a result (WP-107, red-team S4)
+
+WP-107 reported 1.11x at 8 threads on a deck whose loop-A fraction it had itself
+measured at 7.80 %, i.e. a computed ceiling of **1.08x**. The number was above the
+ceiling in the same document and nobody flagged it. Re-measured on an idle box:
+1.03x / 1.03x / **0.94x** at 2/4/8 threads — 8 threads is a *regression*.
+
+Two traps in one:
+
+1. **Check every measured speed-up against the ceiling you derived.** Exceeding it
+   is proof the measurement is noise (or that the fraction is wrong); it is never
+   good news.
+2. **"The box was busy, so this is a lower bound" is a sign error as often as not.**
+   Contention inflates the serial baseline *and* suppresses the oversubscription
+   penalty of the wide thread counts. Whether the bias helps or hurts depends on
+   the deck, so the caveat is never a substitute for re-running idle.
+
+### A whole-file CRLF→LF rewrite of a vanilla file is invisible in review and permanent in `git blame` (WP-107, red-team S1)
+
+An editor helpfully normalised `SRC/material/nD/UWmaterials/ManzariDafalias.{cpp,h}`
+while making a 78-line change. Both files are pinned `-text` in `.gitattributes`, so
+git stores the bytes verbatim and nothing normalised them back: the PR diff read
+**5635/5584 and 431/410**, ~11,000 of its 11,474 additions were line-ending noise,
+the review surface was inflated ~50x, `git blame` pointed the entire file at the WP,
+and a concurrent PR touching the same file conflicted **wholesale** (`git merge-tree`
+confirmed both before and after the fix).
+
+**Check before every PR on this fork:** `git diff origin/ladruno..HEAD --numstat` —
+any file whose additions ≈ deletions ≈ its own line count is a conversion, not a
+change. `git diff -w --ignore-cr-at-eol` shows what really changed. The fix is to
+rewrite the file with its original endings and re-commit; the content is unaffected.
+
+### A `static` grep is an audit, not a re-entrancy proof — measured on ManzariDafalias (WP-107)
+
+This is the most useful thing WP-107 found, and it cost the WP its headline
+payoff, so it is worth stating bluntly.
+
+ADR-75b §5.1 sizes the threading hazard as "~5,600 function-/file-scope
+`static Matrix|Vector|ID` declarations across 587 files", which frames
+re-entrancy as a *grep problem*. It is not. `ManzariDafalias` under `IntScheme 1`
+(ModifiedEuler) has **no function-scope static anywhere on its update call
+graph** —
+
+    integrate -> explicit_integrator -> ModifiedEuler
+              -> {GetElastoPlasticTangent, Stress_Correction,
+                  IntersectionFactor, GetStateDependent, GetStiffness}
+
+every `static Vector`/`Matrix` in that file is in `RungeKutta45`, `NewtonIter`,
+`getPStrain` or `sendSelf`/`recvSelf`, all off that path — and no
+`Matrix::Solve`/`Invert` on it either. It was allowlisted for WP-107's threaded
+`Domain::update()` on exactly that basis.
+
+**It segfaults.** On a 6400-element `LadrunoQuad -bbar` plane-strain deck at 4
+threads, reproducibly (4/4), as soon as the PLASTIC branch is exercised in
+volume. The elastic branch (gravity stage, `mElastFlag == 0`) is clean and
+bit-identical, which is why a mild load path ran 12/12 clean with a byte-exact
+curve before a harder one was tried — the most dangerous possible result.
+
+What the experiments rule out, none of which changed the outcome:
+
+| hypothesis | test | result |
+|---|---|---|
+| the fork's subclass | vanilla `nDMaterial ManzariDafalias` | crashes identically, 4/4 |
+| solver interaction | `BandGeneral` vs `Pardiso` | both crash |
+| worker-thread stack overflow | `KMP_STACKSIZE=64M` (libiomp5 is the runtime) | no change |
+| `opserr` from inside the parallel region | `-Pmin 1e-8` so the clamp never warns | crashes with **zero** warnings emitted |
+| the element | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** |
+| a benign FP-order difference | — | it is a segfault, not a last-bits difference |
+
+Root cause **not located**. The family is therefore refused by
+`ManzariDafalias::ladrunoThreadSafeUpdate()` returning false unconditionally.
+
+**A second round excluded three more hypotheses** (full table in
+[[75b_ladruno_threaded_assembly_adr]] §14.1), and one of them reframes the
+problem: serializing the **entire `theEle->update()`** with `#pragma omp critical`
+— so the threads exist and enter the region but never run an update concurrently
+— **still faults 0/4**. Serializing the whole of `ManzariDafalias::integrate()`
+likewise changes nothing, and `OMP_STACKSIZE`/`KMP_STACKSIZE` at 256 MB changes
+nothing. **So this is not a data race between element updates**, which is what
+every hypothesis up to that point had assumed. What is left is something about
+running this particular update path on an OpenMP worker thread at all — the
+elastic path on the same worker thread, same element, same counts, is clean 6/6.
+
+The practical blocker for going further on this box: no `cdb`/`WinDbg`/`procdump`
+is installed and the Release build emits **no PDBs**, so a faulting frame could
+not be obtained. That is the first thing to fix next time, not another hypothesis.
+
+Three things to carry forward:
+
+1. **A located-but-unfixed hazard is worse than an un-audited one**, because the
+   audit creates confidence. WP-107's allowlist defaults to `false` precisely so
+   that being wrong is expensive to do rather than free.
+2. **A clean threaded run on a mild load path proves nothing.** The bit-identity
+   gate has to be run on a deck that exercises the branch you care about; ours
+   passed 12/12 with `maxdiff = 0.000e+00` on a configuration that had barely
+   entered plasticity.
+3. **The next tool is ThreadSanitizer, not another grep.** ADR-75b §7's
+   correctness protocol already says so ("the only tool that finds the misses
+   `grep` cannot"); this is the measurement that proves the protocol item is
+   load-bearing rather than belt-and-braces. TSan needs clang/gcc, so it means
+   the Esmeralda/Linux path, not the MSVC desktop one.
+
 ### `LadrunoSANISAND::schemeReachesModifiedEuler()` returned false for `IntScheme 2`, so the class printed a false "-maxSubsteps has NO EFFECT" warning — FIXED (WP-108)
 - **Note on provenance:** this defect was FOUND by WP-105 (F12, PR [#844](https://github.com/nmorabowen/OpenSees/pull/844), still open/unmerged as of this writing) and its own `LEDGER_quirks.md` row lives only on that branch, not on `ladruno` — this WP-108 branch was cut from `ladruno` before #844 merged, so that row could not be edited here; this is therefore a NEW row recording the same finding plus the fix. **When #844 merges, its own row ("schemeReachesModifiedEuler() returns false for IntScheme 2 ... MEASURED FALSE") should be updated to point at this fix (or merged into this row) rather than left saying "not fixed."**
 - **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
@@ -7340,3 +7551,35 @@ hardening. The comment is corrected in the same PR.
   read-only finding. If you need to know which tangent a step actually used, cross-reference the
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
   `TanType 2` output — there is no dedicated flag for it.
+
+## gcc + `-fopenmp` SEGFAULTS the zero-mass `system Diagonal` path — the fork cannot be built with OpenMP on Linux
+
+- **Symptom.** Build the fork with `-DLADRUNO_OPENMP=ON` on gcc/Linux and
+  `tests/test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`
+  dies with `Fatal Python error: Segmentation fault`, taking the whole pytest process with it
+  (`Segmentation fault (core dumped)`, exit **139**) at the second test in the suite. Measured
+  twice on the same commit, byte-identical traceback both times:
+  [run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356) (PR #843).
+  The Python frame is `ops.analyze(1, 0.001)` inside `_run_massless(("Diagonal",), 0.0)`.
+- **It is NOT the threaded loop.** The runtime thread count defaults to 1, at which
+  `Domain::ladrunoThreadedUpdate()` returns `false` before touching anything and
+  `Domain::update()` runs the unchanged serial loop. No `ladrunoThreads` call appears anywhere
+  in the crashing file. Nor is it a dormant-pragma activation (`#pragma omp` / `_OPENMP` exist
+  only in PFEM — `OPS_Element`, deliberately un-flagged — the interpreter, and WP-107's own
+  code), nor an ODR/ABI split (no class layout is `#ifdef`-conditional).
+- **What is left is codegen/link.** `-fopenmp` on `OPS_Domain` + `OPS_Utilities`, plus libgomp
+  and `-pthread` on the link line, changes optimization and the glibc allocator's threading
+  path — enough to turn a **latent defect in the singular-mass failure path** into a hard crash.
+  That path is already on record two entries' worth: a free DOF with **zero lumped mass** makes
+  the assembled `M` singular, `Diagonal` aborts with `aii = 0`, and Full/Band **return success
+  with garbage**. The failure route also re-enters `Domain::update()` from
+  `Domain::revertToLastCommit()` on the shared element iterator — the recorded reentrancy trap.
+- **Does NOT reproduce on MSVC.** The same source with `LADRUNO_OPENMP=ON` passes that file
+  locally (3/3), and the whole WP-107 file passes 18/18.
+- **Workaround/status (2026-09-16, PR #843, owner decision — not fixed).** `option(LADRUNO_OPENMP … OFF)`
+  in `CMakeLists.txt`; `Ladruno_scripts\build.bat` turns it ON, so the ON path is the Windows/MSVC
+  canonical build and nothing else. Consequence to keep in view: **Zone-A does not exercise the
+  threaded element loop at all** — `tests/test_wp107_threaded_update.py` probes the binary and
+  skips with a reason. Fixing this needs a Linux build under **ASAN/valgrind + gdb** as its own
+  work package; when it lands, flip the CMake default to ON so CI gates the feature.
+  See ADR-75b §14.4, [[107_ladruno_openmp_element_loop]] §3.1, BUILD_GOTCHAS §15.

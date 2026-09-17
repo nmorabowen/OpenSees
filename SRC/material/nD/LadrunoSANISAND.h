@@ -350,6 +350,21 @@ class LadrunoSANISAND : public ManzariDafalias
     // setTrialStrain, which is public, and because a test may want to drive it.
     int ladrunoTrialUpdate(void);   // Ladruno (ADR-92 P1)
 
+    // Ladruno WP-107 (ADR-75b stage L3-1). Narrower than the base's answer:
+    // re-entrant only when the base scheme is re-entrant (IntScheme 1) AND
+    // -implex is OFF.
+    //
+    // -implex is excluded because its diagnostics are a PROCESS-WIDE ledger
+    // (LadrunoImplexGlobals in LadrunoSANISAND.cpp: maxError, sumError, count
+    // and the four refusal buckets, all plain non-atomic members reached from
+    // every integration point). Two of those accumulators are FLOATING-POINT
+    // (sumError, and maxError's compare-and-store), so making them thread-safe
+    // is not a matter of adding an atomic -- a threaded sum changes the
+    // reported average's last bits with the thread count, which is exactly the
+    // determinism the WP exists to preserve. The honest answer for now is to
+    // refuse, loudly, and keep the ledger exact.
+    virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+
   protected:
 
     // Ladruno (ADR-86b): the status the wrappers' setTrialStrain returns.

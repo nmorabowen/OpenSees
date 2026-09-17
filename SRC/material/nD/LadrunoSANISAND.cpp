@@ -1926,10 +1926,35 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 //  vanilla footprint ZERO).
 // ===========================================================================
 
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in LadrunoSANISAND.h.
+bool
+LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+    // TWO independent refusals, and the base's is currently the binding one.
+    //
+    // (1) -implex: the diagnostics are a process-wide ledger (LadrunoImplexGlobals
+    //     below) with FLOATING-POINT accumulators, so threading would make the
+    //     reported average depend on the thread count -- not fixable with an
+    //     atomic, and exactly the determinism WP-107 exists to preserve.
+    // (2) the base class refuses outright: a threaded IntScheme-1 integration
+    //     SEGFAULTS once the plastic branch is exercised in volume, with no
+    //     function-scope static anywhere on its call graph. See the long note on
+    //     ManzariDafalias::ladrunoThreadSafeUpdate().
+    //
+    // (1) is kept explicit even though (2) already refuses everything, because
+    // (1) is a DESIGN constraint that survives any fix to (2).
+    if (mImplexOpt.enabled)
+        return false;
+    return this->ManzariDafalias::ladrunoThreadSafeUpdate();
+}
+
+
 // Process-wide IMPL-EX error accounting, on the
 // `ASDConcrete3DMaterial::GlobalParameters` template (:307-342). Anonymous
 // namespace: this is one process's diagnostic accumulator, not an interface, and
 // nothing outside this translation unit may reach it.
+// (Red-team N3: WP-107 had spliced its ladrunoThreadSafeUpdate() between this
+// paragraph and the `namespace {` it documents. Restored.)
 namespace {
 
 class LadrunoImplexGlobals                                    // Ladruno (ADR-92 P1)

@@ -109,8 +109,11 @@ class PartitionedDomain: public Domain
     virtual  int revertToLastCommit(void);        
     virtual  int revertToStart(void);    
 
-    virtual  int update(void);        
+    virtual  int update(void);
     virtual  int update(double newTime, double dT);
+
+    // Ladruno WP-107: never thread the element loop under a PartitionedDomain.
+    virtual  bool ladrunoThreadedUpdateAllowed(void) const { return false; }
 
     virtual  int analysisStep(double dT);
     virtual  int eigenAnalysis(int, bool, bool);

@@ -1,0 +1,19 @@
+t0_sanisand_t1_r0            threads=1 rep=0 rc=0 perstep=0.32458 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t1_r1            threads=1 rep=1 rc=0 perstep=0.29338 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t1_r2            threads=1 rep=2 rc=0 perstep=0.27401 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t2_r0            threads=2 rep=0 rc=0 perstep=0.26099 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t2_r1            threads=2 rep=1 rc=0 perstep=0.24619 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t2_r2            threads=2 rep=2 rc=0 perstep=0.24163 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t4_r0            threads=4 rep=0 rc=0 perstep=0.22120 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t4_r1            threads=4 rep=1 rc=0 perstep=0.20544 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t4_r2            threads=4 rep=2 rc=0 perstep=0.20485 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t8_r0            threads=8 rep=0 rc=0 perstep=0.20280 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t8_r1            threads=8 rep=1 rc=0 perstep=0.22199 identical=True maxdiff=0.000e+00 refused=False
+t0_sanisand_t8_r2            threads=8 rep=2 rc=0 perstep=0.21520 identical=True maxdiff=0.000e+00 refused=False
+
+| threads | per-step wall (s, min over repeats) | speed-up | curve bit-identical | max abs diff | refused? |
+|---|---|---|---|---|---|
+| 1 | 0.27401 | 1.00x | YES | 0.000e+00 | no |
+| 2 | 0.24163 | 1.13x | YES | 0.000e+00 | no |
+| 4 | 0.20485 | 1.34x | YES | 0.000e+00 | no |
+| 8 | 0.20280 | 1.35x | YES | 0.000e+00 | no |

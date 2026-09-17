@@ -68,7 +68,8 @@ extern double   ops_Dt;                // current delta T for current domain doi
 // extern double  *ops_Gravity;        // gravity factors for current domain undergoing an update
 extern int ops_Creep;
 extern Domain  *ops_TheActiveDomain;   // current domain undergoing an update
-extern Element *ops_TheActiveElement;  // current element undergoing an update
+extern thread_local Element *ops_TheActiveElement;  // current element undergoing an update
+                                       // Ladruno WP-107: thread_local, see Element.cpp
 
 // global variable for initial state analysis
 // added: Chris McGann, University of Washington

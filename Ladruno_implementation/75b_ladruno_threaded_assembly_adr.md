@@ -1,7 +1,7 @@
 ---
 title: ADR-75b — Lane 3, threaded element assembly (shared-memory OpenMP)
 project: Ladruno
-status: CLOSED for the production/cluster path — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
+status: CLOSED for the production/cluster path; stage L3-1 IMPLEMENTED desktop-scoped by WP-107 (see section 14) — G-L3 MEASURED 2026-07-26 and FAILED by ~42x (§13). Was PARKED — measurement-gated on G-L3 (§12, answers §11 q8). Policy SETTLED (§3 determinism, §4 scatter remedy); stage L3-0 MEASURED and REVISED after a 64-agent adversarial review (Lane B passes only under PARDISO; Lane D's loop A FAILS the gate once `-commitSolveState` is on ⇒ L3-1 de-authorized). L3-0b work-removal now SHIPPED in full ⇒ every remaining ranked target is a REDUCING loop, so the cheap reduction-free entry point is gone. Neither threading code NOR prerequisite work authorized until G-L3 measures the element fraction at production scale (≥500k DOF)
 priority: medium
 owner: nmora
 amends: 75_ladruno_sparse_direct_strategy_adr
@@ -944,3 +944,254 @@ that live on the cluster. Its addressable scope has collapsed.
 **Decision: CLOSE Lane 3 for the production/cluster path.** §2's five-loop taxonomy,
 §3's determinism policy and §4's scatter remedy remain correct and are the reusable
 assets; they should be cited, not re-derived, if a desktop-scoped case is ever made.
+
+---
+
+## 14. Stage L3-1 IMPLEMENTED, desktop-scoped — WP-107 (2026-09-15)
+
+*(Does not reopen the lane. §13's CLOSE for the production/cluster path stands
+verbatim; this section records that §13's own final paragraph — "Lane 3 is at best a
+desktop-only optimization on models ≲136k DOF … cited, not re-derived, if a
+desktop-scoped case is ever made" — has been taken up, for one loop.)*
+
+Full design, audit tables and results: [[107_ladruno_openmp_element_loop]].
+
+**Scope taken:** loop A (`Domain::update()`) only, on a plane-strain
+`LadrunoQuad -bbar` + `LadrunoSANISAND` strip. The case differs from G-L3's in the
+one way §13 said could matter: the element kernel is a **substepping critical-state
+model**, not `stdBrick`/`J2Plasticity`, and the solve is a desktop factorization
+rather than a 40.2 s MUMPS one.
+
+**What this ADR contributed, and how each item was consumed:**
+
+| This ADR | How WP-107 used it |
+|---|---|
+| §2.1 loop A has no FP reduction | The whole safety argument. Bit-identical by construction; no new CI mode, no ordered/fast split. `ok` is an integer `reduction(+:)`. |
+| §2.1b the exclusion list is exactly `LadrunoRigidBody` + `ZeroLengthVG_HG` | Excluded automatically — nothing is on the allowlist unless it opts in. |
+| §3 P-1 threading stays off by default | Build flag on, **thread count 1**. |
+| §3 P-5 one coordinated thread knob | `ladrunoThreads` + `LADRUNO_THREADS`, `SRC/utility/LadrunoThreads.{h,cpp}`. Nothing calls `omp_set_num_threads()`; the count reaches exactly one `num_threads(n)` clause — which also keeps PFEM's dormant pragmas dormant. |
+| §3 P-6 pin `MKL_NUM_THREADS=1` for identity runs | The bench harness pins it before the module loads. |
+| §5.3 / §5.4-H7 `ops_TheActiveElement` | `thread_local`. |
+| §5.4-H2 element kernel statics | `Element::ladrunoThreadSafeUpdate()`, **default false**, all-or-nothing. `LadrunoQuad`'s `shp`/`shpBar` → `thread_local`; `update()`'s three function-scope statics → stack-backed non-owning `Vector`/`Matrix`. |
+| §5.4-H3 shared mutable cursor | Snapshot into a `std::vector` before the region. |
+| §5.4-H4 `Node`'s lazy getters | Serial pre-pass over all three `create*` paths. |
+| §5.4-H6 the profiler instrument races | **Refuse** while `deep()` is armed. This closes §5.4-H6's "aggravator" cleanly: the loop-A *fraction* is measured on the serial baseline, where deep profiling is safe, and the threaded runs are timed on wall clock. |
+| §7 P-c index-addressable accessor | Solved by the snapshot, without changing `SRC/tagged/storage/`. |
+| §7 P-e per-thread profiler scopes | **Not needed** — superseded by the H6 refusal. |
+
+**Three prerequisites this ADR listed were NOT needed, because they belong to loops
+B/C rather than to loop A:** P-a (de-static the `FE_Element`/`DOF_Group` pools),
+§4's scatter remedy, and §4.2's ordered gather. Loop A touches none of them.
+
+**§4.2's anti-goal on `thread_local` is narrowed, not violated.** The anti-goal reads
+"`thread_local` statics as the de-statication strategy — fixes the race, forecloses
+exact gather (§4.2)". That objection is specific to loops B/C, where an exact ordered
+gather needs every element's matrix live simultaneously. Loop A has no gather, so
+nothing is foreclosed — and `thread_local` costs **0 bytes per element** where §11 q9
+prices per-element buffers at **1-4 GB of SERIAL memory** at production element counts.
+For loop A, `thread_local` is the cheaper *and* the safer answer.
+
+**§11 q7 ("does any element alias rather than `getCopy()` a material?") is answered
+for the allowlisted set only:** `LadrunoQuad` calls `m.getCopy(type)` per integration
+point (`LadrunoQuad.cpp:110`). The general question is untouched.
+
+**New hazard this ADR did not have, and it is the sharpest one:**
+`Matrix::Solve`/`Invert` run on the process-wide `Matrix::matrixWork`, which they
+**free and reallocate** when the matrix exceeds the fixed work area. A threaded path
+reaching them is a **use-after-free**, not a race — and it is invisible to §5.1's
+scoped `static` count because the static lives in `SRC/matrix/`. It is the decisive
+reason `ManzariDafalias IntScheme 2`/`4` and `LadrunoQuad -eas` are refused. Banked in
+[[LEDGER_quirks]].
+
+**If loops B/C are ever revisited at desktop scale, the design is not §4.1's atomic
+scatter.** For a bounded-size deck the cheap exact form is a **chunked ordered
+gather**: compute a chunk of `C` FE_Elements in parallel into `C` per-slot buffers,
+then replay `addA`/`addB` over that chunk in serial `(FE index, i, j)` order (§4.2(i)'s
+triple), then advance. Storage is `C × idSize²` — bounded and small — instead of
+`Σ idSize²`'s projected 1.5 GB at 1M DOF, and it is bit-identical because the replay
+order *is* the serial order. It still requires per-instance `FE_Element` and element
+buffers first (§5.4-H1), which is the real bill.
+
+### 14.0 Performance, as re-measured on an idle box (red-team S4 — supersedes the first table)
+
+| threads | per-step wall (s, min of 3) | mean of 3 | speed-up | full field bit-identical |
+|---|---|---|---|---|
+| 1 | 0.16014 | 0.17301 | 1.00x | YES |
+| 2 | 0.15550 | 0.16865 | **1.03x** | YES |
+| 4 | 0.15474 | 0.17034 | **1.03x** | YES |
+| 8 | 0.17050 | 0.19819 | **0.94x — a REGRESSION** | YES |
+
+Elastic deck, 14 400 `LadrunoQuad -bbar`, 12 steps, `system Pardiso`,
+`MKL_NUM_THREADS=1`, box idle. One distinct full-field md5 across all twelve runs.
+
+**Say the 8-thread number plainly: on this deck 8 threads is SLOWER than serial.**
+Loop A is 7.80 % of this step, so §13's Amdahl arithmetic caps the whole-step prize
+at 1.08x — and per-region fork/join plus `schedule(dynamic,8)` queue contention,
+paid on *every Newton iteration* together with the serial snapshot + O(nEle)
+allowlist re-audit + 3·O(nNode) `Node` pre-pass in front of the loop, costs more
+than that at 8 threads on 24 logical CPUs whose cores are already carrying the
+sequential-MKL solve.
+
+The table this replaces reported **1.11x at 8 threads, above the 1.08x ceiling the
+same paragraph computed**, measured while two sibling wp/106 jobs shared the box
+and captioned "speed-ups are lower bounds". Both halves were wrong, and the
+**"lower bound" caveat is withdrawn**: contention was suppressing the
+oversubscription penalty as much as it inflated the serial baseline, so idle the
+numbers get *worse*. The standing rule: a speed-up above your own Amdahl ceiling
+is a measurement defect, not a result.
+
+Two further things this stage does NOT establish:
+
+* **The threaded failure path is unreachable** with today's allowlist (red-team
+  S5). The lowest-serial-index `critical`, the extra diagnostic line and step-cut
+  parity have never executed at any thread count, because the only allowlisted
+  material's `setTrialStrain*` overloads all `return 0` unconditionally.
+  §7's correctness-protocol item "deterministic failure reporting under N
+  threads" is therefore answered by construction and by reading, not by
+  experiment, until a second material is allowlisted.
+* **MPI is fenced out, not measured.** §11 q6 stays deferred — see §14.3.
+
+### 14.1 The follow-up hunt — what the defect is NOT (WP-107, second round)
+
+A bounded second round was spent locating §5.1's segfault. It was not located,
+but four hypotheses are now **excluded by experiment**, which is worth more than
+the prose that preceded them. Reproducer throughout: vanilla
+`nDMaterial ManzariDafalias` IntScheme 1 + `LadrunoQuad -bbar`, 6 400 elements,
+`--threads 4`, `ds = 0.02` (enough plasticity to trigger it), 4 runs per cell.
+
+| # | test | result | what it excludes |
+|---|---|---|---|
+| 0 | baseline | **0/4 clean** | — |
+| 1 | `std::recursive_mutex` around the **whole `ManzariDafalias::integrate()`** | **0/4 clean** | the entire material algorithm: `explicit_integrator`, `ModifiedEuler`, `Stress_Correction`, `GetElastoPlasticTangent`, and every `Matrix`/`Vector` temporary they build |
+| 2 | `#pragma omp critical` around the **whole `theEle->update()`** in `Domain::ladrunoThreadedUpdate` | **0/4 clean** | **concurrency itself.** Threads enter the region and run updates strictly one at a time, and it still faults |
+| 3 | `OMP_STACKSIZE=256M`, then `KMP_STACKSIZE=256M` (libiomp5md is the runtime, so both are honoured) | **0/4 clean** | worker-thread stack exhaustion |
+| 4 | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** | `LadrunoQuad`, the iterator snapshot, the `Node` pre-pass, `thread_local ops_TheActiveElement`, and the OpenMP region as such |
+
+**Test 2 is the one that reframes the problem.** With the update serialized the
+loop is, semantically, a serial loop that happens to be driven from worker
+threads — and it still segfaults. So this is **not a data race between element
+updates**. What remains is something about executing *this particular update
+path* on an OpenMP worker thread at all, where the elastic path on the same
+thread is fine. The obvious difference between the two is the volume of
+`Vector`/`Matrix` construction and destruction: ModifiedEuler builds and destroys
+~50 of them per substep over thousands of substeps, the elastic integrator
+almost none.
+
+**Where the next agent should start, in order:**
+
+1. **Get the stack.** This round could not: the box has no `cdb`/`WinDbg`/
+   `procdump`, and the Release build carries **no PDBs** (`CMAKE_BUILD_TYPE=Release`,
+   no `/Zi`), so even a vectored-exception-handler backtrace would have been
+   unsymbolized addresses in one statically-linked module. Configure
+   `RelWithDebInfo` (or add `/Zi /DEBUG`) and install the SDK Debugging Tools,
+   then `cdb -g -G -c ".ecxr;kb 40;~*kb 20;q"`. One faulting frame ends this.
+2. **ThreadSanitizer on Linux/Esmeralda** — ADR-75b §7's protocol item 1, which
+   §5.1 has now shown to be load-bearing rather than belt-and-braces.
+3. **Suspect the container allocation path, not the algorithm.** Tests 1 and 2
+   exonerate the algorithm; `Matrix`'s class-wide `matrixWork`/`intWork`/
+   `sizeDoubleWork` (`Matrix.cpp:48-52`) are still the only shared mutable state
+   on the path, reached from the constructors (lazy first-touch) and from
+   `Solve`/`Invert`/`addMatrixTripleProduct` — the latter three are **not** on
+   the IntScheme-1 path, which is what makes this puzzling rather than obvious.
+   Worth confirming with an allocation-counting build before theorising further.
+
+Until then the family stays refused, and the refusal is loud.
+
+
+### 14.3 The MPI fence (red-team B2) — `_PARALLEL_INTERPRETERS` is NOT covered by the `PartitionedDomain` override
+
+The first version of §14 recorded "`PartitionedDomain`/`Subdomain` refuse outright,
+so SP/MP are untouched". **Only SP was.** Under `_PARALLEL_INTERPRETERS` —
+`OpenSeesMP` / `OpenSeesPyMP`, the fork's dominant parallel idiom — every rank
+holds a **plain `Domain`**, so the overrides never fire, the loop was live on every
+rank, and because the thread count is seeded from an environment variable that
+`mpiexec` propagates, one `LADRUNO_THREADS=8` in a job script would have turned an
+np-8 run into 64-way oversubscription with the single per-process announcement
+lost in rank-interleaved stdout. §11 q6 defers hybrid MPI+threads; the stage had
+shipped it by accident.
+
+WP-107 now refuses on **any** parallel build, checked before every other gate, on
+the compile definition rather than on `MPI_Comm_size` (np == 1 under OpenSeesMP is
+still the parallel code path, not the desktop case this stage measured). The check
+lives in its own per-target translation unit, `SRC/utility/LadrunoParallelBuild.cpp`:
+`OPS_Domain` is a single OBJECT library compiled once with neither parallel define,
+so an `#ifdef _PARALLEL_*` written in `Domain.cpp` compiles to nothing in all five
+targets — the trap ADR-78 P1 measured and documented in `LadrunoContactAbort.h`.
+
+`/openmp` cannot be compiled *out* of SP/MP/PyMP for the same structural reason
+(they link the same OBJECT libraries), so those three targets also get
+`${OpenMP_CXX_LIBRARIES}` on their link lines: empty on MSVC, where the runtime
+arrives via the object's `/DEFAULTLIB` directive, but not on gcc/clang — i.e.
+Esmeralda.
+
+**Everything else in this ADR is unchanged**, including §8's anti-goals and §12/§13's
+verdicts. Nothing here is evidence about the cluster regime.
+
+### 14.4 SETTLED — the default stays **OFF in CMake, ON via `build.bat`**, because **gcc + `-fopenmp` segfaults** (PR #843 CI fix, 2026-09-16)
+
+§14 shipped with one item deliberately left to the owner: *whether the fork's
+canonical build turns `LADRUNO_OPENMP` ON*, given that the first cut defaulted the
+CMake option OFF and had `Ladruno_scripts\build.bat` pass `-DLADRUNO_OPENMP=ON`.
+
+**Two things were measured, in this order. The second overrules the first.**
+
+**(a) The split does mean CI never gates the feature.** It silently assumed
+build.bat *is* the fork's build path. It is — for developers on Windows. **Zone-A is
+not on it**: `.github/workflows/ladruno.yml` configures the Ubuntu job with a bare
+`cmake -S . -B build/Release …`. So the gate built the feature **OUT**,
+`ladrunoThreads(n)` stayed serial on CI, and the WP's entire warrant —
+`tests/test_wp107_threaded_update.py`, which §14/B1 added precisely because the WP
+had shipped untested — failed **10 of 18** on it (run 35160539366), every failure
+quoting the binary's own *"built WITHOUT LADRUNO_OPENMP"* warning. A stage whose
+mutation gate cannot execute on the gate is not gated.
+
+**(b) Flipping the CMake default to ON was TRIED, and it CRASHES Linux.** With
+`option(LADRUNO_OPENMP … ON)` Zone-A got past the WP's own tests and then
+**segfaulted**, deterministically, twice on the same commit
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)):
+
+```
+test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+Fatal Python error: Segmentation fault      → pytest exit 139
+```
+
+That test is the **zero-mass `system Diagonal`** case and has nothing to do with
+this WP. It crashes **at 1 thread**, where `Domain::ladrunoThreadedUpdate()` returns
+`false` before touching anything and `Domain::update()` runs the unchanged serial
+loop — so it is **not the threaded loop**. What remains is gcc's `-fopenmp` codegen
+and link (libgomp, `-pthread`) turning the already-untrustworthy singular-mass
+failure path into a hard crash; [[LEDGER_quirks]] has long recorded that a free DOF
+with zero lumped mass makes the assembled `M` singular and that Full/Band then
+*return success with garbage*. It does **not** reproduce on MSVC — the same source
+with OpenMP ON passes that file locally, 3/3.
+
+**Resolution (owner decision, 2026-09-16): do not chase the gcc crash in this PR.**
+The CMake option **stays OFF by default**; `build.bat` keeps passing
+`-DLADRUNO_OPENMP=ON` explicitly (and `=OFF` under `LADRUNO_NO_OPENMP` — both ways,
+so a stale Conan cache never decides it). The consequences, stated plainly so nobody
+has to rediscover them:
+
+- **Windows/MSVC (build.bat) ships the feature ON and TESTS it** — 18/18.
+- **Zone-A does NOT exercise the threaded loop.** The test file probes the binary at
+  runtime and **SKIPS with a reason** rather than failing. (a) is therefore *not*
+  satisfied, knowingly.
+- **The fork cannot currently be built with OpenMP on gcc.** That blocks the
+  Esmeralda/Linux path for this stage independently of its desktop scope, and it
+  needs its own Linux **ASAN/gdb** work package.
+- **When that lands, this default should flip to ON**, at which point Zone-A gates
+  the feature and (a) is satisfied too.
+
+**None of this touches §3 P-1 ("threading stays off by default"), and the
+distinction is the one most likely to be misread:** P-1 is about **threads**, not
+about **compiling the loop in**. The runtime default is still **1 thread**, at which
+`Domain::update` takes the byte-identical *serial* path — not a one-thread parallel
+region — and an ON build is byte-identical to the `634824e1f` OFF baseline binary on
+an elastic and a SANISAND deck. ADR-40's "OpenMP-by-default is an anti-goal" is
+satisfied by the runtime default, which is unchanged. Combined with §14.3's fence
+(every MPI target refuses outright), the build default is invisible to SP/MP/PyMP
+and to any run that does not ask.
+
+Test-side companion: a module-level `skipif` probe so a build without the option
+skips with a reason instead of failing 10 times — biased to **RUN** on every
+ambiguous outcome, so the skip can never quietly un-gate the WP beyond the one gap
+recorded above. See [[107_ladruno_openmp_element_loop]] §3.1.

@@ -77,6 +77,33 @@ setup_env.bat   →   build.bat [mode]
 | `rebuild` | Wipes `build/` only (keeps Conan/MUMPS caches), full rebuild | Faster reset than `clean`; reuses MUMPS and Conan downloads |
 | `<target>` | Builds just one target. Valid: `OpenSees`, `OpenSeesSP`, `OpenSeesMP`, `OpenSeesPy` | Quick iteration on a single front end |
 
+### `build.bat` builds **with OpenMP on** — and it is the only thing that does (WP-107 / ADR-75b L3-1)
+
+`build.bat` passes `-DLADRUNO_OPENMP=ON`, so the Windows/MSVC build you get from this
+page compiles in the threaded `Domain::update()` element loop and
+`tests/test_wp107_threaded_update.py` runs there (18/18). The CMake option itself
+defaults **OFF**, so a bare `cmake` build — including CI's Zone-A Ubuntu job, which
+configures with a raw `cmake -S . -B build/Release …` and never runs `build.bat` —
+does **not** get it, and that test file **skips itself with a reason**.
+
+**That asymmetry is a gcc defect, not a preference.** The default was flipped to ON so
+Zone-A would gate the feature, and Zone-A then segfaulted deterministically in an
+unrelated test — the zero-mass `system Diagonal` case,
+`test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`,
+exit 139, [run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)
+— at 1 thread, where the threaded loop is inert, and not reproducible on MSVC. **The
+fork cannot currently be built with OpenMP on gcc**, and **CI does not exercise the
+threaded loop** until a Linux ASAN/gdb work package fixes that; the default flips to
+ON then. Full record: ADR-75b §14.4.
+
+**Compiled in is not threaded.** The runtime default is still **1 thread**, at which
+the loop takes the byte-identical serial path; you opt in per run with
+`ladrunoThreads <n>` / `ops.ladrunoThreads(n)` or the `LADRUNO_THREADS` env var. The
+compile flag is PRIVATE to `OPS_Domain` + `OPS_Utilities` (never `OPS_Element`, whose
+dormant PFEM `#pragma omp` lines must stay dead), and every MPI target refuses the
+threaded loop outright. To build it out on Windows too: `set LADRUNO_NO_OPENMP=1`
+before `build.bat`.
+
 ## Output
 
 ```
