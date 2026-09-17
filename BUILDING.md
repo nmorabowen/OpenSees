@@ -77,24 +77,26 @@ setup_env.bat   →   build.bat [mode]
 | `rebuild` | Wipes `build/` only (keeps Conan/MUMPS caches), full rebuild | Faster reset than `clean`; reuses MUMPS and Conan downloads |
 | `<target>` | Builds just one target. Valid: `OpenSees`, `OpenSeesSP`, `OpenSeesMP`, `OpenSeesPy` | Quick iteration on a single front end |
 
-### `build.bat` builds **with OpenMP on** — and it is the only thing that does (WP-107 / ADR-75b L3-1)
+### OpenMP is compiled in on every build path (WP-107 / ADR-75b L3-1; default ON since WP-109)
 
-`build.bat` passes `-DLADRUNO_OPENMP=ON`, so the Windows/MSVC build you get from this
-page compiles in the threaded `Domain::update()` element loop and
-`tests/test_wp107_threaded_update.py` runs there (18/18). The CMake option itself
-defaults **OFF**, so a bare `cmake` build — including CI's Zone-A Ubuntu job, which
-configures with a raw `cmake -S . -B build/Release …` and never runs `build.bat` —
-does **not** get it, and that test file **skips itself with a reason**.
+`option(LADRUNO_OPENMP … ON)` in `CMakeLists.txt`, so `build.bat`, a bare `cmake`, and
+CI's Zone-A Ubuntu job all compile in the threaded `Domain::update()` element loop, and
+`tests/test_wp107_threaded_update.py` runs everywhere (18 cases; it still probes the
+binary and skips with a reason on a deliberate `-DLADRUNO_OPENMP=OFF` build).
+`build.bat` keeps passing `-DLADRUNO_OPENMP=ON` explicitly (`=OFF` under
+`set LADRUNO_NO_OPENMP=1`) — that is about a stale Conan cache never deciding it, not
+about the default.
 
-**That asymmetry is a gcc defect, not a preference.** The default was flipped to ON so
-Zone-A would gate the feature, and Zone-A then segfaulted deterministically in an
-unrelated test — the zero-mass `system Diagonal` case,
-`test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`,
-exit 139, [run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356)
-— at 1 thread, where the threaded loop is inert, and not reproducible on MSVC. **The
-fork cannot currently be built with OpenMP on gcc**, and **CI does not exercise the
-threaded loop** until a Linux ASAN/gdb work package fixes that; the default flips to
-ON then. Full record: ADR-75b §14.4.
+**If you read that the fork "cannot be built with OpenMP on gcc", that is stale.** PR #843
+(2026-09-16) hit a deterministic Zone-A segfault with the default ON
+([run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356))
+and shipped OFF. WP-109 (2026-09-17, [#846](https://github.com/nmorabowen/OpenSees/pull/846)) ran the suite under gdb on the
+runner: the crash was `FindOpenMP` returning `libstdc++.a` — because this file's
+`-static-libstdc++` EXE linker flag leaks into its executable probe — and that static
+archive being linked into the **shared** Python module next to `libstdc++.so.6`. Two
+C++ runtimes, one process, wrong locale facet, segfault at the first `opserr << int`.
+Fixed in CMake (probe with the flag cleared; link only the OpenMP runtime), pinned by
+`tests/test_wp109_module_single_libstdcxx.py`. Record: ADR-75b §14.5, BUILD_GOTCHAS §16.
 
 **Compiled in is not threaded.** The runtime default is still **1 thread**, at which
 the loop takes the byte-identical serial path; you opt in per run with
