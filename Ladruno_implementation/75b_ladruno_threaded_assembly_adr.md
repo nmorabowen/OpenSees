@@ -1282,7 +1282,19 @@ esmeralda module (179 leaked symbols), green after relink (0), with
 `test_adr30_projection_p0.py` 3/3 alongside. The runner then verified the fixed
 branch under the same gdb harness and under ASAN ([run 35172780503](https://github.com/nmorabowen/OpenSees/actions/runs/35172780503)), and
 `ladruno.yml` was dispatched on the branch so Zone-A ran with the WP-107 file
-**executing, not skipping** — see the WP-109 PR for the counts.
+**executing, not skipping**. Measured on ubuntu-latest (gcc 13.3), fixed branch:
+
+| gate | result |
+|---|---|
+| debug workflow, gdb job: whole collection under `gdb -batch` | **2562 passed, 124 skipped, 4 xfailed**, `exited normally` (run 35172780503) |
+| `ladruno.yml` Zone-A (Ubuntu), `pytest -m zone_a` | **2500 passed, 118 skipped, 69 deselected, 3 xfailed** (run 35173119941) |
+| `tests/test_wp107_threaded_update.py` on that Zone-A | **18 PASSED, 0 SKIPPED** (was 18 skipped under #843) |
+| `test_massless_dof_is_not_policeable_by_the_soe_layer` | PASSED (was exit 139) |
+| `tests/test_wp109_module_single_libstdcxx.py` | PASSED |
+| Tcl verification suite / LAPACK singular regression | 19 checks OK / all solvers reject |
+
+Against #843's green baseline (2481 passed, 136 skipped) that is +19 passed / −18
+skipped: the 18 WP-107 cases now execute, plus the one new pin.
 
 **What changes in §14.4's list.** Zone-A now gates WP-107 (its 18 cases run on gcc);
 the fork *can* be built with OpenMP on gcc; build.bat's explicit `-DLADRUNO_OPENMP=ON`
