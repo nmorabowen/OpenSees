@@ -886,8 +886,11 @@ module define libstdc++ symbols. Same trap for `MPI_CXX_LIBRARIES` /
 **Debugging the runner itself is cheap and sometimes the only faithful option.** A
 `workflow_dispatch`-only workflow on the WP branch (`ladruno_wp109_debug.yml`,
 deleted at closeout) built the module with `-g` and ran pytest under `gdb -batch`
-and under ASAN on ubuntu-latest — the environment esmeralda could not mirror
-(no Docker, no g++-13). Two traps: GitHub does not register a `workflow_dispatch`
+on ubuntu-latest — the environment esmeralda could not mirror (no Docker, no
+g++-13). Its ASAN twin job never finished there: a `-fsanitize=address -O1 -j8`
+build of the whole tree gets the 16 GB hosted VM killed (*"runner has received a
+shutdown signal"*) in the ASDPlastic template set, twice; build one object library
+at a time or `-j2` if you ever need it. esmeralda's ASAN tree was clean. Two traps: GitHub does not register a `workflow_dispatch`
 workflow until it has run once from a push, so give it a push trigger scoped to
 the branch; and `gh run view --log` refuses while any job of the run is still in
 progress — fetch a finished job with

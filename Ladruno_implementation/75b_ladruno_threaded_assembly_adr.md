@@ -1280,7 +1280,7 @@ missing tool) and fails if the module defines any `std::locale` / `std::ios_base
 PE modules skip with a reason. **Mutation gate measured:** red on the unfixed
 esmeralda module (179 leaked symbols), green after relink (0), with
 `test_adr30_projection_p0.py` 3/3 alongside. The runner then verified the fixed
-branch under the same gdb harness and under ASAN ([run 35172780503](https://github.com/nmorabowen/OpenSees/actions/runs/35172780503)), and
+branch under the same gdb harness ([run 35172780503](https://github.com/nmorabowen/OpenSees/actions/runs/35172780503)), and
 `ladruno.yml` was dispatched on the branch so Zone-A ran with the WP-107 file
 **executing, not skipping**. Measured on ubuntu-latest (gcc 13.3), fixed branch:
 
@@ -1295,6 +1295,15 @@ branch under the same gdb harness and under ASAN ([run 35172780503](https://gith
 
 Against #843's green baseline (2481 passed, 136 skipped) that is +19 passed / −18
 skipped: the 18 WP-107 cases now execute, plus the one new pin.
+
+**ASAN, stated plainly.** The debug workflow's `-fsanitize=address -O1 -g` job never
+finished on the hosted runner — both attempts (unfixed and fixed branch) died with
+*"the runner has received a shutdown signal"* while compiling the ASDPlastic
+template set (at 92 % / 59 min), the signature of the 16 GB VM running out of memory
+under a sanitizer build at `-j8`. It was not pursued: the gdb frame plus the link-map
+facts are dispositive, and ASAN on esmeralda (gcc 11.4, unfixed module with 126
+leaked symbols) ran `test_adr30_projection_p0.py` 3/3 with no report. If a hosted
+ASAN build is ever wanted, build a single object library at a time or `-j2`.
 
 **What changes in §14.4's list.** Zone-A now gates WP-107 (its 18 cases run on gcc);
 the fork *can* be built with OpenMP on gcc; build.bat's explicit `-DLADRUNO_OPENMP=ON`
