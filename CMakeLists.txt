@@ -745,55 +745,108 @@ add_library(OPS_SysOfEqnPython     OBJECT)
 # coordinated thread-count policy" is implemented as an explicit num_threads(n)
 # clause (SRC/utility/LadrunoThreads.h) rather than omp_set_num_threads().
 # ---------------------------------------------------------------------------
-# DEFAULT IS **OFF**, AND THAT IS A GCC DEFECT, NOT A PREFERENCE -- Ladruno
-# WP-107, settled by the PR #843 CI fix (2026-09-16). Read this before "tidying"
-# it to ON: the flip to ON WAS TRIED, and it broke Linux.
+# DEFAULT IS **ON** since WP-109 (2026-09-17). It was OFF from PR #843 (2026-09-16)
+# because flipping it ON segfaulted Zone-A on gcc -- and that crash was NOT a
+# gcc codegen defect and NOT the singular-mass path: it was THIS FILE linking a
+# second, static libstdc++ into the shared Python module. Keep the history so
+# nobody "tidies" it back:
 #
-# Where each path stands today:
-#   * `Ladruno_scripts\build.bat` passes -DLADRUNO_OPENMP=ON explicitly (and =OFF
-#     under LADRUNO_NO_OPENMP -- both ways, so a stale cache never decides it).
-#     The Windows/MSVC canonical build therefore ships the feature ON and TESTS
-#     it: tests/test_wp107_threaded_update.py runs and passes there, 18/18.
-#   * Zone-A (.github/workflows/ladruno.yml) configures the Ubuntu build with a
-#     bare `cmake -S . -B build/Release ...` and never goes through build.bat, so
-#     with this default OFF **CI does NOT exercise the threaded loop**. That gap
-#     is known and deliberate, not an oversight: the test file probes the binary
-#     at runtime and SKIPS with a reason rather than failing.
+#   * Zone-A (.github/workflows/ladruno.yml) configures Ubuntu with a bare
+#     `cmake -S . -B build/Release ...` and never runs build.bat, so a default
+#     that lives only in build.bat is invisible to CI (BUILD_GOTCHAS section 15).
+#     The default therefore belongs HERE. build.bat keeps passing
+#     -DLADRUNO_OPENMP=ON explicitly (and =OFF under LADRUNO_NO_OPENMP, both
+#     ways) so a stale Conan cache never decides it.
+#   * With the option ON, gcc builds died deterministically in
+#       test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+#       (Fatal Python error: Segmentation fault, exit 139, run 35164371356)
+#     at the FIRST `opserr << int` on the zero-mass `system Diagonal` refusal.
+#     gdb on the ubuntu-latest runner (WP-109, run 35171085324) put the fault in
+#       std::codecvt<char16_t,char>::do_unshift   <- wrong facet, wrong vtable
+#       std::ostream::_M_insert<long>
+#       PythonStream::err_out<int>                (SRC/interpreter/PythonStream.h)
+#       DiagonalDirectSolver::solve               (opserr << i)
+#     i.e. the std::stringstream inside PythonStream looked up its num_put facet
+#     and got a codecvt facet instead: TWO libstdc++ runtimes in one process.
+#   * ROOT CAUSE (build, not code). This file sets
+#       CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++"   (GNU branch)
+#     and FindOpenMP's probe is a try_compile of an EXECUTABLE, so the probe's
+#     verbose link line carries `-Bstatic -lstdc++ -Bdynamic ... -lgomp -lpthread`.
+#     CMake's implicit-link parser records the static archive by path and, since
+#     "libstdc++" (with the prefix) is not in CMAKE_CXX_IMPLICIT_LINK_LIBRARIES
+#     ("stdc++;..."), keeps it as an OpenMP "implicit library":
+#       OpenMP_CXX_LIB_NAMES      = libstdc++;gomp;pthread
+#       OpenMP_libstdc++_LIBRARY  = /usr/lib/gcc/x86_64-linux-gnu/<v>/libstdc++.a
+#       OpenMP_pthread_LIBRARY    = /usr/lib/x86_64-linux-gnu/libpthread.a
+#     Every target then appended ${OpenMP_CXX_LIBRARIES}, INCLUDING the SHARED
+#     OpenSeesPy / OpenSeesPyMP modules, which are meant to use libstdc++.so.6
+#     (and still DT_NEED it). Measured on esmeralda: opensees.so exported 179
+#     libstdc++ internals (std::locale::classic, ios_base::Init, the facet ids)
+#     while also needing libstdc++.so.6; LD_DEBUG=bindings showed num_put::id
+#     bound to BOTH copies. Which reference lands on which copy depends on the
+#     archive layout and load order -- gcc 13 / Ubuntu 24.04 (the runner)
+#     crashed, gcc 11 / 22.04 (esmeralda) happened not to. The Tcl executable was
+#     never affected: it is -static-libstdc++ by design, one copy.
+#   * FIX (below). (1) FindOpenMP is probed with CMAKE_EXE_LINKER_FLAGS cleared
+#     so the static-libstdc++ flag cannot leak into its implicit-library scan;
+#     (2) independently of (1) -- a pre-existing cache still carries the bad
+#     OpenMP_CXX_LIB_NAMES -- the list handed to the targets is
+#     LADRUNO_OPENMP_LINK_LIBS, which keeps ONLY the OpenMP runtime (gomp / omp /
+#     iomp5) and drops everything else with a STATUS line naming it. Nothing in
+#     this file may link ${OpenMP_CXX_LIBRARIES} directly.
+#   * PINNED by tests/test_wp109_module_single_libstdcxx.py (zone_a): parses the
+#     loaded module's ELF .dynsym and fails if it DEFINES any std::locale /
+#     std::ios_base / std::codecvt<char16_t> symbol (a second libstdc++), or if
+#     libstdc++.so.6 is not DT_NEEDED. Reverting this fix turns it red on Linux.
+#     ADR-75b section 14.5, BUILD_GOTCHAS section 16, LEDGER_quirks (WP-109).
 #
-# WHY NOT SIMPLY DEFAULT ON (which is what a reader will want to do, and what
-# would let CI gate the feature). It was set to ON, and Zone-A then SEGFAULTED --
-# deterministically, twice, in code with nothing to do with this WP:
-#   test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
-#   Fatal Python error: Segmentation fault ... exit 139
-#   https://github.com/nmorabowen/OpenSees/actions/runs/35164371356
-# The crash is the ZERO-MASS `system Diagonal` case, at 1 thread, where
-# Domain::ladrunoThreadedUpdate() returns false before touching anything -- so it
-# is NOT the threaded loop. It is gcc's `-fopenmp` codegen/link (libgomp,
-# -pthread) turning the already-untrustworthy singular-mass failure path
-# (LEDGER_quirks: "a free DOF with zero lumped mass makes the assembled M
-# singular", Full/Band silently returning success with garbage) into a hard
-# crash. It does not reproduce on MSVC. Locating it needs a Linux ASAN/gdb work
-# package; until that lands **the fork cannot be built with OpenMP on gcc**, and
-# defaulting ON here would crash every bare-cmake and CI build.
-#
-# So: ON via build.bat on Windows, OFF everywhere else, UNTIL the gcc defect is
-# fixed -- at which point this default should flip to ON so Zone-A gates the
-# feature. ADR-75b section 14.4 records the whole decision and its reversal.
-#
-# Independent of all that, ON is safe as a CAPABILITY: the RUNTIME default is 1
-# thread (ADR-40's "OpenMP-by-default" is an anti-goal; only `ladrunoThreads` /
-# LADRUNO_THREADS opts in), at 1 thread Domain::update takes the byte-identical
-# serial path, an ON build matches the 634824e1f OFF baseline binary on an
-# elastic and a SANISAND deck (Ladruno_files/testbed/perf/wp107/RESULTS.md
-# section 4), and every MPI target refuses the threaded loop outright
-# (LadrunoParallelBuild.cpp).
-option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" OFF)
+# ON is safe as a CAPABILITY: the RUNTIME default is 1 thread (ADR-40's
+# "OpenMP-by-default" is an anti-goal; only `ladrunoThreads` / LADRUNO_THREADS
+# opts in), at 1 thread Domain::update takes the byte-identical serial path, an
+# ON build matches the 634824e1f OFF baseline binary on an elastic and a SANISAND
+# deck (Ladruno_files/testbed/perf/wp107/RESULTS.md section 4), and every MPI
+# target refuses the threaded loop outright (LadrunoParallelBuild.cpp).
+option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" ON)
 set(LADRUNO_OPENMP_ACTIVE OFF)
+set(LADRUNO_OPENMP_LINK_LIBS "")
 if(LADRUNO_OPENMP)
+  # Ladruno WP-109 (1): probe with the EXE linker flags cleared. The GNU branch
+  # above sets -static-libgcc -static-libstdc++ for the EXECUTABLES; FindOpenMP's
+  # try_compile is an executable and would otherwise report the static
+  # libstdc++.a as an OpenMP implicit library (see the history above).
+  set(_ladruno_saved_exe_linker_flags "${CMAKE_EXE_LINKER_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "")
   find_package(OpenMP)
+  set(CMAKE_EXE_LINKER_FLAGS "${_ladruno_saved_exe_linker_flags}")
+  unset(_ladruno_saved_exe_linker_flags)
   if(OpenMP_CXX_FOUND)
     set(LADRUNO_OPENMP_ACTIVE ON)
+    # Ladruno WP-109 (2): the ONLY link list the targets may use. Keep the
+    # OpenMP runtime, drop everything else FindOpenMP swept up (libstdc++.a,
+    # libpthread.a, ...). A stale CMakeCache from before this fix still carries
+    # OpenMP_CXX_LIB_NAMES=libstdc++;gomp;pthread, so this filter is not
+    # optional even with (1) in place.
+    set(_ladruno_omp_dropped "")
+    foreach(_ladruno_omp_lib IN LISTS OpenMP_CXX_LIBRARIES)
+      get_filename_component(_ladruno_omp_name "${_ladruno_omp_lib}" NAME)
+      if(_ladruno_omp_name MATCHES "^(lib)?(gomp|omp|iomp5|iomp5md|vcomp)([.-][^/]*)?$"
+         OR _ladruno_omp_lib MATCHES "^-l(gomp|omp|iomp5)$")
+        list(APPEND LADRUNO_OPENMP_LINK_LIBS "${_ladruno_omp_lib}")
+      else()
+        list(APPEND _ladruno_omp_dropped "${_ladruno_omp_lib}")
+      endif()
+    endforeach()
     message(STATUS "Ladruno WP-107: OpenMP element loop ENABLED (${OpenMP_CXX_FLAGS}); runtime default is still 1 thread")
+    message(STATUS "Ladruno WP-109: OpenMP runtime link libs = [${LADRUNO_OPENMP_LINK_LIBS}]")
+    if(_ladruno_omp_dropped)
+      message(STATUS "Ladruno WP-109: dropped from FindOpenMP's list (must NOT reach the shared Python modules): [${_ladruno_omp_dropped}]")
+    endif()
+    if("${LADRUNO_OPENMP_LINK_LIBS}" MATCHES "stdc\\+\\+|libgcc|pthread\\.a")
+      message(FATAL_ERROR "Ladruno WP-109: the OpenMP link list still carries a C++/pthread static runtime: [${LADRUNO_OPENMP_LINK_LIBS}]. Linking it into opensees.so gives the process two libstdc++ copies (segfault in PythonStream). Fix the filter above.")
+    endif()
+    unset(_ladruno_omp_dropped)
+    unset(_ladruno_omp_lib)
+    unset(_ladruno_omp_name)
   else()
     message(WARNING "Ladruno WP-107: LADRUNO_OPENMP=ON but no OpenMP found -- the threaded element loop is compiled OUT")
   endif()
@@ -1263,7 +1316,7 @@ target_link_libraries(OpenSees
   ZLIB::ZLIB
   Eigen3::Eigen
   ${PARDISO_MKL_LIBRARIES}   # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
-  ${OpenMP_CXX_LIBRARIES}    # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
+  ${LADRUNO_OPENMP_LINK_LIBS}    # Ladruno WP-107/WP-109: OpenMP runtime ONLY (see the option)
 )
 
 # Ladruno ADR-75 P1d: `system Pardiso` in the TCL chain (SRC/tcl/commands.cpp,
@@ -1358,7 +1411,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
-       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
+       ${LADRUNO_OPENMP_LINK_LIBS}   # Ladruno WP-107 red-team B2 / WP-109 (see the note at the option)
     )
 
 endif()
@@ -1435,7 +1488,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
-       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
+       ${LADRUNO_OPENMP_LINK_LIBS}   # Ladruno WP-107 red-team B2 / WP-109 (see the note at the option)
     )
 
     if(LADRUNO_CMS)
@@ -1471,7 +1524,7 @@ target_link_libraries(OpenSeesPy
    Eigen3::Eigen
    ${Python_LIBRARIES}
    ${PARDISO_MKL_LIBRARIES}  # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
-   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
+   ${LADRUNO_OPENMP_LINK_LIBS}   # Ladruno WP-107/WP-109: OpenMP runtime ONLY (see the option)
 )
 
 
@@ -1552,7 +1605,7 @@ target_link_libraries(OpenSeesPyMP
    ${SCALAPACK_LIBRARIES}
    ${MPI_Fortran_LIBRARIES}
    ${MPI_CXX_LINK_FLAGS}
-   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
+   ${LADRUNO_OPENMP_LINK_LIBS}   # Ladruno WP-107 red-team B2 / WP-109 (see the note at the option)
 )
 
 if(LADRUNO_CMS)
