@@ -43,11 +43,18 @@ init` explicitly -- WP-112 changes nothing else):
     behind; under `init` it reads 9.659111 after every one of them (to
     3e-14 relative: the holds are real solves and move the state by ULPs,
     which is not a branch).
-    (Pardiso on this 170-DOF system does not change its arithmetic with the
-    thread count, so the lottery shows here through the hold count instead;
-    the TIMs strip, at 9 720 Gauss points, showed it through the threads.
-    The thread-count leg below is therefore a regression guard, and the
-    hold-count leg is what makes this file non-vacuous.)
+    LIMIT OF THE THREAD-COUNT LEG, stated plainly: on THIS deck (~170 DOF)
+    Pardiso's arithmetic does not change with the thread count, so this deck
+    CANNOT show vanilla's thread sensitivity. Measured on 01a7aa330: the
+    gravity+holds displacement field (a weighted sum, compared by hex) is
+    bit-identical at 1/2/8 threads on 12x6 and 48x24 meshes and differs only
+    at 96x48 (~9 400 DOF) -- where the push itself fails to converge in both
+    modes, so no bit-identity claim can be made there. What the thread leg
+    DOES prove is that MKL_NUM_THREADS reaches MKL (`-stats` threads=t)
+    and that the default's ten steps are bit-identical; it is a regression
+    guard. The mechanism's non-vacuity comes from the hold-count leg, where
+    the same sign-at-round-off lottery shows through a different
+    perturbation. The TIMs strip (9 720 GPs) is the thread-count evidence.
   * STATED, not asserted: under `init` the curve from step 4 on still moves
     with the hold count (step 10: 35.72 / 36.06 / 36.07 / 35.54 / 35.53 kN/m
     after 0..4 holds). The holds perturb the committed state by round-off
@@ -290,7 +297,9 @@ def test_default_first_step_is_immune_to_the_hold_lottery():
         runs[('vanilla', 0)]['roundoff'], runs[('vanilla', 2)]['roundoff'])
 
 
-_WARN = 'is at round-off'
+# The warning's own opening, not a phrase: the vanilla constructor echo also
+# says "is at round-off" (measured: 10 warnings + 1 echo line = 11 hits).
+_WARN = '-flipAlphaIn vanilla and ||alpha - alpha_in|| = '
 
 
 def test_vanilla_roundoff_warning_and_default_silence():
