@@ -76,3 +76,4 @@ ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)
 IMPL-EX commit-time refusal latch — no silent partial commits
 ladrunoThreads — OpenMP element state-determination loop (opt-in)
 LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)
+LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)

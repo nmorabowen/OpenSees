@@ -245,8 +245,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
                     double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
-                    int flipAlphaInMode = 1,         // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
-                                                      //   1 = vanilla (DEFAULT -- RC14 reversed;
+                    int flipAlphaInMode = 0,         // Ladruno WP-112 (F14): 0 = init (DEFAULT),
+                                                      //   1 = vanilla (opt-in; the P2-7c default;
                                                       //   see the FlipAlphaInMode note below)
                     double PreElastic = 0.0);        // Ladruno (ADR-93 II.1): -pRe, the
                                                       //   elastic-only confinement floor.
@@ -264,8 +264,8 @@ class LadrunoSANISAND : public ManzariDafalias
                     int maxSubsteps = 0,
                     double reversalTol = 1.0e-10,    // Ladruno ADR-92 P2-5
                     double reversalRel = 0.05,       // Ladruno ADR-92 P2-5b
-                    int flipAlphaInMode = 1,         // Ladruno ADR-92 P2-7c: 0 = init (opt-in),
-                                                      //   1 = vanilla (DEFAULT -- RC14 reversed;
+                    int flipAlphaInMode = 0,         // Ladruno WP-112 (F14): 0 = init (DEFAULT),
+                                                      //   1 = vanilla (opt-in; the P2-7c default;
                                                       //   see the FlipAlphaInMode note below)
                     double PreElastic = 0.0);        // Ladruno (ADR-93 II.1): -pRe, the
                                                       //   elastic-only confinement floor.
@@ -563,8 +563,20 @@ class LadrunoSANISAND : public ManzariDafalias
     bool   mImplexClampFired; // the p_min clamp acted on the LAST extrapolation
     long   mImplexClampCount; // how often it has acted at this integration point
 
+    // Ladruno WP-112 (F14), 2026-09-18: THE DEFAULT IS NOW FLIP_ALPHA_IN_INIT
+    // (0), by the owner's decision. The P2-7c reading below stands as a record
+    // of a real-deck measurement, but it missed one case: ManzariDafalias's
+    // reversal test reads the SIGN of (alpha_n - alpha_in_n):Ce:d_eps, and the
+    // elastic stage runs that test too, so after LoadControl(0) holds
+    // (alpha_n - alpha_in_n) is at ROUND-OFF at most points and the thread-
+    // count-dependent round-off picks the first plastic step's branch. TIMs
+    // F14: 1.511/1.824/1.824/1.489 kPa at 1/2/4/8 MKL threads under vanilla;
+    // 1.824/14.339/36.586 kPa at rows 1/8/15 under init on every thread count.
+    // `vanilla` stays available (it reproduces real ManzariDafalias) and warns
+    // once per point when it meets that state (ladrunoWarnRoundoffAlphaIn()).
+    //
     // Ladruno ADR-92 P2-7c: -flipAlphaIn mode. FLIP_ALPHA_IN_VANILLA (1, the
-    // DEFAULT as of P2-7c) is a no-op: mAlpha_in is left to
+    // DEFAULT from P2-7c until WP-112) is a no-op: mAlpha_in is left to
     // ManzariDafalias::integrate()'s own loading-reversal sign test. Esmeralda
     // measured that test is NOT noise on a real deck -- with the P2-5/5b/5c
     // guard confined to PRIMED states (mPrimed, below), vanilla's flip sign
@@ -575,7 +587,7 @@ class LadrunoSANISAND : public ManzariDafalias
     // alpha_in = 0 are loading in the gravity direction, which vanilla
     // intends). So there is no defect to fix at the flip itself; the fork must
     // not ship a modelling change as the default. FLIP_ALPHA_IN_INIT (0,
-    // opt-in via `-flipAlphaIn init`) sets mAlpha_in = mAlpha_in_n := mAlpha_n
+    // opt-in under P2-7c, the DEFAULT since WP-112) sets mAlpha_in = mAlpha_in_n := mAlpha_n
     // deterministically instead -- the alternative Dafalias-Manzari modelling
     // choice (the reference IS the current back-stress; h -> infinity
     // initially) -- an owner's (RC14) request, not a bug fix. NOT an -implex
@@ -584,7 +596,7 @@ class LadrunoSANISAND : public ManzariDafalias
         FLIP_ALPHA_IN_INIT    = 0,
         FLIP_ALPHA_IN_VANILLA = 1
     };
-    int    mFlipAlphaInMode;   // Ladruno ADR-92 P2-7c: -flipAlphaIn init|vanilla(DEFAULT)
+    int    mFlipAlphaInMode;   // Ladruno WP-112: -flipAlphaIn init(DEFAULT)|vanilla
 
     // Ladruno ADR-92 P2-7c: per-instance, DISPATCH-INDEPENDENT idempotency gate
     // for the once-per-flip handling (the mAlpha_in mode above and, under
@@ -709,6 +721,14 @@ class LadrunoSANISAND : public ManzariDafalias
     // exactly the answers the latch exists to stop.
     bool   mImplexCommitRefusedLatch;   // Ladruno WP-99 (F7)
 
+    // Ladruno WP-112 (F14): once-per-instance latch of the sign-at-round-off
+    // warning (ladrunoWarnRoundoffAlphaIn()). Diagnostic only: NOT sent on the
+    // wire, starts false on getCopy(const char*) (every Gauss point is a fresh
+    // instance that may warn; the wrappers' memberwise getCopy(void) copies
+    // it), NOT reset by revertToStart -- on the same rule as the other
+    // diagnostic-only members.
+    bool   mRoundoffAlphaInWarned;      // Ladruno WP-112 (F14)
+
     // SHADOW of the non-virtual ManzariDafalias::initialize(). Same signature on
     // purpose -- see the DESIGN NOTE above. DO NOT add `virtual` here or in the
     // base.
@@ -792,6 +812,13 @@ class LadrunoSANISAND : public ManzariDafalias
     // = 0 rather than ops_Dt = 0 and is NOT caught by this rule -- it is a
     // different kind of hold, unaddressed here.
     bool ladrunoGuardReversalNoise(void);          // Ladruno ADR-92 P2-5 / P2-5b / P2-5c
+
+    // Ladruno WP-112 (F14): READ-ONLY warning, once per instance, when
+    // `-flipAlphaIn vanilla` meets a plastic-stage trial whose committed
+    // ||alpha_n - alpha_in_n|| is nonzero but at round-off
+    // (<= 1e-8 * max(||alpha_n||, m)): the base's reversal test then reads the
+    // sign of round-off. Threshold rationale at the definition.
+    void ladrunoWarnRoundoffAlphaIn(void);         // Ladruno WP-112 (F14)
 
     // implexError and its deviatoric / volumetric split, on ADR 92 section 2's
     // definition. `epsRef` is the strain the denominator is scaled by: the P0
