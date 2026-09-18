@@ -708,11 +708,15 @@ def test_tantype_2_costs_fewer_newton_iterations():
 
     Measured on the dev box at the pinned settings: TanType 0 needs 800
     iterations over 40 steps (20.0 per step), TanType 2 needs 283 (7.1 per
-    step) -- **2.8x**.  (Those numbers predate WP-110, which corrected the
-    elastoplastic tangent `TanType 2` is built from; the post-fix count is in
-    the WP-110 ledger row.  The gated claim is still the inequality, and it
-    was re-run against the corrected tangent, not assumed to carry over.)  On a boundary-value problem the same difference showed
+    step) -- **2.8x**.  On a boundary-value problem the same difference showed
     up as ~7x of wall time (ADR-90 GATE U, a strip footing).
+
+    WP-110 (F15) re-measurement.  The 283 above was measured with the WRONG
+    elastoplastic tangent (`TanType 2` on IntScheme 1 is chained from
+    `GetElastoPlasticTangent`, which WP-110 corrected).  Re-run on build
+    dee04dbe3 at the same pinned settings: TanType 0 still 800 iterations
+    (20.0 per step -- Ce is untouched), TanType 2 **103** (2.58 per step) --
+    **7.8x**, up from 2.8x.  The gated claim remains the inequality.
 
     NOT asserted: the ratio.  It depends on the deck, the tolerance and the
     load-step size -- the sweep table shows it running from 3.3x to 4.7x across
@@ -816,8 +820,11 @@ def test_tantype_does_not_change_the_converged_answer():
     changed.  The argument does not: under `NormUnbalance` the accepted point is
     set by the residual, not by `K_f`, so a corrected tangent may change the
     iteration count but not the answer beyond this tolerance ball.  The floor is
-    NOT loosened; the post-fix measurement is printed below and recorded in the
-    WP-110 ledger row.
+    NOT loosened.  Measured on build dee04dbe3: axial displacement reldiff
+    1.56e-3 and GP1 stress reldiff 3.38e-4 (floor 1e-2) -- both SMALLER than
+    the pre-fix 4.46e-3 (`_TX_ANSWER_FLOOR` comment) and 7.0e-4
+    (emitter guide section 1), as a closer-to-exact tangent
+    leaves a smaller residual inside the same tolerance ball.
     """
     n0, _, uz0, sig0 = _run_triaxial(31, (1, 0, 1, 1.0e-7, 1.0e-7))
     n2, _, uz2, sig2 = _run_triaxial(32, (1, 2, 1, 1.0e-7, 1.0e-7))

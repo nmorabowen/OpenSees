@@ -51,7 +51,7 @@ invariant and no sign correction is needed.
 
 COST: 2 states x 2 schemes x (1 + <= 12) single-element runs plus the sanity
 and TanType-1 legs -- about 60 builds of ~120 steps each. Budget < 3 min;
-measured wall time is recorded in the ledger row (WP-110).
+measured 44-60 s on the dev box (build dee04dbe3), so not marked slow.
 """
 import math
 
@@ -391,9 +391,16 @@ def _build_hash():
 def test_elastic_state_tangent_is_ce():
     """Harness sanity: at an elastic state the engine tangent is Ce, and the
     numpy Ce transcription reproduces it. If this fails the harness (or the
-    'tangent' response's row-major reshape) is wrong, not the fix."""
+    'tangent' response's row-major reshape) is wrong, not the fix.
+
+    Same tiny-tail rule as the plastic legs: the elastic tangent is built from
+    G(p) at the START of the last increment (measured on dee04dbe3: without the
+    tail, 10 equal steps from zero leave Ct 9.5 % off Ce(p_final) -- G(0.9 p) =
+    sqrt(0.9) G(p)). A 20-step tail of 1e-3 of the path puts the last start
+    close to p_final; measured on dee04dbe3: Ct vs Ce(p_final) 4.97e-5."""
     build(2, 1)
-    run(checkpoints([np.diag([-2e-4, -2e-4, -2e-4])], [10]))
+    e_iso = np.diag([-2e-4, -2e-4, -2e-4])
+    run(checkpoints([e_iso, e_iso*(1.0 + TAIL_FRAC)], [10, 20]))
     st = internal_state()
     K, G = get_elastic_moduli(st['sigma'])
     Ce = get_stiffness(K, G)

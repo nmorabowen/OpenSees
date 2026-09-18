@@ -440,6 +440,11 @@ test tolerance. **apeGmsh note:** golden files or convergence statistics (iterat
 wall time) recorded with `TanType 1/2` before #847 will move and should be re-baselined, not
 treated as regressions. Emit `TanType` explicitly, as §1 already asks.
 
+Measured on the fork's own single-element drained triaxial (IntScheme 1, TanType 2, 40
+`LoadControl` steps, build dee04dbe3): Newton iterations **283 → 103** (7.1 → 2.6 per step), and
+the TanType 0-vs-2 answer gap quoted in §1 shrinks from 4.5e-3 to 1.6e-3 (displacement) and
+7.0e-4 to 3.4e-4 (stress) — same tolerance, same floor.
+
 ## Log
 
 - 2026-08-27 — Written after PR #767 and PR #768 merged.
