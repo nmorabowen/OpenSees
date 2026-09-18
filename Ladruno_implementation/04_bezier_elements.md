@@ -157,6 +157,66 @@ following are **explicitly deferred**, each with the trigger that would revive i
 
 Nothing here blocks using `BezierTri6` for straight-sided 2D continuum problems today.
 
+## WP-114: `-bbar` is the plane-strain ½ split (TIMs F17, PR #848)
+
+**Defect (fixed in b42ca77d8).** `computeBBarMatrix` applied the 3D mean-dilatation
+split, (B̄+2B)/3 and (B̄−B)/3, to the 3-row plane-strain B and dropped the εzz row. The
+material therefore saw an in-plane trace of (θ+2θ̄)/3 instead of θ̄. Under isochoric
+flow that keeps all 3 point-wise volumetric constraints of the plain T6, so `-bbar`
+relieved nothing. The element now uses the 2D split, εxx/εyy += (θ̄−θ)/2, the same as
+LadrunoQuad and LadrunoUP (2D). That leaves one constraint per element. The element
+tangent was never the problem: it matches a central FD to ≤ 5e-11 before and after the
+fix, at elastic, associated and ψ=0 plastic states.
+
+**Punch benchmark** (`tests/wp114/punch_nonassoc.py`, driver `run_punch_matrix.py`).
+Half model of a rigid rough strip punch, B = 2 m, block 8 × 6 m graded to the punch
+corner. UW DruckerPrager φ = 33°, c = 2 kPa, plane-strain MC match, no hardening (the
+tension cutoff sits at the apex). γ = 18 kN/m³ and q = 20 kPa surcharge, applied in an
+elastic geostatic stage; then displacement control to s/B = 0.10. Same strategy for every
+case: Newton → KrylovNewton → NewtonLineSearch, then up to 6 step halvings (a "wall"),
+NormDispIncr 1e-8. g1 = 280 T6 or 140 Q4; g2 = 1 120 T6 or 560 Q4. T6 g1 and Q4 g2 have
+the same node grid. The census counts GPs on the tension cutoff or apex (`ladrunoBranch`
+2/3) at the last converged step.
+
+| case | ψ = 0 | ψ = φ |
+|---|---|---|
+| T6 `-bbar` PRE (÷3) g1 | **walls s/B 0.039**, peak 219 kPa, 39 cuts, **63 apex** | 672 kPa at 0.10 (rising), 7 apex |
+| T6 `-bbar` POST (½) g1 | no wall, 395 kPa at 0.10 (flattening), 2 cuts, **0** | 656 kPa (rising), 4 apex |
+| T6 `-bbar` POST g2 | walls 0.026 at 1e-8 (Newton stalls at 1e-6 to 1e-7, 0 apex); at tol 1e-6: peak 382, 371 at 0.10, 0 | 628 kPa (rising), 8 apex |
+| T6 std g1 | peak 450 at 0.071, 435 at 0.10, 1 apex | 664 kPa (rising), 2 apex |
+| Q4 `-bbar` g1 | 482 kPa at 0.10 (rising), 0 | 809 kPa (rising), 17 apex |
+| Q4 `-bbar` g2 | peak 439 at 0.075, 428 at 0.10, 0 | 706 kPa (rising), 46 apex |
+
+At s/B = 0.06, ψ = 0: T6-bbar POST 372, T6 std 434, Q4 g1 451, Q4 g2 427 kPa. The fixed
+T6 `-bbar` does not reach the quad band. It sits 13–18 % below it, and it trends down
+with refinement as the quad does. This is consistent with it being the least-constrained
+of the four (one volumetric constraint per 6-node element), but we have no reference
+solution for ψ = 0 DP, so we do not claim it is closer to the true limit.
+
+**Where the pre-fix apex points were.** They were not at the punch corner. The 63 GPs had
+distances from the corner of 0.17 m (min), 1.08 m (median) and 5.05 m (max). Most were
+deep (y < −0.25 m), and 16 were under the punch more than 2 m from the corner. They
+appeared at s/B = 0.0035, as soon as ψ = 0 flow started. At s/B = 0.03 the intra-element
+I1 spread over plastic elements had a median of 0.41 × |mean I1| and a p90 of 2.23 before
+the fix, and was exactly 0 after it. With ψ = φ it was 0.11 / 0.31 before and 0.10 / 0.30
+after. So the apex points are the pressure checkerboard of volumetric locking. That locking
+was left in place by the ÷3 split. They are not a boundary or loading effect.
+
+**Bernstein loading lead: ruled out as the cause, but a real trap.** Surcharge loads with
+Lagrange weights (qL/6, 2qL/3, qL/6) on Bézier CPs are the wrong consistent loads (they
+should be qL/3 each). With those loads every T6 run fails at the first plastic step, before
+and after the fix, for both ψ values. That is a different signature from the reported wall.
+With the correct Bernstein loads, the fixed element has no cutoff or apex points.
+
+**Asymmetric-pivot lead: not reproduced.** See `LEDGER_quirks` ("constant perturbed-pivot
+count … element-less nodes").
+
+Gate: `tests/test_beziertri6_bbar_plane_strain.py`. It checks the trace kinematics, the
+volumetric rank (1 vs 3), the FD tangent, and that the ψ = 0 punch runs to s/B = 0.06 with
+no wall, 0 apex points, and ≥ 0.75 × the Q4 g1 load. About 8 s. On the pre-fix binary the
+kinematics, rank and punch checks fail; the FD check passes on both binaries, because it is a
+consistency gate.
+
 ## Implementation log
 
 - 2026-05-30 — ADR drafted. Draft element in `bezierFEM` reviewed equation-by-equation
@@ -223,3 +283,4 @@ Nothing here blocks using `BezierTri6` for straight-sided 2D continuum problems 
 - 2026-05-30 — **MERGED to `ladruno`** via PR #6 (element + registration + this ADR;
   `ELE_TAG_BezierTri6 = 33000`). `ladruno` is the source of truth — the element is now in
   the integration branch. This README-index + log entry complete the picture on ladruno.
+- 2026-09-18 — **WP-114 (TIMs F17): `-bbar` switched to the plane-strain ½ split** (b42ca77d8, PR #848). The 3D ÷3 split had kept all 3 volumetric constraints under ψ=0 flow; see the WP-114 section above.
