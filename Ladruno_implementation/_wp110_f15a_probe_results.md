@@ -1,5 +1,10 @@
 # WP-110 / F15a -- GetElastoPlasticTangent measurement probe: results (revised)
 
+> **Superseded as a test (WP-110 phase 1):** the probe file `tests/test_manzari_ep_tangent_probe.py` became the gate
+> `tests/test_manzari_ep_tangent_gate.py`, which reads the ENGINE's tangent via `eleResponse(ele, 'tangent')`
+> instead of a numpy transcription. The `get_ep_tangent_workbench` oracle cited below lives on there as
+> `workbench_tangent`. This note stays as the measurement record.
+
 **Status: CONFIRMED, and a SECOND, independent defect found.**
 `ManzariDafalias::GetElastoPlasticTangent` (ManzariDafalias.cpp:5110) has two
 separate Voigt covariant/contravariant mistakes, both in the plastic

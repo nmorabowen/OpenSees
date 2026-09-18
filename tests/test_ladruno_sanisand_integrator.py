@@ -708,7 +708,10 @@ def test_tantype_2_costs_fewer_newton_iterations():
 
     Measured on the dev box at the pinned settings: TanType 0 needs 800
     iterations over 40 steps (20.0 per step), TanType 2 needs 283 (7.1 per
-    step) -- **2.8x**.  On a boundary-value problem the same difference showed
+    step) -- **2.8x**.  (Those numbers predate WP-110, which corrected the
+    elastoplastic tangent `TanType 2` is built from; the post-fix count is in
+    the WP-110 ledger row.  The gated claim is still the inequality, and it
+    was re-run against the corrected tangent, not assumed to carry over.)  On a boundary-value problem the same difference showed
     up as ~7x of wall time (ADR-90 GATE U, a strip footing).
 
     NOT asserted: the ratio.  It depends on the deck, the tolerance and the
@@ -805,6 +808,16 @@ def test_tantype_does_not_change_the_converged_answer():
     NOT asserted: bit-identity.  These are different iteration paths reaching the
     same point, not the same arithmetic, and demanding equality would be a gate
     that fails on a compiler flag.
+
+    WP-110 (F15) -- STILL HOLDS, deliberately unchanged.  WP-110 fixed two Voigt
+    defects in `GetElastoPlasticTangent`, which is exactly what this deck's
+    `TanType 2` leg is built from (IntScheme 1: `aCep_Consistent` chains
+    `aCep1`/`aCep2`, both from that function).  So the tangent under test here
+    changed.  The argument does not: under `NormUnbalance` the accepted point is
+    set by the residual, not by `K_f`, so a corrected tangent may change the
+    iteration count but not the answer beyond this tolerance ball.  The floor is
+    NOT loosened; the post-fix measurement is printed below and recorded in the
+    WP-110 ledger row.
     """
     n0, _, uz0, sig0 = _run_triaxial(31, (1, 0, 1, 1.0e-7, 1.0e-7))
     n2, _, uz2, sig2 = _run_triaxial(32, (1, 2, 1, 1.0e-7, 1.0e-7))

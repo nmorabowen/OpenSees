@@ -50,6 +50,11 @@
 #define INT_MAXSTR_FE     9
 #define INT_RungeKutta45  45 // By Jose Abell @ UANDES
 
+// Ladruno WP-110 (F15): response id for the "tangent" material response. Only has
+// to miss this class's 1..8 and LadrunoSANISAND's 33086..33096; it is a response
+// id, not a class tag, and nothing may derive one from it.
+constexpr int LadrunoManzariTangentResponseID = 33110;          // Ladruno WP-110 (F15)
+
 const double        ManzariDafalias::one3            = 1.0/3.0 ;
 const double        ManzariDafalias::two3            = 2.0/3.0;
 const double        ManzariDafalias::root23          = sqrt(2.0/3.0);
@@ -608,6 +613,14 @@ ManzariDafalias::setResponse (const char **argv, int argc, OPS_Stream &output)
     {
         return new MaterialResponse(this, 8, this->getPStrain());
     }
+    // Ladruno WP-110 (F15): expose the tangent the material hands the element
+    // (Ce / mCep / mCep_Consistent per TanType, via the subclass getTangent()),
+    // so a test can compare the ENGINE's own tangent against finite differences
+    // instead of a numpy transcription of it. NDMaterial::setResponse has a
+    // "tangent" too, but this class never falls through to it and its id (4)
+    // collides with "alpha" here -- hence a private id in the fork's band.
+    else if (strcmp(argv[0], "tangent") == 0 || strcmp(argv[0], "Tangent") == 0)   // Ladruno WP-110 (F15)
+        return new MaterialResponse(this, LadrunoManzariTangentResponseID, this->getTangent());  // Ladruno WP-110 (F15)
     else
         return 0;
 }
@@ -650,6 +663,8 @@ ManzariDafalias::getResponse(int responseID, Information &matInfo)
             if (matInfo.theVector != 0)
                 *(matInfo.theVector) = getPStrain();
             return 0;
+        case LadrunoManzariTangentResponseID:                     // Ladruno WP-110 (F15)
+            return matInfo.setMatrix(this->getTangent());         // Ladruno WP-110 (F15)
         default:
             return -1;
     }
@@ -1486,6 +1501,12 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 
     aC = GetStiffness(K, G);
     aD = GetCompliance(K, G);
+    // Ladruno WP-110 (F15c): vanilla never assigned aCep in this function, so
+    // TanType 1 under IntScheme 0/1 returned whatever mCep last held (Ce from the
+    // last elastic step, or a Stress_Correction leftover). Start from Ce so the
+    // early returns (substep cap; p below p_residual at dT_min) hand back Ce, not
+    // stale data; the normal exit at the bottom overwrites it with the end state's tangent.
+    aCep = aC;                                                      // Ladruno WP-110 (F15c)
 
     NextStress = CurStress;
     NextAlpha = CurAlpha;
@@ -1902,6 +1923,16 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             dT = fmin(dT, 1 - T);
         }
     }
+
+    // Ladruno WP-110 (F15c): the continuum elastoplastic tangent (TanType 1) at
+    // the END-of-increment state -- the same convention BackwardEuler_CPPM uses
+    // (GetStateDependent + GetElastoPlasticTangent at NextStress, end of that fn).
+    // Only the normal exit (T >= 1) reaches here; the loading index is the last
+    // substep's NextDGamma (> 0 plastic, 0 when that substep unloaded).
+    GetStateDependent(NextStress, NextAlpha, NextFabric, NextVoidRatio, alpha_in,   // Ladruno WP-110 (F15c)
+        n, d, b, Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0, A, D, B, C, R);   // Ladruno WP-110 (F15c)
+    aCep = GetElastoPlasticTangent(NextStress, NextDGamma, CurStrain, NextStrain,  // Ladruno WP-110 (F15c)
+        G, K, B, C, D, h, n, d, b);                                                // Ladruno WP-110 (F15c)
     return;
 }
 
@@ -5131,12 +5162,21 @@ ManzariDafalias::GetElastoPlasticTangent(const Vector& NextStress, const double&
 	temp0 -= temp1; temp0 += temp2;
 	R = ToCovariant(temp0);
 
-    temp1 = DoubleDot4_2(aC, ToCovariant(R));
+    // Ladruno WP-110 (F15): was DoubleDot4_2(aC, ToCovariant(R)). R is ALREADY
+    // covariant (the line above), so the extra ToCovariant doubled R's shear
+    // entries a second time -- an exact 2x error in aCep's shear rows. aC maps
+    // covariant -> contravariant, so it takes R as-is. temp1 = Ce:R.
+    temp1 = DoubleDot4_2(aC, R);                                    // Ladruno WP-110 (F15)
     // temp2 = DoubleDot2_4(ToCovariant(n - one3 * DoubleDot2_2_Contr(n,r) * mI1), aC);
 	temp0 = mI1; temp0 *= (-1.0 * one3 * DoubleDot2_2_Contr(n, r)); temp0 += n;
 	temp0 = ToCovariant(temp0);
 	temp2 = DoubleDot2_4(temp0, aC);
-    temp3 = DoubleDot2_2_Contr(temp2, R) + Kp;
+    // Ladruno WP-110 (F15): was DoubleDot2_2_Contr(temp2, R). temp2 = Q:Ce is
+    // CONTRAVARIANT (stress-like) and R is COVARIANT (strain-like), so the true
+    // contraction Q:Ce:R is the plain Voigt sum -- DoubleDot2_2_Mixed. The
+    // _Contr form re-doubled the shear terms of an already-covariant R, making
+    // the denominator ~7.6 % too large and shrinking the whole plastic correction.
+    temp3 = DoubleDot2_2_Mixed(temp2, R) + Kp;                      // Ladruno WP-110 (F15)
     if (fabs(temp3) < small) return aC;
     
     // aCep = (aC - (MacauleyIndex(NextDGamma) / temp3 * (Dyadic2_2(temp1, temp2))));
