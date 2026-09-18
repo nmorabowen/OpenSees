@@ -16,7 +16,7 @@ three; this file gates the ENGINE's own tangent -- read back through the new
 ``eleResponse(ele, 'tangent')`` material response -- against:
 
   * a finite-difference (FD) tangent of the engine's own stress update, which
-    is what a tangent must match; tolerance 0.5 % on every entry that carries a
+    is what a tangent must match; tolerance 1.5 % (measured worst 0.496 %) on every entry that carries a
     real signal;
   * the numpy "workbench" formula (full 3x3 tensor algebra, no Voigt
     bookkeeping at all: ``Dep = Ce - (Ce:R) (x) (Q:Ce) / (Kp + Q:Ce:R)``) --
@@ -82,7 +82,11 @@ FREE_DOFS = [(n, d) for n in range(2, 9) for d in (1, 2, 3)]
 VOIGT_COMPS = [(0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (0, 2)]
 
 H_FD = 1.0e-8          # the one FD step size (probe measured 0.02-0.17 % at it)
-FD_RTOL = 5.0e-3       # engine tangent vs one-sided FD
+FD_RTOL = 1.5e-2       # engine tangent vs one-sided FD. Measured worst 0.496 %
+                       # (p'~20, IntScheme 2) -- FD truncation plus BE's algorithmic
+                       # step, not tangent error. 1.5 % keeps cross-platform margin and
+                       # still catches either defect alone (7.6 % denominator, 2x shear);
+                       # ORACLE_RTOL below carries the precision.
 ORACLE_RTOL = 1.0e-3   # engine tangent vs the numpy workbench formula
 N_MAIN = 40            # steps per main loading segment
 N_TAIL = 4             # steps in the tiny continuation segment
@@ -414,7 +418,7 @@ def test_elastic_state_tangent_is_ce():
 @pytest.mark.parametrize("state", STATES, ids=[s[0] for s in STATES])
 def test_tantype1_matches_one_sided_fd(state, int_scheme):
     """The engine's TanType 1 tangent at a plastic shear state matches the
-    reversal-consistent one-sided FD of its own stress update to 0.5 %, and the
+    reversal-consistent one-sided FD of its own stress update to 1.5 %, and the
     workbench formula to 0.1 %. Scheme 2 reaches GetElastoPlasticTangent via
     BackwardEuler_CPPM's end-of-increment call; scheme 1 via the WP-110 (F15c)
     end-of-increment write in ModifiedEuler."""
@@ -443,7 +447,7 @@ def test_tantype1_matches_one_sided_fd(state, int_scheme):
         "engine tangent does not match the workbench formula -- the C++ fix and "
         "the tensor-algebra oracle disagree", err_wb, Ct, C_wb)
     assert err_fd < FD_RTOL, (
-        "engine tangent is not the derivative of its own stress update to 0.5 %",
+        "engine tangent is not the derivative of its own stress update to 1.5 %",
         err_fd, Ct, C_fd)
 
 
