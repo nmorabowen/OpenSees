@@ -1,5 +1,23 @@
 """WP-110 / F15a -- measurement probe for ManzariDafalias::GetElastoPlasticTangent.
 
+REVISION 2: a coordinator/Workbench cross-check found the first revision's
+"numerator-only fix" still ~5-7% off finite-difference (FD) at realistic
+states. That review surfaced TWO more findings, both folded in below:
+
+  (a) a SECOND, independent defect in the DENOMINATOR
+      (``temp3 = DoubleDot2_2_Contr(temp2, R) + Kp;`` at :5139) -- see
+      ``get_ep_tangent_workbench`` and the "second defect" note further down;
+  (b) the ORIGINAL central-difference FD was itself contaminated: it straddles
+      a real branch in ``integrate()`` (the alpha_in reversal reset) whose sign
+      depends on the probe direction, so ``(F(+h)-F(-h))/(2h)`` silently
+      differenced two DIFFERENT internal states. ``safe_sign``/``fd_one_sided``
+      below fix this by picking, per probe direction, whichever sign leaves
+      ``alpha_in`` equal to the committed base state, then using a one-sided
+      difference. With both the harness fixed and both Voigt defects corrected
+      (the ``workbench`` formula), FD now matches to 0.02%-0.17% at realistic
+      p'~20/~214 kPa, eta~1.3 states with genuine shear demand -- see
+      Ladruno_implementation/_wp110_f15a_probe_results.md for the full table.
+
 GOAL (measurement only, no C++ changes): confirm or refute that
 ``GetElastoPlasticTangent`` (SRC/material/nD/UWmaterials/ManzariDafalias.cpp:5110)
 computes a wrong continuum elastoplastic tangent at a plastic (loading) state,
@@ -260,6 +278,61 @@ def _get_ep_tangent(next_stress, next_dgamma, G, K, B, C, D, h, n, d, b, buggy):
     return aC - (macauley_index(next_dgamma)/temp3) * np.outer(temp1, temp2)
 
 
+def _vec_to_ten(v):
+    T = np.zeros((3, 3))
+    for a, (i, j) in enumerate(VOIGT_COMPS):
+        T[i, j] = T[j, i] = v[a]
+    return T
+
+
+def _ten_to_vec(T):
+    return np.array([T[i, j] for (i, j) in VOIGT_COMPS])
+
+
+def _dev3(T):
+    return T - np.trace(T)/3.0*np.eye(3)
+
+
+def _fro(A, B):
+    return float(np.tensordot(A, B, axes=2))
+
+
+def get_ep_tangent_workbench(next_stress, next_dgamma, G, K, B, C, D, h, n_vec, b_vec):
+    """SECOND defect check: the Workbench's (C4-sanisand/sanisand_cep.py,
+    ``Dep6``) formula, using proper full-tensor contractions throughout (no
+    Voigt ToCovariant/DoubleDot2_2_Contr detours at all):
+
+        CeR   = Ce:R    = 2G dev(R) + K tr(R) I
+        QCe   = Q:Ce    = 2G dev(Q) + K tr(Q) I,   Q = n - (n:r)/3 I
+        denom = Kp + Q:Ce:R   (a TRUE Frobenius double-dot)
+        Dep   = Ce - CeR (x) QCe / denom
+
+    Measured: the engine's own ``temp3`` (DoubleDot2_2_Contr(temp2, R) + Kp,
+    :5139) is a near-constant ~1.076x too LARGE relative to `denom` here
+    whenever R/n carry nonzero shear (Voigt 3-5) components -- a second,
+    independent Voigt-convention mismatch from the numerator's double
+    ToCovariant, surviving even after that first fix. It rescales the WHOLE
+    plastic correction term uniformly (same ratio on every entry, diagonal
+    and off-diagonal alike), because it is a single scalar denominator."""
+    S = _vec_to_ten(next_stress)
+    p = np.trace(S)/3.0 + M_PRESIDUAL
+    p = (SMALL+M_PRESIDUAL) if p < (SMALL+M_PRESIDUAL) else p
+    r_t = _dev3(S)/p
+    n_t = _vec_to_ten(n_vec)
+    b_t = _vec_to_ten(b_vec)
+    Kp = TWO3*p*h*_fro(b_t, n_t)
+    R_t = B*n_t - C*(n_t@n_t - np.eye(3)/3.0) + D/3.0*np.eye(3)
+    Q_t = n_t - _fro(n_t, r_t)/3.0*np.eye(3)
+    CeR = 2.0*G*_dev3(R_t) + K*np.trace(R_t)*np.eye(3)
+    QCe = 2.0*G*_dev3(Q_t) + K*np.trace(Q_t)*np.eye(3)
+    denom = Kp + _fro(QCe, R_t)
+    aC = get_stiffness(K, G)
+    if abs(denom) < SMALL:
+        return aC, denom
+    aCep = aC - macauley_index(next_dgamma)*np.outer(_ten_to_vec(CeR), _ten_to_vec(QCe))/denom
+    return aCep, denom
+
+
 # --------------------------------------------------------------- FE harness --
 _tagctr = [9000]
 
@@ -387,6 +460,41 @@ def fd_material_tangent(e_targets, nsteps, h, int_scheme, tan_type, mat_tag=1):
     return C
 
 
+def committed_alpha_in(e_targets, nsteps, int_scheme, tan_type, mat_tag=1):
+    build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
+    apply_path_and_run(make_checkpoints(e_targets, nsteps))
+    return internal_state()[3]
+
+
+def safe_probe_sign(e_targets, nsteps, h, int_scheme, tan_type, probe_idx, base_alpha_in, mat_tag=1):
+    """HARNESS FIX for the reversal-branch contamination (see module
+    docstring REVISION 2 note b): return whichever of +1/-1 leaves alpha_in
+    equal to the committed base state's, i.e. does NOT trip integrate()'s
+    reversal reset (~ManzariDafalias.cpp:1005-1013). A one-sided FD in that
+    direction samples one smooth branch instead of straddling the kink."""
+    for sign in (+1, -1):
+        build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
+        vals = make_checkpoints_strain(e_targets, nsteps, probe_idx=probe_idx, h=sign*h)
+        apply_path_and_run(vals)
+        if np.allclose(internal_state()[3], base_alpha_in, atol=1e-9):
+            return sign
+    return None
+
+
+def fd_material_tangent_one_sided(e_targets, nsteps, h, int_scheme, tan_type, signs, mat_tag=1):
+    build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
+    apply_path_and_run(make_checkpoints(e_targets, nsteps))
+    F0 = wrapper_stress()
+    C = np.zeros((6, 6))
+    for j in range(6):
+        build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
+        vals = make_checkpoints_strain(e_targets, nsteps, probe_idx=j, h=signs[j]*h)
+        apply_path_and_run(vals)
+        F1 = wrapper_stress()
+        C[:, j] = (F1 - F0) / (signs[j]*h)
+    return C
+
+
 def analytic_tangent_from_state(e_targets, nsteps, int_scheme, tan_type, mat_tag=1, buggy=True):
     build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
     vals = make_checkpoints(e_targets, nsteps)
@@ -397,6 +505,24 @@ def analytic_tangent_from_state(e_targets, nsteps, int_scheme, tan_type, mat_tag
     aCep = _get_ep_tangent(m_sigma, dgamma, G, K, sd['B'], sd['C'], sd['D'], sd['h'],
                             sd['n'], sd['d'], sd['b'], buggy=buggy)
     return aCep, dict(mSigma=m_sigma, e=e, dGamma=dgamma, K=K, G=G, **sd)
+
+
+def analytic_tangents_all(e_targets, nsteps, int_scheme, tan_type, mat_tag=1):
+    """buggy (as-written) / fixed (numerator only) / workbench (both defects
+    corrected) in one committed build, plus the state dict."""
+    build(mat_tag=mat_tag, int_scheme=int_scheme, tan_type=tan_type)
+    apply_path_and_run(make_checkpoints(e_targets, nsteps))
+    m_sigma, m_alpha, m_fabric, m_alpha_in, e, dgamma = internal_state()
+    K, G = get_elastic_moduli(m_sigma)
+    sd = get_state_dependent(m_sigma, m_alpha, m_fabric, e, m_alpha_in)
+    Ca_bug = _get_ep_tangent(m_sigma, dgamma, G, K, sd['B'], sd['C'], sd['D'], sd['h'],
+                              sd['n'], sd['d'], sd['b'], buggy=True)
+    Ca_fix = _get_ep_tangent(m_sigma, dgamma, G, K, sd['B'], sd['C'], sd['D'], sd['h'],
+                              sd['n'], sd['d'], sd['b'], buggy=False)
+    Ca_wb, denom_wb = get_ep_tangent_workbench(m_sigma, dgamma, G, K, sd['B'], sd['C'], sd['D'],
+                                                sd['h'], sd['n'], sd['b'])
+    return dict(Ca_bug=Ca_bug, Ca_fix=Ca_fix, Ca_wb=Ca_wb, mSigma=m_sigma, e=e, dGamma=dgamma,
+                K=K, G=G, alpha_in=m_alpha_in, denom_wb=denom_wb, **sd)
 
 
 def _fmt(M):
@@ -430,48 +556,84 @@ def test_manzari_ep_tangent_probe():
     out(f"elastic sanity max rel err = {max_rel:.3e}")
     assert max_rel < 1e-4, "harness sanity check FAILED: FD does not reproduce Ce -- fix the harness, not the bug"
 
+    # Realistic states (p'~20 and ~214 kPa, eta~1.3) WITH genuine shear demand
+    # (n's Voigt-shear component ~0.21) -- a pure coaxial/no-shear triaxial
+    # path makes R's shear component identically zero and hides BOTH defects,
+    # which is what an earlier (unshared) attempt at "realistic states"
+    # accidentally measured. iso/yy/xy tuned empirically against this harness.
     cases = [
-        ("LOW p'", [np.diag([-2e-3, -2e-3, -2e-3]),
-                    np.array([[-2e-3, -1e-3, 0], [-1e-3, -6e-3, 0], [0, 0, -2e-3]])]),
-        ("HIGH p'", [np.diag([-2e-2, -2e-2, -2e-2]),
-                     np.array([[-2e-2, -1e-2, 0], [-1e-2, -6e-2, 0], [0, 0, -2e-2]])]),
+        ("LOW p'~20, eta~1.3", -1.5e-5, -2.7e-3, -5e-4),
+        ("HIGH p'~214, eta~1.3", -4.8e-5, -8.64e-3, -1.6e-3),
     ]
-    for label, e_targets in cases:
-        out("="*70); out(f"{label} plastic-loading probe (IntScheme=2 BackwardEuler_CPPM, TanType=1)"); out("="*70)
-        build(mat_tag=1, int_scheme=2, tan_type=1)
-        apply_path_and_run(make_checkpoints(e_targets, 30))
-        sig = wrapper_stress()
-        p, q, eta = p_q_eta(sig)
-        out(f"stress(wrapper)={sig}")
-        out(f"p'={p:.6g} kPa  q={q:.6g}  eta=q/p'={eta:.4g}")
+    for label, iso, yy, xy in cases:
+        out("="*70); out(f"{label} (IntScheme=2 BackwardEuler_CPPM, TanType=1)"); out("="*70)
+        e_targets = [np.diag([iso, iso, iso])]
+        e2 = np.diag([iso, iso, iso]).copy()
+        e2[1, 1] += yy; e2[0, 1] += xy; e2[1, 0] += xy
+        e_targets.append(e2)
+        nsteps = 40
 
-        Ca_bug, st = analytic_tangent_from_state(e_targets, 30, int_scheme=2, tan_type=1, buggy=True)
-        Ca_fix, _ = analytic_tangent_from_state(e_targets, 30, int_scheme=2, tan_type=1, buggy=False)
-        out(f"dGamma={st['dGamma']:.6g} (>0 confirms an active, LOADING plastic state)")
-        assert st['dGamma'] > 0, f"{label}: material never went plastic (dGamma==0) -- retarget the strain path"
+        st = analytic_tangents_all(e_targets, nsteps, int_scheme=2, tan_type=1)
+        p, q, eta = p_q_eta(-1.0*st['mSigma'])
+        out(f"p'={p:.6g} kPa  q={q:.6g}  eta={eta:.4g}  dGamma={st['dGamma']:.4g}"
+            f"  n_shear={st['n'][3]:.4g}")
+        assert st['dGamma'] > 0, f"{label}: material never went plastic -- retarget the strain path"
+        assert abs(st['n'][3]) > 0.05, f"{label}: n has ~no shear component -- both defects would be invisible"
 
-        out("Analytic aCep AS-WRITTEN (buggy, double ToCovariant):\n" + _fmt(Ca_bug))
-        out("Analytic aCep FIXED (single ToCovariant):\n" + _fmt(Ca_fix))
+        out("Analytic aCep AS-WRITTEN (buggy, double ToCovariant) row3:\n  " + str(st['Ca_bug'][3]))
+        out("Analytic aCep FIXED (numerator only) row3:\n  " + str(st['Ca_fix'][3]))
+        out("Analytic aCep WORKBENCH (numerator + denominator) row3:\n  " + str(st['Ca_wb'][3]))
 
-        # Mechanism-specific, falsifiable check: rows 0-2 (normal) must be
-        # bit-identical between buggy/fixed; rows 3-5 (shear) must differ.
-        normal_rows_match = np.allclose(Ca_bug[0:3, :], Ca_fix[0:3, :], rtol=0, atol=1e-6)
-        shear_rows_differ = not np.allclose(Ca_bug[3:6, :], Ca_fix[3:6, :], rtol=1e-6, atol=1e-6)
-        out(f"normal rows (0-2) bit-identical buggy vs fixed: {normal_rows_match}")
-        out(f"shear rows (3-5) differ buggy vs fixed: {shear_rows_differ}")
+        # Mechanism 1 (numerator, exact 2x): off-diagonal shear-row entries.
+        offdiag_ratio = st['Ca_bug'][3, 0:3] / st['Ca_fix'][3, 0:3]
+        out(f"buggy/fixed ratio, row3 cols0-2 (expect exactly 2.0): {offdiag_ratio}")
+        assert np.allclose(offdiag_ratio, 2.0, rtol=1e-6), "numerator defect signature (exact 2x) not reproduced"
 
-        Cfd = fd_material_tangent(e_targets, 30, 1e-6, int_scheme=2, tan_type=1)
-        out("FD (h=1e-6):\n" + _fmt(Cfd))
+        # Mechanism 2 (denominator, ~1.076x): fixed and workbench share the
+        # SAME numerator (temp1/temp2 equivalent to Ce:R / Q:Ce) and differ
+        # ONLY in the denominator scalar, so (aC-Ca_wb)/(aC-Ca_fix) must be
+        # the SAME constant across every entry of the correction term.
+        aC = get_stiffness(st['K'], st['G'])
+        corr_fix = aC - st['Ca_fix']
+        corr_wb = aC - st['Ca_wb']
+        mask = np.abs(corr_fix) > 1.0
+        denom_ratio = corr_wb[mask] / corr_fix[mask]
+        out(f"denominator-only ratio (correction_wb/correction_fixed), should be one "
+            f"constant across all entries: min={denom_ratio.min():.5f} max={denom_ratio.max():.5f}")
+        assert (denom_ratio.max() - denom_ratio.min()) < 1e-3 * abs(denom_ratio.mean()), (
+            "workbench and fixed differ by more than a single denominator rescale -- "
+            "second-defect isolation broken")
 
-        def relblock(A):
-            return np.abs(Cfd-A)/np.where(np.abs(A) > 1e-6, np.abs(A), 1.0)
-        out("rel err FD vs BUGGY:\n" + _fmt(relblock(Ca_bug)))
-        out("rel err FD vs FIXED:\n" + _fmt(relblock(Ca_fix)))
+        # Harness fix: one-sided, reversal-consistent FD. This is the
+        # regression-style, tightly-toleranced check.
+        base_ain = st['alpha_in']
+        signs = [safe_probe_sign(e_targets, nsteps, 1e-6, 2, 1, j, base_ain) for j in range(6)]
+        out(f"reversal-safe probe signs per direction: {signs}")
+        Cfd_1sided = fd_material_tangent_one_sided(e_targets, nsteps, 1e-8, 2, 1, signs)
+        out("FD one-sided (h=1e-8, reversal-safe) row3:\n  " + str(Cfd_1sided[3]))
 
-        out("FD h-convergence for entry (3,3) [dSigma_xy/dEps_xy]:")
-        for hh in (1e-4, 1e-5, 1e-6, 1e-7, 1e-8):
-            Cfd_h = fd_material_tangent(e_targets, 30, hh, int_scheme=2, tan_type=1)
-            out(f"  h={hh:8.1e}  FD[3,3]={Cfd_h[3,3]:12.5g}  buggy={Ca_bug[3,3]:12.5g}  fixed={Ca_fix[3,3]:12.5g}")
+        # Two entries in this row (yz, xz -- indices 4,5) carry NO real signal
+        # (Ca_wb ~ 0 exactly -- no yz/xz loading imposed) and h=1e-8 finite
+        # differencing of double-precision stress leaves ~1-3 units of pure
+        # round-off there (Cfd_1sided ~ 3, not ~0), which is noise, not a
+        # mismatch -- checking them against ANY nonzero floor divides noise by
+        # noise. Only assert on the entries carrying a real analytic signal.
+        real_signal = np.abs(st['Ca_wb'][3]) > 1.0
+        rel_vs_wb = np.abs(Cfd_1sided[3] - st['Ca_wb'][3]) / np.where(real_signal, np.abs(st['Ca_wb'][3]), 1.0)
+        rel_vs_fix = np.abs(Cfd_1sided[3] - st['Ca_fix'][3]) / np.where(real_signal, np.abs(st['Ca_fix'][3]), 1.0)
+        out(f"row3 rel err, one-sided FD vs WORKBENCH: {rel_vs_wb}  (real-signal mask: {real_signal})")
+        out(f"row3 rel err, one-sided FD vs FIXED (numerator only): {rel_vs_fix}")
+        out(f"no-signal entries (yz,xz) absolute FD noise: {Cfd_1sided[3][~real_signal]}")
+        assert np.max(rel_vs_wb[real_signal]) < 0.01, (
+            f"{label}: one-sided FD does not match the workbench (both-defects-fixed) "
+            f"formula to 1% -- rel err {rel_vs_wb}")
+
+        # Context only (not asserted): the ORIGINAL central-difference FD,
+        # which straddles the alpha_in reversal branch and is expected to be
+        # noisy/wrong on the off-diagonal columns.
+        Cfd_central = fd_material_tangent(e_targets, nsteps, 1e-8, int_scheme=2, tan_type=1)
+        out("FD central-difference (h=1e-8, KNOWN CONTAMINATED, for context only) row3:\n  "
+            + str(Cfd_central[3]))
 
     report = "\n".join(lines)
     print(report)

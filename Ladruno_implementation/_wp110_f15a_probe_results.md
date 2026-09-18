@@ -1,177 +1,148 @@
-# WP-110 / F15a -- GetElastoPlasticTangent measurement probe: results
+# WP-110 / F15a -- GetElastoPlasticTangent measurement probe: results (revised)
 
-**Status: CONFIRMED.** `ManzariDafalias::GetElastoPlasticTangent`
-(SRC/material/nD/UWmaterials/ManzariDafalias.cpp:5110) computes a wrong
-continuum elastoplastic tangent at a plastic (loading) state. Mechanism:
-the flow-direction vector `R` is converted contravariant -> covariant
-**twice**:
+**Status: CONFIRMED, and a SECOND, independent defect found.**
+`ManzariDafalias::GetElastoPlasticTangent` (ManzariDafalias.cpp:5110) has two
+separate Voigt covariant/contravariant mistakes, both in the plastic
+correction term `aCep = aC - (Macauley/temp3) * Dyadic2_2(temp1, temp2)`:
 
-```cpp
-R = ToCovariant(temp0);                     // :5127 -- single, correct
-temp1 = DoubleDot4_2(aC, ToCovariant(R));   // :5129 -- R is ALREADY covariant;
-                                             //          this re-wraps it.
+1. **Numerator (originally reported, still confirmed):** `R` is converted to
+   covariant TWICE — `R = ToCovariant(temp0)` (:5131) then
+   `temp1 = DoubleDot4_2(aC, ToCovariant(R))` (:5133, wraps the *already*
+   covariant `R` again). This doubles `temp1`'s shear (Voigt 3,4,5) entries a
+   second time, so it can only ever corrupt aCep's **shear rows** — measured
+   at an exact **2.000x** ratio on every shear-row/normal-column entry.
+
+2. **Denominator (NEW, found only after the coordinator's Workbench
+   cross-check flagged a residual):**
+   `temp3 = DoubleDot2_2_Contr(temp2, R) + Kp;` (ManzariDafalias.cpp:5139)
+   uses the CONTRAVARIANT double-dot (`DoubleDot2_2_Contr`, which re-doubles
+   Voigt indices 3-5) on a mismatched pair: `temp2` (a stress-like vector from
+   contracting a covariant strain direction through `aC`) against `R`
+   (covariant, already shear-doubled). This is a different Voigt-convention
+   slip from defect 1, and it survives even after defect 1 is fixed. Measured:
+   `temp3` (engine, as-written -- unaffected by defect 1) is a **constant
+   ~1.0757x** too large relative to the Workbench's properly-contracted
+   `denom = Kp + Q:Ce:R` (`ddot(QCe, R)`, a true Frobenius double-dot), at
+   BOTH states tested (1.07577 at p'~20, 1.07568 at p'~214 -- consistent to 4
+   significant figures, i.e. state-independent in this sample). Since `temp3`
+   is a scalar dividing the WHOLE rank-1 correction, this rescales *every*
+   entry of the correction term uniformly by ~7.6%, regardless of defect 1.
+
+**Numerator-only fix ("fixed" in the original note) is INSUFFICIENT.** It
+still uses the wrong `temp3`, so it is still ~6-8% off the true continuum
+tangent. Both defects must be fixed to match FD.
+
+## What changed since the first note, and why
+
+The first note's ~5-7% "fixed vs FD" residual was reported at IntScheme=2 with
+a *central* finite difference and, for the "HIGH" case, at an unrealistic
+p'=13218 kPa. Two problems were found on review:
+
+- **Harness artifact (confirmed, real):** `integrate()`'s reversal check
+  (ManzariDafalias.cpp ~1005-1013: `if (alpha_n - alpha_in_n):Ce:d_eps < 0,
+  reset alpha_in := alpha_n`) fires or not depending on the SIGN of the probed
+  strain increment relative to the ongoing loading direction. A symmetric
+  central difference `(F(+h)-F(-h))/(2h)` therefore differences two states
+  with DIFFERENT `alpha_in` (confirmed by direct read-back: at every one of
+  the 6 probe directions, `alpha_in(+h) != alpha_in(-h)`), straddling a real
+  kink in the response rather than sampling one smooth branch. This
+  contaminates the off-diagonal FD entries badly (LOW p', central FD at
+  h=1e-8: row3 = `[2327, -1165, 2372, 16417, 0, 1.5]` -- compare to any of the
+  three analytic candidates below; none matches within 40%).
+- **Unrealistic test state:** p'=13218 kPa is far outside where these Toyoura
+  parameters were tuned; the original note's per-block error table was partly
+  measuring that, not just the bug.
+
+**Fix applied here:** (a) realistic states, p'~20 and ~214 kPa, eta~1.3, WITH
+genuine shear demand (`n`'s Voigt-shear component ~0.21, so the numerator bug
+is actually visible -- a state with zero shear, e.g. pure coaxial triaxial
+compression, makes `R`'s shear component zero and the numerator bug
+disappears identically, which is what the *first* realistic-state attempt
+without shear accidentally measured); (b) a *one-sided* finite difference
+whose sign is chosen, per probe direction, to keep `alpha_in` identical to the
+committed base state (no reversal reset) -- see `check_alphain.py` logic
+folded into `final_compare.py`.
+
+## Method addition: the Workbench formula, transcribed as a third candidate
+
+Per the coordinator's instruction, `C4-sanisand/sanisand_cep.py` (read-only,
+copied to scratch, not run) was diffed term by term against
+`GetElastoPlasticTangent`. It computes `Dep6` with proper 3x3 tensor algebra
+throughout (no Voigt ToCovariant/DoubleDot2_2_Contr detours):
+
+```
+CeR  = 2G*dev(R) + K*tr(R)*I      # Ce:R
+QCe  = 2G*dev(Q) + K*tr(Q)*I      # Q:Ce,  Q = n - (n:r)/3 * I
+denom = Kp + ddot(QCe, R)         # Q:Ce:R, a true Frobenius double-dot
+Dep6  = Ce6 - outer(CeR_vec, QCe_vec) / denom
 ```
 
-`ToCovariant` (:5651) only doubles the **shear** Voigt entries (indices
-3,4,5 = xy,yz,xz); the normal entries (0,1,2 = xx,yy,zz) are untouched. Since
-`aCep = aC - (Macauley/temp3) * Dyadic2_2(temp1, temp2)` scales its
-correction term row-wise by `temp1`, the bug can only ever corrupt aCep's
-**shear rows** (3,4,5 -- dSigma_xy, dSigma_yz, dSigma_xz w.r.t. any strain
-component). The normal rows (0,1,2) are mathematically untouched. This is a
-falsifiable, mechanism-specific prediction and it is exactly what was
-measured -- see "Row-identity check" below.
+`Kp`, `R`, `B`, `C`, `D`, `n`, `d`, `b`, `h`, the state evaluated at
+(mSigma, mAlpha, mFabric, mAlpha_in, e) and the loading test are otherwise
+IDENTICAL to `GetStateDependent`/`GetElastoPlasticTangent` -- only the Voigt
+bookkeeping in the final assembly differs. This "workbench" formula was added
+as a third numpy candidate (`get_ep_tangent_workbench` in
+`tests/test_manzari_ep_tangent_probe.py`) alongside "buggy" (as-written) and
+"fixed" (numerator-only correction).
 
-Test: `tests/test_manzari_ep_tangent_probe.py` (passes; it records the
-comparison, it does not gate on the bug being present/absent). Raw console
-output: `Ladruno_implementation/_wp110_f15a_probe_raw_output.txt`.
+## Results table (row 3 = dSigma_xy / dEps_*, the shear-shear diagnostic row)
 
-## Build
+Two states, p'~20 and p'~214 kPa, eta~1.3, WITH shear demand
+(n_shear = dep['n'][3] ~ 0.214 at both):
 
-```
-ladrunoBuild = 48c0e99bc8e28bbb4fdf965015f285f01e16e90d
-```
+### LOW: p'=20.03 kPa, q=25.90, eta=1.293, dGamma=1.60e-6
 
-Matches `ladruno` tip `48c0e99bc` (>= the required `48c0e99`). This is the
-**installed** Ladruno binary (`C:\Program Files\Ladruno\OpenSees\bin`), per
-the WP-110 rule of no build in this worktree.
+| source | col0 (xx) | col1 (yy) | col2 (zz) | col3 (xy, diag) |
+|---|---:|---:|---:|---:|
+| buggy (as-written) | 8643.2 | -4339.5 | 8833.8 | 14663.9 |
+| fixed (numerator only) | 4321.6 | -2169.8 | 4416.9 | 15866.0 |
+| **workbench (both fixed)** | **4649.0** | **-2334.2** | **4751.6** | **15774.9** |
+| FD, central diff, h=1e-8 (contaminated) | 2327.2 | -1165.3 | 2372.0 | 16417.3 |
+| **FD, one-sided reversal-safe, h=1e-8** | **4654.4** | **-2330.7** | **4744.0** | **15766.5** |
 
-## Method (brief; full rationale in the test's module docstring)
+One-sided FD vs workbench: **0.12%, 0.11%, 0.16%, 0.05%** relative error.
+One-sided FD vs fixed (numerator-only): **7.1%, 0.9%, 7.4%, 0.63%**.
+One-sided FD vs buggy: **85.7%, 86.1%, 86.2%, 6.99%**.
 
-- Single 8-node `SSPbrick` (1-point stabilized hex -> one shared material
-  state) with `ManzariDafalias` in its native 3D form (no plane-strain
-  reduction, so `eleResponse('stress')` exposes all 6 components including
-  sigma_zz, which the 2D `PlaneStrain` wrapper hides).
-- All 21 non-pinned DOFs driven by SP constraints under per-DOF `Path`
-  TimeSeries (`constraints('Transformation')` -- `Plain` silently drops any
-  non-homogeneous SP value, a real trap hit while building this harness) so
-  the element sees an exact, fully prescribed affine (uniform) strain
-  history with **zero free DOFs** -- no equilibrium solve can contaminate a
-  probe.
-- **FD leg:** central-difference the wrapper's 6-component stress against
-  each of the 6 independent strain components, rebuilding the model from
-  scratch per probe (replay the identical path, bump one extra checkpoint).
-  This converges, as h -> 0, to the true *continuum* (rate-form) tangent
-  regardless of which IntScheme produced the probe steps.
-- **Analytic leg:** `GetStateDependent` / `GetElasticModuli` /
-  `GetElastoPlasticTangent` transcribed verbatim into numpy (as-written and
-  with the second `ToCovariant` removed), fed the exact internal state
-  (mSigma, mAlpha, mFabric, mAlpha_in, void ratio, dGamma) read back from the
-  same committed FE state via `eleResponse`. The 3D wrapper flips sign
-  uniformly (`mSigma_M = -mSigma`); since both stress and strain flip
-  together, the tangent matrix is invariant, so no sign correction is needed
-  when comparing the two legs.
-- IntScheme = 2 (`BackwardEuler_CPPM`), TanType = 1 (continuum aCep, not the
-  separately-computed "consistent" tangent) throughout the plastic cases.
+### HIGH: p'=213.56 kPa, q=292.9, eta=1.372, dGamma=7.41e-5
 
-**Gotcha recorded (also in the test's docstring):** the full `ManzariDafalias`
-constructor sets `mElastFlag = 0` ("stage 0") unconditionally, which forces
-`elastic_integrator` regardless of IntScheme/TanType -- `GetElastoPlasticTangent`
-is never reached and TanType 0/1/2 are silently identical until
-`ops.updateMaterialStage('-material', tag, '-stage', 1)` is called. Cost real
-time to find; the test asserts `dGamma > 0` at the plastic states specifically
-to catch a regression back into this trap.
+| source | col0 (xx) | col1 (yy) | col2 (zz) | col3 (xy, diag) |
+|---|---:|---:|---:|---:|
+| buggy (as-written) | 29755.6 | -12585.8 | 30336.4 | 47887.5 |
+| fixed (numerator only) | 14877.8 | -6292.9 | 15168.2 | 51808.1 |
+| **workbench (both fixed)** | **16003.7** | **-6769.1** | **16316.1** | **51511.4** |
+| FD, central diff, h=1e-8 (contaminated) | 8004.7 | -3383.6 | 8153.9 | 53615.2 |
+| **FD, one-sided reversal-safe, h=1e-8** | **16009.4** | **-6767.1** | **16307.7** | **51501.8** |
 
-## Elastic sanity gate
+One-sided FD vs workbench: **0.04%, 0.03%, 0.05%, 0.02%**.
+One-sided FD vs fixed: **7.1%, 0.02%, 7.0%, 0.02%**.
+One-sided FD vs buggy: **85.9%, 85.9%, 86.0%, 7.06%**.
 
-TanType=0, small isotropic strain, no plasticity possible:
-
-| | analytic Ce | FD |
-|---|---|---|
-| normal diag | 7198 | 7198 |
-| normal off-diag | 378.8 | 378.8 |
-| shear diag | 3410 | 3410 |
-
-Max relative error: **2.2e-9**. Confirms the FE harness and the numpy
-transcription of `GetStiffness`/`GetElasticModuli` are both correct before
-touching the suspect function.
-
-## Plastic-state results
-
-Two states reached via a 2-stage strain ramp (isotropic consolidation, then
-an added deviatoric/shear increment), IntScheme=2, TanType=1:
-
-| | LOW p' | HIGH p' |
-|---|---|---|
-| p' (kPa) | 205.9 | 13218 |
-| q (kPa) | 178.4 | 10976 |
-| eta = q/p' | 0.866 | 0.830 |
-| dGamma | 6.48e-5 | 9.53e-4 |
-
-(dGamma > 0 confirms an active, loading plastic state at both.)
-
-### Row-identity check (the falsifiable prediction)
-
-At both states: **rows 0-2 (normal) of aCep are bit-identical between the
-as-written (buggy) and fixed formulas; rows 3-5 (shear) differ.** This is
-exactly the row-selective corruption pattern the double-`ToCovariant`
-mechanism predicts, and rules out an unrelated/general-purpose bug.
-
-Off-diagonal shear-row entries (row 3 or 4 or 5, column in 0-2) come out at
-**exactly 2x** between buggy and fixed (e.g. LOW p', row 3: buggy
-[27560, -20770, 28970] vs fixed [13780, -10380, 14480] -- ratio 2.000, 2.001,
-2.001) — the aC contribution to those entries is zero (`GetStiffness` has no
-normal-shear coupling), so they come ONLY from the rank-1 correction term,
-which scales linearly with the doubled `temp1` shear component.
-
-### Per-block relative error, FD vs analytic (h=1e-6, not yet fully h-converged)
-
-| block | LOW p': FD vs buggy | FD vs fixed | HIGH p': FD vs buggy | FD vs fixed |
-|---|---|---|---|---|
-| normal-normal (rows/cols 0-2) | 7.6%-75% | *(identical to buggy — unaffected rows)* | 1.0%-99.8% | *(identical)* |
-| shear-shear diag, e.g. (3,3) | 19.1% | 4.3% | 30.3% | 7.1% |
-
-Rows 0-2 are identical between the "FD vs buggy" and "FD vs fixed" tables by
-construction (those rows are bug-free in both variants); their nonzero
-residual against FD reflects the known theoretical gap between the
-*continuum* (rate-form) tangent `GetElastoPlasticTangent` computes and the
-*algorithmic* tangent that a finite difference of the actual (discretely
-integrated) response measures -- expected, not further bug evidence.
-
-### FD step-size convergence, entry (3,3) = dSigma_xy/dEps_xy
-
-LOW p':
-
-| h | FD | buggy | fixed |
-|---|---|---|---|
-| 1e-4 | 37293 | 42635 | 48676 |
-| 1e-5 | 46331 | 42635 | 48676 |
-| 1e-6 | 50787 | 42635 | 48676 |
-| 1e-7 | 51269 | 42635 | 48676 |
-| 1e-8 | 51318 | 42635 | 48676 |
-
-HIGH p':
-
-| h | FD | buggy | fixed |
-|---|---|---|---|
-| 1e-4 | 338400 | 305800 | 372110 |
-| 1e-5 | 391690 | 305800 | 372110 |
-| 1e-6 | 398590 | 305800 | 372110 |
-| 1e-7 | 399240 | 305800 | 372110 |
-| 1e-8 | 398920 | 305800 | 372110 |
-
-FD converges cleanly and monotonically to a stable plateau at both states
-(the analytic values, being h-independent by construction, are flat lines).
-At the converged limit:
-
-- LOW p': **fixed is 5.1% off FD; buggy is 16.9% off** (buggy error ~3.3x fixed's).
-- HIGH p': **fixed is 6.8% off FD; buggy is 23.4% off** (buggy error ~3.4x fixed's).
-
-Fixed is consistently, substantially closer to the converged FD value than
-buggy, at both confinement levels, for exactly the row family the mechanism
-predicts.
+**IntScheme cross-check:** repeating the one-sided-FD-vs-workbench comparison
+with IntScheme=1 (ModifiedEuler) instead of 2 (BackwardEuler_CPPM) gives the
+same result to within 0.1% at both states -- the continuum-tangent limit does
+not depend on which scheme produced the probed states, as expected (FD with
+h->0 samples the local rate response, not the discretization).
 
 ## Verdict
 
-**CONFIRMED.** Mechanism = double `ToCovariant` on the flow-direction term
-`R` at ManzariDafalias.cpp:5129 (the loading-direction conversion at ~:5132
-is single and correct, as suspected). Effect: aCep's shear rows (dSigma_xy,
-dSigma_yz, dSigma_xz w.r.t. any strain component) get a rank-1 plastic
-correction inflated by exactly 2x relative to the correct value; normal rows
-(dSigma_xx, dSigma_yy, dSigma_zz) are completely unaffected. Measured
-magnitude at the two states probed here is larger than the ~9% prior figure
-(here: buggy is 17%-23% off the converged FD limit vs fixed's 5%-7%), and the
-error appears state-dependent (grows somewhat with p'/eta in this sample) --
-consistent with a real, non-trivial tangent defect that a Newton solver using
-TanType=1 on any IntScheme calling `GetElastoPlasticTangent` (BackwardEuler
-CPPM, RungeKutta variants, MaxStrainInc/MaxEnergyInc) would feel as a
-systematically wrong, direction-dependent (shear-only) Jacobian.
+**CONFIRMED, with a correction to the earlier verdict's scope: two defects,
+not one.**
+
+1. Numerator double `ToCovariant` on `R` (:5131, :5133) -- exact 2x error on
+   aCep's shear rows. (Original finding, still holds.)
+2. Denominator Voigt-mismatch (:5139, `DoubleDot2_2_Contr(temp2, R)`) --
+   ~7.6% systematic overestimate of `temp3` relative to the true `Q:Ce:R`,
+   uniformly weakening the entire plastic correction. (New.)
+
+The apparent "fixed is still 5-7% off FD" was **both** real (defect 2, ~6-8%,
+confirmed present and independent of defect 1) **and** partly a harness
+artifact (a central-difference FD straddling `integrate()`'s alpha_in
+reversal branch, which by itself produced 40-100%+ noise in the off-diagonal
+FD columns and had nothing to do with either defect). With the harness fixed
+(one-sided, reversal-consistent FD) and both defects corrected in the numpy
+oracle (the "workbench" formula), FD matches to **0.02%-0.17%** at both
+p'~20 and p'~214 kPa, eta~1.3, with genuine shear content -- as good a
+confirmation as the two independent tangent derivations (this probe's
+transcription and the Workbench's `sanisand_cep.py`) can give without a
+third, independently-authored implementation.
