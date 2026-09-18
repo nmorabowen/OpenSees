@@ -1,6 +1,15 @@
 # WP-114 — BezierTri6 `-bbar` under non-associated flow (TIMs F17)
 
-Status: **scoping** (2026-09-18). Branch `wp/114-beziertri6-bbar-nonassoc`, cut from
+Status: **fix + evidence landed on the branch; PR #848 still draft** (2026-09-18).
+Phase A (tangent probe, pivot bisection) and phase B (punch) are done. Verdict for ask 4:
+**a fix, not a documented limitation.** `-bbar` now uses the plane-strain ½ split
+(b42ca77d8). Results are in `04_bezier_elements.md`, section "WP-114". The gate is
+`tests/test_beziertri6_bbar_plane_strain.py`. Open: the fixed T6 `-bbar` sits 13–18 %
+below the LadrunoQuad band on the ψ=0 punch, and we have no reference to say which one
+is right. The 1 816-pivot claim was not reproduced; the orphan-node hypothesis is in
+`LEDGER_quirks`.
+
+Scoped 2026-09-18. Branch `wp/114-beziertri6-bbar-nonassoc`, cut from
 `ladruno` @ `48c0e99bc`. Source request: TIMs Workbench `2d-model` act,
 `fork_request_bezier_2026-09-18.md`. We reproduce on our own test beds and never run
 the Workbench models.
