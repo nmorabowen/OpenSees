@@ -151,3 +151,114 @@ p'~20 and p'~214 kPa, eta~1.3, with genuine shear content -- as good a
 confirmation as the two independent tangent derivations (this probe's
 transcription and the Workbench's `sanisand_cep.py`) can give without a
 third, independently-authored implementation.
+
+## F15(d) -- BVP replay: SANISAND self-weight strip footing, `-flipAlphaIn init`
+
+**Question:** the Workbench ran a SANISAND self-weight strip footing (B/8
+quad, implicit, `-flipAlphaIn init`) and reported TanType 1/2 parting from
+TanType 0 near s/B ~ 0.0075 (+7 % at 0.009, +13 % at 0.010, +22 % at 0.0115),
+not brought back by a tighter tolerance, and not reproducible run-to-run at
+TanType 1/2 while TanType 0 was. Does that survive the F15 tangent fix
+(commit `dee04dbe3`, this WP's own P0/P1)?
+
+**Deck:** no fork BVP deck matched "B/8 quad" or "-flipAlphaIn" by name, so
+this replay reuses the fork's own SANISAND self-weight strip-footing driver,
+`Ladruno_files/testbed/hypo_bearing/sanisand_tau0_band.py` (the ADR-90/WP-A2
+tau=0 collapse-band study, also the base of WP-106's `-pRe` BVP gate) --
+`LadrunoBrick -formulation bbar`, plane strain, rough rigid footing, K0
+self-weight staged before the push, the R3-graded mesh, `NormUnbalance`
+ladder Newton -> NewtonLineSearch -> KrylovNewton. **The driver had no
+`-flipAlphaIn` passthrough**, so one was added: `run_leg(..., flip_alpha_in=)`
+and a `--flipAlphaIn init|vanilla` CLI flag, emitted only when non-default
+`vanilla` so every pre-existing leg's material command stays byte-identical
+(same rule as `-pRe`/`-implexFactor`). Shrunk for wall-clock: single leg
+`h1.0_e0.6944` (h0 = 1.0 m, Gorini's calibrated e_init = 0.6944, the coarsest
+of the deck's 3x2 grid), `--sfrac 0.012` (vs the deck's own 0.25 default), no
+surcharge, `IntScheme 1` (ModifiedEuler, the deck default). No C++ changes,
+no rebuild.
+
+**Binaries**, both confirmed via `ops.ladrunoBuild()`:
+post-fix = this worktree's `dist\bin` (`dee04dbe39117d16835f7caa52a6b71aab72f1ba`,
+F15 fix committed); pre-fix = the installed
+`C:\Program Files\Ladruno\OpenSees\bin` (`48c0e99bc8e28bbb4fdf965015f285f01e16e90d`).
+
+**A genuine seizure, not a flake:** the first TanType 2 attempt (post-fix,
+uncapped substeps, the deck's own default) hung completely -- zero progress
+past its s/B = 0.005 checkpoint for over 20 minutes of active CPU (a
+threaded Pardiso solve, confirmed still `Responding` and burning CPU, not
+deadlocked) before being killed. This is the deck's own documented GATE-U
+failure mode ("every uncapped leg of this deck seizing inside ModifiedEuler,
+so uncapped ... would simply spend their wall budget and measure the
+budget" -- the module docstring). Both TanType 2 legs below therefore use
+`--maxsubsteps 20000`, WP-106's own precedent for this exact deck; TanType 0
+never needed it (uncapped throughout, no seizure, `nsub 0` in the JSON either
+way).
+
+**Legs run** (all `--tantype`/`--flipAlphaIn init`, `h1.0_e0.6944`, one
+foreground `python3.12 -u` call each, ~3.5-5 min wall):
+
+| leg | binary | TanType | maxsubsteps | wall_s | steps | failed rungs | relaxed |
+|---|---|---:|---:|---:|---:|---:|---:|
+| postfix_tan0 | dee04dbe3 (post-fix) | 0 | 0 (uncapped) | 214 | 46 | 10 | 0 |
+| postfix_tan2_run1 | dee04dbe3 (post-fix) | 2 | 20000 | 252 | 46 | 14 | 3 |
+| postfix_tan2_run2 | dee04dbe3 (post-fix) | 2 | 20000 | 252 | 46 | 14 | 3 |
+| prefix_tan0 | 48c0e99bc (pre-fix) | 0 | 0 (uncapped) | 216 | 46 | 10 | 0 |
+| prefix_tan2 | 48c0e99bc (pre-fix) | 2 | 20000 | 297 | 46 | 18 | 2 |
+
+Artifacts under `Ladruno_files/testbed/hypo_bearing/wp110_f15d/<leg>/`
+(`a2_h1.0_e0.6944_curve.csv`, `_field.csv`, `.json`, engine logs) plus the
+five `*_stdout.log` driver transcripts.
+
+### q (kPa) at s/B, linearly interpolated from each leg's own step sequence
+
+| leg | 0.005 | 0.0075 | 0.009 | 0.010 | 0.0115 | end (0.012) |
+|---|---:|---:|---:|---:|---:|---:|
+| postfix_tan0 | 205.061 | 294.085 | 346.670 | 381.095 | 432.124 | 449.454 |
+| postfix_tan2_run1 | 204.819 | 295.173 | 346.177 | 380.619 | 431.843 | 448.887 |
+| postfix_tan2_run2 | 204.819 | 295.173 | 346.177 | 380.619 | 431.843 | 448.887 |
+| prefix_tan0 | 205.061 | 294.085 | 346.670 | 381.095 | 432.124 | 449.454 |
+| prefix_tan2 | 204.824 | 294.130 | 346.392 | 380.905 | 433.842 | 450.462 |
+
+TanType 2 vs TanType 0 at the same binary (% difference):
+
+| s/B | post-fix (2 vs 0) | pre-fix (2 vs 0) |
+|---|---:|---:|
+| 0.005 | -0.12 % | -0.12 % |
+| 0.0075 | +0.37 % | +0.02 % |
+| 0.009 | -0.14 % | -0.08 % |
+| 0.010 | -0.12 % | -0.05 % |
+| 0.0115 | -0.06 % | +0.40 % |
+| end | -0.13 % | +0.22 % |
+
+### Verdict
+
+**1. The families do NOT part here, before or after the fix.** TanType 0 and
+TanType 2 track within +/-0.4 % at every checkpoint on both binaries -- nowhere
+near the Workbench's reported +7 / +13 / +22 %. This replay does **not**
+reproduce the reported divergence at this scale/configuration. Candidate
+reasons the gap is real but this deck doesn't show it: the Workbench's
+"B/8 quad" mesh, footing width and boundary conditions are unknown and may
+differ from this deck's rough-footing R3-graded strip; the Workbench may have
+run the denser `e_init = 0.60` leg (this deck's own "ill-posed case", not
+tried here) rather than Gorini's calibrated 0.6944; a surcharge or a larger
+push reach past s/B = 0.012 (this leg is still climbing steeply, nowhere
+near a peak); or an uncapped substep budget that seizes (see below) rather
+than a clean converged answer at each checkpoint.
+
+**2. TanType 2 IS reproducible here, bit-for-bit, once substeps are capped.**
+`postfix_tan2_run1` and `postfix_tan2_run2` are identical to every reported
+significant figure in `q_foot_kPa`, `q_base_kPa`, and every substep-census
+column across all 46 steps (`diff`'d directly); only the cumulative `wall_s`
+timing column differs, as expected from run-to-run scheduling noise. The
+Workbench's reported *non*-reproducibility is more consistent with the
+uncapped-substep GATE-U seizure hitting a wall-clock cutoff at a different
+point each run (a machine-timing artifact) than with genuine numerical
+nondeterminism in the fixed tangent's converged path -- this replay found no
+nondeterminism once the seizure is avoided.
+
+**3. The fix's footprint shows up in Newton cost, not in the converged q.**
+Pre-fix TanType 2 needed 18 failed ladder rungs vs post-fix's 14 (+29 %) to
+commit the same 46 steps, echoing (at a much smaller scale) the WP-110 F15
+integrator finding of 283 -> 103 Newton iterations over 40 steps on the
+drained-triaxial gate. The two binaries' TanType 0 legs (elastic tangent,
+untouched by the fix) are byte-identical, as expected.

@@ -681,6 +681,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
             predictor=False, implex=False, implex_control=None,
             implex_factor="fixed",  # Ladruno ADR-92 P2-9
             pre=0.0,                # Ladruno (ADR-93 II.1 / WP-106): -pRe
+            flip_alpha_in="vanilla",  # Ladruno ADR-92 P2-7c: -flipAlphaIn (WP-110 F15d)
             xlim=None, zbot=None, build=None):
     wall_budget = WALL_BUDGET_S if wall_budget is None else wall_budget
     tag = leg_tag(h0, ename)
@@ -772,7 +773,13 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
                    # control/controlIter without -implexControl).
                    *(("-implexFactor", implex_factor)
                      if (implex and implex_control and implex_factor in ("control", "controlIter"))
-                     else ()))
+                     else ()),
+                   # Ladruno ADR-92 P2-7c (WP-110 F15d): -flipAlphaIn. Emitted
+                   # only when non-default "vanilla", so every existing leg's
+                   # material command stays byte-identical -- same rule as
+                   # -pRe / -implexFactor above.
+                   *(("-flipAlphaIn", flip_alpha_in)
+                     if flip_alpha_in and flip_alpha_in != "vanilla" else ()))
     for e, conn in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *[int(c) + 1 for c in conn], 1,
                     "-geom", "linear", "-b", 0.0, 0.0, -GAMMA,
@@ -1161,7 +1168,7 @@ def run_leg(h0, ename, e_init, out_dir, wall_budget=None, sfrac=SFRAC,
         driver=os.path.abspath(__file__),
         date=datetime.datetime.now().isoformat(timespec="seconds"),
         solver=solver, nodes=n_nodes, hexes=n_hex, dof=3 * n_nodes,
-        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, pre=pre, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
+        gamma=GAMMA, K0=K0, M_c=M_C, presidual=OPT_PRESIDUAL, pmin=OPT_PMIN, pre=pre, flip_alpha_in=flip_alpha_in, surcharge_kpa=surcharge, predictor=predictor, implex=implex, implex_control=implex_control, xlim=xlim, zbot=zbot,
         ds_max=ds_max, ds_base=DS_BASE, ds_min=DS_MIN, push_tol=tol,
         push_test=test_type, push_tol_abs=tol_abs, force_ref=want,
         int_scheme=INT_SCHEME, tan_type=tan_type, jaco_type=JACO_TYPE,
@@ -1269,6 +1276,11 @@ def main(argv=None):
     ap.add_argument("--tantype", type=int, default=TAN_TYPE,
                     choices=(0, 1, 2),
                     help="ManzariDafalias TanType: 0 elastic (the PARSER DEFAULT, and a trap), 1 continuum ep, 2 consistent ep")
+    ap.add_argument("--flipAlphaIn", dest="flip_alpha_in", default="vanilla",
+                    choices=("init", "vanilla"),
+                    help="Ladruno ADR-92 P2-7c: -flipAlphaIn init|vanilla; vanilla "
+                         "(default) omits the flag entirely so every pre-WP-110 "
+                         "leg's material command stays byte-identical (WP-110 F15d)")
     args = ap.parse_args(argv)
     tol = args.tol if args.tol is not None else (
         PUSH_TOL if args.test == "NormUnbalance" else PUSH_TOL_DISP)
@@ -1288,6 +1300,7 @@ def main(argv=None):
     print(f"    convergence test (pinned)   : {args.test} @ {tol}"
           + (" x gamma*V" if args.test == "NormUnbalance" else " m"))
     print(f"    TanType (0=elastic default) : {args.tantype}")
+    print(f"    -flipAlphaIn (WP-110 F15d)  : {args.flip_alpha_in}")
     print(f"    surcharge (kPa, outside foot): {args.surcharge}")
     print(f"    domain (xlim, zbot)         : "
           f"{args.xlim if args.xlim is not None else 'R3 30.0'}, "
@@ -1314,6 +1327,7 @@ def main(argv=None):
                         implex=args.implex, implex_control=args.implex_control,
                         implex_factor=args.implex_factor,  # Ladruno ADR-92 P2-9
                         pre=args.pRe,   # Ladruno (ADR-93 II.1 / WP-106)
+                        flip_alpha_in=args.flip_alpha_in,  # WP-110 F15d
                         xlim=args.xlim, zbot=args.zbot, build=build)
         except AssertionError as exc:
             print(f"    LEG FAILED A CONTROL: {exc}", flush=True)
