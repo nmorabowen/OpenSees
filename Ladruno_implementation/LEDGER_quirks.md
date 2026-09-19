@@ -7552,6 +7552,21 @@ Three things to carry forward:
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
   `TanType 2` output — there is no dedicated flag for it.
 
+### `ManzariDafalias` TanType 1 under IntScheme 1 (and 0) was a STALE matrix — `ModifiedEuler` never wrote `mCep` — FIXED (WP-110, F15c)
+- **Bites:** you set `TanType 1` (continuum elastoplastic tangent) with the recommended `IntScheme 1` and get modified-Newton convergence, or a tangent that is plainly Ce at a plastic state. Nothing warns.
+- **Why:** `ManzariDafalias::ModifiedEuler` computes `aCep1`/`aCep2` for its `aCep_Consistent` chain (TanType 2) but never assigned `aCep` itself. `mCep` therefore kept whatever the last writer left: Ce from the last elastic step (`elastic_integrator` / the elastic branch of `explicit_integrator`), or a `Stress_Correction` leftover on a step whose last substep needed a correction. Scheme 0 (`MaxEnergyInc`) inherits it through `nCep`. `RungeKutta4` (scheme 3) has the same hole and is NOT fixed (scheme 3 is already warned against at construction).
+- **Workaround/status (WP-110, #847):** fixed — `ModifiedEuler` starts from `aCep = Ce` and, on its normal exit, writes `GetElastoPlasticTangent` at the end-of-increment state (the `BackwardEuler_CPPM` convention). Observable now via `eleResponse(ele, 'tangent')`.
+
+### `ManzariDafalias` is ELASTIC until `updateMaterialStage ... -stage 1`, and the flag is process-wide — a tangent probe that forgets the flip measures Ce and "passes"
+- **Bites:** a material-point probe or FD tangent check on `ManzariDafalias`/`LadrunoSANISAND` finds `dGamma = 0`, TanType 0/1/2 all identical and equal to Ce, and concludes the tangent is fine. It never left the elastic branch.
+- **Why:** `mElastFlag` is a `static` class member (one per process, not per instance); the full constructors set it to 0 (ELASTIC, #714), so `integrate()` calls `elastic_integrator` unconditionally and `GetElastoPlasticTangent` is never reached until `updateMaterialStage -material <tag> -stage 1`. Because it is static, constructing ANY new `ManzariDafalias` resets EVERY live instance to elastic — a rebuild-per-probe harness must re-flip after every build.
+- **Workaround/status:** by design (staged-gravity idiom). Always flip after construction and assert `dGamma > 0` (state slot 25) before trusting a plastic-state measurement — `tests/test_manzari_ep_tangent_gate.py` does both.
+
+### A central-difference FD tangent of `ManzariDafalias` straddles the `alpha_in` reversal reset — use a one-sided, direction-safe difference
+- **Bites:** `(sigma(eps + h e_j) - sigma(eps - h e_j)) / 2h` at a plastic state gives off-diagonal entries 40-100 % off any analytic tangent, at every `h`, and looks like a tangent bug (WP-110 F15a first pass).
+- **Why:** `integrate()` resets `alpha_in := alpha_n` when `(alpha_n - alpha_in):Ce:d_eps < 0`. Whether that fires depends on the SIGN of the probe increment, so `+h` and `-h` land on two different internal states (read back: `alpha_in(+h) != alpha_in(-h)` in all six directions) and the central difference differences across a kink, not along one branch.
+- **Workaround/status:** per direction, pick the sign whose run leaves `alpha_in` equal to the committed base state, and difference one-sidedly against the base stress (h = 1e-8 matched the corrected tangent to 0.02-0.17 %). Also make the last load increment tiny, because both integrators take G and K at the START of an increment while the FD samples the committed state. Implemented in `tests/test_manzari_ep_tangent_gate.py`.
+
 ## gcc + `-fopenmp` SEGFAULTS the zero-mass `system Diagonal` path — the fork cannot be built with OpenMP on Linux
 
 - **Symptom.** Build the fork with `-DLADRUNO_OPENMP=ON` on gcc/Linux and
