@@ -434,7 +434,39 @@ point, 10 per process); that line is the fork telling you the first plastic step
 decided by round-off. **Golden files on `LadrunoSANISAND` with no token move** where the flip
 decided anything (the implicit Esmeralda R3 twin did not move, to the digit; the IMPL-EX dense
 arm's wall moved 0.01689 → 0.01754): regenerate them, or pin `vanilla` in the fixture that
-produced them.
+produced them. apeGmsh adopts this as `LadrunoSANISAND.flip_alpha_in` in apeGmsh#1158.
+
+## 9. The elastoplastic tangent was wrong before WP-110 (F15) — what that means for apeGmsh decks
+
+`ManzariDafalias::GetElastoPlasticTangent` — shared by `ManzariDafalias` and `LadrunoSANISAND` —
+had two Voigt-convention errors (a 2x error on the shear rows, and a denominator ~7.6 % too large),
+and `IntScheme 1` never computed a `TanType 1` tangent at all (it handed the element a stale Ce).
+Fixed in PR #847; the engine tangent now matches a finite-difference derivative of its own stress
+update to 0.5 % at plastic shear states (`tests/test_manzari_ep_tangent_gate.py`).
+
+Which decks were affected, by the tangent they asked for:
+
+| deck | tangent before the fix |
+|---|---|
+| `TanType 0` (vanilla default) | Ce — unaffected |
+| `TanType 1`, `IntScheme 1` or `0` | stale Ce — modified Newton in disguise |
+| `TanType 1`, `IntScheme 2` | built from the wrong formula |
+| `TanType 2`, `IntScheme 1` (the `LadrunoSANISAND` default pair) | chained from the wrong formula |
+| `TanType 2`, `IntScheme 2` | the CPPM's own Jacobian — unaffected, EXCEPT on steps where the CPPM fell back to `ModifiedEuler` (see `LEDGER_quirks`) |
+
+**What the fix does NOT change: the stress update.** The tangent only steers Newton. Under a
+FORCE-residual test (`NormUnbalance`) the converged answer is the same to within the tolerance, so
+results computed with `TanType 1/2` before the fix used a wrong tangent but are not wrong answers
+for that reason alone. What does move: iteration counts, which steps converge, and — under
+`NormDispIncr` / `EnergyIncr`, which accept on `dU = K^-1 R` — the accepted point, within the
+test tolerance. **apeGmsh note:** golden files or convergence statistics (iterations, cut steps,
+wall time) recorded with `TanType 1/2` before #847 will move and should be re-baselined, not
+treated as regressions. Emit `TanType` explicitly, as §1 already asks.
+
+Measured on the fork's own single-element drained triaxial (IntScheme 1, TanType 2, 40
+`LoadControl` steps, build dee04dbe3): Newton iterations **283 → 103** (7.1 → 2.6 per step), and
+the TanType 0-vs-2 answer gap quoted in §1 shrinks from 4.5e-3 to 1.6e-3 (displacement) and
+7.0e-4 to 3.4e-4 (stress) — same tolerance, same floor.
 
 ## Log
 
@@ -447,3 +479,5 @@ produced them.
   `implex` field on `LadrunoSANISAND` as of this writing.
 - 2026-09-18 — WP-112 (TIMs F14): `-flipAlphaIn` default `vanilla` → `init`; section 8's table
   row and the "WP-112" subsection (the new default, and when to pass `vanilla`).
+- 2026-09-18 — Section 9: WP-110 (F15) elastoplastic-tangent fix, PR #847 — which decks used a
+  wrong tangent, and why converged answers under `NormUnbalance` are unaffected.
