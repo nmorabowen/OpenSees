@@ -99,7 +99,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
-| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
+| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, force `α_in := α` at every point (`init`) or leave initialisation to vanilla's loading-reversal sign test (`vanilla`, which reproduces real `ManzariDafalias` and reads the sign of round-off after elastic holds) | **`init`** (since WP-112; was `vanilla`) | ADR-92 P2-7, WP-112 (TIMs F14); `vanilla` warns once per Gauss point when it meets a round-off `α − α_in`; see §11 |
 | `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
 | `-pRe $p` | **elastic-only** confinement floor (ADR-93 II.1): the three `GetElasticModuli` overloads read `G, K ~ sqrt(max(p + $p, p_min)/P_atm)` and **nothing else in the model changes** | `0` = OFF | not IMPL-EX-specific and not gated on `-implex`; `-Pelastic` is accepted as a synonym. Refused below `0` and refused if given twice (it is a constitutive constant, and the echo can report only one value); **warns** above `0.1*P_atm`; prints a NOTE when `pRe <= p_min`, where the clamp already dominates as `p -> 0`. **Inert at stage 0** — see §3.1 and §4 |
 | `-implexFactor fixed\|control\|controlIter` | how `f` is CHOSEN: `fixed` = the clock ratio `alpha*dt_{n+1}/dt_n` (the pre-P2-9 operator, and the only mode gate-passed); `control` = the closed-form minimiser of `\|\|sigma~(f) - sigma_impl\|\|`, computed ONCE at the first trial of the step and frozen — **R3 REFUTED** (biased by the elastic-predictor first iterate); `controlIter` = the same minimiser recomputed at EVERY trial from that iterate's own `d_eps` — **R3 PASSES**, at a wall-time/Newton-churn cost; both control modes keep the clock ratio as the upper bound `f_max` | `fixed` | ADR-92 P2-9; **requires `-implexControl`** (refused without it, not silently downgraded); see §12 |
@@ -540,6 +540,10 @@ apart, so the declaration has to arrive out of band. That is exactly what the co
   +5.99 % at 0.0070 and **+19.40 % at 0.0085** against the refusal-free arm on the same deck.
   Compare reach and refusal counts freely; compare `q` only against an arm that ran refusal-free.
   Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
+- **F10's bare-`-implex` recipe did not transfer to a finer strip (TIMs, 2026-09-18).** On the
+  TIMs act's own self-weight strip, bare `-implex` (control off, as above) aborts at
+  `s/B = 0.0004` on the footing-edge Gauss point on every build: the fork's F10 deck was too
+  coarse to resolve the edge, so its 0.0500 reach says nothing about a mesh that does.
 
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
@@ -686,7 +690,7 @@ reference is kept across a zero-increment commit so a run of holds does not drif
 Still building; no holds inside a reported push on either material until the hold acceptance
 passes (hold probe `alpha_in` changed = 0 on both arms).
 
-### `alpha_in` at the stage flip is decided by the sign test — deterministic, not noise (`-flipAlphaIn`, P2-7)
+### `alpha_in` at the stage flip — `init` by default since WP-112 (`-flipAlphaIn`, P2-7 / F14)
 
 Vanilla `ManzariDafalias` never explicitly initialises `α_in` at the `updateMaterialStage 0 -> 1`
 flip; it relies on the loading-reversal sign test inside `integrate()` firing on the first plastic
@@ -703,6 +707,35 @@ run, and the implicit twin's first-step stiffness returns to the pre-P2 number t
 `ManzariDafalias` exactly; `-flipAlphaIn init` (opt-in) forces `α_in := α` unconditionally at
 every point at the flip on both the implicit and IMPL-EX paths — a declared modelling variant,
 not a defect fix. Every P2-7 curve names which flag it used.
+
+**Default moved to `init` (WP-112, TIMs F14, 2026-09-18) — the paragraph above is the P2-7c
+record, and it missed one case.** The sign test reads only the SIGN of
+`(α_n − α_in_n) : Ce : Δε`, with no magnitude guard on either factor, and vanilla runs it in the
+elastic stage too. A `LoadControl(0)` hold's `Δε` is solver noise, so each hold sets
+`α_in := α_n` at a coin-flip of points, and afterwards `α_n − α_in_n` is only the round-off by
+which `α` has moved since. On the first plastic step the direction of a round-off perturbation
+then picks the branch — and the thread count of MKL's solve is such a perturbation. The TIMs
+self-weight strip (9 720 Gauss points) read the **first push step at 1.511 / 1.824 / 1.824 /
+1.489 kPa at 1 / 2 / 4 / 8 MKL threads under `vanilla`** on Windows (1.597 / 1.824 / 1.824 on
+Linux), and the branches it opened were 30 % apart by `s/B = 0.035`; under **`init` the same leg
+reads 1.824 / 14.339 / 36.586 kPa at rows 1 / 8 / 15 on every thread count and both builds**. The
+fork reproduces the mechanism on a 12 × 6 `LadrunoQuad` self-weight strip
+(`tests/test_ladruno_sanisand_flip_determinism.py`): two elastic holds leave 229 of 288 Gauss
+points with `‖α − α_in‖` below `1e-12` of `max(‖α‖, m)`, and vanilla's first push step then
+reads 4.107 / FAIL / 8.332 / 9.483 kN/m after 0 / 1 / 2 / 3 holds, while `init` reads 9.659 kN/m
+after every one of them (to 3e-14) and is bit-identical at 1 / 2 / 4 / 8 threads for ten steps.
+So `init` is the default now. `-flipAlphaIn vanilla` stays, for reproducing real
+`ManzariDafalias` (A/B against vanilla decks and golden files), and prints a warning once per
+Gauss point (10 per process) when a plastic-stage trial meets `0 < ‖α_n − α_in_n‖ ≤ 1e-8 ·
+max(‖α_n‖, m)`. **The R3 numbers do not move:** P2-7c measured the Esmeralda implicit twin under
+`init` identical to `vanilla` to the digit (6.511 / 11.539 / 16.117 / 20.528 kN, "the RC14 price
+on this column is zero"). What does move is the IMPL-EX dense refuse arm's `fixed` reference wall,
+0.01689 under `vanilla` vs 0.01754 under `init` (also P2-7c) — P2-9's ship/refute bars were set
+against the former, and `controlIter` has not been re-measured under `init`. One limit stays: on
+the fork's deck the `init` curve still moves with the hold count from step 4 on (step 10: 35.5 –
+36.1 kN/m after 0 – 4 holds), because the holds change the committed state by round-off and later
+branch decisions amplify it. `init` removes the flip's sign lottery, not every sensitivity of the
+model to its state.
 
 **The zero-increment companion return at the flip is opt-in, default off (`-implexFlipAbsorb`,
 P2-7c).** The first cut of P2-7 had this absorption run unconditionally under `-implex`: at the

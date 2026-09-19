@@ -396,7 +396,7 @@ refused if `-implex` is not present somewhere on the line.
 | `-implexGuard on\|off` | `on` | forces `f = 0` on a step whose committed predecessor showed a loading reversal or `Kp <= 0` (ADR-92 P2-2) |
 | `-implexTrialGuard on\|off` | `on` | on a trial past `-implexControl`'s tolerance (floor not reached), retries at `f = 0` before refusing (ADR-92 P2-6) |
 | `-reversalTol $tol` / `-reversalRel $rel` | `tol=1e-10`, `rel=0.05` | magnitude guard on the loading-reversal `alpha_in` reset (ADR-92 P2-5/P2-5b) |
-| `-flipAlphaIn init\|vanilla` | `vanilla` | at the elastic-to-plastic stage flip, whether `alpha_in` is decided by the sign test (`vanilla`) or forced unconditionally (`init`, ADR-92 P2-7) |
+| `-flipAlphaIn init\|vanilla` | **`init`** (since WP-112; was `vanilla`) | at the elastic-to-plastic stage flip, whether `alpha_in := alpha` is forced at every point (`init`) or left to vanilla's sign test (`vanilla`, ADR-92 P2-7); see "WP-112" below. NOT an `-implex` option: it is live with `-implex` off |
 | `-implexFlipAbsorb on\|off` | `off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (ADR-92 P2-7c) |
 | `-implexFactor fixed\|control\|controlIter` | `fixed` | how `f` is chosen: `fixed` = the clock ratio (gate-passed, byte-identical to pre-P2-9); `control` = first-trial closed-form minimiser, **REFUTED** by the fork's R3 gate; `controlIter` = per-trial recompute, **passes** R3 at a wall-time/Newton-churn cost, not shipped as default (ADR-92 P2-9). Requires `-implexControl`. See §12 of the implex guide and the 2026-09-08 adoption note above. |
 
@@ -412,6 +412,29 @@ default an apeGmsh convenience wrapper to `control` — it is measured worse tha
 gate (depth 0.052 vs the 0.076 bar, overlay 11.1% vs the 2% bar,
 `_adr92_p2_9_r3_results.md`) — and treat `controlIter` as an opt-in for the TIMs campaign, not a
 general recommendation, since its own Esmeralda dense-refuse arm is still owed.
+
+### WP-112 (TIMs F14) — `-flipAlphaIn` now defaults to `init`; when to pass `vanilla`
+
+**The new default.** A deck that emits no `-flipAlphaIn` token now runs `init`: at
+`updateMaterialStage 1` every Gauss point sets `alpha_in := alpha`, so the first plastic step is
+the same on every machine and every MKL thread count. Under the old default (`vanilla`) the TIMs
+self-weight strip's first push step read 1.511 / 1.824 / 1.824 / 1.489 kPa at 1 / 2 / 4 / 8
+threads, because vanilla's loading-reversal test reads the sign of `alpha - alpha_in`, which the
+elastic stage's `LoadControl(0)` holds leave at round-off (implex guide §11, "`alpha_in` at the
+stage flip"). This applies with `-implex` off as much as on — the token is not an IMPL-EX option.
+
+**What the emitter should do.** Model the field as `flip_alpha_in: Literal["init", "vanilla"] |
+None = None`, with `None` omitting the token (fork default `init`) — the same rule as every other
+flag in this section. **Emit `vanilla` only when the deck must reproduce real
+`nDMaterial ManzariDafalias`**: an A/B against a vanilla deck, a golden file generated on
+vanilla `ManzariDafalias` or on a fork build older than WP-112, or an upstream-bound comparison.
+A deck that passes `vanilla` and holds in the elastic stage will print
+`... -flipAlphaIn vanilla and ||alpha - alpha_in|| = ... is at round-off ...` (once per Gauss
+point, 10 per process); that line is the fork telling you the first plastic step of that run is
+decided by round-off. **Golden files on `LadrunoSANISAND` with no token move** where the flip
+decided anything (the implicit Esmeralda R3 twin did not move, to the digit; the IMPL-EX dense
+arm's wall moved 0.01689 → 0.01754): regenerate them, or pin `vanilla` in the fixture that
+produced them. apeGmsh adopts this as `LadrunoSANISAND.flip_alpha_in` in apeGmsh#1158.
 
 ## 9. The elastoplastic tangent was wrong before WP-110 (F15) — what that means for apeGmsh decks
 
@@ -454,5 +477,7 @@ the TanType 0-vs-2 answer gap quoted in §1 shrinks from 4.5e-3 to 1.6e-3 (displ
 - 2026-09-07 — Section 8: full `-implex*` token family (ADR 92 P1/P2/P2-9), added after PR #822
   merged (`179da6ffb`). No prior IMPL-EX coverage existed in this file; `nd.py` still declares no
   `implex` field on `LadrunoSANISAND` as of this writing.
+- 2026-09-18 — WP-112 (TIMs F14): `-flipAlphaIn` default `vanilla` → `init`; section 8's table
+  row and the "WP-112" subsection (the new default, and when to pass `vanilla`).
 - 2026-09-18 — Section 9: WP-110 (F15) elastoplastic-tangent fix, PR #847 — which decks used a
   wrong tangent, and why converged answers under `NormUnbalance` are unaffected.

@@ -549,6 +549,16 @@ default path differs from 887fea475's (0.0169 vs 0.0161, 42 545 vs 29 527 guards
 single-element byte-identity gate cannot see a dispatch-scope difference: a mesh-level twin check belongs in the
 acceptance from now on.
 
+**WP-112 (TIMs F14, 2026-09-18): `-flipAlphaIn` default `vanilla` → `init`, by the owner's decision.** The RC14
+reading above ("the flip's sign test is deterministic on a real deck") holds for the Esmeralda R3 deck and not in
+general: the sign test runs in the elastic stage too, a `LoadControl(0)` hold leaves `α_n − α_in_n` at round-off,
+and the first plastic step then reads the sign of round-off — TIMs measured 1.511 / 1.824 / 1.824 / 1.489 kPa at
+1 / 2 / 4 / 8 MKL threads under `vanilla`, 1.824 / 14.339 / 36.586 kPa at rows 1 / 8 / 15 on every count under
+`init`. The R3 gate numbers above are unchanged by the flip (P2-7c measured the implicit twin under `init`
+identical to `vanilla` to the digit); the `fixed` dense-arm reference wall is 0.01754 under the new default
+(P2-7c's `init` arm) rather than 0.01689. `vanilla` stays opt-in and warns once per Gauss point on a round-off
+`α − α_in`. Guide §11, `tests/test_ladruno_sanisand_flip_determinism.py`, LEDGER_quirks 2026-09-18.
+
 **P2-8 (listed, not built, and SUPERSEDED by P2-9):** a guard threshold `-implexGuardKp <ratio>` was the fixed-threshold answer to the same under-firing; P2-9's `f*` is its graded, material-agnostic replacement and is what was built. P2-8 remains the fallback the ADR records if P2-9's dense-arm gate fails. The original note:  a guard threshold `-implexGuardKp <ratio>`
 firing when `Kp / G < ratio` on the committed predecessor (default 0 = today), priced by a sweep {0, 0.05, 0.2} on
 reach vs overlay; owner's call whether it belongs in this PR or the next.

@@ -65,6 +65,7 @@
 //        <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>                  \
 //        <-implexFactor fixed|control>                                          \
 //        <-reversalTol $tol> <-reversalRel $ratio> <-flipAlphaIn init|vanilla>
+//        (-flipAlphaIn default: init, since WP-112)
 //
 //  Ladruno ADR-92 P2-9: -implexFactor picks HOW f is chosen. `fixed` (the
 //  DEFAULT) is the clock ratio alpha*dt_{n+1}/dt_n and reaches no new
@@ -73,13 +74,18 @@
 //  the step. It IS an -implex option and additionally REQUIRES -implexControl
 //  (without a companion at the trial there is no sigma_impl to aim at).
 //
-//  Ladruno ADR-92 P2-7c: -flipAlphaIn is NOT an -implex option -- `vanilla`
-//  (the DEFAULT, reversed from the first P2-7 redesign; see RC14 / Esmeralda
-//  evidence at the member note in the header) leaves mAlpha_in to
-//  ManzariDafalias::integrate()'s own loading-reversal sign test; `init`
-//  (opt-in) sets mAlpha_in := mAlpha_n deterministically at the elastic->
-//  plastic stage flip instead -- an alternative modelling choice, not a bug
-//  fix. Live with -implex off exactly as on. -implexFlipAbsorb IS an -implex
+//  Ladruno ADR-92 P2-7c / WP-112 (F14): -flipAlphaIn is NOT an -implex option.
+//  `init` (the DEFAULT since WP-112) sets mAlpha_in := mAlpha_n
+//  deterministically at the elastic->plastic stage flip; `vanilla` (opt-in
+//  since WP-112; it was the P2-7c default) leaves mAlpha_in to
+//  ManzariDafalias::integrate()'s own loading-reversal sign test. WP-112 moved
+//  the default because that sign test reads the SIGN of
+//  (alpha_n - alpha_in_n):Ce:d_eps with no magnitude guard, and after
+//  elastic-stage holds the first factor is at round-off at most points, so the
+//  direction of a round-off perturbation (e.g. MKL's thread count) picks the
+//  branch -- TIMs F14 measured 1.511/1.824/1.824/1.489 kPa on the first push
+//  step at 1/2/4/8 threads under `vanilla`, 1.824 on every count under `init`.
+//  Live with -implex off exactly as on. -implexFlipAbsorb IS an -implex
 //  option (refused without -implex, like -implexGuard): `off` (the DEFAULT)
 //  leaves the flip committing nothing beyond mElastFlag's own effect on the
 //  next real step; `on` additionally commits a zero-pseudo-time-increment
@@ -180,7 +186,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>"      // Ladruno ADR-92 P2-6/P2-7c
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
-               << " <-flipAlphaIn init|vanilla>"                                // Ladruno ADR-92 P2-7c
+               << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
                << endln;
         return 0;
     }
@@ -215,9 +221,10 @@ OPS_LadrunoSANISAND(void)
     double reversalRel  = 0.05;     // Ladruno ADR-92 P2-5b: default relative floor,
                                //          scaled off the last COMMITTED strain
                                //          increment; 0 disables the relative part
-    int    flipAlphaInMode = 1;     // Ladruno ADR-92 P2-7c: 1 = vanilla (DEFAULT), 0 = init
-                               //          (opt-in). Matches LadrunoSANISAND::FLIP_ALPHA_IN_*,
-                               //          which is `protected` and therefore not nameable here.
+    int    flipAlphaInMode = 0;     // Ladruno WP-112 (F14): 0 = init (DEFAULT), 1 = vanilla
+                               //          (opt-in; the P2-7c default). Matches
+                               //          LadrunoSANISAND::FLIP_ALPHA_IN_*, which is
+                               //          `protected` and therefore not nameable here.
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
     // makes an existing SANISAND deck byte-identical.
@@ -436,11 +443,11 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
-        // Ladruno ADR-92 P2-7c: NOT an -implex option either -- see the parser
-        // comment block above. `vanilla` (the DEFAULT) leaves the base's own
-        // loading-reversal sign test alone; `init` (opt-in) sets
-        // mAlpha_in := mAlpha_n deterministically at the elastic->plastic
-        // stage flip instead.
+        // Ladruno ADR-92 P2-7c / WP-112: NOT an -implex option either -- see
+        // the parser comment block above. `init` (the DEFAULT since WP-112)
+        // sets mAlpha_in := mAlpha_n deterministically at the elastic->plastic
+        // stage flip; `vanilla` (opt-in) leaves the base's own
+        // loading-reversal sign test alone.
         else if (strcmp(argTok, "-flipAlphaIn") == 0 || strcmp(argTok, "-flipalphain") == 0) {
             seenFlag = true;
             const char *rawMode = OPS_GetString();
@@ -461,16 +468,17 @@ OPS_LadrunoSANISAND(void)
             else {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": -flipAlphaIn wants init|vanilla, got '" << modeTok
-                       << "'. vanilla (the DEFAULT) leaves ManzariDafalias's own"
-                          " loading-reversal sign test to decide mAlpha_in at the"
-                          " elastic->plastic stage flip -- measured (Esmeralda,"
-                          " P2-7c) to be a genuine, deterministic continuing-loading"
-                          " test on a real deck, not noise, once the P2-5/5b/5c guard"
-                          " is confined to primed states; init sets"
-                          " mAlpha_in := mAlpha_n deterministically instead, the"
-                          " alternative Dafalias-Manzari modelling choice (the"
+                       << "'. init (the DEFAULT, WP-112) sets mAlpha_in := mAlpha_n"
+                          " deterministically at the elastic->plastic stage flip (the"
                           " reference IS the current back-stress; h -> infinity"
-                          " initially) -- an owner's request, not a bug fix." << endln;
+                          " initially); vanilla leaves ManzariDafalias's own"
+                          " loading-reversal sign test to decide mAlpha_in, which"
+                          " reads the SIGN of (alpha - alpha_in):Ce:d_eps and so is"
+                          " decided by round-off wherever that difference is at"
+                          " round-off (e.g. after elastic-stage holds) -- the first"
+                          " plastic step then depends on the MKL thread count"
+                          " (TIMs F14). Pass vanilla only to reproduce real"
+                          " ManzariDafalias." << endln;
                 return 0;
             }
         }
@@ -893,7 +901,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
@@ -924,7 +933,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
@@ -946,10 +956,11 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
+    mFlipAlphaInMode(0),                                                              // Ladruno WP-112 (F14): init (was vanilla)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -966,10 +977,11 @@ LadrunoSANISAND::LadrunoSANISAND()
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
+    mFlipAlphaInMode(0),                                                              // Ladruno WP-112 (F14): init (was vanilla)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -1051,8 +1063,8 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
     // let that happen unannounced.
     if (mFlipAlphaInMode != FLIP_ALPHA_IN_INIT && mFlipAlphaInMode != FLIP_ALPHA_IN_VANILLA) {
         opserr << "WARNING LadrunoSANISAND tag " << tag << ": flipAlphaInMode = " << mFlipAlphaInMode
-               << " is not init(0) or vanilla(1); using the default vanilla(1)." << endln;
-        mFlipAlphaInMode = FLIP_ALPHA_IN_VANILLA;
+               << " is not init(0) or vanilla(1); using the default init(0)." << endln;   // Ladruno WP-112
+        mFlipAlphaInMode = FLIP_ALPHA_IN_INIT;                                               // Ladruno WP-112
     }
 }
 
@@ -1362,12 +1374,14 @@ LadrunoSANISAND::echoLadrunoConstants(void)
     opserr << "LadrunoSANISAND tag " << this->getTag()
            << ": -flipAlphaIn " << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla")
            << " (flip: alpha_in := alpha "
-           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT
-                 ? "(init, opt-in -- an alternative Dafalias-Manzari modelling choice)"
-                 : "(vanilla, the DEFAULT: unchanged -- the base's own loading-reversal"
-                   " sign test decides, which Esmeralda measured is deterministic and"
-                   " correct on a real deck once the reversal-noise guard is confined"
-                   " to primed states -- see P2-7c)")
+           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT                                       // Ladruno WP-112 (F14)
+                 ? "(init, the DEFAULT since WP-112: deterministic at every point,"
+                   " independent of round-off and of the MKL thread count)"
+                 : "(vanilla, opt-in: unchanged -- the base's own loading-reversal"
+                   " sign test decides; where alpha - alpha_in is at round-off (e.g."
+                   " after elastic-stage holds) its SIGN, and so the first plastic"
+                   " step, is decided by round-off -- TIMs F14. A once-per-point"
+                   " warning names such a state)")
            << "), -implexFlipAbsorb "
            << (mImplexOpt.flipAbsorb
                  ? "on (the flip commits a zero-pseudo-time-increment companion return,"
@@ -1853,7 +1867,10 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     mReversalRel    = ladrunoData(27);
     mDEpsNormCommit = ladrunoData(28);
 
-    // Ladruno ADR-92 P2-7 (redesign): the deck's request.
+    // Ladruno ADR-92 P2-7 (redesign): the deck's request. The sender's mode
+    // always wins; the broker's null constructor starts at init (0, the
+    // WP-112 default) only until this line runs, so an MP rank or restored
+    // datastore can never fall back to a different mode from the sender's.
     mFlipAlphaInMode = (int)ladrunoData(29);
 
     // Ladruno ADR-92 P2-7c: mFlipSeen IS restored (unlike 887fea475's
@@ -2513,6 +2530,11 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         this->ladrunoRunStageFlipOnce();
     }
 
+    // Ladruno WP-112 (F14): read-only diagnostic, placed BEFORE either branch
+    // so it sees the committed (alpha_n, alpha_in_n) pair that integrate()'s
+    // reversal test is about to read, on the implicit and the -implex path.
+    this->ladrunoWarnRoundoffAlphaIn();
+
     if (!this->ladrunoImplexActive()) {
         mImplexTrialDone = false;   // so commitState() takes the base path
         this->integrate();
@@ -2755,10 +2777,12 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  even the P2-5c dt==0 check. Before the first plastic commitState() since
 //  the elastic->plastic stage flip, this whole function is a no-op and
 //  ManzariDafalias::integrate()'s own loading-reversal sign test stands
-//  exactly as it ran: harmless under `-flipAlphaIn init` (mAlpha_in was just
-//  set equal to mAlpha at the flip, so the test's outcome does not matter),
-//  and a faithful reproduction of the pre-P2-7 defect under `vanilla`, which
-//  is the whole point of that token. mPrimed is set at the first plastic
+//  exactly as it ran: harmless under `-flipAlphaIn init` (the DEFAULT since
+//  WP-112: mAlpha_in was just set equal to mAlpha at the flip, so the test
+//  reads an exact 0 and takes the no-reset branch deterministically), and a
+//  faithful reproduction of real ManzariDafalias under `vanilla`, which is
+//  the whole point of that token -- including its sign-at-round-off
+//  behaviour (WP-112 / F14; see ladrunoWarnRoundoffAlphaIn()). mPrimed is set at the first plastic
 //  commitState() (see commitState() / ladrunoImplexCommit()) -- NOT by the
 //  -implex synthetic companion return in updateParameter(), which stays
 //  un-priming by construction (it calls ManzariDafalias::commitState()
@@ -2796,6 +2820,104 @@ LadrunoSANISAND::ladrunoGuardReversalNoise(void)
         return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+//  Ladruno WP-112 (F14): the sign-at-round-off warning (`-flipAlphaIn vanilla`
+//  only). READ-ONLY -- it changes no state the analysis reads, so it cannot
+//  move an answer; its only write is its own latch.
+//
+//  THE HAZARD. ManzariDafalias::integrate() (ManzariDafalias.cpp:1022-1026)
+//  resets alpha_in := alpha_n when (alpha_n - alpha_in_n) : (Ce : d_eps) < 0,
+//  with no magnitude guard on EITHER factor. The elastic stage runs the same
+//  test every step (it sits before the mElastFlag branch), so after a
+//  LoadControl(0) hold -- whose d_eps is solver noise, whose sign is therefore
+//  a coin -- alpha_in := alpha_n at roughly half the points, and on the next
+//  step alpha_n - alpha_in_n is only the round-off by which alpha moved since.
+//  On the first PLASTIC increment that round-off vector's sign against a real
+//  d_eps picks the branch, and the branch picks h = b0/((alpha-alpha_in):n):
+//  TIMs F14 measured the first push step at 1.511/1.824/1.824/1.489 kPa at
+//  1/2/4/8 MKL threads. `init` (the default) removes it by construction.
+//
+//  "AT ROUND-OFF" -- the threshold, and why it is 1e-8 relative:
+//      0 < ||alpha_n - alpha_in_n|| <= 1e-8 * max(||alpha_n||, m)
+//  * relative to ||alpha_n||, because alpha = dev(sigma)/p is a RATIO and the
+//    round-off in it scales with its own size; floored at the yield-surface
+//    size m (m_m, ~0.005-0.01 in calibrated sets) so a near-isotropic state
+//    (||alpha_n|| ~ 1e-16, e.g. an isotropically confined brick, where
+//    init and vanilla still differ at 1e-6 relative) is judged against the
+//    natural scale of the back-stress rather than against its own round-off;
+//  * MEASURED on the WP-112 test deck (12x6 LadrunoQuad, two elastic holds,
+//    old build): the round-off population sits at <= 1e-12 of that scale
+//    (229/288 points), the genuine population at exactly 1.0 (alpha_in = 0);
+//    1e-8 is 4 decades above the former (double precision u = 1.1e-16,
+//    amplified by the solve and a few steps of accumulation) and 8 decades
+//    below the latter, and 4+ decades below the back-stress travel of a real
+//    plastic step (~2G*d_eps/p relative: 1e-4 and up at d_eps >= 1e-7).
+//    STATED LIMIT: a hold whose Newton tolerance is loose leaves a
+//    Newton-tolerance-scale (not round-off) difference -- alpha moves by
+//    ~2G/p times the strain noise, and ADR-92 P2-5b measured that noise at
+//    4e-9..1.4e-6 in the plastic stage -- which can exceed 1e-8 and then
+//    carries the same sign lottery WITHOUT this warning. `init` removes both;
+//    this warning names only the round-off case the F14 request asked for;
+//  * EXACTLY zero is excluded on purpose: 0 : x = 0 is not < 0, so the test
+//    deterministically keeps alpha_in = alpha_in_n (= alpha_n) -- there is no
+//    lottery, whatever the round-off in d_eps.
+//
+//  WHEN. Only on a plastic-stage trial (mElastFlag != 0) with a nonzero strain
+//  increment (a hold's d_eps == 0 dots to exactly 0 and decides nothing), in
+//  vanilla mode, and once per material INSTANCE, i.e. once per Gauss point
+//  (mRoundoffAlphaInWarned) -- with a 10-per-process print budget like every
+//  sibling warning in this file, because a strip has thousands of points in
+//  the same state and the first ten carry all the information.
+// ---------------------------------------------------------------------------
+void
+LadrunoSANISAND::ladrunoWarnRoundoffAlphaIn(void)
+{
+    if (mRoundoffAlphaInWarned || mElastFlag == 0 ||
+        mFlipAlphaInMode != FLIP_ALPHA_IN_VANILLA)
+        return;
+
+    bool moved = false;
+    for (int i = 0; i < 6; i++)
+        if (mEpsilon(i) != mEpsilon_n(i)) { moved = true; break; }
+    if (!moved)
+        return;
+
+    // Contravariant (stress-like) Voigt norm, as GetNorm_Contr computes it,
+    // written out so the diagnostic allocates nothing on the trial path.
+    double d2 = 0.0, a2 = 0.0;
+    for (int i = 0; i < 6; i++) {
+        const double w = (i < 3) ? 1.0 : 2.0;
+        const double d = mAlpha_n(i) - mAlpha_in_n(i);
+        d2 += w * d * d;
+        a2 += w * mAlpha_n(i) * mAlpha_n(i);
+    }
+    const double dNorm = sqrt(d2);
+    if (dNorm == 0.0)
+        return;
+    const double aNorm = sqrt(a2);
+    const double scale = (aNorm > m_m) ? aNorm : m_m;
+    if (dNorm > 1.0e-8 * scale)
+        return;
+
+    mRoundoffAlphaInWarned = true;
+    static int ladrunoRoundoffAlphaInWarnCount = 0;   // Ladruno WP-112 (F14)
+    if (ladrunoRoundoffAlphaInWarnCount < 10) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -flipAlphaIn vanilla and ||alpha - alpha_in|| = " << dNorm
+               << " is at round-off (<= 1e-8 * max(||alpha|| = " << aNorm
+               << ", m = " << m_m << ")) on a plastic increment. ManzariDafalias's"
+                  " loading-reversal test reads only the SIGN of"
+                  " (alpha - alpha_in):Ce:d_eps, so here round-off -- e.g. the MKL"
+                  " thread count -- picks the branch and the plastic modulus that"
+                  " follows (TIMs F14). Use -flipAlphaIn init (the default) unless"
+                  " you mean to reproduce real ManzariDafalias. Once per Gauss"
+                  " point." << endln;
+        if (++ladrunoRoundoffAlphaInWarnCount == 10)
+            opserr << "WARNING LadrunoSANISAND: further round-off alpha_in warnings"
+                      " suppressed (budget 10 per process)." << endln;
+    }
 }
 
 // Ce(p_n) into all three tangent slots.
@@ -3973,13 +4095,15 @@ void
 LadrunoSANISAND::ladrunoRunStageFlipOnce(void)
 {
     // --- (1) the -flipAlphaIn mode's deterministic mAlpha_in reset. `init`
-    // (opt-in) sets mAlpha_in := mAlpha_n here -- the alternative
-    // Dafalias-Manzari modelling choice (the reference IS the current
-    // back-stress; h -> infinity initially). `vanilla` (the DEFAULT) is a
-    // no-op -- ManzariDafalias::integrate()'s own sign test decides, exactly
-    // as it always has, and Esmeralda measured that test to be a genuine,
-    // deterministic signal on a real deck, not noise, once (2) below confines
-    // the P2-5/5b/5c guard to primed states.
+    // (the DEFAULT since WP-112) sets mAlpha_in := mAlpha_n here -- the
+    // Dafalias-Manzari choice in which the reference IS the current
+    // back-stress (h -> infinity initially). `vanilla` (opt-in) is a no-op --
+    // ManzariDafalias::integrate()'s own sign test decides, exactly as it
+    // always has. Ladruno WP-112 (F14): that test is deterministic only where
+    // (alpha_n - alpha_in_n) is NOT at round-off; after elastic-stage holds it
+    // is at round-off at most points (measured: 229/288 Gauss points below
+    // 1e-12 relative after two LoadControl(0) holds on the WP-112 deck), and
+    // there the thread-count-dependent round-off picks the branch.
     if (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT) {
         mAlpha      = mAlpha_n;    // trial/committed consistent
         mAlpha_in   = mAlpha_n;
@@ -4666,7 +4790,7 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
         s << "              -implexFlipAbsorb = " << (mImplexOpt.flipAbsorb ? "on" : "OFF")
           << " (ADR-92 P2-7c: zero-pseudo-time-increment companion return"
              " committed AT the elastic->plastic stage flip; -flipAlphaIn "
-          << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla (DEFAULT)")
+          << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init (DEFAULT)" : "vanilla")   // Ladruno WP-112
           << ")" << endln;
         // Ladruno ADR-92 P2-9
         s << "              -implexFactor = "
