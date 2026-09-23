@@ -2,7 +2,8 @@
 
 Revision 1. Not yet adversarially reviewed.
 
-Status: **in progress on the branch; draft PR open** (2026-09-23).
+Status: **built; draft PR #850. Merge after #841** — L2 stays red until #841 lands, because
+SANISAND's process-wide IMPL-EX globals are the live instance it exists to catch (2026-09-23).
 
 Scoped 2026-09-23. Branch `wp/115-agents-surface`, cut from `ladruno` @ `79e062367`. Source: a
 read of how `basecamp/omarchy` organizes its repo for agents (`AGENTS.md` + short task-triggered
@@ -68,6 +69,39 @@ A 7,600-line ledger is a good archive and a poor warning system.
 - **Guides in Omarchy's `agents/skills/`.** Claude Code would not load them automatically;
   `.claude/skills/` plus the `AGENTS.md` table reaches both Claude and other agents.
 
+## Results (2026-09-23)
+
+- **Step 1.** `AGENTS.md` holds the rules; every heading of the old `CLAUDE.md` is present.
+  `upstream_pr_campaign.md`'s never-ships list gains `AGENTS.md` and the lint.
+- **Step 2.** Guides: `ladruno-new-element` (78 lines), `ladruno-new-material` (79 lines); all 46
+  ledger pointers resolve (enforced by L3). The #588 degeneracy-guard lesson was only in code
+  comments and a commit message, so it gained a `LEDGER_quirks` entry for the guide to point at.
+- **Step 3.** `ci/check_quirk_patterns.py` + a 10-case self-test, last in the `static-gates` job
+  (the required job name is unchanged). On the branch it reports one finding: LadrunoSANISAND.
+- **Mutation acceptance, all passed** (lint run on `git archive` trees):
+
+  | Run | Tree | Expected | Got |
+  |---|---|---|---|
+  | A1 | `4a975edee` (parent of #562) | L1 flags Quad, CST, LST, CSTPair | 8 plane sites flagged (2 per element) |
+  | A1b | `f89687274` (the #562 fix) | plane family clean | clean |
+  | A2 | `ladruno` @ `79e062367` | L2 flags SANISAND | flagged |
+  | A2b | #841 head `e900f49e0` | SANISAND passes | passes |
+
+- **Waivers (6, comment-only, each checked by reading the code).** `BezierTet10`, `BezierTri6`,
+  `LadrunoIMKBeam`, `LadrunoIMKBeam2d`: the shared buffer is written only by
+  `getResistingForce`/`getResistingForceIncInertia`, which nothing on the Rayleigh path
+  (`getMass`/`getTangentStiff`/`getInitialStiff`) calls. Safe today, but it depends on that
+  staying true; converting them to the snapshot idiom would remove the dependency (C++ change, not
+  in this WP). `MassScalingEnergyRegistry`: owner-scoped, cleared in each publisher's destructor,
+  and `wipe` deletes the integrator. `Profiler`: survives `wipe` by current design; whether it
+  should reset is left open.
+- **Step 4.** `LEDGER_implementations` row; the `LEDGER_quirks` conventions now say to enforce
+  greppable quirks in the gate and point to them from the guides. That replaces the planned
+  `WORKFLOW_GOTCHAS` pointer: the convention belongs where quirks are written.
+
 ## Open questions
 
 - Whether L2's site list stays small enough to hand-classify as fork singletons grow.
+- Should `wipe` reset the Profiler? (Waived as current design.)
+- Convert the four waived Rayleigh sites to the snapshot idiom, so safety stops depending on
+  `getTangentStiff` never calling `getResistingForce`?
