@@ -363,6 +363,7 @@ public:
 
     // ---- ownership wiring (called by OpenSeesCommands) ----
     static void      setInstance(Profiler* p) noexcept;
+    // ladruno-lint: wipe-ok survives wipe by current design: multi-run scripts must call `profiler reset` (LEDGER_quirks "The Profiler is a process-global singleton"). Whether wipe should reset it is an open decision (WP-115).
     static Profiler& instance();   // == theProfiler()
 
     Profiler(const Profiler&)            = delete;

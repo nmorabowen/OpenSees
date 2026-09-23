@@ -319,6 +319,7 @@ const Vector &LadrunoIMKBeam2d::getResistingForceIncInertia(void)
 
   // Rayleigh damping forces
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+    // ladruno-lint: rayleigh-ok static P is written only by getResistingForce() and getResistingForceIncInertia(); getMass/getTangentStiff/getInitialStiff never call either, so the betaK Rayleigh re-entry cannot refill it (verified WP-115). Snapshot into a local if getTangentStiff ever starts calling getResistingForce.
     P.addVector(1.0, this->getRayleighDampingForces(), 1.0);
 
   if (rho == 0.0)

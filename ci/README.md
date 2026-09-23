@@ -9,9 +9,11 @@ locally from the repo root. Source of truth:
 | `check_classtags.py` | classTag value collisions (Axis 1, G2) + cross-header drift + ladruno-band policy | none | 1 on a ladruno-involved collision |
 | `check_manifest.py` | every ladruno classTag has a manifest row + a test (or WAIVED) | PyYAML | 1 on an unaccounted/active-but-untested tag |
 | `check_tcl_results.py` | turns a `FAILED` line in `results.out` into a nonzero exit (G1) | none | 1 if any FAILED |
+| `check_quirk_patterns.py` | `LEDGER_quirks` entries with a greppable pattern, enforced on fork-stamped sources: L1 Rayleigh snapshot (#562), L2 singleton reset on `wipe`, L3 task-guide pointers resolve (WP-115). Self-test: `test_check_quirk_patterns.py` | none | 1 on any unwaived finding |
 
 ```bash
 python ci/check_classtags.py            # default: actionable only
+python ci/check_quirk_patterns.py      # L1+L2+L3; --only L1 / --root DIR / --list-waivers
 python ci/check_classtags.py --verbose  # also list inherited-upstream collisions
 python ci/check_classtags.py --strict   # warnings become errors
 python ci/check_manifest.py

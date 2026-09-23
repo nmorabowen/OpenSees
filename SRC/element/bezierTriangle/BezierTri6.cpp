@@ -861,6 +861,7 @@ const Vector &BezierTri6::getResistingForceIncInertia()
     // still be added even when there is no mass.
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
         const Vector &v = this->getRayleighDampingForces();
+        // ladruno-lint: rayleigh-ok P_return is written only by getResistingForce() and getResistingForceIncInertia(); getMass/getTangentStiff/getInitialStiff never call either, so the betaK Rayleigh re-entry cannot refill it (verified WP-115). Snapshot into a local if getTangentStiff ever starts calling getResistingForce.
         P_return += v;
     }
 

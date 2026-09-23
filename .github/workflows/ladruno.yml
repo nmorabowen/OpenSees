@@ -47,6 +47,14 @@ jobs:
           pip install h5py numpy pytest
           cd Ladruno_scripts/ladruno_recorder_tests
           pytest -q test_ladruno_harness.py
+      # Quirk-pattern gate (WP-115): LEDGER_quirks entries that name a greppable
+      # pattern, enforced -- L1 Rayleigh snapshot (#562), L2 singleton reset on
+      # wipe, L3 task-guide pointers. Last in the job so a red lint never hides
+      # the gates above. The self-test proves each rule still fires.
+      - name: quirk-pattern lint self-test (WP-115)
+        run: pytest -q ci/test_check_quirk_patterns.py
+      - name: quirk-pattern lints (WP-115)
+        run: python ci/check_quirk_patterns.py
 
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
