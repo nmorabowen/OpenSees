@@ -2,9 +2,10 @@
 
 Revision 1. Not yet adversarially reviewed.
 
-Status: **built; draft PR #850. Merge after #841, #853 and #854** — each lint rule stays red until the
-PR fixing its live instance lands: L2 → SANISAND's process-wide IMPL-EX globals (#841); L4 → the IMK
-beams' missing `Element::commitState()` (#853); L5 → the vanilla elastic beams' double load (#854).
+Status: **built; draft PR #850. Merge after #841, #852, #853 and #854** — each lint rule stays red until
+the PR fixing its live instance lands: L2 → SANISAND's process-wide IMPL-EX globals (#841); L4 → the IMK
+beams' missing `Element::commitState()` (#853); L5 → the vanilla elastic beams' double load (#854);
+L6 → the Bezier ground-motion sign (#852).
 
 Scoped 2026-09-23. Branch `wp/115-agents-surface`, cut from `ladruno` @ `79e062367`. Source: a
 read of how `basecamp/omarchy` organizes its repo for agents (`AGENTS.md` + short task-triggered
@@ -172,6 +173,29 @@ that calls it — ground motion applied at 2·a_g.
 - **Acceptance:** on this branch it flags exactly the three vanilla beams; on
   `origin/wp/119-elasticbeam2d-double-q` (the fix) it reports 0. Full lint 5.0 s.
 - **Merge order:** L5 is red here until #854 merges. #850 now merges after #841, #853 and #854.
+
+## Step 8 — L6, the ground-motion sign rule (2026-09-24)
+
+Added at the owner's request after WP-117 (#852) found `BezierTri6`/`BezierTet10` accumulating
+`+M·R·a_g` into `Q` while `getResistingForce()` subtracts `Q` — the mesh shaken the wrong way.
+
+- **Rule:** read the accumulation sign in `addInertiaLoadToUnbalance` (`V.addMatrixVector(…, ±1.0)`,
+  `V(i) -= …`, `V(i) += -…`, `load->addMatrixVector(…)`) and the application sign in
+  `getResistingForce()` (else IncInertia: `X.addVector(1.0, V, ±1.0)`, `X -= *V`, `X += V`). The residual
+  must gain `+M·R·a_g`, so the product must be +1. An unreadable sign (a variable factor such as `fact`)
+  is skipped, never guessed. Waiver `// ladruno-lint: sign-ok <reason>`.
+- **Scope:** all element files, vanilla included (like L5). Surveyed first: across all 200 element
+  classes that implement the method, 108 are decidable and exactly the two Bezier elements are wrong —
+  no vanilla sign bug found. All 12 fork elements are decidable.
+- **Scanner fix it exposed:** the statement splitter broke on the `;` inside `for (a; b; c)` headers, so
+  the plane family's `for (…) Q(i) += -M(i,i)*ra[i];` was unreadable. Semicolons inside parentheses no
+  longer split a statement. L1/L2/L4/L5 results and the WP-115 historical acceptance are unchanged.
+- **Self-test:** 6 new cases (52 total) — the Bezier shape, the WP-117 fix, the FourNodeQuad `for` form
+  both ways, the ElasticBeam form, the LadrunoBrick pointer form both ways, the add-convention, an
+  unreadable factor, waiver.
+- **Acceptance:** flags exactly `BezierTri6` and `BezierTet10` here; 0 on `origin/wp/117-bezier-ground-sign`.
+  Full lint 7.0 s.
+- **Merge order:** L6 is red here until #852 merges. #850 now merges after #841, #852, #853 and #854.
 
 ## Open questions
 

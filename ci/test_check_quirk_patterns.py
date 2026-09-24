@@ -386,6 +386,101 @@ def test_l5_waiver(tmp_path):
     assert _l5(tmp_path, waived) == []
 
 
+# ---------------------------------------------------------------- L6
+RF_SUB_Q = """
+const Vector &Elem::getResistingForce()
+{
+    P_return.Zero();
+    P_return.addVector(1.0, Q, -1.0);
+    return P_return;
+}
+"""
+BEZIER_WRONG = RF_SUB_Q + """
+int Elem::addInertiaLoadToUnbalance(const Vector &accel)
+{
+    const Matrix &M = this->getMass();
+    static Vector a(6);
+    // Q += M x a
+    Q.addMatrixVector(1.0, M, a, 1.0);
+    return 0;
+}
+"""
+
+
+def _l6(tmp_path, body):
+    root = _tree(tmp_path, {"SRC/element/Elem.cpp": body})       # unstamped: L6 scans vanilla too
+    return cq.check_ground_sign(root, _rel(root), set())
+
+
+def test_l6_flags_the_bezier_shape(tmp_path):
+    out = _l6(tmp_path, BEZIER_WRONG)
+    assert len(out) == 1 and "wrong sign" in out[0] and "+M*R*a_g" in out[0], out
+
+
+def test_l6_passes_the_wp117_fix(tmp_path):
+    assert _l6(tmp_path, BEZIER_WRONG.replace("Q.addMatrixVector(1.0, M, a, 1.0);",
+                                              "Q.addMatrixVector(1.0, M, a, -1.0);")) == []
+
+
+def test_l6_reads_the_other_accumulation_forms(tmp_path):
+    # FourNodeQuad: `for (...) Q(i) += -K(i,i)*ra[i];` (for-header semicolons must not split it)
+    quad = RF_SUB_Q + """
+int Elem::addInertiaLoadToUnbalance(const Vector &accel)
+{
+  for (int i = 0; i < 8; i++)
+    Q(i) += -K(i,i)*ra[i];
+  return 0;
+}
+"""
+    assert _l6(tmp_path / "a", quad) == []
+    assert len(_l6(tmp_path / "b", quad.replace("Q(i) += -K(i,i)*ra[i];", "Q(i) += K(i,i)*ra[i];"))) == 1
+    # ElasticBeam: `Q(0) -= m * Raccel1(0);`
+    beam = RF_SUB_Q + """
+int Elem::addInertiaLoadToUnbalance(const Vector &accel)
+{
+  Q(0) -= m * Raccel1(0);
+  Q(1) -= m * Raccel1(1);
+  return 0;
+}
+"""
+    assert _l6(tmp_path / "c", beam) == []
+    # LadrunoBrick: `load->addMatrixVector(1.0, M, resid, -1.0);` with `resid -= *load;`
+    brick = """
+const Vector &Elem::getResistingForce(void)
+{
+  formResidAndTangent(0);
+  if (load != 0) resid -= *load;
+  return resid;
+}
+int Elem::addInertiaLoadToUnbalance(const Vector &accel)
+{
+  if (load == 0) load = new Vector(24);
+  load->addMatrixVector(1.0, M, resid, -1.0);
+  return 0;
+}
+"""
+    assert _l6(tmp_path / "d", brick) == []
+    assert len(_l6(tmp_path / "e", brick.replace("resid, -1.0)", "resid, 1.0)"))) == 1
+
+
+def test_l6_added_vector_needs_a_positive_accumulation(tmp_path):
+    # the other consistent convention: accumulate +M*a and ADD it to the residual
+    added = BEZIER_WRONG.replace("P_return.addVector(1.0, Q, -1.0);", "P_return.addVector(1.0, Q, 1.0);")
+    assert _l6(tmp_path, added) == []
+
+
+def test_l6_stays_silent_when_the_sign_is_unreadable(tmp_path):
+    # a variable factor cannot be judged: skip, never guess
+    assert _l6(tmp_path, BEZIER_WRONG.replace("a, 1.0);", "a, fact);")) == []
+
+
+def test_l6_waiver(tmp_path):
+    waived = BEZIER_WRONG.replace("    Q.addMatrixVector(1.0, M, a, 1.0);",
+                                  "    // ladruno-lint: sign-ok Q here is ADDED by a custom integrator hook\n"
+                                  "    Q.addMatrixVector(1.0, M, a, 1.0);")
+    assert _l6(tmp_path, waived) == []
+
+
 def test_l4_waiver_and_stale_waiver(tmp_path):
     waived = IMK_COMMIT.replace("int Beam::commitState(void)",
                                 "// ladruno-lint: commit-ok Kc handled by an owned sub-element\n"

@@ -58,6 +58,18 @@ bodies are seen whole).
                 line above):
                     // ladruno-lint: double-ok <reason>
 
+  L6 ground-sign  The sign of the ground-motion inertia load. An element's
+                `addInertiaLoadToUnbalance()` accumulates +-M*R*a_g into its load
+                vector, and `getResistingForce()` (else IncInertia) adds or
+                subtracts that vector; the residual must GAIN +M*R*a_g, so the
+                two signs must multiply to +1 (the convention: Q += -M*R*a_g,
+                P -= Q). BezierTri6/BezierTet10 wrote +M*R*a_g and subtracted it,
+                shaking the mesh the wrong way (fixed WP-117 #852). Scans every
+                element file, vanilla included (like L5); an element whose
+                signs cannot be read (a variable factor, an unusual form) is
+                skipped, never guessed. Waive the accumulation statement:
+                    // ladruno-lint: sign-ok <reason>
+
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
@@ -79,7 +91,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -223,17 +235,21 @@ def functions(cl):
 def statements(cl, f):
     """(text, first_line, last_line) for each `;`-terminated statement in function
     f's body, with block braces as boundaries."""
-    out, buf, first = [], [], None
+    out, buf, first, paren = [], [], None, 0
     for li in range(f.open, f.end + 1):
         line = cl[li]
         start = line.index("{") + 1 if li == f.open else 0
         for ch in line[start:]:
-            if ch in ";{}":
+            if ch == "(":
+                paren += 1
+            elif ch == ")":
+                paren = max(0, paren - 1)
+            if ch in ";{}" and not (ch == ";" and paren > 0):   # `for (a; b; c)` is one header
                 if ch == ";" and buf:
                     out.append(("".join(buf).strip(), first, li))
                 elif ch == "{" and buf:
                     out.append(("".join(buf).strip() + " {", first, li))
-                buf, first = [], None
+                buf, first, paren = [], None, 0
             else:
                 if first is None and not ch.isspace():
                     first = li
@@ -577,6 +593,122 @@ def check_double_load(root, rel, used_waivers=None):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L6
+# --------------------------------------------------------------------------
+def _split_args(s):
+    """Top-level comma split of an argument list (no surrounding parens)."""
+    out, depth, cur = [], 0, []
+    for ch in s:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur).strip())
+    return out
+
+
+def _sign_of(expr):
+    """Sign of a scale factor: +1 / -1 for a numeric literal (`1.0`, `-1.0`), -1 for any
+    explicitly negated expression (`-fact`), None when it cannot be decided (`fact`)."""
+    e = expr.strip()
+    neg = e.startswith("-")
+    body = e.lstrip("-+ ").strip()
+    if re.fullmatch(r"\(?\s*[\d.]+(?:[eE][-+]?\d+)?\s*\)?", body):
+        return -1 if neg else 1
+    return -1 if neg else None
+
+
+VEC = r"(\(\s*\*\s*\w+\s*\)|\*\s*\w+|\w+\s*->|\w+)"
+
+
+def _vec_name(v):
+    return re.sub(r"[()*\s]|->", "", v)
+
+
+def _accumulations(stmts):
+    """[(vector, sign, first, last)] of load-vector accumulations in addInertiaLoadToUnbalance."""
+    out = []
+    for s, a, b in stmts:
+        s1 = strip_prefix(s)
+        m = re.match(r"^" + VEC + r"\s*(?:\.|)\s*(addMatrixVector|addVector)\s*\((.*)\)\s*$", s1, re.S)
+        if m:
+            args = _split_args(m.group(3))
+            if len(args) == (4 if m.group(2) == "addMatrixVector" else 3):
+                sg = _sign_of(args[-1])
+                if sg is not None:
+                    out.append((_vec_name(m.group(1)), sg, a, b))
+            continue
+        m = re.match(r"^" + VEC + r"\s*(?:\([^=]*\))?\s*([-+])=\s*(.+)$", s1, re.S)
+        if m:
+            rhs_neg = m.group(3).strip().startswith("-")
+            sg = (1 if m.group(2) == "+" else -1) * (-1 if rhs_neg else 1)
+            out.append((_vec_name(m.group(1)), sg, a, b))
+    return out
+
+
+def _application_sign(stmts, vec):
+    """How `vec` enters the residual: -1 subtracted, +1 added, None if not found."""
+    for s, _, _ in stmts:
+        s1 = strip_prefix(s)
+        m = re.search(r"(?:\.|->)\s*addVector\s*\(\s*([^,]+),\s*\*?\s*" + re.escape(vec) + r"\s*,\s*([^)]+)\)", s1)
+        if m and _sign_of(m.group(2)) is not None:
+            return _sign_of(m.group(2))
+        m = re.search(r"\w\s*([-+])=\s*\*?\s*" + re.escape(vec) + r"\s*$", s1)
+        if m:
+            return -1 if m.group(1) == "-" else 1
+    return None
+
+
+def check_ground_sign(root, rel, used_waivers=None, stamped_only=False):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    element_dir = (root / "SRC" / "element").resolve()
+    for path, raw, cl in _sources(root, stamped_only=stamped_only, needles=("addInertiaLoadToUnbalance",)):
+        if element_dir not in path.resolve().parents:
+            continue
+        funcs = {f.name: f for f in functions(cl) if "::" in f.name}
+        for name, f in funcs.items():
+            cls, meth = name.rsplit("::", 1)
+            if meth != "addInertiaLoadToUnbalance":
+                continue
+            accs = _accumulations(statements(cl, f))
+            if not accs:
+                continue
+            for vec in sorted({v for v, *_ in accs}):
+                applied = None
+                for m2 in ("getResistingForce", "getResistingForceIncInertia"):
+                    g = funcs.get(f"{cls}::{m2}")
+                    if g is not None:
+                        applied = _application_sign(statements(cl, g), vec)
+                        if applied is not None:
+                            break
+                if applied is None:
+                    continue                               # cannot tell how the vector is used
+                for v, sg, a, b in accs:
+                    if v != vec or sg * applied > 0:
+                        continue
+                    wl, reason = waiver_at(raw, b, "sign-ok", above=b - a + 1)
+                    if wl is not None:
+                        used.add((str(path), wl))
+                        if len(reason) >= MIN_REASON:
+                            continue
+                        findings.append(f"L6 {rel(path)}:{a + 1}: sign-ok waiver reason too short")
+                        continue
+                    how = "subtracts" if applied < 0 else "adds"
+                    findings.append(
+                        f"L6 {rel(path)}:{a + 1}: {name} accumulates {'+' if sg > 0 else '-'}M*R*a_g into "
+                        f"'{vec}', and the residual {how} '{vec}' -- the ground-motion inertia load has the "
+                        "wrong sign (the residual must gain +M*R*a_g). Use Q += -M*R*a_g with P -= Q, or "
+                        "waive with '// ladruno-lint: sign-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -626,7 +758,7 @@ def list_waivers(root, rel):
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4,L5", help="comma list of L1,L2,L3,L4,L5")
+    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6", help="comma list of L1..L6")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -651,7 +783,9 @@ def main():
         findings += check_commitstate(root, rel, used)
     if "L5" in wanted:
         findings += check_double_load(root, rel, used)
-    if {"L1", "L2", "L4", "L5"} <= wanted:    # stale detection needs every waiver consumer
+    if "L6" in wanted:
+        findings += check_ground_sign(root, rel, used)
+    if {"L1", "L2", "L4", "L5", "L6"} <= wanted:    # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)

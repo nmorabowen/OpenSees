@@ -35,6 +35,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] **[lint]** An overridden `commitState()` calls `Element::commitState()` first — it is the only
       place `Kc` (behind `betaKc` damping) is refreshed; skipping it makes `betaKc` behave like
       `betaK0` (LadrunoIMKBeam, fixed WP-118 #853). A `betaKc` test must make the tangent change.
+- [ ] **[lint]** Ground-motion SIGN: `addInertiaLoadToUnbalance` accumulates `−M·R·a_g` into the load
+      vector and the residual subtracts it, so the residual gains `+M·R·a_g`. `+M·a` shakes the mesh the
+      wrong way, silently (BezierTri6/BezierTet10, fixed WP-117 #852).
 - [ ] **[lint]** Ground motion: the load vector accumulates `−M·R·a_g` and is subtracted ONCE — if
       `getResistingForceIncInertia` calls `getResistingForce()` (which subtracts it), it must not
       subtract it again. Quirks: "`ElasticBeam2d` subtracts the ground-motion load Q TWICE". Copy the
