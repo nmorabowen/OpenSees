@@ -99,9 +99,40 @@ A 7,600-line ledger is a good archive and a poor warning system.
   greppable quirks in the gate and point to them from the guides. That replaces the planned
   `WORKFLOW_GOTCHAS` pointer: the convention belongs where quirks are written.
 
+## Step 5 — snapshot conversion of the four waived sites (2026-09-23)
+
+The owner asked for the four waived Rayleigh sites to be converted, after an adversarial review.
+
+**Review (two independent Opus reviewers, read-only).**
+- *Safety/conversion:* the "safe today" claim HOLDS at all four sites (every path from `Element::getRayleighDampingForces()` traced). The conversion is bit-identical if operation order is kept: Bezier is ((f−Q)+M·a)+R, IMK is ((f−Q)+R)+m·a. Copying the CST template onto IMK would have changed the last bit.
+- *Concurrency:* no race today or after. Only `Element::update()` runs in the WP-107 OpenMP loop (`Domain.cpp` ~2693); assembly is serial and none of the four classes is allowlisted.
+- *Coverage:* none of the four had a transient Rayleigh test, and the existing plane gate (tiny βK) cannot see a dropped Rayleigh force.
+- *Lint:* one CRITICAL hole (a snapshot taken after `const Vector &v = getRayleighDampingForces()` passed) and several MAJOR ones (plain/copy binds, pointer and `this->` targets, one-line `if` bodies, unqualified L2 hook matching, any `X::clearAll` counted as a hook).
+
+**Done.**
+- Conversion in `BezierTet10`, `BezierTri6`, `LadrunoIMKBeam`, `LadrunoIMKBeam2d`: function-local `static Vector res` seeded before the Rayleigh call, `return res`. Waivers removed.
+- `tests/test_rayleigh_inertia_bezier_imk.py` (zone_a, 34 cases). IMK is differential against `elasticBeamColumn` carrying the same lumped masses as nodal masses (agreement 1.2e-14); Bezier uses the self-validating overshoot rig (1.93–1.97) plus a 5% damping leg (ratios 0.914–0.931, band 0.80–0.97).
+- `ci/check_quirk_patterns.py` rewritten as a small C++ scanner; every review hole has a self-test case (33 cases). Historical acceptance re-run and unchanged.
+
+**Evidence** (pyd rebuilt per row; sources restored and a full 5-target rebuild after):
+
+| Build | Expected | Result |
+|---|---|---|
+| original (pre-conversion) code | bit-identical to converted | 4,382 / 4,382 recorded displacements identical over 36 runs |
+| original + re-entry hazard in `getTangentStiff` | βK legs fail | 12 failed — exactly the βK legs (the only path through `getTangentStiff`) |
+| converted + same hazard | all pass | 34 passed |
+| converted, Rayleigh add dropped | every leg with element damping fails | 26 failed; the 8 passes have nothing to detect (static, tiny-βK by design, IMK αM with nodal mass) |
+| converted, inertia add dropped | every leg with element mass fails | 20 failed; the 14 passes have no element mass |
+| final committed code, full rebuild | all pass, bit-identical | 148 passed (new + Bezier + IMK + plane-dynamics + response tokens); bit-identical to converted |
+
+**Found along the way — owner decision needed (not fixed; each changes results):**
+1. **CRITICAL — Bezier ground-motion inertia has the wrong sign.** `BezierTet10::addInertiaLoadToUnbalance` / `BezierTri6` build `Q += +M·a_g`; the vanilla and LadrunoBrick convention is `−M·a_g`. Proven by running it: under a constant +2.0 ground acceleration, a rigid-body probe gives relative acceleration −2.000 for vanilla `quad`/`stdBrick` and +2.000 for both Bezier elements. Present since BezierTet10 was added (2026-05-30); no test ran a Bezier element under `UniformExcitation`.
+2. **MAJOR — `betaKc` damping frozen on the IMK beams.** `LadrunoIMKBeam(2d)::commitState` never calls `Element::commitState()`, so `Kc` keeps the tangent from when `rayleigh` ran — zero if that was before the first step.
+3. **Upstream — vanilla `ElasticBeam2d` subtracts the ground-motion Q twice** with element `-mass` (response exactly 2× the same beam with nodal masses). `ElasticBeam3d` is correct. Recorded in `LEDGER_quirks`; not fixed (vanilla-footprint rule).
+
 ## Open questions
 
 - Whether L2's site list stays small enough to hand-classify as fork singletons grow.
 - Should `wipe` reset the Profiler? (Waived as current design.)
-- Convert the four waived Rayleigh sites to the snapshot idiom, so safety stops depending on
-  `getTangentStiff` never calling `getResistingForce`?
+- ~~Convert the four waived Rayleigh sites?~~ Done (Step 5).
+- Fix the three findings in Step 5 (Bezier ground-motion sign, IMK `betaKc`, upstream `ElasticBeam2d`)?
