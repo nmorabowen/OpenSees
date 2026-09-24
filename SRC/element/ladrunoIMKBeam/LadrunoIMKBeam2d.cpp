@@ -315,15 +315,21 @@ const Vector &LadrunoIMKBeam2d::getResistingForce(void)
 
 const Vector &LadrunoIMKBeam2d::getResistingForceIncInertia(void)
 {
-  P = this->getResistingForce();
+  // SNAPSHOT into a function-local buffer BEFORE getRayleighDampingForces():
+  // betaK Rayleigh re-enters getTangentStiff(); returning `res` keeps the result
+  // independent of anything that path writes, and of the static P that
+  // getResistingForce() returns (Element::getResponse 444444 subtracts both).
+  // Order is unchanged -- ((f - Q) + R) + m*a -- so results are bit-identical
+  // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+  static Vector res(6);
+  res = this->getResistingForce();
 
-  // Rayleigh damping forces
+  // Rayleigh damping forces (added BEFORE inertia -- keep this order)
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-    // ladruno-lint: rayleigh-ok static P is written only by getResistingForce() and getResistingForceIncInertia(); getMass/getTangentStiff/getInitialStiff never call either, so the betaK Rayleigh re-entry cannot refill it (verified WP-115). Snapshot into a local if getTangentStiff ever starts calling getResistingForce.
-    P.addVector(1.0, this->getRayleighDampingForces(), 1.0);
+    res.addVector(1.0, this->getRayleighDampingForces(), 1.0);
 
   if (rho == 0.0)
-    return P;
+    return res;
 
   const Vector &accel1 = theNodes[0]->getTrialAccel();
   const Vector &accel2 = theNodes[1]->getTrialAccel();
@@ -331,12 +337,12 @@ const Vector &LadrunoIMKBeam2d::getResistingForceIncInertia(void)
   double L = theCoordTransf->getInitialLength();
   double m = 0.5 * rho * L;
 
-  P(0) += m * accel1(0);
-  P(1) += m * accel1(1);
-  P(3) += m * accel2(0);
-  P(4) += m * accel2(1);
+  res(0) += m * accel1(0);
+  res(1) += m * accel1(1);
+  res(3) += m * accel2(0);
+  res(4) += m * accel2(1);
 
-  return P;
+  return res;
 }
 
 // ---------------------------------------------------------------------------

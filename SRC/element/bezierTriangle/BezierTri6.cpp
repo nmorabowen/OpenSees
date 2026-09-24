@@ -835,8 +835,14 @@ const Vector &BezierTri6::getResistingForce()
 
 const Vector &BezierTri6::getResistingForceIncInertia()
 {
-    // Get static resisting force (fills P_return)
-    this->getResistingForce();
+    // SNAPSHOT into a function-local buffer before anything else runs:
+    // getMass() and the betaK Rayleigh re-entry (getTangentStiff) must not be
+    // able to reach the vector being accumulated. Returning `res` also keeps it
+    // distinct from P_return, which getResistingForce() returns. Same operations
+    // in the same order -- ((f - Q) + M*a) + R -- so results are bit-identical
+    // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+    static Vector res(NELD);
+    res = this->getResistingForce();
 
     // ─── Add inertia: R += M × a ──────────────────────────────
     // Mass may come from the element rho OR the material density, so
@@ -853,19 +859,16 @@ const Vector &BezierTri6::getResistingForceIncInertia()
             a(2*i)     = accel(0);
             a(2*i + 1) = accel(1);
         }
-        P_return.addMatrixVector(1.0, M, a, 1.0);
+        res.addMatrixVector(1.0, M, a, 1.0);
     }
 
     // ─── Add Rayleigh damping if present ──────────────────────
     // Independent of mass: stiffness-proportional damping (betaK) must
     // still be added even when there is no mass.
-    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
-        const Vector &v = this->getRayleighDampingForces();
-        // ladruno-lint: rayleigh-ok P_return is written only by getResistingForce() and getResistingForceIncInertia(); getMass/getTangentStiff/getInitialStiff never call either, so the betaK Rayleigh re-entry cannot refill it (verified WP-115). Snapshot into a local if getTangentStiff ever starts calling getResistingForce.
-        P_return += v;
-    }
+    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+        res += this->getRayleighDampingForces();
 
-    return P_return;
+    return res;
 }
 
 

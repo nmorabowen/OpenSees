@@ -1209,7 +1209,14 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
 
 const Vector &BezierTet10::getResistingForceIncInertia()
 {
-    this->getResistingForce();
+    // SNAPSHOT into a function-local buffer before anything else runs:
+    // getMass() and the betaK Rayleigh re-entry (getTangentStiff) must not be
+    // able to reach the vector being accumulated. Returning `res` also keeps it
+    // distinct from P_return, which getResistingForce() returns. Same operations
+    // in the same order -- ((f - Q) + M*a) + R -- so results are bit-identical
+    // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+    static Vector res(NELD);
+    res = this->getResistingForce();
 
     const Matrix &M = this->getMass();
     bool hasMass = false;
@@ -1224,16 +1231,13 @@ const Vector &BezierTet10::getResistingForceIncInertia()
             a(3*i + 1) = accel(1);
             a(3*i + 2) = accel(2);
         }
-        P_return.addMatrixVector(1.0, M, a, 1.0);
+        res.addMatrixVector(1.0, M, a, 1.0);
     }
 
-    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
-        const Vector &v = this->getRayleighDampingForces();
-        // ladruno-lint: rayleigh-ok P_return is written only by getResistingForce() and getResistingForceIncInertia(); getMass/getTangentStiff/getInitialStiff never call either, so the betaK Rayleigh re-entry cannot refill it (verified WP-115). Snapshot into a local if getTangentStiff ever starts calling getResistingForce.
-        P_return += v;
-    }
+    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+        res += this->getRayleighDampingForces();
 
-    return P_return;
+    return res;
 }
 
 
