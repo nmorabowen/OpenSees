@@ -1254,9 +1254,16 @@ LadrunoDispBeamColumn2d::getDampingForce(void)
 const Vector&
 LadrunoDispBeamColumn2d::getResistingForceIncInertia()
 {
-  P = this->getResistingForce();
+  // SNAPSHOT into a function-local buffer, not the shared static P: betaK
+  // Rayleigh re-enters getTangentStiff(), so accumulating into a buffer that
+  // path could refill would silently drop inertia (LEDGER_quirks "MUST snapshot
+  // the shared static `resid`"). Returning `res` also keeps the result distinct
+  // from the P that getResistingForce() returns. Same operations, same order,
+  // so results are bit-identical (WP-116).  // Ladruno
+  static Vector res(6);
+  res = this->getResistingForce();
   
-  if (theDamping) P += this->getDampingForce();
+  if (theDamping) res += this->getDampingForce();
   
   if (rho != 0.0) {
     const Vector &accel1 = theNodes[0]->getTrialAccel();
@@ -1267,10 +1274,10 @@ LadrunoDispBeamColumn2d::getResistingForceIncInertia()
     double L = crdTransf->getInitialLength();
     double m = 0.5*rho*L;
     
-    P(0) += m*accel1(0);
-    P(1) += m*accel1(1);
-    P(3) += m*accel2(0);
-    P(4) += m*accel2(1);
+    res(0) += m*accel1(0);
+    res(1) += m*accel1(1);
+    res(3) += m*accel2(0);
+    res(4) += m*accel2(1);
   } else  {
     // use matrix vector multip. for consistent mass matrix
     static Vector accel(6);
@@ -1278,21 +1285,21 @@ LadrunoDispBeamColumn2d::getResistingForceIncInertia()
       accel(i)   = accel1(i);
       accel(i+3) = accel2(i);
     }
-    P.addMatrixVector(1.0, this->getMass(), accel, 1.0);
+    res.addMatrixVector(1.0, this->getMass(), accel, 1.0);
   }
     
     // add the damping forces if rayleigh damping
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-      P.addVector(1.0, this->getRayleighDampingForces(), 1.0);
+      res.addVector(1.0, this->getRayleighDampingForces(), 1.0);
 
   } else {
     
     // add the damping forces if rayleigh damping
     if (betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-      P.addVector(1.0, this->getRayleighDampingForces(), 1.0);
+      res.addVector(1.0, this->getRayleighDampingForces(), 1.0);
   }
 
-  return P;
+  return res;
 }
 
 int
@@ -2003,9 +2010,12 @@ LadrunoDispBeamColumn2d::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(this->getResistingForce());
 
   else if (responseID == 12) {
-    P.Zero();
-    P.addVector(1.0, this->getRayleighDampingForces(), 1.0);
-    return eleInfo.setVector(P);
+    // own buffer, not the shared static P -- same reason as in
+    // getResistingForceIncInertia (WP-116).  // Ladruno
+    static Vector damp(6);
+    damp.Zero();
+    damp.addVector(1.0, this->getRayleighDampingForces(), 1.0);
+    return eleInfo.setVector(damp);
 
   } else if (responseID == 2) {
       P(3) =  q(0);
