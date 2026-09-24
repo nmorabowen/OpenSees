@@ -2,7 +2,7 @@
 
 Revision 1. Follow-up to WP-115 (#850); its adversarial review raised the gap.
 
-Status: **built; draft PR #851** (2026-09-23).
+Status: **complete; draft PR #851 ready for the owner** (2026-09-24).
 
 Scoped 2026-09-23. Branch `wp/116-dispbeam-stamp`, cut from `ladruno` @ `79e062367` (not stacked on
 #850). The quirk lint `ci/check_quirk_patterns.py` lands with #850; until then it is run here from
@@ -44,9 +44,23 @@ never saw them. The WP-115 reviewer called their Rayleigh sites safe, unverified
    the ground-motion Q twice (LEDGER_quirks, found by WP-115). Plus a closed-form check that
    `dampingForces` equals `betaK·K_e·v_e` from the analytical Euler–Bernoulli stiffness.
 
-## Results
+## Results (2026-09-24)
 
-(filled in below after the build and the break-on-purpose runs)
+Full 5-target build from scratch (8.8 min), then one `opensees.pyd` rebuild per row, sources restored
+and a final full rebuild after. Tests under CPython 3.12 `python -S`.
+
+| Build | Expected | Result |
+|---|---|---|
+| converted (this branch) | all pass | 34 passed |
+| original, pre-conversion (`4e3ec6b17`) | bit-identical to converted | 3,696 / 3,696 recorded values identical over 32 runs (displacements, velocities, `dampingForces`) |
+| original + re-entry hazard in `getTangentStiff` (`P.Zero(); P(1)=1e3`) | βK legs + response check fail | 11 failed — all 10 βK legs and `test_damping_force_response_2d[betaK=1e-3]` |
+| converted + same hazard | all pass | 34 passed |
+| converted, Rayleigh adds dropped | every leg with element damping fails | 26 failed; the 8 passes have nothing to detect (static ×2, the response path this mutation does not touch ×2, alphaM with nodal mass ×4) |
+| converted, inertia adds dropped | every leg with element mass fails | 20 failed; the 14 passes have no element mass (static ×2, nodal-mass legs ×12) |
+| final committed code, full rebuild | all pass, bit-identical | 34 passed; bit-identical to converted |
+
+The hazard row also proves the `getResponse` id 12 conversion is needed, not cosmetic: with the
+shared `P`, a re-entry that writes `P` corrupts the `dampingForces` recorder output.
 
 ## Rejected approaches
 
