@@ -745,8 +745,13 @@ int BezierTri6::addInertiaLoadToUnbalance(const Vector &accel)
         a(2*i + 1) = Raccel(1);
     }
 
-    // Q += M × a
-    Q.addMatrixVector(1.0, M, a, 1.0);
+    // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
+    // so the unbalance gains -M·R·a_g, the ground-motion inertia load). This
+    // was `+1.0` until WP-117, which drove Bezier element mass with -a_g: a
+    // UniformExcitation run shook the Bezier mesh the wrong way, and a mixed
+    // model (Bezier soil + nodal-mass frame) in opposite directions. Matches
+    // FourNodeQuad / LadrunoBrick / every other fork element.  // Ladruno
+    Q.addMatrixVector(1.0, M, a, -1.0);
 
     return 0;
 }

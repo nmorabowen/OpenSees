@@ -166,7 +166,11 @@ void LadrunoIMKBeam2d::setDomain(Domain *theDomain)
 // ---------------------------------------------------------------------------
 int LadrunoIMKBeam2d::commitState(void)
 {
-  int ok = 0;
+  // Base-class commit first: it refreshes Kc, the committed stiffness behind
+  // betaKc Rayleigh damping. Skipping it left Kc frozen at the tangent captured
+  // when `rayleigh` ran, so betaKc silently behaved like betaK0 once hinges
+  // yielded or the geometry rotated (WP-118). Same order as ElasticBeam2d.  // Ladruno
+  int ok = this->Element::commitState();
   for (int i = 0; i < 2; i++) {
     if (theMat[i] != 0)
       ok += theMat[i]->commitState();
