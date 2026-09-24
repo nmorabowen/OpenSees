@@ -1007,8 +1007,13 @@ ElasticBeam2d::getResistingForceIncInertia()
   if (theDamping) P += this->getDampingForce();
   
   // subtract external load P = P - Q
-  P.addVector(1.0, Q, -1.0);
-  
+  // Ladruno WP-119: getResistingForce() above already subtracts Q whenever
+  // rho != 0 -- the only case Q is non-zero (it holds only the ground-motion
+  // inertia load, added in addInertiaLoadToUnbalance). Subtracting it again
+  // drove element mass with 2*a_g under UniformExcitation. ElasticBeam3d has no
+  // second subtraction. Still present in upstream master (checked 2026-09-24).
+  // P.addVector(1.0, Q, -1.0);
+
   // add the damping forces if rayleigh damping
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     P.addVector(1.0, this->getRayleighDampingForces(), 1.0);

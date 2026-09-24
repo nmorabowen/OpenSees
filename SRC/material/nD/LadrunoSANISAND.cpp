@@ -2119,6 +2119,62 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     void noteControlFactorBackoff(void)       { nCtlFactorBackoff++; }
     long getControlFactorBackoffs(void) const { return nCtlFactorBackoff; }
 
+    // Ladruno WP-104: `wipe` is the semantic zero point of every counter here.
+    //
+    // Every accumulator in this singleton is "process-wide" so that a driver
+    // can read one integration point's response as the LEG's census (the
+    // warnings are throttled, so the count is the only record). That contract
+    // was written for arms of ONE model; it was never meant to outlive the
+    // model. Measured (apeGmsh live test, 2026-09-15): a FRESH
+    // `nDMaterial LadrunoSANISAND` in a NEW model, after `ops.wipe()` and with
+    // a different tag, reported `implexRefusals = [9,0,0,9,0,9]` -- the nine
+    // companion refusals an EARLIER model in the same process had latched --
+    // so a guide assertion like `implexRefusals[3] == 0` at the end of a run
+    // passed or failed on process order (which pytest module ran first).
+    //
+    // Same rule, same precedent as `Ladruno::EnergyChannelRegistry::
+    // resetOnWipe()` in Domain::clearAll() (ADR-69/72): `wipe` destroys every
+    // producer (each Gauss point's material instance) and every consumer (the
+    // recorders and the elements the response is read through), so nothing
+    // that could still be counting survives it -- a total carried across it is
+    // a number about objects that no longer exist. Called from
+    // OPS_clearAllNDMaterial() (the nD-material wipe hook both interpreters
+    // and OpenSees.exe go through), NOT from Domain::clearAll(): that one also
+    // runs from Domain::recvSelf() on an MP rank mid-setup, which is not a
+    // wipe. ops.reset() / revertToStart() are deliberately NOT a reset: they
+    // rewind the SAME model, and a leg's running totals across reverts are
+    // exactly what "read it as deltas" (LEDGER_quirks) is for.
+    //
+    // The commit-round marker resets too: after a wipe `firstCommitter` is a
+    // dangling address (its object was deleted), and the next model's
+    // maxError/avgError would otherwise degrade to since-process-start
+    // (`noteCommitRound()`'s documented degenerate case) for the rest of the
+    // process, or -- worse -- reset mid-round if the allocator hands the same
+    // address to some other integration point.
+    //
+    // The 10-per-process `opserr` throttles at the refusal sites are function-
+    // local statics and are NOT touched: a warning budget is a log-volume
+    // contract for the process, not a per-model census (LEDGER_quirks: "use a
+    // CHILD process when a gate needs a fresh throttle").
+    void resetOnWipe(void)
+    {
+        maxError          = 0.0;
+        sumError          = 0.0;
+        count             = 0;
+        firstCommitter    = 0;
+        nRefusedD2        = 0;
+        nRefusedControl   = 0;
+        nRefusedCompanion = 0;
+        nRefusedLatched   = 0;
+        nFloorFallback    = 0;
+        nGuardF0          = 0;
+        nHoldPreserved    = 0;
+        nReversalNoise    = 0;
+        nTrialGuardF0     = 0;
+        nHoldSkipCommit   = 0;
+        nCtlFactorBackoff = 0;
+    }
+
   private:
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
@@ -2149,6 +2205,19 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
 };
 
 } // anonymous namespace
+
+// Ladruno WP-104: the one door into the anonymous-namespace singleton above.
+// Called by OPS_clearAllNDMaterial() (SRC/material/nD/NDMaterial.cpp) on
+// `wipe`, from both interpreters and from OpenSees.exe. Declared in
+// LadrunoSANISAND.h so the definition here is checked against the signature;
+// NDMaterial.cpp reaches it through a local `extern` (vanilla's own idiom for
+// the OPS_clearAll* hooks in commands.cpp) rather than pulling this header into
+// the NDMaterial base file.
+void
+ladrunoSanisandResetImplexGlobals(void)
+{
+    LadrunoImplexGlobals::instance().resetOnWipe();
+}
 
 // Zeroes the IMPL-EX state and sizes the one history vector. Called from all
 // four constructors, from initialize() (hence revertToStart), from recvSelf, and
