@@ -32,6 +32,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       LOCAL before adding `getRayleighDampingForces()`: betaK Rayleigh calls `getTangentStiff()`,
       which may refill the static and silently drop inertia (and `-Q`). Quirks: "MUST snapshot
       the shared static `resid`" — read its 2026-07-11 recurrence note.
+- [ ] **[lint]** An overridden `commitState()` calls `Element::commitState()` first — it is the only
+      place `Kc` (behind `betaKc` damping) is refreshed; skipping it makes `betaKc` behave like
+      `betaK0` (LadrunoIMKBeam, fixed WP-118 #853). A `betaKc` test must make the tangent change.
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
 - [ ] Ignoring Rayleigh? Override `getDamp` AND `getRayleighDampingForces` too. Quirks: "A no-op

@@ -35,6 +35,17 @@ bodies are seen whole).
                 Waive at the declaration (same line or up to two lines above):
                     // ladruno-lint: wipe-ok <reason>
 
+  L4 commit     A fork element's `commitState()` that neither chains to
+                `Element::commitState()` (or to a parent's `X::commitState()`)
+                nor overrides `setRayleighDampingFactors`. The base commit is
+                the ONLY place Kc -- the committed stiffness behind betaKc
+                Rayleigh damping -- is refreshed; skipping it freezes Kc at the
+                initial stiffness, so betaKc silently behaves like betaK0
+                (LadrunoIMKBeam, fixed WP-118 #853). A class that overrides
+                setRayleighDampingFactors never allocates Kc and is exempt.
+                Waive at the function header (or the line above it):
+                    // ladruno-lint: commit-ok <reason>
+
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
@@ -56,7 +67,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -411,6 +422,87 @@ def check_wipe(root, rel, used_waivers=None):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L4
+# --------------------------------------------------------------------------
+CHAINS_TO_BASE = re.compile(r"\b\w+\s*::\s*commitState\s*\(")
+
+
+def _header_declares(path, cls, method):
+    """True if the header next to `path` declares `method` (i.e. the class overrides it)."""
+    for suffix in (".h", ".hpp"):
+        h = path.with_suffix(suffix)
+        if h.exists():
+            text = "\n".join(clean(h.read_text(encoding="utf-8", errors="replace")))
+            if re.search(r"\b" + re.escape(method) + r"\s*\(", text):
+                return True
+    return False
+
+
+CLASS_BASE = re.compile(r"\bclass\s+(\w+)\s*(?:final\s*)?:\s*(?:public|protected|private)?\s*(?:virtual\s+)?(\w+)")
+
+
+def _class_bases(root):
+    """{class: first base} from every header under SRC (materials/sections also have a
+    commitState(); only Element subclasses own a Kc)."""
+    bases = {}
+    for h in (root / "SRC").rglob("*.h"):
+        try:
+            text = h.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "class" not in text:
+            continue
+        for m in CLASS_BASE.finditer(text):
+            bases.setdefault(m.group(1), m.group(2))
+    return bases
+
+
+def _is_element(cls, bases):
+    seen = set()
+    while cls in bases and cls not in seen:
+        seen.add(cls)
+        cls = bases[cls]
+        if cls == "Element":
+            return True
+    return False
+
+
+def check_commitstate(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    bases = None
+    for path, raw, cl in _sources(root, stamped_only=True, needles=("::commitState",)):
+        funcs = functions(cl)
+        names = {f.name for f in funcs}
+        for f in funcs:
+            if "::" not in f.name or f.name.rsplit("::", 1)[1] != "commitState":
+                continue
+            cls = f.name.rsplit("::", 1)[0]
+            if bases is None:
+                bases = _class_bases(root)
+            if not _is_element(cls.split("::")[-1], bases):
+                continue                                   # materials/sections/transforms own no Kc
+            body = "\n".join(cl[f.open:f.end + 1])
+            if CHAINS_TO_BASE.search(body):
+                continue                                   # Element:: or a parent's commitState
+            if f"{cls}::setRayleighDampingFactors" in names or \
+                    _header_declares(path, cls, "setRayleighDampingFactors"):
+                continue                                   # never allocates Kc
+            wl, reason = waiver_at(raw, f.open, "commit-ok", above=f.open - f.start + 1)
+            if wl is not None:
+                used.add((str(path), wl))
+                if len(reason) >= MIN_REASON:
+                    continue
+                findings.append(f"L4 {rel(path)}:{f.start + 1}: commit-ok waiver reason too short for {f.name}")
+                continue
+            findings.append(
+                f"L4 {rel(path)}:{f.start + 1}: {f.name} does not call Element::commitState() -- Kc (betaKc "
+                "Rayleigh damping) is never refreshed, so betaKc behaves like betaK0; chain to the base "
+                "first, or waive with '// ladruno-lint: commit-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -460,7 +552,7 @@ def list_waivers(root, rel):
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3", help="comma list of L1,L2,L3")
+    ap.add_argument("--only", default="L1,L2,L3,L4", help="comma list of L1,L2,L3,L4")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -481,7 +573,9 @@ def main():
         findings += check_rayleigh(root, rel, used)
     if "L2" in wanted:
         findings += check_wipe(root, rel, used)
-    if {"L1", "L2"} <= wanted:
+    if "L4" in wanted:
+        findings += check_commitstate(root, rel, used)
+    if {"L1", "L2", "L4"} <= wanted:          # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)

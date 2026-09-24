@@ -218,6 +218,85 @@ def test_l2_waiver(tmp_path):
     assert _l2(tmp_path, {"SRC/material/Mat.cpp": waived}) == []
 
 
+# ---------------------------------------------------------------- L4
+# the LadrunoIMKBeam shape (pre WP-118): commits materials + transform, never the base
+IMK_COMMIT = STAMP + """
+int Beam::commitState(void)
+{
+  int ok = 0;
+  for (int i = 0; i < 2; i++)
+    ok += theMat[i]->commitState();
+  ok += theCoordTransf->commitState();
+  return ok;
+}
+"""
+
+
+ELEMENT_H = "class Beam : public Element\n{\n};\n"
+
+
+def _l4(tmp_path, files):
+    files = dict(files)
+    files.setdefault("SRC/element/Beam.h", ELEMENT_H)
+    root = _tree(tmp_path, files)
+    used = set()
+    return cq.check_commitstate(root, _rel(root), used) + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def test_l4_ignores_non_elements(tmp_path):
+    # materials / sections / transforms have a commitState() too, but own no Kc
+    out = _l4(tmp_path, {"SRC/element/Beam.cpp": IMK_COMMIT,
+                         "SRC/element/Beam.h": "class Beam : public UniaxialMaterial\n{\n};\n"})
+    assert out == []
+
+
+def test_l4_follows_indirect_inheritance(tmp_path):
+    out = _l4(tmp_path, {"SRC/element/Beam.cpp": IMK_COMMIT,
+                         "SRC/element/Beam.h": "class Beam : public BeamBase\n{\n};\n",
+                         "SRC/element/BeamBase.h": "class BeamBase : public Element\n{\n};\n"})
+    assert len(out) == 1, out
+
+
+def test_l4_flags_a_commitstate_that_skips_the_base(tmp_path):
+    out = _l4(tmp_path, {"SRC/element/Beam.cpp": IMK_COMMIT})
+    assert len(out) == 1 and "Beam::commitState does not call Element::commitState" in out[0], out
+
+
+def test_l4_passes_when_chaining_to_element(tmp_path):
+    fixed = IMK_COMMIT.replace("  int ok = 0;", "  int ok = this->Element::commitState();")
+    assert _l4(tmp_path, {"SRC/element/Beam.cpp": fixed}) == []
+
+
+def test_l4_passes_when_chaining_to_a_parent(tmp_path):
+    parent = IMK_COMMIT.replace("  int ok = 0;", "  int ok = BeamBase::commitState();")
+    assert _l4(tmp_path, {"SRC/element/Beam.cpp": parent}) == []
+
+
+def test_l4_exempts_a_class_that_overrides_rayleigh(tmp_path):
+    # the LadrunoRigidBody shape: Rayleigh ignored, Kc never allocated
+    in_cpp = IMK_COMMIT + "int Beam::setRayleighDampingFactors(double, double, double, double) { return 0; }\n"
+    assert _l4(tmp_path / "a", {"SRC/element/Beam.cpp": in_cpp}) == []
+    in_h = {"SRC/element/Beam.cpp": IMK_COMMIT,
+            "SRC/element/Beam.h": "class Beam : public Element\n{\n  int setRayleighDampingFactors(double, double, double, double);\n};\n"}
+    assert _l4(tmp_path / "b", in_h) == []
+
+
+def test_l4_ignores_member_commits_and_comments(tmp_path):
+    # `theMat[i]->commitState()` is not a base call, and a commented base call does not count
+    commented = IMK_COMMIT.replace("  int ok = 0;", "  int ok = 0;   // this->Element::commitState();")
+    assert len(_l4(tmp_path, {"SRC/element/Beam.cpp": commented})) == 1
+
+
+def test_l4_waiver_and_stale_waiver(tmp_path):
+    waived = IMK_COMMIT.replace("int Beam::commitState(void)",
+                                "// ladruno-lint: commit-ok Kc handled by an owned sub-element\n"
+                                "int Beam::commitState(void)")
+    assert _l4(tmp_path / "a", {"SRC/element/Beam.cpp": waived}) == []
+    stale = waived.replace("  int ok = 0;", "  int ok = this->Element::commitState();")
+    out = _l4(tmp_path / "b", {"SRC/element/Beam.cpp": stale})
+    assert len(out) == 1 and "stale commit-ok" in out[0], out
+
+
 # ---------------------------------------------------------------- L3
 def test_l3_flags_an_orphaned_pointer(tmp_path):
     root = _tree(tmp_path, {

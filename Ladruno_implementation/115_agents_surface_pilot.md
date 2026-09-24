@@ -2,8 +2,9 @@
 
 Revision 1. Not yet adversarially reviewed.
 
-Status: **built; draft PR #850. Merge after #841** — L2 stays red until #841 lands, because
-SANISAND's process-wide IMPL-EX globals are the live instance it exists to catch (2026-09-23).
+Status: **built; draft PR #850. Merge after #841 and #853** — L2 stays red until #841 lands, because
+SANISAND's process-wide IMPL-EX globals are the live instance it exists to catch (2026-09-23); L4 stays
+red until #853 lands, because the IMK beams are the live instance it exists to catch (2026-09-24).
 
 Scoped 2026-09-23. Branch `wp/115-agents-surface`, cut from `ladruno` @ `79e062367`. Source: a
 read of how `basecamp/omarchy` organizes its repo for agents (`AGENTS.md` + short task-triggered
@@ -129,6 +130,26 @@ The owner asked for the four waived Rayleigh sites to be converted, after an adv
 1. **CRITICAL — Bezier ground-motion inertia has the wrong sign.** `BezierTet10::addInertiaLoadToUnbalance` / `BezierTri6` build `Q += +M·a_g`; the vanilla and LadrunoBrick convention is `−M·a_g`. Proven by running it: under a constant +2.0 ground acceleration, a rigid-body probe gives relative acceleration −2.000 for vanilla `quad`/`stdBrick` and +2.000 for both Bezier elements. Present since BezierTet10 was added (2026-05-30); no test ran a Bezier element under `UniformExcitation`.
 2. **MAJOR — `betaKc` damping frozen on the IMK beams.** `LadrunoIMKBeam(2d)::commitState` never calls `Element::commitState()`, so `Kc` keeps the tangent from when `rayleigh` ran — the element's initial stiffness, so `betaKc` behaves like `betaK0`. *Corrected by WP-118:* this doc first said "zero if `rayleigh` ran before the first step"; measurement refuted it — `Domain::addElement` calls `update()`, so the captured tangent is valid. Fixed in WP-118 (#853).
 3. **Upstream — vanilla `ElasticBeam2d` subtracts the ground-motion Q twice** with element `-mass` (response exactly 2× the same beam with nodal masses). `ElasticBeam3d` is correct. Recorded in `LEDGER_quirks`; not fixed (vanilla-footprint rule).
+
+## Step 6 — L4, the commitState rule (2026-09-24)
+
+Added at the owner's request after WP-118 (#853) found `LadrunoIMKBeam(2d)::commitState()` skipping
+`Element::commitState()` (so `betaKc` was frozen at the initial stiffness).
+
+- **Rule:** an `Element` subclass's `commitState()` must call `Element::commitState()` or a parent's
+  `X::commitState()`, unless the class overrides `setRayleighDampingFactors` (then `Kc` is never
+  allocated — `LadrunoRigidBody`). Waiver `// ladruno-lint: commit-ok <reason>` at the header.
+- **Element-only:** materials, sections and transformations also define `commitState()` but own no `Kc`.
+  The first draft flagged 15 of them; the rule now resolves the class hierarchy from the headers and
+  checks only classes that reach `Element`.
+- **Self-test:** 8 new cases (41 total): flags the IMK shape, passes base and parent chains, exempts a
+  Rayleigh override (in the `.cpp` or the header), ignores non-elements, follows indirect inheritance,
+  ignores a commented-out base call, waiver + stale waiver.
+- **Acceptance:** on this branch it flags exactly `LadrunoIMKBeam` and `LadrunoIMKBeam2d`; on
+  `origin/wp/118-imk-betakc` (the fix) it reports 0; on `origin/wp/116-dispbeam-stamp` the newly
+  stamped `LadrunoDispBeamColumn` passes (it chains).
+- **Merge order:** L4 is red here until #853 merges, as L2 is until #841. Merge #841 and #853 first,
+  then merge `ladruno` into this branch.
 
 ## Open questions
 
