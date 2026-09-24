@@ -669,7 +669,11 @@ int BezierTet10::addInertiaLoadToUnbalance(const Vector &accel)
         a(3*i + 2) = Raccel(2);
     }
 
-    Q.addMatrixVector(1.0, M, a, 1.0);
+    // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
+    // so the unbalance gains -M·R·a_g). Was `+1.0` until WP-117, which drove
+    // the element mass with -a_g under UniformExcitation. Matches
+    // TenNodeTetrahedron / LadrunoBrick / every other fork element.  // Ladruno
+    Q.addMatrixVector(1.0, M, a, -1.0);
     return 0;
 }
 
