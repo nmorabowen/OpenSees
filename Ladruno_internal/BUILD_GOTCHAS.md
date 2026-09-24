@@ -755,6 +755,64 @@ imports matplotlib at module scope). That is a genuinely missing dependency in
 the bare `python3.12`, not a handle artefact — `pip install matplotlib` or
 `--ignore` those two modules.
 
+## 15. A build default that lives only in `build.bat` is INVISIBLE to Zone-A
+
+**The fork has two configure paths, not one, and only one of them is `build.bat`.**
+`build.bat` is the only Windows build recipe (CLAUDE.md) — but `.github/workflows/`
+`ladruno.yml`'s Zone-A job runs on Ubuntu and configures with a raw
+
+```
+cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=… -DCMAKE_BUILD_TYPE=Release …
+```
+
+which **never sources `build.bat` or any of its `-D` flags**. So any feature whose
+default is expressed as "`build.bat` passes `-DFOO=ON`" is compiled **OUT on CI**,
+silently, while every developer sees it ON.
+
+**Measured 2026-09-16 (PR #843, WP-107).** `option(LADRUNO_OPENMP … OFF)` +
+`build.bat` passing ON meant Zone-A built the threaded element loop out;
+`ops.ladrunoThreads(n)` stayed serial there and the WP's own warrant file failed
+**10 of 18** with *"this binary was built WITHOUT LADRUNO_OPENMP"* (run
+35160539366) — i.e. the feature's gate could not execute on the gate.
+
+**Rule.** Put the default in `CMakeLists.txt`'s `option(...)`, which *both* paths
+cross. Keep `build.bat` passing the value **explicitly, in both directions**
+(`-DFOO=ON` / `-DFOO=OFF`) — that is about a stale Conan cache never deciding it,
+not about setting the default.
+
+**…and the exception that proves it, same PR: `LADRUNO_OPENMP` is STILL `OFF` in
+`CMakeLists.txt`, deliberately, because flipping it ON CRASHED LINUX.** With the
+option defaulting ON, Zone-A got past the WP's own tests and then **segfaulted,
+deterministically, twice on the same commit**, in a test with nothing to do with
+threading:
+
+```
+test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+Fatal Python error: Segmentation fault      → pytest exit 139
+https://github.com/nmorabowen/OpenSees/actions/runs/35164371356
+```
+
+It is the **zero-mass `system Diagonal`** case, crashing **at 1 thread** where
+`Domain::ladrunoThreadedUpdate()` returns `false` before touching anything — so not
+the threaded loop, but gcc's `-fopenmp` codegen/link (libgomp, `-pthread`) turning
+the already-untrustworthy singular-mass failure path (`LEDGER_quirks`) into a hard
+crash. **Not reproducible on MSVC.** So today: **build.bat ON (Windows, tested
+18/18), CMake default OFF, and CI does NOT exercise the threaded loop** until a
+Linux ASAN/gdb WP fixes the crash — then flip the default to ON. ADR-75b §14.4.
+
+**The transferable lesson is the pairing, not either half:** before moving a build
+default from `build.bat` into `CMakeLists.txt` so CI picks it up, expect CI's
+*different toolchain* to be exercising that flag for the first time. Budget a CI
+round trip for it; "it builds on MSVC" is not evidence about gcc.
+
+**Corollary for tests.** A test file that depends on a compile option must probe
+for it and skip with a reason, and the probe must be biased to **RUN** on every
+ambiguous outcome (see `tests/test_wp107_threaded_update.py`). A probe that skips
+when unsure converts a red CI into a green one that tests nothing — strictly worse
+than the failure it was meant to tidy away. When a skip on CI is nevertheless the
+accepted state, as here, say so in the docs rather than letting a green check imply
+coverage that does not exist.
+
 ## `ops.ladrunoBuild()` lags after an incremental rebuild
 
 `CMakeLists.txt:200-207` captures the git hash with

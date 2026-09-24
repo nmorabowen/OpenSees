@@ -70,7 +70,7 @@ traded reach for a bounded refusal count rather than an unbounded ladder (§7 be
 
 ```tcl
 nDMaterial LadrunoSANISAND $tag  <23 constants>  \
-    -Presidual $pr -Pmin $pmin -honorTolR $h -maxSubsteps $N \
+    -Presidual $pr -pRe $pre -Pmin $pmin -honorTolR $h -maxSubsteps $N \
     -implex  <-implexControl $tol $reductionLimit>  <-implexAlpha $a> \
     <-implexDt pseudo|strain|user <$dt>>  \
     <-implexFloor implicit|accept|refuse>  <-implexGuard on|off>  <-implexTrialGuard on|off>  \
@@ -99,8 +99,9 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
-| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
+| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, force `α_in := α` at every point (`init`) or leave initialisation to vanilla's loading-reversal sign test (`vanilla`, which reproduces real `ManzariDafalias` and reads the sign of round-off after elastic holds) | **`init`** (since WP-112; was `vanilla`) | ADR-92 P2-7, WP-112 (TIMs F14); `vanilla` warns once per Gauss point when it meets a round-off `α − α_in`; see §11 |
 | `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
+| `-pRe $p` | **elastic-only** confinement floor (ADR-93 II.1): the three `GetElasticModuli` overloads read `G, K ~ sqrt(max(p + $p, p_min)/P_atm)` and **nothing else in the model changes** | `0` = OFF | not IMPL-EX-specific and not gated on `-implex`; `-Pelastic` is accepted as a synonym. Refused below `0` and refused if given twice (it is a constitutive constant, and the echo can report only one value); **warns** above `0.1*P_atm`; prints a NOTE when `pRe <= p_min`, where the clamp already dominates as `p -> 0`. **Inert at stage 0** — see §3.1 and §4 |
 | `-implexFactor fixed\|control\|controlIter` | how `f` is CHOSEN: `fixed` = the clock ratio `alpha*dt_{n+1}/dt_n` (the pre-P2-9 operator, and the only mode gate-passed); `control` = the closed-form minimiser of `\|\|sigma~(f) - sigma_impl\|\|`, computed ONCE at the first trial of the step and frozen — **R3 REFUTED** (biased by the elastic-predictor first iterate); `controlIter` = the same minimiser recomputed at EVERY trial from that iterate's own `d_eps` — **R3 PASSES**, at a wall-time/Newton-churn cost; both control modes keep the clock ratio as the upper bound `f_max` | `fixed` | ADR-92 P2-9; **requires `-implexControl`** (refused without it, not silently downgraded); see §12 |
 
 ## 2. What the nine words mean
@@ -125,11 +126,27 @@ not" defect this fork's parsers exist to make impossible).
   refusal**. The companion runs at `commitState`, where no global Newton is left to react if it
   seizes — it must be able to *fail* rather than force-accept at `dT_min = 1e-6`, which is
   precisely what `-maxSubsteps` (ADR-86b / #792 T1) buys.
-- **Scheme 2 (`BackwardEuler_CPPM`).** *Permitted* but not the default — P0 measured 58–74 % of
-  its calls on the low-confinement corner path taking the low-`p` branch, whose Newton is
-  disabled by a literal `errFlag = 0` (`ManzariDafalias.cpp:2264`), so it silently falls through
-  to `explicit_integrator` (i.e. `ModifiedEuler` again) and costs a 19-unknown Newton everywhere
-  else it doesn't. Same `-maxSubsteps > 0` requirement applies, refused the same way.
+- **Scheme 2 (`BackwardEuler_CPPM`).** *Permitted* but not the default. Same `-maxSubsteps > 0`
+  requirement applies, refused the same way (`LadrunoSANISAND.cpp:2039-2048`, current line numbers -- see the source, not this note, if they move again) — and, as of WP-108,
+  the constructor's own "`-maxSubsteps` has NO EFFECT with IntScheme 2" warning no longer prints,
+  because it was **false** (WP-105 / F12; `schemeReachesModifiedEuler()` used to answer `false` for
+  `s == 2`, see `LEDGER_quirks.md`). `BackwardEuler_CPPM`'s own retry ladder
+  (`ManzariDafalias.cpp` ~2472-2588) falls back to `explicit_integrator` on non-convergence or
+  ladder exhaustion, and that switch does not enumerate `INT_BackwardEuler` — it hits `default:` ->
+  `ModifiedEuler`, the same seam `-maxSubsteps`/`-honorTolR` read. WP-105 measured what scheme 2
+  buys and what it costs at a material point on a GIVEN strain increment (the commit-time companion's
+  own regime): **3.7–4.3x less discretisation error and 4.2–7.6x less wall time** than scheme 1 at
+  `dEz = 1e-4`, rising to 7–30x / 10–13x at `4.6e-4`; the low-`p` explicit fallback fires on **0 %**
+  of steps until the point is pinned at `p_min`, where it fires on ~53 % and both schemes become the
+  same operator. What it costs UNDER A GLOBAL NEWTON (an increment merely proposed, not given): a
+  CPPM step that cannot return recurses through up to 512 half-increments before falling back,
+  **silently** — `integrate()` discards the return value, `debugFlag` is compiled off, and nothing
+  refuses. Measured at 12–134 s for a single failing step and at outright stalls (8 of 8 arms) where
+  scheme 1 completes (1 of 8); on the CP1/ADR-95 bearing leg it reached `s/B = 4e-5` in 1347 s
+  against the baseline's `0.019` in 1267 s, with `ds` pinned at 25x the subdivision floor. **Use it
+  where the increment is given (a companion return, a prescribed-strain probe); do not make it the
+  primary integrator of a load- or displacement-controlled BVP without a cap on the ladder.** Full
+  tables: `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
 - **Every other scheme (0/3/4/5/6/7/8/9/45) is refused with a sentence.** They carry no
   error-controlled substepping, so the companion could not report a failed return and
   `-implexControl` would have nothing to refuse.
@@ -169,6 +186,79 @@ the analysis to stop.
 **At COMMIT time no element propagates anything**, because `Domain::commit()` is a bare
 `elePtr->commitState();`. That is why a commit-time companion failure LATCHES the material
 instead — see §9.
+
+### 3.1 `-pRe` — a stiffness floor, and the three things it is not (ADR-93 II.1)
+
+A cohesionless sand has no stiffness at zero confinement, so at the free-surface ring beside a
+footing `G, K -> 0` and the substep controller spends thousands of substeps proving a stress
+that carries nothing to relative tolerance. `-pRe $p` puts a declared floor under the ELASTIC
+moduli only: `pn = tr(sigma)/3 + pRe` inside the three `GetElasticModuli` overloads, clamped at
+`m_Pmin` after the addition, so the effective floor is `sqrt(max(p + pRe, p_min)/P_atm)`.
+
+**It is not `-Presidual`**, which floors the STRENGTH side (`GetF`, `psi`, `M^b`, `M^d`, `D`,
+the `D_factor` sigmoid, the low-`p` integrator guards) and never reached the moduli at all —
+the asymmetry ADR 93 §1 row 1 measured. **It is not a cohesion**: it adds no strength and does
+not move the critical-state line. **It is not `-Pmin`**, which is a clamp on the STRESS; `-pRe`
+changes no stress, only the tangent the stress is integrated with. Default `0` is
+byte-identical: the parameter enters as `+ 0.0`, and the one derived quantity recomputed for it
+(the initial `mCe` at `p = P_atm`, which the base fixes before the fork's last write lands) sits
+behind an early return.
+
+**"Elastic-only" scopes the VARIABLE, not the EFFECT.** `m_PreElastic` is read at the three
+`GetElasticModuli` overloads and in no other expression — but `K` and `G` leave those functions
+by reference and are then used by the plastic machinery: `Stress_Correction` (including its
+low-`p` rescue `dLambda = (p_min - p)/K`), `IntersectionFactor` /
+`IntersectionFactor_Unloading`, `GetElastoPlasticTangent`, and the plastic multiplier itself,
+
+```
+NextDGamma = (2G n:de_dev - K de_v (n:r)) / (Kp + 2G(B - C tr(n^3)) - K D (n:r)),   Kp UNfloored.
+```
+
+So the floor changes `L` mid-path — `sqrt((p + pRe)/p)` is `1.41` at `p' = 1` kPa (+41 % on `G`),
+`1.095` at 5 kPa, `1.077` at the BVP ring's 6.25 kPa — and the committed curve moves with it.
+What it does **not** change is the destination: `eta = M^b` at the bounding state is a strength
+identity in which the moduli do not appear, which is why §7.4's capacity gate reads `< 1e-5`
+while §7.9's pre-failure curve reads `+6–8 %`. **Those two numbers are the same fact, not a
+trade** — a stiffness floor is capacity-neutral and path-changing by construction, and that is
+exactly why ADR-93 §7.6 replaces the "committed curve inside the certificate tolerance"
+requirement with capacity neutrality rather than negotiating the tolerance.
+
+**It does nothing in the ELASTIC stage — by vanilla's design, not by omission.** See §4: while
+`mElastFlag == 0` the three `GetElasticModuli` overloads take the branch
+`G = G0*P_atm*(2.97-e)^2/(1+e)` **without** the `sqrt(pn/P_atm)` factor, so the gravity / K0 leg
+is pressure-INDEPENDENT and `pn` — hence `-pRe`, and `-Pmin` with it — is computed and unused. A
+stage-0 leg is bit-identical at `pRe = 0` and `pRe = 1e6` alike, and `-Pmin 0.0101` vs `10.0`
+changes nothing there either. There is no confinement dependence for a confinement floor to
+floor. Where the factor **is** live (`mElastFlag == 1`) the initial elastic operator is re-derived
+with the floor and scales by exactly `sqrt((P_atm + pRe)/P_atm)`: measured `2.000000000` on all
+six modes of an unstrained `stdBrick` at `pRe = 3*P_atm`, after `updateMaterialStage ... 1` +
+`reset()`.
+
+**Explicit dynamics.** The floor raises the assembled stiffness, so it shortens
+`CentralDifferenceLadruno`'s critical time step in the same proportion — `dt_cr` scales as
+`1/sqrt((p + pRe)/p)`, up to 41 % shorter at `p' = 1` kPa. Budget for it before adopting a value
+on an explicit deck.
+
+**What WP-106 measured, so you know what to expect — this is not free speed.** On the ADR-93
+ring path the floor cuts NOTHING: that dumped point is confined (min `p` 6.4–6.5 kPa), the
+substep count moves under 1 % and in the WRONG direction, and committed stress moves ~3.5–4 % at
+`pRe = 1` kPa — because `sqrt((6.5 + 1)/6.5) = 1.074` is a 7 % move on `G` wherever `p` is
+small-ish, not only where the model has no answer. **On a real strip footing it is worse:** at
+the campaign's own 7.65 kPa surcharge the live free-surface ring sits at `p ~ 6.25` kPa, and
+`pRe = 1` kPa there costs **1.93× the substeps per step**, takes the worst single Gauss point
+from 1387 to **18 831**, reaches LESS settlement in the same wall budget, and moves the
+load–settlement curve **+5.9 %**. The floor pays only where a point genuinely reaches `p -> 0`
+— at `p0 = 0.5` kPa it is 324× cheaper — and an embedment or surcharge that has already removed
+that state removes the reason for the floor with it. Adopting a value is a declared modelling
+statement about small-strain stiffness at low confinement, and it has to be paid for on the deck
+that uses it: report the substep census (the `substeps` response) and the peak resultant on both
+arms first. The WP-106 numbers are in `93_ladruno_sanisand_zero_confinement_adr.md` §7, with
+the instruments in `Ladruno_implementation/wp106_pre_floor/`.
+
+**Parallel / restore.** The request crosses the fork wire (`Vector(35)`, slot 34) and is carried
+by `getCopy(const char*)` to every Gauss point, so an MP rank and a database-restored material
+run the same elastic law as the process that wrote them — the ADR-86 §3 defect, which is what
+this family of flags exists to make impossible.
 
 ## 4. The stage rule
 
@@ -460,6 +550,10 @@ apart, so the declaration has to arrive out of band. That is exactly what the co
   +5.99 % at 0.0070 and **+19.40 % at 0.0085** against the refusal-free arm on the same deck.
   Compare reach and refusal counts freely; compare `q` only against an arm that ran refusal-free.
   Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
+- **F10's bare-`-implex` recipe did not transfer to a finer strip (TIMs, 2026-09-18).** On the
+  TIMs act's own self-weight strip, bare `-implex` (control off, as above) aborts at
+  `s/B = 0.0004` on the footing-edge Gauss point on every build: the fork's F10 deck was too
+  coarse to resolve the edge, so its 0.0500 reach says nothing about a mesh that does.
 
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
@@ -483,6 +577,33 @@ apart, so the declaration has to arrive out of band. That is exactly what the co
 - **Cyclic response lags by one step.** `alpha`, `z` and `alpha_in` advance only on the committed
   path, so a reversal is not detected on the extrapolated state. Monotonic pushover is the
   measured target; cyclic use needs its own reversal test before being trusted.
+
+### `IntScheme 2` (BackwardEuler_CPPM) -- qualified per increment, refuted as the BVP integrator -- WP-105 (F12)
+
+Scheme 2 is **not** a drop-in replacement for the deck default, and it is not simply worse either --
+it depends entirely on whether the strain increment is *given* or *proposed*. On a replayed strain
+path (zero free DOF, the increment supplied rather than found by a global Newton) scheme 2
+integrates the **same model to the same limit** as scheme 1 -- `1.3e-3` / `2.9e-3` maximum relative
+stress deviation over the whole path at `dEz = 1e-5` (`p0 = 100` / `20 kPa`), terminal `eta` within
+`4.2e-4` / `2.0e-4` -- and at the campaign's own increment (`dEz = 1e-4`) it is **3.7-4.3x more
+accurate and 4.2-7.6x cheaper** than scheme 1; at `4.6e-4`, **7-30x more accurate and 10-13x
+cheaper**, with scheme 1 itself the one leaving its own bounding surface at `p0 = 20 kPa`
+(`eta/M^b = 1.056`). **It is refuted as the primary integrator of a load-controlled BVP.** Under a
+global Newton at `dEz >= 1e-4` it stalls in **8 of 8** free-standing drained-triaxial arms (scheme 1
+stalls in 1 of 8), and each failing step burns **12-134 s** grinding `BackwardEuler_CPPM`'s
+recursive-halving ladder against a 30 ms normal step -- up to **4400x**. On the real CP1/ADR-95
+bearing leg (`x10z8`, `h1.0_e0.6944`, 1200 s budget) it committed 11 steps to `s/B = 4e-5` against
+the scheme-1 baseline's 51 steps to `s/B = 0.019` in the same wall clock -- **475x shallower for the
+same wall clock** -- with `ds` pinned at 25x the subdivision floor and every one of its committed
+steps on the relaxed rung 3. **Use it where the increment is already given** -- a prescribed-strain
+material-point study, or (open question) as the commit-time `-implex` companion itself, which runs
+at `commitState` on an increment nothing proposes off-path and therefore sits in the regime where
+scheme 2 wins; `-implex` was OFF in every WP-105 arm, so that companion question is unresolved, not
+answered favourably. Do not reach for scheme 2 as the strip's primary integrator on this evidence.
+Full numbers, the replay/free-standing/floor/bearing tables, and the "could not verify" list:
+[[Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md]] (also see
+`LEDGER_quirks.md` for the two related defects this same study found: the `-maxSubsteps` inertness
+warning is wrong for scheme 2, and a CPPM non-convergence is invisible end to end).
 
 ## 10. Verification
 
@@ -579,7 +700,7 @@ reference is kept across a zero-increment commit so a run of holds does not drif
 Still building; no holds inside a reported push on either material until the hold acceptance
 passes (hold probe `alpha_in` changed = 0 on both arms).
 
-### `alpha_in` at the stage flip is decided by the sign test — deterministic, not noise (`-flipAlphaIn`, P2-7)
+### `alpha_in` at the stage flip — `init` by default since WP-112 (`-flipAlphaIn`, P2-7 / F14)
 
 Vanilla `ManzariDafalias` never explicitly initialises `α_in` at the `updateMaterialStage 0 -> 1`
 flip; it relies on the loading-reversal sign test inside `integrate()` firing on the first plastic
@@ -596,6 +717,35 @@ run, and the implicit twin's first-step stiffness returns to the pre-P2 number t
 `ManzariDafalias` exactly; `-flipAlphaIn init` (opt-in) forces `α_in := α` unconditionally at
 every point at the flip on both the implicit and IMPL-EX paths — a declared modelling variant,
 not a defect fix. Every P2-7 curve names which flag it used.
+
+**Default moved to `init` (WP-112, TIMs F14, 2026-09-18) — the paragraph above is the P2-7c
+record, and it missed one case.** The sign test reads only the SIGN of
+`(α_n − α_in_n) : Ce : Δε`, with no magnitude guard on either factor, and vanilla runs it in the
+elastic stage too. A `LoadControl(0)` hold's `Δε` is solver noise, so each hold sets
+`α_in := α_n` at a coin-flip of points, and afterwards `α_n − α_in_n` is only the round-off by
+which `α` has moved since. On the first plastic step the direction of a round-off perturbation
+then picks the branch — and the thread count of MKL's solve is such a perturbation. The TIMs
+self-weight strip (9 720 Gauss points) read the **first push step at 1.511 / 1.824 / 1.824 /
+1.489 kPa at 1 / 2 / 4 / 8 MKL threads under `vanilla`** on Windows (1.597 / 1.824 / 1.824 on
+Linux), and the branches it opened were 30 % apart by `s/B = 0.035`; under **`init` the same leg
+reads 1.824 / 14.339 / 36.586 kPa at rows 1 / 8 / 15 on every thread count and both builds**. The
+fork reproduces the mechanism on a 12 × 6 `LadrunoQuad` self-weight strip
+(`tests/test_ladruno_sanisand_flip_determinism.py`): two elastic holds leave 229 of 288 Gauss
+points with `‖α − α_in‖` below `1e-12` of `max(‖α‖, m)`, and vanilla's first push step then
+reads 4.107 / FAIL / 8.332 / 9.483 kN/m after 0 / 1 / 2 / 3 holds, while `init` reads 9.659 kN/m
+after every one of them (to 3e-14) and is bit-identical at 1 / 2 / 4 / 8 threads for ten steps.
+So `init` is the default now. `-flipAlphaIn vanilla` stays, for reproducing real
+`ManzariDafalias` (A/B against vanilla decks and golden files), and prints a warning once per
+Gauss point (10 per process) when a plastic-stage trial meets `0 < ‖α_n − α_in_n‖ ≤ 1e-8 ·
+max(‖α_n‖, m)`. **The R3 numbers do not move:** P2-7c measured the Esmeralda implicit twin under
+`init` identical to `vanilla` to the digit (6.511 / 11.539 / 16.117 / 20.528 kN, "the RC14 price
+on this column is zero"). What does move is the IMPL-EX dense refuse arm's `fixed` reference wall,
+0.01689 under `vanilla` vs 0.01754 under `init` (also P2-7c) — P2-9's ship/refute bars were set
+against the former, and `controlIter` has not been re-measured under `init`. One limit stays: on
+the fork's deck the `init` curve still moves with the hold count from step 4 on (step 10: 35.5 –
+36.1 kN/m after 0 – 4 holds), because the holds change the committed state by round-off and later
+branch decisions amplify it. `init` removes the flip's sign lottery, not every sensitivity of the
+model to its state.
 
 **The zero-increment companion return at the flip is opt-in, default off (`-implexFlipAbsorb`,
 P2-7c).** The first cut of P2-7 had this absorption run unconditionally under `-implex`: at the

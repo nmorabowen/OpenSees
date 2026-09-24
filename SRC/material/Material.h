@@ -59,6 +59,18 @@ class Material : public TaggedObject, public MovableObject
     // method for this material to update itself according to its new parameters
     virtual void update(void) {return;}
 
+    // Ladruno WP-107 (ADR-75b stage L3-1). May setTrialStrain/setTrialF on
+    // DIFFERENT instances of this material run concurrently? Default false, for
+    // the same "un-audited means never threaded" reason as
+    // Element::ladrunoThreadSafeUpdate(), which is what consults this.
+    //
+    // The answer is often CONFIGURATION-dependent rather than class-dependent,
+    // so it is a runtime query and not a class-tag table: ManzariDafalias is
+    // re-entrant under IntScheme 1 (ModifiedEuler) but NOT under 2
+    // (BackwardEuler_CPPM -> NewtonIter's static Vector/Matrix work arrays) or
+    // 4 (RungeKutta45's). See Ladruno_implementation/107_ladruno_openmp_element_loop.md.
+    virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
+
   protected:
     
   private:

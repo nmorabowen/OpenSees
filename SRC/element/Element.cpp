@@ -44,7 +44,19 @@
 #include <Node.h>
 #include <Domain.h>
 
-Element  *ops_TheActiveElement = 0;
+// Ladruno WP-107 (ADR-75b sections 5.3 / 5.4-H7): thread_local. This global is
+// written per element INSIDE the threaded Domain::update loop and read by at
+// least 7 materials (LadrunoJ2, LadrunoConcrete3D, ASDConcrete3D/1D,
+// LadrunoRCConcrete, LadrunoRCFiniteStrain, ASDSteel1D) to pick up a
+// regularization characteristic length. Left as a plain global, a threaded loop
+// A makes one element's material latch ANOTHER element's lch -- a converged,
+// plausible, WRONG softening response, which is the worst failure mode in
+// ADR-75b's risk register. thread_local removes the race outright.
+//
+// Behaviour change, serial: NONE (one thread => one instance). Threaded: the
+// value left behind after the loop is "the last element this thread handled"
+// instead of "the last element in iteration order". Nothing reads the residual.
+thread_local Element *ops_TheActiveElement = 0;
 
 Matrix **Element::theMatrices; 
 Vector **Element::theVectors1; 

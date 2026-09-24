@@ -2,7 +2,7 @@
 title: "ADR 93 — LadrunoSANISAND at zero confinement: what the model should do once p reaches the floor"
 project: Ladruno
 type: adr
-status: "BRAINSTORM — problem stated, candidates listed, no decision; owner + TIMs to choose the P0 experiments"
+status: "II.1 BUILT (WP-106, draft #842), MEASURED at the Gauss point AND on the BVP — see sections 7.1-7.10 (7.10 = the red/blue review of #842: the floor is INERT in the elastic stage because vanilla's mElastFlag==0 branch is pressure-independent -- kept and pinned, with -Pmin as the control -- and refreshInitialElasticOperator() is live and exact at stage 1, eigen x2.000000000 at pRe = 3*P_atm). Verdict: the mechanism works where a point reaches the floor (324x at p0 = 0.5 kPa) and is REFUTED on the campaign deck at its 7.65 kPa surcharge, where the ring is confined at p ~ 6.25 kPa (1.93x the substeps, +5.9% on the curve). Available, not adopted; the owner decides. Sections 1-5 remain the brainstorm they were."
 priority: high
 owner: nmora
 related:
@@ -234,6 +234,324 @@ benchmark is a real footing or the idealised half-space.
   decision to change the sigmoid's floor is his.
 - Is a declared elastic floor `p_r,e` acceptable to the material's author as a fork parameter
   (default 0, echoed) — or must it stay a deck-level flag only?
+
+## 7. WP-106 — II.1 is BUILT, and what it does is not what the candidate text assumed
+
+> [!abstract] **One line.** `-pRe` exists, it is exactly the elastic-only floor §II.1 and the
+> 2026-09-07 decision memo specified, it adds **no strength** (measured: `eta/M^b` moves under
+> `1e-5` where `-Presidual 1.01` moves it `+18.1 %`), and it cuts the substep seizure by **324×**
+> at a Gauss point that actually reaches the floor — **but the committed curve at those points is
+> NOT inside any certificate tolerance**, and on the ADR's own dumped ring path it cuts **nothing**
+> (0.994×, i.e. very slightly worse) because that point is confined. II.1's *mechanism* is
+> confirmed; II.1 as *the campaign's answer* is not, and this section says why with the numbers.
+> **§7.9 closes it on the BVP:** at the campaign's own 7.65 kPa surcharge the live free-surface
+> ring sits at `p ~ 6.25` kPa — confined — and the floor there costs **1.93× the substeps**, a
+> per-point worst of **18 831** against 1387, and **+5.9 %** on the load-settlement curve, while
+> reaching LESS settlement in the same wall budget. The embedment PM-01 D20 already prescribes
+> has removed the problem II.1 exists to solve.
+
+Built on `wp/106-sanisand-pre-elastic-floor` (draft PR #842), engine `cc4aa6db0`, against the
+pre-change binary at `634824e1f`. Instruments and raw dumps:
+`Ladruno_implementation/wp106_pre_floor/`.
+
+### 7.1 What was built
+
+Exactly the change D2 of `_adr93_decision_2026-09-07.md` specifies, with three refinements the
+source forced:
+
+- **`+ m_PreElastic` goes BEFORE the `m_Pmin` clamp**, not after, so the effective floor is
+  `sqrt(max(p + pRe, p_min)/P_atm)`. That is what the ADR-93 numpy oracle already did
+  (`adr92_p0_oracle/sanisand_implex_oracle.py::elastic_moduli`, whose `Presidual_e` seam predates
+  this WP), and the oracle is where every II.1 number in §3 and `_adr93_p0_ring_replay` came from.
+  A C++ that floored after the clamp would silently not be the thing that was measured.
+- **The flag is `-pRe`** (the ADR's own `p_r,e`, and the oracle's name), with `-Pelastic`
+  accepted as the synonym the memo wrote down.
+- **The initial elastic operator has to be re-derived.** `ManzariDafalias::initialize()` computes
+  `mCe = mCep = mCep_Consistent` at `p = P_atm` at the foot of its own body — i.e. inside the BASE
+  constructor, *before* `applyLadrunoConstants()` has restored the floor. `LadrunoSANISAND` now
+  calls `refreshInitialElasticOperator()` from `initialize()` and from `getCopy(const char*)`;
+  it early-returns at `pRe == 0`, so the default re-executes not one floating-point operation.
+
+Wire, clone, echo, `Print`, `revertToStart` and the parser refusal follow the `m_Presidual`
+pattern exactly (fork `Vector(34) -> Vector(35)`, slot 34). No `setParameter` entry — neither
+`-Presidual` nor `-Pmin` has one, and the floor follows its family. Ledger rows: two in
+`LEDGER_vanilla_files.md` (`ManzariDafalias.{h,cpp}`; the banner regen), one in
+`LEDGER_implementations.md`.
+
+### 7.2 The default is byte-identical — measured, not argued
+
+Full per-step fingerprint (6 strain + 6 stress + the 26-entry `state` + `psi` + `yieldDistance` +
+the ADR-86b substep pair), pre-change binary vs this one, `-pRe` omitted:
+
+| deck | steps | result |
+|---|---|---|
+| drained triaxial, `p0 = 100` kPa, uncapped | 54 | **byte-identical**, md5 `e4b5e3d3c598` |
+| drained triaxial, `p0 = 20` kPa, `-maxSubsteps 20000` | 18 | **byte-identical**, md5 `c1fa7508734b` |
+| drained triaxial, `p0 = 0.5` kPa, `-maxSubsteps 20000` | 13 | **byte-identical** |
+
+`-pRe 0` and the flag omitted are also equal to `0.0` exactly on the zero-free-DOF material-point
+deck. The nine SANISAND / Manzari pytest files read **94 passed / 2 skipped / 2 xfailed on both
+binaries**; the new `tests/test_ladruno_sanisand_pre_floor.py` adds 7 passed / 1 slow-skipped.
+
+### 7.3 The C++ IS the oracle (so §3's II.1 numbers transfer)
+
+ADR-92 gate G0, re-run with the floor switched on: replay the binary's own recorded strain path
+through the numpy oracle at the same `pRe`, worst relative departure over the leg.
+
+| leg | pRe | steps | sigma | alpha | z | epsE |
+|---|---|---|---|---|---|---|
+| `p0 = 20` | 0 | 18 | 5.3e-14 | 4.9e-15 | 1.3e-14 | 3.6e-14 |
+| `p0 = 20` | 1 | 50 | 8.2e-14 | 5.4e-15 | 1.2e-14 | 5.0e-14 |
+| `p0 = 0.5` | 0 | 13 | 7.3e-11 | 1.7e-12 | 1.8e-11 | 1.6e-11 |
+| `p0 = 0.5` | 1 | 40 | **0** | 0 | 0 | 0 |
+| `p0 = 0.1` | 0 | 40 | **0** | 0 | 0 | 0 |
+| `p0 = 0.1` | 1 | 40 | **0** | 0 | 0 | 0 |
+
+G0's bar is `1e-8`. Every leg passes, three of them exactly.
+
+### 7.4 It adds NO strength — the capacity-neutrality gate, passed with room
+
+The tests' own low-confinement drained triaxial (`p0 = 0.01 P_atm = 1.01` kPa, 1200 steps, the
+deck `test_presidual_is_the_low_p_defect` uses), read at the end of the path:
+
+| arm | `p` | `q` | `eta` | `M^b` | `eta/M^b − 1` |
+|---|---|---|---|---|---|
+| `pRe = 0` | 3.29428 | 6.85255 | 2.08014 | 2.07858 | **+0.00075** |
+| `pRe = 0.1` | 3.29357 | 6.85105 | 2.08013 | 2.07858 | **+0.00074** |
+| `pRe = 1.0` | 3.29374 | 6.85122 | 2.08007 | 2.07852 | **+0.00075** |
+| `-Presidual 1.01` (control) | 5.46304 | 13.35998 | 2.44552 | 2.07022 | **+0.18128** |
+
+`pRe = 1` kPa moves `eta` by **−0.0034 %** and `eta/M^b` by **under `1e-5` absolute**;
+`-Presidual` at the same 1 kPa moves `eta/M^b` by **+18.1 %**. At `p0 = 20` kPa on the last step
+both arms reached, `eta` 1.82036 → 1.82259 and `eta/M^b` 0.91311 → 0.91421, i.e. **+0.12 %** —
+inside the 0.5 % bar the WP was given. D2's capacity-neutrality gate is met at the Gauss-point
+level. (The BVP-level half of that gate — the strip control — was **not run**; see §7.7.)
+
+### 7.5 The cost: it works, and only where the point reaches the floor
+
+Same prescribed path, same steps, `substeps` response summed over the steps BOTH arms completed.
+"reach" is how far the global solve got before it stopped.
+
+| `p0` [kPa] | common steps | substeps `pRe 0` | substeps `pRe 1` | **cut** | reach `pRe 0` | reach `pRe 1` |
+|---|---|---|---|---|---|---|
+| 20, `-maxSubsteps 20000` | 18 | 7373 | 7299 | **1.010×** | 18/50 | **50/50** |
+| 20, uncapped | 33 | 13476 | 13471 | **1.000×** | 33/90 | **73/90** |
+| **0.5**, cap 20000 | 13 | **20409** | **63** | **324×** | 13/40 | **40/40** |
+| 0.1, cap 20000 | 40 | 118 | 67 | **1.76×** | 40/40 | 40/40 |
+
+At `p0 = 0.5` kPa the unfloored arm is the ADR-93 seizure itself — **1570 substeps per step** —
+and `pRe = 1` kPa reduces it to **4.8 per step** while turning a leg that stalls at step 13 into
+one that completes. That is II.1's mechanism, demonstrated. At `p0 = 20` kPa the substep saving
+is **nil** (1.00×); the floor only buys reach there, by keeping the tangent out of the regime
+where the cap fires.
+
+**And it is not monotone in the parameter.** `pRe = 0.1` kPa at `p0 = 0.5` kPa **failed at step 1**
+(0/40) where both `pRe = 0` (13 steps) and `pRe = 1.0` (40 steps) ran. A small floor is not a
+small improvement; the deck has to be measured at the value it will use.
+
+### 7.6 The ADR's own ring path: the floor cuts NOTHING there
+
+`wp106_pre_floor/ring_delta.py` re-runs `_adr93_p0_ring_replay`'s arms against the **`pRe = 0`**
+arm (the §3 gate measured every arm against the vanilla `p_r = 1.01` control, which mixes the
+strength floor's effect into the column):
+
+| leg | `p_r,e` | substeps | mean/step | **cut vs `pRe 0`** | median `d(sigma)` | max `d(sigma)` | min `p` |
+|---|---|---|---|---|---|---|---|
+| dense | 0 | 9812 | 64.1 | 1.000× | 0 | 0 | 6.537 |
+| dense | 0.1 | 9831 | 64.3 | **0.998×** | 3.52e-3 | 4.01e-3 | 6.541 |
+| dense | 1 | 9875 | 64.5 | **0.994×** | 3.40e-2 | 3.86e-2 | 6.574 |
+| gorini | 0 | 11163 | 66.1 | 1.000× | 0 | 0 | 6.431 |
+| gorini | 0.1 | 11173 | 66.1 | **0.999×** | 4.17e-3 | 4.44e-3 | 6.435 |
+| gorini | 1 | 11223 | 66.4 | **0.995×** | 4.03e-2 | 4.29e-2 | 6.467 |
+
+The floor makes that path **slightly more expensive**, and moves committed stress by **3.4–4.0 %**
+at `pRe = 1` kPa. Both follow from one fact the P0 report already stated and this WP confirms
+from the other side: **the instrumented point is CONFINED** (`min p` 6.4–6.5 kPa, `clamp_fired`
+0 on all 362 steps). `sqrt((6.5 + 1)/6.5) = 1.074` — so at `pRe = 1` kPa the floor is a 7 % move
+on `G` at a point that never needed one. The floor does not know where the ring is; it acts
+wherever `p` is comparable to `pRe`.
+
+**Therefore: `d(sigma)` is NOT inside a certificate tolerance wherever the floor does anything.**
+3.4–4 % on the ring path, 0.65 % median at `p0 = 20`, 5.9 % median at `p0 = 0.1`, and a *factor*
+at `p0 = 0.5` (the two arms there are running materials with genuinely different stiffness, one of
+which is seizing). A point with no stiffness and a point with a floored stiffness are not the
+same material, and the whole purpose of II.1 is that they should not be. The requirement "the
+committed curve change is inside the certificate tolerance" is **met only at `pRe = 0`**, i.e.
+only where the feature is off — so it is the wrong acceptance test for this candidate, and §7.4's
+capacity-neutrality gate (strength unmoved) is the right one. Recording this because the WP was
+given the tolerance framing and it should fail loudly rather than be quietly reinterpreted.
+
+**In one line, because the reframing and the `+6–8 %` curve are the SAME fact and not a trade:**
+the floored `K, G` enter the plastic multiplier
+`NextDGamma = (2G n:de_dev − K de_v (n:r)) / (Kp + 2G(B − C tr(n³)) − K D (n:r))` with `Kp`
+unfloored, so `L` changes by `λE/(Kp + λE)` against `E/(Kp + E)` with `λ = sqrt((p + pRe)/p)` —
+non-zero everywhere except in the limit `b:n → 0`, i.e. **at the bounding surface**. A stiffness
+floor is therefore path-changing everywhere and capacity-neutral exactly where capacity is
+defined; "curve inside the certificate tolerance" is unsatisfiable by *any* working version of
+II.1, while "capacity-neutral" is the property II.1 actually promises.
+
+### 7.7 What was NOT run
+
+- ~~**The BVP leg.**~~ **RUN — see §7.9**, which was written after this list and answers it:
+  `--pRe` was added to `sanisand_tau0_band.py`, both arms were run at the campaign's 7.65 kPa
+  surcharge, and the floor is **refuted** on that deck (1.93× the substeps, +5.9 % on the curve,
+  less settlement in the same wall budget) because the live ring is confined at `p ~ 6.25` kPa.
+  Still not run at the finer meshes (`h0 = 0.5`, `0.25`) or at the `p' ~ 5 kPa` surface row.
+- The full Zone-A sweep (only the nine SANISAND/Manzari files + the new one were run).
+- A real two-rank MP run. The wire is gated by a FileDatastore round trip, not by MPI.
+- D5a / II.2 (the `D_factor` sigmoid at `p_r = 0`) — untouched, still open, still the material
+  author's call.
+
+### 7.8 Status of II.1 after WP-106
+
+**BUILT and available; not adopted.** `-pRe` defaults to 0 and no deck runs it unless it asks.
+The decision memo's D1 ("the fork's fallback of record") stands, with three things now known that
+it assumed:
+
+1. the floor **does** remove the seizure where the point reaches it (324× at `p0 = 0.5` kPa);
+2. it adds **no** strength (§7.4), so the D2 capacity gate is met at the Gauss point;
+3. it is **not** free and **not** monotone — it perturbs `G` by ~7 % anywhere `p ~ pRe`, it made
+   the ADR's own (confined) ring path marginally worse, and `pRe = 0.1` broke a leg that both 0
+   and 1.0 ran.
+
+A value is therefore a **declared, deck-level modelling statement that must be measured on the
+deck**, not a default anyone can inherit. **§7.9 then measured it on the campaign's own deck and
+the answer there is no** — with PM-01 D20's 7.65 kPa embedment in place the ring is confined at
+`p ~ 6.25` kPa and the floor costs 1.93× the substeps for a +5.9 % change in the answer. II.1
+stays available, and stays for a deck whose ring genuinely reaches `p -> 0`.
+
+### 7.9 The BVP leg, run — and it REFUTES the cost case on a real footing
+
+§7.7 called this the owed measurement and the only one that could decide II.1 for the campaign.
+It is now run, and the answer is **no**.
+
+`--pRe` was added to `Ladruno_files/testbed/hypo_bearing/sanisand_tau0_band.py` (the fork's own
+strip driver, which already had `--surcharge`), together with a per-committed-step **substep
+census** — the ADR-86b `substeps` response summed over every Gauss point, plus the per-point max
+and its element, plus the same two over the free-surface band beside the footing edge. Six new
+curve columns; the flag is emitted only when non-zero, so every pre-WP-106 leg is byte-identical.
+
+**The two arms.** Plane-strain strip footing, `B = 2` m, implicit (no `-implex`), the campaign's
+`--surcharge 7.65` kPa (PM-01 D20's minimum-embedment pressure), IntScheme 1, TanType 2.
+**Coarsened on purpose and said out loud:** the COARSE leg only (`h0 = 1.0` m, Gorini's calibrated
+`e_init = 0.6944`, 200 hexes / 462 nodes), `--wall 2000` (33 min) per arm, `--maxsubsteps 20000`
+on **both** arms — GATE U measured every uncapped leg of this deck seizing, so uncapped both arms
+would have measured the wall budget rather than the material. Engine `cc4aa6db0`.
+
+**The ring is CONFINED at this surcharge.** `p_min` over the whole mesh after K0 gravity is
+**6.25 kPa** on both arms (the surcharge is on the free surface and the coarse mesh puts the
+top Gauss point ~0.2 m down). The `p' ~ 5 kPa` the F13 request aimed at needs a finer surface
+row; at `h0 = 1.0` it is 6.25, and that difference turns out to decide the result.
+
+| arm | mode | steps | `s/B` in ~2000 s | `q` at the end [kPa] | wall/step (median) | substeps total | /step (median) | **max @ any point** | band total | band /step (median) | band max | failed | subdivisions |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `pRe = 0` | WALL | 66 | **0.0603** | 1392.94 | **8.88 s** | 3 848 894 | **26 348** | **1 387** | 885 373 (23.0 %) | 6 847 | 1 387 | 55 | 0/80 |
+| `pRe = 1` | WALL | 137 | **0.0389** | 991.49 | **11.52 s** | 6 729 191 | **50 789** | **18 831** | 2 421 702 (36.0 %) | 19 816 | 16 792 | 245 | 16/80 |
+
+**The floor makes this deck worse on every axis it was supposed to improve.** Median substeps per
+step **1.93× higher**; the worst single Gauss point goes from 1387 to **18 831**, within 6 % of
+the 20 000 cap; the near-surface band's share of the mesh's substep cost rises from 23 % to 36 %;
+wall per step rises 30 %; the run reaches **less** settlement in the same budget (0.0389 vs
+0.0603) and needs 245 failed attempts and 16 subdivisions against 55 and 0. No material refusal
+fired on either arm.
+
+**Committed load–settlement delta** (interpolated onto a common `s/B` grid over the range both
+arms reached, 61 samples): **median +5.88 %, mean +5.99 %, max +7.96 %**; at the common end
+`s/B = 0.03889`, `q` 920.0 → 991.5 kPa (**+7.77 %**). The matched-settlement checkpoints the
+driver takes independently agree and show the wall cost too:
+
+| `s/B` | `q` `pRe 0` | `q` `pRe 1` | Δ | `t` `pRe 0` | `t` `pRe 1` |
+|---|---|---|---|---|---|
+| 0.002 | 63.864 | 68.193 | **+6.78 %** | 38 s | 42 s |
+| 0.005 | 136.206 | 145.290 | **+6.67 %** | 118 s | 142 s |
+| 0.010 | 258.801 | 275.181 | **+6.33 %** | 283 s | 317 s |
+| 0.020 | 495.119 | 521.006 | **+5.23 %** | 601 s | 653 s |
+| 0.040 | 951.075 | *(not reached)* | — | 1244 s | — |
+
+**Why, and it is the §7.6 mechanism one level up.** The census's worst Gauss point on the
+unfloored arm sits in **element 120, `x = 1.5` m, `z = -0.5` m** — the free-surface element
+immediately outboard of the footing edge, i.e. exactly the ADR's ring. It is at `p ~ 6 kPa`, not
+at the floor. Adding 1 kPa there is a `sqrt(7.25/6.25) = 1.077` bump on `G` at a point that had
+stiffness already; it stiffens the whole near-surface region, raises the load path by ~6 %, and
+drives the material harder per step — **more** substeps, not fewer. §7.5 said the floor pays only
+where the point *reaches* the floor; §7.6 said the dumped ring point does not; §7.9 now says the
+**live** ring point under the campaign's own surcharge does not either.
+
+**What this does and does not settle.** It settles II.1 for *this* deck at *this* surcharge: the
+7.65 kPa embedment PM-01 D20 already prescribes has removed the zero-confinement ring, so there is
+nothing left for an elastic floor to do and a floor is a 6 % strength-free change to the answer
+for a 1.9× substep bill. It does **not** settle a deck whose ring really does sit at `p -> 0` —
+the `p0 = 0.5` kPa Gauss-point leg (§7.5, 324× cheaper) is the existence proof that the mechanism
+works there. **Both arms are WALL-terminated, so neither `q` is a capacity** — 1392.94 and 991.49
+kPa are where the runs stopped. Not run at finer meshes (`h0 = 0.5`, `0.25`), and not run at the
+`p' ~ 5 kPa` surface row the request aimed at, which needs the finer mesh; the sign of the effect
+is unlikely to flip between 6.25 and 5 kPa, but that is an inference, not a measurement.
+
+Artifacts: `Ladruno_files/testbed/hypo_bearing/wp106_bvp/{pRe0,pRe1.0}/` (curve CSVs with the six
+new columns, leg JSON, field dumps, engine logs) and `wp106_bvp.log`; roll-up
+`Ladruno_implementation/wp106_pre_floor/bvp_summary.py`.
+
+### 7.10 Red/blue review of #842 — where the floor is live, and where it is not
+
+An adversarial re-run of §7.1–§7.9 on the branch binary reproduced every number above and found
+one thing the WP had claimed and not measured: **`-pRe` does not move a stage-0 (gravity / K0)
+leg, or the initial tangent read before the stage flip, at any magnitude.** `pRe = 1e6` — a floor
+that multiplies `G` by 99.5 — leaves an elastic-stage leg bit-identical, and
+`refreshInitialElasticOperator()`, documented in three places as load-bearing, appeared to deliver
+nothing.
+
+**Cause, and why it is not a defect.** `mElastFlag` is a static on `ManzariDafalias`, `0` in every
+constructor and flipped by `updateMaterialStage ... 1`. At `0`, all three `GetElasticModuli`
+overloads take the branch
+
+```
+G = G0 * P_atm * (2.97 - e)^2 / (1 + e);          // NO sqrt(pn / P_atm) factor
+```
+
+so the elastic stage is **pressure-independent** and `pn` is computed and unused. `-Pmin` — the
+clamp on the line below the seam — is inert there for the same reason: `0.0101` vs `10.0` kPa, a
+31× move on `G` if the branch were live, is bit-identical too. There is no confinement dependence
+at stage 0 for a **confinement** floor to floor. Forcing one in would not remove a stage-flip
+stiffness switch — vanilla's own switch (a fixed `G(P_atm)` for gravity, then the real law) is
+larger and is the entire point of the staged idiom — it would silently restate the `G0`
+calibration in the gravity leg of every `-pRe` deck. **Decision: the elastic-stage inertness is
+kept, documented, and pinned**, with `-Pmin` as the control so the pin records a property of the
+vanilla stage rather than an assertion about this flag.
+
+**`refreshInitialElasticOperator()` is live, and exact.** It is unobservable only inside that same
+`mElastFlag == 0` regime. At `mElastFlag == 1` — `updateMaterialStage ... 1` followed by
+`revertToStart` (`ops.reset()`), which is the path `initialize()` is on — the initial elastic
+operator, and any `eigen` formed from it, scales by exactly `sqrt((P_atm + pRe)/P_atm)`:
+
+| `pRe` | predicted factor | measured, all six modes of an unstrained `stdBrick` |
+|---|---|---|
+| `3*P_atm` = 303 kPa | `sqrt(404/101)` = **2** | **2.000000000** (λ₁ 67443.766571864 → 134887.53314373) |
+
+Both facts are now `zone_a` gates (`test_pre_floor_scales_the_initial_elastic_operator`,
+`test_pre_floor_is_inert_in_the_elastic_stage_and_that_is_correct`). The one remaining window —
+stage flipped to 1 but nothing re-initialised and no strain seen — still reports the stage-0
+operator; that is vanilla's behaviour at `pRe = 0` as well, and `-pRe` neither creates nor widens
+it.
+
+**One further measurement the review forced.** The "`+ m_PreElastic` BEFORE the `m_Pmin` clamp"
+ordering — which §7.1 and the PR body called decisive — is **behaviourally unobservable**. A
+clamp-then-add build was compiled (all three overloads) and run: byte-identical to the correct
+build on the gate deck and on `-Pmin` 10.0 / 30.0 variants. The clamp inside `GetElasticModuli`
+never fires on a staged deck — at stage 0 the branch that reads `pn` is not taken, and at stage 1
+`Stress_Correction`'s low-`p` rescue holds committed `p` at or above `m_Pmin` from the first
+plastic step (at `-Pmin 10` the only sub-`p_min` steps are the five stage-0 ones; `p` jumps
+5.725 → 11.15 at the flip). The ordering therefore rests on **oracle provenance** — it is what
+`sanisand_implex_oracle.py::elastic_moduli` does, and that oracle produced every II.1 number — and
+not on measured behaviour. It is pinned in the SOURCE (the seam line must appear exactly three
+times; no unfloored `pn` line may survive), which is the only place it is observable.
+
+**Also from the review, now on the branch:** the gate's ON-side assertions were one-sided
+inequalities, so the committed stress is now **pinned** at `pRe = 1.0` to 1e-6 relative on both
+`getCopy` branches, with a 1 %-perturbed leg beside it to fix the pin's resolution (2.778e-4, 278x
+outside the pin); the parser refuses a repeated `-pRe`, warns above `0.1*P_atm` and prints a NOTE when
+`pRe <= p_min` (where the clamp already dominates as `p -> 0`, so the ring gains nothing while `G`
+is still perturbed wherever `p ~ pRe`); and §7.6's reframing is stated as the same algebra as the
+`+6–8 %` curve rather than as a trade.
 
 ## Log
 
@@ -496,3 +814,59 @@ benchmark is a real footing or the idealised half-space.
   the free-surface ring is still not where these legs stop — they stop at confined softening
   points in the shear zone — so ADR 93's own question remains open and un-reached.
 
+- 2026-09-15 (WP-106, draft #842, engine `cc4aa6db0`) — **II.1 BUILT: `-pRe`, the elastic-only
+  floor, exactly as §II.1 and the 2026-09-07 memo's D2 specify.** Full record in §7 above. The
+  three findings that were NOT in the candidate text: (1) it adds no strength at all —
+  `eta/M^b` moves by under `1e-5` at `pRe = 1` kPa on the 1.01 kPa drained triaxial where
+  `-Presidual 1.01` moves it `+18.1 %`, so D2's capacity gate is met at the Gauss point;
+  (2) it removes the seizure **only where the point reaches the floor** — 20409 → 63 substeps
+  (**324×**) over 13 steps at `p0 = 0.5` kPa, but **1.00×** at `p0 = 20` kPa and **0.994×**
+  (slightly worse) on this ADR's own dumped ring path, because that point is CONFINED at
+  `p` 6.4–6.5 kPa and a 1 kPa floor is a 7 % perturbation of `G` there; (3) it is **not monotone**
+  — `pRe = 0.1` kPa at `p0 = 0.5` kPa failed the global solve at step 1 where both 0 and 1.0 ran.
+  `pRe = 0` is byte-identical to `634824e1f` on three fingerprinted decks (md5-equal, including
+  the 26-entry `state`), and the C++ reproduces the numpy oracle's `Presidual_e` to `8e-14` or
+  exactly, so §3's oracle numbers transfer. **Requirement that FAILED as framed:** "the committed
+  curve change is inside the certificate tolerance" holds only at `pRe = 0`; wherever the floor
+  acts the curve moves by 0.65 % (`p0 = 20`) to 3.4–4.0 % (ring path) to a factor (`p0 = 0.5`),
+  which is what a stiffness floor IS. §7.6 argues the capacity-neutrality gate is the right
+  acceptance test and the tolerance framing is the wrong one. **Still owed and still decisive:
+  the BVP leg** (strip control / ADR-95 `hypo_bearing` at a 7.65 kPa surcharge, with `--pRe`
+  added to `sanisand_tau0_band.py`) — it is the only measurement that can say whether a real
+  footing's ring reaches the floor at all, which §7.6 shows the dumped one does not. Not adopted;
+  default 0; owner's call.
+- 2026-09-16 (WP-106 F13, same branch / PR #842, engine `cc4aa6db0`) — **the BVP leg is RUN and
+  it REFUTES II.1 on the campaign's own deck.** §7.9. `--pRe` added to `sanisand_tau0_band.py`
+  (emitted only when non-zero, so every prior leg is byte-identical) together with a
+  per-committed-step **substep census** — the ADR-86b `substeps` response over every Gauss point,
+  the per-point max and its element, and the same two over the near-surface band beside the
+  footing edge (six new curve columns). Coarse leg only (`h0 = 1.0`, `e_init = 0.6944`, 200
+  hexes), `--surcharge 7.65`, `--maxsubsteps 20000` and `--wall 2000` on BOTH arms, implicit.
+  **`p_min` after K0 gravity is 6.25 kPa on both arms** — at this surcharge the live ring is
+  CONFINED, so there is nothing for an elastic floor to floor. Result: `pRe = 1` kPa costs
+  **1.93×** the median substeps per step (50 789 vs 26 348), takes the worst single Gauss point
+  from **1387 to 18 831** (within 6 % of the 20 000 cap), raises the band's share of the substep
+  bill from 23 % to 36 %, costs 30 % more wall per step, needs 245 failed attempts and 16
+  subdivisions against 55 and 0, reaches **less** settlement in the same budget (s/B 0.0389 vs
+  0.0603), and moves the committed load-settlement curve by **+5.88 % median / +7.96 % max**
+  (matched-settlement checkpoints agree: +6.78 / +6.67 / +6.33 / +5.23 % at s/B 0.002 / 0.005 /
+  0.01 / 0.02). The unfloored arm's worst point is **element 120, `x = 1.5` m, `z = -0.5` m** —
+  the free-surface element immediately outboard of the footing edge, i.e. the ADR's own ring,
+  measured at `p ~ 6` kPa rather than at the floor. So §7.5's rule holds one level up: the floor
+  pays only where the point REACHES the floor, and PM-01 D20's 7.65 kPa embedment has already
+  removed that state. **Both arms are WALL-terminated — neither `q` is a capacity.** Not run:
+  the finer meshes (`h0 = 0.5`, `0.25`) and the `p' ~ 5 kPa` surface row the F13 request aimed
+  at, which needs them. II.1 stays available and stays unadopted.
+- 2026-09-16 — **Red/blue review of #842 (§7.10).** The red team reproduced every §7 number and
+  found one unmeasured claim: `-pRe` moves neither a stage-0 leg nor the initial tangent, at any
+  magnitude. Root cause: `mElastFlag == 0` selects the branch of `GetElasticModuli` WITHOUT the
+  `sqrt(pn/P_atm)` factor, so the gravity stage is pressure-independent and `pn` — with `-Pmin`
+  alongside it — is computed and unused. A confinement floor has nothing to floor there.
+  **Kept and pinned rather than "fixed":** forcing the floor into stage 0 would restate the `G0`
+  calibration in every `-pRe` deck's gravity leg and would not remove vanilla's own (larger)
+  stage-flip switch. `refreshInitialElasticOperator()` is NOT dead — at `mElastFlag == 1` it
+  scales the initial tangent by exactly `sqrt((P_atm + pRe)/P_atm)`, measured `2.000000000` on
+  all six modes at `pRe = 3*P_atm`. Committed stress at `pRe = 1.0` is now pinned to 1e-6 with
+  the after-the-clamp mutant proxy run and rejected; the parser refuses a repeated `-pRe`, warns
+  above `0.1*P_atm` and NOTEs `pRe <= p_min`; the docs now scope "elastic-only" to the VARIABLE
+  and state that §7.6's reframing and the `+6–8 %` curve are one fact. Gate 7/1 -> 13/1.

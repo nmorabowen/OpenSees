@@ -6012,6 +6012,7 @@ failure mode you happened to observe.
 - **Bites:** the elastic stage sets `α = dev(σ)/p` every step (`ManzariDafalias.cpp:1055`), so at the flip from `updateMaterialStage 0` to `1` the material already holds `α = r_gravity ≠ 0` while `α_in = 0`. `Elastic2Plastic()` never touches `α_in` — the init lines that would set it are commented out (`:5139-5141`). The only place `α_in` ever gets initialised is the sign test inside `integrate()` (`:1005-1013`), which fires on the FIRST plastic evaluation after the flip. That initialisation is decided by the sign test on the first plastic increment; deterministic on a real deck, noise only on an exactly-zero re-equilibration where the fork's synthetic return uses an exactly zero increment and is neutral. Esmeralda 887fea475 (real deck, reversal-noise guard confined to primed states) confirms this: the sign test sets `α_in := α` at 28 629/34 560 points on step 1, identical every run — a genuine continuing-loading decision, not round-off — and the implicit path then returns to the pre-P2 number to the digit (6.511 / 11.539 / 16.117 / 20.528 vs `c162833ed`). The earlier, wider P2-5/5b/5c reversal-noise guard (built to fix the unrelated hold-corruption defect) had suppressed the sign test's reset unconditionally at every state, not just primed ones, which is what produced the 23-33 % soft implicit path from step 1 (Esmeralda 146574/146586: first rows 1.296 / 2.6 kN vs 6.511 on `c162833ed`) — a guard-scope defect, not a defect in the sign test itself.
 - **Consequence:** a hold or re-equilibration step placed EXACTLY at the flip (an exactly-zero increment) is the one case where the sign test is genuinely neutral, because the fork's synthetic zero-increment return has no direction to decide from; that case is handled separately (the `-implex` zero-increment companion return, P2-7c's per-instance detection). On any real (non-zero) first post-flip increment the sign test is deterministic and decides the true loading direction — there is no defect there to work around.
 - **Rule:** the fork's `-flipAlphaIn init|vanilla` defaults to `vanilla`: leave the sign test in control, since it is deterministic on a real deck and reproduces real `ManzariDafalias` exactly. `init` (opt-in) forces `α_in := α` unconditionally at every point at the flip — a declared, opt-in modelling variant, not a defect fix, and every P2-7 curve names which flag it used. The reversal-noise guard now applies only to PRIMED states (points that have taken a plastic commit since the flip), so it can no longer intercept the flip's own sign-test initialisation.
+- **Superseded 2026-09-18 (WP-112 / TIMs F14): the default is now `init`.** The rule above held on the Esmeralda R3 deck and not in general -- after an elastic-stage hold the sign test reads round-off; see "The loading-reversal test reads the SIGN of round-off after elastic holds" below.
 
 ### `updateMaterialStage` reaches one element; the static `mElastFlag` hides it (ADR-92 P2-7c)
 - **Bites:** `MaterialStageParameter::setDomain()` walks the domain's elements and calls `theEle->setParameter(...)` in a loop that stops the instant one element accepts the parameter — `while (((theEle = theEles()) != 0) && (theResult == -1))` (`SRC/domain/component/MaterialStageParameter.cpp:76-78`), with the comment on `:75` spelling out the assumption: "note because of the way this parameter is updated only need to find one in the domain". Measured on the fork's R3 footing (200 elements, 1600 Gauss points): `ops.updateMaterialStage('-material', 1, '-stage', 1)` reached exactly ONE element's 8 Gauss points. Vanilla never noticed because `ManzariDafalias::mElastFlag` is a class-wide `static`, so one dispatch flips every instance at once; P2-7's per-instance work (the `α_in` flip-init, the IMPL-EX zero-increment companion return) ran at 8/1600 points instead of all of them, and on `887fea475` the `init` vs `vanilla` `-flipAlphaIn` arms were indistinguishable as a result — not because the fix was wrong, but because it never ran on 1592 of the 1600 points.
@@ -7194,3 +7195,432 @@ hardening. The comment is corrected in the same PR.
 - **Fix:** `OPS_clearAllNDMaterial()` (`SRC/material/nD/NDMaterial.cpp`, the nD-material wipe hook that `SRC/tcl/commands.cpp`, `SRC/interpreter/OpenSeesCommands.cpp` and `PythonAnalysisBuilder.cpp` all call) now calls `ladrunoSanisandResetImplexGlobals()`, which zeroes the whole singleton. Same rule and precedent as `Ladruno::EnergyChannelRegistry::instance().resetOnWipe()` in `Domain::clearAll()` (ADR-69/72): wipe destroys every producer (each Gauss point's material) and consumer (recorders, the elements the response is read through), so a total carried across it is about objects that no longer exist. Hooked in the material hook rather than `Domain::clearAll()` because the latter also runs from `Domain::recvSelf()` on an MP rank mid-setup, which is not a wipe.
 - **What resets and what does not (pinned by `tests/test_wp104_implex_refusals_wipe_reset.py` + the classic-Tcl twin `tests/tcl/wp104_implex_refusals_wipe.tcl`):** `wipe` -> everything in the singleton, including the `firstCommitter` commit-round marker (a dangling address after a wipe; left alone it would degrade `avgImplexError` to since-process-start for the rest of the process, or reset mid-round if the allocator reuses the address). `ops.reset()` / `revertToStart()` -> NOTHING in the singleton (same model, read legs as deltas); the per-instance latch (slot 4) IS cleared there, as WP-99 says. The 10-per-process `opserr` throttles at the refusal sites -> never (a warning budget is a log-volume contract, not a census; a gate that needs a fresh throttle runs in a child process, see the ADR-86b entry).
 - **Rule:** inside one model, keep reading the ledger as deltas. Across models, `wipe` is the zero point and a fresh material MUST read `[0,0,0,0,0,0]` -- assert it at model start if a harness depends on the end-of-run check. Any future process-wide diagnostic in a material follows the same shape: singleton + `resetOnWipe()` + a call from the family's `OPS_clearAll*` hook.
+## Threading the element loop — five things a `static` grep will not find (WP-107, ADR-75b L3-1)
+
+### `Matrix::Solve` and `Matrix::Invert` run on a PROCESS-WIDE scratch buffer that they FREE AND REALLOCATE
+
+`Matrix::matrixWork` / `Matrix::intWork` (`SRC/matrix/Matrix.cpp:51-52`) are class
+statics. `Matrix::Solve(Vector&,Vector&)` (`:373`), `Solve(Matrix&,Matrix&)`
+(`:461`) and `Invert` (`:567`) each contain the same block: if the matrix is
+bigger than the fixed work area, `delete [] matrixWork; matrixWork = new
+double[dataSize];` — then they copy `data` into it and factor in place.
+
+So any code path reachable from a threaded loop that calls either method is not
+merely a data race on a shared buffer: it is a **use-after-free**, because one
+thread can free the buffer another thread is mid-factorization on. A grep for
+`static` inside the element or material file finds nothing — the static is three
+directories away in `SRC/matrix/`.
+
+This is the concrete reason WP-107's allowlist refuses `ManzariDafalias`
+`IntScheme 2` / `4` (their `NewtonSol*`/`NewtonIter*` call both) and
+`LadrunoQuad -formulation eas` (its static condensation inverts `Kaa`), even
+though nothing about those paths *looks* shared. The `Matrix` **constructors**
+also lazily allocate that buffer, which is benign in practice only because
+thousands of `Matrix` objects are built during model construction on the master
+thread — do not rely on that if a threaded phase is ever added before model
+build completes.
+
+### Re-entrancy of an element is a property of its whole call graph, and of its CONFIGURATION — not of its class
+
+Two traps that the obvious "audit the element class" framing misses:
+
+1. **The material decides.** `ManzariDafalias` is re-entrant under `IntScheme 1`
+   (ModifiedEuler: no static work arrays, no `Matrix::Invert`) and is NOT under
+   `IntScheme 2` or `4`. Same class, same object, opposite answers — which is why
+   WP-107 made the allowlist a **runtime virtual** (`ladrunoThreadSafeUpdate()`)
+   rather than a class-tag table. The same holds one level up: `LadrunoQuad` is
+   re-entrant for `std`/`bbar`/`ssp` under `-geom linear` and is not for `eas` or
+   `-geom finite`.
+2. **A diagnostic ledger can block threading even when the physics is clean.**
+   `LadrunoSANISAND` under `-implex` keeps a process-wide accumulator
+   (`LadrunoImplexGlobals`) whose `sumError`/`maxError` are **floating point**.
+   Adding an atomic does not fix it: a threaded sum changes the reported average's
+   last bits with the thread count, which is exactly the determinism the threaded
+   loop exists to preserve. The right answer was to refuse, not to "make it
+   thread-safe".
+
+### `Node`'s trial-state GETTERS allocate
+
+`Node::getTrialDisp()` (`Node.cpp:590`), `getTrialVel()`, `getTrialAccel()` and
+friends lazily call `createDisp()` / `createVel()` / `createAccel()`, which
+`new` a `4*numberDOF` array and build four `Vector`s over it. A read-only-looking
+`const Vector &d = theNodes[a]->getTrialDisp();` in an element's `update()` is
+therefore a **write** the first time it runs on a node. Two elements sharing a
+fresh node both allocate: last-writer-wins, the other allocation leaks, and a
+`const Vector&` already handed out points into the freed buffer.
+
+Exactly three `create*` functions exist and all lazy getters funnel through them,
+so a serial pre-pass touching those three getters on every node closes the hazard
+completely — which is what `Domain::ladrunoThreadedUpdate()` does before entering
+its parallel region.
+
+### An `extern` redeclaration in a `.cpp` breaks when the definition becomes `thread_local`
+
+Making `ops_TheActiveElement` `thread_local` compiled everywhere that included
+`OPS_Globals.h` / `G3Globals.h`, and failed with MSVC **C2370 "redefinition;
+different storage class"** in the two files that had declared it themselves:
+`LadrunoDispBeamColumn2d.cpp:60` and `3d.cpp:56`. If you change the storage class
+of a global in this tree, grep for local `extern` copies of it — the headers are
+not the whole story.
+
+### The profiler's deep gate cannot be on while the loop is threaded
+
+`OPS_PROFILE_SCOPE_DEEP_NAMED` is gated on `enabled() && deep()`
+(`ProfilerMacros.h:90-93`), and every `~ElemScope` does a lazy `std::map` insert
+plus counter read-modify-writes on the node the master thread built
+(`Profiler.cpp:115-124`). Concurrent `std::map` insertion is undefined behaviour,
+and `Profiler.h:59-63` states the precondition ("each thread owns its own tree")
+that this violates. So `Domain::ladrunoThreadedUpdate()` **refuses** to thread
+while the deep gate is armed.
+
+The practical consequence for anyone benchmarking: the per-loop *fraction* is a
+property of the SERIAL baseline, so measure it with the deep profiler at 1
+thread, and measure the threaded runs on wall time with the profiler off. Trying
+to profile a threaded run deeply gets you a serial run and a confusing table.
+
+### A process-wide `static bool` "warn once" latch makes every model after the first MUTE (WP-107, red-team S3)
+
+The pattern is everywhere in this codebase and it is wrong whenever the message
+describes a **per-model** decision rather than a per-process one:
+
+```cpp
+static bool warned = false;
+if (!warned) { warned = true; opserr << "WARNING ..."; }
+```
+
+WP-107's threaded element loop re-audits the domain on *every* `Domain::update()`,
+so `wipe` + rebuild, a runtime `element`, and `remove element` were all handled
+correctly — but with three such latches, only the FIRST model in the process ever
+said what it had decided. Measured: clean deck announces THREADED; `wipe` + a deck
+with a bad element 7 refuses correctly and says so; `wipe` + a deck with a bad
+element 33 refuses **silently**; `wipe` + a clean deck threads **silently**. A run
+that quietly went serial and a run that stayed threaded then look identical, which
+is the exact confusion the message exists to prevent. A one-process-per-run bench
+driver hides it; pytest, apeGmsh and any in-process parameter study do not.
+
+**Rule:** latch per *(owning object, outcome, identifying tag, parameter)*, not per
+process, and give the owning object a generation counter that its mutators bump
+(`Domain::addElement` / `removeElement` / `clearAll` here). Keep the steady-state
+quiet so the message cannot become per-iteration spam — both failure modes are
+real, and the test file asserts both directions.
+
+### A speed-up above your own Amdahl ceiling is a measurement defect, not a result (WP-107, red-team S4)
+
+WP-107 reported 1.11x at 8 threads on a deck whose loop-A fraction it had itself
+measured at 7.80 %, i.e. a computed ceiling of **1.08x**. The number was above the
+ceiling in the same document and nobody flagged it. Re-measured on an idle box:
+1.03x / 1.03x / **0.94x** at 2/4/8 threads — 8 threads is a *regression*.
+
+Two traps in one:
+
+1. **Check every measured speed-up against the ceiling you derived.** Exceeding it
+   is proof the measurement is noise (or that the fraction is wrong); it is never
+   good news.
+2. **"The box was busy, so this is a lower bound" is a sign error as often as not.**
+   Contention inflates the serial baseline *and* suppresses the oversubscription
+   penalty of the wide thread counts. Whether the bias helps or hurts depends on
+   the deck, so the caveat is never a substitute for re-running idle.
+
+### A whole-file CRLF→LF rewrite of a vanilla file is invisible in review and permanent in `git blame` (WP-107, red-team S1)
+
+An editor helpfully normalised `SRC/material/nD/UWmaterials/ManzariDafalias.{cpp,h}`
+while making a 78-line change. Both files are pinned `-text` in `.gitattributes`, so
+git stores the bytes verbatim and nothing normalised them back: the PR diff read
+**5635/5584 and 431/410**, ~11,000 of its 11,474 additions were line-ending noise,
+the review surface was inflated ~50x, `git blame` pointed the entire file at the WP,
+and a concurrent PR touching the same file conflicted **wholesale** (`git merge-tree`
+confirmed both before and after the fix).
+
+**Check before every PR on this fork:** `git diff origin/ladruno..HEAD --numstat` —
+any file whose additions ≈ deletions ≈ its own line count is a conversion, not a
+change. `git diff -w --ignore-cr-at-eol` shows what really changed. The fix is to
+rewrite the file with its original endings and re-commit; the content is unaffected.
+
+### A `static` grep is an audit, not a re-entrancy proof — measured on ManzariDafalias (WP-107)
+
+This is the most useful thing WP-107 found, and it cost the WP its headline
+payoff, so it is worth stating bluntly.
+
+ADR-75b §5.1 sizes the threading hazard as "~5,600 function-/file-scope
+`static Matrix|Vector|ID` declarations across 587 files", which frames
+re-entrancy as a *grep problem*. It is not. `ManzariDafalias` under `IntScheme 1`
+(ModifiedEuler) has **no function-scope static anywhere on its update call
+graph** —
+
+    integrate -> explicit_integrator -> ModifiedEuler
+              -> {GetElastoPlasticTangent, Stress_Correction,
+                  IntersectionFactor, GetStateDependent, GetStiffness}
+
+every `static Vector`/`Matrix` in that file is in `RungeKutta45`, `NewtonIter`,
+`getPStrain` or `sendSelf`/`recvSelf`, all off that path — and no
+`Matrix::Solve`/`Invert` on it either. It was allowlisted for WP-107's threaded
+`Domain::update()` on exactly that basis.
+
+**It segfaults.** On a 6400-element `LadrunoQuad -bbar` plane-strain deck at 4
+threads, reproducibly (4/4), as soon as the PLASTIC branch is exercised in
+volume. The elastic branch (gravity stage, `mElastFlag == 0`) is clean and
+bit-identical, which is why a mild load path ran 12/12 clean with a byte-exact
+curve before a harder one was tried — the most dangerous possible result.
+
+What the experiments rule out, none of which changed the outcome:
+
+| hypothesis | test | result |
+|---|---|---|
+| the fork's subclass | vanilla `nDMaterial ManzariDafalias` | crashes identically, 4/4 |
+| solver interaction | `BandGeneral` vs `Pardiso` | both crash |
+| worker-thread stack overflow | `KMP_STACKSIZE=64M` (libiomp5 is the runtime) | no change |
+| `opserr` from inside the parallel region | `-Pmin 1e-8` so the clamp never warns | crashes with **zero** warnings emitted |
+| the element | same element + `ElasticIsotropicPlaneStrain2D`, 10 000 elements, 8 threads | **6/6 clean, bit-identical** |
+| a benign FP-order difference | — | it is a segfault, not a last-bits difference |
+
+Root cause **not located**. The family is therefore refused by
+`ManzariDafalias::ladrunoThreadSafeUpdate()` returning false unconditionally.
+
+**A second round excluded three more hypotheses** (full table in
+[[75b_ladruno_threaded_assembly_adr]] §14.1), and one of them reframes the
+problem: serializing the **entire `theEle->update()`** with `#pragma omp critical`
+— so the threads exist and enter the region but never run an update concurrently
+— **still faults 0/4**. Serializing the whole of `ManzariDafalias::integrate()`
+likewise changes nothing, and `OMP_STACKSIZE`/`KMP_STACKSIZE` at 256 MB changes
+nothing. **So this is not a data race between element updates**, which is what
+every hypothesis up to that point had assumed. What is left is something about
+running this particular update path on an OpenMP worker thread at all — the
+elastic path on the same worker thread, same element, same counts, is clean 6/6.
+
+The practical blocker for going further on this box: no `cdb`/`WinDbg`/`procdump`
+is installed and the Release build emits **no PDBs**, so a faulting frame could
+not be obtained. That is the first thing to fix next time, not another hypothesis.
+
+Three things to carry forward:
+
+1. **A located-but-unfixed hazard is worse than an un-audited one**, because the
+   audit creates confidence. WP-107's allowlist defaults to `false` precisely so
+   that being wrong is expensive to do rather than free.
+2. **A clean threaded run on a mild load path proves nothing.** The bit-identity
+   gate has to be run on a deck that exercises the branch you care about; ours
+   passed 12/12 with `maxdiff = 0.000e+00` on a configuration that had barely
+   entered plasticity.
+3. **The next tool is ThreadSanitizer, not another grep.** ADR-75b §7's
+   correctness protocol already says so ("the only tool that finds the misses
+   `grep` cannot"); this is the measurement that proves the protocol item is
+   load-bearing rather than belt-and-braces. TSan needs clang/gcc, so it means
+   the Esmeralda/Linux path, not the MSVC desktop one.
+
+### `LadrunoSANISAND::schemeReachesModifiedEuler()` returned false for `IntScheme 2`, so the class printed a false "-maxSubsteps has NO EFFECT" warning — FIXED (WP-108)
+- **Note on provenance:** this defect was FOUND by WP-105 (F12, PR [#844](https://github.com/nmorabowen/OpenSees/pull/844), still open/unmerged as of this writing) and its own `LEDGER_quirks.md` row lives only on that branch, not on `ladruno` — this WP-108 branch was cut from `ladruno` before #844 merged, so that row could not be edited here; this is therefore a NEW row recording the same finding plus the fix. **When #844 merges, its own row ("schemeReachesModifiedEuler() returns false for IntScheme 2 ... MEASURED FALSE") should be updated to point at this fix (or merged into this row) rather than left saying "not fixed."**
+- **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
+  are inert on scheme 2 and skip capping it. WP-105 (F12) measured this false on the `p -> p_min`
+  floor path: a `-maxSubsteps 100` cap on scheme 2 turned a run that completed **40 of 40 uncapped**
+  into one that **refuses at step 18**. The warning was wrong; the seam was live all along.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND::schemeReachesModifiedEuler()`
+  (`LadrunoSANISAND.cpp:1035-1048`) returned `false` for `mScheme == 2`, which gated the
+  constructor's warning text (`:1206-1213`, "`-maxSubsteps N has NO EFFECT with IntScheme 2`") and
+  the identical claim for `-honorTolR` (`:1187-1199`). But `ManzariDafalias::explicit_integrator`'s
+  `switch (mScheme)` (`ManzariDafalias.cpp:1070-1101`) does not enumerate `INT_BackwardEuler`, so a
+  call into it falls to `default:` -> `ModifiedEuler`, exactly where both seams
+  (`mMaxSubstepsInME`, `mHonorTolR`) are read. Scheme 2 routes there whenever
+  `BackwardEuler_CPPM`'s own recursive-halving retry ladder (`ManzariDafalias.cpp` ~2472-2588)
+  falls back on non-convergence or ladder exhaustion — conditionally, not on every step the way
+  schemes 0/1 do, but "sometimes reaches it" is not "never reaches it", and the warning claimed the
+  latter. This directly contradicted `LadrunoSANISAND_implex_guide.md` §3, which REQUIRES
+  `-maxSubsteps > 0` on scheme 2 under `-implex` and refuses the deck without it
+  (`LadrunoSANISAND.cpp:2047-2058`, the `setLadrunoImplexOptions` `s == 2` branch) — one of the two
+  had to be wrong, and WP-105's measurement said it was the warning.
+- **Workaround/status (2026-09-16, WP-108):** FIXED. `schemeReachesModifiedEuler()` now returns
+  `true` for `mScheme == INT_LSANISAND_BackwardEuler` (2) as well as 0/1/>9-not-45, with the
+  function's header comment and a new `tests/test_ladruno_sanisand_intscheme2_maxsubsteps.py`
+  (reproducing WP-105's own floor-path control) pinning both that the false warning no longer
+  prints and that the cap actually fails a step on scheme 2. Scheme 1's output is unchanged
+  (byte-identical) — the fix only adds a branch for `s == 2`, ahead of the existing `s > 9` catch-all.
+  Full measurement: `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`
+  section 5.4/6 (WP-105).
+### `IntScheme 2` (BackwardEuler_CPPM) on `LadrunoSANISAND`/`ManzariDafalias` is QUALIFIED per prescribed increment and REFUTED as a BVP's primary integrator — WP-105 (F12)
+- **Bites:** scheme 2 looks like a strictly-better companion to scheme 1 (`ModifiedEuler`) if you
+  only run it at a given strain increment — and it IS, there. On a replayed strain path (zero free
+  DOF, the increment supplied rather than proposed) it integrates the **same model to the same
+  limit** as scheme 1: `1.3e-3` / `2.9e-3` maximum relative stress deviation over the path at
+  `dEz = 1e-5` (`p0 = 100` / `20 kPa`), terminal `eta` within `4.2e-4` / `2.0e-4`; at the campaign's
+  own increment (`dEz = 1e-4`) it is **3.7-4.3x more accurate and 4.2-7.6x cheaper**, and at
+  `4.6e-4`, **7-30x more accurate and 10-13x cheaper**, with scheme 1 the one leaving its own
+  bounding surface at `p0 = 20 kPa` (`eta/M^b = 1.056`, 160% wrong in stress norm). **Put it under a
+  global Newton instead — the increment now PROPOSED, not given — and it inverts.** Free-standing
+  drained-triaxial at `dEz >= 1e-4`: scheme 2 stalls in **8 of 8** arms (scheme 1 stalls in 1 of 8);
+  loosening the global tolerance `1e-9 -> 1e-7` does not rescue it. Each failing step costs
+  **12-134 s** against a 30 ms normal step (up to 4400x) grinding the recursive-halving ladder. On
+  the real CP1/ADR-95 bearing leg (`x10z8`, `h1.0_e0.6944`, 1200 s budget each) scheme 2 committed
+  11 steps to `s/B = 4e-5` against the scheme-1 baseline's 51 steps to `s/B = 0.019` — **475x
+  shallower for the same wall clock** — `ds` pinned at 25x the subdivision floor, 100% of its
+  committed steps on the relaxed rung 3.
+- **Why:** the failure is on off-path trial iterates a global Newton proposes, not on the solution
+  path — the replay arm (same path, same `dEz = 4.6e-4`, increment given) completes 40 of 40 in
+  1.7 ms/step on the identical model. A coarse-step trial iterate is a strain increment
+  `BackwardEuler_CPPM`'s 19-unknown Newton cannot return; it recurses (see the next two entries)
+  through up to 512 half-increments before giving up, and every one of those half-increments is
+  another 19-unknown Newton of up to 30 iterations. ADR-92 D3's own stated reason for keeping
+  scheme 1 as the default ("58-74% of scheme 2's calls take the low-`p` branch and integrate
+  explicitly") does NOT reproduce here: measured **0 of 1820** steps on every replayed
+  drained-triaxial path at `p0 = 100` and `20 kPa`, and **0 of 80** on the descent of a `p -> p_min`
+  path; the 58-74% figure reproduces (53%, `85/160` steps) only once the point is already pinned at
+  `p_min` with a zero deviator, i.e. on steps where nothing is being integrated.
+- **Workaround/status (2026-09-16):** D3's *conclusion* survives (scheme 1 + `-maxSubsteps` stays
+  the companion default) but its *stated reason* does not — see the amendment in
+  `92_ladruno_sanisand_implex_adr.md` and the new subsection in
+  `LadrunoSANISAND_implex_guide.md` §9. Use scheme 2 only where the increment is already given (a
+  prescribed-strain material-point study); do not make it the primary integrator of a load- or
+  displacement-controlled BVP without a cap on the ladder — none was tried. `-implex` was OFF in
+  every WP-105 arm, so whether scheme 2 is the better commit-time IMPL-EX companion (which runs at
+  `commitState` on an increment nothing proposes off-path — exactly the regime where scheme 2 wins)
+  is measured nowhere and remains open. Full tables and scripts:
+  `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
+
+### `ManzariDafalias::integrate()` discards `BackwardEuler_CPPM`'s return value, and the CPPM's own ladder can never fail anyway — a scheme-2 non-convergence is invisible in every channel
+- **Bites:** a CPPM step whose Newton diverged, whose Jacobian was singular, or which recursed
+  through up to 512 half-increments and then gave up looks EXACTLY like a clean implicit return —
+  no return code, no `opserr` line, no response. Measured cost of one such invisible failure on a
+  single-element drained triaxial at `dEz = 1e-4`: **133.75 s for one step against 30 ms for its
+  neighbours** (WP-105 / F12).
+- **Why (verified on `634824e1f`):** `ManzariDafalias.cpp:1023-1027` calls
+  `BackwardEuler_CPPM(...)` for `mScheme == INT_BackwardEuler` with no assignment — the return
+  value is simply discarded. It would not matter even if it were kept: the `while(errFlag != 1)`
+  ladder always terminates by falling through to `explicit_integrator` and setting
+  `errFlag = 1` (`:2584-2588`), and the low-`p` branch does the same (`errFlag = 0` then explicit
+  then `errFlag = 1`, on this checkout at `:2418`/`:2431`/`:2436` — the guide's §3 citation of
+  `:2264` for the low-`p` branch has moved on this build; WP-105 recorded the new lines rather than
+  editing the guide's prose, which is about the mechanism, not the line number). The recursion
+  itself increments `implicitLevel` at `:2538` and is capped at `implicitLevel > mMaxSubStep = 10`
+  (`:2352-2357`), i.e. up to `2^9` halvings, each its own 19-unknown Newton of up to 30 iterations
+  with a 19x19 solve. With `ManzariDafalias::debugFlag` a compile-time `const bool = false`
+  (`:57`), none of this prints. The only observable is the shipped `substeps` response
+  (`LadrunoSANISAND::setResponse`, `LadrunoSANISAND.cpp:4044-4058`), whose first component
+  `mSubstepsTakenInME` is non-zero **only if** `ModifiedEuler` ran — an exact detector of the CPPM
+  falling back on scheme 2, but silent whenever the ladder succeeds by substepping rather than by
+  falling through. The fork's only trial-time refusal for this material,
+  `LadrunoSANISAND::ladrunoUpdateStatus()` (`LadrunoSANISAND.cpp:3993-3996`), returns
+  `LADRUNO_MATERIAL_REFUSED` only via `mSubstepCapHitInME`, set at exactly one site inside
+  `ModifiedEuler()` (`ManzariDafalias.cpp:1578-1600`) and gated on `mMaxSubstepsInME` — so on scheme
+  2 a refusal can arise only AFTER the CPPM has already given up, and only if `-maxSubsteps > 0`
+  (next entry). The F7 element-refusal roster (this file, "element refusal roster", PR #838) is
+  irrelevant to a bare CPPM failure: there is nothing for the element to forward.
+- **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed. A fix would need
+  (a) `integrate()` to check `BackwardEuler_CPPM`'s return and (b) a way to surface it that does not
+  depend on `debugFlag` (compile-time off) or on the ladder actually falling through to
+  `ModifiedEuler`. Until then, treat any scheme-2 run through a global Newton as unauditable for
+  silent quality loss — measure cost and stall rate (this entry's numbers), not correctness,
+  because correctness has no channel to fail loudly through.
+
+### `LadrunoSANISAND::schemeReachesModifiedEuler()` returns false for `IntScheme 2`, so the class prints "`-maxSubsteps` has NO EFFECT" — MEASURED FALSE — fixed (WP-108, #845)
+- **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
+  are inert on scheme 2 and skip capping it. Measured on the `p -> p_min` floor path (WP-105 / F12):
+  a `-maxSubsteps 100` cap on scheme 2 turned a run that completed **40 of 40 uncapped** into one
+  that **refuses at step 18**. The seam is very much live.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND::schemeReachesModifiedEuler()`
+  (`LadrunoSANISAND.cpp:1035-1048`) returns `false` for `mScheme == 2`, and that false is what
+  gates the constructor's warning text at `:1206-1213` ("`-maxSubsteps N has NO EFFECT with
+  IntScheme 2`") and the identical claim for `-honorTolR` at `:1187-1199`. But
+  `ManzariDafalias::explicit_integrator`'s `switch (mScheme)` (`ManzariDafalias.cpp:1070-1101`)
+  does not enumerate `INT_BackwardEuler` among its cases, so it falls to `default:` ->
+  `ModifiedEuler`, which is exactly where both seams (`mMaxSubstepsInME`, `mHonorTolR`) are read.
+  Scheme 2 DOES route through `ModifiedEuler` whenever the CPPM falls back (the previous entry), so
+  both seams are live on it. This directly contradicts
+  `LadrunoSANISAND_implex_guide.md` §3, which REQUIRES `-maxSubsteps > 0` on scheme 2 under
+  `-implex` and refuses the deck without it (`LadrunoSANISAND.cpp:2047-2058`) — one of the two had
+  to be wrong, and the measurement says it is the warning, not the guide.
+- **Fixed (WP-108, PR [#845](https://github.com/nmorabowen/OpenSees/pull/845)):** the one-line fix
+  this row originally flagged as "not applied" has landed — `schemeReachesModifiedEuler()` now
+  returns `true` for `mScheme == 2`, ahead of the existing `s > 9` catch-all. See the earlier row in
+  this file ("... — FIXED (WP-108)") for the fix detail and verification. WP-105 / F12 itself made
+  no source edits; this row records the finding, and the fix is credited to WP-108.
+
+### `TanType 2` under `IntScheme 2` is a genuine algorithmic tangent — but any CPPM fallback silently overwrites it with `ModifiedEuler`'s chained tangent, with no diagnostic telling you which one you got
+- **Bites:** you ask for `-TanType 2` expecting the consistent (algorithmic) tangent of the CPPM's
+  own return map on every step. On any step where the CPPM instead fell back to
+  `ModifiedEuler` — which under a global Newton at the campaign increment is most of them, see the
+  first entry above — you silently get a different object: `ModifiedEuler`'s substep-chained
+  continuum tangent. Nothing distinguishes the two in any response or log.
+- **Why (verified on `634824e1f`):** `LadrunoSANISAND3D::getTangent()`
+  (`SRC/material/nD/LadrunoSANISAND3D.cpp:170-178`, shadowing the identical
+  `ManzariDafalias3D.cpp:134-141`) returns `mCep_Consistent` for `mTangType == 2`. Under scheme 2
+  that member is written at `ManzariDafalias.cpp:2609` (`Cep_Consistent = aCepConsistent;`) from
+  `NewtonIter2(...)` (`:2457`), which fills it in `NewtonSol` as the condensation of the 19x19 CPPM
+  Jacobian (`:3448-3472`, ending `Cep = -1.0 * CSigma;` at `:3472`) — a genuine algorithmic
+  tangent, one iterate stale (`NewtonIter2`'s loop tests convergence before the final `NewtonSol`
+  call, so the tangent is evaluated at the second-to-last iterate, not the converged one). But
+  every path out of the CPPM that reaches `explicit_integrator` — the low-`p` branch
+  (`:2431-2436`) or ladder exhaustion (`:2584-2588`) — OVERWRITES `aCepConsistent` with
+  `ModifiedEuler`'s own chained product (`:1835`,
+  `aCep_Consistent = aCep_thisStep * (aD * aCep_Consistent + T * mIImix)`). `TanType 2` is not
+  scheme-2-only: `ModifiedEuler` maintains its own `aCep_Consistent` (`:1490`, `:1835`), so the
+  option is meaningful on scheme 1 too (the deck `sanisand_tau0_band.py:349` already uses it) — the
+  two objects are different animals, a return-map Jacobian on scheme 2 versus a product of
+  continuum tangents over the substep chain on scheme 1, and scheme 2 silently degrades into the
+  latter on fallback. **Under `-implex` both are inert regardless:** the material hands out
+  `Ce(p_n)` and says so (`LadrunoSANISAND.cpp:2097-2099`, "TanType ... is INERT under -implex").
+- **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed; recorded as a
+  read-only finding. If you need to know which tangent a step actually used, cross-reference the
+  `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
+  `TanType 2` output — there is no dedicated flag for it.
+
+### `ManzariDafalias` TanType 1 under IntScheme 1 (and 0) was a STALE matrix — `ModifiedEuler` never wrote `mCep` — FIXED (WP-110, F15c)
+- **Bites:** you set `TanType 1` (continuum elastoplastic tangent) with the recommended `IntScheme 1` and get modified-Newton convergence, or a tangent that is plainly Ce at a plastic state. Nothing warns.
+- **Why:** `ManzariDafalias::ModifiedEuler` computes `aCep1`/`aCep2` for its `aCep_Consistent` chain (TanType 2) but never assigned `aCep` itself. `mCep` therefore kept whatever the last writer left: Ce from the last elastic step (`elastic_integrator` / the elastic branch of `explicit_integrator`), or a `Stress_Correction` leftover on a step whose last substep needed a correction. Scheme 0 (`MaxEnergyInc`) inherits it through `nCep`. `RungeKutta4` (scheme 3) has the same hole and is NOT fixed (scheme 3 is already warned against at construction).
+- **Workaround/status (WP-110, #847):** fixed — `ModifiedEuler` starts from `aCep = Ce` and, on its normal exit, writes `GetElastoPlasticTangent` at the end-of-increment state (the `BackwardEuler_CPPM` convention). Observable now via `eleResponse(ele, 'tangent')`.
+
+### `ManzariDafalias` is ELASTIC until `updateMaterialStage ... -stage 1`, and the flag is process-wide — a tangent probe that forgets the flip measures Ce and "passes"
+- **Bites:** a material-point probe or FD tangent check on `ManzariDafalias`/`LadrunoSANISAND` finds `dGamma = 0`, TanType 0/1/2 all identical and equal to Ce, and concludes the tangent is fine. It never left the elastic branch.
+- **Why:** `mElastFlag` is a `static` class member (one per process, not per instance); the full constructors set it to 0 (ELASTIC, #714), so `integrate()` calls `elastic_integrator` unconditionally and `GetElastoPlasticTangent` is never reached until `updateMaterialStage -material <tag> -stage 1`. Because it is static, constructing ANY new `ManzariDafalias` resets EVERY live instance to elastic — a rebuild-per-probe harness must re-flip after every build.
+- **Workaround/status:** by design (staged-gravity idiom). Always flip after construction and assert `dGamma > 0` (state slot 25) before trusting a plastic-state measurement — `tests/test_manzari_ep_tangent_gate.py` does both.
+
+### A central-difference FD tangent of `ManzariDafalias` straddles the `alpha_in` reversal reset — use a one-sided, direction-safe difference
+- **Bites:** `(sigma(eps + h e_j) - sigma(eps - h e_j)) / 2h` at a plastic state gives off-diagonal entries 40-100 % off any analytic tangent, at every `h`, and looks like a tangent bug (WP-110 F15a first pass).
+- **Why:** `integrate()` resets `alpha_in := alpha_n` when `(alpha_n - alpha_in):Ce:d_eps < 0`. Whether that fires depends on the SIGN of the probe increment, so `+h` and `-h` land on two different internal states (read back: `alpha_in(+h) != alpha_in(-h)` in all six directions) and the central difference differences across a kink, not along one branch.
+- **Workaround/status:** per direction, pick the sign whose run leaves `alpha_in` equal to the committed base state, and difference one-sidedly against the base stress (h = 1e-8 matched the corrected tangent to 0.02-0.17 %). Also make the last load increment tiny, because both integrators take G and K at the START of an increment while the FD samples the committed state. Implemented in `tests/test_manzari_ep_tangent_gate.py`.
+
+## gcc + `-fopenmp` SEGFAULTS the zero-mass `system Diagonal` path — the fork cannot be built with OpenMP on Linux
+
+- **Symptom.** Build the fork with `-DLADRUNO_OPENMP=ON` on gcc/Linux and
+  `tests/test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`
+  dies with `Fatal Python error: Segmentation fault`, taking the whole pytest process with it
+  (`Segmentation fault (core dumped)`, exit **139**) at the second test in the suite. Measured
+  twice on the same commit, byte-identical traceback both times:
+  [run 35164371356](https://github.com/nmorabowen/OpenSees/actions/runs/35164371356) (PR #843).
+  The Python frame is `ops.analyze(1, 0.001)` inside `_run_massless(("Diagonal",), 0.0)`.
+- **It is NOT the threaded loop.** The runtime thread count defaults to 1, at which
+  `Domain::ladrunoThreadedUpdate()` returns `false` before touching anything and
+  `Domain::update()` runs the unchanged serial loop. No `ladrunoThreads` call appears anywhere
+  in the crashing file. Nor is it a dormant-pragma activation (`#pragma omp` / `_OPENMP` exist
+  only in PFEM — `OPS_Element`, deliberately un-flagged — the interpreter, and WP-107's own
+  code), nor an ODR/ABI split (no class layout is `#ifdef`-conditional).
+- **What is left is codegen/link.** `-fopenmp` on `OPS_Domain` + `OPS_Utilities`, plus libgomp
+  and `-pthread` on the link line, changes optimization and the glibc allocator's threading
+  path — enough to turn a **latent defect in the singular-mass failure path** into a hard crash.
+  That path is already on record two entries' worth: a free DOF with **zero lumped mass** makes
+  the assembled `M` singular, `Diagonal` aborts with `aii = 0`, and Full/Band **return success
+  with garbage**. The failure route also re-enters `Domain::update()` from
+  `Domain::revertToLastCommit()` on the shared element iterator — the recorded reentrancy trap.
+- **Does NOT reproduce on MSVC.** The same source with `LADRUNO_OPENMP=ON` passes that file
+  locally (3/3), and the whole WP-107 file passes 18/18.
+- **Workaround/status (2026-09-16, PR #843, owner decision — not fixed).** `option(LADRUNO_OPENMP … OFF)`
+  in `CMakeLists.txt`; `Ladruno_scripts\build.bat` turns it ON, so the ON path is the Windows/MSVC
+  canonical build and nothing else. Consequence to keep in view: **Zone-A does not exercise the
+  threaded element loop at all** — `tests/test_wp107_threaded_update.py` probes the binary and
+  skips with a reason. Fixing this needs a Linux build under **ASAN/valgrind + gdb** as its own
+  work package; when it lands, flip the CMake default to ON so CI gates the feature.
+  See ADR-75b §14.4, [[107_ladruno_openmp_element_loop]] §3.1, BUILD_GOTCHAS §15.
+
+### The loading-reversal test reads the SIGN of round-off after elastic holds -- the first plastic step depends on the MKL thread count (WP-112 / TIMs F14, 2026-09-18)
+- **Bites:** `ManzariDafalias::integrate()` (`ManzariDafalias.cpp:1022-1026`) sets `alpha_in := alpha_n` when `(alpha_n - alpha_in_n) : (Ce : d_eps) < 0`, with no magnitude guard on EITHER factor, and it runs that test BEFORE the `mElastFlag` branch, i.e. in the elastic stage too. A `LoadControl(0)` hold's `d_eps` is solver noise, so a hold sets `alpha_in := alpha_n` at a coin-flip of points; `alpha = dev(sigma)/p` then moves only by round-off, so `alpha_n - alpha_in_n` is round-off at those points. On the first PLASTIC increment the sign of that round-off vector against a real `d_eps` picks the reset branch, and the branch picks `h = b0/((alpha - alpha_in):n)`.
+- **Measured:** TIMs self-weight strip (9 720 GPs), first push step 1.511 / 1.824 / 1.824 / 1.489 kPa at 1 / 2 / 4 / 8 MKL threads (Windows), 1.597 / 1.824 / 1.824 (Linux); branches 30 % apart by `s/B = 0.035`. Fork deck (12 x 6 `LadrunoQuad`, 48c0e99bc): after two elastic holds 229/288 GPs have `||alpha - alpha_in|| < 1e-12 * max(||alpha||, m)`, none without holds; vanilla's first push step reads 4.107 / FAIL / 8.332 / 9.483 kN/m after 0 / 1 / 2 / 3 holds. On that small deck Pardiso does not change its arithmetic with the thread count, so the lottery shows through the hold count instead -- same mechanism, different perturbation.
+- **Why P2-7c missed it:** RC14's evidence (Esmeralda R3, 28 629/34 560 points set `alpha_in := alpha` at step 1, identical every run) was a deck on which the difference was NOT at round-off at the flip, so the sign test decided a real direction. It is deterministic only where `alpha_n - alpha_in_n` is not round-off; a hold anywhere in the elastic stage makes it round-off. (The P2-5/5b/5c guards do not help: they act only on PRIMED states, i.e. after the first plastic commit.)
+- **Rule:** `-flipAlphaIn init` is the default since WP-112 (`alpha_in := alpha_n` at the flip, so the test reads an exact 0 and takes the no-reset branch deterministically). `-flipAlphaIn vanilla` is for reproducing real `ManzariDafalias` only, and warns once per Gauss point (10 per process) on a plastic trial with `0 < ||alpha_n - alpha_in_n|| <= 1e-8 * max(||alpha_n||, m)`. On vanilla `ManzariDafalias` itself the defect stands: do not hold in the elastic stage before `updateMaterialStage 1` if you need a thread-count-independent first step. The same sign lottery exists at SOLVER-noise (not round-off) scale after a loose-tolerance hold; the warning names only the round-off case, and `init` removes both.
+- **Not removed by `init`:** on the fork deck the `init` curve still moves with the hold count from step 4 on (step 10: 35.5-36.1 kN/m after 0-4 holds) -- the holds change the committed state by round-off and later branch decisions amplify it.
+### Plane-strain B-bar with the 3D ÷3 split relieves NOTHING under isochoric flow — a 3-row plane-strain B needs the ½ split (BezierTri6 `-bbar`, fixed WP-114)
+- **Bites:** a 2D element's `-bbar` built by copying the 3D mean-dilatation recipe, (B̄+2B)/3 and (B̄−B)/3 on the normal rows, onto a 3-row plane-strain B (εxx, εyy, γxy). The εzz row, (B̄−B)/3, has nowhere to go and is dropped, so the material sees an in-plane trace of (θ+2θ̄)/3, not θ̄. Averaged over the element that is θ̄, so "trace = 0 at every GP" still forces θ = 0 at every GP: the T6 keeps **3** volumetric constraints, the same as the plain element (the ½ split leaves **1**). Elastic tests, patch tests and an FD tangent check (1e-11) all pass; the defect only shows under ψ=0 / critical-state flow, as intra-element pressure checkerboarding (median I1 spread 41% of the mean, p90 223%, vs exactly 0 after the fix) that drives scattered GPs to the Drucker-Prager apex and walls a rigid punch (s/B = 0.039, 63 apex GPs; the TIMs deck walled at 0.0022 with 123).
+- **Why:** the 3D ÷3 split distributes the dilatation correction over three normal strains; with εzz ≡ 0 only two are available, so the correction must be split ½/½ (θ̄−θ)/2 on εxx and εyy. The same rule gives the 2D F-bar power ½, not ⅓ (see the LadrunoFiniteStrain2D row).
+- **Check:** with a nearly incompressible elastic material (ν = 0.4999999) count the bulk-dominated eigenvalues of one element's `eleResponse … stiffness`: T6 std 3, correct `-bbar` 1, ÷3 `-bbar` 3. Or impose a field with varying dilatation and check εxx+εyy at every GP equals the plain element's average θ. Both are in `tests/test_beziertri6_bbar_plane_strain.py`.
+- **Status (2026-09-18):** BezierTri6 fixed in b42ca77d8 (PR #848). LadrunoQuad and LadrunoUP (2D) already used ½; LadrunoLST/CST have no B-bar. Audit any NEW 2D B-bar/F-bar for this.
+
+### A CONSTANT perturbed-pivot count from the elastic stage onward is a mesh-topology symptom — check for element-less (orphan) nodes before blaming the element or the material
+- **Bites:** Pardiso (or MUMPS) reports the same number of perturbed pivots on every factorisation, starting at the first elastic K0 solve and never changing through the plastic stages. It looks like an element rank defect, but an element defect would change with the material state and would show up as near-null elastic modes of the element stiffness. WP-114 could not reproduce the TIMs report's 1 816 pivots on any Bézier deck (0 pivots across every bisection, no near-null modes). The one time the harness did produce such pivots, the cause was tri6 mid-edge nodes that no element referenced (their DOFs have exactly zero stiffness), which is the likely cause in a mesh export too.
+- **Why:** a node with no element has an all-zero row and column (plus any fix/sp). A direct solver has to perturb each of its free DOFs, and that count depends only on the topology, so it is constant from the first step.
+- **Census recipe (one line, after the model is built):** `used = {n for e in ops.getEleTags() for n in ops.eleNodes(e)}; orphans = [n for n in ops.getNodeTags() if n not in used]`. `2 × len(orphans)` (ndf=2, minus fixed DOFs) is the pivot count to expect. Remove the orphans or fix their DOFs.
+- **Status (2026-09-18):** diagnostic only, WP-114 (`tests/wp114/pivot_bisection.py`). Not chased further; the reporter's mesh export is the suspect.

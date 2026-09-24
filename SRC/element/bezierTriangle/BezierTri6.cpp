@@ -1000,19 +1000,26 @@ void BezierTri6::computeBBarMatrix(const double dN_dx[2][NEN],
                                     const double dN_avg[2][NEN],
                                     double Bbar[NSTRESS][NELD]) const
 {
-    //  B-bar formulation (Kadapa Eq. 45, adapted for 2D):
+    //  B-bar formulation, plane strain (2D mean-dilatation split):
     //
-    //  Replace the volumetric (dilatational) part of B with its
-    //  volume-weighted average. The deviatoric part stays local.
+    //  Replace the in-plane dilatation θ = εxx+εyy with its element
+    //  average θ̄. The deviatoric part stays local.
+    //
+    //  Ladruno WP-114: the split is 1/2, NOT the 3D 1/3 (Kadapa Eq. 45).
+    //  With εzz ≡ 0 the 3-row B cannot carry the 1/3 rule's εzz row
+    //  (B̄-B)/3, so the old form gave the material a trace of (θ+2θ̄)/3.
+    //  Under isochoric flow (ψ=0, critical state) that kept all 3
+    //  point-wise volumetric constraints, i.e. no relief over the plain
+    //  element. Same split as LadrunoQuad.
     //
     //  For node a, column for u_x DOF:
-    //    row 0 (ε_xx): (B̄₁ + 2B₁)/3
-    //    row 1 (ε_yy): (B̄₁ - B₁)/3
+    //    row 0 (ε_xx): B₁ + (B̄₁ - B₁)/2
+    //    row 1 (ε_yy): (B̄₁ - B₁)/2
     //    row 2 (γ_xy): B₂             (unchanged)
     //
     //  For node a, column for u_y DOF:
-    //    row 0 (ε_xx): (B̄₂ - B₂)/3
-    //    row 1 (ε_yy): (B̄₂ + 2B₂)/3
+    //    row 0 (ε_xx): (B̄₂ - B₂)/2
+    //    row 1 (ε_yy): B₂ + (B̄₂ - B₂)/2
     //    row 2 (γ_xy): B₁             (unchanged)
     //
     //  where B₁ = ∂Nₐ/∂x, B₂ = ∂Nₐ/∂y at the current GP
@@ -1032,13 +1039,13 @@ void BezierTri6::computeBBarMatrix(const double dN_dx[2][NEN],
         int col_y = 2 * a + 1;
 
         // u_x DOF column
-        Bbar[0][col_x] = (Bbar1 + 2.0 * B1) / 3.0;
-        Bbar[1][col_x] = (Bbar1 - B1) / 3.0;
+        Bbar[0][col_x] = B1 + 0.5 * (Bbar1 - B1);
+        Bbar[1][col_x] = 0.5 * (Bbar1 - B1);
         Bbar[2][col_x] = B2;
 
         // u_y DOF column
-        Bbar[0][col_y] = (Bbar2 - B2) / 3.0;
-        Bbar[1][col_y] = (Bbar2 + 2.0 * B2) / 3.0;
+        Bbar[0][col_y] = 0.5 * (Bbar2 - B2);
+        Bbar[1][col_y] = B2 + 0.5 * (Bbar2 - B2);
         Bbar[2][col_y] = B1;
     }
 }

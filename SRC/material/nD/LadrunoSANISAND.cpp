@@ -65,6 +65,7 @@
 //        <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>                  \
 //        <-implexFactor fixed|control>                                          \
 //        <-reversalTol $tol> <-reversalRel $ratio> <-flipAlphaIn init|vanilla>
+//        (-flipAlphaIn default: init, since WP-112)
 //
 //  Ladruno ADR-92 P2-9: -implexFactor picks HOW f is chosen. `fixed` (the
 //  DEFAULT) is the clock ratio alpha*dt_{n+1}/dt_n and reaches no new
@@ -73,13 +74,18 @@
 //  the step. It IS an -implex option and additionally REQUIRES -implexControl
 //  (without a companion at the trial there is no sigma_impl to aim at).
 //
-//  Ladruno ADR-92 P2-7c: -flipAlphaIn is NOT an -implex option -- `vanilla`
-//  (the DEFAULT, reversed from the first P2-7 redesign; see RC14 / Esmeralda
-//  evidence at the member note in the header) leaves mAlpha_in to
-//  ManzariDafalias::integrate()'s own loading-reversal sign test; `init`
-//  (opt-in) sets mAlpha_in := mAlpha_n deterministically at the elastic->
-//  plastic stage flip instead -- an alternative modelling choice, not a bug
-//  fix. Live with -implex off exactly as on. -implexFlipAbsorb IS an -implex
+//  Ladruno ADR-92 P2-7c / WP-112 (F14): -flipAlphaIn is NOT an -implex option.
+//  `init` (the DEFAULT since WP-112) sets mAlpha_in := mAlpha_n
+//  deterministically at the elastic->plastic stage flip; `vanilla` (opt-in
+//  since WP-112; it was the P2-7c default) leaves mAlpha_in to
+//  ManzariDafalias::integrate()'s own loading-reversal sign test. WP-112 moved
+//  the default because that sign test reads the SIGN of
+//  (alpha_n - alpha_in_n):Ce:d_eps with no magnitude guard, and after
+//  elastic-stage holds the first factor is at round-off at most points, so the
+//  direction of a round-off perturbation (e.g. MKL's thread count) picks the
+//  branch -- TIMs F14 measured 1.511/1.824/1.824/1.489 kPa on the first push
+//  step at 1/2/4/8 threads under `vanilla`, 1.824 on every count under `init`.
+//  Live with -implex off exactly as on. -implexFlipAbsorb IS an -implex
 //  option (refused without -implex, like -implexGuard): `off` (the DEFAULT)
 //  leaves the flip committing nothing beyond mElastFlag's own effect on the
 //  next real step; `on` additionally commits a zero-pseudo-time-increment
@@ -146,13 +152,14 @@ static int numLadrunoSANISANDMaterials = 0;
 // Ladruno (ADR-86 PR-3): IntScheme numbers, re-declared here because
 // ManzariDafalias's own INT_* macros are defined in ManzariDafalias.cpp (:38-49)
 // and are therefore not visible outside that TU. Prefixed so they can never
-// collide with the base's if that ever changes. Only the three this file needs.
+// collide with the base's if that ever changes. Only the four this file needs.
 // KEEP IN SYNC with ManzariDafalias.cpp:38-49 -- there is no compile-time link
 // between the two, which is why schemeReachesModifiedEuler() spells out the
 // dispatch it is asserting rather than trusting the names.
-#define INT_LSANISAND_MAXENE_MFE     0    // ManzariDafalias INT_MAXENE_MFE
-#define INT_LSANISAND_ModifiedEuler  1    // ManzariDafalias INT_ModifiedEuler
-#define INT_LSANISAND_RungeKutta45  45    // ManzariDafalias INT_RungeKutta45
+#define INT_LSANISAND_MAXENE_MFE      0    // ManzariDafalias INT_MAXENE_MFE
+#define INT_LSANISAND_ModifiedEuler   1    // ManzariDafalias INT_ModifiedEuler
+#define INT_LSANISAND_BackwardEuler   2    // ManzariDafalias INT_BackwardEuler -- Ladruno (WP-108)
+#define INT_LSANISAND_RungeKutta45   45    // ManzariDafalias INT_RungeKutta45
 
 void *
 OPS_LadrunoSANISAND(void)
@@ -171,7 +178,7 @@ OPS_LadrunoSANISAND(void)
         opserr << "Want: nDMaterial LadrunoSANISAND tag? G0? nu? e_init? Mc? c? lambda_c? e0? ksi?"
                << " P_atm? m? h0? Ch? nb? A0? nd? z_max? cz? Rho?"
                << " <IntScheme? TanType? JacoType? TolF? TolR?>"
-               << " <-Presidual pr?> <-Pmin pmin?> <-honorTolR 0|1>"
+               << " <-Presidual pr?> <-pRe pre?> <-Pmin pmin?> <-honorTolR 0|1>"
                << " <-maxSubsteps n?>"
                << " <-implex> <-implexControl tol? reductionLimit?>"
                << " <-implexAlpha a?> <-implexDt pseudo|strain|user <dt?>>"     // Ladruno (ADR-92)
@@ -179,7 +186,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>"      // Ladruno ADR-92 P2-6/P2-7c
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
-               << " <-flipAlphaIn init|vanilla>"                                // Ladruno ADR-92 P2-7c
+               << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
                << endln;
         return 0;
     }
@@ -199,6 +206,11 @@ OPS_LadrunoSANISAND(void)
     oData[4] = 1.0e-7;     // TolR        )
 
     double presidual = 0.0;    // Ladruno: default -- a cohesionless sand has no cohesion
+    double preElastic = 0.0;   // Ladruno (ADR-93 II.1): default OFF -- no stiffness floor,
+                               //          so every pre-ADR-93 deck is byte-identical
+    bool   sawPreElastic = false;   // Ladruno (ADR-93 II.1): a REPEATED -pRe is REFUSED,
+                               //          not silently last-wins -- the echo prints ONE
+                               //          value and a reader could not see which won
     double pmin      = -1.0;   // Ladruno: sentinel -- resolve to 1.0e-3 * P_atm in the ctor
     int    honorTolR = 0;      // Ladruno: default = vanilla's hardcoded ModifiedEuler
                                //          substep tolerance 1e-4 (ADR-86 PR-3)
@@ -209,9 +221,10 @@ OPS_LadrunoSANISAND(void)
     double reversalRel  = 0.05;     // Ladruno ADR-92 P2-5b: default relative floor,
                                //          scaled off the last COMMITTED strain
                                //          increment; 0 disables the relative part
-    int    flipAlphaInMode = 1;     // Ladruno ADR-92 P2-7c: 1 = vanilla (DEFAULT), 0 = init
-                               //          (opt-in). Matches LadrunoSANISAND::FLIP_ALPHA_IN_*,
-                               //          which is `protected` and therefore not nameable here.
+    int    flipAlphaInMode = 0;     // Ladruno WP-112 (F14): 0 = init (DEFAULT), 1 = vanilla
+                               //          (opt-in; the P2-7c default). Matches
+                               //          LadrunoSANISAND::FLIP_ALPHA_IN_*, which is
+                               //          `protected` and therefore not nameable here.
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
     // makes an existing SANISAND deck byte-identical.
@@ -269,6 +282,67 @@ OPS_LadrunoSANISAND(void)
                        << ": -Presidual must be >= 0 (got " << presidual
                        << "). p_residual is an apparent cohesion c = p_r*tan(phi)." << endln;
                 return 0;
+            }
+        }
+        // Ladruno (ADR-93 II.1): the ELASTIC-ONLY confinement floor.
+        // `-Pelastic` is accepted as a synonym because that is the spelling the
+        // ADR-93 decision memo (_adr93_decision_2026-09-07.md, D2) wrote down
+        // before the flag was built; `-pRe` is the name the parameter carries in
+        // the ADR text itself (`p_r,e`) and in the numpy oracle, and is the one
+        // the echo, Print and the guide use.
+        else if (strcmp(argTok, "-pRe") == 0 || strcmp(argTok, "-pre") == 0 ||
+                 strcmp(argTok, "-Pre") == 0 || strcmp(argTok, "-PRe") == 0 ||
+                 strcmp(argTok, "-Pelastic") == 0 || strcmp(argTok, "-pelastic") == 0) {
+            seenFlag = true;
+            // Ladruno (ADR-93 II.1, blue-team SHOULD-4): a SECOND -pRe is refused.
+            // Every other flag in this parser silently last-wins, which is
+            // survivable for a diagnostic switch; it is not for a constitutive
+            // constant, because the echo prints exactly one value and a deck that
+            // says `-pRe 1 ... -pRe 5` reads as if it asked for 1.
+            if (sawPreElastic) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe (or a synonym) given more than once. It is a"
+                          " constitutive constant, not a switch -- the echo can only"
+                          " report one value, so a silent last-wins would misreport"
+                          " the material. Give it once." << endln;
+                return 0;
+            }
+            sawPreElastic = true;
+            numData  = 1;
+            if (OPS_GetDoubleInput(&numData, &preElastic) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe wants one value (the elastic-only confinement floor,"
+                          " in this deck's stress units)" << endln;
+                return 0;
+            }
+            if (preElastic < 0.0) {
+                // A stiffness floor below zero is not "a smaller floor": it lowers
+                // the modulus argument below the stress and, past -p, pins the whole
+                // model at m_Pmin. Refuse, the same way -Presidual refuses.
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe must be >= 0 (got " << preElastic
+                       << "). It is a STIFFNESS floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm)."
+                          " It adds NO strength -- use -Presidual for that." << endln;
+                return 0;
+            }
+            // Ladruno (ADR-93 II.1, blue-team SHOULD-4): an UPPER sanity bound, as a
+            // warning and not a refusal. Unlike -Presidual (which the yield surface
+            // bounds), the floor perturbs G at EVERY confinement by
+            // sqrt((p + pRe)/p), so a large value does not "floor the ring" -- it
+            // stiffens the whole model. WP-106 measured 1 kPa (= 0.01*P_atm) as
+            // already a 7 % move on G at the live ring; 0.1*P_atm is an order of
+            // magnitude above anything it measured, so that is where the warning
+            // starts. dData[8] is P_atm (positional 9).
+            if (preElastic > 0.1 * dData[8]) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -pRe = " << preElastic << " is above 0.1*P_atm = "
+                       << 0.1 * dData[8] << ". The floor is NOT local to the"
+                          " free-surface ring -- it multiplies G, K by"
+                          " sqrt((p + pRe)/p) at every Gauss point (a factor "
+                       << sqrt((dData[8] + preElastic) / dData[8])
+                       << " at p = P_atm itself), and it shortens the explicit"
+                          " critical dt in the same proportion. Accepted; declare it."
+                       << endln;
             }
         }
         else if (strcmp(argTok, "-Pmin") == 0 || strcmp(argTok, "-pmin") == 0) {
@@ -369,11 +443,11 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
-        // Ladruno ADR-92 P2-7c: NOT an -implex option either -- see the parser
-        // comment block above. `vanilla` (the DEFAULT) leaves the base's own
-        // loading-reversal sign test alone; `init` (opt-in) sets
-        // mAlpha_in := mAlpha_n deterministically at the elastic->plastic
-        // stage flip instead.
+        // Ladruno ADR-92 P2-7c / WP-112: NOT an -implex option either -- see
+        // the parser comment block above. `init` (the DEFAULT since WP-112)
+        // sets mAlpha_in := mAlpha_n deterministically at the elastic->plastic
+        // stage flip; `vanilla` (opt-in) leaves the base's own
+        // loading-reversal sign test alone.
         else if (strcmp(argTok, "-flipAlphaIn") == 0 || strcmp(argTok, "-flipalphain") == 0) {
             seenFlag = true;
             const char *rawMode = OPS_GetString();
@@ -394,16 +468,17 @@ OPS_LadrunoSANISAND(void)
             else {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": -flipAlphaIn wants init|vanilla, got '" << modeTok
-                       << "'. vanilla (the DEFAULT) leaves ManzariDafalias's own"
-                          " loading-reversal sign test to decide mAlpha_in at the"
-                          " elastic->plastic stage flip -- measured (Esmeralda,"
-                          " P2-7c) to be a genuine, deterministic continuing-loading"
-                          " test on a real deck, not noise, once the P2-5/5b/5c guard"
-                          " is confined to primed states; init sets"
-                          " mAlpha_in := mAlpha_n deterministically instead, the"
-                          " alternative Dafalias-Manzari modelling choice (the"
+                       << "'. init (the DEFAULT, WP-112) sets mAlpha_in := mAlpha_n"
+                          " deterministically at the elastic->plastic stage flip (the"
                           " reference IS the current back-stress; h -> infinity"
-                          " initially) -- an owner's request, not a bug fix." << endln;
+                          " initially); vanilla leaves ManzariDafalias's own"
+                          " loading-reversal sign test to decide mAlpha_in, which"
+                          " reads the SIGN of (alpha - alpha_in):Ce:d_eps and so is"
+                          " decided by round-off wherever that difference is at"
+                          " round-off (e.g. after elastic-stage holds) -- the first"
+                          " plastic step then depends on the MKL thread count"
+                          " (TIMs F14). Pass vanilla only to reproduce real"
+                          " ManzariDafalias." << endln;
                 return 0;
             }
         }
@@ -713,7 +788,7 @@ OPS_LadrunoSANISAND(void)
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                        << ": unrecognized option '" << argTok << "'."
                        << " Expected a numeric positional optional or one of"
-                       << " -Presidual / -Pmin / -honorTolR / -maxSubsteps /"
+                       << " -Presidual / -pRe / -Pmin / -honorTolR / -maxSubsteps /"
                        << " -implex / -implexControl / -implexAlpha / -implexDt /"
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
@@ -773,7 +848,8 @@ OPS_LadrunoSANISAND(void)
                             (int)oData[0], (int)oData[1], (int)oData[2], oData[3], oData[4],
                             presidual, pmin, honorTolR, maxSubsteps, reversalTol,
                             reversalRel,     // Ladruno ADR-92 P2-5b
-                            flipAlphaInMode);   // Ladruno ADR-92 P2-7
+                            flipAlphaInMode, // Ladruno ADR-92 P2-7
+                            preElastic);     // Ladruno (ADR-93 II.1)
 
     if (theMaterial == 0) {
         opserr << "WARNING ran out of memory for nDMaterial LadrunoSANISAND material with tag: "
@@ -811,10 +887,11 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel, int flipAlphaInMode)
+    double reversalRel, int flipAlphaInMode, double PreElastic)
   : ManzariDafalias(tag, classTag, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, ch,
                     nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType, JacoType, TolF, TolR),
     mPresidualInput(Presidual),
+    mPreElasticInput(PreElastic),                                                     // Ladruno (ADR-93 II.1)
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
@@ -824,7 +901,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     // Defensive input sanitising -- the parser already rejects these, but the
     // wrappers and getCopy() also reach this constructor.
@@ -840,11 +918,12 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     double nb, double A0, double nd, double z_max, double cz, double mDen,
     int integrationScheme, int tangentType, int JacoType, double TolF, double TolR,
     double Presidual, double Pmin, int honorTolR, int maxSubsteps, double reversalTol,
-    double reversalRel, int flipAlphaInMode)
+    double reversalRel, int flipAlphaInMode, double PreElastic)
   : ManzariDafalias(tag, ND_TAG_LadrunoSANISAND, G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm,
                     m, h0, ch, nb, A0, nd, z_max, cz, mDen, integrationScheme, tangentType,
                     JacoType, TolF, TolR),
     mPresidualInput(Presidual),
+    mPreElasticInput(PreElastic),                                                     // Ladruno (ADR-93 II.1)
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
@@ -854,7 +933,8 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mFlipAlphaInMode(flipAlphaInMode),                                                // Ladruno ADR-92 P2-7c
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
 
@@ -869,16 +949,18 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
 LadrunoSANISAND::LadrunoSANISAND(int classTag)
   : ManzariDafalias(classTag),
     mPresidualInput(0.0),
+    mPreElasticInput(0.0),                                                            // Ladruno (ADR-93 II.1)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
+    mFlipAlphaInMode(0),                                                              // Ladruno WP-112 (F14): init (was vanilla)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -888,16 +970,18 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
 LadrunoSANISAND::LadrunoSANISAND()
   : ManzariDafalias(ND_TAG_LadrunoSANISAND),
     mPresidualInput(0.0),
+    mPreElasticInput(0.0),                                                            // Ladruno (ADR-93 II.1)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
-    mFlipAlphaInMode(1),                                                              // Ladruno ADR-92 P2-7c: vanilla
+    mFlipAlphaInMode(0),                                                              // Ladruno WP-112 (F14): init (was vanilla)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
-    mImplexCommitRefusedLatch(false)                                                  // Ladruno WP-99 (F7)
+    mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
     this->applyLadrunoConstants();
@@ -927,6 +1011,16 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
         opserr << "WARNING LadrunoSANISAND tag " << tag << ": p_residual = " << mPresidualInput
                << " < 0 is meaningless; using 0." << endln;
         mPresidualInput = 0.0;
+    }
+    // Ladruno (ADR-93 II.1): same rule as p_residual just above. A NEGATIVE
+    // elastic floor would LOWER the moduli below what the stress says -- and
+    // below `-p` it would drive the argument of the sqrt through the m_Pmin
+    // clamp from the wrong side, i.e. silently pin every Gauss point in the model
+    // at the floor stiffness. Refuse rather than widen.
+    if (mPreElasticInput < 0.0) {
+        opserr << "WARNING LadrunoSANISAND tag " << tag << ": pRe = " << mPreElasticInput
+               << " < 0 is meaningless (it is a STIFFNESS floor); using 0." << endln;
+        mPreElasticInput = 0.0;
     }
     if (mPminInput == 0.0) {
         opserr << "WARNING LadrunoSANISAND tag " << tag
@@ -969,8 +1063,8 @@ LadrunoSANISAND::sanitiseLadrunoInputs(int tag)
     // let that happen unannounced.
     if (mFlipAlphaInMode != FLIP_ALPHA_IN_INIT && mFlipAlphaInMode != FLIP_ALPHA_IN_VANILLA) {
         opserr << "WARNING LadrunoSANISAND tag " << tag << ": flipAlphaInMode = " << mFlipAlphaInMode
-               << " is not init(0) or vanilla(1); using the default vanilla(1)." << endln;
-        mFlipAlphaInMode = FLIP_ALPHA_IN_VANILLA;
+               << " is not init(0) or vanilla(1); using the default init(0)." << endln;   // Ladruno WP-112
+        mFlipAlphaInMode = FLIP_ALPHA_IN_INIT;                                               // Ladruno WP-112
     }
 }
 
@@ -1002,9 +1096,73 @@ void
 LadrunoSANISAND::applyLadrunoConstants(void)
 {
     m_Presidual     = mPresidualInput;
+    // Ladruno (ADR-93 II.1): the elastic-only floor, on the SAME "win the last
+    // write" rule as the two lines around it -- the base's initialize() resets it
+    // to 0.0 (and revertToStart routes through initialize), so a seam asserted
+    // anywhere else would silently revert mid-analysis.
+    m_PreElastic    = mPreElasticInput;    // Ladruno (ADR-93 II.1)
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
     mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
+}
+
+// Ladruno (ADR-93 II.1): re-derive the INITIAL elastic operator with the floor in
+// place.
+//
+// `ManzariDafalias::initialize()` computes mK, mG, mCe (= mCep =
+// mCep_Consistent) at p = P_atm at the foot of its body -- BEFORE
+// applyLadrunoConstants() has restored `m_PreElastic`, because the base
+// constructor runs first by language rule. With `-pRe` on, that operator is the
+// UNFLOORED one, and anything that reads the tangent before the first
+// setTrialStrain (getInitialTangent, an eigenvalue analysis, a Gauss point that
+// is never strained) would read a stiffness the deck did not ask for. This redoes
+// the base's own three lines, from the same p = P_atm diagonal, so mCe is the
+// operator GetElasticModuli itself would return at sigma = P_atm*I.
+//
+// WHEN IT IS OBSERVABLE, exactly (blue-team BLOCK-1, measured -- do NOT re-derive
+// this by reading GetElasticModuli alone):
+//
+//   `mElastFlag` is a STATIC on the base, 0 in every constructor and flipped to 1
+//   by `updateMaterialStage ... 1`. In the mElastFlag == 0 branch of all three
+//   GetElasticModuli overloads the `sqrt(pn / P_atm)` factor is DROPPED
+//   (ManzariDafalias.cpp :4922 / :4951 / :4980) -- the gravity stage runs a
+//   pressure-INDEPENDENT G = G0*P_atm*(2.97-e)^2/(1+e). So `pn` is computed and
+//   not used there, and neither this function nor -pRe nor -Pmin can move the
+//   stage-0 answer by one bit. That is correct, not a defect: there is no
+//   confinement dependence at stage 0 for a confinement floor to floor, and the
+//   stage-0 value happens to coincide with G(p = P_atm), which is the reference
+//   point this function uses.
+//
+//   With mElastFlag == 1 the factor is live and so is this function: after
+//   `updateMaterialStage ... 1` + `revertToStart` (ops.reset()), the initial
+//   tangent -- and any `eigen` formed from it -- scales by exactly
+//   sqrt((P_atm + pRe)/P_atm). Measured 2.000000000 at pRe = 3*P_atm and pinned
+//   in tests/test_ladruno_sanisand_pre_floor.py
+//   (test_pre_floor_scales_the_initial_elastic_operator).
+//
+//   The remaining window -- stage flipped to 1 but nothing re-initialised and no
+//   strain seen yet -- still reports the stage-0 operator. That is vanilla's own
+//   behaviour (vanilla leaves the same stale mCe there) and -pRe neither creates
+//   nor widens it.
+//
+// Guarded on the REQUEST (`mPreElasticInput`), not on `m_PreElastic`, so that at
+// the default 0.0 not one floating-point operation is re-executed: the
+// byte-identity of an existing deck is then a property of the control flow, not
+// an argument about `x + 0.0`.
+void
+LadrunoSANISAND::refreshInitialElasticOperator(void)
+{
+    if (mPreElasticInput == 0.0)
+        return;
+
+    Vector mSigAtm(6);
+    mSigAtm(0) = m_P_atm;
+    mSigAtm(1) = m_P_atm;
+    mSigAtm(2) = m_P_atm;
+    this->GetElasticModuli(mSigAtm, mVoidRatio, mK, mG);
+    mCe             = this->GetStiffness(mK, mG);
+    mCep            = mCe;
+    mCep_Consistent = mCe;
 }
 
 // Ladruno (ADR-86 PR-3): does this deck's IntScheme actually reach the code that
@@ -1021,7 +1179,19 @@ LadrunoSANISAND::applyLadrunoConstants(void)
 //   scheme  1  INT_ModifiedEuler  explicit_integrator -> ModifiedEuler      REACHES
 //   scheme  0  INT_MAXENE_MFE     MaxEnergyInc        -> ModifiedEuler      REACHES
 //   anything not in {0..9, 45}    explicit_integrator -> default:           REACHES
-//   scheme  2  INT_BackwardEuler  integrate() branches to BackwardEuler_CPPM  no
+//   scheme  2  INT_BackwardEuler  integrate() tries BackwardEuler_CPPM first;    REACHES,
+//              on non-convergence its own retry ladder (ManzariDafalias.cpp     conditionally
+//              ~2472-2588) falls back to explicit_integrator, whose switch does
+//              not enumerate INT_BackwardEuler, so THAT call hits `default:` ->
+//              ModifiedEuler. Ladruno (WP-108): this row used to say "no" -- it
+//              was wrong. WP-105/F12 measured it directly: a `-maxSubsteps 100`
+//              cap on scheme 2 turned a run that completed 40 of 40 uncapped
+//              into one that refuses at step 18 (Ladruno_files/testbed/
+//              hypo_bearing/adr92_f12/F12_intscheme2_verdict.md, section 6).
+//              Unlike schemes 0/1 (which call ModifiedEuler unconditionally,
+//              every step), scheme 2 only routes there on the fallback path --
+//              but "sometimes reaches it" is not "never reaches it", and the
+//              warning below claimed the latter.
 //   scheme  3  INT_RungeKutta                         -> RungeKutta4          no
 //   scheme  5  INT_ForwardEuler                       -> ForwardEuler         no
 //   scheme 45  INT_RungeKutta45                       -> RungeKutta45         no  (it
@@ -1039,6 +1209,19 @@ LadrunoSANISAND::schemeReachesModifiedEuler(void) const
     // a guard.
     const int s = (int)mScheme;
     if (s == INT_LSANISAND_ModifiedEuler || s == INT_LSANISAND_MAXENE_MFE)
+        return true;
+    // Ladruno (WP-108): scheme 2's implicit retry ladder (BackwardEuler_CPPM,
+    // ManzariDafalias.cpp ~2472-2588) falls back to explicit_integrator on
+    // non-convergence or ladder exhaustion, and that switch does not enumerate
+    // INT_BackwardEuler, so it hits `default:` -> ModifiedEuler -- the same
+    // seam -maxSubsteps/-honorTolR read. schemeReachesModifiedEuler() answers
+    // "can this deck's cap ever bind", not "does every step of this scheme
+    // call ModifiedEuler", so scheme 2's conditional (fallback-only) routing
+    // still earns `true`: measured on WP-105/F12, a `-maxSubsteps 100` cap
+    // turned a completing 40/40 run into a refusal at step 18. Returning
+    // `false` here made the constructor and print() warnings below claim the
+    // cap has NO EFFECT on scheme 2, which is false -- see LEDGER_quirks.md.
+    if (s == INT_LSANISAND_BackwardEuler)
         return true;
     // Scheme numbers the base's switch does not enumerate fall through
     // explicit_integrator's `default:`, which is ModifiedEuler.
@@ -1080,6 +1263,32 @@ LadrunoSANISAND::echoLadrunoConstants(void)
         opserr << " (default, cohesionless)";
     else
         opserr << " (user)";
+
+    // Ladruno (ADR-93 II.1): echoed next to p_residual because the pair is the
+    // whole point -- p_residual floors STRENGTH and never the moduli, pRe floors
+    // STIFFNESS and never the strength. Named with what it does, so a reader
+    // cannot mistake it for a second cohesion.
+    opserr << ", pRe = " << m_PreElastic;
+    if (mPreElasticInput == 0.0)
+        opserr << " (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor)";
+    else
+        opserr << " (user, ELASTIC-ONLY floor: G, K ~ sqrt(max(p + pRe, p_min)/P_atm);"
+                  " yield surface, psi, M^b, M^d, D and p_min UNCHANGED -- ADR 93 II.1)";
+
+    // Ladruno (ADR-93 II.1, blue-team SHOULD-4): the one interaction between the
+    // two low-stress constants that a deck cannot see from either value alone.
+    // Unfloored the moduli argument is max(p, p_min); floored it is
+    // max(p + pRe, p_min). At the free-surface ring, p -> 0, so the floored
+    // argument tends to max(pRe, p_min): if pRe <= p_min the m_Pmin STRESS clamp
+    // already supplies the larger number and the floor buys NOTHING exactly where
+    // it was asked to buy something -- while still perturbing G by
+    // sqrt((p + pRe)/p) everywhere p is finite. That is the worst of both and it
+    // is silent, so say it.
+    if (mPreElasticInput > 0.0 && mPreElasticInput <= m_Pmin)
+        opserr << " [NOTE: pRe <= p_min = " << m_Pmin
+               << ", so as p -> 0 the p_min stress clamp already dominates the floor"
+                  " and the ring gains NO stiffness; the floor still perturbs G, K"
+                  " wherever p is comparable to pRe. Raise pRe above p_min, or drop it]";
 
     opserr << ", p_min = " << m_Pmin;
     if (mPminInput < 0.0)
@@ -1165,12 +1374,14 @@ LadrunoSANISAND::echoLadrunoConstants(void)
     opserr << "LadrunoSANISAND tag " << this->getTag()
            << ": -flipAlphaIn " << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla")
            << " (flip: alpha_in := alpha "
-           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT
-                 ? "(init, opt-in -- an alternative Dafalias-Manzari modelling choice)"
-                 : "(vanilla, the DEFAULT: unchanged -- the base's own loading-reversal"
-                   " sign test decides, which Esmeralda measured is deterministic and"
-                   " correct on a real deck once the reversal-noise guard is confined"
-                   " to primed states -- see P2-7c)")
+           << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT                                       // Ladruno WP-112 (F14)
+                 ? "(init, the DEFAULT since WP-112: deterministic at every point,"
+                   " independent of round-off and of the MKL thread count)"
+                 : "(vanilla, opt-in: unchanged -- the base's own loading-reversal"
+                   " sign test decides; where alpha - alpha_in is at round-off (e.g."
+                   " after elastic-stage holds) its SIGN, and so the first plastic"
+                   " step, is decided by round-off -- TIMs F14. A once-per-point"
+                   " warning names such a state)")
            << "), -implexFlipAbsorb "
            << (mImplexOpt.flipAbsorb
                  ? "on (the flip commits a zero-pseudo-time-increment companion return,"
@@ -1221,6 +1432,9 @@ LadrunoSANISAND::initialize()
 {
     ManzariDafalias::initialize();   // the base must still run its own init
     this->applyLadrunoConstants();   // Ladruno: and we take the last write
+
+    this->refreshInitialElasticOperator();   // Ladruno (ADR-93 II.1)
+
     // Ladruno (ADR-92 P1): a revertToStart puts the material back at step 0, so
     // the extrapolation history has to go with it -- d_eps_p(n) from a discarded
     // load path is the single most misleading thing this class could carry
@@ -1311,6 +1525,18 @@ LadrunoSANISAND::getCopy(const char *type)
         // clone made AFTER this instance's own flip must not re-run the
         // once-per-flip handling either.
         clone->mFlipSeen        = mFlipSeen;                                        // Ladruno ADR-92 P2-7c
+        // Ladruno (ADR-93 II.1): -pRe is not a WRAPPER constructor argument (the
+        // wrappers' signatures stop at maxSubsteps, exactly as they do for
+        // mReversalTol above), so it is transferred here and then re-asserted on
+        // the base seam. applyLadrunoConstants() is the only writer of
+        // m_PreElastic, and the clone's own constructor has already run it once
+        // with the wrapper default 0.0 -- so it MUST run again here, after the
+        // request has been copied, or every Gauss point would silently run with
+        // the floor OFF while the deck-level prototype echoed it ON. That is the
+        // ADR-86 section 3 defect, in a new variable.
+        clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
+        clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1324,6 +1550,18 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mDEpsNormCommit  = mDEpsNormCommit;                                   // Ladruno ADR-92 P2-5b
         clone->mFlipAlphaInMode = mFlipAlphaInMode;                                  // Ladruno ADR-92 P2-7
         clone->mFlipSeen        = mFlipSeen;                                        // Ladruno ADR-92 P2-7c
+        // Ladruno (ADR-93 II.1): -pRe is not a WRAPPER constructor argument (the
+        // wrappers' signatures stop at maxSubsteps, exactly as they do for
+        // mReversalTol above), so it is transferred here and then re-asserted on
+        // the base seam. applyLadrunoConstants() is the only writer of
+        // m_PreElastic, and the clone's own constructor has already run it once
+        // with the wrapper default 0.0 -- so it MUST run again here, after the
+        // request has been copied, or every Gauss point would silently run with
+        // the floor OFF while the deck-level prototype echoed it ON. That is the
+        // ADR-86 section 3 defect, in a new variable.
+        clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
+        clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1485,7 +1723,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
+    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1536,6 +1774,15 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // Ladruno WP-99 (F7)
     ladrunoData(33) = mImplexCommitRefusedLatch ? 1.0 : 0.0;
 
+    // Ladruno (ADR-93 II.1): the deck's -pRe request. It MUST cross for exactly
+    // the reason mPresidualInput does (ADR 86 section 3, the defect this class was
+    // written about): an MP worker or a database-restored material that starts
+    // with the floor at 0 while the rank beside it runs a floored one is running
+    // a DIFFERENT elastic law, silently. The base seam m_PreElastic is not sent
+    // separately -- it is not on the vanilla Vector(97) and recvSelf re-derives it
+    // through applyLadrunoConstants(), which is the only writer.
+    ladrunoData(34) = mPreElasticInput;
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1555,7 +1802,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(34);                                                    // Ladruno WP-99 (F7)
+    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1565,6 +1812,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     }
 
     mPresidualInput = ladrunoData(0);
+    mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -1619,7 +1867,10 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     mReversalRel    = ladrunoData(27);
     mDEpsNormCommit = ladrunoData(28);
 
-    // Ladruno ADR-92 P2-7 (redesign): the deck's request.
+    // Ladruno ADR-92 P2-7 (redesign): the deck's request. The sender's mode
+    // always wins; the broker's null constructor starts at init (0, the
+    // WP-112 default) only until this line runs, so an MP rank or restored
+    // datastore can never fall back to a different mode from the sender's.
     mFlipAlphaInMode = (int)ladrunoData(29);
 
     // Ladruno ADR-92 P2-7c: mFlipSeen IS restored (unlike 887fea475's
@@ -1692,10 +1943,35 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 //  vanilla footprint ZERO).
 // ===========================================================================
 
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in LadrunoSANISAND.h.
+bool
+LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+    // TWO independent refusals, and the base's is currently the binding one.
+    //
+    // (1) -implex: the diagnostics are a process-wide ledger (LadrunoImplexGlobals
+    //     below) with FLOATING-POINT accumulators, so threading would make the
+    //     reported average depend on the thread count -- not fixable with an
+    //     atomic, and exactly the determinism WP-107 exists to preserve.
+    // (2) the base class refuses outright: a threaded IntScheme-1 integration
+    //     SEGFAULTS once the plastic branch is exercised in volume, with no
+    //     function-scope static anywhere on its call graph. See the long note on
+    //     ManzariDafalias::ladrunoThreadSafeUpdate().
+    //
+    // (1) is kept explicit even though (2) already refuses everything, because
+    // (1) is a DESIGN constraint that survives any fix to (2).
+    if (mImplexOpt.enabled)
+        return false;
+    return this->ManzariDafalias::ladrunoThreadSafeUpdate();
+}
+
+
 // Process-wide IMPL-EX error accounting, on the
 // `ASDConcrete3DMaterial::GlobalParameters` template (:307-342). Anonymous
 // namespace: this is one process's diagnostic accumulator, not an interface, and
 // nothing outside this translation unit may reach it.
+// (Red-team N3: WP-107 had spliced its ladrunoThreadSafeUpdate() between this
+// paragraph and the `namespace {` it documents. Restored.)
 namespace {
 
 class LadrunoImplexGlobals                                    // Ladruno (ADR-92 P1)
@@ -2323,6 +2599,11 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         this->ladrunoRunStageFlipOnce();
     }
 
+    // Ladruno WP-112 (F14): read-only diagnostic, placed BEFORE either branch
+    // so it sees the committed (alpha_n, alpha_in_n) pair that integrate()'s
+    // reversal test is about to read, on the implicit and the -implex path.
+    this->ladrunoWarnRoundoffAlphaIn();
+
     if (!this->ladrunoImplexActive()) {
         mImplexTrialDone = false;   // so commitState() takes the base path
         this->integrate();
@@ -2565,10 +2846,12 @@ LadrunoSANISAND::ladrunoRestoreTrialFromCommitted(void)
 //  even the P2-5c dt==0 check. Before the first plastic commitState() since
 //  the elastic->plastic stage flip, this whole function is a no-op and
 //  ManzariDafalias::integrate()'s own loading-reversal sign test stands
-//  exactly as it ran: harmless under `-flipAlphaIn init` (mAlpha_in was just
-//  set equal to mAlpha at the flip, so the test's outcome does not matter),
-//  and a faithful reproduction of the pre-P2-7 defect under `vanilla`, which
-//  is the whole point of that token. mPrimed is set at the first plastic
+//  exactly as it ran: harmless under `-flipAlphaIn init` (the DEFAULT since
+//  WP-112: mAlpha_in was just set equal to mAlpha at the flip, so the test
+//  reads an exact 0 and takes the no-reset branch deterministically), and a
+//  faithful reproduction of real ManzariDafalias under `vanilla`, which is
+//  the whole point of that token -- including its sign-at-round-off
+//  behaviour (WP-112 / F14; see ladrunoWarnRoundoffAlphaIn()). mPrimed is set at the first plastic
 //  commitState() (see commitState() / ladrunoImplexCommit()) -- NOT by the
 //  -implex synthetic companion return in updateParameter(), which stays
 //  un-priming by construction (it calls ManzariDafalias::commitState()
@@ -2606,6 +2889,104 @@ LadrunoSANISAND::ladrunoGuardReversalNoise(void)
         return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+//  Ladruno WP-112 (F14): the sign-at-round-off warning (`-flipAlphaIn vanilla`
+//  only). READ-ONLY -- it changes no state the analysis reads, so it cannot
+//  move an answer; its only write is its own latch.
+//
+//  THE HAZARD. ManzariDafalias::integrate() (ManzariDafalias.cpp:1022-1026)
+//  resets alpha_in := alpha_n when (alpha_n - alpha_in_n) : (Ce : d_eps) < 0,
+//  with no magnitude guard on EITHER factor. The elastic stage runs the same
+//  test every step (it sits before the mElastFlag branch), so after a
+//  LoadControl(0) hold -- whose d_eps is solver noise, whose sign is therefore
+//  a coin -- alpha_in := alpha_n at roughly half the points, and on the next
+//  step alpha_n - alpha_in_n is only the round-off by which alpha moved since.
+//  On the first PLASTIC increment that round-off vector's sign against a real
+//  d_eps picks the branch, and the branch picks h = b0/((alpha-alpha_in):n):
+//  TIMs F14 measured the first push step at 1.511/1.824/1.824/1.489 kPa at
+//  1/2/4/8 MKL threads. `init` (the default) removes it by construction.
+//
+//  "AT ROUND-OFF" -- the threshold, and why it is 1e-8 relative:
+//      0 < ||alpha_n - alpha_in_n|| <= 1e-8 * max(||alpha_n||, m)
+//  * relative to ||alpha_n||, because alpha = dev(sigma)/p is a RATIO and the
+//    round-off in it scales with its own size; floored at the yield-surface
+//    size m (m_m, ~0.005-0.01 in calibrated sets) so a near-isotropic state
+//    (||alpha_n|| ~ 1e-16, e.g. an isotropically confined brick, where
+//    init and vanilla still differ at 1e-6 relative) is judged against the
+//    natural scale of the back-stress rather than against its own round-off;
+//  * MEASURED on the WP-112 test deck (12x6 LadrunoQuad, two elastic holds,
+//    old build): the round-off population sits at <= 1e-12 of that scale
+//    (229/288 points), the genuine population at exactly 1.0 (alpha_in = 0);
+//    1e-8 is 4 decades above the former (double precision u = 1.1e-16,
+//    amplified by the solve and a few steps of accumulation) and 8 decades
+//    below the latter, and 4+ decades below the back-stress travel of a real
+//    plastic step (~2G*d_eps/p relative: 1e-4 and up at d_eps >= 1e-7).
+//    STATED LIMIT: a hold whose Newton tolerance is loose leaves a
+//    Newton-tolerance-scale (not round-off) difference -- alpha moves by
+//    ~2G/p times the strain noise, and ADR-92 P2-5b measured that noise at
+//    4e-9..1.4e-6 in the plastic stage -- which can exceed 1e-8 and then
+//    carries the same sign lottery WITHOUT this warning. `init` removes both;
+//    this warning names only the round-off case the F14 request asked for;
+//  * EXACTLY zero is excluded on purpose: 0 : x = 0 is not < 0, so the test
+//    deterministically keeps alpha_in = alpha_in_n (= alpha_n) -- there is no
+//    lottery, whatever the round-off in d_eps.
+//
+//  WHEN. Only on a plastic-stage trial (mElastFlag != 0) with a nonzero strain
+//  increment (a hold's d_eps == 0 dots to exactly 0 and decides nothing), in
+//  vanilla mode, and once per material INSTANCE, i.e. once per Gauss point
+//  (mRoundoffAlphaInWarned) -- with a 10-per-process print budget like every
+//  sibling warning in this file, because a strip has thousands of points in
+//  the same state and the first ten carry all the information.
+// ---------------------------------------------------------------------------
+void
+LadrunoSANISAND::ladrunoWarnRoundoffAlphaIn(void)
+{
+    if (mRoundoffAlphaInWarned || mElastFlag == 0 ||
+        mFlipAlphaInMode != FLIP_ALPHA_IN_VANILLA)
+        return;
+
+    bool moved = false;
+    for (int i = 0; i < 6; i++)
+        if (mEpsilon(i) != mEpsilon_n(i)) { moved = true; break; }
+    if (!moved)
+        return;
+
+    // Contravariant (stress-like) Voigt norm, as GetNorm_Contr computes it,
+    // written out so the diagnostic allocates nothing on the trial path.
+    double d2 = 0.0, a2 = 0.0;
+    for (int i = 0; i < 6; i++) {
+        const double w = (i < 3) ? 1.0 : 2.0;
+        const double d = mAlpha_n(i) - mAlpha_in_n(i);
+        d2 += w * d * d;
+        a2 += w * mAlpha_n(i) * mAlpha_n(i);
+    }
+    const double dNorm = sqrt(d2);
+    if (dNorm == 0.0)
+        return;
+    const double aNorm = sqrt(a2);
+    const double scale = (aNorm > m_m) ? aNorm : m_m;
+    if (dNorm > 1.0e-8 * scale)
+        return;
+
+    mRoundoffAlphaInWarned = true;
+    static int ladrunoRoundoffAlphaInWarnCount = 0;   // Ladruno WP-112 (F14)
+    if (ladrunoRoundoffAlphaInWarnCount < 10) {
+        opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+               << ": -flipAlphaIn vanilla and ||alpha - alpha_in|| = " << dNorm
+               << " is at round-off (<= 1e-8 * max(||alpha|| = " << aNorm
+               << ", m = " << m_m << ")) on a plastic increment. ManzariDafalias's"
+                  " loading-reversal test reads only the SIGN of"
+                  " (alpha - alpha_in):Ce:d_eps, so here round-off -- e.g. the MKL"
+                  " thread count -- picks the branch and the plastic modulus that"
+                  " follows (TIMs F14). Use -flipAlphaIn init (the default) unless"
+                  " you mean to reproduce real ManzariDafalias. Once per Gauss"
+                  " point." << endln;
+        if (++ladrunoRoundoffAlphaInWarnCount == 10)
+            opserr << "WARNING LadrunoSANISAND: further round-off alpha_in warnings"
+                      " suppressed (budget 10 per process)." << endln;
+    }
 }
 
 // Ce(p_n) into all three tangent slots.
@@ -3783,13 +4164,15 @@ void
 LadrunoSANISAND::ladrunoRunStageFlipOnce(void)
 {
     // --- (1) the -flipAlphaIn mode's deterministic mAlpha_in reset. `init`
-    // (opt-in) sets mAlpha_in := mAlpha_n here -- the alternative
-    // Dafalias-Manzari modelling choice (the reference IS the current
-    // back-stress; h -> infinity initially). `vanilla` (the DEFAULT) is a
-    // no-op -- ManzariDafalias::integrate()'s own sign test decides, exactly
-    // as it always has, and Esmeralda measured that test to be a genuine,
-    // deterministic signal on a real deck, not noise, once (2) below confines
-    // the P2-5/5b/5c guard to primed states.
+    // (the DEFAULT since WP-112) sets mAlpha_in := mAlpha_n here -- the
+    // Dafalias-Manzari choice in which the reference IS the current
+    // back-stress (h -> infinity initially). `vanilla` (opt-in) is a no-op --
+    // ManzariDafalias::integrate()'s own sign test decides, exactly as it
+    // always has. Ladruno WP-112 (F14): that test is deterministic only where
+    // (alpha_n - alpha_in_n) is NOT at round-off; after elastic-stage holds it
+    // is at round-off at most points (measured: 229/288 Gauss points below
+    // 1e-12 relative after two LoadControl(0) holds on the WP-112 deck), and
+    // there the thread-count-dependent round-off picks the branch.
     if (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT) {
         mAlpha      = mAlpha_n;    // trial/committed consistent
         mAlpha_in   = mAlpha_n;
@@ -4339,6 +4722,12 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     s << "  p_residual = " << m_Presidual
       << "   (input " << mPresidualInput
       << (mPresidualInput == 0.0 ? ", default: cohesionless)" : ", user)") << endln;
+    // Ladruno (ADR-93 II.1): the elastic-only confinement floor.
+    s << "  pRe        = " << m_PreElastic
+      << (mPreElasticInput == 0.0
+            ? "   (default 0: OFF, no stiffness floor)"
+            : "   (user: ELASTIC-ONLY floor, G,K ~ sqrt(max(p+pRe,p_min)/P_atm);"
+              " strength side untouched)") << endln;
     s << "  p_min      = " << m_Pmin;
     if (mPminInput < 0.0)
         s << "   (default = 1e-3*P_atm, P_atm = " << m_P_atm << ")" << endln;
@@ -4379,8 +4768,12 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     // a scheme that never routes there the cap is stored, echoed, wired -- and does
     // nothing. NB IntScheme 7 is called INT_MAXSTR_MFE and does NOT reach
     // ModifiedEuler: MaxStrainInc has no case for it and falls through to
-    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name;
-    // schemeReachesModifiedEuler() encodes the switch and is correct as written.
+    // ForwardEuler (ManzariDafalias.cpp:1199-1207). Read the switch, not the name.
+    // Ladruno (WP-108): schemeReachesModifiedEuler() used to also get scheme 2
+    // wrong by the same "read the switch" rule -- BackwardEuler_CPPM's own
+    // fallback ladder ends in explicit_integrator's `default:` -> ModifiedEuler,
+    // so the cap DOES bind there (conditionally). Fixed; see the function's
+    // header comment and LEDGER_quirks.md.
     if (mMaxSubsteps != 0 && !this->schemeReachesModifiedEuler())
         s << "             NOTE: IntScheme " << (int)mScheme << " does not route to"
              " ModifiedEuler(), so -maxSubsteps is INERT on this deck." << endln;
@@ -4466,7 +4859,7 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
         s << "              -implexFlipAbsorb = " << (mImplexOpt.flipAbsorb ? "on" : "OFF")
           << " (ADR-92 P2-7c: zero-pseudo-time-increment companion return"
              " committed AT the elastic->plastic stage flip; -flipAlphaIn "
-          << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init" : "vanilla (DEFAULT)")
+          << (mFlipAlphaInMode == FLIP_ALPHA_IN_INIT ? "init (DEFAULT)" : "vanilla")   // Ladruno WP-112
           << ")" << endln;
         // Ladruno ADR-92 P2-9
         s << "              -implexFactor = "

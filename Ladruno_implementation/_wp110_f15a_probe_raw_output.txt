@@ -1,0 +1,59 @@
+ladrunoBuild = 48c0e99bc8e28bbb4fdf965015f285f01e16e90d
+======================================================================
+ELASTIC SANITY (TanType=0)
+======================================================================
+analytic Ce:
+       7198       378.8       378.8           0           0           0
+      378.8        7198       378.8           0           0           0
+      378.8       378.8        7198           0           0           0
+          0           0           0        3410           0           0
+          0           0           0           0        3410           0
+          0           0           0           0           0        3410
+FD:
+       7198       378.8       378.8           0           0           0
+      378.8        7198       378.8           0    2.22e-09           0
+      378.8       378.8        7198           0    1.11e-09           0
+          0           0           0        3410           0           0
+          0           0           0   4.621e-10        3410   -2.31e-10
+          0           0           0   4.621e-10           0        3410
+elastic sanity max rel err = 2.220e-09
+======================================================================
+LOW p'~20, eta~1.3 (IntScheme=2 BackwardEuler_CPPM, TanType=1)
+======================================================================
+p'=20.0325 kPa  q=25.8983  eta=1.293  dGamma=1.596e-06  n_shear=0.2145
+Analytic aCep AS-WRITTEN (buggy, double ToCovariant) row3:
+  [ 8643.23526564 -4339.53543429  8833.80748061 14663.89322683     0.             0.        ]
+Analytic aCep FIXED (numerator only) row3:
+  [ 4321.61763282 -2169.76771715  4416.9037403  15865.98550912     0.             0.        ]
+Analytic aCep WORKBENCH (numerator + denominator) row3:
+  [ 4649.04659716 -2334.16097375  4751.55209195 15774.90854108     0.             0.        ]
+buggy/fixed ratio, row3 cols0-2 (expect exactly 2.0): [2. 2. 2.]
+denominator-only ratio (correction_wb/correction_fixed), should be one constant across all entries: min=1.07577 max=1.07577
+reversal-safe probe signs per direction: [1, -1, 1, -1, 1, 1]
+FD one-sided (h=1e-8, reversal-safe) row3:
+  [ 4654.36772883 -2330.67765176  4744.03312394 15766.48872925     2.99548848     2.99547489]
+row3 rel err, one-sided FD vs WORKBENCH: [0.00114456 0.00149232 0.00158242 0.00053375 2.99548848 2.99547489]  (real-signal mask: [ True  True  True  True False False])
+row3 rel err, one-sided FD vs FIXED (numerator only): [0.07699665 0.07415998 0.07406305 0.00627107 2.99548848 2.99547489]
+no-signal entries (yz,xz) absolute FD noise: [2.99548848 2.99547489]
+FD central-difference (h=1e-8, KNOWN CONTAMINATED, for context only) row3:
+  [ 2327.18386441 -1165.33882588  2372.01656197 16417.28326027     0.             1.49773594]
+======================================================================
+HIGH p'~214, eta~1.3 (IntScheme=2 BackwardEuler_CPPM, TanType=1)
+======================================================================
+p'=213.561 kPa  q=292.902  eta=1.372  dGamma=7.409e-05  n_shear=0.2146
+Analytic aCep AS-WRITTEN (buggy, double ToCovariant) row3:
+  [ 29755.63751074 -12585.75211758  30336.4057862   47887.48323284     -0.             -0.        ]
+Analytic aCep FIXED (numerator only) row3:
+  [14877.81875537 -6292.87605879 15168.2028931  51808.06856282    -0.            -0.        ]
+Analytic aCep WORKBENCH (numerator + denominator) row3:
+  [16003.70048716 -6769.09063779 16316.05949912 51511.37753078    -0.            -0.        ]
+buggy/fixed ratio, row3 cols0-2 (expect exactly 2.0): [2. 2. 2.]
+denominator-only ratio (correction_wb/correction_fixed), should be one constant across all entries: min=1.07568 max=1.07568
+reversal-safe probe signs per direction: [1, -1, 1, -1, -1, 1]
+FD one-sided (h=1e-8, reversal-safe) row3:
+  [16009.43031121 -6767.11600107 16307.72394634 51501.83734202    -0.00000639     0.00000639]
+row3 rel err, one-sided FD vs WORKBENCH: [0.00035803 0.00029171 0.00051088 0.00018521 0.00000639 0.00000639]  (real-signal mask: [ True  True  True  True False False])
+row3 rel err, one-sided FD vs FIXED (numerator only): [0.07606031 0.0753614  0.07512565 0.00591088 0.00000639 0.00000639]
+no-signal entries (yz,xz) absolute FD noise: [-0.00000639  0.00000639]
+FD central-difference (h=1e-8, KNOWN CONTAMINATED, for context only) row3:
+  [ 8004.71515561 -3383.55799947  8153.86197317 53615.24561955     0.             0.        ]

@@ -102,6 +102,46 @@ class Element : public DomainComponent
     virtual int revertToLastCommit(void) = 0;        
     virtual int revertToStart(void);                
     virtual int update(void);
+
+    // Ladruno WP-107 (ADR-75b stage L3-1, correctness protocol item 2: "per-
+    // classTag allowlist, DEFAULT EMPTY"). May this element's update() be
+    // called concurrently with other elements' update()?
+    //
+    // The default is `false` and that is the whole design: an un-audited
+    // element is never threaded, which turns ADR-75 section 11.1's
+    // "one missed static = silent, thread-count-dependent wrong answers"
+    // from a whole-codebase invariant into a per-class opt-in. Domain::update
+    // falls back to the serial loop, loudly and once, if ANY element in the
+    // domain answers false.
+    //
+    // To answer true a class must be re-entrant TRANSITIVELY, on the whole
+    // update() call graph and not just in its own body:
+    //
+    //   1. No shared function-scope or class-scope scratch anywhere on that
+    //      call graph (ADR-75b section 5.4-H2/H5). Note that a class-wide
+    //      buffer is fine if the update() path never reaches the method that
+    //      writes it -- the claim is about the PATH, not the class (see
+    //      ElasticIsotropicPlaneStrain2D.h, whose D/sigma are class-wide and
+    //      whose allowlisting is still sound).
+    //   2. No writes to node state shared with another element (section 2.1b
+    //      -- LadrunoRigidBody and ZeroLengthVG_HG are hard exclusions).
+    //   3. Every material it holds must itself answer
+    //      Material::ladrunoThreadSafeUpdate() true.
+    //   4. It MUST NOT WRITE TO `opserr` FROM update(). (Red-team S8.)
+    //      `opserr` is one shared OPS_Stream: two threads formatting into it
+    //      interleave at best and corrupt its internal state at worst, and any
+    //      warn-once counter behind it is an unsynchronised read-modify-write.
+    //      This WP had to promote two ManzariDafalias warn counters to
+    //      std::atomic for exactly this reason. A class that warns on a
+    //      degenerate Jacobian, a clamped parameter or a substep cap is
+    //      therefore NOT allowlistable as written -- make the diagnostic
+    //      per-instance and report it after the loop.
+    //   5. It must not THROW out of update(). An exception escaping a
+    //      structured block is undefined behaviour under MSVC's OpenMP, so a
+    //      throwing class cannot be allowlisted even if it is otherwise
+    //      re-entrant. (Red-team N2; nothing on today's allowlist throws.)
+    virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
+
     virtual bool isSubdomain(void);
     
     // methods to return the current linearized stiffness,

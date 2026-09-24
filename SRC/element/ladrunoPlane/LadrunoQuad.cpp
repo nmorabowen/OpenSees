@@ -69,8 +69,8 @@ static inline void dyad2(const Vector &a, const Vector &b, Matrix &out)
 double LadrunoQuad::matrixData[64];
 Matrix LadrunoQuad::K(matrixData, 8, 8);
 Vector LadrunoQuad::P(8);
-double LadrunoQuad::shp[3][4];
-double LadrunoQuad::shpBar[2][4];
+thread_local double LadrunoQuad::shp[3][4];        // Ladruno WP-107 (H2)
+thread_local double LadrunoQuad::shpBar[2][4];     // Ladruno WP-107 (H2)
 double LadrunoQuad::pts[4][2];
 double LadrunoQuad::wts[4];
 
@@ -707,6 +707,32 @@ void LadrunoQuad::formB(Matrix &B)
   }
 }
 
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in LadrunoQuad.h.
+//
+// The element half of the audit: update()'s own scratch is stack-backed and
+// shp/shpBar are thread_local, so the STD/BBAR/SSP linear path touches no
+// shared mutable state and writes no node state (it only READS getTrialDisp,
+// whose lazy allocation Domain::update forces before the parallel region --
+// hazard H4). The material half is delegated, because for ManzariDafalias-family
+// models re-entrancy is a property of the integration scheme, not of the class.
+bool
+LadrunoQuad::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+  if (formulation == Formulation::EAS)
+    return false;
+  if (this->isFinite())
+    return false;
+
+  const int nmat = (formulation == Formulation::SSP) ? 1 : 4;
+  for (int i = 0; i < nmat; i++) {
+    if (theMaterial == 0 || theMaterial[i] == 0)
+      return false;
+    if (theMaterial[i]->ladrunoThreadSafeUpdate() == false)
+      return false;
+  }
+  return true;
+}
+
 int LadrunoQuad::update(void)
 {
   if (this->isFinite())            // -geom finite (ADR 70): F-driven updated-Lagrangian
@@ -725,14 +751,23 @@ int LadrunoQuad::update(void)
   if (formulation == Formulation::EAS)
     return this->formEAStrue(0, false);
 
-  static Vector u(8);
+  // Ladruno WP-107 (ADR-75b L3-1, hazard H2): these three were function-scope
+  // `static` buffers, i.e. shared by every LadrunoQuad in the model. They are
+  // now STACK-backed -- Vector/Matrix have non-owning (double*, size)
+  // constructors, so this is re-entrant AND allocation-free (a plain local
+  // `Vector u(8)` would heap-allocate on every call, which is a serial
+  // regression and a malloc-contention point under threads). Serial arithmetic
+  // is bit-identical: same values, same order, different storage.
+  double uData[8];
+  Vector u(uData, 8);
   for (int a = 0; a < 4; a++) {
     const Vector &d = theNodes[a]->getTrialDisp();
     u(2 * a)     = d(0);
     u(2 * a + 1) = d(1);
   }
 
-  static Vector eps(3);
+  double epsData[3];
+  Vector eps(epsData, 3);
 
   if (formulation == Formulation::SSP) {
     // single material evaluation at the centroid: strain = Mmem * u
@@ -743,7 +778,8 @@ int LadrunoQuad::update(void)
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
-  static Matrix B(3, 8);
+  double BData[24];
+  Matrix B(BData, 3, 8);
   int ret = 0;
   for (int i = 0; i < 4; i++) {
     this->shapeFunction(pts[i][0], pts[i][1]);

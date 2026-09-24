@@ -549,6 +549,16 @@ default path differs from 887fea475's (0.0169 vs 0.0161, 42 545 vs 29 527 guards
 single-element byte-identity gate cannot see a dispatch-scope difference: a mesh-level twin check belongs in the
 acceptance from now on.
 
+**WP-112 (TIMs F14, 2026-09-18): `-flipAlphaIn` default `vanilla` → `init`, by the owner's decision.** The RC14
+reading above ("the flip's sign test is deterministic on a real deck") holds for the Esmeralda R3 deck and not in
+general: the sign test runs in the elastic stage too, a `LoadControl(0)` hold leaves `α_n − α_in_n` at round-off,
+and the first plastic step then reads the sign of round-off — TIMs measured 1.511 / 1.824 / 1.824 / 1.489 kPa at
+1 / 2 / 4 / 8 MKL threads under `vanilla`, 1.824 / 14.339 / 36.586 kPa at rows 1 / 8 / 15 on every count under
+`init`. The R3 gate numbers above are unchanged by the flip (P2-7c measured the implicit twin under `init`
+identical to `vanilla` to the digit); the `fixed` dense-arm reference wall is 0.01754 under the new default
+(P2-7c's `init` arm) rather than 0.01689. `vanilla` stays opt-in and warns once per Gauss point on a round-off
+`α − α_in`. Guide §11, `tests/test_ladruno_sanisand_flip_determinism.py`, LEDGER_quirks 2026-09-18.
+
 **P2-8 (listed, not built, and SUPERSEDED by P2-9):** a guard threshold `-implexGuardKp <ratio>` was the fixed-threshold answer to the same under-firing; P2-9's `f*` is its graded, material-agnostic replacement and is what was built. P2-8 remains the fallback the ADR records if P2-9's dense-arm gate fails. The original note:  a guard threshold `-implexGuardKp <ratio>`
 firing when `Kp / G < ratio` on the committed predecessor (default 0 = today), priced by a sweep {0, 0.05, 0.2} on
 reach vs overlay; owner's call whether it belongs in this PR or the next.
@@ -608,3 +618,50 @@ admissible by construction — so `refuse` would stop IMPL-EX exactly where the 
 itself is still walking forward, and `implicit` closes the self-sustaining gap-closing loop P2-1
 measured without paying for an extra return map (the companion is already computed for the error
 comparison). `accept` remains available only to reproduce pre-P2 behaviour or isolate the loop.
+
+
+## Addendum (2026-09-16) — D3's stated reason corrected by WP-105 / F12; conclusion unchanged
+
+D3 (§5) reversed the companion default to scheme 1 (`ModifiedEuler`) and gave, as its reason,
+that scheme 2 (`BackwardEuler_CPPM`) "is not an implicit return where the campaign's problem
+lives" because P0 measured 58–74 % of its calls on the low-confinement corner path taking the
+low-`p` branch and integrating via `explicit_integrator`. WP-105 / F12 (build `634824e1f`, no
+source edited) measured this figure directly and it does not reproduce as a general statement:
+
+- **0 of 1820** steps take the explicit fallback on a replayed drained-triaxial path at
+  `p0 = 100 kPa`, and **0 of 1820** at `p0 = 20 kPa`, at `Δε_z = 1e-5, 1e-4, 4.6e-4` alike.
+- **0 of 80** steps on the descent leg of a prescribed `p → p_min` path (the ADR-93 ring
+  regime), from a committed `p0 = 5 kPa` down to the floor.
+- The 58–74 % figure reproduces — **53 %, 85 of 160 steps** — only once the point is already
+  pinned at `p_min` with a zero deviator, i.e. exactly the steps where there is no longer
+  anything to integrate. P0's measurement was correct about the place it measured (the low-`p`
+  corner) and is not a fair characterization of scheme 2 in general.
+
+**D3's conclusion — scheme 1 with `-maxSubsteps` stays the companion default — is UNCHANGED and
+survives on stronger grounds than D3 itself offered.** The real reason, which D3 never measured:
+under a global Newton at the campaign's own increment (`Δε_z ≥ 1e-4`) scheme 2 stalls in **8 of 8**
+free-standing drained-triaxial arms against scheme 1's 1 of 8, and every failing step burns
+**12–134 s** (up to 4400× a normal 30 ms step) grinding `BackwardEuler_CPPM`'s recursive-halving
+ladder (`ManzariDafalias.cpp:2538`, `implicitLevel++`, cap 10 at `:2352-2357`, i.e. up to 512
+half-increments) before silently falling back to `ModifiedEuler` — silently because
+`integrate()` discards the CPPM's return value (`:1023-1027`) and `debugFlag` is a compile-time
+`false` (`:57`). Loosening the global tolerance from `1e-9` to `1e-7` does not rescue it. On the
+real CP1/ADR-95 bearing leg (`x10z8`, `h1.0_e0.6944`, 1200 s budget each) scheme 2 committed 11
+steps to `s/B = 4e-5` against the scheme-1 baseline's 51 steps to `s/B = 0.019` in the same wall
+clock — **475× shallower for the same wall clock** — with `ds` pinned at 25× the subdivision
+floor and every one of its committed steps on the relaxed rung 3.
+
+**What this changes going forward:** nothing in §5's D3 row or §6's plan — the default is
+unchanged and needs no re-litigation. It corrects the *citation trail* only: any future document
+that repeats "scheme 2 integrates explicitly 58–74 % of the time" as a general property of the
+material (rather than of the low-`p` corner specifically) is citing a superseded reading. It also
+leaves one question D3 never asked and this ADR still does not answer: whether scheme 2 is the
+better **commit-time IMPL-EX companion**, since the companion runs at `commitState` on an
+increment nothing proposes off-path — precisely the regime (prescribed strain increment) where
+WP-105 measured scheme 2 as 3.7–4.3× more accurate and 4.2–7.6× cheaper than scheme 1 at the
+campaign increment. `-implex` was OFF in every WP-105 arm; that companion question is open, not
+answered favourably or unfavourably.
+
+Full measurement, tables, and scripts: `LEDGER_quirks.md` (three new rows: the refutation itself,
+the invisible-non-convergence defect, and the `-maxSubsteps` inertness-warning defect) and
+`Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.

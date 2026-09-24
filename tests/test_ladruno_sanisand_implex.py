@@ -3825,10 +3825,18 @@ def test_explicit_default_words_are_byte_identical(capfd):
     (alpha is already 0) either way -- this addition only extends the
     WORD/ORDER byte-identity claim to the two new tokens, not a physics
     claim about them.
+
+    WP-112 (F14): the `-flipAlphaIn` DEFAULT is now `init`, so the explicit
+    word that matches the default is `init` and this test names it. The
+    claim is unchanged -- "the explicit default word is byte-identical to
+    omitting it" -- only the word that IS the default moved; keeping
+    `vanilla` here would have silently turned the test into an init-vs-
+    vanilla comparison, which is a different claim (and fails, as it
+    should: the two modes are different constitutive choices at the flip).
     """
     tag_a, tag_b, tag_c = 8900, 8901, 8902
     explicit_words = ('-implexGuard', 'on', '-implexTrialGuard', 'on',
-                      '-implexFloor', 'implicit', '-flipAlphaIn', 'vanilla',
+                      '-implexFloor', 'implicit', '-flipAlphaIn', 'init',
                       '-implexFlipAbsorb', 'off')
 
     stresses_a, guards_a = _drive_explicit_default_words(tag_a, ())
@@ -4009,6 +4017,15 @@ def test_flip_initialises_alpha_in_at_every_point():
     branch never touches `mAlpha_in`, so it stays at the zero placeholder
     every constructor leaves it at) at every point, on both paths.
 
+    WP-112 (F14, 2026-09-18): DEFAULT FLIPPED BACK to `init` by the owner.
+    Under `vanilla` the first plastic step's reversal reset is decided by
+    the SIGN of (alpha_n - alpha_in_n):Ce:d_eps, and where that difference
+    is at round-off the direction of a tiny, MKL-thread-count-dependent
+    perturbation picks the branch (TIMs strip: 1.511/1.824/1.824/1.489 kPa
+    at 1/2/4/8 threads). The test now checks THREE things: explicit
+    `init`, the no-token DEFAULT (== init), and explicit `vanilla` (the old
+    default's zero-placeholder assertion, unchanged, under its own token).
+
     See the section block comment above for why `_build_p27_k0`'s K0-like
     ramp is used instead of an isotropic confine-first deck, and why a
     non-vacuity check (Gauss point 1's `alpha` is genuinely nonzero at the
@@ -4051,9 +4068,38 @@ def test_flip_initialises_alpha_in_at_every_point():
                 'to set alpha_in := alpha_n deterministically at every '
                 'Gauss point' % (gp + 1, implex_on), alpha[gp], alpha_in[gp])
 
-    # -- the DEFAULT (now vanilla): alpha_in stays at its elastic-stage value --
-    for implex_on, tag in ((False, 8422), (True, 8423)):
+    # -- WP-112 (F14): the DEFAULT is now `init` -- NO -flipAlphaIn token, and
+    # alpha_in must equal alpha at every point, on both paths, exactly as
+    # under the explicit `init` loop above. Kills a mutant that leaves the
+    # parser/constructor default at vanilla (alpha_in would read the zero
+    # placeholder here, and alpha[0] != 0 is asserted first, so that is not
+    # vacuous).
+    for implex_on, tag in ((False, 8424), (True, 8425)):
         opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) if implex_on else ()
+        _build_p27_k0(tag, opts)
+        _p27_elastic_leg(tag)
+        ops.updateMaterialStage('-material', tag, '-stage', 1)
+
+        alpha = _read_all_alpha(ngp=8)
+        alpha_in_default = _read_all_alpha_in(ngp=8)
+        assert _vnorm(alpha[0]) > 0.0, (
+            'alpha == 0 at Gauss point 1 right after the flip under the '
+            'DEFAULT (implex_on=%r) -- the default-is-init check below would '
+            'be vacuous' % implex_on, alpha[0])
+        for gp in range(8):
+            assert alpha[gp] == alpha_in_default[gp], (
+                'alpha_in does not equal alpha at Gauss point %d right after '
+                'updateMaterialStage 1 under the DEFAULT -flipAlphaIn '
+                '(implex_on=%r) -- WP-112 made `init` the default'
+                % (gp + 1, implex_on), alpha[gp], alpha_in_default[gp])
+
+    # -- EXPLICIT vanilla (the pre-WP-112 default, now opt-in): alpha_in stays
+    # at its elastic-stage value. Same assertion the old DEFAULT loop made,
+    # now under the explicit token (WP-112 moved the token, not the claim).
+    for implex_on, tag in ((False, 8422), (True, 8423)):
+        opts = ('-flipAlphaIn', 'vanilla')
+        if implex_on:
+            opts = ('-implex', '-maxSubsteps', _CAP_ADEQUATE) + opts
         _build_p27_k0(tag, opts)
         _p27_elastic_leg(tag)
         ops.updateMaterialStage('-material', tag, '-stage', 1)
@@ -4062,9 +4108,9 @@ def test_flip_initialises_alpha_in_at_every_point():
         for gp in range(8):
             assert all(v == 0.0 for v in alpha_in_vanilla[gp]), (
                 'alpha_in is NOT the elastic-stage placeholder (zero) at '
-                'Gauss point %d under the DEFAULT -flipAlphaIn (implex_on=%r) '
-                '-- the default is supposed to be vanilla, reproducing the '
-                'OLD behaviour and leaving alpha_in untouched by the flip'
+                'Gauss point %d under EXPLICIT -flipAlphaIn vanilla '
+                '(implex_on=%r) -- vanilla is supposed to reproduce the OLD '
+                'behaviour and leave alpha_in untouched by the flip'
                 % (gp + 1, implex_on), alpha_in_vanilla[gp])
 
 

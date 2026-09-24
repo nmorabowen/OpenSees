@@ -1,0 +1,19 @@
+el_elastic_t1_r0             threads=1 rep=0 rc=0 perstep=0.17044 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t1_r1             threads=1 rep=1 rc=0 perstep=0.17185 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t1_r2             threads=1 rep=2 rc=0 perstep=0.16557 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t2_r0             threads=2 rep=0 rc=0 perstep=0.16710 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t2_r1             threads=2 rep=1 rc=0 perstep=0.16518 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t2_r2             threads=2 rep=2 rc=0 perstep=0.16907 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t4_r0             threads=4 rep=0 rc=0 perstep=0.17188 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t4_r1             threads=4 rep=1 rc=0 perstep=0.16377 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t4_r2             threads=4 rep=2 rc=0 perstep=0.15146 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t8_r0             threads=8 rep=0 rc=0 perstep=0.17718 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t8_r1             threads=8 rep=1 rc=0 perstep=0.15889 identical=True maxdiff=0.000e+00 refused=False
+el_elastic_t8_r2             threads=8 rep=2 rc=0 perstep=0.14872 identical=True maxdiff=0.000e+00 refused=False
+
+| threads | per-step wall (s, min over repeats) | speed-up | curve bit-identical | max abs diff | refused? |
+|---|---|---|---|---|---|
+| 1 | 0.16557 | 1.00x | YES | 0.000e+00 | no |
+| 2 | 0.16518 | 1.00x | YES | 0.000e+00 | no |
+| 4 | 0.15146 | 1.09x | YES | 0.000e+00 | no |
+| 8 | 0.14872 | 1.11x | YES | 0.000e+00 | no |

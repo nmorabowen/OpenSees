@@ -714,6 +714,117 @@ add_library(OPS_Domain             OBJECT)
 add_library(OPS_SysOfEqn           OBJECT)
 add_library(OPS_SysOfEqnPython     OBJECT)
 
+# ---------------------------------------------------------------------------
+# Ladruno WP-107 (ADR-75b stage L3-1, DESKTOP-SCOPED): OpenMP for the element
+# state-determination loop in Domain::update() -- "loop A", the one assembly
+# loop of ADR-75b section 2 that carries NO floating-point reduction and is
+# therefore bit-identical when threaded.
+#
+# SCOPE, stated up front because ADR-75b section 13 CLOSED this lane for the
+# production/cluster path: G-L3 measured loop A at 0.26% of step at 540 675 DOF
+# under MUMPS -- the gate failed by ~42x and the trend is monotonic in N. What
+# section 13 left standing is "Lane 3 is at best a desktop-only optimization on
+# models <= ~136k DOF". That is exactly the TIMs plane-strain strip regime
+# (LadrunoQuad -bbar + LadrunoSANISAND, tens of thousands of Gauss points, a
+# desktop PARDISO solve), so this option exists for that case and no other.
+#
+# THE COMPILE FLAG IS DELIBERATELY NOT GLOBAL. It goes on OPS_Domain and
+# OPS_Utilities only -- NOT on OPS_Element. The fork carries 7 pre-existing
+# `#pragma omp` lines in PFEM (ADR-75b section 1) that have always been
+# compiler-ignored no-ops because nothing passed /openmp. Putting /openmp on
+# the element library would silently ACTIVATE untested PFEM threading as a side
+# effect of this WP. Keeping the flag off OPS_Element leaves them dead, exactly
+# as before.
+#
+# DUAL OpenMP RUNTIME, a known and accepted caveat. The serial targets already
+# link mkl_intel_thread + libiomp5md for desktop PARDISO (ADR-75 P1b, above).
+# With MSVC /openmp the objects also pull vcomp. Two OpenMP runtimes then
+# coexist in one process, each with its own pool. They are used in disjoint
+# phases (our element loop; MKL's factorization) so this is a performance
+# caveat, not a correctness one -- and it is the reason ADR-75b P-5's "one
+# coordinated thread-count policy" is implemented as an explicit num_threads(n)
+# clause (SRC/utility/LadrunoThreads.h) rather than omp_set_num_threads().
+# ---------------------------------------------------------------------------
+# DEFAULT IS **OFF**, AND THAT IS A GCC DEFECT, NOT A PREFERENCE -- Ladruno
+# WP-107, settled by the PR #843 CI fix (2026-09-16). Read this before "tidying"
+# it to ON: the flip to ON WAS TRIED, and it broke Linux.
+#
+# Where each path stands today:
+#   * `Ladruno_scripts\build.bat` passes -DLADRUNO_OPENMP=ON explicitly (and =OFF
+#     under LADRUNO_NO_OPENMP -- both ways, so a stale cache never decides it).
+#     The Windows/MSVC canonical build therefore ships the feature ON and TESTS
+#     it: tests/test_wp107_threaded_update.py runs and passes there, 18/18.
+#   * Zone-A (.github/workflows/ladruno.yml) configures the Ubuntu build with a
+#     bare `cmake -S . -B build/Release ...` and never goes through build.bat, so
+#     with this default OFF **CI does NOT exercise the threaded loop**. That gap
+#     is known and deliberate, not an oversight: the test file probes the binary
+#     at runtime and SKIPS with a reason rather than failing.
+#
+# WHY NOT SIMPLY DEFAULT ON (which is what a reader will want to do, and what
+# would let CI gate the feature). It was set to ON, and Zone-A then SEGFAULTED --
+# deterministically, twice, in code with nothing to do with this WP:
+#   test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer
+#   Fatal Python error: Segmentation fault ... exit 139
+#   https://github.com/nmorabowen/OpenSees/actions/runs/35164371356
+# The crash is the ZERO-MASS `system Diagonal` case, at 1 thread, where
+# Domain::ladrunoThreadedUpdate() returns false before touching anything -- so it
+# is NOT the threaded loop. It is gcc's `-fopenmp` codegen/link (libgomp,
+# -pthread) turning the already-untrustworthy singular-mass failure path
+# (LEDGER_quirks: "a free DOF with zero lumped mass makes the assembled M
+# singular", Full/Band silently returning success with garbage) into a hard
+# crash. It does not reproduce on MSVC. Locating it needs a Linux ASAN/gdb work
+# package; until that lands **the fork cannot be built with OpenMP on gcc**, and
+# defaulting ON here would crash every bare-cmake and CI build.
+#
+# So: ON via build.bat on Windows, OFF everywhere else, UNTIL the gcc defect is
+# fixed -- at which point this default should flip to ON so Zone-A gates the
+# feature. ADR-75b section 14.4 records the whole decision and its reversal.
+#
+# Independent of all that, ON is safe as a CAPABILITY: the RUNTIME default is 1
+# thread (ADR-40's "OpenMP-by-default" is an anti-goal; only `ladrunoThreads` /
+# LADRUNO_THREADS opts in), at 1 thread Domain::update takes the byte-identical
+# serial path, an ON build matches the 634824e1f OFF baseline binary on an
+# elastic and a SANISAND deck (Ladruno_files/testbed/perf/wp107/RESULTS.md
+# section 4), and every MPI target refuses the threaded loop outright
+# (LadrunoParallelBuild.cpp).
+option(LADRUNO_OPENMP "Thread the Domain::update element loop with OpenMP (desktop-scoped, ADR-75b L3-1)" OFF)
+set(LADRUNO_OPENMP_ACTIVE OFF)
+if(LADRUNO_OPENMP)
+  find_package(OpenMP)
+  if(OpenMP_CXX_FOUND)
+    set(LADRUNO_OPENMP_ACTIVE ON)
+    message(STATUS "Ladruno WP-107: OpenMP element loop ENABLED (${OpenMP_CXX_FLAGS}); runtime default is still 1 thread")
+  else()
+    message(WARNING "Ladruno WP-107: LADRUNO_OPENMP=ON but no OpenMP found -- the threaded element loop is compiled OUT")
+  endif()
+endif()
+
+# WP-107 red-team B2. THE OPTION CANNOT BE "COMPILED OUT OF SP/MP/PyMP", and
+# the reason is structural: OPS_Domain and OPS_Utilities are OBJECT libraries
+# built ONCE and folded into all five targets, so there is no per-target
+# variant of Domain.cpp to leave /openmp off. Two consequences, both handled:
+#
+#   1. SP/MP/PyMP DO contain the OpenMP-compiled OPS_Domain/OPS_Utilities
+#      objects, so they need the OpenMP runtime on their link lines too. It is
+#      added there (empty unless LADRUNO_OPENMP=ON, and empty on MSVC even then
+#      because OpenMP_CXX_LIB_NAMES is blank and the runtime arrives through
+#      the object's /DEFAULTLIB directive -- but NOT empty on gcc/clang, i.e.
+#      Esmeralda, where leaving it off would be a link error waiting to happen).
+#   2. The threaded loop must therefore refuse at RUNTIME on those binaries
+#      rather than be absent from them. That is
+#      SRC/utility/LadrunoParallelBuild.cpp, listed in
+#      OPS_MPI_PER_TARGET_SOURCES so it is the one file that DOES get compiled
+#      per target and can see _PARALLEL_INTERPRETERS / _PARALLEL_PROCESSING.
+if(LADRUNO_OPENMP_ACTIVE)
+  # PRIVATE on purpose: OBJECT libraries propagate usage requirements to their
+  # consumers, and the whole point above is that /openmp must NOT reach
+  # OPS_Element (PFEM's dormant pragmas).
+  foreach(_ladruno_omp_tgt OPS_Domain OPS_Utilities)
+    target_compile_options(${_ladruno_omp_tgt}     PRIVATE ${OpenMP_CXX_FLAGS})
+    target_compile_definitions(${_ladruno_omp_tgt} PRIVATE _LADRUNO_OPENMP)
+  endforeach()
+endif()
+
 # Ladruno ADR 1000: declare the target before final MP targets are linked;
 # SRC/system_of_eqn/ladrunoCMS supplies its sources later in the configure pass.
 if(LADRUNO_CMS)
@@ -905,9 +1016,15 @@ set(OPS_INTERP_TCL_PER_TARGET_SOURCES
 #                               contributed, so under MPI every rank sized its
 #                               penalty from rank-local stiffness and the ranks
 #                               sharing an interface constraint disagreed on it.
+# Ladruno: sources that MUST see the consuming target's _PARALLEL_PROCESSING /
+# _PARALLEL_INTERPRETERS define. Everything in an OBJECT library is compiled
+# once with neither define, so an `#ifdef _PARALLEL_*` written there is dead in
+# every build (ADR-78 P1 measured this). Files listed here are compiled once per
+# target instead, which is why each is kept to ~one function.
 set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
     ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
+    ${OPS_SRC_DIR}/utility/LadrunoParallelBuild.cpp   # Ladruno WP-107 red-team B2 (MPI fence)
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
@@ -1146,6 +1263,7 @@ target_link_libraries(OpenSees
   ZLIB::ZLIB
   Eigen3::Eigen
   ${PARDISO_MKL_LIBRARIES}   # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
+  ${OpenMP_CXX_LIBRARIES}    # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
 )
 
 # Ladruno ADR-75 P1d: `system Pardiso` in the TCL chain (SRC/tcl/commands.cpp,
@@ -1240,6 +1358,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
     )
 
 endif()
@@ -1316,6 +1435,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
     )
 
     if(LADRUNO_CMS)
@@ -1351,6 +1471,7 @@ target_link_libraries(OpenSeesPy
    Eigen3::Eigen
    ${Python_LIBRARIES}
    ${PARDISO_MKL_LIBRARIES}  # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
+   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 (empty unless LADRUNO_OPENMP=ON)
 )
 
 
@@ -1431,6 +1552,7 @@ target_link_libraries(OpenSeesPyMP
    ${SCALAPACK_LIBRARIES}
    ${MPI_Fortran_LIBRARIES}
    ${MPI_CXX_LINK_FLAGS}
+   ${OpenMP_CXX_LIBRARIES}   # Ladruno WP-107 red-team B2 (see the note at the option)
 )
 
 if(LADRUNO_CMS)

@@ -30,6 +30,7 @@
 
 #include <string.h>
 #include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
+#include <atomic>                  // Ladruno WP-107: the two ModifiedEuler warn budgets
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <algorithm>
@@ -48,6 +49,11 @@
 #define INT_MAXSTR_RK     8
 #define INT_MAXSTR_FE     9
 #define INT_RungeKutta45  45 // By Jose Abell @ UANDES
+
+// Ladruno WP-110 (F15): response id for the "tangent" material response. Only has
+// to miss this class's 1..8 and LadrunoSANISAND's 33086..33096; it is a response
+// id, not a class tag, and nothing may derive one from it.
+constexpr int LadrunoManzariTangentResponseID = 33110;          // Ladruno WP-110 (F15)
 
 const double        ManzariDafalias::one3            = 1.0/3.0 ;
 const double        ManzariDafalias::two3            = 2.0/3.0;
@@ -607,6 +613,14 @@ ManzariDafalias::setResponse (const char **argv, int argc, OPS_Stream &output)
     {
         return new MaterialResponse(this, 8, this->getPStrain());
     }
+    // Ladruno WP-110 (F15): expose the tangent the material hands the element
+    // (Ce / mCep / mCep_Consistent per TanType, via the subclass getTangent()),
+    // so a test can compare the ENGINE's own tangent against finite differences
+    // instead of a numpy transcription of it. NDMaterial::setResponse has a
+    // "tangent" too, but this class never falls through to it and its id (4)
+    // collides with "alpha" here -- hence a private id in the fork's band.
+    else if (strcmp(argv[0], "tangent") == 0 || strcmp(argv[0], "Tangent") == 0)   // Ladruno WP-110 (F15)
+        return new MaterialResponse(this, LadrunoManzariTangentResponseID, this->getTangent());  // Ladruno WP-110 (F15)
     else
         return 0;
 }
@@ -649,6 +663,8 @@ ManzariDafalias::getResponse(int responseID, Information &matInfo)
             if (matInfo.theVector != 0)
                 *(matInfo.theVector) = getPStrain();
             return 0;
+        case LadrunoManzariTangentResponseID:                     // Ladruno WP-110 (F15)
+            return matInfo.setMatrix(this->getTangent());         // Ladruno WP-110 (F15)
         default:
             return -1;
     }
@@ -917,6 +933,18 @@ ManzariDafalias::initialize()
     // set minimum allowable p
     m_Pmin      = 1.0e-4 * m_P_atm;
     m_Presidual = 1.0e-2 * m_P_atm;
+    // Ladruno (ADR-93 II.1): the elastic-only confinement floor. Vanilla value is
+    // ZERO, so every base-class path stays bit-identical (`p + 0.0` is the
+    // identity on a finite double, and on `-0.0` it only turns the sum into
+    // `+0.0`, which the very next `<= m_Pmin` test already maps to m_Pmin).
+    // Set HERE and not in the four constructor bodies because initialize() is the
+    // one site all four reach AND the site revertToStart() re-runs -- the same
+    // rule m_Pmin/m_Presidual above follow. It must precede the GetElasticModuli
+    // call at the foot of this function, which reads it.
+    // LadrunoSANISAND::initialize() calls this first and then
+    // applyLadrunoConstants(), which takes the last write (the class's whole
+    // design note, LadrunoSANISAND.h).
+    m_PreElastic = 0.0;   // Ladruno (ADR-93 II.1)
 
     // strain and stress terms
     mEpsilon.Zero();
@@ -1056,6 +1084,49 @@ void ManzariDafalias::elastic_integrator(const Vector& CurStress, const Vector& 
     return;
 }
 
+
+// Ladruno WP-107 (ADR-75b stage L3-1). See the declaration in ManzariDafalias.h
+// for the per-scheme audit this encodes. Only IntScheme 1 (ModifiedEuler) is
+// proven re-entrant; every other scheme -- audited-and-rejected or simply not
+// audited -- answers false, because the ADR's rule is "un-audited is never
+// threaded", not "not-known-bad is fine".
+bool
+ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
+{
+    // REFUSED, unconditionally -- and the reason is the most useful thing WP-107
+    // found, so it is recorded here rather than in a ledger only.
+    //
+    // The first version of this returned `mScheme == INT_ModifiedEuler`, on the
+    // strength of a COMPLETE function-scope-static audit of the
+    //   integrate -> explicit_integrator -> ModifiedEuler
+    //             -> {GetElastoPlasticTangent, Stress_Correction,
+    //                 IntersectionFactor, GetStateDependent, GetStiffness}
+    // call graph, which finds NONE (every static Vector/Matrix in this file is in
+    // RungeKutta45, NewtonIter, getPStrain or sendSelf/recvSelf -- all off the
+    // IntScheme-1 path), plus no Matrix::Solve/Invert anywhere on it.
+    //
+    // That audit is not a proof, and the measurement says so. On a 6400-element
+    // LadrunoQuad -bbar plane-strain deck:
+    //   * IntScheme 1, threads > 1, with the ELASTIC branch only (gravity stage,
+    //     mElastFlag == 0): clean, bit-identical.
+    //   * IntScheme 1, threads > 1, once the PLASTIC branch is exercised in
+    //     volume: segfaults, 4/4 at 4 threads.
+    // Ruled out by experiment, none of which changed the outcome: the fork's
+    // subclass (vanilla ManzariDafalias crashes identically), the linear solver
+    // (BandGeneral and Pardiso both), worker-thread stack size
+    // (KMP_STACKSIZE=64M), and the warning path (it faults with zero warnings
+    // emitted). The same element with ElasticIsotropicPlaneStrain2D is clean
+    // 6/6 at 8 threads on 10 000 elements, so the element half is not at fault.
+    //
+    // WP-107's rule is "un-audited is never threaded". A located-but-unfixed
+    // hazard is strictly worse than an un-audited one, so this family is refused
+    // until someone finds it. A threaded run on a ManzariDafalias-family deck
+    // therefore falls back to the serial loop, loudly, naming the element tag.
+    //
+    // See Ladruno_implementation/107_ladruno_openmp_element_loop.md section 5 and
+    // LEDGER_quirks.md ("a static grep is not a re-entrancy proof").
+    return false;
+}
 
 void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector& CurStrain, const Vector& CurElasticStrain,
         const Vector& CurAlpha, const Vector& CurFabric, const Vector& alpha_in, const Vector& NextStrain,
@@ -1430,6 +1501,12 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 
     aC = GetStiffness(K, G);
     aD = GetCompliance(K, G);
+    // Ladruno WP-110 (F15c): vanilla never assigned aCep in this function, so
+    // TanType 1 under IntScheme 0/1 returned whatever mCep last held (Ce from the
+    // last elastic step, or a Stress_Correction leftover). Start from Ce so the
+    // early returns (substep cap; p below p_residual at dT_min) hand back Ce, not
+    // stale data; the normal exit at the bottom overwrites it with the end state's tangent.
+    aCep = aC;                                                      // Ladruno WP-110 (F15c)
 
     NextStress = CurStress;
     NextAlpha = CurAlpha;
@@ -1453,15 +1530,20 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // of stderr during ADR-86 PR-1. The throttle is therefore a PROCESS-WIDE budget:
         // the first 10 events print, then one suppression notice, then silence -- worst
         // case 11 lines for a mesh of any size. Diagnostics only; no numerics change.
-        static int ladrunoClampWarnCount = 0;                               // Ladruno
-        if (ladrunoClampWarnCount < 10) {                                   // Ladruno
+        // Ladruno WP-107: std::atomic, exactly as the THREAD SAFETY note on the
+        // sibling budget below asked for "if Lane 3 lands". ModifiedEuler is the
+        // one integration scheme WP-107 threads, so these two counters are the
+        // only ones in the threaded path. Still a diagnostic budget and nothing
+        // else: the print order across threads is not defined, only the count.
+        static std::atomic<int> ladrunoClampWarnCount(0);                   // Ladruno
+        if (ladrunoClampWarnCount.load() < 10) {                             // Ladruno
             opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                    << this->getTag() << ": mean stress p = " << p
                    << " is below the floor m_Pmin + m_Presidual = " << m_Pmin + m_Presidual
                    << "; CLAMPING the stress to p = " << m_Pmin
                    << " (deviator preserved). The result at this integration point is set "
                    << "by the clamp, not by the model." << endln;
-            if (++ladrunoClampWarnCount == 10)                              // Ladruno
+            if (ladrunoClampWarnCount.fetch_add(1) + 1 == 10)               // Ladruno
                 opserr << "WARNING ManzariDafalias: further ModifiedEuler() low-p clamp "
                        << "warnings suppressed (budget 10 per process)." << endln;
         }
@@ -1573,8 +1655,10 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             // job that affects the answer. Promote to std::atomic<int> if Lane 3
             // lands. Same note on the three sibling budgets (the two low-p clamps
             // here and LadrunoBrick's refusal reporter).
-            static int ladrunoSubstepCapWarnCount = 0;                  // Ladruno
-            if (ladrunoSubstepCapWarnCount < 10) {
+            // Ladruno WP-107: promoted to std::atomic<int>, as the note above
+            // said to do "if Lane 3 lands". It has.
+            static std::atomic<int> ladrunoSubstepCapWarnCount(0);      // Ladruno
+            if (ladrunoSubstepCapWarnCount.load() < 10) {
                 opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                        << this->getTag() << ": substep cap " << mMaxSubstepsInME
                        << " reached at T = " << T << ", dT = " << dT
@@ -1596,7 +1680,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
                        << " COMMIT time no element acts on it at all --"        // Ladruno WP-99 (F7)
                        << " Domain::commit() drops the return."                 // Ladruno WP-99 (F7)
                        << endln;
-                if (++ladrunoSubstepCapWarnCount == 10)
+                if (ladrunoSubstepCapWarnCount.fetch_add(1) + 1 == 10)
                     opserr << "WARNING ManzariDafalias: further ModifiedEuler() substep-cap"
                            << " warnings suppressed (budget 10 per process)." << endln;
             }
@@ -1839,6 +1923,16 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             dT = fmin(dT, 1 - T);
         }
     }
+
+    // Ladruno WP-110 (F15c): the continuum elastoplastic tangent (TanType 1) at
+    // the END-of-increment state -- the same convention BackwardEuler_CPPM uses
+    // (GetStateDependent + GetElastoPlasticTangent at NextStress, end of that fn).
+    // Only the normal exit (T >= 1) reaches here; the loading index is the last
+    // substep's NextDGamma (> 0 plastic, 0 when that substep unloaded).
+    GetStateDependent(NextStress, NextAlpha, NextFabric, NextVoidRatio, alpha_in,   // Ladruno WP-110 (F15c)
+        n, d, b, Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0, A, D, B, C, R);   // Ladruno WP-110 (F15c)
+    aCep = GetElastoPlasticTangent(NextStress, NextDGamma, CurStrain, NextStrain,  // Ladruno WP-110 (F15c)
+        G, K, B, C, D, h, n, d, b);                                                // Ladruno WP-110 (F15c)
     return;
 }
 
@@ -4868,7 +4962,29 @@ ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, const d
                 const Vector& cEStrain, double &K, double &G)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // this part could make problems
@@ -4910,7 +5026,29 @@ void
 ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double &K, double &G, const double& D)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
@@ -4930,7 +5068,29 @@ void
 ManzariDafalias::GetElasticModuli(const Vector& sigma, const double& en, double &K, double &G)
 // Calculates G, K
 {
-    double pn = one3 * GetTrace(sigma);
+    // Ladruno (ADR-93 II.1): `+ m_PreElastic` -- the ELASTIC-ONLY confinement
+    // floor, one of the THREE GetElasticModuli overloads and of no other site in
+    // this file (two of the three are live; the first is a dead overload kept in
+    // sync -- ManzariDafalias.h). It is added BEFORE the m_Pmin clamp, matching the ADR-93 numpy
+    // oracle (adr92_p0_oracle/sanisand_implex_oracle.py, elastic_moduli), so the
+    // effective floor under the moduli is sqrt(max(p + p_r,e, p_min)/P_atm).
+    // m_PreElastic is 0.0 in vanilla, so this line is the vanilla one.
+    // NOT a cohesion: the yield function, psi, M^b, M^d, D, the D_factor sigmoid
+    // and the low-p integrator guards all keep reading `p + m_Presidual` and are
+    // untouched. But NOTE what `pn` feeds: G and K leave by reference and are
+    // used by Stress_Correction, IntersectionFactor, GetElastoPlasticTangent and
+    // the plastic multiplier, so the floor moves the PATH; it does not move the
+    // bounding state eta = M^b. And in the `mElastFlag == 0` branch below the
+    // `sqrt(pn/P_atm)` factor is DROPPED, so `pn` is unused there and neither
+    // this seam nor m_Pmin can change a stage-0 answer. See ManzariDafalias.h.
+    // ORDERING, honestly scoped (blue team on #842): "before the clamp" is
+    // chosen to match the ADR-93 numpy oracle, which is a PROVENANCE argument,
+    // not a behavioural one. A clamp-then-add build was compiled and run and is
+    // byte-identical on every deck measured: the clamp below never fires on a
+    // staged deck -- at stage 0 the branch that reads `pn` is not taken, and at
+    // stage 1 Stress_Correction's low-p rescue holds committed `p >= m_Pmin`
+    // from the first plastic step. It is pinned in the source, not by a deck.
+    double pn = one3 * GetTrace(sigma) + m_PreElastic;   // Ladruno (ADR-93 II.1)
     pn = (pn <= m_Pmin) ? m_Pmin : pn;
 
     // Ladruno (ADR-86 PR-2, D9 / ADR sec.7.3): elastic-G void-ratio flag seam. See the
@@ -5002,12 +5162,21 @@ ManzariDafalias::GetElastoPlasticTangent(const Vector& NextStress, const double&
 	temp0 -= temp1; temp0 += temp2;
 	R = ToCovariant(temp0);
 
-    temp1 = DoubleDot4_2(aC, ToCovariant(R));
+    // Ladruno WP-110 (F15): was DoubleDot4_2(aC, ToCovariant(R)). R is ALREADY
+    // covariant (the line above), so the extra ToCovariant doubled R's shear
+    // entries a second time -- an exact 2x error in aCep's shear rows. aC maps
+    // covariant -> contravariant, so it takes R as-is. temp1 = Ce:R.
+    temp1 = DoubleDot4_2(aC, R);                                    // Ladruno WP-110 (F15)
     // temp2 = DoubleDot2_4(ToCovariant(n - one3 * DoubleDot2_2_Contr(n,r) * mI1), aC);
 	temp0 = mI1; temp0 *= (-1.0 * one3 * DoubleDot2_2_Contr(n, r)); temp0 += n;
 	temp0 = ToCovariant(temp0);
 	temp2 = DoubleDot2_4(temp0, aC);
-    temp3 = DoubleDot2_2_Contr(temp2, R) + Kp;
+    // Ladruno WP-110 (F15): was DoubleDot2_2_Contr(temp2, R). temp2 = Q:Ce is
+    // CONTRAVARIANT (stress-like) and R is COVARIANT (strain-like), so the true
+    // contraction Q:Ce:R is the plain Voigt sum -- DoubleDot2_2_Mixed. The
+    // _Contr form re-doubled the shear terms of an already-covariant R, making
+    // the denominator ~7.6 % too large and shrinking the whole plastic correction.
+    temp3 = DoubleDot2_2_Mixed(temp2, R) + Kp;                      // Ladruno WP-110 (F15)
     if (fabs(temp3) < small) return aC;
     
     // aCep = (aC - (MacauleyIndex(NextDGamma) / temp3 * (Dyadic2_2(temp1, temp2))));

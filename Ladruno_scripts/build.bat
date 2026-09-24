@@ -315,6 +315,32 @@ if defined LADRUNO_CMS_BUILD (
 ) else (
     set "CMS_FLAGS=-DLADRUNO_CMS=OFF -DLADRUNO_CMS_BUILD_TESTS=OFF"
 )
+REM Ladruno WP-107 (ADR-75b L3-1): the threaded Domain::update element loop is
+REM compiled IN by default here, and is still a no-op at runtime because the
+REM thread count defaults to 1 (`ladrunoThreads` / LADRUNO_THREADS opt in).
+REM DECISION, recorded so it is not re-litigated -- and RE-CONFIRMED by the PR
+REM #843 CI fix (2026-09-16) after the opposite was tried and REVERTED. The CMake
+REM option defaults OFF; THIS SCRIPT is what turns it ON, so the ON path is the
+REM Windows/MSVC canonical build and nothing else. Two reasons, in order:
+REM  1. gcc + `-fopenmp` SEGFAULTS an unrelated test (the zero-mass
+REM     `system Diagonal` case, test_adr30_projection_p0.py, exit 139, run
+REM     35164371356) -- deterministic, at 1 thread, not the threaded loop, and
+REM     not reproducible on MSVC. Defaulting the option ON made every bare-cmake
+REM     and Zone-A build crash, so the default went back to OFF and CI does NOT
+REM     exercise the threaded loop until a Linux ASAN/gdb WP fixes that.
+REM  2. The original argument, unchanged: a capability that has to be recompiled
+REM     to be tried is a capability nobody tries -- and the serial path is
+REM     byte-identical with the option compiled in: WP-107 built this tree both
+REM     ways and compared curves at 1 thread on an elastic and a SANISAND deck,
+REM     byte-identical both times
+REM     (Ladruno_files/testbed/perf/wp107/RESULTS.md section 4).
+REM Set LADRUNO_NO_OPENMP=1 to build it out.
+REM Passed EXPLICITLY both ways so a prior configure never sticks in the cache.
+if defined LADRUNO_NO_OPENMP (
+    set "OMP_FLAGS=-DLADRUNO_OPENMP=OFF"
+) else (
+    set "OMP_FLAGS=-DLADRUNO_OPENMP=ON"
+)
 REM CMAKE_NINJA_FORCE_RESPONSE_FILE=ON: push include/object/library lists into .rsp files so a
 REM DEEP source path (e.g. a .claude\worktrees\<name> build tree) can't blow a cl.exe command line
 REM past the Windows ~32 KB CreateProcess limit ("CreateProcess failed. The parameter is incorrect"
@@ -327,6 +353,7 @@ cmake --preset conan-release ^
     -DMUMPS_DIR="%MUMPS_INSTALL%/lib" ^
     -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include" ^
     %CMS_FLAGS% ^
+    %OMP_FLAGS% ^
     -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON
 set "RC=%errorlevel%"
 popd
