@@ -46,6 +46,18 @@ bodies are seen whole).
                 Waive at the function header (or the line above it):
                     // ladruno-lint: commit-ok <reason>
 
+  L5 double-load  An element's `getResistingForceIncInertia()` that calls
+                `getResistingForce()` -- which already subtracts the element
+                load vector -- and then subtracts the SAME vector again. That
+                vector holds the UniformExcitation inertia load -M*R*a_g, so
+                ground motion was applied twice (vanilla ElasticBeam2d and
+                ElasticTimoshenkoBeam2d/3d, fixed WP-119 #854). Unlike L1/L2/L4
+                this scans EVERY element file, vanilla included: the incident
+                was in vanilla code, and a rule scoped to fork files could not
+                have caught it. Waive the second subtraction (its line or the
+                line above):
+                    // ladruno-lint: double-ok <reason>
+
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
@@ -67,7 +79,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -503,6 +515,68 @@ def check_commitstate(root, rel, used_waivers=None):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L5
+# --------------------------------------------------------------------------
+SUBTRACT = re.compile(
+    r"\b\w+\s*(?:\.|->)\s*addVector\s*\(\s*1\.0\s*,\s*\*?\s*(\w+)\s*,\s*-\s*1\.0\s*\)"   # X.addVector(1.0, V, -1.0)
+    r"|\b\w+\s*-=\s*\*?\s*(\w+)\s*$")                                                     # X -= V  /  X -= *V
+CALLS_RF = re.compile(r"\bgetResistingForce\s*\(\s*\)")
+
+
+def _subtracted(stmts):
+    """{vector name: [(first_line, last_line)]} for each load-vector subtraction statement."""
+    out = {}
+    for s, a, b in stmts:
+        m = SUBTRACT.search(strip_prefix(s))
+        if m:
+            out.setdefault(m.group(1) or m.group(2), []).append((a, b))
+    return out
+
+
+def check_double_load(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    for p in sorted((root / "SRC" / "element").rglob("*")):
+        if p.suffix not in SUFFIXES or not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "getResistingForceIncInertia" not in text or not CALLS_RF.search(text):
+            continue
+        raw, cl = text.splitlines(), clean(text)
+        funcs = {f.name: f for f in functions(cl) if "::" in f.name}
+        for name, rfi in funcs.items():
+            cls, meth = name.rsplit("::", 1)
+            if meth != "getResistingForceIncInertia":
+                continue
+            rf = funcs.get(f"{cls}::getResistingForce")
+            if rf is None:
+                continue
+            rfi_stmts = statements(cl, rfi)
+            if not any(CALLS_RF.search(s) for s, _, _ in rfi_stmts):
+                continue                                   # rebuilds the residual itself (LadrunoBrick shape)
+            in_rf = _subtracted(statements(cl, rf))
+            for vec, spans in _subtracted(rfi_stmts).items():
+                if vec not in in_rf:
+                    continue
+                for a, b in spans:
+                    wl, reason = waiver_at(raw, b, "double-ok", above=b - a + 1)
+                    if wl is not None:
+                        used.add((str(p), wl))
+                        if len(reason) >= MIN_REASON:
+                            continue
+                        findings.append(f"L5 {rel(p)}:{a + 1}: double-ok waiver reason too short")
+                        continue
+                    findings.append(
+                        f"L5 {rel(p)}:{a + 1}: {name} calls getResistingForce() -- which already subtracts "
+                        f"'{vec}' -- and subtracts '{vec}' again; the UniformExcitation inertia load is counted "
+                        "twice. Drop the second subtraction, or waive with '// ladruno-lint: double-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -552,7 +626,7 @@ def list_waivers(root, rel):
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4", help="comma list of L1,L2,L3,L4")
+    ap.add_argument("--only", default="L1,L2,L3,L4,L5", help="comma list of L1,L2,L3,L4,L5")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -575,7 +649,9 @@ def main():
         findings += check_wipe(root, rel, used)
     if "L4" in wanted:
         findings += check_commitstate(root, rel, used)
-    if {"L1", "L2", "L4"} <= wanted:          # stale detection needs every waiver consumer
+    if "L5" in wanted:
+        findings += check_double_load(root, rel, used)
+    if {"L1", "L2", "L4", "L5"} <= wanted:    # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)

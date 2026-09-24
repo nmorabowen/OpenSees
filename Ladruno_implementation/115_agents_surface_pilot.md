@@ -2,9 +2,9 @@
 
 Revision 1. Not yet adversarially reviewed.
 
-Status: **built; draft PR #850. Merge after #841 and #853** — L2 stays red until #841 lands, because
-SANISAND's process-wide IMPL-EX globals are the live instance it exists to catch (2026-09-23); L4 stays
-red until #853 lands, because the IMK beams are the live instance it exists to catch (2026-09-24).
+Status: **built; draft PR #850. Merge after #841, #853 and #854** — each lint rule stays red until the
+PR fixing its live instance lands: L2 → SANISAND's process-wide IMPL-EX globals (#841); L4 → the IMK
+beams' missing `Element::commitState()` (#853); L5 → the vanilla elastic beams' double load (#854).
 
 Scoped 2026-09-23. Branch `wp/115-agents-surface`, cut from `ladruno` @ `79e062367`. Source: a
 read of how `basecamp/omarchy` organizes its repo for agents (`AGENTS.md` + short task-triggered
@@ -150,6 +150,28 @@ Added at the owner's request after WP-118 (#853) found `LadrunoIMKBeam(2d)::comm
   stamped `LadrunoDispBeamColumn` passes (it chains).
 - **Merge order:** L4 is red here until #853 merges, as L2 is until #841. Merge #841 and #853 first,
   then merge `ladruno` into this branch.
+
+## Step 7 — L5, the double-load rule (2026-09-24)
+
+Added at the owner's request after WP-119 (#854) found vanilla `ElasticBeam2d`,
+`ElasticTimoshenkoBeam2d` and `ElasticTimoshenkoBeam3d` subtracting their load vector (the
+UniformExcitation inertia load) in both `getResistingForce()` and the `getResistingForceIncInertia()`
+that calls it — ground motion applied at 2·a_g.
+
+- **Rule:** in `C::getResistingForceIncInertia`, a call to `getResistingForce()` plus a subtraction of a
+  vector (`X.addVector(1.0, V, -1.0)` or `X -= V`) that `C::getResistingForce` also subtracts. Statement
+  level, comments blanked, so the WP-119 fix (the line commented out) passes. Waiver
+  `// ladruno-lint: double-ok <reason>`.
+- **Scope — a deliberate exception:** L1/L2/L4 scan only fork-stamped files; L5 scans every element
+  file, vanilla included. The incident was in vanilla code, so a fork-only rule could not have caught
+  it — and the WP-115 standard is that a lint which misses its own incident does not ship. Noise is
+  nil: the whole tree has exactly the three instances #854 fixes.
+- **Self-test:** 5 new cases (46 total) — flags the ElasticBeam2d shape in an unstamped file and the
+  Timoshenko shape; passes the WP-119 fix, the FourNodeQuad shape (single subtraction), the
+  LadrunoBrick shape (IncInertia rebuilds the residual itself), a different vector subtracted; waiver.
+- **Acceptance:** on this branch it flags exactly the three vanilla beams; on
+  `origin/wp/119-elasticbeam2d-double-q` (the fix) it reports 0. Full lint 5.0 s.
+- **Merge order:** L5 is red here until #854 merges. #850 now merges after #841, #853 and #854.
 
 ## Open questions
 

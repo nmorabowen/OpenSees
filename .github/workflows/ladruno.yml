@@ -50,7 +50,8 @@ jobs:
       # Quirk-pattern gate (WP-115): LEDGER_quirks entries that name a greppable
       # pattern, enforced -- L1 Rayleigh snapshot (#562), L2 singleton reset on
       # wipe, L3 task-guide pointers, L4 element commitState chains to the base
-      # (betaKc Kc refresh, WP-118). Last in the job so a red lint never hides
+      # (betaKc Kc refresh, WP-118), L5 ground-motion load subtracted once (all
+      # element files, vanilla included; WP-119). Last in the job so a red lint never hides
       # the gates above. The self-test proves each rule still fires.
       - name: quirk-pattern lint self-test (WP-115)
         run: pytest -q ci/test_check_quirk_patterns.py

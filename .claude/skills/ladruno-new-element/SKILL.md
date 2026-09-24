@@ -35,6 +35,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] **[lint]** An overridden `commitState()` calls `Element::commitState()` first — it is the only
       place `Kc` (behind `betaKc` damping) is refreshed; skipping it makes `betaKc` behave like
       `betaK0` (LadrunoIMKBeam, fixed WP-118 #853). A `betaKc` test must make the tangent change.
+- [ ] **[lint]** Ground motion: the load vector accumulates `−M·R·a_g` and is subtracted ONCE — if
+      `getResistingForceIncInertia` calls `getResistingForce()` (which subtracts it), it must not
+      subtract it again. Quirks: "`ElasticBeam2d` subtracts the ground-motion load Q TWICE". Copy the
+      rigid-body probe: every node's relative acceleration must be exactly `−a_g`.
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
 - [ ] Ignoring Rayleigh? Override `getDamp` AND `getRayleighDampingForces` too. Quirks: "A no-op
