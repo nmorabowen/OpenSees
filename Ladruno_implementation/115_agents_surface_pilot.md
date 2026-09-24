@@ -127,7 +127,7 @@ The owner asked for the four waived Rayleigh sites to be converted, after an adv
 
 **Found along the way — owner decision needed (not fixed; each changes results):**
 1. **CRITICAL — Bezier ground-motion inertia has the wrong sign.** `BezierTet10::addInertiaLoadToUnbalance` / `BezierTri6` build `Q += +M·a_g`; the vanilla and LadrunoBrick convention is `−M·a_g`. Proven by running it: under a constant +2.0 ground acceleration, a rigid-body probe gives relative acceleration −2.000 for vanilla `quad`/`stdBrick` and +2.000 for both Bezier elements. Present since BezierTet10 was added (2026-05-30); no test ran a Bezier element under `UniformExcitation`.
-2. **MAJOR — `betaKc` damping frozen on the IMK beams.** `LadrunoIMKBeam(2d)::commitState` never calls `Element::commitState()`, so `Kc` keeps the tangent from when `rayleigh` ran — zero if that was before the first step.
+2. **MAJOR — `betaKc` damping frozen on the IMK beams.** `LadrunoIMKBeam(2d)::commitState` never calls `Element::commitState()`, so `Kc` keeps the tangent from when `rayleigh` ran — the element's initial stiffness, so `betaKc` behaves like `betaK0`. *Corrected by WP-118:* this doc first said "zero if `rayleigh` ran before the first step"; measurement refuted it — `Domain::addElement` calls `update()`, so the captured tangent is valid. Fixed in WP-118 (#853).
 3. **Upstream — vanilla `ElasticBeam2d` subtracts the ground-motion Q twice** with element `-mass` (response exactly 2× the same beam with nodal masses). `ElasticBeam3d` is correct. Recorded in `LEDGER_quirks`; not fixed (vanilla-footprint rule).
 
 ## Open questions
@@ -135,4 +135,4 @@ The owner asked for the four waived Rayleigh sites to be converted, after an adv
 - Whether L2's site list stays small enough to hand-classify as fork singletons grow.
 - Should `wipe` reset the Profiler? (Waived as current design.)
 - ~~Convert the four waived Rayleigh sites?~~ Done (Step 5).
-- Fix the three findings in Step 5 (Bezier ground-motion sign, IMK `betaKc`, upstream `ElasticBeam2d`)?
+- Step 5 findings: Bezier ground-motion sign → WP-117 (#852); IMK `betaKc` → WP-118 (#853); upstream `ElasticBeam2d` double-Q → still open (vanilla, owner's call).
