@@ -21,6 +21,11 @@ them. This is observation-only — fixes we actually applied are tracked in
 - If a quirk drove a code change, cross-link the ledger row / PR.
 - Deep build/toolchain quirks may live in
   [[../Ladruno_internal/01_compilation_journal]]; link rather than duplicate.
+- **If the quirk names a greppable pattern, enforce it**: add a rule to
+  `ci/check_quirk_patterns.py` (with a self-test case) instead of relying on
+  someone re-reading this file. If it bites element or material authors, add a
+  one-line pointer to the matching `.claude/skills/ladruno-new-*` guide; the
+  gate's L3 check fails if a pointer stops matching a heading here (WP-115).
 
 ## Quirks
 
@@ -7625,6 +7630,15 @@ Three things to carry forward:
 - **Census recipe (one line, after the model is built):** `used = {n for e in ops.getEleTags() for n in ops.eleNodes(e)}; orphans = [n for n in ops.getNodeTags() if n not in used]`. `2 × len(orphans)` (ndf=2, minus fixed DOFs) is the pivot count to expect. Remove the orphans or fix their DOFs.
 - **Status (2026-09-18):** diagnostic only, WP-114 (`tests/wp114/pivot_bisection.py`). Not chased further; the reporter's mesh export is the suspect.
 
+### A Jacobian degeneracy guard must normalize by the LARGEST column — `|det|/∏‖cols‖` is blind to axis COLLAPSE, and an absolute `|det|` threshold is not scale-free (#588, recorded WP-115)
+- **Bites:** an element that refuses degenerate geometry (here the `-formulation eas` centroid Jacobian of `LadrunoQuad`/`LadrunoBrick`) keeps running on a collapsed element. `|det J0| / (‖c0‖‖c1‖)` is `|sin θ|`: it catches collinear axes, but a quad squashed onto a line leaves one fp-residue column (~1e-17), `det` and the column product shrink together, the ratio stays ~1, `J0⁻¹ ~ 1e17`, and the enhanced Newton goes NaN with `analyze()` returning 0 (see "`analyze()` returns rc=0 on a NaN-poisoned system"). An absolute `|det|` threshold instead scales as `L^dim` and refuses healthy small elements.
+- **Fix:** `|det| / max‖col‖^dim` = `(‖c_min‖/‖c_max‖)·|sin θ|` catches collapse and collinearity, is size-invariant, and still passes a healthy 100:1 element (1e-2 ≫ 1e-10). Fixed in `LadrunoQuad.cpp` / `LadrunoBrick.cpp` by #588.
+- **Why it survived:** the guard had ZERO direct tests; both adversarial reviews probed collinearity, never collapse, and reverting to an absolute threshold passed all 13 existing tests. Gate: `tests/test_ladrunoQuad_eas.py`, `tests/test_ladrunoBrick_eas.py` (two-mode refusal battery + 1e-6/1/1e6 scale pins). Any new geometry guard needs the same two-mode refusal test.
+
+### Vanilla `ElasticBeam2d` subtracts the ground-motion load Q TWICE with element `-mass` — `UniformExcitation` drives its element mass at 2·a_g (found WP-115)
+- **Bites:** a 2D `elasticBeamColumn ... -mass rho` under `pattern UniformExcitation` responds to twice the ground acceleration. Measured WP-115: a 4-element cantilever, constant a_g in y — the tip history with element `-mass` is exactly 2.000× the same beam with the identical lumped masses given as nodal `mass` (ratio 2.0000 at every step). `ElasticBeam3d` is correct; nodal masses are correct.
+- **Why:** `ElasticBeam2d::addInertiaLoadToUnbalance` accumulates `Q -= m·a_g` (lumped) or `Q -= M·a_g` (consistent). `getResistingForce()` then does `if (rho != 0) P.addVector(1.0, Q, -1.0);` (`ElasticBeam2d.cpp` ~:1089) AND `getResistingForceIncInertia()` calls `getResistingForce()` and subtracts Q again (~:1010). `ElasticBeam3d::getResistingForceIncInertia` has no second subtraction. Upstream code, present at the fork's import (`30cc727df`); not a Ladruno edit.
+- **Workaround/status:** put 2D beam mass on the nodes (`ops.mass`) for ground-motion runs, or use `ElasticBeam3d`/a fork beam. Do NOT use a 2D `elasticBeamColumn` with element `-mass` as a -Q oracle — `tests/test_rayleigh_inertia_bezier_imk.py` uses nodal masses for exactly this reason. **FIXED by WP-119 (#854)**, together with the same defect in `ElasticTimoshenkoBeam2d/3d` — see the entry "subtracted the ground-motion load TWICE with element `-mass`" (WP-119). On builds before WP-119, the nodal-mass workaround above applies.
 ### An element `commitState()` that does not chain to `Element::commitState()` freezes `betaKc` at the initial stiffness — silently (LadrunoIMKBeam, fixed WP-118)
 - **Bites:** `betaKc` Rayleigh damping uses `Kc`, the committed stiffness. `Element::setRayleighDampingFactors` captures `Kc = getTangentStiff()` once, when `rayleigh` runs, and `Element::commitState()` is the ONLY place that refreshes it. An override of `commitState()` that commits its materials/transformation but never calls the base leaves `Kc` at the initial tangent forever: `betaKc` behaves exactly like `betaK0`. Nothing warns; a linear elastic model is unaffected, so the usual smoke tests pass. `LadrunoIMKBeam(2d)` shipped like this: under a Corotational large-rotation step load its betaKc history departed from `elasticBeamColumn` by 45% of peak.
 - **Not a zero-capture bug:** `Domain::addElement` calls `element->update()` right after `setDomain`, so the tangent is already valid when `rayleigh` runs even before any analysis. (The WP-115 review first reported `Kc = 0`; measurement refuted it.)

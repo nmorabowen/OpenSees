@@ -147,8 +147,10 @@ __pycache__
 /Ladruno_scripts/ladruno_recorder_tests/*.ladruno
 /Ladruno_scripts/ladruno_recorder_tests/*.mpco
 
-# Claude Code session scratch (never commit)
-.claude/
+# Claude Code session scratch (never commit) — except the task guides under
+# .claude/skills/, which are tracked source (Ladruno WP-115)
+.claude/*
+!.claude/skills/
 _build_ladrunobrick.log
 
 # Ladruno transient build logs / banner backups (not source)
