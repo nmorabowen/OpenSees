@@ -49,7 +49,7 @@ authored by the Ladruno team (Nicolas Mora Bowen, Patricio Palacios, José Abell
      credit + the literature references for that class. Recommend dropping the
      ASCII-art banner block for upstream files (jaabell's call; default = drop).
    - Nothing from `.claude/`, `CLAUDE.md`, `AGENTS.md`, `ci/check_quirk_patterns.py`,
-     `Ladruno_implementation/`,
+     `ci/check_viewer_ledger.py`, `Ladruno_implementation/`,
      `Ladruno_internal/`, `Ladruno_scripts/` (except ported test assets),
      `banner_*` ships in a package.
 2. **Documentation with references is part of "done".** Each ported class gets:

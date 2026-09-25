@@ -58,6 +58,19 @@ jobs:
         run: pytest -q ci/test_check_quirk_patterns.py
       - name: quirk-pattern lints (WP-115)
         run: python ci/check_quirk_patterns.py
+      # Viewer-tools ledger gate (WP-121): a PR that adds a file under
+      # Ladruno_tools/ must also edit LEDGER_implementations.md (#35, #53, #485,
+      # #487 did not). It reads the PR diff (base...head), so it runs on
+      # pull_request only; the self-test runs on every event. Last in the job so it
+      # never hides the gates above.
+      - name: viewer ledger gate self-test (WP-121)
+        run: pytest -q ci/test_check_viewer_ledger.py
+      - name: viewer ledger gate (WP-121)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python ci/check_viewer_ledger.py --base "$BASE_SHA" --head "$HEAD_SHA"
 
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
