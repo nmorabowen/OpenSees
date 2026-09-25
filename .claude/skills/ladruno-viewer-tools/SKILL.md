@@ -78,9 +78,10 @@ cd ../../monitor_viewer && <venv-python> test_monitor_view.py
 
 ## Ledgers and docs (same PR)
 
-- [ ] **[lint]** A new file under `Ladruno_tools/` needs an edit to its tool's row in
-      `LEDGER_implementations.md`. #35, #53, #485 and #487 skipped it; the last two after the
-      lesson was written down (`121_viewer_agent_surface.md`).
+- [ ] **[lint]** A new source file in `Ladruno_tools/<tool>/` (added, copied or moved in) needs an
+      added `LEDGER_implementations.md` line that names `Ladruno_tools/<tool>`: edit that tool's
+      row. Your WP's own row does not count unless it names the tool. #35, #53, #485 and #487
+      skipped it; the last two after the lesson was written down (`121_viewer_agent_surface.md`).
 - [ ] The gate cannot see a modification-only change. When behaviour changes, update the row and
       the plan-doc log anyway (`06_profiler.md`, `08_analysis_monitor.md`); #55 needed a follow-up
       doc PR (#56) for this.
