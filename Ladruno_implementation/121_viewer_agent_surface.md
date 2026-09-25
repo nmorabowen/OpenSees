@@ -2,7 +2,7 @@
 
 Revision 1. Not yet adversarially reviewed.
 
-Status: **built; draft PR open.** No merge-order constraint: V1 reads a PR's own diff, so the
+Status: **built; draft PR #856.** No merge-order constraint: V1 reads a PR's own diff, so the
 stale ledger rows listed under "Live incidents" do not turn it red.
 
 Scoped 2026-09-25. Branch `wp/121-viewer-agent-surface`, cut from `ladruno` @ `bc5c33453`. Extends
