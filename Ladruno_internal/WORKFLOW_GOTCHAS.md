@@ -223,6 +223,20 @@ if any authored file is unstamped — good as a pre-commit / CI gate. Do **not**
 stamp vanilla upstream files (→ §6); those keep their original header + inline
 `// Ladruno` markers.
 
+**Why it matters beyond credit: the stamp is the quirk lint's scope.**
+`ci/check_quirk_patterns.py` scans only files carrying `LADRUNO-HEADER-START`, so an
+unstamped fork file is invisible to L1/L2/L4. It happened twice: LadrunoDispBeamColumn
+(WP-116), then 31 files / 8,042 lines at once (WP-120 R1, fixed by WP-122), among them
+shared seams (`LadrunoMassCache.h`, `LadrunoResponseTokens.h`, `CriticalTimeStep`,
+`LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it: nothing in CI runs
+`--check`, and `--check` only sees files already in GLOBS — a file never added to GLOBS
+stays unstamped with a green check. Also keep GLOBS honest when files are deleted or
+already stamped by hand: WP-122 found 5 GLOBS entries matching nothing (the
+`ExplicitBathe*` family #419 deleted) and 10 hand-stamped files missing from GLOBS.
+To list fork files that lack the stamp:
+`python Ladruno_implementation/wp120_code_health/inventory.py` (needs the `upstream`
+remote; lands with WP-120 #855).
+
 ---
 
 ## 6. Vanilla-file footprint — keep it minimal and additive
