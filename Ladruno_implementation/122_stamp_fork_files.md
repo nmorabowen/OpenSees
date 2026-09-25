@@ -3,7 +3,7 @@
 Revision 1. Not adversarially reviewed: a comment-only change, proven by fingerprint (below); per
 `feedback_adversarial_gate_when`, the full gate is for novel math, core/vanilla code or weak coverage.
 
-Status: **complete; draft PR #857 ready for the owner** (2026-09-25).
+Status: **complete; PR #857 marked ready (2026-09-25). The owner merges.**
 
 Scoped 2026-09-25. Branch `wp/122-stamp-fork-files`, cut from `ladruno` @ `bc5c33453` (not stacked on
 WP-120 #855). Discharges WP-120 R1 and its open question 2.
@@ -48,6 +48,19 @@ with the tree: 10 stamped files missing from it, 5 entries matching no file.
 
 6. **Ledgers.** A `LEDGER_implementations` row. `WORKFLOW_GOTCHAS.md` §5 gains why the stamp matters (it
    is the lint's scope) and the two traps behind the drift.
+7. **CI gate (added at the owner's request, 2026-09-25).** A new `static-gates` step, "header stamp covers
+   GLOBS (WP-122)", runs `python Ladruno_scripts/stamp_headers.py --check`. It sits just before the quirk
+   lint, because a red stamp means the lint's scope is wrong. The required job name is unchanged.
+   *Accept:* `wp122_stamp/stamp_gate_acceptance.py` runs `--check` in `git archive` copies of the branch
+   (each tree runs its own copy of the script). GLOBS globs are case-sensitive on the Linux runner, so they
+   were also re-matched with `fnmatchcase` against `git ls-files`: 268 files, 0 globs differing from the
+   Windows match. **Met:**
+
+   | Tree | Expected | Result |
+   |---|---|---|
+   | branch, unchanged | exit 0 | PASS ("All 268 authored files carry a current header.") |
+   | stamp block removed from `LadrunoMassCache.h` | exit 1, file named | PASS |
+   | stamp block stale (credit line edited) | exit 1, file named | PASS |
 
 ## Results
 
@@ -76,19 +89,16 @@ one-shot-latch convention WP-115 accepted.
   (`HoekBrown_*`, `StiffSoil_*`) that match only fork-added files today.
 - **Leave the 5 stub blocks as they were.** They were outside GLOBS, so `--check` never saw them. Bringing
   them under GLOBS makes the script own them; the canonical block replaces the stub.
-- **Adding a CI gate in this WP.** A CI stamp gate belongs with WP-120 recommendation (ii), which is still
-  the owner's call; see Open questions.
 - **Skip the ASDPlastic kit headers as "José's code".** They are fork-added (not on `upstream/master`),
   and José Abell is one of the four credited authors. The upstream campaign
   (`upstream_pr_campaign.md` §3, package 1.5) re-stamps headers in its own scrub step anyway.
 
 ## Open questions
 
-1. **A CI guard so this cannot recur.** Neither trap is covered today: `stamp_headers.py --check` is not
-   in CI, and `--check` cannot see a fork file that was never added to GLOBS. Options, cheapest first:
-   (a) add `stamp_headers.py --check` to `static-gates` (catches a GLOBS file losing its stamp);
-   (b) fail if a file whose path contains `ladruno`/`Ladruno` lacks the stamp (would have caught 14 of the
-   31); (c) WP-120's `inventory.py` against `upstream/master`. That is exact, but CI would have to fetch
-   the upstream remote. Owner's decision, together with WP-120 (ii).
+1. **The second trap is still open.** CI now runs `--check` (step 7), which catches a GLOBS file that
+   loses its stamp. It cannot see a fork file that was never added to GLOBS; that is how all 31 escaped.
+   Further options: (b) fail if a file whose path contains `ladruno`/`Ladruno` lacks the stamp (would have
+   caught 14 of the 31, nearly free); (c) WP-120's `inventory.py` against `upstream/master`. That is exact,
+   but CI would have to fetch the upstream remote. Owner's decision, together with WP-120 (ii).
 2. **Before allowlisting ASDPlasticMaterial3D for the WP-107 threaded loop**, make
    `MohrCoulombTensionCutoff_YF.h`'s two statics atomic or per-instance.

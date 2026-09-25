@@ -228,9 +228,10 @@ stamp vanilla upstream files (→ §6); those keep their original header + inlin
 unstamped fork file is invisible to L1/L2/L4. It happened twice: LadrunoDispBeamColumn
 (WP-116), then 31 files / 8,042 lines at once (WP-120 R1, fixed by WP-122), among them
 shared seams (`LadrunoMassCache.h`, `LadrunoResponseTokens.h`, `CriticalTimeStep`,
-`LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it: nothing in CI runs
-`--check`, and `--check` only sees files already in GLOBS — a file never added to GLOBS
-stays unstamped with a green check. Also keep GLOBS honest when files are deleted or
+`LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it. Nothing in CI ran
+`--check` — since WP-122 the `static-gates` job does ("header stamp covers GLOBS").
+And `--check` only sees files already in GLOBS, so a file never added to GLOBS stays
+unstamped with a green check — **still open: adding the new file to GLOBS is on you.** Also keep GLOBS honest when files are deleted or
 already stamped by hand: WP-122 found 5 GLOBS entries matching nothing (the
 `ExplicitBathe*` family #419 deleted) and 10 hand-stamped files missing from GLOBS.
 To list fork files that lack the stamp:
