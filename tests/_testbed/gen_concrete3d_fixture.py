@@ -399,6 +399,45 @@ def main(out=None):
         lines.append(f"GCT {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(As))} {repr(float(efc))} "
                      f"{repr(float(g))} {repr(float(pk))}")
 
+    # ---- (B10) FULL CDPM2 PLASTIC POTENTIAL (B1, WP concrete3d-flow-potential): hardening paths and tangents
+    #      with flow_potential='cdpm2' (+ one sub-incremented large-step path). Pins cdpm2FlowGradJac, the
+    #      Hessian-based analytic 4x4 Jacobian, the consistent tangent and returnMapTensor sub-incrementation
+    #      to the oracle (numerical-Jacobian return + FD tangent). Legacy blocks above are untouched. ----
+    mp_c = dict(mp_h); mp_c["flow_potential"] = "cdpm2"; mp_c["Df"] = 0.85; mp_c["Hp"] = 0.01
+    mp_cs = dict(mp_c); mp_cs["max_subincr"] = 10
+    pathfs = []
+
+    def add_pathf(mp, dl, label):
+        pathfs.append((label, mp, dl, run_path(mp, dl, True)))
+
+    dlc, _ = driven_strain_path(mp_c, np.linspace(0, -0.006, 120), True, "free")
+    add_pathf(mp_c, dlc, "cdpm2_uniax_comp")
+    dlk, _ = driven_strain_path(mp_c, np.linspace(0, -0.012, 120), True, "active", sigma3=0.10 * 30.0)
+    add_pathf(mp_c, dlk, "cdpm2_confined_comp")
+    add_pathf(mp_c, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, "cdpm2_hydro_comp")
+    add_pathf(mp_c, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, "cdpm2_hydro_tens")
+    add_pathf(mp_c, [[-4.0e-4, 1.5e-4, 0.5e-4, 1.0e-4, 0, 0]] * 12, "cdpm2_offaxis_shear")
+    add_pathf(mp_cs, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep")
+    lines.append(f"NPATHF {len(pathfs)}")
+    for label, mp, dl, rows in pathfs:
+        lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} {len(dl)}")
+        for deps, (sig, kp) in zip(dl, rows):
+            lines.append(f"{_fmt(deps)}  {_fmt(sig)}  {repr(float(kp))}")
+    tanfs = []
+    dlt, rt = driven_strain_path(mp_c, np.linspace(0, -0.0018, 60), True, "free")
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]), "tanf_cdpm2_uniax"))
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]), "tanf_cdpm2_shear"))
+    sgc = np.zeros(6); kpc = 0.0                    # a CAP state: low kp, compression-dominated triaxial trial
+    tanfs.append((mp_c, sgc, 0.05, np.array([-2.0e-3, -1.2e-3, -1.0e-3, 1.0e-4, 0, 0]), "tanf_cdpm2_cap"))
+    lines.append(f"NTANF {len(tanfs)}")
+    for mp, sig_n, kp_n, deps, label in tanfs:
+        C = ref.consistent_tangent(sig_n, deps, mp, kp_n, hardening=True)
+        lines.append(f"TANF {label} {_fmt(_pblock(mp))} 1")
+        lines.append(_fmt(sig_n))
+        lines.append(repr(float(kp_n)))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(C.flatten()))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "
