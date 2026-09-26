@@ -226,12 +226,29 @@ def test_live_restore_drops_Ki(name, tmp_path):
 # UniformExcitation a_g moves rigidly, so every node's RELATIVE acceleration is exactly
 # -a_g. A sign flip gives +a_g, a skipped load gives 0, and a full (consistent) mass reduced
 # to its diagonal breaks the nodal balance. Horizontal and vertical ground motion.
+def _tri6_cmass():
+    m = _plane(TRI + _mids(TRI, TRI_MIDS), [(1, (1, 1)), (2, (0, 1)), (4, (0, 1))])
+    ops.element("BezierTri6", 1, *range(1, 7), 0.8, "PlaneStrain", m, "-rho", RHO, "-cMass")
+    return 3, (1.0, 0.3)
+
+
+def _tet10_cmass():
+    m = _solid(TET + _mids(TET, TET_EDGES), [1, 2, 3, 5, 6, 7])
+    ops.element("BezierTet10", 1, *range(1, 11), m, "-rho", RHO, "-cMass")
+    return 4, (1.0, 0.3, 0.0)
+
+
+# Bezier defaults to LUMPED mass; the -cMass variants put a genuinely full M through the
+# helper's full branch (Brick/Brick20 are consistent by default)
+GROUND = dict(ELEMENTS, **{"BezierTri6-cMass": _tri6_cmass, "BezierTet10-cMass": _tet10_cmass})
+
+
 @pytest.mark.parametrize("direction", [1, 2])
-@pytest.mark.parametrize("name", list(ELEMENTS))
+@pytest.mark.parametrize("name", list(GROUND))
 def test_ground_inertia_rigid_body(name, direction):
     _SUPPORTS[0] = False
     try:
-        ELEMENTS[name]()
+        GROUND[name]()
     finally:
         _SUPPORTS[0] = True
     ndf = len(ops.nodeDisp(ops.getNodeTags()[0]))
