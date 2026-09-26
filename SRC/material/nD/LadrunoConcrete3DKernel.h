@@ -116,6 +116,15 @@ struct Params {
     // POSITIVE effective-stress directions). Both temper modes => w_t~0 in compression (no tension
     // pre-damage). See tensileDamageWeight.
     int    ctTemper = 0;
+    // Tensile softening law (WP concrete3d-oracle-diagnosis). 0 = legacy exponential sigma = ft exp(-eps_i/eps_f),
+    // eps_f = Gf/(ft lch), with the legacy kdt2 = (kdt - eps0)/x_s history (byte-identical to the pre-2026-09
+    // kernel; the kernel/oracle default so every fixture stays pinned). 1 = CDPM2 BILINEAR (Grassl 2013
+    // Eq.51/58/59: s1 = 0.3 ft at wf1 = 0.15 wf, wf = 4.444 Gf/ft, w = lch*eps_i) with the literal Eq.44/45
+    // histories — the nDMaterial wrapper DEFAULT (-tensionLaw bilinear|exp).
+    int    tensionLaw = 0;
+    // Compressive softening strain eps_fc used DIRECTLY when > 0 (the wrapper's -epsFc, or its Gc-energy
+    // calibration calibrateEpsFc). 0 => legacy eps_fc = Gc/(fc lch).
+    double epsFc = 0.0;
     // rate / robustness
     double eta = 0.0;            // Duvaut-Lions viscosity (0 => inviscid, byte-identical)
     bool   implex = false;       // Tier-2 (IMPL-EX)
@@ -393,6 +402,82 @@ inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double
         w = (lo < wn && wn < hi) ? wn : 0.5 * (lo + hi);         // ...bisection fallback
     }
     return w < 0.0 ? 0.0 : (w > 1.0 ? 1.0 : w);
+}
+
+// ---------------------------------------------------------------------------
+// CDPM2 BILINEAR tension law + literal Eq.45 history (mirror of the oracle _bilinear_sigma /
+// _solve_omega_bilinear / _omega_t / _tension_hist_update / _eps_fc byte-for-byte). See Params::tensionLaw.
+// ---------------------------------------------------------------------------
+static const double BILIN_S1 = 0.3, BILIN_W1 = 0.15;
+static const double BILIN_GF = 0.5 * (0.15 + 0.3);           // Gf/(ft wf) = 0.225  =>  wf = 4.444 Gf/ft
+
+inline double epsFcOf(const Params& mp) { return mp.epsFc > 0.0 ? mp.epsFc : mp.Gc / (mp.fc * mp.lch); }
+
+inline double bilinearSigma(double wcr, double ft, double wf, double* slope = nullptr)
+{
+    const double wf1 = BILIN_W1 * wf, s1 = BILIN_S1 * ft;
+    if (wcr <= wf1) { if (slope) *slope = -(ft - s1) / wf1; return ft - (ft - s1) * wcr / wf1; }
+    if (wcr <= wf)  { if (slope) *slope = -s1 / (wf - wf1);  return s1 * (wf - wcr) / (wf - wf1); }
+    if (slope) *slope = 0.0;
+    return 0.0;
+}
+
+inline double solveOmegaBilinear(double kd1, double kd2, double D, double ft, double Gf, double lch)
+{
+    const double wf = Gf / (BILIN_GF * ft);
+    const double wf1 = BILIN_W1 * wf, s1 = BILIN_S1 * ft, h = lch;
+    if (D <= ft) return 0.0;
+    double den = D * wf1 + (s1 - ft) * kd2 * h;
+    if (den > 0.0) {
+        const double w = ((D - ft) * wf1 - (s1 - ft) * kd1 * h) / den;
+        if (0.0 <= w && w <= 1.0 && h * (kd1 + w * kd2) <= wf1) return w;
+    }
+    den = D * (wf - wf1) - s1 * kd2 * h;
+    if (den > 0.0) {
+        const double w = (D * (wf - wf1) + s1 * (kd1 * h - wf)) / den;
+        const double wi = h * (kd1 + w * kd2);
+        if (0.0 <= w && w <= 1.0 && wf1 < wi && wi <= wf) return w;
+    }
+    if (h * kd1 >= wf) return 1.0;
+    auto F = [&](double w) { return (1.0 - w) * D - bilinearSigma(h * (kd1 + w * kd2), ft, wf); };
+    double lo = 0.0, hi = 1.0;
+    if (F(lo) <= 0.0) return 0.0;
+    if (F(hi) >= 0.0) return 1.0;
+    for (int it = 0; it < 200; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        if (mid <= lo || mid >= hi) break;
+        if (F(mid) > 0.0) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
+inline double omegaT(const Params& mp, double kdt1, double kdt2, double D)
+{
+    if (mp.tensionLaw == 1) return solveOmegaBilinear(kdt1, kdt2, D, mp.ft, mp.Gf, mp.lch);
+    return solveOmegaBracketed(kdt1, kdt2, D, mp.ft, mp.Gf / (mp.ft * mp.lch));
+}
+
+inline void tensionHistUpdate(const Params& mp, double& kdt1, double& kdt2, double et, double et_max_n,
+                              double dnorm, double xs, double wtw)
+{
+    const double eps0 = mp.ft / mp.E;
+    const double det_raw = (et - et_max_n > 0.0) ? (et - et_max_n) : 0.0;
+    if (mp.tensionLaw == 1) {
+        if (det_raw > 0.0) {
+            kdt2 += wtw * det_raw / xs;
+            if (et > eps0) {
+                const double frac = (et_max_n >= eps0) ? 1.0 : (et - eps0) / det_raw;
+                kdt1 += wtw * frac * dnorm / xs;
+            }
+        }
+        return;
+    }
+    if (det_raw > 0.0 && et > eps0) {
+        const double lo = et_max_n > eps0 ? et_max_n : eps0;
+        const double above = (et - lo > 0.0) ? (et - lo) : 0.0;
+        kdt2 += wtw * above / xs;
+        kdt1 += wtw * dnorm / xs;
+    }
 }
 
 // ===========================================================================
@@ -1134,8 +1219,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
                           double* wtOut = nullptr, double* wcOut = nullptr)
 {
     const double eps0 = mp.ft / mp.E;
-    const double eps_f  = mp.Gf / (mp.ft * mp.lch);
-    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+    const double eps_fc = epsFcOf(mp);
 
     double A[3][3], w[3], V[3][3];
     voigtToMat(sig_eff, A);
@@ -1162,10 +1246,12 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     const bool loading = det_raw > 0.0 && et > eps0;
 
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
-    if (loading) {
+    {
         double depl[6]; for (int i = 0; i < 6; ++i) depl[i] = epl[i] - epl_n[i];
         const double wtw = tensileDamageWeight(mp, ac, depl, w, V);     // P2h ctTemper weight (1 if none)
-        kdt2 += wtw * above / xs;     kdt1 += wtw * dnorm / xs;          // Eq.45 / Eq.44 (w_t tempers C->T)
+        tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw); // Eq.44/45 (law-dependent)
+    }
+    if (loading) {
         kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
         kdc1 += ac * betaC(w, kp, mp) * dnorm / xs;                      // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     }
@@ -1186,7 +1272,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     const double sigtMax = in.sigtMax > Dt ? in.sigtMax : Dt;
     const double sigcMax = in.sigcMax > Dc ? in.sigcMax : Dc;
     const double wt = (et_max > eps0 && sigtMax > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
+                    ? omegaT(mp, kdt1, kdt2, sigtMax) : 0.0;
     const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
                     ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
 
@@ -1331,7 +1417,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
     const double eps0   = mp.ft / mp.E;
     const double eps_f  = mp.Gf / (mp.ft * mp.lch);
-    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+    const double eps_fc = epsFcOf(mp);
+    const bool bilin = (mp.tensionLaw == 1);
 
     double A[3][3], w[3], V[3][3];
     voigtToMat(sig_eff, A);
@@ -1356,8 +1443,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const double bc = betaC(w, kp_new, mp);              // Eq.50 (P2f): scales the kdc1 plastic part
     const double wtw = tensileDamageWeight(mp, ac, depl, w, V);   // P2h ctTemper weight (1 if none)
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
+    tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw);
     if (loading) {
-        kdt2 += wtw * above / xs;    kdt1 += wtw * dnorm / xs;
         kdc  += ac * above;          kdc2 += ac * above / xs;
         kdc1 += ac * bc * dnorm / xs;
     }
@@ -1377,7 +1464,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const bool tLoading = Dt >= in.sigtMax;
     const bool cLoading = Dc >= in.sigcMax;
     const double wt = (et_max2 > eps0 && sigtMax > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
+                    ? omegaT(mp, kdt1, kdt2, sigtMax) : 0.0;
     const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
                     ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
 
@@ -1487,9 +1574,10 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // (analytic, reuses dac_deps); proj -> composite micro-FD through the return map (w_t = the tensile-
     // stress-projected plastic-strain fraction). Only under loading.
     double dwtw_deps[6] = {0,0,0,0,0,0};
-    if (loading && mp.ctTemper == 1) {
+    const bool tAdv = bilin ? (det_raw > 0.0) : loading;         // the tensile history advances this step
+    if (tAdv && mp.ctTemper == 1) {
         for (int i = 0; i < 6; ++i) dwtw_deps[i] = -dac_deps[i];
-    } else if (loading && mp.ctTemper == 2) {
+    } else if (tAdv && mp.ctTemper == 2) {
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
         const double base = mp.fc / mp.E;
         double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
@@ -1517,22 +1605,46 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // dkd*/dε under loading (else zero).  kdc1 = ac * bc * dnorm / xs (Eq.48 with beta_c) => product rule.
     // kdt2 = w_t * above / xs, kdt1 = w_t * dnorm / xs (Eq.45/44 with the ctTemper weight) => product rule.
     double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
+    for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = 0.0; }
+    if (bilin && det_raw > 0.0) {
+        // literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
+        const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
+        const bool cross = et_max_n < eps0;
+        const double frac = cross ? (et - eps0) / det_raw : 1.0;
+        const double dfr = cross ? (eps0 - et_max_n) / (det_raw * det_raw) : 0.0;   // d frac / d et
+        for (int i = 0; i < 6; ++i) {
+            dkdt2[i] = wtw * (det_deps[i] * ixs - det_raw * dxs_deps[i] * ixs2) + (det_raw * ixs) * dwtw_deps[i];
+            if (et > eps0)
+                dkdt1[i] = wtw * (frac * dnorm_deps[i] * ixs + dnorm * dfr * det_deps[i] * ixs
+                                  - frac * dnorm * dxs_deps[i] * ixs2) + (frac * dnorm * ixs) * dwtw_deps[i];
+        }
+    }
     if (loading) {
         const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
         for (int i = 0; i < 6; ++i) {
-            dkdt2[i] = wtw * (det_deps[i] * ixs - above * dxs_deps[i] * ixs2) + (above * ixs) * dwtw_deps[i];
-            dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
+            if (!bilin) {
+                dkdt2[i] = wtw * (det_deps[i] * ixs - above * dxs_deps[i] * ixs2) + (above * ixs) * dwtw_deps[i];
+                dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
+            }
             dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
             dkdc1[i] = (dac_deps[i] * bc * dnorm + ac * dbc_deps[i] * dnorm + ac * bc * dnorm_deps[i]) * ixs
                      - ac * bc * dnorm * dxs_deps[i] * ixs2;
         }
-    } else for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = dkdc1[i] = dkdc2[i] = 0.0; }
+    } else for (int i = 0; i < 6; ++i) { if (!bilin) { dkdt1[i] = dkdt2[i] = 0.0; } dkdc1[i] = dkdc2[i] = 0.0; }
 
     // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
     // (P2g) D = the MONOTONE drive sigtMax/sigcMax; dDt_deps/dDc_deps are already zeroed on unload, so an
     // unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
     double dwt[6], dwc[6];
-    if (wt > 0.0 && wt < 1.0) {
+    if (wt > 0.0 && wt < 1.0 && bilin) {
+        // IFT on F(w) = (1-w)D - sigma(h(kd1+w kd2)): F_w = -D - sigma' h kd2 (sigma' = active branch slope)
+        const double wf_b = mp.Gf / (BILIN_GF * mp.ft);
+        double slope = 0.0; bilinearSigma(mp.lch * (kdt1 + wt * kdt2), mp.ft, wf_b, &slope);
+        const double spd = slope * mp.lch;
+        const double Fw = -sigtMax - spd * kdt2;
+        for (int i = 0; i < 6; ++i)
+            dwt[i] = (-(1.0 - wt) / Fw) * dDt_deps[i] + (spd / Fw) * dkdt1[i] + (spd * wt / Fw) * dkdt2[i];
+    } else if (wt > 0.0 && wt < 1.0) {
         const double Ht = sigtMax * ((1.0 - wt) * kdt2 / eps_f - 1.0);
         const double a0 = -(1.0 - wt) / Ht;
         const double a1 = -(1.0 - wt) * sigtMax / (eps_f * Ht);

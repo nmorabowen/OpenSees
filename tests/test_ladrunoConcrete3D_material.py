@@ -452,6 +452,20 @@ def test_vertex_return_gate():
     assert r["PASS"]
 
 
+def test_tension_law_gate():
+    """CDPM2 BILINEAR tension law (Grassl 2013 Eq.51/58/59 + the literal Eq.45 kdt2 history; the nDMaterial
+    default since WP concrete3d-oracle-diagnosis) on the paper's own Fig.7 parameters. T1 the softening curve
+    matches the paper's CDPM2 envelope within 5% at 0.2/0.3/0.4 mm/m (legacy exp: 2.3/1.2/0.63 vs 0.96/0.77/
+    0.58 MPa); T2 total work = Gf + pre-peak plastic work (residual -1.4%, the Eq.44 Frobenius-norm effect)
+    while legacy 'exp' over-dissipates by +40%; T3 lch-objective to <1%; T4 analytic == FD damaged tangent."""
+    r = ref.run_tension_law_gate(verbose=False)
+    assert r["T1_ok"], (r["T1_sigma"], r["T1_rel"])
+    assert r["T2_ok"], (r["T2_residual"], r["T2_exp_excess"])
+    assert r["T3_ok"], r["T3_dissipation"]
+    assert r["T4_ok"], r["T4_rel"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

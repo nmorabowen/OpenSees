@@ -299,7 +299,7 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # ===========================================================================
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
                   qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
-                  ct_temper="none"):
+                  ct_temper="none", tension_law="exp", eps_fc=0.0):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -309,8 +309,13 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
         e = eccentricity_from_kupfer(fc, ft, target_fcc_ratio)
     K = E / (3.0 * (1.0 - 2.0 * nu))
     G = E / (2.0 * (1.0 + nu))
+    # tension_law: 'exp' (the ORACLE default — keeps every P2 gate byte-identical; the pre-2026-09 fork law)
+    #   or 'bilinear' (Grassl 2013 Eq.51/58/59 + the literal Eq.45 kdt2 history; the MATERIAL default in the
+    #   nDMaterial wrapper since WP concrete3d-oracle-diagnosis). eps_fc > 0: the compressive softening
+    #   strain used DIRECTLY (the wrapper's -epsFc, or its Gc-calibrated value); 0 => legacy Gc/(fc*lch).
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
-                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper)
+                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper,
+                tension_law=tension_law, eps_fc=eps_fc)
 
 
 # ---------------------------------------------------------------------------
@@ -1147,6 +1152,107 @@ def _solve_omega_bracketed(kd1, kd2, sig_eff, f, eps_f):
     return min(1.0, max(0.0, w))
 
 
+# ---------------------------------------------------------------------------
+# CDPM2 BILINEAR tension law + literal Eq.45 history (WP concrete3d-oracle-diagnosis, 2026-09).
+# Grassl et al. 2013 Eq.51/58: sigma(w) = ft - (ft-s1) w/wf1 (0<w<=wf1), s1 (wf-w)/(wf-wf1) (wf1<w<=wf),
+# 0 beyond; s1 = 0.3 ft, wf1 = 0.15 wf; w = h*eps_i (crack band, h = lch), eps_i = kdt1 + wt*kdt2 (Eq.52),
+# and Eq.59 GFt = ft*wf1/2 + s1*wf/2 = 0.225 ft wf  =>  wf = Gf/(0.225 ft) = 4.444 Gf/ft.
+# The literal Eq.45 is d kdt2 = d kdt / x_s from the START of loading (OOFEM ConcreteDPM2 accumulates it
+# pre-peak too), so in uniaxial tension wt*kdt2 = wt*eps = the TRUE inelastic strain eps - sigma/E. The
+# legacy fork history kdt2 = (kdt - eps0)/x_s under-counts the crack opening by wt*eps0*h — with
+# eps0*h ~ wf that stretched the softening curve (+~25 % dissipation over Gf, Fig.7 tail far too high).
+# Eq.44 kdt1 takes only the POST-onset part of the crossing step's plastic strain (OOFEM's fraction).
+# ---------------------------------------------------------------------------
+_BILIN_S1, _BILIN_W1 = 0.3, 0.15           # s1/ft, wf1/wf (Jirasek-Zimmermann, Grassl 2013 Sec.5)
+_BILIN_GF = 0.5 * (_BILIN_W1 + _BILIN_S1)  # Gf/(ft wf) = wf1/(2wf) + s1/(2ft) = 0.225
+
+
+def _tlaw(mp):
+    return mp.get("tension_law", "exp")
+
+
+def _eps_fc(mp, Gc, lch):
+    """Compressive softening strain: mp['eps_fc'] if set (>0) else the legacy Gc/(fc*lch)."""
+    v = mp.get("eps_fc", 0.0)
+    return v if v > 0.0 else Gc / (mp["fc"] * lch)
+
+
+def _bilinear_sigma(wcr, ft, wf):
+    """Eq.51/58 stress at crack opening wcr, and its slope d sigma/d w."""
+    wf1, s1 = _BILIN_W1 * wf, _BILIN_S1 * ft
+    if wcr <= wf1:
+        return ft - (ft - s1) * wcr / wf1, -(ft - s1) / wf1
+    if wcr <= wf:
+        return s1 * (wf - wcr) / (wf - wf1), -s1 / (wf - wf1)
+    return 0.0, 0.0
+
+
+def _solve_omega_bilinear(kd1, kd2, D, ft, Gf, lch):
+    """omega_t for the bilinear law: (1-w) D = sigma(h (kd1 + w kd2)) (Eq.53 with Eq.51/52). Closed form per
+    branch (Eq.58, as OOFEM computeDamageParamTension); fully open => 1; a local snap-back (non-positive
+    branch denominator) falls back to a bracketed bisection on the same residual."""
+    wf = Gf / (_BILIN_GF * ft)
+    wf1, s1, h = _BILIN_W1 * wf, _BILIN_S1 * ft, lch
+    if D <= ft:
+        return 0.0
+    den = D * wf1 + (s1 - ft) * kd2 * h
+    if den > 0.0:
+        w = ((D - ft) * wf1 - (s1 - ft) * kd1 * h) / den
+        if 0.0 <= w <= 1.0 and h * (kd1 + w * kd2) <= wf1:
+            return w
+    den = D * (wf - wf1) - s1 * kd2 * h
+    if den > 0.0:
+        w = (D * (wf - wf1) + s1 * (kd1 * h - wf)) / den
+        if 0.0 <= w <= 1.0 and wf1 < h * (kd1 + w * kd2) <= wf:
+            return w
+    if h * kd1 >= wf:
+        return 1.0
+    F = lambda w: (1.0 - w) * D - _bilinear_sigma(h * (kd1 + w * kd2), ft, wf)[0]
+    lo, hi = 0.0, 1.0
+    if F(lo) <= 0.0:
+        return 0.0
+    if F(hi) >= 0.0:
+        return 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if mid <= lo or mid >= hi:
+            break
+        if F(mid) > 0.0:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def _omega_t(mp, kdt1, kdt2, D, Gf, lch):
+    """Tensile damage for the active law ('exp': the legacy exponential, eps_f = Gf/(ft lch))."""
+    ft = mp["ft"]
+    if _tlaw(mp) == "bilinear":
+        return _solve_omega_bilinear(kdt1, kdt2, D, ft, Gf, lch)
+    return _solve_omega_bracketed(kdt1, kdt2, D, ft, Gf / (ft * lch))
+
+
+def _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm, xs, wt_w):
+    """Tensile damage histories after one step (et_max = COMMITTED running max of eps_tilde).
+    'exp' (legacy, byte-identical): kdt2 += w (et - max(et_max,eps0))/xs, kdt1 += w dnorm/xs, both only
+    past onset. 'bilinear' (literal Eq.44/45): kdt2 += w (et-et_max)/xs whenever the history advances
+    (pre-peak included); kdt1 += w frac dnorm/xs past onset, frac = post-onset fraction of the step."""
+    eps0 = mp["ft"] / mp["E"]
+    det_raw = max(et - et_max, 0.0)
+    if _tlaw(mp) == "bilinear":
+        if det_raw > 0.0:
+            kdt2 += wt_w * det_raw / xs
+            if et > eps0:
+                frac = 1.0 if et_max >= eps0 else (et - eps0) / det_raw
+                kdt1 += wt_w * frac * dnorm / xs
+        return kdt1, kdt2
+    if det_raw > 0.0 and et > eps0:
+        above = max(et - max(et_max, eps0), 0.0)
+        kdt2 += wt_w * above / xs
+        kdt1 += wt_w * dnorm / xs
+    return kdt1, kdt2
+
+
 def _solve_omega_t_exp(kappa_dt, kdt1, kdt2, sig_t_eff, E, ft, eps_f):
     """CDPM2 tensile damage, EXPONENTIAL softening (Eq.55) with the inelastic-strain split Eq.52.
     eps_i = kdt1 + wt*kdt2 (Eq.52); nominal sig_t_nom = ft*exp(-eps_i/eps_f) (Eq.55); and
@@ -1279,7 +1385,7 @@ def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0, beta_c_o
     monotonic simplification) for the P2f non-tautology comparison (real beta_c is markedly more ductile)."""
     E, fc, nu, Df = mp["E"], mp["fc"], mp["nu"], mp["Df"]
     ft = mp["ft"]; eps0 = ft / E
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
     et_prev = 0.0; kdc = 0.0; kdc1 = 0.0; sigc_max = 0.0   # P2g: monotone running-max drive (no heal)
     epl_prev = np.zeros(3)
@@ -1482,7 +1588,7 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
     E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
     et_max = 0.0                                          # running max of eps_tilde (Eq.43 history)
     sigt_max = sigc_max = 0.0                             # P2g: monotone running-max effective drive (no heal)
@@ -1517,17 +1623,16 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
                               (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
                               (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
         dnorm_epl = float(np.linalg.norm(epl - epl_prev))
+        # coaxial uniaxial-stress path: stress frame = principal axes (V=I), depl principal = epl-epl_prev
+        wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                       (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                     sig_eff, np.eye(3))        # P2h ctTemper weight (1 if 'none')
+        # Eq.44/45 tensile histories (law-dependent, see _tension_hist_update; 'exp' = the legacy form:
+        # kdt2 from the onset eps0, telescoping to max(kappa_dt-eps0,0) at x_s=1 == the P2a driver)
+        kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm_epl, xs, wt_w)
         if loading:
-            # kdt2/kdc2 integrate d kappa_d/x_s from the onset eps0 (Eq.45/49); clamping the lower
-            # limit at eps0 telescopes to max(kappa_dt-eps0,0) when x_s=1, so the tension channel is
-            # byte-identical to the P2a driver. kdt1/kdc1 take the FULL plastic-strain increment
-            # (Eq.44/48), matching P2a/P2b. (Variable-x_s onset harmonization across channels = P2d.)
-            # coaxial uniaxial-stress path: stress frame = principal axes (V=I), depl principal = epl-epl_prev
-            wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
-                                                           (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
-                                         sig_eff, np.eye(3))    # P2h ctTemper weight (1 if 'none')
-            kdt2 += wt_w * above / xs                     # Eq.45  d kappa_dt2 = d kappa_dt / x_s
-            kdt1 += wt_w * dnorm_epl / xs                 # Eq.44  (w_t tempers compression->tension coupling)
+            # kdc2 integrates d kappa_dc/x_s from the onset eps0 (Eq.49); kdc1 takes the FULL plastic-
+            # strain increment (Eq.48), matching P2b. (Variable-x_s onset harmonization = P2d.)
             kdc += ac * above                             # Eq.47  d kappa_dc = alpha_c d eps_tilde
             kdc2 += ac * above / xs                       # Eq.49
             bc = beta_c(sig_eff, kp, mp)                  # Eq.50  (P2f) cyclic damage<->plasticity factor
@@ -1549,7 +1654,7 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
         # PHYSICAL FLOOR on the softening drive: only solve omega when the extreme principal of that
         # sign is a REAL stress (> 1e-6 * strength), never on the ~1e-10 MPa lateral-Newton residual.
         # Without it the residual's SIGN spuriously flips wt 0<->1 in pure compression (review-fix).
-        wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+        wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
         wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
 
         sig_nom = apply_damage_principal(sig_eff, wt, wc)            # Eq.1
@@ -1610,7 +1715,7 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     eps = st["eps"].copy(); sig_eff = st["sig_eff"].copy(); kp = st["kp"]; el = st["el"]
     et_max = st["et_max"]; sigt_max = st["sigt_max"]; sigc_max = st["sigc_max"]
     kdt1 = st["kdt1"]; kdt2 = st["kdt2"]; kdc = st["kdc"]; kdc1 = st["kdc1"]; kdc2 = st["kdc2"]
@@ -1641,11 +1746,11 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
                           (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
                           (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
     dnorm = float(np.linalg.norm(epl - epl_prev))
+    wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                   (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                 sig_eff, np.eye(3))
+    kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm, xs, wt_w)
     if loading:
-        wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
-                                                       (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
-                                     sig_eff, np.eye(3))
-        kdt2 += wt_w * above / xs;   kdt1 += wt_w * dnorm / xs
         kdc += ac * above;           kdc2 += ac * above / xs
         kdc1 += ac * beta_c(sig_eff, kp, mp) * dnorm / xs
     et_max = max(et_max, et); epl_prev = epl
@@ -1653,7 +1758,7 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     sig_t_drive = E * et if float(np.max(sig_eff)) > 1.0e-6 * ft else 0.0
     sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
     sigt_max = max(sigt_max, sig_t_drive); sigc_max = max(sigc_max, sig_c_drive)
-    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
     wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
     sig_nom = apply_damage_principal(sig_eff, wt, wc)
     new = dict(eps=eps, sig_eff=sig_eff, kp=kp, el=el, et_max=et_max, sigt_max=sigt_max,
@@ -1670,7 +1775,7 @@ def drive_confined_fiber(mp, eps11_path, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_f
     E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
     et_max = 0.0
     sigt_max = sigc_max = 0.0
@@ -1703,11 +1808,11 @@ def drive_confined_fiber(mp, eps11_path, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_f
                               (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
                               (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
         dnorm = float(np.linalg.norm(epl - epl_prev))
+        wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                       (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                     sig_eff, np.eye(3))
+        kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm, xs, wt_w)
         if loading:
-            wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
-                                                           (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
-                                         sig_eff, np.eye(3))
-            kdt2 += wt_w * above / xs;   kdt1 += wt_w * dnorm / xs
             kdc += ac * above;           kdc2 += ac * above / xs
             kdc1 += ac * beta_c(sig_eff, kp, mp) * dnorm / xs
         et_max = max(et_max, et); epl_prev = epl
@@ -1715,7 +1820,7 @@ def drive_confined_fiber(mp, eps11_path, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_f
         sig_t_drive = E * et if float(np.max(sig_eff)) > 1.0e-6 * ft else 0.0
         sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
         sigt_max = max(sigt_max, sig_t_drive); sigc_max = max(sigc_max, sig_c_drive)
-        wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+        wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
         wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
         sig_nom = apply_damage_principal(sig_eff, wt, wc)
         for k, v in (("eps11", e11), ("eps_lat", el), ("sig11", sig_nom[0]), ("wc", wc),
@@ -1974,7 +2079,7 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     E, fc, ft = mp["E"], mp["fc"], mp["ft"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
@@ -1994,10 +2099,9 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     loading = det_raw > 0.0 and et > eps0
     kdt1, kdt2 = state["kdt1"], state["kdt2"]
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
+    wt_w = tensile_damage_weight(mp, ac, depl, w, V)         # P2h ctTemper weight (1 if 'none')
+    kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm_epl, xs, wt_w)   # Eq.44/45
     if loading:                                           # same accumulation as drive_damaged_unified
-        wt_w = tensile_damage_weight(mp, ac, depl, w, V)     # P2h ctTemper weight (1 if 'none')
-        kdt2 += wt_w * above / xs
-        kdt1 += wt_w * dnorm_epl / xs
         kdc += ac * above
         kdc2 += ac * above / xs
         kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl / xs   # Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
@@ -2024,7 +2128,7 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     sigt_max = max(state.get("sigt_max", 0.0), sig_t_drive)
     sigc_max = max(state.get("sigc_max", 0.0), sig_c_drive)
     # physical floor (see drive_damaged_unified): no omega-solve on a numerical-residual stress
-    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
     wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
     sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
     new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
@@ -2268,7 +2372,7 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     E, fc, ft = mp["E"], mp["fc"], mp["ft"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
-    eps_fc = Gc / (fc * lch)
+    eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
@@ -2289,8 +2393,9 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
     bc = beta_c(lam, kp_new, mp)                          # Eq.50 (P2f): scales the kdc1 plastic part
     wt_w = tensile_damage_weight(mp, ac, depl, lam, V)    # P2h ctTemper weight
+    kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm, xs, wt_w)
+    bilin = _tlaw(mp) == "bilinear"
     if loading:
-        kdt2 += wt_w * above / xs; kdt1 += wt_w * dnorm / xs
         kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnorm / xs
     et_max2 = max(et_max, et)
     Dt = E * et if float(np.max(lam)) > 1.0e-6 * ft else 0.0   # P2i: E*eps_tilde tensile drive (Eq.37)
@@ -2306,7 +2411,7 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     t_loading = Dt >= state.get("sigt_max", 0.0)          # live tensile drive at/above the committed max
     c_loading = Dc >= state.get("sigc_max", 0.0)
     # SAME physical floor as damaged_step_tensor (keeps the analytic tangent's omega == the update's)
-    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max2 > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max2 > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
     wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
 
     Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
@@ -2363,9 +2468,10 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     # (w_t is the tensile fraction of the plastic-strain increment). Only under loading.
     mode = mp.get("ct_temper", "none")
     dwt_w_deps = np.zeros(6)
-    if loading and mode == "alphat":
+    t_adv = (det_raw > 0.0) if bilin else loading         # the tensile history advances this step
+    if t_adv and mode == "alphat":
         dwt_w_deps = -dac_deps
-    elif loading and mode == "proj":
+    elif t_adv and mode == "proj":
         base = fc / E
 
         def _wtw_of(d6):
@@ -2382,21 +2488,44 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
             dm = np.array(deps6, float); dm[j] -= hh
             dwt_w_deps[j] = (_wtw_of(dp) - _wtw_of(dm)) / (2.0 * hh)
 
+    if bilin:
+        # literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
+        if det_raw > 0.0:
+            dkdt2 = wt_w * (det_deps / xs - det_raw * dxs_deps / xs**2) + (det_raw / xs) * dwt_w_deps
+            if et > eps0:
+                frac = 1.0 if et_max >= eps0 else (et - eps0) / det_raw
+                dfrac = np.zeros(6) if et_max >= eps0 else ((eps0 - et_max) / det_raw**2) * det_deps
+                dkdt1 = wt_w * (frac * dnorm_deps / xs + dnorm * dfrac / xs - frac * dnorm * dxs_deps / xs**2) \
+                    + (frac * dnorm / xs) * dwt_w_deps
+            else:
+                dkdt1 = np.zeros(6)
+        else:
+            dkdt2 = dkdt1 = np.zeros(6)
     if loading:
-        # kdt2 = w_t * above / xs ; kdt1 = w_t * dnorm / xs  (Eq.45/44 with the ctTemper weight) => product rule
-        dkdt2 = wt_w * (det_deps / xs - above * dxs_deps / xs**2) + (above / xs) * dwt_w_deps
-        dkdt1 = wt_w * (dnorm_deps / xs - dnorm * dxs_deps / xs**2) + (dnorm / xs) * dwt_w_deps
+        if not bilin:
+            # kdt2 = w_t * above / xs ; kdt1 = w_t * dnorm / xs  (Eq.45/44 with the ctTemper weight) => product rule
+            dkdt2 = wt_w * (det_deps / xs - above * dxs_deps / xs**2) + (above / xs) * dwt_w_deps
+            dkdt1 = wt_w * (dnorm_deps / xs - dnorm * dxs_deps / xs**2) + (dnorm / xs) * dwt_w_deps
         dkdc2 = (dac_deps * above + ac * det_deps) / xs - ac * above * dxs_deps / xs**2
         # kdc1 = ac * bc * dnorm / xs  (Eq.48 with beta_c) => product rule over ac, bc, dnorm, xs
         dkdc1 = (dac_deps * bc * dnorm + ac * dbc_deps * dnorm + ac * bc * dnorm_deps) / xs \
             - ac * bc * dnorm * dxs_deps / xs**2
     else:
-        dkdt2 = dkdt1 = dkdc2 = dkdc1 = np.zeros(6)
+        if not bilin:
+            dkdt2 = dkdt1 = np.zeros(6)
+        dkdc2 = dkdc1 = np.zeros(6)
 
     # omega via IFT on F(w) = (1-w)D - f exp(-(kd1+w kd2)/eps_f) = 0 ; H = dF/dw = D[(1-w)kd2/eps_f - 1]
     # (P2g) D = the MONOTONE drive sigt_max/sigc_max; dDt_deps/dDc_deps are already zeroed on unload, so
     # an unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
-    if 0.0 < wt < 1.0:
+    if 0.0 < wt < 1.0 and bilin:
+        # IFT on F(w) = (1-w)D - sigma(h(kd1+w kd2)): F_w = -D - sigma' h kd2, F_D = 1-w, F_kd1 = -sigma' h,
+        # F_kd2 = -sigma' h w  (sigma' = the active bilinear branch slope)
+        wf_b = Gf / (_BILIN_GF * ft)
+        spd = _bilinear_sigma(lch * (kdt1 + wt * kdt2), ft, wf_b)[1] * lch
+        Fw = -sigt_max - spd * kdt2
+        dwt = (-(1.0 - wt) / Fw) * dDt_deps + (spd / Fw) * dkdt1 + (spd * wt / Fw) * dkdt2
+    elif 0.0 < wt < 1.0:
         Ht = sigt_max * ((1.0 - wt) * kdt2 / eps_f - 1.0)
         dwt = (-(1.0 - wt) / Ht) * dDt_deps + (-(1.0 - wt) * sigt_max / (eps_f * Ht)) * dkdt1 \
             + (-(1.0 - wt) * sigt_max * wt / (eps_f * Ht)) * dkdt2
@@ -3389,6 +3518,74 @@ def run_vertex_gate(verbose=True):
         print(f"  V2 hydrostatic tension vs 1000 substeps: rel(1) = {res['V2_rel']:.2e} rel(100) = {res['V2_rel100']:.2e}  ok={res['V2_ok']}")
         print(f"  V3 sign-flip fuzz: {flips} flips / {conv_n} converged  ok={res['V3_ok']}")
         print(f"  V4 cone: rho(small shear)={rho_small:.3e}  rho(large shear)={rho_big:.3e}  ok={res['V4_ok']}")
+    return res
+
+
+def run_tension_law_gate(verbose=True):
+    """CDPM2 BILINEAR tension law gate (WP concrete3d-oracle-diagnosis; the nDMaterial default since then).
+    Grassl et al. 2013 Fig.7 parameters (Gopalaratnam & Shah 1985): E=28 GPa nu=0.2 fc=40 ft=3.5 MPa
+    GFt=55 J/m^2 h=0.1 m, CDPM2 defaults (e=0.525 Df=0.85 qh0=0.3 Hp=0.01); units MPa, mm, N/mm.
+      T1 the uniaxial-tension softening reproduces the paper's CDPM2 curve (monotonic ENVELOPE of the
+         published cyclic response, digitised from the vector figure) within 5% at 0.2/0.3/0.4 mm/m:
+         0.957 / 0.769 / 0.580 MPa. The legacy exponential law gives 2.34 / 1.23 / 0.63 there.
+      T2 ENERGY: total work to full separation  lch*int(sigma d eps) = Gf + lch*W_p,pre (the pre-peak
+         plastic work, which CDPM2 does not regularize) + a residual of -1.4% (<3% gated): Eq.44 feeds the
+         Frobenius norm ||d eps_p|| (> the axial plastic increment, lateral flow) into eps_i, so the law
+         reaches its end a little early — inherent CDPM2 (OOFEM identical). Legacy 'exp' over-dissipates
+         by +40% (its kdt2 = kdt - eps0 under-counts the crack opening by wt*eps0*h).
+      T3 lch-objectivity of the damage dissipation (lch = 25/50/100 mm; 200 mm is beyond the bilinear
+         snap-back limit h < wf1 ft/((ft-s1) eps0) = 120 mm for these parameters): spread < 1%.
+      T4 the analytic damaged tangent == its numerical FD on bilinear branch-1 and branch-2 states."""
+    E, nu, fc, ft, Gf = 28000.0, 0.2, 40.0, 3.5, 0.055
+    res = {}
+    env = [(0.2, 0.957), (0.3, 0.769), (0.4, 0.580)]      # Fig.7 CDPM2 envelope (MPa at mm/m)
+
+    def uni(law, lch, emax=1.2e-3, n=1201):
+        mp = make_material(E, nu, fc, ft, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, tension_law=law)
+        d = drive_damaged_unified(mp, np.linspace(0.0, emax, n), Gf, 1.0, lch, 15.0)
+        s, e = np.array(d["sig11"]), np.array(d["eps11"])
+        # pre-peak plastic work: sigma * d eps_p on the undamaged (wt=0) part of the path
+        epl = e - np.array(d["sig_eff"]) / E
+        pre = np.array(d["wt"]) <= 0.0
+        wp_pre = float(np.sum(0.5 * (s[1:] + s[:-1]) * np.diff(epl) * pre[1:]))
+        return mp, s, e, lch * float(np.trapezoid(s, e)), lch * wp_pre
+
+    _, s, e, W, Wp = uni("bilinear", 100.0)
+    res["T1_sigma"] = [float(np.interp(em * 1e-3, e, s)) for em, _ in env]
+    res["T1_rel"] = [abs(v - r) / r for v, (_, r) in zip(res["T1_sigma"], env)]
+    res["T1_ok"] = bool(max(res["T1_rel"]) < 0.05 and s[-1] < 1e-6)
+    res["T2_W"] = W; res["T2_Wp_pre"] = Wp
+    res["T2_residual"] = (W - Wp - Gf) / Gf
+    _, se, ee, We, Wpe = uni("exp", 100.0)
+    res["T2_exp_excess"] = (We - Wpe - Gf) / Gf
+    res["T2_ok"] = bool(abs(res["T2_residual"]) < 0.03 and res["T2_exp_excess"] > 0.2)
+    dis = []
+    for lch in (25.0, 50.0, 100.0):
+        _, s_, e_, W_, Wp_ = uni("bilinear", lch, emax=9.0e-4 * 100.0 / lch, n=1201)
+        dis.append(W_ - Wp_)
+    res["T3_dissipation"] = dis
+    res["T3_ok"] = bool((max(dis) - min(dis)) / Gf < 0.01 and max(abs(x - Gf) for x in dis) / Gf < 0.03)
+    # T4 tangent (uniaxial-STRAIN tension path into branch 1 and branch 2)
+    mpb = make_material(E, nu, fc, ft, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, tension_law="bilinear")
+    rels = []
+    for e_end in (1.6e-4, 3.0e-4):
+        st = make_damage_state(mpb)
+        st, _, wts, _ = _advance_damaged(st, [np.array([x, 0, 0, 0, 0, 0]) for x in np.linspace(0, e_end, 400)],
+                                         mpb, Gf, 1.0, 100.0, 15.0)
+        deps = np.array([2.0e-7, 0, 0, 0, 0, 0])
+        Ca = damaged_tangent_analytic(st, deps, mpb, Gf, 1.0, 100.0, 15.0)
+        Cn = damaged_consistent_tangent(st, deps, mpb, Gf, 1.0, 100.0, 15.0)
+        rels.append(float(np.sqrt(np.sum((Ca - Cn) ** 2)) / np.sqrt(np.sum(Cn ** 2))))
+    res["T4_rel"] = rels
+    res["T4_ok"] = bool(max(rels) < 1.0e-5)
+    res["PASS"] = bool(res["T1_ok"] and res["T2_ok"] and res["T3_ok"] and res["T4_ok"])
+    if verbose:
+        print("  T1 Fig.7 envelope: " + "  ".join(f"{em} mm/m: {v:.3f} (paper {r:.3f})" for (em, r), v in zip(env, res["T1_sigma"]))
+              + f"  ok={res['T1_ok']}")
+        print(f"  T2 energy: W={W*1e3:.2f} J/m2 = Gf {Gf*1e3:.1f} + pre-peak plastic {Wp*1e3:.2f} + residual "
+              f"{res['T2_residual']*100:+.2f}%   (legacy exp excess {res['T2_exp_excess']*100:+.1f}%)  ok={res['T2_ok']}")
+        print(f"  T3 lch 25/50/100: damage dissipation = {[round(x*1e3, 3) for x in dis]} J/m2  ok={res['T3_ok']}")
+        print(f"  T4 analytic vs FD tangent (branch 1 / 2): {rels}  ok={res['T4_ok']}")
     return res
 
 

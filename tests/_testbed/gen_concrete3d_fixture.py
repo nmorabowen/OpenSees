@@ -242,11 +242,29 @@ def main(out=None):
     # eigenvectors — the P2e/I4 frozen-eigenvector limitation, not a drive bug).
     bipath = [np.array([e, 0.6 * e, 0, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 300)]
     add_dmg("dmg_biaxial_tension", mp_h, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    # CDPM2 BILINEAR tension law (WP concrete3d-oracle-diagnosis; the nDMaterial default): uniaxial-strain
+    # tension into branch 1 (w < wf1) and branch 2 (wf1 < w < wf), a biaxial-tension state (E*eps_tilde
+    # drive), and 'proj' ctTemper (exercises the pre-peak kdt2 + d(w_t) chain). Pins omegaT/solveOmegaBilinear,
+    # tensionHistUpdate (literal Eq.44/45) and the bilinear IFT tangent against the oracle.
+    mp_hb = dict(mp_h); mp_hb["tension_law"] = "bilinear"
+    add_dmg("dmg_tension_bilin_b1", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 2.5e-4, 300)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_tension_bilin_b2", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 9.0e-4, 400)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_biaxial_bilin", mp_hb, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    mp_hbp = dict(mp_hb); mp_hbp["ct_temper"] = "proj"
+    add_dmg("dmg_cttemper_proj_bilin", mp_hbp, lch, tp_pr, [2.0e-6, 0, 0, 0, 0, 0])
+    # direct eps_fc (the wrapper's -epsFc / its Gc-calibrated value) on the confined-compression state
+    mp_efc = dict(mp_h); mp_efc["eps_fc"] = 2.0e-3
+    add_dmg("dmg_compression_epsfc", mp_efc, lch, cpath,
+            [dconf["eps11"][ic] - cpath[-1][0], dconf["eps_lat"][ic] - cpath[-1][1], dconf["eps_lat"][ic] - cpath[-1][2], 0, 0, 0])
 
+    _TL = {"exp": 0, "bilinear": 1}
     lines.append(f"NDMG {len(dmgs)}")
     for label, mp, lch, st, deps, sig_nom in dmgs:
         lines.append(f"DMG {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
-                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
+                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))}")
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
