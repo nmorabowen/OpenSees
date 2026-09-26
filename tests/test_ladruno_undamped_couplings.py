@@ -17,7 +17,15 @@ the contract itself, so a change to the shared code that lets damping leak in fa
      act is through the element;
   2. eleResponse 'dampingForce' is exactly zero in a moving state;
   3. the explicit critical step (element self-report, and the integrator's value under
-     CentralDifferenceLadruno) does not depend on betaK.
+     CentralDifferenceLadruno) does not depend on betaK;
+  4. the element's damping is ZERO in absolute terms, not merely factor-independent:
+     under Newmark average acceleration (gamma=1/2, beta=1/4) a linear undamped system
+     conserves discrete energy exactly, so a constant load from rest gives a free
+     vibration whose amplitude must not decay. Test 1 alone cannot see a getDamp that
+     is nonzero regardless of the factors (both runs would carry it equally) -- WP-123
+     mutation row C proved that gap before this case was added. The case uses
+     `algorithm Linear`: these elements put no D·v in their residual, so a spurious C
+     only reaches the tangent, which Newton would iterate away.
 """
 import math
 
@@ -141,6 +149,50 @@ def test_damping_force_is_zero_while_moving(name):
     assert any(v != 0.0 for _, v in hist[-1]), "velocity must be nonzero at the probe"
     assert len(damp) > 0, "dampingForce must be answered (an empty reply would pass vacuously)"
     assert all(math.isfinite(x) and x == 0.0 for x in damp)
+
+
+# ------------------------------------------------------------------ 4. no absolute damping
+@pytest.mark.parametrize("name", ELEMENTS)
+def test_free_vibration_does_not_decay(name):
+    """Constant load from rest, Newmark average acceleration, no Rayleigh: the loaded DOFs
+    oscillate about the static solution forever. Compare the oscillation amplitude in the
+    first and last fifth of the run on every free DOF that moves."""
+    ops.wipe()
+    free = MODELS[name]()
+    ops.remove("loadPattern", 1)                      # the model's Linear pattern -> Constant
+    ops.timeSeries("Constant", 2)
+    ops.pattern("Plain", 2, 2)
+    if name in ("LadrunoDistributingCoupling", "LadrunoKinematicCoupling"):
+        ops.load(1, 100.0, -50.0, 25.0, 10.0, -20.0, 1000.0)
+    else:
+        ops.load(1, 1.0, -0.5, 0.25)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 1)
+    # Linear, not Newton: these elements add no D·v to their residual, so a spurious
+    # getDamp only pollutes the TANGENT and Newton would iterate it away (same answer,
+    # slower). One solve per step with the element's own tangent is exact for these
+    # linear ties; a C-polluted tangent then shows up as a wrong (decaying) response.
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    nsteps = 1500                                     # >= 30 periods of the slowest DOF here
+    hist = []
+    for _ in range(nsteps):
+        assert ops.analyze(1, DT) == 0
+        hist.append([ops.nodeDisp(n, d) for n, d in free])
+    k = nsteps // 5
+    checked = 0
+    for j in range(len(free)):
+        series = [h[j] for h in hist]
+        early = max(series[:k]) - min(series[:k])
+        late = max(series[-k:]) - min(series[-k:])
+        if early < 1.0e-12:
+            continue                                  # a DOF the load does not excite
+        checked += 1
+        assert late > 0.95 * early, f"DOF {free[j]}: amplitude {early:.3e} -> {late:.3e} (damped)"
+    assert checked > 0, "no DOF moved: the probe proves nothing"
 
 
 # ------------------------------------------------------------------ 3. dt_cr ignores betaK

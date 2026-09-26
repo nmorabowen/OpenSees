@@ -85,10 +85,14 @@ def build_pyd(log):
 def run_tests():
     out = []
     for t in TESTS:
-        r = subprocess.run([PY, "-S", str(ROOT / "Ladruno_implementation/wp123_undamped/run_pytest.py"), t],
+        r = subprocess.run([PY, "-S", str(ROOT / "Ladruno_implementation/wp123_undamped/run_pytest.py"), t, "-rf"],
                            cwd=ROOT, capture_output=True, text=True, errors="replace")
         tail = [ln for ln in r.stdout.strip().splitlines() if ln.strip()]
         summary = tail[-1] if tail else "(no output)"
+        failed = sorted({ln.split("::")[1].split("[")[0] for ln in tail
+                         if ln.startswith("FAILED") and "::" in ln})
+        if failed:
+            summary += " -- failing: " + ", ".join(failed)
         if r.returncode not in (0, 1):
             summary = f"CRASHED rc={r.returncode} (0x{r.returncode & 0xFFFFFFFF:08X}) | {summary}"
         out.append((Path(t).name, r.returncode, summary))
