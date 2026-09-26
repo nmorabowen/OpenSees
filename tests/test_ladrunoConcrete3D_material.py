@@ -494,6 +494,18 @@ def test_flow_potential_gate():
     assert r["PASS"]
 
 
+def test_compression_drive_gate():
+    """B2 — CDPM2 compressive damage drive (E kappa_dc vs ft, Eq.47-49/53/55; OOFEM computeDamage). G1 OOFEM
+    con2dpm2 step 5 == the OOFEM transcription (-1.3222) to 0.5 %; G2 confined compression (0.05 / 0.10 fc): the
+    nominal stress is continuous at damage onset and peaks on the CDPM2 failure surface (legacy drops fcc -> fc
+    in one step); G3 analytic == FD damaged tangent on a CDPM2-drive softening state."""
+    r = ref.run_compression_drive_gate(verbose=False)
+    assert r["G1_ok"], r["G1_step5"]
+    assert r["G2_ok"], r["G2"]
+    assert r["G3_ok"], r["G3_rel"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

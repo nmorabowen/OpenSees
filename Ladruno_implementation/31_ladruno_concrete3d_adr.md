@@ -603,3 +603,20 @@ near-axis cap returns had no regular solution, and uniaxial compression reached 
 5. Gate results: con2dpm2 plasticity == an independent OOFEM transcription at equal sub-steps; Kupfer peak
    −32.79 MPa at −2.20 mm/m (paper −32.81 at −2.19). The Fig.9 post-peak needs `εfc ≈ 6e-4` (−30.0 at −3 mm/m);
    with the paper's stated 1e-4 OOFEM's own CDPM2 gives −13 MPa there, so the figure's `εfc` is not 1e-4.
+
+## 13. Amendment 2026-09 — B2: the CDPM2 compressive damage drive (WP `concrete3d-damage-drive`)
+
+User-approved (plan B2; resolves §11-4b). The v1 compressive drive `(1−ωc)(−σ̄min) = fc·exp(..)` with histories
+from the onset only is replaced (default `-compressionDrive cdpm2`) by Grassl 2013 Eq.47-49/53/55 as OOFEM
+`ConcreteDPM2::computeDamage`: `eqc += αc·Δε̃`, `κdc = max eqc`, `κdc2 += Δκdc/xs` from the start,
+`κdc1 += αc βc·frac·‖Δεp‖/xs` past ε0 (post-onset fraction of the crossing step), `(1−ωc)·E·κdc = ft·exp(−(κdc1+ωcκdc2)/εfc)`.
+Two new committed scalars (`eqc`, previous `ε̃`). Also: **ω is capped at 1 − 1e-6 in the stress** (the bilinear law
+made fully cracked states identically stress-free, a whole plateau of spurious equilibrium roots — the OOFEM
+con2dpm2 one-substep element Newton jumped onto it), and return-map diagnostics (`getResponse "substeps"` /
+`"returnFailures"`, `-verbose`; the warning is printed only on a FINAL failure, rate-limited).
+Results: con2dpm2 step 5 == the OOFEM transcription (−1.3224 vs −1.3222 at 10 sub-steps, −1.286 vs −1.258 at 100);
+confined onset continuous (legacy dropped 8.4 / 15.7 MPa in one step at σ3/fc = 0.05 / 0.1) and the peak on the CDPM2
+surface; Imran-Pantazopoulou peaks equal the paper's CDPM2 curves at all 7 confinements with εfc = 1e-4
+(−47.4…−194.8 vs −47.3…−194.9); Caner-Bažant within the paper's own scatter; Kupfer now equals the OOFEM
+transcription exactly (−13.0 MPa at −3 mm/m with As = 1.5 — the paper's Fig.9 curve needs As ≈ 10–15, not εfc 6e-4).
+Not modelled: OOFEM's in-step unload/reload search (`checkForUnAndReloading`). `-compressionDrive legacy` = pre-B2.

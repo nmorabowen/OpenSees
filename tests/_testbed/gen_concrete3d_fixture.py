@@ -445,6 +445,48 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(C.flatten()))
 
+    # ---- (B11) CDPM2 COMPRESSIVE DAMAGE DRIVE (B2): committed damage states driven with
+    #      compression_drive='cdpm2' (+ the CDPM2 flow), one more increment -> the oracle NOMINAL stress. Carries
+    #      the two extra history fields (eqc, etp). The C++ also checks its analytic damaged tangent against the
+    #      numerical tangent of its own stress (the DMG B4 contract). ----
+    mp_cd = dict(mp_c); mp_cd["compression_drive"] = "cdpm2"; mp_cd["tension_law"] = "bilinear"
+    mp_cd["max_subincr"] = 10
+    dmgcs = []
+
+    def add_dmgc(label, mp, lch_, build_path, deps):
+        st = ref.make_damage_state(mp)
+        st, _, _, _ = ref._advance_damaged(st, build_path, mp, Gf, Gc, lch_, As)
+        sig_nom, _, info = ref.damaged_step_tensor(st, np.asarray(deps, float), mp, Gf, Gc, lch_, As)
+        dmgcs.append((label, mp, lch_, st, np.asarray(deps, float), sig_nom))
+
+    mp_cd["eps_fc"] = 2.0e-4                      # a softening compressive branch inside the path range
+    def _dpath(d, i):
+        return [np.array([d["eps11"][k], d["eps_lat"][k], d["eps_lat"][k], 0, 0, 0]) for k in range(i)],             [d["eps11"][i] - d["eps11"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], 0, 0, 0]
+    # a LIGHT confinement (0.02 fc) keeps the lateral effective principals off the sigma_lat = 0 Macaulay kink
+    # (a pure uniaxial-stress state sits ON it: the numerical tangent straddles the tension/compression split)
+    du = ref.drive_damaged_unified(mp_cd, np.linspace(0, -6.0e-3, 150), Gf, Gc, lch, As, sigma3=0.02 * 30.0)
+    pu, du1 = _dpath(du, int(np.argmax(du["wc"] > 0.3)))
+    add_dmgc("dmgc_uniax_softening", mp_cd, lch, pu, du1)
+    pu0, du0 = _dpath(du, int(np.argmax(du["wc"] > 0.0)))         # the ONSET step (post-onset fraction)
+    add_dmgc("dmgc_uniax_onset", mp_cd, lch, pu0, du0)
+    dcf = ref.drive_damaged_unified(mp_cd, np.linspace(0, -8.0e-3, 150), Gf, Gc, lch, As, sigma3=0.05 * 30.0)
+    pc, dc1 = _dpath(dcf, int(np.argmax(dcf["wc"] > 0.2)))
+    add_dmgc("dmgc_confined", mp_cd, lch, pc, dc1)
+    spc = [np.array([-e, 0.3 * e, 0.2 * e, 0.4 * e, 0, 0]) for e in np.linspace(0, 2.5e-3, 200)]
+    add_dmgc("dmgc_shear_comp", mp_cd, lch, spc, [-1.0e-5, 3.0e-6, 2.0e-6, 4.0e-6, 0, 0])
+    lines.append(f"NDMGC {len(dmgcs)}")
+    for label, mp, lch_, st, deps, sig_nom in dmgcs:
+        lines.append(f"DMGC {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} {repr(float(lch_))} "
+                     f"{repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} {_TL[mp.get('tension_law', 'exp')]} "
+                     f"{repr(float(mp.get('eps_fc', 0.0)))} 1 {int(mp.get('max_subincr', 0))} 1")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "
