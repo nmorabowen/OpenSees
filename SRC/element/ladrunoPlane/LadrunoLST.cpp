@@ -801,6 +801,9 @@ int LadrunoLST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
   // across the G2 family -- nothing sig-exempt that recvSelf rewrites may
   // survive a re-receive into a live element.
   massCache.invalidate();
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
   return res;
 }
 

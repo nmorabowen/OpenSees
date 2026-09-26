@@ -13,7 +13,8 @@ Ki cache (cacheKi / dropKi)
     "converges to the Newton answer", which a zero Ki still fails);
   * Ki is formed ONCE (the vanilla convention): after halving E through a parameter,
     ModifiedNewton -initial must iterate against the frozen K0 -- a helper that forgot to
-    cache would re-form Ki at the new E and converge at once.
+    cache would re-form Ki at the new E and converge at once;
+  * C6: a restore into a LIVE element (database checkpoint) drops Ki (dropKi in recvSelf).
 """
 import pytest
 
@@ -171,3 +172,47 @@ def test_initial_stiffness_is_formed_once(name):
     assert ops.analyze(1) == 0
     n_iter = ops.testIter()
     assert n_iter > 8, f"{name}: Ki was re-formed after the E update ({n_iter} iterations)"
+
+
+# C6: restore into a LIVE element (same domain, database restore of a checkpoint).
+# Not CSTPair (Ki != K by design, so iteration counts cannot see a stale Ki).
+LIVE = [pytest.param(n, marks=pytest.mark.xfail(
+            strict=True, reason="C14: LadrunoBrick20 is singular after a live restore "
+                                "(recvSelf clears geomCached, no setDomain follows)"))
+        if n == "LadrunoBrick20" else n for n in ELEMENTS if n != "LadrunoCSTPair"]
+
+
+@pytest.mark.parametrize("name", LIVE)
+def test_live_restore_drops_Ki(name, tmp_path):
+    """Save at E, move the live elements to E/2 and form Ki there, restore the checkpoint
+    (live recvSelf back to E). Ki must follow: ModifiedNewton -initial converges at once.
+    A kept Ki (E/2) gives the iteration factor 1 - K/K0 = -1 and never converges."""
+    node, load = ELEMENTS[name]()
+    ops.parameter(1, "element", 1, "E")
+    ops.database("File", str(tmp_path / "db"))
+    ops.save(1)
+    ops.updateParameter(1, 0.5 * E)
+    # form Ki at E/2 WITHOUT adding a load pattern: an object the checkpoint does not hold
+    # makes the restore itself fail
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 5, 0)
+    ops.algorithm("ModifiedNewton", "-initial")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static", "-noWarnings")
+    assert ops.analyze(1) == 0
+    assert ops.restore(1) in (0, None)
+    ops.wipeAnalysis()
+    ops.timeSeries("Linear", 7)
+    ops.pattern("Plain", 7, 7)
+    ops.load(node, *load)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 20, 0)
+    ops.algorithm("ModifiedNewton", "-initial")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static", "-noWarnings")
+    assert ops.analyze(1) == 0, f"{name}: stale Ki after a live restore"
+    assert ops.testIter() <= 3

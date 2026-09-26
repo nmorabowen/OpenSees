@@ -1484,6 +1484,9 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   // vs std lumping) is sig-exempt as construction-fixed, but recvSelf just
   // rewrote it -- a guard hit on a live element would serve the pre-recv mass.
   massCache.invalidate();
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
 
   return res;
 }

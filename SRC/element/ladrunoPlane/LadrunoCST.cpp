@@ -703,6 +703,9 @@ int LadrunoCST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
   }
   theMaterial[0]->setDbTag(idData(1));
   res += theMaterial[0]->recvSelf(commitTag, theChannel, theBroker);
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
   return res;
 }
 

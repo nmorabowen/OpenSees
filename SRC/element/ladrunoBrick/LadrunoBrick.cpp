@@ -3720,6 +3720,9 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // can flip it with rho and coords unchanged -- a clean-guard hit would then
   // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
   if (Mi != 0) { delete Mi; Mi = 0; }
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
 
   return res;
 }
