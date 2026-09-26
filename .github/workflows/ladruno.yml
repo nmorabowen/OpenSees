@@ -47,6 +47,16 @@ jobs:
           pip install h5py numpy pytest
           cd Ladruno_scripts/ladruno_recorder_tests
           pytest -q test_ladruno_harness.py
+      # Header-stamp gate (WP-122): the LADRUNO-HEADER-START stamp IS the quirk
+      # lint's scope, so every file in stamp_headers.py GLOBS must carry a current
+      # stamp, and every tracked SRC source upstream OpenSees does not have (per the
+      # committed Ladruno_scripts/upstream_src_manifest.txt) must be in GLOBS, and
+      # no GLOBS entry may match nothing (a deleted/renamed file). No
+      # network: after merging upstream, refresh the manifest with
+      # `stamp_headers.py --refresh-upstream-manifest` (WORKFLOW_GOTCHAS §5).
+      # Just before the lint because a red stamp means the lint's scope is wrong.
+      - name: header stamp covers GLOBS (WP-122)
+        run: python Ladruno_scripts/stamp_headers.py --check
       # Quirk-pattern gate (WP-115): LEDGER_quirks entries that name a greppable
       # pattern, enforced -- L1 Rayleigh snapshot (#562), L2 singleton reset on
       # wipe, L3 task-guide pointers, L4 element commitState chains to the base
