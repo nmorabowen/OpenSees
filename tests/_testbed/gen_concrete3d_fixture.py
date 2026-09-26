@@ -418,6 +418,13 @@ def main(out=None):
     add_pathf(mp_c, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, "cdpm2_hydro_tens")
     add_pathf(mp_c, [[-4.0e-4, 1.5e-4, 0.5e-4, 1.0e-4, 0, 0]] * 12, "cdpm2_offaxis_shear")
     add_pathf(mp_cs, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep")
+    # OOFEM con2dpm2 at ONE sub-step per 5e-4 step (SI units, the coordinator's C++ -3.22 MPa regression): the
+    # far-outside uniaxial trial that the plain Newton failed sporadically on (=> sub-increment fallback =>
+    # discontinuous map). Pins the globalized Newton + sub-incrementation on exactly this path.
+    mp_oo = ref.make_material(30e9, 0.15, 3e6, 1e6, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, flow_potential="cdpm2",
+                              max_subincr=10)
+    dlo, _ = driven_strain_path(mp_oo, np.array([-5.0e-4 * k for k in range(1, 6)]), True, "free")
+    add_pathf(mp_oo, dlo, "cdpm2_con2dpm2_1substep")
     lines.append(f"NPATHF {len(pathfs)}")
     for label, mp, dl, rows in pathfs:
         lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} {len(dl)}")

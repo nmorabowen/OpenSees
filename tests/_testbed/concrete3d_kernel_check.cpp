@@ -423,7 +423,7 @@ static void run_oracle_dump(const char* path) {
                 fh >> kpO;
                 double sigC[6], kpC, Dt[6][6];
                 returnMapTensor(mp, sig_n, deps, kp_n, true, sigC, kpC, Dt, false);
-                for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+                for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]) * 30.0 / mp.fc);   // MPa-equivalent (SI cases)
                 maxk = std::fmax(maxk, std::fabs(kpC - kpO) / (1.0 + std::fabs(kpO)));
                 for (int i = 0; i < 6; ++i) sig_n[i] = sigC[i];
                 kp_n = kpC;

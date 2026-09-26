@@ -712,6 +712,52 @@ inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, dou
 // the build-PR deliverable); theta frozen; hydrostatic apex fallback; HONEST
 // convergence (independent f at the returned stress w/ its own Lode angle).
 // ---------------------------------------------------------------------------
+// Residual R[4] (and, if J != nullptr, the analytic 4x4 Jacobian) of the hardening return system with the FULL
+// CDPM2 plastic potential (B1): R1 = xi - xi_tr + 3K dlam m_v, R2 = rho - rho_tr + 2G dlam m_s, R3 = f_p (frozen
+// Lode r), R4 = kp - kp_n - dlam ||m||/xh cos2. Used by the globalized Newton (line search needs R alone).
+inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp, double xi_tr, double rho_tr,
+                                   double kp_n, double r, double cos2, const Params& mp, double R[4],
+                                   double J[4][4] = nullptr)
+{
+    const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
+    double m_v, m_s, dmv[3], dms[3];
+    cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
+    const double sigV = xi / SQRT3;
+    const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    R[0] = xi - xi_tr + 3.0 * K * dlam * m_v;
+    R[1] = rho - rho_tr + 2.0 * G * dlam * m_s;
+    R[2] = yfInvHard(xi, rho, r, kp, mp);
+    R[3] = kp - kp_n - dlam * mnorm / xh * cos2;
+    if (!J) return;
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
+    const double sigV_fc = xi / (SQRT3 * fc);
+    const double AV = rho / (SQRT6 * fc) + sigV_fc;
+    const double RR = rho * r / (SQRT6 * fc) + sigV_fc;
+    const double cap = (1.0 - q1) * AV * AV + SQRT1_5 * rho / fc;
+    const double dcap_dxi = (1.0 - q1) * 2.0 * AV / (SQRT3 * fc);
+    const double dcap_drho = (1.0 - q1) * 2.0 * AV / (SQRT6 * fc) + SQRT1_5 / fc;
+    const double dcap_dkp = -dq1 * AV * AV;
+    const double dq1sq_q2 = 2.0 * q1 * q2 * dq1 + q1 * q1 * dq2;
+    const double dq1sq_q2sq = 2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2;
+    const double dxh_dxi = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh) / SQRT3;
+    double dmn[3];
+    for (int j = 0; j < 3; ++j) dmn[j] = (m_v * dmv[j] + m_s * dms[j]) / mnorm;
+    J[0][0] = 1.0 + 3.0 * K * dlam * dmv[0]; J[0][1] = 3.0 * K * dlam * dmv[1];
+    J[0][2] = 3.0 * K * m_v;                 J[0][3] = 3.0 * K * dlam * dmv[2];
+    J[1][0] = 2.0 * G * dlam * dms[0];       J[1][1] = 1.0 + 2.0 * G * dlam * dms[1];
+    J[1][2] = 2.0 * G * m_s;                 J[1][3] = 2.0 * G * dlam * dms[2];
+    J[2][0] = 2.0 * cap * dcap_dxi + m0 * q1 * q1 * q2 / (SQRT3 * fc);
+    J[2][1] = 2.0 * cap * dcap_drho + m0 * q1 * q1 * q2 * r / (SQRT6 * fc);
+    J[2][2] = 0.0;
+    J[2][3] = 2.0 * cap * dcap_dkp + m0 * RR * dq1sq_q2 - dq1sq_q2sq;
+    J[3][0] = -dlam * cos2 * (dmn[0] / xh - mnorm / (xh * xh) * dxh_dxi);
+    J[3][1] = -dlam * cos2 * dmn[1] / xh;
+    J[3][2] = -mnorm / xh * cos2;
+    J[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
+}
+
 inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& mp, double kp_n,
                                           double tol = 1.0e-11)
 {
@@ -821,7 +867,57 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         if (rho < 0.0) { if (!clampRho) { apex = true; break; } rho = 0.0; }
     }
     };
-    newton(false);
+    // B1 GLOBALIZED Newton for the CDPM2 potential (mirror of the oracle _newton_glob): OOFEM's projections
+    // (rho >= 0, dlam >= 0, kp >= kp_n) + a backtracking line search on the scaled residual. The plain Newton fails
+    // sporadically on far trials (iterates cross the kp = 1 kink / go kp < 0) and the sub-incremented fallback
+    // then made the stress a DISCONTINUOUS function of the strain (spurious element-Newton roots: OOFEM con2dpm2
+    // at one sub-step gave -3.22 MPa + return-map warnings in the C++ build). A vertex solution cannot satisfy R2
+    // with rho pinned at 0 => stop early (rho stuck at 0 for 3 iterations) and flag apex => vertex candidate.
+    auto newtonGlob = [&]() {
+        xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
+        double Rr[4];
+        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr);
+        int stuck = 0;
+        for (int it = 0; it < 100; ++it) {
+            if (std::fabs(Rr[0]) < tol * fc && std::fabs(Rr[1]) < tol * fc
+                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { converged = true; return; }
+            double Rj[4], J[4][4];
+            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J);
+            double M[4][5];
+            for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rr[i]; }
+            for (int c = 0; c < 4; ++c) {
+                int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+                for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+                if (M[c][c] == 0.0) return;
+                for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+            }
+            double step[4];
+            for (int i = 0; i < 4; ++i) { step[i] = M[i][4] / M[i][i]; if (!std::isfinite(step[i])) return; }
+            const double sc[4] = {1.0 / fc, 1.0 / fc, 1.0, 1.0};
+            double n0 = 0.0; for (int i = 0; i < 4; ++i) n0 += (Rr[i] * sc[i]) * (Rr[i] * sc[i]);
+            n0 = std::sqrt(n0);
+            double a = 1.0, un[4], Rn[4];
+            for (;;) {
+                un[0] = xi + a * step[0]; un[1] = rho + a * step[1]; un[2] = dlam + a * step[2]; un[3] = kp + a * step[3];
+                if (un[1] < 0.0) un[1] = 0.0;
+                if (un[2] < 0.0) un[2] = 0.0;
+                if (un[3] < kp_n) un[3] = kp_n;
+                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn);
+                double nn = 0.0; bool fin = true;
+                for (int i = 0; i < 4; ++i) { fin = fin && std::isfinite(Rn[i]); nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]); }
+                if ((fin && std::sqrt(nn) < (1.0 - 1.0e-4 * a) * n0) || a < 1.0 / 64.0) break;
+                a *= 0.5;
+            }
+            xi = un[0]; rho = un[1]; dlam = un[2]; kp = un[3];
+            for (int i = 0; i < 4; ++i) Rr[i] = Rn[i];
+            stuck = (rho == 0.0) ? stuck + 1 : 0;
+            if (stuck >= 3) { apex = true; return; }
+        }
+    };
+    // cdpm2: the globalized Newton first; if it fails (not an axis overshoot), fall back to the plain scheme
+    // (whose rho<0 abort feeds the vertex test + the clamped retry below) before giving up.
+    if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
+    else newton(false);
     const bool overshot = apex;
 
     R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
