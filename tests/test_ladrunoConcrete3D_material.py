@@ -480,6 +480,20 @@ def test_gc_energy_gate():
     assert r["PASS"]
 
 
+def test_flow_potential_gate():
+    """B1 — full CDPM2 plastic potential (Grassl 2013 Eq.22-29, cap-compactive volumetric flow, Df = CDPM2
+    dilation constant) replacing the v1 always-dilatant flow. F1 analytic gradient + Hessian == FD; F2 OOFEM
+    con2dpm2 plasticity reproduced (step 1 == the OOFEM transcription to 0.5 %); F3 Kupfer -1/0 peak strain
+    (-2.20 vs -2.19 mm/m; legacy -1.50) and the Fig.9 post-peak with eps_fc = 6e-4; F4 fuzz: 0 failed returns,
+    0 sign flips (with sub-incrementation)."""
+    r = ref.run_flow_potential_gate(verbose=False)
+    assert r["F1_ok"], (r["F1_grad"], r["F1_hess"], r["F1_cap_dgdsigV"])
+    assert r["F2_ok"], r["F2"]
+    assert r["F3_ok"], r["F3"]
+    assert r["F4_ok"], (r["F4_failed"], r["F4_flips"], r["F4_plastic"])
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
