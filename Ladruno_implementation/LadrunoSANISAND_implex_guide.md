@@ -389,6 +389,85 @@ f   = ops.eleResponse(eleTag, "material", intPtNum, "yieldDistance")[0]
 Vanilla `ManzariDafalias` does not answer either name (empty response). Both are inherited by the
 3D and plane-strain wrappers. Test: `tests/test_ladruno_sanisand_responses.py`.
 
+### 6.2 `substepStats` — what the integrator cost, per point, since `revertToStart` (WP-127, F20(a))
+
+`substeps` (ADR-86b) reports the LAST update only, and is zeroed by the next one — including the
+zero-increment settle pass `analyze` pushes through every material after a failed step. So right
+after a failed `analyze` it reads 0 everywhere (the TIMs ring dump). `substepStats` is the
+post-mortem counter: **every column is per integration point** (one material instance), none is
+process-wide; the cumulative ones count since `revertToStart` (`reset()`), are **not** reset by
+`revertToLastCommit`, cross `getCopy` and the MP/database wire. Reading them never changes a number
+(byte-identity pinned, `tests/test_ladruno_sanisand_replay_counters.py`). Only `ModifiedEuler`
+(IntScheme 1, and 0 through `MaxEnergyInc`) is instrumented; on other schemes the substep columns stay 0.
+
+| slot | name (`substepStats_*`) | meaning |
+|---|---|---|
+| 0 | `updates` | material updates (`integrate()` calls, any stage/scheme) |
+| 1 | `meCalls` | `ModifiedEuler()` calls |
+| 2 | `substeps` | substep ATTEMPTS; closes as `[3]+[4]+[5]+[7]+[8]+[9]` |
+| 3 | `accepted` | passed the error test |
+| 4 | `rejectedErr` | failed it at `dT > dT_min`, retried smaller |
+| 5 | `forcedAtDTmin` | **failed it at `dT == dT_min` (1e-6) and was ACCEPTED anyway** — elastic tangent, `alpha` re-derived, see `LEDGER_quirks` "ACCEPTS a substep that FAILED" |
+| 6 | `forcedClampMc` | of `[5]`, those where the radial `eta -> Mc` stress clamp fired |
+| 7 | `rejectedLowP` | `p < p_r` inside a substep: `dT` cut by 10 |
+| 8 | `abandonedLowP` | `p < p_r` at `dT == dT_min`: ModifiedEuler **returned at `T < 1`**, silently |
+| 9 | `capHits` | `-maxSubsteps` fired (update refused) |
+| 10 | `entryPminClamps` | stress below `p_min + p_r` on entry: rebuilt at `p_min` |
+| 11 | `pnResets` | `explicit_integrator`'s `p_n < p_r` reset (`sigma := p_min I`, `alpha := 0`) |
+| 12 | `maxSubstepsOneUpdate` | most substeps any single update took |
+| 13 | `lastSubsteps` | substeps of the last update that entered ModifiedEuler |
+| 14 | `lastForcedAtDTmin` | `[5]` for that update |
+| 15 | `lastAbandonedLowP` | `[8]` for that update |
+| 16 | `lastCapHit` | 0/1 for that update |
+
+```python
+s = ops.eleResponse(ele, "material", ip, "substepStats")
+substeps, forced, abandoned, caps = s[2], s[5], s[8], s[9]
+```
+
+### 6.3 Replaying one material point: `ladrunoSANISANDReplay` (WP-127, F21)
+
+Puts a **private copy** of the `nDMaterial LadrunoSANISAND` prototype into a given state and drives
+one strain increment through the same `setTrialStrain` an element uses. No element, domain or
+analysis; nothing survives the call (the stage flag is forced to 1 and `ops_Dt` set for the call,
+then both restored).
+
+```
+ladrunoSANISANDReplay $matTag -convention compressionPositive|tensionPositive
+    -sigma s11 s22 s33 s12 s23 s31   -alpha a..6   -alphaIn ai..6   -fabric z..6
+    -voidRatio $e   -dStrain d11 d22 d33 g12 g23 g31
+    <-type 3D|PlaneStrain> <-trace $maxRecords (10000)> <-dt $dt (1.0)>
+    <-primed 0|1 (1)> <-prevIncrNorm $norm (0)>
+```
+
+- **`-convention` is required.** `compressionPositive` = the model's internal `mSigma`
+  (and compression-positive strain); `tensionPositive` = what `eleResponse ... stress` returns and
+  an element strain. `alpha`, `alpha_in`, `z` are ratios and are never flipped. Shear strain is
+  engineering (gamma). **The TIMs ring CSVs are compression-positive** despite their README
+  (`LEDGER_quirks`, finding A).
+- `alpha`, `alpha_in`, `z` are projected to their deviatoric parts (warning above 1e-6 relative);
+  the given traces are returned.
+- The state is committed through the base `commitState()`, so `K`, `G` and `e` are exactly what a
+  converged step leaves for the next one: replaying step k+1 from the committed state of step k
+  reproduces the analysis' stress (pinned to 1e-9, `test_replay_reproduces_an_analysis_step`).
+- `-primed`/`-prevIncrNorm` feed the ADR-92 P2-5 reversal-noise guard; the defaults (armed, 0) are
+  a plastic point with no history. `-dt 0` makes the call a hold.
+- `-type PlaneStrain` requires `d33 = g23 = g31 = 0`.
+
+Returns one flat list (format 1): `[1, rc, 17, nRec, 5, dropped]`, the 17 `substepStats` columns of
+this one update, 34 state values (`sigma` in the request convention, `alpha`, `alpha_in`, `z`, `e`,
+`p` (compression-positive), `q`, `f` before, `f` after, path code, elastic ratio, given `tr(alpha)`,
+`tr(alpha_in)`, `tr(z)`), then `nRec` records `T, dT, err, code, atDTmin`. Path codes: -1 not the
+explicit path, 0 elastic, 1 start outside the yield surface, 2 elastic->plastic, 3 plastic,
+4 unload-then-plastic, 5 `p_n < p_r` reset. Trace codes: 0 accept, 1 reject (error), 2 forced at
+`dT_min`, 3 forced + `Mc` clamp, 4/5 low-p cut, 6 low-p abandon, 7 cap. The trace buffer lives only
+for the call and is capped (`dropped` counts the rest). Classic Tcl prints the list with `%35.20f`,
+so read tiny `err`/`dT` from Python.
+
+Python helper (reads the attached CSVs, runs the documented probes):
+`Ladruno_scripts/sanisand_replay.py` — `replay(...)`, `read_ring_csv(...)`, `probes(delta)`;
+`python -S <bootstrap> Ladruno_scripts/sanisand_replay.py --delta 1e-5`.
+
 ## 7. Choosing the tolerance
 
 The registered `-implexControl` operating point (`tol = 0.05`, `reductionLimit = 0.01`) was swept

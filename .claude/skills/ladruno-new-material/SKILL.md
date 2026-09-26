@@ -43,6 +43,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
+      step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
+      Quirks: "ACCEPTS a substep that FAILED its error test".
 - [ ] IMPL-EX in a static analysis: `ops_Dt` is pseudo-time and erratic; guard the
       extrapolation factor. Quirks: "IMPL-EX in a STATIC analysis".
 - [ ] `revertToStart()` must not reset calibrated constants mid-analysis. Quirks:
