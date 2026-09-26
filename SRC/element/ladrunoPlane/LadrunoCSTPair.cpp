@@ -34,6 +34,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Renderer.h>
@@ -422,8 +423,7 @@ const Matrix &LadrunoCSTPair::getInitialStiff(void)
       }
     }
   }
-  Ki = new Matrix(K);
-  return *Ki;   // cached copy, not the shared static scratch
+  return LadrunoShell::cacheKi(Ki, K);   // cached copy, not the shared static scratch
 }
 
 const Matrix &LadrunoCSTPair::getMass(void)

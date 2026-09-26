@@ -70,6 +70,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Domain.h>
@@ -201,10 +202,6 @@ BezierTri6::BezierTri6(int tag,
         controlPts[i][1] = 0.0;
     }
 
-    // Zero initial stiffness data
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
-
     // Allocate materials at Gauss points
     // Use NGAUSS points for stiffness/stress, NGAUSS_MASS is only
     // used in getMass() where we don't store materials.
@@ -238,8 +235,6 @@ BezierTri6::BezierTri6()
         controlPts[i][1] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
 }
 
 
@@ -591,11 +586,7 @@ const Matrix &BezierTri6::getInitialStiff()
             }
     }
 
-    // Cache the initial stiffness
-    Ki = new Matrix(Ki_data, NELD, NELD);
-    *Ki = K_return;
-
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K_return);
 }
 
 

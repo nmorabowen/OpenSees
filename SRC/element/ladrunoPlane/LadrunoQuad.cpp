@@ -38,6 +38,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Renderer.h>
@@ -834,16 +835,14 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
 
   if (formulation == Formulation::EAS) {
     this->formEAStrue(1, true);
-    Ki = new Matrix(K);
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K);
   }
 
   if (formulation == Formulation::SSP) {
     const Matrix &C = theMaterial[0]->getInitialTangent();
     K.addMatrix(0.0, Kstab, 1.0);   // initial state: undamaged
     K.addMatrixTripleProduct(1.0, Mmem, C, 4.0 * J0 * thickness);
-    Ki = new Matrix(K);
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K);
   }
 
   // Ladruno (ADR 70 review): getInitialStiff always returns the SYMMETRIC
@@ -865,8 +864,7 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     this->formB(B);
     K.addMatrixTripleProduct(1.0, B, D, dvol);
   }
-  Ki = new Matrix(K);
-  return *Ki;   // return the cached copy, not the shared static scratch K
+  return LadrunoShell::cacheKi(Ki, K);   // the cached copy, not the shared static scratch K
 }
 
 const Matrix &LadrunoQuad::getMass(void)

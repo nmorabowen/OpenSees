@@ -47,6 +47,7 @@
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Element.h>
 #include <Node.h>
 #include <Domain.h>
@@ -543,7 +544,7 @@ const Matrix &  LadrunoBrick20::getInitialStiff(void)
     return *Ki;
 
   formStiffness(1);
-  Ki = new Matrix(stiff);
+  LadrunoShell::cacheKi(Ki, stiff);
   LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
   return *Ki;
 }
@@ -1464,7 +1465,7 @@ int  LadrunoBrick20::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
   badGeom = false;
   warnedBadUse = false;
   if (M0 != 0) { delete M0; M0 = 0; }
-  if (Ki != 0) { delete Ki; Ki = 0; }
+  LadrunoShell::dropKi(Ki);
 
   for (int i = 0; i < this->nGP(); i++) {
     int matClassTag = idData(i);
