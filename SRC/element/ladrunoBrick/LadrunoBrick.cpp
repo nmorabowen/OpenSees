@@ -47,6 +47,7 @@
 #include <ErrorHandler.h>
 #include <LadrunoBrick.h>
 #include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gate
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <SolidTransformation.h>          // Ladruno — geometry-method seam (2/3)
 #include <SolidTransformationLinear.h>    // Ladruno — v1 identity method
 #include <FiniteStrainNDMaterial.h>       // Ladruno — v3 finite: setTrialF(F) seam
@@ -605,22 +606,22 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
       formPhysical(1, true);
     else
       formUri(1, true);
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::SSP) {
     formSSP(1, true);
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::EAS) {
     formEAStrue(1, true);   // condensed elastic K* at alpha=0 (no inner Newton)
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
@@ -727,7 +728,7 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
   static Vector zeroF(24);
   theGeom->globalizeStiff(stiff, zeroF, stiff);
 
-  Ki = new Matrix(stiff);
+  LadrunoShell::cacheKi(Ki, stiff);
   LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
   return stiff;
 }
