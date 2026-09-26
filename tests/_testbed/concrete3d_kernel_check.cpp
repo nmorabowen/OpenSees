@@ -407,6 +407,59 @@ static void run_oracle_dump(const char* path) {
         }
     }
 
+    // ---- (B10) FULL CDPM2 PLASTIC POTENTIAL (B1): cdpm2-flow paths (incl. a sub-incremented one) + tangents ----
+    if (fh >> tok && tok == "NPATHF") {
+        int n; fh >> n;
+        for (int p = 0; p < n; ++p) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            int nsteps; fh >> mp.flowPotential >> mp.maxSubIncr >> nsteps;
+            double sig_n[6] = {0,0,0,0,0,0}, kp_n = 0.0, maxs = 0, maxk = 0;
+            for (int s = 0; s < nsteps; ++s) {
+                double deps[6], sigO[6], kpO;
+                for (int i = 0; i < 6; ++i) fh >> deps[i];
+                for (int i = 0; i < 6; ++i) fh >> sigO[i];
+                fh >> kpO;
+                double sigC[6], kpC, Dt[6][6];
+                returnMapTensor(mp, sig_n, deps, kp_n, true, sigC, kpC, Dt, false);
+                for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+                maxk = std::fmax(maxk, std::fabs(kpC - kpO) / (1.0 + std::fabs(kpO)));
+                for (int i = 0; i < 6; ++i) sig_n[i] = sigC[i];
+                kp_n = kpC;
+            }
+            worst_sig = std::fmax(worst_sig, maxs); worst_kp = std::fmax(worst_kp, maxk);
+            const bool ok = maxs < 1.0e-6 && maxk < 1.0e-7;
+            if (!ok) ++fails;
+            std::printf("  %-24s sig_err=%.2e kp_err=%.2e  %s\n", label.c_str(), maxs, maxk, ok ? "ok" : "FAIL");
+        }
+    }
+    if (fh >> tok && tok == "NTANF") {
+        int n; fh >> n;
+        for (int t = 0; t < n; ++t) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            fh >> mp.flowPotential;
+            double sig_n[6], kp_n, deps[6], CO[36];
+            for (int i = 0; i < 6; ++i) fh >> sig_n[i];
+            fh >> kp_n;
+            for (int i = 0; i < 6; ++i) fh >> deps[i];
+            for (int i = 0; i < 36; ++i) fh >> CO[i];
+            double sigC[6], kpC, Dt[6][6];
+            returnMapTensor(mp, sig_n, deps, kp_n, true, sigC, kpC, Dt, true);
+            double nd = 0, nn = 0, cmax = 0, perEntry = 0;
+            for (int A = 0; A < 36; ++A) { const double d = Dt[A/6][A%6] - CO[A]; nd += d*d; nn += CO[A]*CO[A]; cmax = std::fmax(cmax, std::fabs(CO[A])); }
+            for (int A = 0; A < 36; ++A) if (std::fabs(CO[A]) > 0.01 * cmax)
+                perEntry = std::fmax(perEntry, std::fabs(Dt[A/6][A%6] - CO[A]) / std::fabs(CO[A]));
+            const double rel = std::sqrt(nd / nn);
+            worst_tan = std::fmax(worst_tan, rel);
+            const bool ok = rel < 2.0e-6 && perEntry < 5.0e-3;
+            if (!ok) ++fails;
+            std::printf("  %-24s tan_rel=%.3e perEntry=%.2e  %s\n", label.c_str(), rel, perEntry, ok ? "ok" : "FAIL");
+        }
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
                 "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);
@@ -547,6 +600,41 @@ static void run_robustness() {
         check(finite && unconv == 0 && std::fabs(sp) < 1.0 && G > 120.0 && G < 125.0,
               "bilinear full crack opening: finite, converged, dissipates Gf (residual tangent stiffness)");
         std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
+    }
+
+    // C7 — FULL CDPM2 POTENTIAL robustness (B1): 120k random tensor increments from the stress-free state with
+    // random kappa_p in [0,1.5], Df in {0.85, 1.0, 0.6}, Hp in {0.01, 0.5} — generic, deep NEAR-AXIS compression
+    // (the closed-cap regime), uniaxial-ish compression with shear, near-apex tension — with sub-incrementation:
+    // 0 failed returns, 0 sign flips, 0 non-finite / kappa-decreasing states (without sub-incrementation ~30% of
+    // the plastic trials fail the direct return; the legacy flow fails ~43%).
+    {
+        Params q = mp; q.flowPotential = 1; q.maxSubIncr = 10;
+        unsigned s3 = 2024u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
+        long plastic = 0, fail = 0, flips = 0, bad = 0;
+        for (int t = 0; t < 120000; ++t) {
+            const int mode = t % 4;
+            q.Df = (t % 3 == 0) ? 0.85 : ((t % 3 == 1) ? 1.0 : 0.6);
+            q.Hp = (t % 2) ? 0.01 : 0.5;
+            double d[6];
+            if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
+            else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
+            else if (mode == 2) { d[0] = -rn() * 5e-3; d[1] = (rn() * 2 - 1) * 1.5e-3; d[2] = (rn() * 2 - 1) * 1.5e-3; d[3] = (rn() * 2 - 1) * 5e-4; d[4] = d[5] = 0; }
+            else { const double v = rn() * 1e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 3e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 2e-4; }
+            const double kp_n = rn() * 1.5;
+            double sig0[6] = {0, 0, 0, 0, 0, 0}, sn[6], kn, Dt[6][6], tr[6];
+            const int st = returnMapTensor(q, sig0, d, kp_n, true, sn, kn, Dt, true);
+            elasticPredTensor(sig0, d, q, tr);
+            if (yieldF(tr, q, qh1Of(kp_n, q.qh0, q.Hp), qh2Of(kp_n, q.Hp)) > 1e-11 * q.fc) ++plastic;
+            if (st != 0) { ++fail; continue; }
+            bool fin = std::isfinite(kn);
+            for (int i = 0; i < 6; ++i) { fin = fin && std::isfinite(sn[i]); for (int j = 0; j < 6; ++j) fin = fin && std::isfinite(Dt[i][j]); }
+            if (!fin || kn < kp_n - 1e-12) ++bad;
+            double B[3][3], ws[3], Vs[3][3]; voigtToMat(sn, B); eig3sym(B, ws, Vs);
+            if (tr[0] + tr[1] + tr[2] < 0 && ws[0] > 0 && ws[1] > 0 && ws[2] > 0) ++flips;
+        }
+        check(fail == 0 && flips == 0 && bad == 0 && plastic > 60000,
+              "CDPM2 potential fuzz (120k): 0 failed returns, 0 sign flips, 0 non-finite");
+        std::printf("       (plastic %ld, failed %ld, flips %ld, bad %ld)\n", plastic, fail, flips, bad);
     }
 
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;
