@@ -97,21 +97,21 @@ def test_substep_stats_monotone_and_closed():
     # every Gauss point is its own instance: GP 1 and GP 3 of a homogeneous
     # quad count the same work, but separately
     assert _stats(gp=3)[SUB] == s[SUB]
-    # revertToStart zeroes the census
+    # revertToStart zeroes the census (Domain::revertToStart then runs one
+    # update() at zero strain, which counts as an update and nothing else)
     ops.reset()
-    assert _stats() == [0.0] * _NSTATS
+    s = _stats()
+    assert s[UPD] <= 1.0 and s[1:] == [0.0] * (_NSTATS - 1), s
 
 
-def _free_quad(max_substeps):
-    """A LadrunoQuad-free, vanilla `quad` with GENUINE free DOFs (top edge
-    LOADED), so a material refusal fails Newton and analyze() reverts."""
+def _free_quad(push):
+    """A vanilla `quad` with GENUINE free DOFs (edges LOADED), so a
+    non-converging step makes analyze() fail and revert."""
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     for j, (x, y) in enumerate(sani._XY):
         ops.node(j + 1, x, y)
-    opts = list(byteid._CAMPAIGN_OPTS)
-    opts[opts.index("-maxSubsteps") + 1] = max_substeps
-    ops.nDMaterial("LadrunoSANISAND", 1, *byteid._CAMPAIGN, *opts)
+    ops.nDMaterial("LadrunoSANISAND", 1, *byteid._CAMPAIGN, *byteid._CAMPAIGN_OPTS)
     ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
     for j, (x, y) in enumerate(sani._XY):
         ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
@@ -135,23 +135,29 @@ def _free_quad(max_substeps):
     ops.pattern("Plain", 2, 2)
     for j, (x, y) in enumerate(sani._XY):   # deviatoric push on the top edge
         if y == 1.:
-            ops.load(j + 1, 0.0, -5.0)
+            ops.load(j + 1, 0.0, -push)
+    ops.integrator("LoadControl", 1.0)
 
 
 def test_counters_survive_a_failed_analyze():
     """F20(a)'s point: after a FAILED analyze (revertToLastCommit plus the
     zero-increment settle pass) the census must still hold what the failed
-    step cost.  The legacy `substeps` response reads 0 here."""
-    _free_quad(max_substeps=2)
-    ops.integrator("LoadControl", 1.0)
+    step cost.  The legacy `substeps` response reads 0 here -- exactly what
+    the TIMs dump saw.  (Measured on this deck: 20 Newton iterations, one
+    ModifiedEuler substep each, analyze -3.)"""
+    _free_quad(push=20.0)
+    before = _stats()
     rc = ops.analyze(1)
-    assert rc < 0, "the capped push was meant to fail"
+    assert rc < 0, "the 20 kPa push was meant to fail"
     s = _stats()
-    assert s[CAP] >= 1 and s[SUB] >= 3, s
-    assert s[LCAP] == 1.0 and s[LSUB] >= 3, s
-    assert _census_closes(s), s
+    assert s[SUB] - before[SUB] >= 10, (before, s)
+    assert s[MECALLS] - before[MECALLS] >= 10, (before, s)
+    assert s[LSUB] >= 1 and _census_closes(s), s
     legacy = list(ops.eleResponse(1, "material", 1, "substeps"))
-    assert legacy[0] < s[SUB], (legacy, s)
+    assert legacy[0] == 0.0, legacy
+    # an explicit second revert changes nothing either
+    ops.revertToLastCommit() if hasattr(ops, "revertToLastCommit") else None
+    assert _stats()[:13] == s[:13]
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +175,15 @@ def campaign():
 def _rows(path, n=None):
     rows = sr.read_ring_csv(path)
     return rows if n is None else rows[:n]
+
+
+def _row(path, el, gp):
+    return next(r for r in sr.read_ring_csv(path) if r["element"] == el and r["gp"] == gp)
+
+
+# b8 element 1859 gp 2: the most expensive b8 point under the isoComp probe
+# (measured 546 ModifiedEuler substeps at 1e-4, with error-test rejections).
+_HARD = (0, 1859, 2)
 
 
 def test_finding_a_attachment_is_compression_positive():
@@ -219,8 +234,10 @@ def test_convention_is_required(campaign):
 
 
 def test_trace_closes_against_the_census_and_is_bounded(campaign):
-    r = _rows(sr.RING_CSVS[0])[0]          # the worst b8 point, el 1950 gp 3
-    res = sr.replay_row(ops, campaign, r, sr.probes(1e-4)["shear"])
+    r = _row(sr.RING_CSVS[_HARD[0]], _HARD[1], _HARD[2])
+    de = sr.probes(1e-4)["isoComp"]
+    res = sr.replay_row(ops, campaign, r, de)
+    assert res["stats"]["substeps"] > 3 and res["stats"]["rejectedErr"] > 0, res["stats"]
     s = res["stats"]
     assert len(res["trace"]) == s["substeps"] and res["trace_dropped"] == 0
     by = {}
@@ -232,12 +249,29 @@ def test_trace_closes_against_the_census_and_is_bounded(campaign):
     assert by.get(3, 0) == s["forcedClampMc"]
     # bounded: a cap of 3 keeps 3 records and counts the rest as dropped
     if s["substeps"] > 3:
-        small = sr.replay_row(ops, campaign, r, sr.probes(1e-4)["shear"], trace=3)
+        small = sr.replay_row(ops, campaign, r, de, trace=3)
         assert len(small["trace"]) == 3
         assert small["trace_dropped"] == s["substeps"] - 3
         assert small["sigma"] == res["sigma"]      # the trace changes nothing
-    off = sr.replay_row(ops, campaign, r, sr.probes(1e-4)["shear"], trace=0)
+    off = sr.replay_row(ops, campaign, r, de, trace=0)
     assert off["trace"] == [] and off["sigma"] == res["sigma"]
+
+
+def test_cap_hit_is_counted_and_traced():
+    """-maxSubsteps 2 on a replay that needs more: rc = the refusal sentinel,
+    capHits = 1, lastCapHit = 1, the last trace record is code 7."""
+    ops.wipe()
+    opts = list(byteid._CAMPAIGN_OPTS)
+    opts[opts.index("-maxSubsteps") + 1] = 2
+    ops.nDMaterial("LadrunoSANISAND", 2, *byteid._CAMPAIGN, *opts)
+    r = _row(sr.RING_CSVS[_HARD[0]], _HARD[1], _HARD[2])
+    res = sr.replay_row(ops, 2, r, sr.probes(1e-4)["isoComp"])
+    s = res["stats"]
+    assert res["rc"] != 0, s
+    assert s["capHits"] == 1 and s["lastCapHit"] == 1, s
+    assert s["substeps"] == 3, s
+    assert res["trace"][-1]["code"] == 7
+    ops.wipe()
 
 
 def test_trace_of_alpha_is_projected(campaign, capfd):
@@ -268,8 +302,7 @@ def test_replay_reproduces_an_analysis_step():
         g = lambda name: list(ops.eleResponse(1, "material", 1, name))
         return dict(sig=g("stress"), eps=g("strain"), alpha=g("alpha"),
                     ain=g("alpha_in"), z=g("fabric"), e=g("state")[24])
-    prev_eps = None
-    ops.analyze(1)
+    assert ops.analyze(1) == 0
     k0 = grab()
     prev_eps = k0["eps"]
     assert ops.analyze(1) == 0
