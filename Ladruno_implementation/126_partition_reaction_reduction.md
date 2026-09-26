@@ -2,8 +2,8 @@
 
 Revision 1. Reproduction only; not adversarially reviewed. From WP-120 (#855) open question 1.
 
-Status: **bug reproduced; draft PR. Fix design awaits the owner's decision (it spans the recorder, the
-`.ladruno` schema and apeGmsh).**
+Status: **OpenSees side implemented and verified locally; draft PR #861.** The owner chose "flag in file +
+apeGmsh sums" (2026-09-25). The apeGmsh stitch fix runs in its own session, as a separate apeGmsh PR.
 
 Scoped 2026-09-25. Branch `wp/126-partition-reaction-reduction`, cut from `ladruno` @ `bc5c33453`.
 (WP-125 was taken by another session.)
@@ -53,7 +53,41 @@ apeGmsh).
   serves MPCO part files. The energy sources (`EnergyBalanceSource`, flag `true`) are already documented as
   a v3b stub.
 
-## Proposed fix (owner's decision)
+## Implemented (2026-09-26)
+
+- **`ResultSource::partitionReduction()`** (`Ladruno_ResultIO.h`) returns `"SUM"` when
+  `requiresPartitionReduction()`, else `"NONE"`. `EnergyBalanceSource` overrides it to `"UNSUPPORTED"`,
+  because a sum would be wrong: shared-node KE is counted in each partition, and RES/ERR are derived. So
+  the three-way value, not the old bool, is what reaches the file.
+- **Sinks** (`Ladruno_Sinks.cpp`) write `PARTITION_REDUCTION` on every streaming result group
+  (`StreamingSink::begin`) and on every envelope group (`EnvelopeSink`).
+  - The envelope value is cached in `accept()` as well as `begin()`: the recorder drives an EnvelopeSink
+    through `accept()` only. The first build wrote no envelope attribute at all, because the HDF5 string
+    writer silently skips an empty string.
+- **Recorder** (`LadrunoRecorder.cpp`):
+  - `is_partitioned` is kept from `initialize()`.
+  - `refusePartitionedEnvelope()` skips, with a warning, any node or domain channel whose reduction is not
+    `NONE` when `-envelope` runs partitioned. Element sources are always `NONE`.
+  - A one-time warning says partitioned `energyBalance` output is not mergeable.
+- **Schema / contract / validator:**
+  - schema §7.1 table, plus the stitching note in the naming section;
+  - `ladruno_apegmsh_contract.md` bullet;
+  - `ladruno_format._validate_partition_reduction`: optional; when present it must be NONE|SUM|UNSUPPORTED;
+    a partitioned envelope must be NONE.
+- **apeGmsh:** a separate session in the apeGmsh repo (started by the owner from the task chip). It has the
+  contract and the real part files below.
+
+### Results
+
+| Check | Result |
+|---|---|
+| Build (5 targets) | 0 errors; 0 warnings in the touched files |
+| `ci`-gated D5 harness (`test_ladruno_harness.py`, incl. new `test_validator_partition_reduction`) | 27/27 |
+| `tests/test_ladruno_partition_reduction.py` (zone_a; skips without h5py) | 4/4: DISPLACEMENT=NONE, REACTION_FORCE/UNBALANCED_FORCE=SUM, energy=UNSUPPORTED, serial SUM envelope kept, partitioned reaction envelope refused (single process, `PMI_SIZE=2` subprocess) |
+| Two-rank gate `mp_reaction_model.py` + `mp_reaction_check.py` | **ALL PASS**: both parts flag REACTION_FORCE=SUM / DISPLACEMENT=NONE; contract stitch at the shared support = **(20, 30) = serial** (first-wins would give (0, 10)); displacement unchanged; partitioned reaction envelope refused on both ranks with the warning; serial envelope kept |
+| Validator on all six real output files | valid |
+
+## Proposed fix (owner's decision, 2026-09-25: this option)
 
 1. **Put the flag in the file.** Each result group gets `PARTITION_REDUCTION = "SUM" | "NONE"`, written
    from `requiresPartitionReduction()`. This is a small schema addition; the validator and the apeGmsh
@@ -82,6 +116,14 @@ apeGmsh).
 
 ## Open questions
 
-- Which of fix 3's two envelope behaviours (refuse vs flag `PARTIAL`)?
+- ~~Which of fix 3's two envelope behaviours?~~ Refuse, with a warning (owner, 2026-09-25).
+- **`CONSTRAINT_TIE_FORCE`** (`ConstraintTieForceSource`) is flagged `NONE`. Whether a constraint force
+  at a node shared by two partitions is also a per-partition partial is **unverified**. Settle it with a
+  two-rank run like `mp_reaction_*` before anyone relies on stitched tie forces.
+- apeGmsh side: nmorabowen/apeGmsh#1179 (draft). It sums SUM rows (vectorised), raises on UNSUPPORTED and
+  on partitions that disagree on the kind, raises on partitioned `read_energy`, and falls back by name
+  (`REACTION*`/`UNBALANCED*`/`RAYLEIGH*`) for files without the attribute. It was verified end-to-end on
+  this WP's real part files: stitched (20, 30) = serial, and the same via the name fallback on a
+  pre-WP-126 build.
 - Should `nodeReaction`-based recorders (vanilla `Node` recorder, MPCO) get a note in the user guide? They
   have the same partial-per-rank semantics; that is OpenSees behaviour, not a fork bug.

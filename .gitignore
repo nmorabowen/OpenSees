@@ -144,6 +144,8 @@ __pycache__
 
 # Ladruno recorder regression: generated HDF5 outputs + dev run dir (not source)
 /Ladruno_scripts/ladruno_recorder_tests/_devrun/
+/Ladruno_scripts/ladruno_recorder_tests/_mp_reaction_out/
+/Ladruno_implementation/wp126_partition_reactions/out/
 /Ladruno_scripts/ladruno_recorder_tests/*.ladruno
 /Ladruno_scripts/ladruno_recorder_tests/*.mpco
 

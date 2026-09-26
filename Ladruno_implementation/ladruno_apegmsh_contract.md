@@ -235,6 +235,19 @@ through it. What follows is the contract that reader implements:
   `"Ladruno"`, not the old `"MPCO_Ladruno"`. Reuse the partition-merge logic (regex
   `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`); handle chunked **and** legacy
   time-series.
+- **Stitching must honour `PARTITION_REDUCTION` (WP-126, schema §7.1).** A node on a
+  partition interface appears in several `.part-N` files. For `NONE` results
+  (kinematics), keep any one copy. For `SUM` results (`reaction*`, `unbalanced*`),
+  **sum** the copies: each part holds only its own elements' share. For `UNSUPPORTED`
+  (`energyBalance`), do not present a merged value. Files without the attribute
+  (pre-WP-126, MPCO) fall back to the result name.
+  - *Found broken 2026-09-25:* `_merge_node_slabs` (`apeGmsh/results/readers/_mpco_multi.py`)
+    kept the first partition's value for every component. At a support shared by two
+    partitions it reported (0, 10) where the serial run gives (20, 30), so base shear
+    from stitched reactions was under-reported. The fix is an apeGmsh PR.
+  - The recorder refuses `-envelope` of a `SUM`/`UNSUPPORTED` result in a partitioned run
+    (warning), so a partitioned envelope is always `NONE` and first-copy stitching is
+    correct for it.
 - **The big one — beam orientation is now solvable from `.ladruno` directly.** The
   apegmsh-helper skill's §7.2 (*"MPCO carries no beam vecxz… don't read MPCO
   LOCAL_AXES"*) is **out of date for the Ladruno recorder**: it writes `MODEL/LOCAL_AXES`
