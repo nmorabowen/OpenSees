@@ -100,6 +100,12 @@ with the tree: 10 stamped files missing from it, 5 entries matching no file.
    | `NOT_STAMPED` entry for a GLOBS file | exit 1 (stale exemption) | PASS |
    | manifest file deleted | exit 1 | PASS |
    | **history:** both coverage rules on `origin/ladruno` with its own GLOBS | all 31 of WP-120 R1 flagged | PASS: 41 flagged = **31 unstamped + 10 stamped-outside-GLOBS; 0 unstamped fork files missed** |
+10. **Dead-GLOBS-entry rule (added at the owner's request, 2026-09-25).** `--check` also fails on a GLOBS
+    entry that matches no source file (`dead_globs`). Globs are case-sensitive on the Linux runner, so an
+    entry with the wrong case fails in CI even where Windows matches it.
+    *Accept:* an entry `SRC/utility/LadrunoDeletedLongAgo.*` appended to GLOBS in an archive copy → exit 1,
+    entry named (PASS). **History:** on `origin/ladruno` with its own GLOBS the rule finds exactly the
+    5 `ExplicitBathe{SMS,SMSConsistent,LNVDSMS,LNVDSMSConsistent,LNVD}.*` entries #419 orphaned (PASS).
 
 ## Results
 
@@ -135,7 +141,7 @@ one-shot-latch convention WP-115 accepted.
 ## Open questions
 
 1. ~~The second trap.~~ Closed by step 9 for every tracked fork source. It stays closed only while the
-   manifest is refreshed after upstream syncs, and a missed refresh fails loudly. A dead GLOBS entry (a
-   deleted file) still does not fail; cheap to add if wanted.
+   manifest is refreshed after upstream syncs, and a missed refresh fails loudly. Dead GLOBS entries:
+   closed by step 10.
 2. **Before allowlisting ASDPlasticMaterial3D for the WP-107 threaded loop**, make
    `MohrCoulombTensionCutoff_YF.h`'s two statics atomic or per-instance.

@@ -244,8 +244,10 @@ manifest-independent backstop.) Consequences:
 - A fork-added file that must not be stamped (vendored third-party code) goes in
   `NOT_STAMPED` in `stamp_headers.py` with a reason; an exemption that no longer
   exempts anything fails `--check`.
-- Keep GLOBS honest when files are deleted: WP-122 found 5 entries matching nothing
-  (the `ExplicitBathe*` family #419 deleted); nothing fails on a dead entry yet.
+- **Deleting or renaming a fork file → remove or fix its GLOBS entry.** `--check` fails on
+  an entry that matches no file (WP-122 found 5, left behind when #419 deleted the
+  `ExplicitBathe*` family). Globs are case-sensitive on the Linux runner, so an entry with
+  the wrong case is dead in CI even though Windows matches it.
 
 ---
 
