@@ -488,25 +488,13 @@ int LadrunoCST::addInertiaLoadToUnbalance(const Vector &accel)
   if (r == 0.0)
     return 0;
 
-  static double ra[6];
-  for (int a = 0; a < numnodes; a++) {
-    const Vector &Raccel = theNodes[a]->getRV(accel);
-    if (Raccel.Size() != 2) {
-      opserr << "LadrunoCST::addInertiaLoadToUnbalance - incompatible sizes\n";
-      return -1;
-    }
-    ra[2 * a]     = Raccel(0);
-    ra[2 * a + 1] = Raccel(1);
-  }
-  // Ladruno (ADR-77 review wave): bare getMass() called for its SIDE EFFECT of
-  // refilling class-static K, then K read directly. Correct ONLY while this
-  // element has no mass cache -- a LadrunoMassCache hit skips the formation and
-  // leaves K holding the last tangent. DO NOT add the G2 cache here without
-  // first rewriting this to consume getMass()'s return (the Quad/LST fix).
-  this->getMass();
-  for (int i = 0; i < 6; i++)
-    Q(i) += -K(i, i) * ra[i];
-  return 0;
+  // Ladruno (WP-124): consume getMass()'s RETURN (retires the bare side-effect
+  // idiom the ADR-77 review wave flagged here; getMass returns K, so the bytes
+  // are the same) -- lumped (diagonal) mass, LadrunoShell::addGroundInertia.
+  static Vector ra(6);
+  const Matrix &Mq = this->getMass();
+  return LadrunoShell::addGroundInertia(Q, Mq, theNodes, numnodes, 2, true, accel, ra,
+                                        "LadrunoCST");
 }
 
 const Vector &LadrunoCST::getResistingForce(void)
