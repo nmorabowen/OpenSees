@@ -571,6 +571,9 @@ Triggered by the validation repo's OOFEM `con2dpm1-4` oracle and Grassl 2013 Fig
    (`calibrateEpsFcTable`, 8 log points, ~0.2 s) and inverted at `Gc/lch`. `-epsFc` gives the raw CDPM2
    `εfc` (Gc ignored) — byte-identical to the old mapping when `εfc = Gc/(fc·lch)`; `-gcLegacy` keeps the old
    `Gc/(fc·lch)` mapping itself (follows `-autoRegularization`; the element battery and the punching test pin it).
+   **Residual tangent stiffness:** the bilinear law reaches `ωt = 1` exactly, which made every tensile
+   direction stiffness-free (singular global system; single-brick tension: NaN / runaway lateral strains).
+   The damaged TANGENT keeps `(1−ω) ≥ 1e-6`; the stress is untouched (fixtures unchanged).
 4. **Still open (need a decision):** (a) the v1 flow potential (`m_v = Df·m0/(√3fc)`, no `[1−qh1]` cap, no
    `mg(σV)`) is the dominant reason uniaxial compression softens ~25 % faster than CDPM2 at matched `εfc`
    and makes near-axis cap returns unsolvable off the vertex — port Eq.22-29 in full; (b) the compressive

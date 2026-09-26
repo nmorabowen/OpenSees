@@ -513,6 +513,42 @@ static void run_robustness() {
         check(same, "-epsFc = Gc/(fc lch) reproduces the legacy compression path byte-for-byte");
     }
 
+    // C6 — full crack opening under the BILINEAR law (omega_t reaches 1 EXACTLY): a single GP driven in
+    // uniaxial tension (axial prescribed, lateral NOMINAL stress = 0 by a plain, UNGUARDED 2x2 Newton on the
+    // material's own damaged tangent — what the global solver does) must stay finite to 5e-3 (~3x the
+    // separation strain), converge every step, and dissipate Gf (+ the small pre-peak plastic work). Pre-fix
+    // the tensile-direction tangent was exactly singular at omega_t = 1 => NaN (the single-brick run printed
+    // thousands of return-map warnings with runaway lateral strains). SI units, fork defaults.
+    {
+        Params t; t.E = 30e9; t.nu = 0.2; t.fc = 30e6; t.ft = 3e6; t.e = eccentricityFromKupfer(30e6, 3e6, 1.16);
+        t.m0 = m0Of(t.fc, t.ft, t.e); t.Df = 1.0; t.As = 2.0; t.qh0 = 0.3; t.Hp = 0.5;
+        t.Gf = 120.0; t.Gc = 30e3; t.lch = 0.1; t.tensionLaw = 1;
+        State in; double ex = 0, ey = 0, ez = 0, W = 0, sp = 0, ep = 0; const int N = 1000; const double de = 5e-3 / N;
+        double Dc[6][6]; elasticC(t, Dc); bool finite = true; int unconv = 0;
+        for (int n = 1; n <= N && finite; ++n) {
+            ez += de;
+            { const double a = Dc[0][0], b = Dc[0][1], c = Dc[1][0], d = Dc[1][1], det = a * d - b * c;
+              ex += (d * (-Dc[0][2] * de) - b * (-Dc[1][2] * de)) / det;
+              ey += (-c * (-Dc[0][2] * de) + a * (-Dc[1][2] * de)) / det; }
+            State out; double s[6], se[6], D[6][6]; bool conv = false;
+            for (int it = 0; it < 50; ++it) {
+                double strain[6] = {ex, ey, ez, 0, 0, 0};
+                returnMap(t, strain, in, out, s, se, D, true, -1.0, true);
+                if (std::fabs(s[0]) + std::fabs(s[1]) < 1e-3) { conv = true; break; }
+                const double a = D[0][0], b = D[0][1], c = D[1][0], d = D[1][1], det = a * d - b * c;
+                ex -= (d * s[0] - b * s[1]) / det; ey -= (-c * s[0] + a * s[1]) / det;
+            }
+            if (!conv) ++unconv;
+            if (!std::isfinite(ex) || !std::isfinite(s[2])) finite = false;
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dc[i][j] = D[i][j];
+            W += 0.5 * (s[2] + sp) * (ez - ep); sp = s[2]; ep = ez; in = out;
+        }
+        const double G = W * t.lch;
+        check(finite && unconv == 0 && std::fabs(sp) < 1.0 && G > 120.0 && G < 125.0,
+              "bilinear full crack opening: finite, converged, dissipates Gf (residual tangent stiffness)");
+        std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
+    }
+
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;
     // returnMapTensor falls back to the finite elastic predictor with status!=0.
     {

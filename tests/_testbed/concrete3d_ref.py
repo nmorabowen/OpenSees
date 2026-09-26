@@ -1164,6 +1164,7 @@ def _solve_omega_bracketed(kd1, kd2, sig_eff, f, eps_f):
 # Eq.44 kdt1 takes only the POST-onset part of the crossing step's plastic strain (OOFEM's fraction).
 # ---------------------------------------------------------------------------
 _BILIN_S1, _BILIN_W1 = 0.3, 0.15           # s1/ft, wf1/wf (Jirasek-Zimmermann, Grassl 2013 Sec.5)
+_OMEGA_TAN_FLOOR = 1.0e-6                   # residual (1-omega) in the damaged TANGENT only (see damaged_tangent_analytic)
 _BILIN_GF = 0.5 * (_BILIN_W1 + _BILIN_S1)  # Gf/(ft wf) = wf1/(2wf) + s1/(2ft) = 0.225
 
 
@@ -2419,8 +2420,12 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         Ceff = (1.0 - beta) * elastic_C(mp) + beta * Ceff
 
     # D_dam: spectral derivative of the per-principal damage with omega FROZEN
-    yv = [(1.0 - wt) * max(lam[a], 0.0) + (1.0 - wc) * min(lam[a], 0.0) for a in range(3)]
-    ypv = [(1.0 - wt) if lam[a] > 0.0 else (1.0 - wc) for a in range(3)]
+    # residual TANGENT stiffness (mirror of the kernel OMEGA_TAN_FLOOR): (1-omega) >= 1e-6 in the tangent only
+    # — the bilinear law reaches omega_t = 1 exactly, which made every tensile direction stiffness-free
+    # (singular global system). The stress is untouched.
+    kT, kC = max(1.0 - wt, _OMEGA_TAN_FLOOR), max(1.0 - wc, _OMEGA_TAN_FLOOR)
+    yv = [kT * max(lam[a], 0.0) + kC * min(lam[a], 0.0) for a in range(3)]
+    ypv = [kT if lam[a] > 0.0 else kC for a in range(3)]
     Ddam = isotropic_tangent(lam, V, yv, ypv)
     sig_t = mat_to_voigt(V @ np.diag(np.maximum(lam, 0.0)) @ V.T)
     sig_c = mat_to_voigt(V @ np.diag(np.minimum(lam, 0.0)) @ V.T)

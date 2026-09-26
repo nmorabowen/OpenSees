@@ -409,6 +409,7 @@ inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double
 // _solve_omega_bilinear / _omega_t / _tension_hist_update / _eps_fc byte-for-byte). See Params::tensionLaw.
 // ---------------------------------------------------------------------------
 static const double BILIN_S1 = 0.3, BILIN_W1 = 0.15;
+static const double OMEGA_TAN_FLOOR = 1.0e-6;                // residual (1-omega) in the damaged TANGENT only
 static const double BILIN_GF = 0.5 * (0.15 + 0.3);           // Gf/(ft wf) = 0.225  =>  wf = 4.444 Gf/ft
 
 inline double epsFcOf(const Params& mp) { return mp.epsFc > 0.0 ? mp.epsFc : mp.Gc / (mp.fc * mp.lch); }
@@ -1469,12 +1470,20 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
                     ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
 
     // D_dam = spectral derivative of the per-principal damaged stress with ω FROZEN
+    // RESIDUAL TANGENT STIFFNESS (WP concrete3d-oracle-diagnosis): the bilinear tension law reaches omega_t = 1
+    // EXACTLY at w = wf, so on a fully open crack every TENSILE principal direction (incl. the uniaxial-tension
+    // laterals, whose effective stress sits on the Macaulay kink) has ZERO tangent stiffness => a singular
+    // global system (single-element tension: NaN / runaway lateral strains, thousands of return-map
+    // warnings). The TANGENT keeps (1-omega) >= OMEGA_TAN_FLOOR; the STRESS is untouched (exact zero), so
+    // the dissipated energy and every stress fixture are unchanged — only omega within 1e-6 of 1 is affected.
+    const double kT = (1.0 - wt) > OMEGA_TAN_FLOOR ? (1.0 - wt) : OMEGA_TAN_FLOOR;
+    const double kC = (1.0 - wc) > OMEGA_TAN_FLOOR ? (1.0 - wc) : OMEGA_TAN_FLOOR;
     double yv[3], ypv[3];
     for (int a = 0; a < 3; ++a) {
         const double st = w[a] > 0.0 ? w[a] : 0.0;
         const double sc = w[a] < 0.0 ? w[a] : 0.0;
-        yv[a]  = (1.0 - wt) * st + (1.0 - wc) * sc;
-        ypv[a] = (w[a] > 0.0) ? (1.0 - wt) : (1.0 - wc);
+        yv[a]  = kT * st + kC * sc;
+        ypv[a] = (w[a] > 0.0) ? kT : kC;
     }
     double Ddam[6][6];
     isotropicTangent(w, V, yv, ypv, Ddam);
