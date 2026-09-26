@@ -13,12 +13,15 @@ endings (LF/CRLF) and any BOM are preserved so the stamp produces a clean diff.
 
     python Ladruno_scripts/stamp_headers.py            # stamp all authored files
     python Ladruno_scripts/stamp_headers.py --check     # report only, exit 1 if any stale
-                                                        # or any Ladruno-named SRC source
+                                                        # or any fork-added SRC source
                                                         # is missing from GLOBS (CI gate)
+    python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest [upstream/master]
+                                                        # after an upstream merge
 """
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -181,6 +184,97 @@ def ladruno_named_outside_globs(root: Path, authored) -> list[Path]:
             and p.resolve() not in auth]
 
 
+# WP-122: the exact rule. A tracked SRC source that upstream OpenSees does not have
+# (not on upstream master, not at the merge-base with ladruno) is fork-authored
+# whatever its name, so it must be in GLOBS. Upstream's SRC file list is committed
+# as UPSTREAM_MANIFEST so CI needs no network. Refresh it after every upstream merge:
+#     python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest
+# A stale manifest fails loudly (upstream's new files show up here), never silently.
+UPSTREAM_MANIFEST_NAME = "upstream_src_manifest.txt"
+
+# Fork-added sources that must NOT be stamped: repo-relative path -> reason (mandatory,
+# >= 12 chars). An entry that no longer exempts anything fails --check. Empty today.
+NOT_STAMPED: dict[str, str] = {}
+
+
+def tracked_sources(root: Path) -> list[Path]:
+    """SRC C/C++ files git tracks under `root`; every such file on disk when `root`
+    is not the top of a git work tree (e.g. a `git archive` copy)."""
+    try:
+        top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True)
+        if top.returncode == 0 and Path(top.stdout.strip()).resolve() == root.resolve():
+            out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "SRC"],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 check=True).stdout.split("\0")
+            return sorted(root / f for f in out
+                          if f and Path(f).suffix in SUFFIXES and (root / f).is_file())
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return sorted(p for p in (root / "SRC").rglob("*") if p.is_file() and p.suffix in SUFFIXES)
+
+
+def read_upstream_manifest(root: Path):
+    """(set of repo-relative paths, header comment lines), or (None, []) if missing."""
+    path = root / "Ladruno_scripts" / UPSTREAM_MANIFEST_NAME
+    if not path.is_file():
+        return None, []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return ({ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")},
+            [ln for ln in lines if ln.startswith("#")])
+
+
+def fork_sources_outside_globs(root: Path, authored, manifest, not_stamped) -> list[Path]:
+    auth = {p.resolve() for p in authored}
+    return [p for p in tracked_sources(root)
+            if p.relative_to(root).as_posix() not in manifest
+            and p.relative_to(root).as_posix() not in not_stamped
+            and p.resolve() not in auth]
+
+
+def stale_exemptions(root: Path, authored, manifest, not_stamped) -> list[str]:
+    auth = {p.resolve() for p in authored}
+    bad = []
+    for rel_path, reason in sorted(not_stamped.items()):
+        p = root / rel_path
+        if len(reason.strip()) < 12:
+            bad.append(rel_path + "  (reason missing or too short)")
+        elif not p.is_file():
+            bad.append(rel_path + "  (file no longer exists)")
+        elif rel_path in manifest:
+            bad.append(rel_path + "  (upstream has it: not a fork file)")
+        elif p.resolve() in auth:
+            bad.append(rel_path + "  (it is in GLOBS: exempt AND stamped)")
+    return bad
+
+
+def refresh_upstream_manifest(upstream: str = "upstream/master", ref: str = "HEAD") -> int:
+    """Rewrite UPSTREAM_MANIFEST from `upstream` + merge-base(ref, upstream).
+    Needs the `upstream` remote (OpenSees/OpenSees): git fetch upstream master."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
+                              encoding="utf-8", check=True).stdout
+    up = git("rev-parse", upstream).strip()
+    mb = git("merge-base", ref, upstream).strip()
+    files = set()
+    for commit in (up, mb):
+        files |= {f for f in git("ls-tree", "-r", "-z", "--name-only", commit, "SRC").split("\0")
+                  if f and Path(f).suffix in SUFFIXES}
+    head = [
+        "# SRC C/C++ files upstream OpenSees has -- the reference stamp_headers.py --check",
+        "# uses to decide which tracked sources are fork-authored (WP-122). Generated by",
+        "#     python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest",
+        "# Do not hand-edit. Refresh after every merge of OpenSees/OpenSees into ladruno.",
+        "# upstream {} = {}".format(upstream, up),
+        "# merge-base({}, {}) = {}".format(ref, upstream, mb),
+    ]
+    (ROOT / "Ladruno_scripts" / UPSTREAM_MANIFEST_NAME).write_text(
+        "\n".join(head + sorted(files)) + "\n", encoding="utf-8", newline="\n")
+    print("Wrote {} ({} files; upstream {}, merge-base {})."
+          .format(UPSTREAM_MANIFEST_NAME, len(files), up[:9], mb[:9]))
+    return 0
+
+
 def build_block(eol: str) -> str:
     art = (ROOT / "Ladruno_scripts" / "banner_ASCII.txt").read_text(
         encoding="utf-8").rstrip("\n").split("\n")
@@ -221,7 +315,12 @@ def restamp(text: str, block: str, eol: str) -> str:
 
 
 def main() -> int:
-    check = "--check" in sys.argv[1:]
+    argv = sys.argv[1:]
+    if "--refresh-upstream-manifest" in argv:
+        i = argv.index("--refresh-upstream-manifest")
+        nxt = argv[i + 1] if i + 1 < len(argv) and not argv[i + 1].startswith("-") else None
+        return refresh_upstream_manifest(nxt or "upstream/master")
+    check = "--check" in argv
     files = authored_files()
     changed: list[Path] = []
     for p in files:
@@ -245,15 +344,38 @@ def main() -> int:
               .format(len(outside)))
         for p in outside:
             print("  " + rel(p))
+    manifest, mhead = read_upstream_manifest(ROOT)
+    unlisted, stale = [], []
+    if manifest is None:
+        print("MISSING Ladruno_scripts/{} -- regenerate it: python Ladruno_scripts/"
+              "stamp_headers.py --refresh-upstream-manifest".format(UPSTREAM_MANIFEST_NAME))
+    else:
+        seen = {p.resolve() for p in outside}
+        unlisted = [p for p in fork_sources_outside_globs(ROOT, files, manifest, NOT_STAMPED)
+                    if p.resolve() not in seen]
+        stale = stale_exemptions(ROOT, files, manifest, NOT_STAMPED)
+        if unlisted:
+            print("Fork sources (not in upstream OpenSees) NOT in GLOBS ({}) -- add each to "
+                  "GLOBS, then stamp. If a file came from an upstream merge, refresh the "
+                  "manifest instead: python Ladruno_scripts/stamp_headers.py "
+                  "--refresh-upstream-manifest".format(len(unlisted)))
+            for p in unlisted:
+                print("  " + rel(p))
+        if stale:
+            print("STALE NOT_STAMPED exemptions ({}):".format(len(stale)))
+            for s in stale:
+                print("  " + s)
     if check:
         if changed:
             print("STALE / unstamped ({}):".format(len(changed)))
             for p in changed:
                 print("  " + rel(p))
-        if changed or outside:
+        if changed or outside or unlisted or stale or manifest is None:
             return 1
-        print("All {} authored files carry a current header; every Ladruno-named source "
-              "is in GLOBS.".format(len(files)))
+        print("All {} authored files carry a current header; every fork-added source is in "
+              "GLOBS (upstream manifest: {} files, {}).".format(
+                  len(files), len(manifest),
+                  "; ".join(h.split(" ", 1)[1] for h in mhead if "=" in h) or "no header"))
         return 0
 
     print("Stamped {} of {} authored files (already-current files unchanged):"
