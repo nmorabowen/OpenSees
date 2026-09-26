@@ -360,6 +360,7 @@ post-peak over `lch`); `-epsFc $v` passes the raw CDPM2 `εfc` instead (Gc ignor
 > 0.5, CDPM2 default 0.85) with return-map sub-incrementation; `-flowPotential legacy` = the pre-B1 always-dilatant flow.
 **B2 (ADR-31 §13):** compressive damage is CDPM2's `E·κdc` vs `ft` drive (`-compressionDrive legacy` = the pre-B2
 `−σ̄min` vs `fc`); recorders `substeps` / `returnFailures` count sub-incremented and failed returns; `-verbose` prints them.
+**B3:** defaults are now CDPM2's `Df = 0.85`, `Hp = 0.01` (pre-B3: `-Df 1.0 -hardening 0.3 0.5`).
 ```python
 ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-Df", 0.85)
 ```

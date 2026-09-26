@@ -94,7 +94,8 @@ def build_solid():
     # the CDPM2 bilinear tension law + Gc as a physical energy) — re-baseline before dropping the pin.
     ops.nDMaterial('LadrunoConcrete3D', 1, EC, NU, FC, FT, GF, GC,
                    '-autoRegularization', '-implex', '-tensionLaw', 'exp', '-gcLegacy',
-                   '-flowPotential', 'legacy', '-compressionDrive', 'legacy')
+                   '-flowPotential', 'legacy', '-compressionDrive', 'legacy',
+                   '-Df', 1.0, '-hardening', 0.3, 0.5)
     ops.nDMaterial('ElasticIsotropic', 2, 3.0 * EC, NU)      # column stub
     n = len(XS) - 1
     for i in range(n + 1):

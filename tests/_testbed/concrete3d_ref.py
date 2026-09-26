@@ -32,6 +32,7 @@ import numpy as np
 
 SQRT3 = np.sqrt(3.0)
 SQRT6 = np.sqrt(6.0)
+F_TOL_HONEST = 3.1e-6   # B5: units-free honest-f tolerance (was 1e-7*(fc+1): 0.3 in Pa); mirrors the kernel
 SQRT1_5 = np.sqrt(1.5)
 TOL_ONSURF = 1.0e-12   # algebraic on-surface identities (G1/G2) must be machine-exact
 TOL_RATIO = 1.0e-10    # meridian-ratio identity (G3)
@@ -836,7 +837,7 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         # ADMISSIBILITY (PR #249 adversarial-review fix, mirrored in the C++ kernel): a valid plastic
         # return needs dlam>=0 AND a non-decreasing hardening variable kp>=kp_n.
         admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
-        if converged and abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible:
+        if converged and abs(f_indep) < F_TOL_HONEST and admissible:
             return sig_new, kp, True, f_indep, True
     # VERTEX RETURN (WP concrete3d-oracle-diagnosis, 2026-09). Reached when the regular (radial) return
     # overshot the hydrostatic axis (rho<0), did not converge, or landed inadmissible. The OLD branch here
@@ -856,7 +857,7 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         sig_new = np.array([sV, sV, sV])
         f_indep = yield_f(np.array([sV, sV, sV, 0.0, 0.0, 0.0]),
                           fc, mp["ft"], mp["e"], qh1(kpv, mp["qh0"], mp["Hp"]), qh2(kpv, mp["Hp"]))
-        if np.isfinite(f_indep) and abs(f_indep) < 1.0e-7 * (fc + 1.0) and kpv >= kp_n - 1.0e-12:
+        if np.isfinite(f_indep) and abs(f_indep) < F_TOL_HONEST and kpv >= kp_n - 1.0e-12:
             return sig_new, kpv, True, f_indep, True
     if apex:                                  # regular RETRY with rho clamped at 0 (vertex rejected)
         u, converged, _ = _newton(True)
@@ -868,7 +869,7 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
                               fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
             admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
-            if abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible:
+            if abs(f_indep) < F_TOL_HONEST and admissible:
                 return sig_new, kp, True, f_indep, True
     f_tr_now = _yf_inv_hard(xi_tr, rho_tr, r, kp_n, mp)
     return np.array(sig_tr, float), kp_n, True, f_tr_now, False

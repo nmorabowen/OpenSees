@@ -153,6 +153,10 @@ struct Params {
 static const double SQRT3 = 1.7320508075688772;
 static const double SQRT6 = 2.449489742783178;
 static const double SQRT1_5 = 1.224744871391589;
+// B5: units-free acceptance tolerance on the (dimensionless) yield function after a return. Was 1e-7*(fc+1):
+// 3.1e-6 in MPa (fc = 30) but 0.3 in Pa (fc = 3e6), so an SI model accepted returns 30 % off the surface. The
+// value equals the MPa one at fc = 30 (every fixture unchanged).
+static const double F_TOL_HONEST = 3.1e-6;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -971,7 +975,7 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         // NON-DECREASING hardening variable (kp>=kp_n). Never report converged for an inadmissible/
         // off-surface state.
         const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-        if (converged && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible) {
+        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
             R.converged = true;
             return R;
         }
@@ -992,7 +996,7 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv)) {
             double svv[6] = {sV, sV, sV, 0, 0, 0};
             const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
-            if (std::isfinite(fv) && std::fabs(fv) < 1.0e-7 * (fc + 1.0) && kpv >= kp_n - 1.0e-12) {
+            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
                 for (int a = 0; a < 3; ++a) R.sp[a] = sV;
                 R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
                 R.apex = true; R.converged = true; R.f_after = fv;
@@ -1010,7 +1014,7 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
             R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
             const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-            if (std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible) {
+            if (std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
                 R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
                 return R;
             }
