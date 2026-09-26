@@ -487,6 +487,37 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
+    # ---- (B12) PV20 TENSION->COMPRESSION TEMPER (-tcTemper): committed damage states on the PV20 element strain
+    #      path (plane stress, the PlateFiber-view kinematics), one more increment -> the oracle NOMINAL stress; the
+    #      C++ also checks its analytic damaged tangent against the FD of its own stress. Same record as DMGC + the
+    #      trailing tcTemper mode (0 none / 2 proj). ----
+    dmgts = []
+    D = ref.PV20_DMG
+    for tc, knots, nst, pick, label in (
+            ("none", ref.PV20_KNOTS, 128, lambda r: 0.2 < r[3] < 0.7, "dmgt_pv20_none_soft"),
+            ("proj", ref.PV20_KNOTS, 128, lambda r: r[0] > 4.0e-3, "dmgt_pv20_proj_strut"),
+            ("proj", np.vstack([ref.PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]]), 200, lambda r: 0.2 < r[3] < 0.7,
+             "dmgt_pv20_proj_soft")):
+        mpt = ref.pv20_material(tc)
+        pp = ref.pv20_path(mpt, nst, knots)
+        k = next(i for i, r in enumerate(pp) if pick(r))
+        st0, dps = pp[k][4], pp[k][5]
+        sig_nom, _, _ = ref.damaged_step_tensor(st0, dps, mpt, D["Gf"], D["Gc"], D["lch"], D["As"])
+        dmgts.append((label, mpt, st0, dps, sig_nom))
+    lines.append(f"NDMGT {len(dmgts)}")
+    for label, mp, st, deps, sig_nom in dmgts:
+        lines.append(f"DMGT {label} {_fmt(_pblock(mp))} {repr(float(D['Gf']))} {repr(float(D['Gc']))} "
+                     f"{repr(float(D['lch']))} {repr(float(D['As']))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))} 1 "
+                     f"{int(mp.get('max_subincr', 0))} 1 {_CT[mp.get('tc_temper', 'none')]}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "

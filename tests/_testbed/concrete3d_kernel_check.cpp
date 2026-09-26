@@ -501,6 +501,47 @@ static void run_oracle_dump(const char* path) {
         }
     }
 
+    // ---- (B12) PV20 TENSION->COMPRESSION TEMPER (-tcTemper): nominal stress vs oracle + analytic vs FD tangent ----
+    if (fh >> tok && tok == "NDMGT") {
+        int n; fh >> n;
+        for (int d = 0; d < n; ++d) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper >> mp.tensionLaw >> mp.epsFc
+               >> mp.flowPotential >> mp.maxSubIncr >> mp.compDrive >> mp.tcTemper;
+            State in, out;
+            for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+            for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+            fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev;
+            double deps[6], sigO[6];
+            for (int i = 0; i < 6; ++i) fh >> deps[i];
+            for (int i = 0; i < 6; ++i) fh >> sigO[i];
+            double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+            double sigC[6], sigEff[6], Da[6][6];
+            returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
+            double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+            double Cn[6][6]; const double base = mp.fc / mp.E;
+            for (int j = 0; j < 6; ++j) {
+                const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
+                double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
+                for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
+                strp[j] += dd; strm[j] -= dd;
+                returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+                for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
+            }
+            double nd = 0, nn = 0;
+            for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
+            const double rel = std::sqrt(nd / nn);
+            worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
+            const bool ok = maxs < 1.0e-6 && rel < 5.0e-5;
+            if (!ok) ++fails;
+            std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
+        }
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
                 "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);

@@ -640,3 +640,55 @@ Not modelled: OOFEM's in-step unload/reload search (`checkForUnAndReloading`). `
   reaches step 5 (−1.54 MPa). Same constitutive map; the difference is the lateral equilibrium solver on a
   non-smooth, multi-branch response (lateral-cracking branch). Accepted: a single implicit 5e-4 step past the
   compressive peak is outside the intended step size; the spurious σ ≡ 0 root is gone (ω ≤ 1 − 1e-6).
+
+## 15. Amendment 2026-09 — PV20: tension→compression damage temper (`-tcTemper proj|none`)
+
+**Symptom:** Vecchio–Collins PV20 on 6e9638007 was modelled as one ASDShellQ4 with a LayeredShell: 4
+LadrunoConcrete3D layers in the PlateFiber view plus PlateRebar steel. It ran clean to γ = 0.02. But τ peaked at
+1.76 MPa at γ = 0.0043 (test 4.26; LadrunoRCConcrete / ASDConcrete3D 4.2–4.6). It then decayed to 0.03 MPa while
+the steel stayed ELASTIC (f_sx ≈ 100, f_sy ≈ 145–187 MPa). The concrete compressive principal peaked at −3.6 MPa
+(0.19 fc).
+
+**Material-point reproduction (oracle, plane stress σ33 = 0, PV20 material, εfc = 1.91e-4 from Gc at lch = 445):**
+- **(1) Crack in direction 1, then compress in direction 2 (σ1 = σ3 = 0):** with literal CDPM2, ω_t = 1 and σ2
+  reaches −64.5 MPa = 3.3 fc with ω_c = 0. The tensile crack drives κp to ~230 (xh ≈ 3e-5 in tension), so
+  qh2 = 1 + Hp(κp − 1) ≈ 3.3 inflates the compressive surface. The αc-weighted Δε̃ is negative at the switch from
+  tension to compression, which pre-offsets the compressive history. With `proj`: −19.4 MPa (0.99 fc), then softening.
+- **(2) Pure shear with εx = εy = 0 (biaxially confined):** the compressive principal saturates at fc in both modes.
+  ω_c never onsets because αc < 1 keeps eqc < ε0. `proj` is identical here.
+- **(3) The element's own strain path (PV20 CSV, replayed through the oracle):** reproduces the collapse (τ_max 1.96,
+  ω_c → 0.98, strut ≤ 0.19 fc). The fork's σ22 condensation is therefore NOT the cause, and neither are a stale
+  spectral frame, the ω cap or `-ctTemper`. The legacy compressive drive is worse (τ_max 2.34, ω_c 0.996).
+- **Root cause:** literal CDPM2 Eq.47/48 feed the compressive damage history with two things once the strut
+  dominates αc. First, αc·βc·‖Δε_p‖, i.e. the crack-opening plastic strain along the TENSILE principal. Second,
+  αc·Δε̃, where ε̃ carries the hardened crack stress (σ̄_t ≈ 2.8 ft on the PV20 path). So κdc passes ε0 with the
+  strut at 0.17 fc, and κdc1 is fed by crack opening. `Hp = 0` or a 10× εfc also "fixes" it, which confirms the
+  mechanism, but neither is a fix.
+
+**Fix (`-tcTemper proj`, the nDMaterial DEFAULT; `-tcTemper none` = literal CDPM2):** φ_a is a per-direction
+weight in the effective-stress eigenframe: 1 for σ̄_a ≤ 1e-3·ft, 0 for σ̄_a ≥ 0.05·ft, linear in between.
+- (i) The κdc1 plastic measure is ‖Φ Δε_p Φ‖, with Φ = diag(φ_a) in that frame.
+- (ii) The CDPM2 compressive drive eqc is fed by ε̃ of the compressive part, with the positive principals scaled by φ_a.
+- Both are EXACTLY literal when every effective principal is ≤ 1e-3·ft. The dead zone absorbs the undetermined
+  σ̄_lat ~ 1e-5·ft of uniaxial-stress compression at ω_t ≈ 1. So every compressive backbone, the Gc table, Kupfer
+  and con2dpm2 are unchanged.
+- The tensile channel is untouched.
+- The analytic damaged tangent carries d(‖Δε_p‖ w_c)/dε (composite micro-FD through the return map, as for
+  `-ctTemper proj`) and dε̃_c/dε.
+
+**Gate** `run_tc_temper_gate` / `test_tc_temper_gate`:
+
+| Check | none | proj | Criterion |
+|---|---|---|---|
+| T1: σ2 after cracking | 3.29 fc | 0.99 fc | fc ± 10 % with proj |
+| T2: strut on the PV20 path | 0.23 fc | 1.22 fc | proj > 0.9 fc (proj τ_max 12.0, ω_c 0 at γ = 0.0064) |
+| T3: analytic vs FD tangent | — | 6.5e-7 (ω_c = 0.20, crack open) | < 1e-4 |
+| T4: proj ≡ none, uniaxial and equibiaxial compression | — | exact (0.0) | exact |
+
+g++ block `NDMGT` (3 PV20-path states, none/proj): nominal stress ≤ 9e-13 vs the oracle, and the damaged tangent vs
+FD of the C++ stress ≤ 8e-7. All earlier fixture blocks are byte-identical (the file only grew).
+
+**Known limitation (not changed):** CDPM2 has no MCFT-type compression softening from transverse tensile strain.
+With the tension-hardened effective surface (qh2), the strut of a cracked panel can exceed fc (1.22 fc on the fixed
+PV20 path, which is past the test's strains). The element-level PV20 rerun decides whether that matters for τ_u.
+The element battery and the punching test pin `-tcTemper none` together with the other legacy flags.
