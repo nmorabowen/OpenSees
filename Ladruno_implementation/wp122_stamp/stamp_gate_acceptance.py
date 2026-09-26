@@ -13,6 +13,7 @@ script derives ROOT from its own location, so each tree runs its own copy.
   NOT_STAMPED exemption for the neutral file -> exit 0
   NOT_STAMPED exemption for a GLOBS file     -> exit 1 (stale exemption)
   manifest file deleted                      -> exit 1
+  GLOBS entry that matches no file           -> exit 1, entry named
 
 History (the incident): both GLOBS-coverage rules, evaluated on <before> with that
 tree's own GLOBS and this branch's manifest, must flag all 31 files WP-120 R1 found
@@ -90,6 +91,10 @@ def mutate(root, how):
     if how == "manifest_gone":
         (root / MANIFEST).unlink()
         return "upstream_src_manifest.txt"
+    if how == "dead_glob":
+        edit(root / SCRIPT, '    "SRC/utility/LadrunoThreads.*",',
+             '    "SRC/utility/LadrunoThreads.*",\n    "SRC/utility/LadrunoDeletedLongAgo.*",')
+        return "SRC/utility/LadrunoDeletedLongAgo.*"
     raise ValueError(how)
 
 
@@ -110,6 +115,7 @@ CASES = (
     ("exempt ok", "exempt_ok", 0),
     ("exempt stale", "exempt_stale", 1),
     ("manifest gone", "manifest_gone", 1),
+    ("dead GLOBS entry", "dead_glob", 1),
 )
 
 
@@ -161,6 +167,13 @@ def main():
               f"outside GLOBS; unstamped fork files missed: {len(missed)}")
         for x in missed:
             print("       MISSED:", x)
+        dead = new.dead_globs(d, old.GLOBS)
+        good = sorted(dead) == sorted(g for g in old.GLOBS if g.startswith("SRC/analysis/integrator/ExplicitBathe")
+                                      and g != "SRC/analysis/integrator/ExplicitBathe.*")
+        good = good and len(dead) == 5
+        ok &= good
+        print(f"[{'PASS' if good else 'FAIL'}] history ({a.before}): dead GLOBS entries {len(dead)} "
+              f"(want the 5 ExplicitBathe* entries #419 orphaned): {dead}")
     return 0 if ok else 1
 
 

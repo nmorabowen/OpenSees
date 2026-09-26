@@ -14,7 +14,8 @@ endings (LF/CRLF) and any BOM are preserved so the stamp produces a clean diff.
     python Ladruno_scripts/stamp_headers.py            # stamp all authored files
     python Ladruno_scripts/stamp_headers.py --check     # report only, exit 1 if any stale
                                                         # or any fork-added SRC source
-                                                        # is missing from GLOBS (CI gate)
+                                                        # is missing from GLOBS, or a GLOBS
+                                                        # entry matches nothing (CI gate)
     python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest [upstream/master]
                                                         # after an upstream merge
 """
@@ -165,6 +166,15 @@ def authored_files() -> list[Path]:
             if p.is_file() and p.suffix in SUFFIXES:
                 seen[p.resolve()] = None
     return sorted(seen)
+
+
+def dead_globs(root: Path = None, globs=None) -> list[str]:
+    """GLOBS entries that match no source file (WP-122: 5 were left behind when #419
+    deleted the ExplicitBathe* family). Case-sensitive on the Linux CI runner, so an
+    entry whose case is wrong is dead there even if Windows matches it."""
+    root = root or ROOT
+    return [g for g in (GLOBS if globs is None else globs)
+            if not any(p.is_file() and p.suffix in SUFFIXES for p in root.glob(g))]
 
 
 # WP-122: --check only sees files already in GLOBS, so a fork file nobody added
@@ -365,12 +375,18 @@ def main() -> int:
             print("STALE NOT_STAMPED exemptions ({}):".format(len(stale)))
             for s in stale:
                 print("  " + s)
+    dead = dead_globs()
+    if dead:
+        print("DEAD GLOBS entries ({}) -- they match no file (deleted or renamed?); remove "
+              "or fix each:".format(len(dead)))
+        for g in dead:
+            print("  " + g)
     if check:
         if changed:
             print("STALE / unstamped ({}):".format(len(changed)))
             for p in changed:
                 print("  " + rel(p))
-        if changed or outside or unlisted or stale or manifest is None:
+        if changed or outside or unlisted or stale or dead or manifest is None:
             return 1
         print("All {} authored files carry a current header; every fork-added source is in "
               "GLOBS (upstream manifest: {} files, {}).".format(
