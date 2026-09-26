@@ -46,6 +46,33 @@
 
 
 #include <elementAPI.h>
+#include <vector>   // Ladruno WP-127: the optional ModifiedEuler substep trace
+
+// Ladruno WP-127 (TIMs F21 / F10b(a)): an OPTIONAL per-substep trace of
+// ModifiedEuler, filled only while a caller has attached one through
+// ManzariDafalias::mLadrunoTrace (today: the `ladrunoSANISANDReplay` command,
+// on a private material copy, for the duration of one update). Bounded:
+// records past `capRecords` are counted in `dropped`, never stored. Five
+// doubles per record: T at the start of the substep, dT, the error norm
+// (NaN when the substep was cut before the error test), the outcome code
+// (see ManzariDafalias.cpp, ladrunoTraceSubstep) and at-dT_min (0/1).
+#define LADRUNO_ME_TRACE_WIDTH 5                                            // Ladruno WP-127
+struct LadrunoMESubstepTrace {                                              // Ladruno WP-127
+    std::vector<double> rec;                                                // Ladruno WP-127
+    int    capRecords;                                                      // Ladruno WP-127
+    double dropped;                                                         // Ladruno WP-127
+    LadrunoMESubstepTrace() : capRecords(0), dropped(0.0) {}                // Ladruno WP-127
+};                                                                          // Ladruno WP-127
+// A NON-OWNING pointer that is never copied: the fork wrappers' getCopy(void)
+// is a memberwise `*clone = *this`, and a copied pointer would let a Gauss-point
+// clone write into a buffer that belongs to someone else's stack frame. Copy
+// construction and assignment therefore both yield a DETACHED slot.
+struct LadrunoMETraceSlot {                                                 // Ladruno WP-127
+    LadrunoMESubstepTrace *p;                                               // Ladruno WP-127
+    LadrunoMETraceSlot() : p(0) {}                                          // Ladruno WP-127
+    LadrunoMETraceSlot(const LadrunoMETraceSlot &) : p(0) {}                // Ladruno WP-127
+    LadrunoMETraceSlot &operator=(const LadrunoMETraceSlot &) { p = 0; return *this; }  // Ladruno WP-127
+};                                                                          // Ladruno WP-127
 
 class ManzariDafalias : public NDMaterial
 {
@@ -248,6 +275,62 @@ class ManzariDafalias : public NDMaterial
 	int     mMaxSubstepsInME;
 	int     mSubstepsTakenInME;
 	bool    mSubstepCapHitInME;
+	// Ladruno WP-127 (TIMs F20(a)): a per-INSTANCE census of what ModifiedEuler
+	// did, i.e. one per Gauss point. Unlike mSubstepsTakenInME above (reset at
+	// every integrate(), and by LadrunoSANISAND::revertToLastCommit under
+	// -implex) these survive revertToLastCommit, so the post-mortem of a FAILED
+	// analyze can still read what the failed step cost -- the TIMs dump read
+	// `substeps` = 0 at every point for exactly that reason. Zeroed at
+	// construction and by LadrunoSANISAND::revertToStart(); carried by getCopy
+	// and the LadrunoSANISAND wire. Doubles (exact to 2^53), written with
+	// `+= 1.0` only: they are READ by nothing in the integrator, so no computed
+	// number can depend on them (pinned byte-identical by
+	// tests/test_ladruno_sanisand_replay_counters.py). Columns (LMS_*):
+	//   cumulative since revertToStart:
+	//     UPDATES        integrate() calls (any stage, any scheme)
+	//     ME_CALLS       ModifiedEuler() calls (IntScheme 1, and 0/MaxEnergy's inner calls)
+	//     SUBSTEPS       substep ATTEMPTS (loop iterations) -- closes as
+	//                    ACCEPTED + REJECTED_ERR + FORCED_DTMIN + REJECTED_LOWP
+	//                    + ABANDON_LOWP + CAP_HITS
+	//     ACCEPTED       error test passed
+	//     REJECTED_ERR   error test failed at dT > dT_min, retried smaller
+	//     FORCED_DTMIN   error test FAILED at dT == dT_min and the substep was
+	//                    ACCEPTED anyway (elastic tangent, re-derived alpha) --
+	//                    the silent accept of WP-127 finding C
+	//     FORCED_CLAMP   ... of which the radial eta -> Mc stress clamp fired
+	//     REJECTED_LOWP  p < p_r after a stage: dT cut by 10
+	//     ABANDON_LOWP   p < p_r at dT == dT_min: ModifiedEuler RETURNS with
+	//                    T < 1 and reports nothing (the increment is partially
+	//                    integrated, silently)
+	//     CAP_HITS       -maxSubsteps fired (the update was refused)
+	//     ENTRY_PMIN     p below p_min + p_r on ENTRY: stress rebuilt at p_min
+	//     PN_RESETS      explicit_integrator's p_n < p_r reset (sigma := p_min I,
+	//                    alpha := 0, no integration)
+	//     MAX_ONE_UPDATE the most substeps any single update took
+	//   the LAST update that entered ModifiedEuler (reset at that update's first
+	//   ModifiedEuler call, so an elastic or zero-increment settle pass -- e.g.
+	//   the one Domain::revertToLastCommit pushes through -- does not erase it):
+	//     LAST_SUBSTEPS, LAST_FORCED, LAST_ABANDON, LAST_CAP
+	enum {                                                                   // Ladruno WP-127
+	    LMS_UPDATES = 0, LMS_ME_CALLS, LMS_SUBSTEPS, LMS_ACCEPTED,           // Ladruno WP-127
+	    LMS_REJECTED_ERR, LMS_FORCED_DTMIN, LMS_FORCED_CLAMP,                // Ladruno WP-127
+	    LMS_REJECTED_LOWP, LMS_ABANDON_LOWP, LMS_CAP_HITS, LMS_ENTRY_PMIN,   // Ladruno WP-127
+	    LMS_PN_RESETS, LMS_MAX_ONE_UPDATE, LMS_LAST_SUBSTEPS, LMS_LAST_FORCED, // Ladruno WP-127
+	    LMS_LAST_ABANDON, LMS_LAST_CAP, LMS_COUNT                            // Ladruno WP-127
+	};                                                                       // Ladruno WP-127
+	double  mLadrunoMEStats[LMS_COUNT];                                      // Ladruno WP-127
+	bool    mLadrunoMEEnteredThisUpdate;                                     // Ladruno WP-127
+	// Which explicit_integrator branch the last update took (-1 = none: elastic
+	// stage or an implicit scheme; 0 elastic; 1 start outside the yield surface;
+	// 2 elastic->plastic transition; 3 plastic; 4 unload-then-plastic; 5 the
+	// p_n < p_r reset) and the intersection factor when 2/4 (else NaN).
+	// Diagnostics for the replay; transient, not on any wire.
+	int     mLadrunoLastPath;                                                // Ladruno WP-127
+	double  mLadrunoLastElasticRatio;                                        // Ladruno WP-127
+	LadrunoMETraceSlot mLadrunoTrace;                                        // Ladruno WP-127 (F21)
+	void    ladrunoResetMEStats(void);                                       // Ladruno WP-127
+	void    ladrunoTraceSubstep(double T, double dT, double err, int code, bool atMin); // Ladruno WP-127
+	void    ladrunoMELowP(double T, double dT, bool abandon, int code);      // Ladruno WP-127
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
 	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,

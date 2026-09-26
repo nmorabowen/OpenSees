@@ -31,6 +31,7 @@
 #include <string.h>
 #include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
 #include <atomic>                  // Ladruno WP-107: the two ModifiedEuler warn budgets
+#include <limits>                  // Ladruno WP-127: quiet_NaN for the substep trace
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <algorithm>
@@ -246,6 +247,7 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mMaxSubstepsInME   = 0;
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
+    ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
 
     initialize();
 }
@@ -336,6 +338,7 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mMaxSubstepsInME   = 0;
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
+    ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
 
     initialize();
 }
@@ -403,6 +406,7 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     mMaxSubstepsInME   = 0;
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
+    ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
 
     this->initialize();
 }
@@ -469,6 +473,7 @@ ManzariDafalias ::ManzariDafalias()
     mMaxSubstepsInME   = 0;
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
+    ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
 
     this->initialize();
 }
@@ -1022,6 +1027,14 @@ void ManzariDafalias::integrate()
     // Numerically inert -- at the default cap 0 nothing branches on either value.
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
+    // Ladruno WP-127 (F20a): diagnostics only -- nothing in the integrator reads
+    // any of these four. The LAST_* census columns are NOT reset here but at this
+    // update's first ModifiedEuler() call (see there), so a zero-increment settle
+    // pass that never reaches ModifiedEuler cannot erase them.
+    mLadrunoMEStats[LMS_UPDATES] += 1.0;                            // Ladruno WP-127
+    mLadrunoMEEnteredThisUpdate = false;                            // Ladruno WP-127
+    mLadrunoLastPath = -1;                                          // Ladruno WP-127
+    mLadrunoLastElasticRatio = std::numeric_limits<double>::quiet_NaN(); // Ladruno WP-127
 
     // update alpha_in in case of unloading
 	// I assume full elastic step and check if the new stress direction is "dramatically" 
@@ -1197,6 +1210,7 @@ void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector&
         NextFabric        = CurFabric;
         NextDGamma        = 0;
         aCep_Consistent = aCep = aC;
+        mLadrunoLastPath = 0;                                       // Ladruno WP-127
 
         return;
 
@@ -1209,6 +1223,8 @@ void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector&
                 opserr << "Manzari Dafalias (tag = " << this->getTag() << ") : p_n < 0, This should have not happened!" << endln;
             NextStress = m_Pmin * mI1;
             NextAlpha.Zero();
+            mLadrunoLastPath = 5;                                   // Ladruno WP-127
+            mLadrunoMEStats[LMS_PN_RESETS] += 1.0;                  // Ladruno WP-127
             return;
         }
         
@@ -1218,12 +1234,15 @@ void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector&
             if (debugFlag) opserr << "stress state outside the yield surface!" << endln;
             if (debugFlag) opserr << "ManzariDafalias : Encountered an illegal stress state! Tag: " << this->getTag() << endln;
             if (debugFlag) opserr << "                  f = " << GetF(CurStress, CurAlpha) << endln;
+            mLadrunoLastPath = 1;                                   // Ladruno WP-127
             (this->*exp_int)(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, NextElasticStrain, NextStress, NextAlpha, 
                     NextFabric, NextDGamma, NextVoidRatio, G, K, aC, aCep, aCep_Consistent);
 
         } else if (fn < -mTolF) {
             // This is a transition from elastic to plastic
             elasticRatio = IntersectionFactor(CurStress, CurStrain, NextStrain, CurAlpha, 0.0, 1.0);
+            mLadrunoLastPath = 2;                                   // Ladruno WP-127
+            mLadrunoLastElasticRatio = elasticRatio;                // Ladruno WP-127
             // dSigma         = DoubleDot4_2(aC, elasticRatio*(NextStrain - CurStrain));
 			dElasStrain = dStrain; dElasStrain *= elasticRatio;
 			dSigma = DoubleDot4_2(aC, dElasStrain);
@@ -1238,11 +1257,14 @@ void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector&
 
             if (DoubleDot2_2_Contr(GetNormalToYield(CurStress, CurAlpha),dSigma)/(GetNorm_Contr(dSigma) == 0 ? 1.0 : GetNorm_Contr(dSigma)) > (- sqrt(mTolF))) {
                 // This is a pure plastic step
+                mLadrunoLastPath = 3;                               // Ladruno WP-127
                 (this->*exp_int)(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, NextElasticStrain, NextStress, NextAlpha, 
                     NextFabric, NextDGamma, NextVoidRatio, G, K, aC, aCep, aCep_Consistent);
             } else {
                 // This is an elastic unloding followed by plastic loading
                 elasticRatio = IntersectionFactor_Unloading(CurStress, CurStrain, NextStrain, CurAlpha);
+                mLadrunoLastPath = 4;                               // Ladruno WP-127
+                mLadrunoLastElasticRatio = elasticRatio;            // Ladruno WP-127
                 // dSigma         = DoubleDot4_2(aC, elasticRatio*(NextStrain - CurStrain));
 				dElasStrain = dStrain; dElasStrain *= elasticRatio;
 				dSigma = DoubleDot4_2(aC, dElasStrain);
@@ -1472,6 +1494,56 @@ void ManzariDafalias::ForwardEuler(const Vector& CurStress, const Vector& CurStr
 }
 
 
+// Ladruno WP-127 (F20a / F21): the ModifiedEuler census and trace helpers.
+// Pure bookkeeping: none of them reads or writes anything the integrator reads.
+void ManzariDafalias::ladrunoResetMEStats(void)                     // Ladruno WP-127
+{
+    for (int i = 0; i < LMS_COUNT; i++)
+        mLadrunoMEStats[i] = 0.0;
+    mLadrunoMEEnteredThisUpdate = false;
+    mLadrunoLastPath = -1;
+    mLadrunoLastElasticRatio = std::numeric_limits<double>::quiet_NaN();
+}
+
+// Outcome codes (the `code` column of the replay trace):
+//   0 accept             error test passed
+//   1 rejectErr          error test failed at dT > dT_min: retried at q*dT
+//   2 forcedAtDTmin      error test FAILED at dT == dT_min and ACCEPTED (finding C)
+//   3 forcedAtDTminClamp ... and the radial eta -> Mc clamp fired
+//   4 rejectLowPStage1   p < p_r after the first stage: dT cut by 10
+//   5 rejectLowPEnd      p < p_r at the end of the substep: dT cut by 10
+//   6 abandonLowP        p < p_r at dT == dT_min: RETURNS with T < 1, silently
+//   7 capHit             -maxSubsteps fired: the update is refused
+// T is the pseudo-time at the START of the substep; err is NaN for 4-7.
+void ManzariDafalias::ladrunoTraceSubstep(double T, double dT, double err, int code, bool atMin)  // Ladruno WP-127
+{
+    LadrunoMESubstepTrace *t = mLadrunoTrace.p;
+    if (t == 0)
+        return;
+    if ((int)(t->rec.size() / LADRUNO_ME_TRACE_WIDTH) >= t->capRecords) {
+        t->dropped += 1.0;
+        return;
+    }
+    t->rec.push_back(T);
+    t->rec.push_back(dT);
+    t->rec.push_back(err);
+    t->rec.push_back((double)code);
+    t->rec.push_back(atMin ? 1.0 : 0.0);
+}
+
+void ManzariDafalias::ladrunoMELowP(double T, double dT, bool abandon, int code)  // Ladruno WP-127
+{
+    if (abandon) {
+        mLadrunoMEStats[LMS_ABANDON_LOWP] += 1.0;
+        mLadrunoMEStats[LMS_LAST_ABANDON] += 1.0;
+        ladrunoTraceSubstep(T, dT, std::numeric_limits<double>::quiet_NaN(), 6, true);
+    } else {
+        mLadrunoMEStats[LMS_REJECTED_LOWP] += 1.0;
+        ladrunoTraceSubstep(T, dT, std::numeric_limits<double>::quiet_NaN(), code, false);
+    }
+}
+
+
 void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurStrain, const Vector& CurElasticStrain,
         const Vector& CurAlpha, const Vector& CurFabric, const Vector& alpha_in, const Vector& NextStrain,
         Vector& NextElasticStrain, Vector& NextStress, Vector& NextAlpha, Vector& NextFabric,
@@ -1498,6 +1570,19 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
     // NextElasticStrain = CurElasticStrain + (NextStrain - CurStrain);
 	dStrain = NextStrain; dStrain -= CurStrain;
 	NextElasticStrain = CurElasticStrain; NextElasticStrain += dStrain;
+
+    // Ladruno WP-127 (F20a): the census. The LAST_* columns describe the last
+    // update that ENTERED ModifiedEuler, so they are reset here, at that
+    // update's first call (MaxEnergyInc/MaxStrainInc may call this several
+    // times per update), and not in integrate(). Diagnostics only.
+    if (!mLadrunoMEEnteredThisUpdate) {                             // Ladruno WP-127
+        mLadrunoMEEnteredThisUpdate = true;                         // Ladruno WP-127
+        mLadrunoMEStats[LMS_LAST_SUBSTEPS] = 0.0;                   // Ladruno WP-127
+        mLadrunoMEStats[LMS_LAST_FORCED]   = 0.0;                   // Ladruno WP-127
+        mLadrunoMEStats[LMS_LAST_ABANDON]  = 0.0;                   // Ladruno WP-127
+        mLadrunoMEStats[LMS_LAST_CAP]      = 0.0;                   // Ladruno WP-127
+    }                                                               // Ladruno WP-127
+    mLadrunoMEStats[LMS_ME_CALLS] += 1.0;                           // Ladruno WP-127
 
     aC = GetStiffness(K, G);
     aD = GetCompliance(K, G);
@@ -1535,6 +1620,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // one integration scheme WP-107 threads, so these two counters are the
         // only ones in the threaded path. Still a diagnostic budget and nothing
         // else: the print order across threads is not defined, only the count.
+        mLadrunoMEStats[LMS_ENTRY_PMIN] += 1.0;                             // Ladruno WP-127
         static std::atomic<int> ladrunoClampWarnCount(0);                   // Ladruno
         if (ladrunoClampWarnCount.load() < 10) {                             // Ladruno
             opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
@@ -1641,8 +1727,15 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         // response all carry an int); only the increment is guarded.
         if (mSubstepsTakenInME < INT_MAX)                               // Ladruno
             ++mSubstepsTakenInME;
+        mLadrunoMEStats[LMS_SUBSTEPS] += 1.0;                           // Ladruno WP-127
+        mLadrunoMEStats[LMS_LAST_SUBSTEPS] += 1.0;                      // Ladruno WP-127
+        if (mLadrunoMEStats[LMS_LAST_SUBSTEPS] > mLadrunoMEStats[LMS_MAX_ONE_UPDATE])  // Ladruno WP-127
+            mLadrunoMEStats[LMS_MAX_ONE_UPDATE] = mLadrunoMEStats[LMS_LAST_SUBSTEPS];  // Ladruno WP-127
         if (mMaxSubstepsInME > 0 && mSubstepsTakenInME > mMaxSubstepsInME) {
             mSubstepCapHitInME = true;
+            mLadrunoMEStats[LMS_CAP_HITS] += 1.0;                       // Ladruno WP-127
+            mLadrunoMEStats[LMS_LAST_CAP] = 1.0;                        // Ladruno WP-127
+            ladrunoTraceSubstep(T, dT, std::numeric_limits<double>::quiet_NaN(), 7, dT == dT_min); // Ladruno WP-127
             // PROCESS-WIDE budget, not per instance: every Gauss point is its own
             // material object (getCopy(const char*) runs a full constructor per
             // integration point), so a per-instance latch is not a throttle. Same
@@ -1773,12 +1866,15 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 
         if (p < m_Presidual)
         {
-            if (dT == dT_min)
+            if (dT == dT_min) {                                     // Ladruno WP-127: braces only
+                ladrunoMELowP(T, dT, true, 4);                      // Ladruno WP-127
                 return;
+            }                                                       // Ladruno WP-127
+            ladrunoMELowP(T, dT, false, 4);                         // Ladruno WP-127
             dT = fmax(0.1 * dT, dT_min);
             continue;
         }
-            
+
         // GetStateDependent(NextStress + dSigma1, NextAlpha + dAlpha1, NextFabric + dFabric1, NextVoidRatio, alpha_in, n, d, b,
         //         Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0, A, D, B, C, R);
 		tmp1.Zero();  tmp1 += NextAlpha; tmp1 += dAlpha1;  // tmp1 is NextAlpha + dAlpha1 until calculating dSigma2
@@ -1855,11 +1951,14 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 		nAlpha += NextAlpha;
 
         p = one3 * GetTrace(nStress) + m_Presidual;
-        
+
         if (p < m_Presidual)
         {
-            if (dT == dT_min)
+            if (dT == dT_min) {                                     // Ladruno WP-127: braces only
+                ladrunoMELowP(T, dT, true, 5);                      // Ladruno WP-127
                 return;
+            }                                                       // Ladruno WP-127
+            ladrunoMELowP(T, dT, false, 5);                         // Ladruno WP-127
             dT = fmax(0.1 * dT, dT_min);
             continue;
         }
@@ -1882,6 +1981,12 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             q = fmax(0.8 * sqrt(TolE / curStepError), 0.1);
 
             if (dT == dT_min) {
+                // Ladruno WP-127 (finding C): this branch ACCEPTS a substep that
+                // FAILED the error test -- elastic tangent, a radial clamp to m_Mc
+                // (not M^b; compression side only) and a re-derived alpha. Counted
+                // (FORCED_DTMIN / FORCED_CLAMP) and traced; the numerics are
+                // untouched (the braces below only add the flag).
+                bool ladrunoClampedMc = false;                      // Ladruno WP-127
                 mUseElasticTan = true;
 
 				// NextElasticStrain -= 0.5* (dPStrain1 + dPStrain2);
@@ -1889,17 +1994,29 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
 				NextElasticStrain -= tmp0;
                 NextStress = nStress;
                 double eta = sqrt(13.5) * GetNorm_Contr(GetDevPart(NextStress)) / GetTrace(NextStress);
-                if (eta > m_Mc)
+                if (eta > m_Mc) {                                   // Ladruno WP-127: braces only
                     NextStress = one3 * GetTrace(NextStress) * mI1 + m_Mc / eta * GetDevPart(NextStress);
+                    ladrunoClampedMc = true;                        // Ladruno WP-127
+                }                                                   // Ladruno WP-127
                 NextAlpha  = CurAlpha + 3.0 * (GetDevPart(NextStress)/GetTrace(NextStress) - GetDevPart(CurStress)/GetTrace(CurStress));
-                
+
+                mLadrunoMEStats[LMS_FORCED_DTMIN] += 1.0;           // Ladruno WP-127
+                mLadrunoMEStats[LMS_LAST_FORCED]  += 1.0;           // Ladruno WP-127
+                if (ladrunoClampedMc)                               // Ladruno WP-127
+                    mLadrunoMEStats[LMS_FORCED_CLAMP] += 1.0;       // Ladruno WP-127
+                ladrunoTraceSubstep(T, dT, curStepError, ladrunoClampedMc ? 3 : 2, true); // Ladruno WP-127
                 T += dT;
-            }
+            } else {                                                // Ladruno WP-127
+                mLadrunoMEStats[LMS_REJECTED_ERR] += 1.0;           // Ladruno WP-127
+                ladrunoTraceSubstep(T, dT, curStepError, 1, false); // Ladruno WP-127
+            }                                                       // Ladruno WP-127
             dT = fmax(q * dT, dT_min);
         } else {
-            
-            if (debugFlag) 
+
+            if (debugFlag)
                 opserr << "+++ Successful increment: T = " << T << ", dT = " << dT << endln;
+            mLadrunoMEStats[LMS_ACCEPTED] += 1.0;                   // Ladruno WP-127
+            ladrunoTraceSubstep(T, dT, curStepError, 0, dT == dT_min); // Ladruno WP-127
 
 			// NextElasticStrain -= 0.5* (dPStrain1 + dPStrain2);
 			tmp0 = dPStrain1; tmp0 += dPStrain2; tmp0 *= 0.5;
