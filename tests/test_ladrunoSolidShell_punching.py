@@ -90,10 +90,11 @@ def build_solid():
     Returns dict(col, supp, core, tens)."""
     ops.wipe()
     ops.model('basic', '-ndm', 3, '-ndf', 3)
-    # pinned to the pre-2026-09 semantics this validation band was set with (ADR-31 §11: the defaults are now
-    # the CDPM2 bilinear tension law + Gc as a physical energy) — re-baseline before dropping the pin.
+    # SHIPPED defaults (ADR-31 §11: CDPM2 bilinear tension law + Gc as a physical energy). Re-baselined
+    # 2026-09-26 against the pre-2026-09 semantics (-tensionLaw exp -gcLegacy): punching limit 317.1 vs
+    # 315.6 kN total (+0.5 %), steel 0.123 vs 0.120 fy, upper-core omega 1.00 both — the band is unchanged.
     ops.nDMaterial('LadrunoConcrete3D', 1, EC, NU, FC, FT, GF, GC,
-                   '-autoRegularization', '-implex', '-tensionLaw', 'exp', '-gcLegacy')
+                   '-autoRegularization', '-implex')
     ops.nDMaterial('ElasticIsotropic', 2, 3.0 * EC, NU)      # column stub
     n = len(XS) - 1
     for i in range(n + 1):
