@@ -81,6 +81,15 @@ Models run under the **build python** (matches the pyd ABI); checks run under th
 (The bold rows are the new element-type coverage. `mp_parallel` is openseesmp-only
 and is run separately.)
 
+**`mp_reaction` (WP-126, openseesmp-only, run separately):** a fixed support node shared by
+two partitions. `mp_reaction_model.py` on 1 and 2 ranks, then `mp_reaction_check.py`. It
+asserts three things:
+- `PARTITION_REDUCTION` is `SUM` on reactions and `NONE` on displacement;
+- stitching per the contract (sum `SUM` rows of a shared node) reproduces the serial
+  reaction exactly. First-partition-wins gives partition 0's share only, which is the
+  pre-WP-126 apeGmsh bug;
+- the partitioned `-envelope` of the reaction is refused.
+
 > **Note — the EIGEN gate caught (and now guards) a real recorder bug.** The
 > modal/eigen write path originally wrote **no** eigenvector data: `recordModeChannel`
 > called the StreamingSink `begin()` (which makes `DATA` a chunked *dataset*) then

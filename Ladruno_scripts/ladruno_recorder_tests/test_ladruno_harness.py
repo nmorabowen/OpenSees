@@ -228,6 +228,46 @@ def test_validator_envelopes(synth):
     assert any("ABSMAX" in p for p in lf.validate(synth))
 
 
+def test_validator_partition_reduction(synth):
+    """PARTITION_REDUCTION (WP-126): optional (pre-WP-126 files lack it); when present
+    NONE|SUM|UNSUPPORTED; in a PARTITIONED file an envelope must be NONE, because a
+    per-partition extreme of a partial result cannot be recombined."""
+    import h5py
+
+    with h5py.File(synth, "a") as f:
+        on_nodes = f["MODEL_STAGE[0]/RESULTS/ON_NODES"]
+        first = on_nodes[next(iter(on_nodes))]
+        first.attrs["PARTITION_REDUCTION"] = "SUM"
+    assert lf.validate(synth) == []                       # valid value, serial file
+
+    with h5py.File(synth, "a") as f:
+        on_nodes = f["MODEL_STAGE[0]/RESULTS/ON_NODES"]
+        on_nodes[next(iter(on_nodes))].attrs["PARTITION_REDUCTION"] = "MAX"
+    assert any("PARTITION_REDUCTION" in p for p in lf.validate(synth))
+    with h5py.File(synth, "a") as f:
+        on_nodes = f["MODEL_STAGE[0]/RESULTS/ON_NODES"]
+        on_nodes[next(iter(on_nodes))].attrs["PARTITION_REDUCTION"] = "NONE"
+
+    mn = np.array([[0.0, 5.0]])
+    mx = np.array([[0.0, 10.0]])
+    with h5py.File(synth, "a") as f:
+        env = (f["MODEL_STAGE[0]/RESULTS"].create_group("ENVELOPES")
+               .create_group("ON_NODES").create_group("REACTION_FORCE"))
+        env.create_dataset("ID", data=np.array([[1]], dtype=np.int64))
+        env.create_dataset("MIN", data=mn)
+        env.create_dataset("MAX", data=mx)
+        env.create_dataset("ABSMAX", data=np.maximum(np.abs(mn), np.abs(mx)))
+        env.create_dataset("ARG_STEP", data=np.zeros((1, 2), dtype=np.int32))
+        env.attrs["PARTITION_REDUCTION"] = "SUM"
+    assert lf.validate(synth) == []                       # serial: a SUM envelope is fine
+
+    with h5py.File(synth, "a") as f:
+        f["INFO"].attrs["PARTITIONED"] = 1
+        f["INFO"].attrs["PARTITION_ID"] = 0
+        f["INFO"].attrs["NUM_PARTITIONS"] = 2
+    assert any("unrecoverable" in p for p in lf.validate(synth))   # partitioned: refused
+
+
 def test_validator_accepts_bary_simplex_ndir(synth):
     """The tri group uses PARAM_DOMAIN='bary' with NDIR=2 decoupled from ORDER=(1,)
     -- validate() must accept it (schema-v1 finding (f))."""

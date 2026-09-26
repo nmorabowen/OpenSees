@@ -152,6 +152,7 @@ namespace ladruno {
 		// as the time-series result group (finding (h): authoritative names in-file).
 		std::string m_display_name, m_components_csv, m_dimension, m_description;
 		int m_result_type, m_data_type;
+		std::string m_partition_reduction;   // WP-126: PARTITION_REDUCTION attr ("NONE"/"SUM"/"UNSUPPORTED")
 		std::vector<int> m_ids;   // cached ids() snapshot for the ID dataset
 		std::vector<double> m_min;
 		std::vector<double> m_max;

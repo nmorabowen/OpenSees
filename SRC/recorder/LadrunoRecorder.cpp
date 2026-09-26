@@ -108,6 +108,7 @@ public:
 		: filename()
 		, send_self_count(0)
 		, p_id(0)
+		, is_partitioned(false)
 		, initialized(false)
 		, first_domain_changed_done(false)
 		, info()
@@ -143,6 +144,9 @@ public:
 	// file becomes "<stem>.part-<p_id>.ladruno" whenever send_self_count != 0.
 	int send_self_count;
 	int p_id;
+	// WP-126: resolved in initialize() (either signal above); read at channel
+	// creation to refuse -envelope of a source whose partitions are partials.
+	bool is_partitioned;
 	bool initialized;
 	// first_domain_changed_done — false until the first record() resolves the
 	// model-stage stamp; thereafter a stamp change triggers a model rebuild
@@ -522,6 +526,7 @@ int LadrunoRecorder::initialize()
 		}
 	}
 	m_data->p_id = part_id;
+	m_data->is_partitioned = is_partitioned;
 
 	// Per-partition output filename: "<stem>.part-<part_id>.ladruno" when this is
 	// one rank of a partitioned run (so N processes never race to write one file —
@@ -1469,6 +1474,27 @@ int LadrunoRecorder::writeSections()
 /* node sources                                                          */
 /* ===================================================================== */
 
+namespace {
+	// WP-126: in a partitioned run each partition file holds only its own share of
+	// an additive result (e.g. the reaction at a support on a partition interface),
+	// so the reader must combine the files. A per-partition EXTREME of a partial can
+	// never be recombined (max(a+b) != max a + max b), so -envelope is refused for any
+	// source whose PARTITION_REDUCTION is not "NONE". Returns true = skip the channel.
+	bool refusePartitionedEnvelope(bool envelope_mode, bool is_partitioned,
+	                               const ladrunons::ResultSource* src)
+	{
+		if (!envelope_mode || !is_partitioned ||
+		    std::strcmp(src->partitionReduction(), "NONE") == 0)
+			return false;
+		opserr << "LadrunoRecorder WARNING: -envelope of '" << src->schema().name.c_str()
+		       << "' is NOT recorded in this partitioned run: each partition holds only a "
+		          "partial (PARTITION_REDUCTION=" << src->partitionReduction()
+		       << "), and a per-partition extreme cannot be recombined. Record it without "
+		          "-envelope; the reader combines the partition files.\n";
+		return true;
+	}
+}
+
 int LadrunoRecorder::initNodeSources()
 {
 	ladrunons::detail::ProcessInfo& info = m_data->info;
@@ -1553,6 +1579,11 @@ int LadrunoRecorder::initNodeSources()
 
 		if (src == 0)
 			continue;
+		if (!is_modes &&
+		    refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
+			delete src;   // WP-126: a partitioned envelope of a partial is unrecoverable
+			continue;
+		}
 
 		ch.source = src;
 		// Envelope mode swaps the sink to an EnvelopeSink for ordinary results;
@@ -2122,24 +2153,44 @@ int LadrunoRecorder::initDomainSources()
 {
 	ladrunons::detail::ProcessInfo& info = m_data->info;
 
+	// WP-126: energy is PARTITION_REDUCTION=UNSUPPORTED (shared-node KE counted in
+	// every partition that holds the node; RES/ERR derived). Streaming still writes each
+	// partition's partial, flagged, so nothing is lost -- but say so once.
+	if (m_data->is_partitioned && !m_data->envelope_mode &&
+	    (m_data->energy_requested || !m_data->energy_region_tags.empty()))
+		opserr << "LadrunoRecorder WARNING: energyBalance in a partitioned run is written "
+		          "per partition and is NOT mergeable (PARTITION_REDUCTION=UNSUPPORTED): "
+		          "the per-step reduction is not implemented (ADR D6, v3b).\n";
+
 	// whole-model energy -> ON_DOMAIN/energyBalance
 	if (m_data->energy_requested) {
-		private_data::DomainChannel ch;
-		ch.source = new ladrunons::EnergyBalanceSource(info);
-		ch.sink = m_data->envelope_mode
-			? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnDomain)
-			: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnDomain);
-		m_data->domain_channels.push_back(ch);
+		ladrunons::ResultSource* src = new ladrunons::EnergyBalanceSource(info);
+		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
+			delete src;
+		} else {
+			private_data::DomainChannel ch;
+			ch.source = src;
+			ch.sink = m_data->envelope_mode
+				? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnDomain)
+				: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnDomain);
+			m_data->domain_channels.push_back(ch);
+		}
 	}
 
 	// per-region energy -> ON_REGIONS/energyBalance
 	if (!m_data->energy_region_tags.empty()) {
-		private_data::DomainChannel ch;
-		ch.source = new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags);
-		ch.sink = m_data->envelope_mode
-			? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnRegions)
-			: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnRegions);
-		m_data->domain_channels.push_back(ch);
+		ladrunons::ResultSource* src =
+			new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags);
+		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
+			delete src;
+		} else {
+			private_data::DomainChannel ch;
+			ch.source = src;
+			ch.sink = m_data->envelope_mode
+				? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnRegions)
+				: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnRegions);
+			m_data->domain_channels.push_back(ch);
+		}
 	}
 
 	return 0;

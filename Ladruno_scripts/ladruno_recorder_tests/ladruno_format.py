@@ -476,8 +476,36 @@ def validate(path: str) -> list[str]:
             _validate_element_results(r, stage, err)
             _validate_nodal_results(r, stage, err)
             _validate_envelopes(r, stage, err)
+            _validate_partition_reduction(r, stage, err, bool(int(info.get("PARTITIONED", 0))))
 
     return problems
+
+
+PARTITION_REDUCTIONS = ("NONE", "SUM", "UNSUPPORTED")
+
+
+def _validate_partition_reduction(r: LadrunoReader, stage: str, err, partitioned: bool) -> None:
+    """PARTITION_REDUCTION (WP-126, schema §7.1): how a reader combines a result across
+    partition files. Optional (files written before WP-126 lack it); when present it must
+    be NONE|SUM|UNSUPPORTED. In a PARTITIONED file an envelope group must be NONE: the
+    recorder refuses to envelope a partial, because a per-partition extreme cannot be
+    recombined."""
+    path = f"{stage}/RESULTS"
+    if path not in r.f:
+        return
+
+    def visit(name, obj):
+        if not hasattr(obj, "attrs") or "PARTITION_REDUCTION" not in obj.attrs:
+            return
+        val = _attr(obj, "PARTITION_REDUCTION")
+        ctx = f"{path}/{name}"
+        if val not in PARTITION_REDUCTIONS:
+            err(f"{ctx}: PARTITION_REDUCTION {val!r} not in {PARTITION_REDUCTIONS}")
+        elif partitioned and name.startswith("ENVELOPES/") and val != "NONE":
+            err(f"{ctx}: envelope of a {val} result in a partitioned file "
+                f"(a per-partition extreme of a partial is unrecoverable)")
+
+    r.f[path].visititems(visit)
 
 
 def _validate_envelopes(r: LadrunoReader, stage: str, err) -> None:
