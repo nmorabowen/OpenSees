@@ -301,7 +301,7 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
                   qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
                   ct_temper="none", tension_law="exp", eps_fc=0.0, flow_potential="legacy",
-                  max_subincr=0, compression_drive="legacy"):
+                  max_subincr=0, compression_drive="legacy", tc_temper="none"):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -318,7 +318,7 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
                 qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper,
                 tension_law=tension_law, eps_fc=eps_fc, flow_potential=flow_potential,
-                max_subincr=max_subincr, compression_drive=compression_drive)
+                max_subincr=max_subincr, compression_drive=compression_drive, tc_temper=tc_temper)
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +358,58 @@ def tensile_damage_weight(mp, ac, depl6, w_stress, V_stress):
         tens = sum(Deig[a, a] ** 2 for a in range(3) if w_stress[a] > floor)   # tensile-stress directions
         return float(np.sqrt(tens) / nrm)
     return 1.0   # 'none' (literal CDPM2)
+
+
+# ---------------------------------------------------------------------------
+# PV20 — tension->compression damage-coupling TEMPER (the `-tcTemper` modes; the mirror of -ctTemper).
+# Literal CDPM2 (Eq.48) feeds the compressive plastic history kdc1 with alpha_c * beta_c * ||d eps_p||, the
+# FULL plastic-strain increment. In a cracked-then-compressed state (RC panel in shear: crack at ~45 deg, strut
+# orthogonal) CDPM2 represents the crack opening as plastic strain along the TENSILE principal; once the strut
+# dominates (alpha_c -> 1) that crack-opening plastic strain is counted as compressive (crushing) damage history,
+# and the strut softens at ~0.2 fc while the steel is elastic (PV20: tau 1.76 -> 0.03 MPa vs test 4.26).
+#   'none' : w_c = 1 -> literal CDPM2 (byte-identical; `-tcTemper none`)
+#   'proj' : w_c = ||Phi d eps_p Phi|| / ||d eps_p||, Phi = diag(phi_a) in the effective-stress eigenframe,
+#            phi_a = 1 for sigma_bar_a <= TC_DEAD ft, 0 for sigma_bar_a >= TC_BAND ft, linear in between: 1 on
+#            non-tensile directions, 0 on a crack direction, continuous. The dead zone keeps a nominally-zero
+#            lateral effective stress (uniaxial-stress compression with omega_t ~ 1 leaves sigma_bar_lat ~ 1e-5 ft
+#            undetermined) on the literal path: w_c == 1.0 and eps_tilde_c == eps_tilde EXACTLY when every
+#            effective principal is <= TC_DEAD ft.
+# ---------------------------------------------------------------------------
+TC_DEAD, TC_BAND = 1.0e-3, 0.05
+
+
+def _tc_phi(mp, w_stress):
+    ft = mp["ft"]
+    return np.clip(1.0 - (np.asarray(w_stress, float) - TC_DEAD * ft) / ((TC_BAND - TC_DEAD) * ft), 0.0, 1.0)
+
+
+def compressive_damage_weight(mp, depl6, w_stress, V_stress):
+    """kdc1 (Eq.48) weight w_c for the -tcTemper modes (see the block comment above)."""
+    if mp.get("tc_temper", "none") != "proj":
+        return 1.0
+    if float(np.max(w_stress)) <= TC_DEAD * mp["ft"]:
+        return 1.0
+    M = voigt_to_mat(depl6)
+    nrm = float(np.sqrt(np.sum(M * M)))
+    if nrm <= 1.0e-300:
+        return 1.0
+    phi = _tc_phi(mp, w_stress)
+    Deig = V_stress.T @ M @ V_stress
+    P = phi[:, None] * Deig * phi[None, :]
+    return float(np.sqrt(np.sum(P * P)) / nrm)
+
+
+def compressive_equiv_strain(mp, w_stress, et):
+    """Equivalent strain that drives the CDPM2 compressive history (Eq.47). 'none': the full eps_tilde (literal).
+    'proj': eps_tilde of the COMPRESSIVE part (tensile principals scaled by phi_a -> zeroed on a crack; see
+    compressive_damage_weight) — identical whenever every effective principal is <= TC_DEAD ft; in a cracked state the hardened crack stress (qh2 ft, qh2 = 1 + Hp (kp-1)
+    grows to ~3 across a crack) no longer pushes kappa_dc past eps0 while the strut is at ~0.2 fc."""
+    if mp.get("tc_temper", "none") != "proj":
+        return et
+    if float(np.max(w_stress)) <= TC_DEAD * mp["ft"]:
+        return et
+    w = np.asarray(w_stress, float)
+    return equiv_strain_general(np.minimum(w, 0.0) + _tc_phi(mp, w) * np.maximum(w, 0.0), mp)
 
 
 def _yf_inv(xi, rho, r, mp):
@@ -2354,15 +2406,17 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     kdt1, kdt2 = state["kdt1"], state["kdt2"]
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
     wt_w = tensile_damage_weight(mp, ac, depl, w, V)         # P2h ctTemper weight (1 if 'none')
+    wc_w = compressive_damage_weight(mp, depl, w, V)         # PV20 tcTemper weight (1 if 'none')
     kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm_epl, xs, wt_w)   # Eq.44/45
     eqc, etp = state.get("eqc", 0.0), state.get("etp", 0.0)
     if _cdrive(mp) == "cdpm2":                            # B2: CDPM2 Eq.47-49
-        kdc, kdc1, kdc2, eqc, etp = _comp_hist_update_cdpm2(mp, kdc, kdc1, kdc2, eqc, etp, et, ac,
-                                                            beta_c(w, kp_new, mp), dnorm_epl, xs)
+        etc = compressive_equiv_strain(mp, w, et)          # PV20 tcTemper: eps_tilde of <sig_bar>- ('none': et)
+        kdc, kdc1, kdc2, eqc, etp = _comp_hist_update_cdpm2(mp, kdc, kdc1, kdc2, eqc, etp, etc, ac,
+                                                            beta_c(w, kp_new, mp), dnorm_epl * wc_w, xs)
     elif loading:                                         # same accumulation as drive_damaged_unified
         kdc += ac * above
         kdc2 += ac * above / xs
-        kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl / xs   # Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
+        kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl * wc_w / xs   # Eq.48 (full CDPM2 beta_c, Eq.50, P2f)
     et_max = max(et_max, et)
     # P2i — multiaxial-consistent TENSILE drive: E*eps_tilde (Eq.37 equivalent strain) instead of the
     # extreme tensile principal, GATED by the presence of a real tensile principal. In uniaxial tension
@@ -2651,16 +2705,19 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
     bc = beta_c(lam, kp_new, mp)                          # Eq.50 (P2f): scales the kdc1 plastic part
     wt_w = tensile_damage_weight(mp, ac, depl, lam, V)    # P2h ctTemper weight
+    wc_w = compressive_damage_weight(mp, depl, lam, V)    # PV20 tcTemper weight (1 if 'none')
+    dnc = dnorm * wc_w                                    # kdc1 plastic measure (== dnorm for 'none')
+    etc = compressive_equiv_strain(mp, lam, et)           # kdc drive (== et for 'none')
     kdt1, kdt2 = _tension_hist_update(mp, kdt1, kdt2, et, et_max, dnorm, xs, wt_w)
     bilin = _tlaw(mp) == "bilinear"
     cdc = _cdrive(mp) == "cdpm2"
     kdc_n, eqc_n, etp_n = kdc, state.get("eqc", 0.0), state.get("etp", 0.0)
     if cdc:                                               # B2: CDPM2 Eq.47-49
-        kdc, kdc1, kdc2, eqc_new, _ = _comp_hist_update_cdpm2(mp, kdc, kdc1, kdc2, eqc_n, etp_n, et, ac, bc,
-                                                              dnorm, xs)
+        kdc, kdc1, kdc2, eqc_new, _ = _comp_hist_update_cdpm2(mp, kdc, kdc1, kdc2, eqc_n, etp_n, etc, ac, bc,
+                                                              dnc, xs)
         c_adv = eqc_new > kdc_n
     elif loading:
-        kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnorm / xs
+        kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnc / xs
     et_max2 = max(et_max, et)
     Dt = E * et if float(np.max(lam)) > 1.0e-6 * ft else 0.0   # P2i: E*eps_tilde tensile drive (Eq.37)
     Dc = max(-float(np.min(lam)), 0.0)                          # compressive drive: extreme principal
@@ -2757,6 +2814,34 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
             dm = np.array(deps6, float); dm[j] -= hh
             dwt_w_deps[j] = (_wtw_of(dp) - _wtw_of(dm)) / (2.0 * hh)
 
+    # PV20 tcTemper 'proj': d(dnorm * w_c)/d(eps) (w_c by composite micro-FD through the return map, as the
+    # ctTemper 'proj' weight) and d(eps_tilde_c)/d(eps). 'none' -> dnc_deps == dnorm_deps, detc_deps == det_deps.
+    dnc_deps, detc_deps = dnorm_deps, det_deps
+    if mp.get("tc_temper", "none") == "proj" and float(np.max(lam)) > TC_DEAD * ft:
+        base = fc / E
+
+        def _wcw_of(d6):
+            sb, _, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
+            if beta < 1.0:
+                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
+            dpl = _plastic_strain6(sb, state["eps"] + d6, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
+            wv, Vv = np.linalg.eigh(voigt_to_mat(sb))
+            return compressive_damage_weight(mp, dpl, wv, Vv)
+
+        dwcw = np.zeros(6)
+        for j in range(6):
+            hh = 1.0e-6 * (abs(deps6[j]) + base)
+            dp = np.array(deps6, float); dp[j] += hh
+            dm = np.array(deps6, float); dm[j] -= hh
+            dwcw[j] = (_wcw_of(dp) - _wcw_of(dm)) / (2.0 * hh)
+        dnc_deps = wc_w * dnorm_deps + dnorm * dwcw
+
+        def _etc_of(s_):
+            ev = np.linalg.eigvalsh(voigt_to_mat(s_))
+            return compressive_equiv_strain(mp, ev, equiv_strain_general(ev, mp))
+
+        detc_deps = Ceff.T @ _dscalar_dsig(_etc_of, sig_bar)
+
     if bilin:
         # literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
         if det_raw > 0.0:
@@ -2777,8 +2862,8 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
             dkdt1 = wt_w * (dnorm_deps / xs - dnorm * dxs_deps / xs**2) + (dnorm / xs) * dwt_w_deps
         dkdc2 = (dac_deps * above + ac * det_deps) / xs - ac * above * dxs_deps / xs**2
         # kdc1 = ac * bc * dnorm / xs  (Eq.48 with beta_c) => product rule over ac, bc, dnorm, xs
-        dkdc1 = (dac_deps * bc * dnorm + ac * dbc_deps * dnorm + ac * bc * dnorm_deps) / xs \
-            - ac * bc * dnorm * dxs_deps / xs**2
+        dkdc1 = (dac_deps * bc * dnc + ac * dbc_deps * dnc + ac * bc * dnc_deps) / xs \
+            - ac * bc * dnc * dxs_deps / xs**2
     else:
         if not bilin:
             dkdt2 = dkdt1 = np.zeros(6)
@@ -2787,16 +2872,16 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         # B2: kappa_dc = eqc_n + ac (et - etp_n) while advancing; kdc2 += d/xs; kdc1 += ac bc frac dnorm/xs
         dkdc = dkdc2 = dkdc1 = np.zeros(6)
         if c_adv:
-            dkdc = ac * det_deps + (et - etp_n) * dac_deps
+            dkdc = ac * detc_deps + (etc - etp_n) * dac_deps
             dd = eqc_new - kdc_n
             dkdc2 = dkdc / xs - dd * dxs_deps / xs**2
             if eqc_new > eps0:
                 cross = kdc_n < eps0
                 frac = (eqc_new - eps0) / dd if cross else 1.0
                 dfrac = ((eps0 - kdc_n) / dd**2) * dkdc if cross else np.zeros(6)
-                inc = ac * bc * frac * dnorm / xs
-                dkdc1 = (dac_deps * bc * frac * dnorm + ac * dbc_deps * frac * dnorm + ac * bc * dfrac * dnorm
-                         + ac * bc * frac * dnorm_deps) / xs - inc * dxs_deps / xs
+                inc = ac * bc * frac * dnc / xs
+                dkdc1 = (dac_deps * bc * frac * dnc + ac * dbc_deps * frac * dnc + ac * bc * dfrac * dnc
+                         + ac * bc * frac * dnc_deps) / xs - inc * dxs_deps / xs
 
     # omega via IFT on F(w) = (1-w)D - f exp(-(kd1+w kd2)/eps_f) = 0 ; H = dF/dw = D[(1-w)kd2/eps_f - 1]
     # (P2g) D = the MONOTONE drive sigt_max/sigc_max; dDt_deps/dDc_deps are already zeroed on unload, so
@@ -4372,3 +4457,147 @@ if __name__ == "__main__":
     p5 = run_p5_gate(verbose=True)
     print("-" * 74)
     print(f"P5: {'PASS' if p5['PASS'] else 'FAIL'}")
+
+
+# ---------------------------------------------------------------------------
+# PV20 — tension->compression damage temper gate (-tcTemper proj, the nDMaterial default since WP
+# concrete3d-damage-drive / PV20). Vecchio-Collins PV20 (ASDShellQ4 + LayeredShell, 4 LadrunoConcrete3D layers
+# in the PlateFiber view) peaked at tau = 1.76 MPa (test 4.26) and decayed to 0.03 MPa with the steel ELASTIC:
+# the concrete strut softened at ~0.2 fc. Root cause (reproduced here at the material point): literal CDPM2
+# Eq.47/48 feed the compressive damage history with (i) alpha_c * ||d eps_p||, i.e. the crack-opening plastic
+# strain once the strut dominates alpha_c, and (ii) alpha_c * d eps_tilde where eps_tilde carries the HARDENED
+# crack stress (qh2 = 1 + Hp (kp-1) ~ 3 across a crack; xh ~ 3e-5 in tension => kp ~ 200).
+# ---------------------------------------------------------------------------
+PV20_MAT = dict(E=21777.77777777778, nu=0.2, fc=19.6, ft=1.4609722789977913)
+PV20_DMG = dict(Gf=0.124717946916348, Gc=44.89387988173409, lch=445.0, As=2.0, eps_fc=1.912142743698654e-4)
+# PV20 element strain path (gamma, eps_x, eps_y) — knots of runs/03_layered_shell/pv_panels/PV20_ladruno3d_plain.csv
+PV20_KNOTS = np.array([[0.0, 0.0, 0.0], [1.0e-4, 0.0, 0.0], [1.15e-3, 2.55e-4, 3.86e-4], [2.75e-3, 5.19e-4, 8.4e-4],
+                       [4.35e-3, 5.19e-4, 9.32e-4], [6.35e-3, 4.49e-4, 8.65e-4]])
+
+
+def pv20_material(tc_temper):
+    return make_material(PV20_MAT["E"], PV20_MAT["nu"], PV20_MAT["fc"], PV20_MAT["ft"], Df=0.85, qh0=0.3, Hp=0.01,
+                         tension_law="bilinear", eps_fc=PV20_DMG["eps_fc"], flow_potential="cdpm2", max_subincr=10,
+                         compression_drive="cdpm2", tc_temper=tc_temper)
+
+
+def _mixed_stress_step(st, e6, free, mp, Gf, Gc, lch, As, tol=1.0e-9):
+    """Damaged step with the TOTAL strain e6 prescribed except the components `free`, solved so the nominal
+    stress there vanishes (FD-Jacobian Newton + backtracking). Returns (sig, state, info, e6, converged)."""
+    e = np.array(e6, float)
+    for _ in range(60):
+        s, ns, info = damaged_step_tensor(st, e - st["eps"], mp, Gf, Gc, lch, As)
+        r = s[free]
+        if np.max(np.abs(r)) < tol * mp["fc"]:
+            return s, ns, info, e, True
+        J = np.zeros((len(free), len(free)))
+        for j, k in enumerate(free):
+            ep = e.copy(); ep[k] += 1.0e-8
+            J[:, j] = (damaged_step_tensor(st, ep - st["eps"], mp, Gf, Gc, lch, As)[0][free] - r) / 1.0e-8
+        try:
+            d = np.linalg.solve(J, -r)
+        except np.linalg.LinAlgError:
+            d = -r / mp["E"]
+        lam, n0 = 1.0, np.linalg.norm(r)
+        while True:
+            et = e.copy(); et[free] += lam * d
+            if np.linalg.norm(damaged_step_tensor(st, et - st["eps"], mp, Gf, Gc, lch, As)[0][free]) < n0 or lam < 1e-4:
+                break
+            lam *= 0.5
+        e = et
+    return s, ns, info, e, False
+
+
+def pv20_path(mp, nsteps=128, knots=PV20_KNOTS):
+    """Plane-stress (sigma_33 = 0) material point driven along the PV20 element strain path. Returns per-step
+    (gamma, tau, nominal compressive principal, wc, committed state BEFORE the step, realized deps6)."""
+    D = PV20_DMG
+    st = make_damage_state(mp)
+    e = np.zeros(6)
+    out = []
+    for g in np.linspace(0.0, knots[-1, 0], nsteps + 1)[1:]:
+        e[0], e[1], e[3] = np.interp(g, knots[:, 0], knots[:, 1]), np.interp(g, knots[:, 0], knots[:, 2]), 0.5 * g
+        st0 = st
+        s, st, info, e, _ = _mixed_stress_step(st, e, [2], mp, D["Gf"], D["Gc"], D["lch"], D["As"])
+        c = 0.5 * (s[0] + s[1]); r = np.hypot(0.5 * (s[0] - s[1]), s[3])
+        out.append((g, s[3], c - r, info["wc"], st0, e - st0["eps"]))
+    return out
+
+
+def pv20_crack_then_compress(mp, n_t=40, n_c=40, e1_max=1.5e-3, de2=-1.0e-4):
+    """Check (1): uniaxial tension in direction 1 to full cracking (sigma_2 = sigma_3 = 0), then compression in
+    direction 2 (sigma_1 = sigma_3 = 0). Returns (omega_t at the end of the tension, min nominal sigma_2)."""
+    D = PV20_DMG
+    st = make_damage_state(mp)
+    e = np.zeros(6)
+    wt = 0.0
+    for k in range(1, n_t + 1):
+        e[0] = e1_max * k / n_t
+        _, st, info, e, _ = _mixed_stress_step(st, e, [1, 2], mp, D["Gf"], D["Gc"], D["lch"], D["As"])
+        wt = info["wt"]
+    smin = 0.0
+    for _ in range(n_c):
+        e[1] += de2
+        s, st, info, e, _ = _mixed_stress_step(st, e, [0, 2], mp, D["Gf"], D["Gc"], D["lch"], D["As"])
+        smin = min(smin, s[1])
+    return wt, smin
+
+
+def run_tc_temper_gate(verbose=True):
+    """PV20 tension->compression temper gate.
+      T1 crack-then-compress: after full cracking in direction 1 (omega_t > 0.99) the compressive strength in
+         direction 2 is fc to 10 % with 'proj'; the literal 'none' reaches > 2 fc (tension-hardened qh2, no wc).
+      T2 PV20 element strain path (plane stress): 'none' softens the strut at < 0.3 fc (the PV20 collapse);
+         'proj' carries > 0.9 fc.
+      T3 analytic damaged tangent == FD at a cracked-strut state with 0 < wc < 1 and a tensile principal ('proj').
+      T4 'proj' == 'none' EXACTLY in uniaxial-stress and equibiaxial compression (no principal > TC_DEAD ft)."""
+    fc = PV20_MAT["fc"]
+    D = PV20_DMG
+    res = {}
+    for tc in ("none", "proj"):
+        res[("T1", tc)] = pv20_crack_then_compress(pv20_material(tc))
+    res["T1_ok"] = bool(res[("T1", "proj")][0] > 0.99 and abs(-res[("T1", "proj")][1] / fc - 1.0) < 0.10
+                        and -res[("T1", "none")][1] > 2.0 * fc)
+    for tc in ("none", "proj"):
+        pp = pv20_path(pv20_material(tc))
+        res[("T2", tc)] = (max(r[1] for r in pp), min(r[2] for r in pp), pp[-1][3])
+    res["T2_ok"] = bool(-res[("T2", "none")][1] < 0.3 * fc and -res[("T2", "proj")][1] > 0.9 * fc)
+    mp = pv20_material("proj")
+    kn = np.vstack([PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]])
+    pp = pv20_path(mp, 200, kn)
+    k = next(i for i, r in enumerate(pp) if 0.2 < r[3] < 0.7)
+    st0, dps = pp[k][4], pp[k][5]
+    Ca = damaged_tangent_analytic(st0, dps, mp, D["Gf"], D["Gc"], D["lch"], D["As"])
+    Cn = damaged_consistent_tangent(st0, dps, mp, D["Gf"], D["Gc"], D["lch"], D["As"])
+    res["T3_rel"] = float(np.linalg.norm(Ca - Cn) / np.linalg.norm(Cn))
+    res["T3_wc"] = float(pp[k][3])
+    res["T3_ok"] = bool(res["T3_rel"] < 1.0e-4)
+    # T4: uniaxial-stress and equibiaxial compression through damaged_step_tensor (the tempered code path)
+    dev = 0.0
+    for free, bi in (([1, 2], False), ([2], True)):
+        sg = {}
+        for tc in ("none", "proj"):
+            m4 = pv20_material(tc)
+            st = make_damage_state(m4); e = np.zeros(6); v = []
+            for kk in range(1, 61):
+                e[0] = -6.0e-3 * kk / 60
+                if bi:
+                    e[1] = e[0]
+                s4, st, _, e, _ = _mixed_stress_step(st, e, free, m4, D["Gf"], D["Gc"], D["lch"], D["As"])
+                v.append(s4[0])
+            sg[tc] = np.array(v)
+        dev = max(dev, float(np.max(np.abs(sg["proj"] - sg["none"])) / fc))
+    res["T4_dev"] = dev
+    res["T4_ok"] = bool(dev == 0.0)
+    res["PASS"] = bool(res["T1_ok"] and res["T2_ok"] and res["T3_ok"] and res["T4_ok"])
+    if verbose:
+        for tc in ("none", "proj"):
+            print(f"  T1 {tc}: wt after cracking {res[('T1', tc)][0]:.4f}, min sigma_2 {res[('T1', tc)][1]:+.2f} MPa "
+                  f"({-res[('T1', tc)][1] / fc:.2f} fc)")
+        for tc in ("none", "proj"):
+            t = res[("T2", tc)]
+            print(f"  T2 {tc}: PV20 path tau_max {t[0]:.3f} MPa, strut min {t[1]:+.2f} MPa ({-t[1] / fc:.2f} fc), "
+                  f"wc end {t[2]:.3f}")
+        print(f"  T3 analytic vs FD tangent (wc={res['T3_wc']:.3f}): {res['T3_rel']:.2e}")
+        print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}   PASS={res['PASS']}")
+    return res

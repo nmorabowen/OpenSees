@@ -506,6 +506,20 @@ def test_compression_drive_gate():
     assert r["PASS"]
 
 
+def test_tc_temper_gate():
+    """PV20 — tension->compression damage temper (-tcTemper proj, the nDMaterial default). Vecchio-Collins PV20
+    collapsed (tau 1.76 -> 0.03 MPa, test 4.26) because literal CDPM2 Eq.47/48 feed the compressive damage history
+    with the crack-opening plastic strain and the hardened crack stress. T1 crack-then-compress: fc to 10 % with
+    'proj' (literal: > 2 fc); T2 PV20 element strain path: 'none' strut < 0.3 fc, 'proj' > 0.9 fc; T3 analytic ==
+    FD damaged tangent at a cracked-strut state; T4 'proj' == 'none' EXACTLY in uniaxial/equibiaxial compression."""
+    r = ref.run_tc_temper_gate(verbose=False)
+    assert r["T1_ok"], (r[("T1", "none")], r[("T1", "proj")])
+    assert r["T2_ok"], (r[("T2", "none")], r[("T2", "proj")])
+    assert r["T3_ok"], r["T3_rel"]
+    assert r["T4_ok"], r["T4_dev"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

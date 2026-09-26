@@ -82,7 +82,7 @@ class LadrunoConcrete3D : public NDMaterial {
                     double eta = 0.0, int ctTemper = 0,
                     double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D,
                     int tensionLaw = 1, double epsFcUser = 0.0, int flowPotential = 1,
-                    int compDrive = 1, bool verbose = false);
+                    int compDrive = 1, bool verbose = false, int tcTemper = 2);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -150,6 +150,7 @@ class LadrunoConcrete3D : public NDMaterial {
   // histories from the start, post-onset fraction); 0 = the legacy fork drive (-sigma_min vs fc).
   int    compDrive;
   bool   verbose;                // -verbose: every final return failure + a per-commit summary of the counters
+  int    tcTemper;             // PV20 tension->compression damage temper: 2=proj (default) 0=none (literal CDPM2)
   // return-map diagnostics (cumulative over ALL integrate() calls incl. Newton iterates; getResponse
   // "substeps" / "returnFailures"): nSub = returns rescued by sub-incrementation, nFail = FINAL failures
   // (elastic-trial fallback); *Step = since the last commitState (the -verbose summary).

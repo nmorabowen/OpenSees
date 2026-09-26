@@ -116,6 +116,12 @@ struct Params {
     // POSITIVE effective-stress directions). Both temper modes => w_t~0 in compression (no tension
     // pre-damage). See tensileDamageWeight.
     int    ctTemper = 0;
+    // PV20 tension->compression damage-coupling temper (the -tcTemper modes; mirror of ctTemper). 0 = none (literal
+    // CDPM2 Eq.47/48, byte-identical; the kernel/oracle default). 2 = proj — the nDMaterial DEFAULT: the kdc1 plastic
+    // measure is the part of ||d eps_p|| along NON-tensile effective-stress directions, and the CDPM2 compressive drive
+    // eqc is fed by eps_tilde of <sig_bar>- (tensile principals zeroed). Identical to none whenever no effective
+    // principal is tensile. See compressiveDamageWeight / compressiveEquivStrain.
+    int    tcTemper = 0;
     // Tensile softening law (WP concrete3d-oracle-diagnosis). 0 = legacy exponential sigma = ft exp(-eps_i/eps_f),
     // eps_f = Gf/(ft lch), with the legacy kdt2 = (kdt - eps0)/x_s history (byte-identical to the pre-2026-09
     // kernel; the kernel/oracle default so every fixture stays pinned). 1 = CDPM2 BILINEAR (Grassl 2013
@@ -392,6 +398,40 @@ inline double tensileDamageWeight(const Params& mp, double ac, const double depl
     return 1.0;                                              // none (literal CDPM2)
 }
 
+// PV20 -tcTemper proj (mirror the oracle compressive_damage_weight): kdc1 (Eq.48) weight w_c = ||Phi depl Phi|| /
+// ||depl|| in the effective-stress eigenframe, phi_a = tcPhi (1 on non-tensile directions incl. a 1e-3 ft dead zone,
+// 0 on a crack direction; continuous). EXACTLY 1.0 when no effective principal is > TC_DEAD ft (every compressive backbone, the Gc
+// table). Literal CDPM2 counts the crack-opening plastic strain of a cracked-then-compressed state (RC panel in shear)
+// as crushing history: the strut softened at ~0.2 fc in PV20 (tau 1.76 -> 0.03 MPa vs 4.26 in the test).
+// phi_a = 1 (sigma_bar_a <= TC_DEAD ft) .. 0 (sigma_bar_a >= TC_BAND ft), linear between (oracle _tc_phi)
+static const double TC_DEAD = 1.0e-3, TC_BAND = 0.05;
+inline double tcPhi(const Params& mp, double s)
+{
+    const double v = 1.0 - (s - TC_DEAD * mp.ft) / ((TC_BAND - TC_DEAD) * mp.ft);
+    return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+}
+inline double compressiveDamageWeight(const Params& mp, const double depl6[6],
+                                      const double w_stress[3], const double V[3][3])
+{
+    if (mp.tcTemper != 2) return 1.0;
+    double mx = w_stress[0]; for (int a = 1; a < 3; ++a) if (w_stress[a] > mx) mx = w_stress[a];
+    if (mx <= TC_DEAD * mp.ft) return 1.0;
+    double M[3][3]; voigtToMat(depl6, M);
+    double nrm2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) nrm2 += M[i][j] * M[i][j];
+    if (nrm2 <= 1.0e-300) return 1.0;
+    double phi[3];
+    for (int a = 0; a < 3; ++a) phi[a] = tcPhi(mp, w_stress[a]);
+    double p2 = 0.0;                                         // ||Phi (V^T M V) Phi||_F^2
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        double d = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d += V[i][a] * M[i][j] * V[j][b];
+        const double q = phi[a] * d * phi[b];
+        p2 += q * q;
+    }
+    return std::sqrt(p2) / std::sqrt(nrm2);
+}
+
 inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, double& ac, double& xs)
 {
     et = equivStrainGeneral(sig_pr, mp);
@@ -401,6 +441,20 @@ inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, 
     const double sigV = xi / SQRT3;
     const double Rs = (sigV <= 0.0 && rho > 1.0e-12) ? (-SQRT6 * sigV / rho) : 0.0;   // Eq.57
     xs = 1.0 + (mp.As - 1.0) * Rs;                                                     // Eq.56
+}
+
+// PV20 -tcTemper proj (mirror the oracle compressive_equiv_strain): the equivalent strain feeding the CDPM2
+// compressive history (Eq.47) is eps_tilde of the COMPRESSIVE part (tensile principals scaled by tcPhi -> zeroed on
+// a crack); `et` (the full eps_tilde) otherwise and whenever no effective principal is > TC_DEAD ft. Stops the hardened crack stress (qh2 ft, qh2 ~ 3 across a crack)
+// from pushing kappa_dc past eps0 while the strut is at ~0.2 fc.
+inline double compressiveEquivStrain(const Params& mp, const double w_stress[3], double et)
+{
+    if (mp.tcTemper != 2) return et;
+    double mx = w_stress[0]; for (int a = 1; a < 3; ++a) if (w_stress[a] > mx) mx = w_stress[a];
+    if (mx <= TC_DEAD * mp.ft) return et;
+    double wc[3];
+    for (int a = 0; a < 3; ++a) wc[a] = w_stress[a] < 0.0 ? w_stress[a] : tcPhi(mp, w_stress[a]) * w_stress[a];
+    return equivStrainGeneral(wc, mp);
 }
 
 inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double f, double eps_f)
@@ -1487,17 +1541,20 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     const bool loading = det_raw > 0.0 && et > eps0;
 
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
+    double dnc = dnorm;
     {
         double depl[6]; for (int i = 0; i < 6; ++i) depl[i] = epl[i] - epl_n[i];
         const double wtw = tensileDamageWeight(mp, ac, depl, w, V);     // P2h ctTemper weight (1 if none)
         tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw); // Eq.44/45 (law-dependent)
+        dnc = dnorm * compressiveDamageWeight(mp, depl, w, V);          // PV20 tcTemper (== dnorm for none)
     }
+    const double etc = compressiveEquivStrain(mp, w, et);                // PV20 tcTemper (== et for none)
     double eqc = in.eqc;
     if (mp.compDrive == 1) {                                             // B2: CDPM2 Eq.47-49
-        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqc, in.etPrev, et, ac, betaC(w, kp, mp), dnorm, xs);
+        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqc, in.etPrev, etc, ac, betaC(w, kp, mp), dnc, xs);
     } else if (loading) {
         kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
-        kdc1 += ac * betaC(w, kp, mp) * dnorm / xs;                      // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
+        kdc1 += ac * betaC(w, kp, mp) * dnc / xs;                        // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     }
     const double et_max = et_max_n > et ? et_max_n : et;
 
@@ -1535,7 +1592,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     out.et_max = et_max; out.kdt1 = kdt1; out.kdt2 = kdt2;
     out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
     out.sigtMax = sigtMax; out.sigcMax = sigcMax;   // P2g monotone drive history
-    out.eqc = eqc; out.etPrev = et;                 // B2 CDPM2 compressive drive history
+    out.eqc = eqc; out.etPrev = etc;                // B2 CDPM2 compressive drive history (PV20: eps_tilde_c)
     if (wtOut) *wtOut = wt;   // expose the damage variables for the wrapper's recorders (read-only)
     if (wcOut) *wcOut = wc;
 }
@@ -1624,6 +1681,7 @@ inline double scalarDriver(int which, const double sig6[6], const Params& mp)
     double A[3][3], w[3], V[3][3]; voigtToMat(sig6, A); eig3sym(A, w, V);
     if (which == 0) return equivStrainGeneral(w, mp);
     if (which == 1) { double et, ac, xs; damageDrivers(w, mp, et, ac, xs); return xs; }
+    if (which == 3) return compressiveEquivStrain(mp, w, equivStrainGeneral(w, mp));   // PV20 tcTemper
     return alphaCompression(w);
 }
 
@@ -1686,16 +1744,19 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 
     const double bc = betaC(w, kp_new, mp);              // Eq.50 (P2f): scales the kdc1 plastic part
     const double wtw = tensileDamageWeight(mp, ac, depl, w, V);   // P2h ctTemper weight (1 if none)
+    const double wcw = compressiveDamageWeight(mp, depl, w, V);   // PV20 tcTemper weight (1 if none)
+    const double dnc = dnorm * wcw;                               // kdc1 plastic measure (== dnorm for none)
+    const double etc = compressiveEquivStrain(mp, w, et);         // kdc drive (== et for none)
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
     tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw);
     const bool cdc = (mp.compDrive == 1);
     const double kdc_n = in.kdc, eqc_n = in.eqc, etp_n = in.etPrev;
     double eqcNew = eqc_n;
     if (cdc) {                                                           // B2: CDPM2 Eq.47-49
-        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqcNew, etp_n, et, ac, bc, dnorm, xs);
+        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqcNew, etp_n, etc, ac, bc, dnc, xs);
     } else if (loading) {
         kdc  += ac * above;          kdc2 += ac * above / xs;
-        kdc1 += ac * bc * dnorm / xs;
+        kdc1 += ac * bc * dnc / xs;
     }
     const bool cAdv = cdc && (eqcNew > kdc_n);
     const double et_max2 = et_max_n > et ? et_max_n : et;
@@ -1860,6 +1921,41 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     }
 
+    // PV20 tcTemper proj: d(dnorm w_c)/dε (w_c by composite micro-FD through the return map, as the ctTemper proj
+    // weight) and d(eps_tilde_c)/dε. none (or no tensile effective principal) -> dnc_deps == dnorm_deps,
+    // detc_deps == det_deps (byte-identical).
+    double dnc_deps[6], detc_deps[6];
+    for (int i = 0; i < 6; ++i) { dnc_deps[i] = dnorm_deps[i]; detc_deps[i] = det_deps[i]; }
+    {
+        double mxw = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mxw) mxw = w[a];
+        if (mp.tcTemper == 2 && mxw > TC_DEAD * mp.ft) {
+            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
+            const double base = mp.fc / mp.E;
+            double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
+            double dwcw[6];
+            for (int j = 0; j < 6; ++j) {
+                const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
+                double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
+                dp[j] += hh; dm[j] -= hh;
+                double sbp[6], sbm[6], kpp, kpm, dum[6][6];
+                returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
+                returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+                double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
+                voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
+                voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
+                double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
+                for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
+                plasticStrain6(sbp, epsp, mp, eplp);
+                plasticStrain6(sbm, epsm, mp, eplm);
+                for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
+                dwcw[j] = (compressiveDamageWeight(mp, dplp, wp, Vp) - compressiveDamageWeight(mp, dplm, wm, Vm))
+                        / (2.0 * hh);
+            }
+            for (int i = 0; i < 6; ++i) dnc_deps[i] = wcw * dnorm_deps[i] + dnorm * dwcw[i];
+            double g_etc[6]; dscalarDsig(3, sig_eff, mp, g_etc); CeffT(g_etc, detc_deps);
+        }
+    }
+
     // dkd*/dε under loading (else zero).  kdc1 = ac * bc * dnorm / xs (Eq.48 with beta_c) => product rule.
     // kdt2 = w_t * above / xs, kdt1 = w_t * dnorm / xs (Eq.45/44 with the ctTemper weight) => product rule.
     double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
@@ -1885,8 +1981,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
                 dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
             }
             dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
-            dkdc1[i] = (dac_deps[i] * bc * dnorm + ac * dbc_deps[i] * dnorm + ac * bc * dnorm_deps[i]) * ixs
-                     - ac * bc * dnorm * dxs_deps[i] * ixs2;
+            dkdc1[i] = (dac_deps[i] * bc * dnc + ac * dbc_deps[i] * dnc + ac * bc * dnc_deps[i]) * ixs
+                     - ac * bc * dnc * dxs_deps[i] * ixs2;
         }
     } else for (int i = 0; i < 6; ++i) { if (!bilin) { dkdt1[i] = dkdt2[i] = 0.0; } dkdc1[i] = dkdc2[i] = 0.0; }
     double dkdc[6] = {0, 0, 0, 0, 0, 0};
@@ -1895,17 +1991,17 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         if (cAdv) {
             const double dd = eqcNew - kdc_n, ixs = 1.0 / xs;
             for (int i = 0; i < 6; ++i) {
-                dkdc[i] = ac * det_deps[i] + (et - etp_n) * dac_deps[i];
+                dkdc[i] = ac * detc_deps[i] + (etc - etp_n) * dac_deps[i];
                 dkdc2[i] = dkdc[i] * ixs - dd * dxs_deps[i] * ixs * ixs;
             }
             if (eqcNew > eps0) {
                 const bool cross = kdc_n < eps0;
                 const double frac = cross ? (eqcNew - eps0) / dd : 1.0;
                 const double dfr = cross ? (eps0 - kdc_n) / (dd * dd) : 0.0;
-                const double inc = ac * bc * frac * dnorm * ixs;
+                const double inc = ac * bc * frac * dnc * ixs;
                 for (int i = 0; i < 6; ++i)
-                    dkdc1[i] = (dac_deps[i] * bc * frac * dnorm + ac * dbc_deps[i] * frac * dnorm
-                                + ac * bc * dfr * dkdc[i] * dnorm + ac * bc * frac * dnorm_deps[i]) * ixs
+                    dkdc1[i] = (dac_deps[i] * bc * frac * dnc + ac * dbc_deps[i] * frac * dnc
+                                + ac * bc * dfr * dkdc[i] * dnc + ac * bc * frac * dnc_deps[i]) * ixs
                              - inc * dxs_deps[i] * ixs;
             }
         }

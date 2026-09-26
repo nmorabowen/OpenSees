@@ -55,7 +55,7 @@ def _mat(tag, **kw):
     # that fail unpinned.
     if kw.get("law", "default") == "legacy":
         args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy",
-                 "-compressionDrive", "legacy",                                      # + B1 flow, B2 drive
+                 "-compressionDrive", "legacy", "-tcTemper", "none",                 # + B1 flow, B2 drive, PV20
                  "-Df", 1.0, "-hardening", 0.3, 0.5]                                 # + B3: pre-B3 defaults
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
