@@ -45,11 +45,34 @@
 //     that wrong is a silent wrong answer, not a crash.
 // Off by default. Intel: "other values are only recommended for an advanced
 // user."
+//
+// Ladruno WP-132 (2026-09, TIMs F22): `-deterministic` / `-cbwr <BRANCH>` —
+// MKL Conditional Numerical Reproducibility. Threaded PARDISO is NOT
+// byte-reproducible run to run (75c Trap 7: ~1 ULP, size-dependent), and on a
+// path-dependent nonlinear deck that last bit is amplified — TIMs §1.6 saw a
+// bearing "wall" move 30 % between two identical runs. CNR needs BOTH halves:
+//   * mkl_cbwr_set(branch) — process-wide, sticky, and refused
+//     (MKL_CBWR_ERR_MODE_CHANGE_FAILURE) once MKL has computed anything, so it
+//     is called at `system` time, and the MKL_CBWR environment variable is the
+//     documented fallback;
+//   * iparm(34) = iparm[33] = the thread count — PARDISO's own CNR switch,
+//     re-applied at every symbolic phase because that block zeroes iparm.
+// Off by default: no mkl_cbwr_* call and iparm[33] stays 0, i.e. the solver is
+// byte-identical to before.
+//
+// Guard by REACHABILITY (not by #ifdef): the MKL service calls below execute
+// only when a PARDISOGenLinSolver is constructed, and `system Pardiso` is
+// registered only under _PARDISO — the serial Tcl OpenSees.exe
+// (tcl/commands.cpp; OpenSeesSP/MP refuse in its #else) and the sequential
+// opensees.pyd (OPS_InterpPyCmds). openseesmp's OPS_InterpPyCmds_MP never gets
+// PARDISO_FLAG, so none of this runs inside the MP MKL DLL, where
+// mkl_set_num_threads* is known to segfault (ADR-45 P3c).
 
 
 #include <PARDISOGenLinSolver.h>
 #include <PARDISOGenLinSOE.h>
 #include <math.h>
+#include <string.h>                   // Ladruno WP-132: strchr/strlen
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
@@ -65,12 +88,56 @@
 #include <profiler/ProfilerMacros.h>  // Ladruno ADR-75: phase-split brackets
                                       // (UmfPack parity, ADR-40 rank 8/10)
 
+// ---- Ladruno WP-132: MKL CBWR branch names ---------------------------------
+// Same spellings as the MKL_CBWR environment variable, so a script line and a
+// launcher line read the same.
+static const struct { const char *name; int code; } ops_cbwr_table[] = {
+	{"OFF",           MKL_CBWR_OFF},
+	{"BRANCH_OFF",    MKL_CBWR_BRANCH_OFF},
+	{"AUTO",          MKL_CBWR_AUTO},
+	{"COMPATIBLE",    MKL_CBWR_COMPATIBLE},
+	{"SSE2",          MKL_CBWR_SSE2},
+	{"SSE3",          MKL_CBWR_SSE3},
+	{"SSSE3",         MKL_CBWR_SSSE3},
+	{"SSE4_1",        MKL_CBWR_SSE4_1},
+	{"SSE4_2",        MKL_CBWR_SSE4_2},
+	{"AVX",           MKL_CBWR_AVX},
+	{"AVX2",          MKL_CBWR_AVX2},
+	{"AVX512_MIC",    MKL_CBWR_AVX512_MIC},
+	{"AVX512",        MKL_CBWR_AVX512},
+	{"AVX512_MIC_E1", MKL_CBWR_AVX512_MIC_E1},
+	{"AVX512_E1",     MKL_CBWR_AVX512_E1},
+	{"AVX10",         MKL_CBWR_AVX10},
+};
+
+static const char *
+ops_cbwr_name(int code)
+{
+	for (const auto &e : ops_cbwr_table)
+		if (e.code == code) return e.name;
+	return "UNKNOWN";
+}
+
+// case-insensitive compare of exactly n chars
+static bool
+ops_cbwr_ieq(const char *a, const char *b, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		char ca = a[i], cb = b[i];
+		if (ca >= 'a' && ca <= 'z') ca = ca - 'a' + 'A';
+		if (cb >= 'a' && cb <= 'z') cb = cb - 'a' + 'A';
+		if (ca != cb) return false;
+	}
+	return true;
+}
+
 PARDISOGenLinSolver::PARDISOGenLinSolver()
 :LinearSOESolver(SOLVER_TAGS_PARDISOGenLinSolver),
  theSOE(0), mtype(11), init(false), needsSymbolic(false), cachedN(0),
  reportStats(0),
  krylovL(0), krylovK(0), haveFactors(false), factorsCurrent(false),
- cgsCalls(0), cgsWins(0), cgsAdviceDone(false)
+ cgsCalls(0), cgsWins(0), cgsAdviceDone(false),
+ cnrBranch(-1), cnrInForce(false), cnrNoticeDone(false)   // Ladruno WP-132
 {
 	// Ladruno ADR-75 P1: the handle and control array are members now (see the
 	// header note). PARDISO REQUIRES pt[] to be zeroed before the first call.
@@ -267,6 +334,14 @@ PARDISOGenLinSolver::solve(void)
 		iparm[17] = reportStats ? -1 : 0;
 		iparm[18] = reportStats ? -1 : 0;
 		iparm[34] =  0;  /* ONE-based indexing — the SOE builds Fortran-style CSR */
+		/* Ladruno WP-132: CNR. iparm(34) (1-based) = the thread count PARDISO
+		   must reproduce with; > 0 is what turns its deterministic scheduling
+		   on (in-core only — iparm[59] stays 0 here). Re-applied on every new
+		   pattern because the loop above just zeroed it. iparm[1] = 2 (METIS)
+		   and iparm[23]/[24] = 0 (classic factorization / sequential forward-
+		   backward solve) are already the deterministic choices. */
+		if (cnrBranch >= 0)
+			iparm[33] = mkl_get_max_threads();
 
 		int phase = 11;
 		// Ladruno ADR-75: same bracket names as UmfpackGenLinSolver, so a
@@ -284,6 +359,27 @@ PARDISOGenLinSolver::solve(void)
 		init = true;
 		needsSymbolic = false;
 		cachedN = n;                // for the destructor; see the header note
+
+		// Ladruno WP-132: say ONCE per solver object what is actually in force —
+		// read back from MKL, not echoed from the request. The splash banner is
+		// compile-time; this is the run-time record for the log.
+		if (cnrBranch >= 0 && cnrNoticeDone == false) {
+			cnrNoticeDone = true;
+			const int inForce = mkl_cbwr_get(MKL_CBWR_BRANCH);
+			const int all     = mkl_cbwr_get(MKL_CBWR_ALL);
+			cnrInForce = (inForce > MKL_CBWR_BRANCH_OFF);
+			opserr << "PARDISO deterministic mode: MKL CNR branch "
+			       << ops_cbwr_name(inForce);
+			if (inForce == MKL_CBWR_AUTO)
+				opserr << " (-> " << ops_cbwr_name(mkl_cbwr_get_auto_branch())
+				       << ")";
+			if (all & MKL_CBWR_STRICT)
+				opserr << ",STRICT";
+			opserr << ", iparm(34)=" << iparm[33] << " thread(s), CNR "
+			       << (cnrInForce ? "ACTIVE" : "NOT ACTIVE -- results are NOT "
+			           "guaranteed reproducible; relaunch with MKL_CBWR=AUTO")
+			       << "\n";
+		}
 		theSOE->factored = false;   // a new pattern always owes a numeric pass
 
 		// Ladruno ADR-75 P1e: a new pattern discards the factors, so there is no
@@ -507,6 +603,86 @@ PARDISOGenLinSolver::setLinearSOE(PARDISOGenLinSOE &theLinearSOE)
     haveFactors = false;
     factorsCurrent = false;
     return 0;
+}
+
+
+// Ladruno WP-132
+int
+PARDISOGenLinSolver::cbwrBranchFromName(const char *name)
+{
+	if (name == 0) return -1;
+	// optional ",STRICT" suffix, as in MKL_CBWR=AVX2,STRICT
+	const char *comma = strchr(name, ',');
+	const size_t len = comma ? (size_t)(comma - name) : strlen(name);
+	int strict = 0;
+	if (comma) {
+		if (strlen(comma + 1) != 6 || !ops_cbwr_ieq(comma + 1, "STRICT", 6))
+			return -1;
+		strict = MKL_CBWR_STRICT;
+	}
+	for (const auto &e : ops_cbwr_table) {
+		// OFF / BRANCH_OFF are readable back but not requestable: asking for
+		// "deterministic, branch off" is a contradiction.
+		if (e.code <= MKL_CBWR_BRANCH_OFF) continue;
+		if (strlen(e.name) == len && ops_cbwr_ieq(name, e.name, len))
+			return e.code | strict;
+	}
+	return -1;
+}
+
+
+// Ladruno WP-132
+int
+PARDISOGenLinSolver::setDeterministic(int branch, int keepEnv)
+{
+	cnrBranch = branch;
+	cnrNoticeDone = false;
+	if (branch < 0) {          // off: leave MKL's process-wide mode untouched
+		cnrInForce = false;
+		return 0;
+	}
+
+	const int current = mkl_cbwr_get(MKL_CBWR_ALL);
+	const bool alreadyOn = (mkl_cbwr_get(MKL_CBWR_BRANCH) > MKL_CBWR_BRANCH_OFF);
+
+	// Bare -deterministic under an MKL_CBWR the launcher already fixed (the
+	// cross-node recipe, TIMs §1.6): keep it — the environment is the more
+	// deliberate statement, and it was applied before MKL could be "in use".
+	// Asking for exactly the value already in force is likewise a no-op:
+	// re-setting after MKL has computed can itself fail with
+	// MODE_CHANGE_FAILURE (a second model in the same interpreter).
+	if ((keepEnv && alreadyOn) || current == branch) {
+		cnrInForce = alreadyOn;
+		return 0;
+	}
+
+	const int rc = mkl_cbwr_set(branch);
+	cnrInForce = (mkl_cbwr_get(MKL_CBWR_BRANCH) > MKL_CBWR_BRANCH_OFF);
+	if (rc == MKL_CBWR_SUCCESS && cnrInForce)
+		return 0;
+
+	const char *want = ops_cbwr_name(branch & ~MKL_CBWR_STRICT);
+	opserr << "WARNING system Pardiso -deterministic: mkl_cbwr_set(" << want
+	       << ") failed (rc " << rc;
+	switch (rc) {
+	case MKL_CBWR_ERR_MODE_CHANGE_FAILURE:
+		opserr << ": the CNR mode is process-wide and cannot change once MKL "
+		          "has computed anything in this process).\n     Relaunch with "
+		          "the environment variable MKL_CBWR=" << want
+		       << " set before OpenSees starts.\n";
+		break;
+	case MKL_CBWR_ERR_UNSUPPORTED_BRANCH:
+		opserr << ": this CPU cannot run that code branch; use AUTO or "
+		          "COMPATIBLE).\n";
+		break;
+	default:
+		opserr << ": see the MKL CBWR error table).\n";
+		break;
+	}
+	opserr << "     MKL CNR branch in force: "
+	       << ops_cbwr_name(mkl_cbwr_get(MKL_CBWR_BRANCH))
+	       << " -- results are NOT guaranteed reproducible.\n";
+	return -1;
 }
 
 

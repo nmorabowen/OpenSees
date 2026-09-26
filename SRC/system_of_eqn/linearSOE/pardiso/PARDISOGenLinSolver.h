@@ -50,6 +50,22 @@ class PARDISOGenLinSolver : public LinearSOESolver
     // L/U across a tangent that HAS changed, i.e. it pays under full Newton.
     void setKrylov(int digits);
 
+    // Ladruno WP-132 (TIMs F22): `system Pardiso -deterministic` /
+    // `-cbwr <BRANCH>` — MKL Conditional Numerical Reproducibility for the
+    // implicit static path. `branch` is an MKL_CBWR_* code (see
+    // cbwrBranchFromName); the call does mkl_cbwr_set() NOW (at `system` time,
+    // before PARDISO has run) and arms iparm(34) = the MKL thread count at
+    // every symbolic phase. Returns 0 when CNR is in force afterwards, <0 when
+    // MKL refused (the mode is PROCESS-WIDE and cannot change once MKL has
+    // computed anything — relaunch with the environment variable MKL_CBWR set).
+    // `keepEnv` = 1 for the bare -deterministic flag: a branch already fixed by
+    // the MKL_CBWR environment variable is kept rather than overridden.
+    int setDeterministic(int branch, int keepEnv);
+    // Name -> MKL_CBWR_* code (case-insensitive; "AVX2", "AVX2,STRICT", ...).
+    // Returns -1 for an unknown name. Static and in this header so the Tcl /
+    // Python parsers stay free of MKL headers.
+    static int cbwrBranchFromName(const char *name);
+
     int sendSelf(int cTag, Channel &theChannel);
     int recvSelf(int cTag,
 		 Channel &theChannel,
@@ -104,6 +120,12 @@ class PARDISOGenLinSolver : public LinearSOESolver
 	  int   cgsCalls;      // phase-23 calls made
 	  int   cgsWins;       // ...that were answered by CGS (no refactorization)
 	  bool  cgsAdviceDone; // cgs_error 5 ("turn this off") reported once
+
+	  // ---- Ladruno WP-132: deterministic (CNR) mode ------------------------
+	  int   cnrBranch;     // -1 = off (default, byte-identical to before);
+	                       // otherwise the MKL_CBWR_* code that was REQUESTED
+	  bool  cnrInForce;    // mkl_cbwr_get() read back a CNR branch
+	  bool  cnrNoticeDone; // the one-time runtime notice, per solver object
 };
 
 #endif
