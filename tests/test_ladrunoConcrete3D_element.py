@@ -52,7 +52,7 @@ def _mat(tag, **kw):
     # the oracle's LEGACY semantics (make_material defaults: exponential law, eps_fc = Gc/(fc lch)), so pin
     # them explicitly unless a test asks for the new defaults (law="default").
     if kw.get("law", "legacy") == "legacy":
-        args += ["-tensionLaw", "exp", "-gcLegacy"]
+        args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy"]   # + B1: legacy v1 flow
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:

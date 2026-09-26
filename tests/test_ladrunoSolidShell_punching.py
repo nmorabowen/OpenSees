@@ -93,7 +93,8 @@ def build_solid():
     # pinned to the pre-2026-09 semantics this validation band was set with (ADR-31 §11: the defaults are now
     # the CDPM2 bilinear tension law + Gc as a physical energy) — re-baseline before dropping the pin.
     ops.nDMaterial('LadrunoConcrete3D', 1, EC, NU, FC, FT, GF, GC,
-                   '-autoRegularization', '-implex', '-tensionLaw', 'exp', '-gcLegacy')
+                   '-autoRegularization', '-implex', '-tensionLaw', 'exp', '-gcLegacy',
+                   '-flowPotential', 'legacy')
     ops.nDMaterial('ElasticIsotropic', 2, 3.0 * EC, NU)      # column stub
     n = len(XS) - 1
     for i in range(n + 1):

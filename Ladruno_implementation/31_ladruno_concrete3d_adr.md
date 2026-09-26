@@ -582,3 +582,24 @@ Triggered by the validation repo's OOFEM `con2dpm1-4` oracle and Grassl 2013 Fig
    MPa); (c) wrapper default `Hp = 0.5` vs CDPM2 `0.01`; (d) no material-level sub-incrementation
    (OOFEM halves the step up to 10×; the fork fails single CDPM2-scale steps in uniaxial compression);
    (e) `f_after` honesty tolerance `1e-7·(fc+1)` is units-dependent (0.3 in Pa).
+
+## 12. Amendment 2026-09 — B1: the full CDPM2 plastic potential (WP `concrete3d-flow-potential`)
+
+User-approved (plan item B1; resolves §11-4a). The v1 flow (`m_v = Df·m0/(√3fc)`, `qh1=1`-shaped `m_s`, §3a
+"Lode-independent simplified flow") is **always dilatant**: the closed `[1−qh1]` cap had no compactive normal,
+near-axis cap returns had no regular solution, and uniaxial compression reached its peak at −1.50 mm/m instead of
+−2.19 (Kupfer) and softened ~25 % faster than CDPM2 at matched `εfc`.
+1. **Potential** = Grassl 2013 Eq.22-29 in the OOFEM `ConcreteDPM2` form: `g = Al² + qh1²(m0ρ/(√6fc) + m_g/fc)`,
+   `m_g = A_g B_g fc exp((σV − qh2 ft/3)/(B_g fc))`; `Df` is now CDPM2's dilation constant (must be > 0.5).
+   Analytic gradient + Hessian rows (σV, ρ, κp) drive the 4×4 return-map Jacobian and the consistent tangent.
+   Post-peak (`qh1=1`) the deviatoric part equals the old `m_s` exactly; only the volumetric part changes.
+2. **Vertex:** the regular map and both vertex cone tests now use the same potential, so the trial space is
+   partitioned consistently (vertex iff inside the cone of normals). The vertex branch stays for both apexes:
+   CDPM2's `g` is conical at ρ = 0 too (OOFEM also keeps tension + compression vertex returns).
+3. **Sub-incrementation** (OOFEM `performPlasticityReturn`): a failed direct return halves the strain increment
+   (depth 10) and integrates the pieces; the tangent is the last piece's. 120k-trial fuzz: 0 failures (direct
+   return alone: 30 %).
+4. `-flowPotential legacy` restores the v1 flow **and** disables sub-incrementation (byte-identical pre-B1).
+5. Gate results: con2dpm2 plasticity == an independent OOFEM transcription at equal sub-steps; Kupfer peak
+   −32.79 MPa at −2.20 mm/m (paper −32.81 at −2.19). The Fig.9 post-peak needs `εfc ≈ 6e-4` (−30.0 at −3 mm/m);
+   with the paper's stated 1e-4 OOFEM's own CDPM2 gives −13 MPa there, so the figure's `εfc` is not 1e-4.
