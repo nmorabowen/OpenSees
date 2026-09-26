@@ -64,7 +64,7 @@
 #ifndef LadrunoEmbeddedRebar_h
 #define LadrunoEmbeddedRebar_h
 
-#include <Element.h>
+#include <LadrunoUndampedElement.h>   // WP-123: refuses Rayleigh, zero getDamp
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
@@ -75,7 +75,7 @@ class Channel;
 class FEM_ObjectBroker;
 class Response;
 
-class LadrunoEmbeddedRebar : public Element
+class LadrunoEmbeddedRebar : public LadrunoUndampedElement
 {
  public:
   LadrunoEmbeddedRebar(int tag, int ndm, int rebarNode, const ID& hostNodes,
@@ -115,18 +115,9 @@ class LadrunoEmbeddedRebar : public Element
   // ADR 20 §10.6 (D-bp-5) — this is a pure penalty COUPLING element; it must
   // carry NO physical Rayleigh damping. A stiffness-proportional βK applied to
   // the artificial (bipenalty-bounded) penalty mode would spuriously shrink the
-  // reported damped dt_cr (CriticalTimeStep.cpp:249-255). Refuse the factors so
-  // they stay zero (getRayleighDampingFactors then returns the zero vector).
-  int setRayleighDampingFactors(double alphaM, double betaK,
-                                double betaK0, double betaKc);
-
-  // ADR 20 §10.6 (D-bp-5) — D == 0 for a pure penalty coupling. The base
-  // Element::getDamp/getRayleighDampingForces lazily allocate their Rayleigh scratch
-  // inside the no-op setRayleighDampingFactors above, so the base path would index an
-  // unallocated buffer (index stays -1) and HARD-CRASH the first implicit-transient step
-  // (Newmark/HHT c2·C is always nonzero). Return an element-owned zeroed C / damping force.
-  const Matrix& getDamp(void);
-  const Vector& getRayleighDampingForces(void);
+  // reported damped dt_cr (CriticalTimeStep.cpp:249-255). The factors are refused
+  // (getRayleighDampingFactors then returns the zero vector) and getDamp is zero:
+  // both inherited from LadrunoUndampedElement (WP-123).
 
   // ADR 20 §10.6.1 — self-reported explicit critical step `2√(m_p/k_eff)` so a
   // -cfl explicit integrator (CriticalTimeStep) honors the bipenalty bound, which
@@ -224,8 +215,6 @@ class LadrunoEmbeddedRebar : public Element
   Matrix* K;                // nDOF x nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // zero mass (nDOF x nDOF)
-  Matrix* C0;               // zero damping (nDOF x nDOF; getDamp scratch)
-  Vector* dampF;            // zero Rayleigh damping force (nDOF)
   Response* bondEnergyResp; // cached bondMat "energy" sub-response (ADR §10.2b)
 
   // committed/trial scalar slip is held by bondMat; nothing else is path-dep.

@@ -1,0 +1,36 @@
+merge-base e1237189a; fork-added 266; stamped 237; GLOBS files 227
+fork-added but UNSTAMPED (invisible to the quirk lint): 31 files, 8042 lines
+     180  SRC/Ladruno_mutation.h
+     552  SRC/analysis/integrator/CriticalTimeStep.cpp
+     173  SRC/analysis/integrator/CriticalTimeStep.h
+     543  SRC/analysis/integrator/LadrunoGeneralizedAlpha.cpp
+      85  SRC/analysis/integrator/LadrunoGeneralizedAlpha.h
+     461  SRC/analysis/integrator/LadrunoHHT.cpp
+      78  SRC/analysis/integrator/LadrunoHHT.h
+     492  SRC/analysis/integrator/LadrunoLoadControl.cpp
+     127  SRC/analysis/integrator/LadrunoLoadControl.h
+     642  SRC/analysis/numberer/LadrunoParallelNumberer.cpp
+      76  SRC/analysis/numberer/LadrunoParallelNumberer.h
+      44  SRC/domain/pattern/drm/DRMHigherOrderNode.h
+     134  SRC/element/LadrunoMassCache.h
+     150  SRC/element/LadrunoResponseTokens.h
+      53  SRC/interpreter/PythonMPIModule.cpp
+     143  SRC/material/nD/ASDPlasticMaterial3D/ElasticityModels/StiffSoil_EL.h
+      78  SRC/material/nD/ASDPlasticMaterial3D/HoekBrown_ParameterTypes.h
+     267  SRC/material/nD/ASDPlasticMaterial3D/HoekBrown_Utils.h
+     159  SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/HoekBrown_PF.h
+     320  SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/MohrCoulombTensionCutoff_PF.h
+     169  SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/StiffSoilCap_PF.h
+     357  SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/StiffSoilShear_PF.h
+     229  SRC/material/nD/ASDPlasticMaterial3D/StiffSoil_HardeningFunctions.h
+     335  SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/HoekBrown_YF.h
+     972  SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/MohrCoulombTensionCutoff_YF.h
+     181  SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/StiffSoilCap_YF.h
+     425  SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/StiffSoilShear_YF.h
+     243  SRC/material/nD/ASDPlasticMaterial3D/test_HoekBrown.cpp
+     127  SRC/material/nD/LadrunoDamage.h
+     161  SRC/utility/LadrunoThreads.cpp
+      86  SRC/utility/LadrunoThreads.h
+stamped but not fork-added (upstream files the fork stamped): ['SRC/analysis/integrator/ExplicitBathe.cpp', 'SRC/analysis/integrator/ExplicitBathe.h']
+stamped but missing from GLOBS (a re-stamp would not maintain them): ['SRC/analysis/handler/LadrunoAutoPenaltyReduce.cpp', 'SRC/analysis/handler/LadrunoAutoPenaltyReduce.h', 'SRC/analysis/handler/LadrunoContactAbort.cpp', 'SRC/analysis/handler/LadrunoContactAbort.h', 'SRC/analysis/integrator/LadrunoSolverQuery.h', 'SRC/material/nD/LadrunoCohesiveHingeBiaxial.cpp', 'SRC/material/nD/LadrunoCohesiveHingeBiaxial.h', 'SRC/material/uniaxial/LadrunoCohesiveHinge.cpp', 'SRC/material/uniaxial/LadrunoCohesiveHinge.h', 'SRC/utility/LadrunoParallelBuild.cpp']
+GLOBS entries matching no file: ['SRC/analysis/integrator/ExplicitBatheSMS.*', 'SRC/analysis/integrator/ExplicitBatheSMSConsistent.*', 'SRC/analysis/integrator/ExplicitBatheLNVDSMS.*', 'SRC/analysis/integrator/ExplicitBatheLNVDSMSConsistent.*', 'SRC/analysis/integrator/ExplicitBatheLNVD.*']

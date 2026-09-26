@@ -223,6 +223,32 @@ if any authored file is unstamped — good as a pre-commit / CI gate. Do **not**
 stamp vanilla upstream files (→ §6); those keep their original header + inline
 `// Ladruno` markers.
 
+**Why it matters beyond credit: the stamp is the quirk lint's scope.**
+`ci/check_quirk_patterns.py` scans only files carrying `LADRUNO-HEADER-START`, so an
+unstamped fork file is invisible to L1/L2/L4. It happened twice: LadrunoDispBeamColumn
+(WP-116), then 31 files / 8,042 lines at once (WP-120 R1, fixed by WP-122), among them
+shared seams (`LadrunoMassCache.h`, `LadrunoResponseTokens.h`, `CriticalTimeStep`,
+`LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it. Nothing in CI ran
+`--check` — since WP-122 the `static-gates` job does ("header stamp covers GLOBS").
+And `--check` only saw files already in GLOBS, so a file never added to GLOBS stayed
+unstamped with a green check. Since WP-122 `--check` also fails on any tracked `SRC`
+source that upstream OpenSees does not have and that is missing from GLOBS, whatever its
+name. "Upstream has it" is read from the committed `Ladruno_scripts/upstream_src_manifest.txt`,
+so CI needs no network. (A separate Ladruno-in-the-path rule stays as a
+manifest-independent backstop.) Consequences:
+- **New fork file → add it to GLOBS and stamp**, or CI goes red naming it.
+- **After merging `OpenSees/OpenSees` into `ladruno`**, upstream's new files are not in
+  the manifest yet and CI names them as "fork sources not in GLOBS". Do **not** add them
+  to GLOBS — refresh the manifest (needs the `upstream` remote):
+  `git fetch upstream master && python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest`.
+- A fork-added file that must not be stamped (vendored third-party code) goes in
+  `NOT_STAMPED` in `stamp_headers.py` with a reason; an exemption that no longer
+  exempts anything fails `--check`.
+- **Deleting or renaming a fork file → remove or fix its GLOBS entry.** `--check` fails on
+  an entry that matches no file (WP-122 found 5, left behind when #419 deleted the
+  `ExplicitBathe*` family). Globs are case-sensitive on the Linux runner, so an entry with
+  the wrong case is dead in CI even though Windows matches it.
+
 ---
 
 ## 6. Vanilla-file footprint — keep it minimal and additive

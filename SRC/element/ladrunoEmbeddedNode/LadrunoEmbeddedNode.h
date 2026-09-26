@@ -60,7 +60,7 @@
 #ifndef LadrunoEmbeddedNode_h
 #define LadrunoEmbeddedNode_h
 
-#include <Element.h>
+#include <LadrunoUndampedElement.h>   // WP-123: refuses Rayleigh, zero getDamp
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
@@ -71,7 +71,7 @@ class FEM_ObjectBroker;
 class Response;
 class UniaxialMaterial;
 
-class LadrunoEmbeddedNode : public Element
+class LadrunoEmbeddedNode : public LadrunoUndampedElement
 {
  public:
   LadrunoEmbeddedNode(int tag, int ndm, int cNode, const ID& hostNodes,
@@ -114,19 +114,8 @@ class LadrunoEmbeddedNode : public Element
   const Vector& getResistingForceIncInertia(void);
 
   // ADR 23 D5 / ADR 20 §10.6 (D-bp-5) — a pure penalty COUPLING carries NO physical
-  // damping (D == 0). The base Element::getDamp/getRayleighDampingForces LAZILY allocate
-  // their Rayleigh scratch inside setRayleighDampingFactors — which we no-op below to
-  // refuse βK — so the base path would index an unallocated buffer (index stays -1 ⇒
-  // out-of-bounds) and HARD-CRASH the moment an implicit transient asks for damping
-  // (Newmark/HHT c2·C every step; addD_Force residual). Override both to return an
-  // element-owned ZEROED C / damping force so the coupling stays damping-free and safe.
-  const Matrix& getDamp(void);
-  const Vector& getRayleighDampingForces(void);
-
-  // ADR 23 D5 / ADR 20 §10.6 (D-bp-5) — a pure penalty COUPLING carries NO physical
-  // Rayleigh damping; refuse the factors so a βK can't spuriously shrink dt_cr.
-  int setRayleighDampingFactors(double alphaM, double betaK,
-                                double betaK0, double betaKc);
+  // damping (D == 0): Rayleigh factors refused, getDamp zero — inherited from
+  // LadrunoUndampedElement (WP-123).
 
   // ADR 23 D5 / ADR 20 §10.6.1 — self-reported explicit critical step 2√(m_p/k_eff)
   // (the per-element eigensolve sees this coupling as λ_max=0). −1 when bipenalty off.
@@ -277,8 +266,6 @@ class LadrunoEmbeddedNode : public Element
   Matrix* K;                // nDOF x nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // mass (nDOF x nDOF; zero unless bipenalty)
-  Matrix* C0;               // damping (nDOF x nDOF; always zero — getDamp scratch)
-  Vector* dampF;            // Rayleigh damping force (nDOF; always zero)
 
   // ADR 23 — INITIAL-GAP (offset) capture for stress-free STAGED activation (mirrors the
   // parent ASDEmbeddedNodeElement m_U0 pattern). At setDomain the element captures each
