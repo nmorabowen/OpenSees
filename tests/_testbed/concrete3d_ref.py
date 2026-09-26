@@ -630,71 +630,171 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             kp - kp_n - dlam * mnorm / xh * cos2,
         ])
 
-    u = np.array([xi_tr, rho_tr, 0.0, kp_n])
-    converged = False
-    apex = False
-    for _ in range(100):
-        R = resid(u)
-        if (abs(R[0]) < tol * fc and abs(R[1]) < tol * fc
-                and abs(R[2]) < tol and abs(R[3]) < tol):
-            converged = True
-            break
-        J = np.zeros((4, 4))
-        for j in range(4):
-            du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
-            up = u.copy()
-            up[j] += du
-            J[:, j] = (resid(up) - R) / du
-        u = u + np.linalg.solve(J, -R)
-        if u[1] < 0.0:                       # deviatoric return overshoots => hydrostatic apex
-            apex = True
-            break
+    def _newton(clamp_rho):
+        # clamp_rho=False: the ORIGINAL scheme — an iterate crossing the hydrostatic axis (rho<0) aborts
+        # (apex=True -> vertex candidate). clamp_rho=True: the RETRY used only after a rejected vertex (the
+        # trial is OUTSIDE the cone of normals, so a regular rho>0 solution exists and the abort was a
+        # Newton overshoot): rho is clamped to >=0 and the iteration continues (OOFEM's max(rho,0)).
+        u = np.array([xi_tr, rho_tr, 0.0, kp_n])
+        for _ in range(100):
+            R = resid(u)
+            if (abs(R[0]) < tol * fc and abs(R[1]) < tol * fc
+                    and abs(R[2]) < tol and abs(R[3]) < tol):
+                return u, True, False
+            J = np.zeros((4, 4))
+            for j in range(4):
+                du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
+                up = u.copy()
+                up[j] += du
+                J[:, j] = (resid(up) - R) / du
+            try:
+                u = u + np.linalg.solve(J, -R)
+            except np.linalg.LinAlgError:    # singular (retry iterate pinned at rho=0): not converged
+                if not clamp_rho:
+                    raise                    # the original scheme never hit this (kept byte-identical)
+                return u, False, False
+            if u[1] < 0.0:                   # deviatoric return overshoots the hydrostatic axis
+                if not clamp_rho:
+                    return u, False, True
+                u[1] = 0.0
+        return u, False, False
 
+    u, converged, apex = _newton(False)
     xi, rho, dlam, kp = u
-    if apex:
-        # Hydrostatic-tension APEX return (mirror return_map_principal): project to the cone vertex
-        # rho=0, f(xi,0;kp)=0. For the hardened surface qh2=1 (kp<1) this is xi_apex=sqrt3 fc/m0;
-        # solve the 1-D f(xi,0)=0 generally for robustness. (Rigorous non-unique vertex multiplier =
-        # Koiter, ADR 4.2 — deferred.)
-        lo, hi = 0.0, SQRT3 * fc / m0 * 4.0
-        for _ in range(80):
-            mid = 0.5 * (lo + hi)
-            if _yf_inv_hard(lo, 0.0, r, kp, mp) * _yf_inv_hard(mid, 0.0, r, kp, mp) <= 0.0:
-                hi = mid
-            else:
-                lo = mid
-        xi = 0.5 * (lo + hi)
-        p_new = xi / SQRT3
-        sig_new = np.array([p_new, p_new, p_new])
-    else:
+    if not apex:
         p_new = xi / SQRT3
         dev_scale = rho / rho_tr if rho_tr > 0.0 else 0.0
         sig_new = s_tr * dev_scale + p_new
+        # HONEST convergence: recompute f INDEPENDENTLY at the returned stress with its OWN (updated)
+        # Lode angle — the frozen-theta residual R[2] can read ~0 while the point is off-surface near
+        # the apex (the frozen theta != the returned stress's true theta). Never report converged for
+        # an off-surface point.
+        f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
+                          fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
+        # ADMISSIBILITY (PR #249 adversarial-review fix, mirrored in the C++ kernel): a valid plastic
+        # return needs dlam>=0 AND a non-decreasing hardening variable kp>=kp_n.
+        admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
+        if converged and abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible:
+            return sig_new, kp, True, f_indep, True
+    # VERTEX RETURN (WP concrete3d-oracle-diagnosis, 2026-09). Reached when the regular (radial) return
+    # overshot the hydrostatic axis (rho<0), did not converge, or landed inadmissible. The OLD branch here
+    # projected EVERY such trial onto the hydrostatic-TENSION vertex with the kp of the ABORTED Newton
+    # iterate: (i) a deep-compression trial was sign-flipped to tension (then rejected by the PR #249
+    # gate => elastic fallback: OOFEM con2dpm3 hydrostatic compression stayed ELASTIC), and (ii) the
+    # tension-vertex kp was an arbitrary iterate value => the hydrostatic-tension response was step-size
+    # dependent and did not converge under refinement (con2dpm4). return_map_vertex solves
+    # f(sigV, rho=0; kp(sigV)) = 0 on the hydrostatic axis with kp CONSISTENT with the vertex plastic
+    # strain, on the TENSION vertex (sigV_tr>0) or — while the [1-qh1] cap closes the surface (kp_n<1) —
+    # the COMPRESSION vertex (sigV_tr<0), accepted only if the trial lies in the cone of plastic-potential
+    # normals at the vertex. Otherwise: SAFE honest failure (elastic predictor, converged=False => the
+    # caller step-cuts) — the PR #249 contract is unchanged.
+    vx = return_map_vertex(xi_tr / SQRT3, rho_tr, mp, kp_n)
+    if vx is not None:
+        sV, kpv, _dl = vx
+        sig_new = np.array([sV, sV, sV])
+        f_indep = yield_f(np.array([sV, sV, sV, 0.0, 0.0, 0.0]),
+                          fc, mp["ft"], mp["e"], qh1(kpv, mp["qh0"], mp["Hp"]), qh2(kpv, mp["Hp"]))
+        if np.isfinite(f_indep) and abs(f_indep) < 1.0e-7 * (fc + 1.0) and kpv >= kp_n - 1.0e-12:
+            return sig_new, kpv, True, f_indep, True
+    if apex:                                  # regular RETRY with rho clamped at 0 (vertex rejected)
+        u, converged, _ = _newton(True)
+        xi, rho, dlam, kp = u
+        if converged and rho > 0.0:
+            p_new = xi / SQRT3
+            dev_scale = rho / rho_tr if rho_tr > 0.0 else 0.0
+            sig_new = s_tr * dev_scale + p_new
+            f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
+                              fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
+            admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
+            if abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible:
+                return sig_new, kp, True, f_indep, True
+    f_tr_now = _yf_inv_hard(xi_tr, rho_tr, r, kp_n, mp)
+    return np.array(sig_tr, float), kp_n, True, f_tr_now, False
 
-    # HONEST convergence: recompute f INDEPENDENTLY at the returned stress with its OWN (updated)
-    # Lode angle — the frozen-theta residual R[2] can read ~0 while the point is off-surface near
-    # the apex (the frozen theta != the returned stress's true theta). Never report converged for
-    # an off-surface point.
-    f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
-                      fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
-    # ADMISSIBILITY + SAFE FALLBACK — ported from the C++ kernel (PR #249 adversarial-review fix,
-    # LadrunoConcrete3DKernel.h returnMapHardening). The oracle had the HONEST f-recompute above but
-    # NOT this half, so it still reported converged for the apex teleport: the hardening Newton
-    # overshoots to rho<0 on a deep-COMPRESSION trial, the apex branch projects to the hydrostatic-
-    # TENSION vertex, and f==0 holds there BY CONSTRUCTION -> `(converged or apex) and |f|<tol`
-    # returns True for a sign-flipped, inadmissible state. Measured: a trial with max principal
-    # -23.76 returned [+2.94,+2.94,+2.94] with conv=True, which then drove the P2i tensile damage
-    # gate to wt=0.997 under pure compression (test_p2i_multiaxial_apportioning_gate, red since the
-    # commit that introduced it). A valid plastic return needs dlam>=0 AND a non-decreasing
-    # hardening variable kp>=kp_n; otherwise hand back the ELASTIC PREDICTOR rather than the
-    # garbage iterate (kp<kp_n would poison the committed history) and report NOT converged so the
-    # caller can cut the step. The rigorous vertex sub-algorithm (Koiter multi-surface, ADR 4.2)
-    # remains deferred — this makes the failure honest, it does not make the apex return correct.
-    admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
-    converged = bool((converged or apex) and abs(f_indep) < 1.0e-7 * (fc + 1.0) and admissible)
-    if not converged:
-        return np.array(sig_tr, float), kp_n, True, f_indep, False
-    return sig_new, kp, True, f_indep, converged
+
+def _vertex_kappa(kp_n, sigV_tr, rho_tr, sigV, mp):
+    """Hardening variable consistent with a VERTEX return from (sigV_tr, rho_tr) to (sigV, rho=0):
+    kp = kp_n + ||d eps_p|| (2 cos theta)^2 / xh(sigV)  (Grassl 2013 Eq.32 with the plastic strain of the
+    vertex projection). ||d eps_p|| is the tensor FROBENIUS norm — volumetric (sigV_tr-sigV)/(sqrt3 K) and
+    deviatoric rho_tr/(2G) — the same norm the regular map's R4 uses (||m|| in the orthonormal (xi,rho)
+    frame). theta is undefined on the axis: theta = pi/3 => (2cos)^2 = 1 (OOFEM computeTempKappa's choice).
+    NB OOFEM ConcreteDPM2::computeTempKappa uses sqrt(1/9 (dsig/K)^2 + (rho/2G)^2), i.e. its volumetric part
+    is 1/sqrt3 of the Frobenius norm (and of its OWN regular-return norm, computeDKappaDDeltaLambda). We keep
+    the self-consistent Frobenius norm; this is the one deliberate difference to OOFEM on the axis."""
+    K, G = mp["K"], mp["G"]
+    eq = np.sqrt((sigV_tr - sigV) ** 2 / (3.0 * K * K) + (rho_tr / (2.0 * G)) ** 2)
+    xh = ductility_xh(sigV, mp["fc"], mp["Ah"], mp["Bh"], mp["Ch"], mp["Dh"])
+    return kp_n + eq / xh
+
+
+def cdpm2_vertex_potential_grad(sigV, kp, mp):
+    """(dg/dsigV, dg/drho) of the FULL CDPM2 plastic potential (Grassl 2013 Eq.22-29: the [1-qh1] cap +
+    the dilatancy function m_g(sigV) with A_g, B_g from Df) at rho=0 — OOFEM ConcreteDPM2::computeDGDInv at
+    rho=0. Used ONLY to delimit the compressive-vertex region (the cone-of-normals test in
+    return_map_vertex): the regular map still uses the simplified v1 flow (m_v = Df m0/(sqrt3 fc), no cap —
+    handoff §3a/§6-5), which has NO compressive cone at all (its volumetric flow is always dilatant), so the
+    compressive vertex can only be delimited with the potential that actually closes. Df is clamped to
+    >0.5 (B_g contains log(2Df-1))."""
+    fc, ft, m0 = mp["fc"], mp["ft"], mp["m0"]
+    Df = max(mp["Df"], 0.5 + 1.0e-6)
+    q1, q2 = qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"])
+    AG = 3.0 * ft * q2 / fc + m0 / 2.0
+    BG = q2 / 3.0 * (1.0 + ft / fc) / (np.log(AG) + np.log(Df + 1.0) - np.log(2.0 * Df - 1.0)
+                                       - np.log(3.0 * q2 + m0 / 2.0))
+    mQ = AG * np.exp((sigV - ft * q2 / 3.0) / (fc * BG))
+    Bl = sigV / fc
+    Al = (1.0 - q1) * Bl * Bl
+    dgs = 4.0 * (1.0 - q1) / fc * Al * Bl + q1 * q1 * mQ / fc
+    dgr = Al / (SQRT6 * fc) * (4.0 * (1.0 - q1) * Bl + 6.0) + m0 * q1 * q1 / (SQRT6 * fc)
+    return dgs, dgr
+
+
+def return_map_vertex(sigV_tr, rho_tr, mp, kp_n):
+    """Dedicated hydrostatic VERTEX return (tension apex, or the compressive cap vertex while qh1<1).
+    Solves F(sigV) = f_p(sigV, rho=0; kp(sigV)) = 0 by bisection between sigV_tr and 0, kp(sigV) from
+    _vertex_kappa (so kp is CONSISTENT with the projection — not the aborted regular-Newton iterate), then
+    checks the trial lies in the cone of plastic-potential normals at the vertex:
+        dlam = (sigV_tr - sigV)/(K dg/dsigV) >= 0   and   rho_tr <= 2G dlam dg/drho
+    (tension: the fork's own flow m_v=Df m0/(sqrt3 fc), m_s(0)=m0/(sqrt6 fc); compression: the CDPM2
+    potential, see cdpm2_vertex_potential_grad). f_p is evaluated ON the axis, where the Lode function
+    multiplies rho=0 — the yield function is regular there (no theta singularity). Returns
+    (sigV, kp, dlam) or None (not a vertex state)."""
+    fc, K, G = mp["fc"], mp["K"], mp["G"]
+    if sigV_tr > 0.0:
+        tension = True
+    elif sigV_tr < 0.0 and kp_n < 1.0:
+        tension = False
+    else:
+        return None
+    F = lambda s: _yf_inv_hard(SQRT3 * s, 0.0, 1.0, _vertex_kappa(kp_n, sigV_tr, rho_tr, s, mp), mp)
+    if not (F(sigV_tr) > 0.0 and F(0.0) < 0.0):
+        return None
+    a, b = (0.0, sigV_tr) if tension else (sigV_tr, 0.0)     # a < b
+    Fa = F(a)
+    for _ in range(200):
+        mid = 0.5 * (a + b)
+        if mid <= a or mid >= b:
+            break
+        Fm = F(mid)
+        if Fm == 0.0:
+            a = b = mid
+            break
+        if (Fm > 0.0) == (Fa > 0.0):
+            a, Fa = mid, Fm
+        else:
+            b = mid
+    s = 0.5 * (a + b)
+    kp = _vertex_kappa(kp_n, sigV_tr, rho_tr, s, mp)
+    if tension:
+        dgs, dgr = mp["Df"] * mp["m0"] / fc, mp["m0"] / (SQRT6 * fc)
+    else:
+        dgs, dgr = cdpm2_vertex_potential_grad(s, kp, mp)
+    if dgs == 0.0:
+        return None
+    dlam = (sigV_tr - s) / (K * dgs)
+    if not (dlam >= 0.0) or rho_tr > 2.0 * G * dlam * dgr * (1.0 + 1.0e-10) + 1.0e-14 * fc:
+        return None
+    return s, kp, dlam
 
 
 def drive_hardening(mp, eps11_path, confine="free", sigma3=0.0):
@@ -3214,6 +3314,81 @@ def run_p3_eta_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, 
               f"rel={res['PV5b_rel']:.2e} ({res['PV5b_ok']})")
         print(f"  PV6 overstress NORM monotone in eta: {[f'{o:.3f}' for o in over]} ({res['PV6_monotone']})")
         print(f"  => P3 ETA GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+def run_vertex_gate(verbose=True):
+    """VERTEX-return gate (WP concrete3d-oracle-diagnosis). Pins the dedicated hydrostatic-axis return
+    (return_map_vertex) that replaced the aborted-iterate tension-apex teleport. Uses the OOFEM ConcreteDPM2
+    regression parameters (con2dpm3/con2dpm4: E=30e9 nu=.15 fc=3e6 ft=1e6 e=.525 Df=.85 qh0=.3 Hp=.01, SI).
+      V1 hydrostatic COMPRESSION yields on the closed [1-qh1] cap vertex: every step converged + plastic,
+         |sigma| far below the elastic E/(1-2nu)*eps, kp increasing, f=0. Pre-fix: ELASTIC (-21.43 MPa at
+         eps=-5e-4, every step a silent non-converged fallback). Reference: an independent numpy
+         transcription of OOFEM ConcreteDPM2 with the Frobenius vertex-kappa gives -3.1396 / -4.8810 MPa at
+         steps 1/5 (OOFEM itself: -2.9636 / -4.0676 with its 1/9 volumetric vertex-kappa factor).
+      V2 hydrostatic TENSION converges under step refinement (1 vs 1000 substeps within 1e-2, 100 vs 1000
+         4x closer: backward-Euler on kp). Pre-fix: the kp of the aborted Newton iterate made
+         the damaged response drift (+1.08 / +0.80 / +0.82 / +0.91 MPa at 1/10/100/1000 substeps).
+      V3 NO sign flip: over a random fuzz no converged return with a compressive mean trial stress lands on
+         an all-tensile state (pre-fix: 4.6% of plastic fuzz trials did — admissible, so the PR #249 gate
+         let them through).
+      V4 the cone of normals delimits the vertex: a slightly off-axis trial still returns to the axis
+         (rho=0), a strongly deviatoric one does not."""
+    E, nu, fc, ft = 30.0e9, 0.15, 3.0e6, 1.0e6
+    mp = make_material(E, nu, fc, ft, Df=0.85, e=0.525, qh0=0.3, Hp=0.01)
+    res = {}
+    # V1
+    sig = np.zeros(6); kp = 0.0; ok = True; out = []
+    for k in range(1, 6):
+        sig, kp_new, plastic, conv = return_map_tensor(sig, np.array([-5.0e-4] * 3 + [0, 0, 0.0]), mp, kp)
+        ok = ok and plastic and conv and kp_new > kp
+        kp = kp_new
+        f = yield_f(sig, fc, ft, mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
+        ok = ok and abs(f) < 1.0e-9 and abs(sig[3]) + abs(sig[4]) + abs(sig[5]) == 0.0
+        out.append(sig[0])
+    res["V1_sigma_MPa"] = [s / 1e6 for s in out]
+    res["V1_ok"] = bool(ok and abs(out[0] / 1e6 + 3.1396) < 1e-3 and abs(out[4] / 1e6 + 4.8810) < 1e-3
+                        and abs(out[0]) < 0.2 * E / (1 - 2 * nu) * 5.0e-4)
+    # V2
+    def hyd_t(n):
+        s = np.zeros(6); k = 0.0; c = True
+        for _ in range(n):
+            s, k, _, cv = return_map_tensor(s, np.array([1.0e-3 / n] * 3 + [0, 0, 0.0]), mp, k)
+            c = c and cv
+        return s[0], c
+    s1, c1 = hyd_t(1); s100, c100 = hyd_t(100); s1000, c1000 = hyd_t(1000)
+    res["V2_rel"] = abs(s1 - s1000) / abs(s1000)
+    res["V2_rel100"] = abs(s100 - s1000) / abs(s1000)
+    # backward-Euler on kp (xh at the end point) => a small step error that SHRINKS with refinement
+    res["V2_ok"] = bool(c1 and c100 and c1000 and res["V2_rel"] < 1.0e-2 and res["V2_rel100"] < 0.25 * res["V2_rel"])
+    # V3
+    rng = np.random.default_rng(7)
+    flips = conv_n = 0
+    m30 = make_material(30000.0, 0.2, 30.0, 3.0, Df=1.0)
+    for _ in range(3000):
+        w = (rng.random(3) * 2.0 - 1.0) * 80.0
+        sp, _, plastic, _, cv = return_map_hardening(w, m30, rng.random() * 1.2)
+        if plastic and cv:
+            conv_n += 1
+            if np.mean(w) < 0.0 and np.min(sp) > 0.0:
+                flips += 1
+    res["V3_flips"] = flips; res["V3_converged"] = conv_n
+    res["V3_ok"] = bool(flips == 0 and conv_n > 0)
+    # V4 (committed plastic cap state, then a hydrostatic probe with a small / a large shear)
+    sig = np.zeros(6); kp = 0.0
+    for _ in range(3):
+        sig, kp, _, _ = return_map_tensor(sig, np.array([-5.0e-4] * 3 + [0, 0, 0.0]), mp, kp)
+    s_small, _, _, c_small = return_map_tensor(sig, np.array([-5.0e-4] * 3 + [1.0e-6, 0, 0.0]), mp, kp)
+    s_big, _, _, c_big = return_map_tensor(sig, np.array([-5.0e-4] * 3 + [2.0e-3, 0, 0.0]), mp, kp)
+    rho_small = invariants(s_small)[1]; rho_big = invariants(s_big)[1]
+    res["V4_rho_small"] = rho_small; res["V4_rho_big"] = rho_big
+    res["V4_ok"] = bool(c_small and rho_small < 1.0e-6 * fc and (not c_big or rho_big > 1.0e-3 * fc))
+    res["PASS"] = bool(res["V1_ok"] and res["V2_ok"] and res["V3_ok"] and res["V4_ok"])
+    if verbose:
+        print(f"  V1 hydrostatic compression (cap vertex): sigma = {np.round(res['V1_sigma_MPa'], 4)} MPa  ok={res['V1_ok']}")
+        print(f"  V2 hydrostatic tension vs 1000 substeps: rel(1) = {res['V2_rel']:.2e} rel(100) = {res['V2_rel100']:.2e}  ok={res['V2_ok']}")
+        print(f"  V3 sign-flip fuzz: {flips} flips / {conv_n} converged  ok={res['V3_ok']}")
+        print(f"  V4 cone: rho(small shear)={rho_small:.3e}  rho(large shear)={rho_big:.3e}  ok={res['V4_ok']}")
     return res
 
 

@@ -436,6 +436,35 @@ static void run_robustness() {
         check(!pr.converged || pr.kp >= kp_n - 1e-9, "apex/overshoot does not commit kp<kp_n");
     }
 
+    // C4 — VERTEX return (WP concrete3d-oracle-diagnosis). (a) NO converged return may sign-flip a
+    // compressive-mean trial onto an all-tensile state (the PR #249 gate let 7617/165641 of these through:
+    // they are 'admissible'); (b) a hydrostatic-compression trial on the closed cap (kp_n<1) must YIELD at
+    // the compressive vertex (pre-fix: elastic fallback, status 2 on every increment); (c) the vertex
+    // tangent is purely volumetric (zero deviatoric stiffness).
+    {
+        unsigned s2 = 777u; auto rn = [&]() { s2 = s2*1664525u + 1013904223u; return (s2>>8)*(1.0/16777216.0); };
+        int flips = 0;
+        for (double Df : {0.3, 0.85, 1.0}) {
+            mp.Df = Df;
+            for (int t = 0; t < 30000; ++t) {
+                double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rn()*2.0 - 1.0) * 80.0;
+                PrincipalResult pr = returnMapHardening(w, mp, rn() * 1.2);
+                if (pr.plastic && pr.converged && (w[0]+w[1]+w[2]) < 0.0 && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0) ++flips;
+            }
+        }
+        check(flips == 0, "no converged return sign-flips a compressive-mean trial to the tension vertex");
+        mp.Df = 1.0;
+        double w[3] = {-150.0, -150.0, -150.0};
+        PrincipalResult pr = returnMapHardening(w, mp, 0.05);
+        check(pr.converged && pr.apex && pr.sp[0] < 0.0 && pr.sp[0] > -150.0 && pr.kp > 0.05
+              && std::fabs(pr.f_after) < 1e-9, "hydrostatic compression yields at the closed-cap vertex");
+        double sig_n[6] = {0,0,0,0,0,0}, deps[6] = {-3e-3, -3e-3, -3e-3, 1e-6, 0, 0};
+        double sigN[6], kpN, Dt[6][6];
+        int st = returnMapTensor(mp, sig_n, deps, 0.05, true, sigN, kpN, Dt, true);
+        const double devmax = std::fmax(std::fabs(Dt[3][3]), std::fabs(Dt[0][0] - Dt[1][0]));
+        check(st == 0 && devmax < 1e-9 * mp.E, "vertex tangent is purely volumetric (zero deviatoric stiffness)");
+    }
+
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;
     // returnMapTensor falls back to the finite elastic predictor with status!=0.
     {

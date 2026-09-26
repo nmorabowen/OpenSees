@@ -437,6 +437,21 @@ def test_p3_eta_gate():
     assert r["PASS"]
 
 
+def test_vertex_return_gate():
+    """Dedicated hydrostatic-axis VERTEX return (WP concrete3d-oracle-diagnosis) on the OOFEM ConcreteDPM2
+    con2dpm3/4 parameters. V1 hydrostatic compression YIELDS on the closed [1-qh1] cap vertex (pre-fix:
+    purely elastic, -21.43 MPa, every increment a silent non-converged fallback); V2 hydrostatic tension
+    converges under step refinement (pre-fix: aborted-Newton-iterate kp => step-size dependent); V3 no
+    converged return sign-flips a compressive-mean trial onto the tension vertex (pre-fix: 169/1496 in this
+    fuzz, all 'admissible'); V4 the cone of normals delimits the vertex region."""
+    r = ref.run_vertex_gate(verbose=False)
+    assert r["V1_ok"], r["V1_sigma_MPa"]
+    assert r["V2_ok"], (r["V2_rel"], r["V2_rel100"])
+    assert r["V3_ok"] and r["V3_flips"] == 0
+    assert r["V4_ok"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

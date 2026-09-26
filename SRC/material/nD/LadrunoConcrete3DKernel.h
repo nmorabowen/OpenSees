@@ -488,6 +488,75 @@ inline PrincipalResult returnMapPrincipal(const double sigTr[3], const Params& m
 }
 
 // ---------------------------------------------------------------------------
+// VERTEX (hydrostatic-axis) return — mirrors the oracle _vertex_kappa / cdpm2_vertex_potential_grad /
+// return_map_vertex byte-for-byte (same bisection, same acceptance test).
+//   vertexKappa: kp consistent with the vertex projection (Grassl Eq.32): kp_n + ||d eps_p||/xh(sigV),
+//     ||d eps_p||_F = sqrt((sigV_tr-sigV)^2/(3K^2) + (rho_tr/2G)^2) (volumetric + deviatoric, the same
+//     Frobenius norm as the regular map's R4), theta=pi/3 on the axis => (2cos)^2 = 1 (OOFEM's choice).
+//     NB OOFEM computeTempKappa uses 1/9 instead of 1/3 on the volumetric term (1/sqrt3 of the norm its
+//     own regular return uses) — the one deliberate difference to OOFEM on the axis.
+//   cdpm2VertexPotentialGrad: (dg/dsigV, dg/drho) of the FULL CDPM2 potential (Eq.22-29) at rho=0; used
+//     ONLY for the compressive-vertex cone test (the v1 regular flow m_v=Df m0/(sqrt3 fc) has no cap
+//     term => its volumetric flow is always dilatant => it has NO compressive cone). Df clamped >0.5.
+//   returnMapVertex: F(sigV)=f_p(sigV,0;kp(sigV))=0 by bisection in (sigV_tr,0); the yield function is
+//     regular on the axis (Lode r multiplies rho=0). Accept iff dlam=(sigV_tr-sigV)/(K dg/dsigV)>=0 and
+//     rho_tr <= 2G dlam dg/drho (trial inside the cone of normals).
+// ---------------------------------------------------------------------------
+inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp)
+{
+    const double K = bulkK(mp), G = shearG(mp);
+    const double d = sigV_tr - sigV, g = rho_tr / (2.0 * G);
+    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    return kp_n + eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+}
+
+inline void cdpm2VertexPotentialGrad(double sigV, double kp, const Params& mp, double& dgs, double& dgr)
+{
+    const double fc = mp.fc, ft = mp.ft, m0 = mp.m0;
+    const double Df = mp.Df > 0.5 + 1.0e-6 ? mp.Df : 0.5 + 1.0e-6;
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double AG = 3.0 * ft * q2 / fc + m0 / 2.0;
+    const double BG = q2 / 3.0 * (1.0 + ft / fc) / (std::log(AG) + std::log(Df + 1.0) - std::log(2.0 * Df - 1.0)
+                                                  - std::log(3.0 * q2 + m0 / 2.0));
+    const double mQ = AG * std::exp((sigV - ft * q2 / 3.0) / (fc * BG));
+    const double Bl = sigV / fc;
+    const double Al = (1.0 - q1) * Bl * Bl;
+    dgs = 4.0 * (1.0 - q1) / fc * Al * Bl + q1 * q1 * mQ / fc;
+    dgr = Al / (SQRT6 * fc) * (4.0 * (1.0 - q1) * Bl + 6.0) + m0 * q1 * q1 / (SQRT6 * fc);
+}
+
+inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, double kp_n,
+                            double& sigV, double& kp, double& dlam)
+{
+    const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
+    bool tension;
+    if (sigV_tr > 0.0) tension = true;
+    else if (sigV_tr < 0.0 && kp_n < 1.0) tension = false;
+    else return false;
+    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp), mp); };
+    if (!(F(sigV_tr) > 0.0 && F(0.0) < 0.0)) return false;   // (also rejects NaN)
+    double a = tension ? 0.0 : sigV_tr, b = tension ? sigV_tr : 0.0;   // a < b
+    double Fa = F(a);
+    for (int it = 0; it < 200; ++it) {
+        const double mid = 0.5 * (a + b);
+        if (mid <= a || mid >= b) break;
+        const double Fm = F(mid);
+        if (Fm == 0.0) { a = b = mid; break; }
+        if ((Fm > 0.0) == (Fa > 0.0)) { a = mid; Fa = Fm; } else b = mid;
+    }
+    const double s = 0.5 * (a + b);
+    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp);
+    double dgs, dgr;
+    if (tension) { dgs = mp.Df * mp.m0 / fc; dgr = mp.m0 / (SQRT6 * fc); }
+    else cdpm2VertexPotentialGrad(s, k, mp, dgs, dgr);
+    if (dgs == 0.0) return false;
+    const double dl = (sigV_tr - s) / (K * dgs);
+    if (!(dl >= 0.0) || rho_tr > 2.0 * G * dl * dgr * (1.0 + 1.0e-10) + 1.0e-14 * fc) return false;
+    sigV = s; kp = k; dlam = dl;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Hardening principal return (Grassl Eq.18 + Eq.30-36). 4-unknown (xi,rho,dlam,kp)
 // Newton with ANALYTIC 4x4 Jacobian (the oracle uses a NUMERICAL Jacobian — this is
 // the build-PR deliverable); theta frozen; hydrostatic apex fallback; HONEST
@@ -518,6 +587,13 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     const double m_v = Df * m0 / (SQRT3 * fc);
     double xi = xi_tr, rho = rho_tr, dlam = 0.0, kp = kp_n;
     bool apex = false, converged = false;
+    // The regular semi-implicit Newton. clampRho=false: the ORIGINAL scheme (an iterate crossing the
+    // hydrostatic axis, rho<0, aborts with apex=true -> vertex candidate). clampRho=true: the RETRY used
+    // only after a rejected vertex (the trial is OUTSIDE the cone of normals, so a regular rho>0 solution
+    // exists and the abort was a Newton overshoot): rho is clamped to >=0 and iteration continues (OOFEM
+    // performRegularReturn's max(rho,0)).
+    auto newton = [&](bool clampRho) {
+    xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
     for (int it = 0; it < 100; ++it) {
         const double m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
         const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
@@ -576,46 +652,73 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         rho += M[1][4] / M[1][1];
         dlam+= M[2][4] / M[2][2];
         kp  += M[3][4] / M[3][3];
-        if (rho < 0.0) { apex = true; break; }
+        if (rho < 0.0) { if (!clampRho) { apex = true; break; } rho = 0.0; }
     }
+    };
+    newton(false);
+    const bool overshot = apex;
 
-    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp;
-    if (apex) {
-        // 1-D apex: f(xi,0;kp)=0 by bisection (mirror the oracle)
-        double lo = 0.0, hi = SQRT3 * fc / m0 * 4.0;
-        for (int it = 0; it < 80; ++it) {
-            double mid = 0.5 * (lo + hi);
-            if (yfInvHard(lo, 0.0, r, kp, mp) * yfInvHard(mid, 0.0, r, kp, mp) <= 0.0) hi = mid; else lo = mid;
-        }
-        xi = 0.5 * (lo + hi);
-        const double p_new = xi / SQRT3;
-        for (int a = 0; a < 3; ++a) R.sp[a] = p_new;
-        R.xi = xi; R.rho = 0.0; R.apex = true;
-    } else {
+    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
+    if (!apex) {
         const double p_new = xi / SQRT3;
         const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
         for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
+        // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
+        double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
+        R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
+        // ADMISSIBILITY (PR #249 adversarial-review fix): a valid plastic return needs dlam>=0 and a
+        // NON-DECREASING hardening variable (kp>=kp_n). Never report converged for an inadmissible/
+        // off-surface state.
+        const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
+        if (converged && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible) {
+            R.converged = true;
+            return R;
+        }
     }
-    // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
-    double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
-    R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-    // ADMISSIBILITY + SAFETY (PR #249 adversarial-review fix). A valid plastic return needs
-    // dlam>=0 and a NON-DECREASING hardening variable (kp>=kp_n). The semi-implicit hardening
-    // Newton can overshoot to rho<0; the apex bisection then returns a SIGN-FLIPPED hydrostatic-
-    // tension vertex with kp<kp_n (or kp<0) for a deep-COMPRESSION trial — the documented KNOWN
-    // GAP (handoff §6: low-kp / off-meridian first-yield + the apex needs sub-stepping + a
-    // dedicated apex sub-algorithm). Be HONEST (never report converged for an inadmissible/off-
-    // surface state — the old `(converged||apex)&&|f|<tol` lied here) and SAFE (never hand back
-    // the garbage iterate — kp<kp_n would poison the committed history): fall back to the elastic
-    // predictor so the caller's status!=0 cuts the step. This deliberately diverges from the
-    // numpy oracle's (equally-arbitrary) apex teleport — the kernel is the safe reference here.
-    const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-    R.converged = (converged || apex) && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible;
-    if (!R.converged) {
-        for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
-        R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
+    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex). Reached when
+    // the regular (radial) return overshot the hydrostatic axis (rho<0), did not converge, or landed
+    // inadmissible. The OLD branch projected EVERY such trial onto the hydrostatic-TENSION vertex with the
+    // kp of the ABORTED Newton iterate: a deep-compression trial was sign-flipped to tension (then rejected
+    // by the PR #249 gate => ELASTIC fallback — hydrostatic compression never yielded, OOFEM con2dpm3), and
+    // the tension-vertex kp was an arbitrary iterate value (hydrostatic tension step-size dependent, no
+    // convergence under refinement, con2dpm4). returnMapVertex solves f(sigV, rho=0; kp(sigV)) = 0 with kp
+    // CONSISTENT with the vertex plastic strain, on the TENSION vertex (sigV_tr>0) or — while the [1-qh1]
+    // cap closes the surface (kp_n<1) — the COMPRESSION vertex, accepted only inside the cone of plastic-
+    // potential normals. Otherwise: SAFE honest failure (elastic predictor, converged=false => the
+    // caller's status!=0 cuts the step) — the PR #249 contract is unchanged.
+    {
+        double sV = 0.0, kpv = kp_n, dlv = 0.0;
+        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv)) {
+            double svv[6] = {sV, sV, sV, 0, 0, 0};
+            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
+            if (std::isfinite(fv) && std::fabs(fv) < 1.0e-7 * (fc + 1.0) && kpv >= kp_n - 1.0e-12) {
+                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
+                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
+                R.apex = true; R.converged = true; R.f_after = fv;
+                return R;
+            }
+        }
     }
-    R.plastic = true;
+    // Regular RETRY with rho clamped at 0 (only after an axis overshoot whose vertex was rejected).
+    if (overshot) {
+        newton(true);
+        if (converged && rho > 0.0) {
+            const double p_new = xi / SQRT3;
+            const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
+            for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
+            double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
+            R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
+            const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
+            if (std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible) {
+                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
+                return R;
+            }
+        }
+    }
+    for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
+    R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
+    R.f_after = yfInvHard(xi_tr, rho_tr, r, kp_n, mp);
+    R.converged = false;
     return R;
 }
 
@@ -841,6 +944,44 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 }
 
 // ---------------------------------------------------------------------------
+// Principal Jacobian of the hardening VERTEX return (returnMapVertex). sp_a = sigV for all a, where
+// F(sigV; sigV_tr, rho_tr) = f(sigV, 0; kp(sigV, sigV_tr, rho_tr)) = 0 (implicit-function theorem):
+//   dsigV/dw_b = -(F_sigVtr * 1/3 + F_rhotr * s_tr_b/rho_tr) / F_sigV ,
+//   F_x = f_x + f_kp kp_x ;  kp = kp_n + eq/xh(sigV), eq = sqrt((sigV_tr-sigV)^2/(3K^2) + (rho_tr/2G)^2).
+// The rho_tr/rho_tr factor cancels analytically (kp_rhotr * s_b/rho_tr = s_b/(4G^2 eq xh)), so an exactly
+// hydrostatic trial is regular. Every row equal => zero deviatoric stiffness (the stress is pinned to the
+// axis) — the rank-deficient apex tangent handoff §6 listed as owed. Returns false on a degenerate state.
+// ---------------------------------------------------------------------------
+inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3])
+{
+    const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
+    const double sigV = pr.xi / SQRT3, kp = pr.kp;
+    const double sigV_tr = (w[0] + w[1] + w[2]) / 3.0;
+    const double d = sigV_tr - sigV, g = pr.rho_tr / (2.0 * G);
+    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    const double dxh = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    if (!(eq > 0.0) || !(xh > 0.0)) return false;
+    const double kp_s  = (-d / (3.0 * K * K)) / (eq * xh) - eq * dxh / (xh * xh);   // dkp/dsigV
+    const double kp_st = ( d / (3.0 * K * K)) / (eq * xh);                           // dkp/dsigV_tr
+    // f on the axis: f = cap^2 + m0 q1^2 q2 s - q1^2 q2^2, cap = (1-q1) s^2, s = sigV/fc
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
+    const double s = sigV / fc, cap = (1.0 - q1) * s * s;
+    const double f_s = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
+    const double f_k = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
+                     - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
+    const double F_s = f_s + f_k * kp_s;
+    if (!(std::fabs(F_s) > 0.0)) return false;
+    for (int b = 0; b < 3; ++b) {
+        const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
+        const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
+        for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Consistent (algorithmic) tangent dsigma/depsilon (6x6, oracle tensor convention).
 // Spectral lift of the principal Jacobian D[a][b]: dsigma/dsig_tr (isotropic
 // tensor-function derivative, de Souza Neto-Peric-Owen 2008 Box A.6) then : C.
@@ -858,12 +999,19 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     // can slow the global Newton. That is acceptable for P1 because the apex is the deferred
     // KNOWN-GAP regime (handoff §6) and the return map flags it (converged=false ⇒ step-cut);
     // the dedicated rank-deficient apex tangent lands with the apex sub-algorithm (P2+).
-    if (!pr.plastic || !pr.converged || pr.apex) { elasticC(mp, Dtan6); return; }
+    // (WP concrete3d-oracle-diagnosis) the HARDENING vertex return now has its own analytic principal
+    // Jacobian (vertexPrincipalJacobian: rank-1, purely volumetric, zero deviatoric stiffness); the
+    // perfect-plastic apex (returnMapPrincipal) keeps the elastic surrogate.
+    if (!pr.plastic || !pr.converged || (pr.apex && !hardening)) { elasticC(mp, Dtan6); return; }
     // eigenprojections E_a = e_a (x) e_a (rank-1)
     double E[3][3][3];
     for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
     double D[3][3];
-    principalJacobian(w, pr, mp, hardening, D);
+    if (pr.apex) {
+        if (!vertexPrincipalJacobian(w, pr, mp, D)) { elasticC(mp, Dtan6); return; }
+    } else {
+        principalJacobian(w, pr, mp, hardening, D);
+    }
 
     // dsigma/dsig_tr as a 4th-order tensor 𝔻_ijkl
     double Dt[3][3][3][3];

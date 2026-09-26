@@ -125,6 +125,11 @@ def main(out=None):
     add_driven(mp_h, np.linspace(0, -0.006, 120), True, "hard_uniax_comp", confine="free")
     add_driven(mp_h, np.linspace(0, -0.012, 120), True, "hard_confined_comp",
                confine="active", sigma3=0.10 * 30.0)
+    # VERTEX returns (WP concrete3d-oracle-diagnosis): strain-driven HYDROSTATIC paths through the dedicated
+    # vertex return — compression onto the closed [1-qh1] cap vertex (pre-fix: elastic, never yielded) and
+    # tension onto the apex with the consistent vertex kp (pre-fix: aborted-iterate kp, step-size dependent).
+    add_fixed(mp_h, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, True, "hard_hydro_comp_vertex")
+    add_fixed(mp_h, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, True, "hard_hydro_tens_vertex")
 
     lines.append(f"NPATH {len(emitted)}")
     for label, pblock, hardening, deps_list, rows in emitted:
@@ -163,6 +168,11 @@ def main(out=None):
     # recompose AND the 4x4 hardening principal Jacobian on a non-axisymmetric trial.
     tans.append((mp_h, sig_h.copy(), kp_h, np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]),
                  True, "tan_hard_shear"))
+    # VERTEX tangent (analytic vertexPrincipalJacobian vs the oracle FD): committed plastic hydrostatic-
+    # compression cap-vertex state, probe a further hydrostatic increment with a small shear (the trial
+    # stays inside the compressive cone of normals, so every FD perturbation also returns to the vertex).
+    add_tan(mp_h, [-5.0e-5, -5.0e-5, -5.0e-5, 2.0e-7, 0, 0], True, "tan_hard_vertex_comp",
+            prestep=[[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 20)
 
     lines.append(f"NTAN {len(tans)}")
     for mp, sig_n, kp_n, deps, hardening, label in tans:
