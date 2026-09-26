@@ -48,6 +48,9 @@
 #define LadrunoElementShell_h
 
 #include <Matrix.h>
+#include <Vector.h>
+#include <Node.h>
+#include <OPS_Globals.h>
 
 namespace LadrunoShell {
 
@@ -72,6 +75,39 @@ inline void dropKi(Matrix *&Ki)
     delete Ki;
     Ki = 0;
   }
+}
+
+
+// ---- ground-motion inertia load (addInertiaLoadToUnbalance) ----------------
+// The OpenSees convention: the load vector Q accumulates -M R a_g and the
+// residual SUBTRACTS Q, so the unbalance gains +M R a_g. `+M a` shakes the mesh
+// the wrong way, silently (BezierTri6/Tet10 until WP-117 #852).
+//   diagOnly = true : Q(i) += -M(i,i) ra(i)      (lumped/diagonal mass; plane four)
+//   diagOnly = false: Q    += -M ra              (full M; Bezier, bricks)
+// The massless early-out stays in the element (its predicate differs per
+// element: material/element rho vs a probe of M's diagonal). ra is the
+// caller's scratch (size nen*ndf), filled with the nodal R a_g. checkSize=false
+// keeps the bricks' historical no-check behaviour (C13, owner decision).
+inline int addGroundInertia(Vector &Q, const Matrix &M, Node **nodes, int nen,
+                            int ndf, bool diagOnly, const Vector &accel,
+                            Vector &ra, const char *who, bool checkSize = true)
+{
+  for (int a = 0; a < nen; a++) {
+    const Vector &Raccel = nodes[a]->getRV(accel);
+    if (checkSize && Raccel.Size() != ndf) {
+      opserr << who << "::addInertiaLoadToUnbalance - matrix and vector sizes incompatible\n";
+      return -1;
+    }
+    for (int j = 0; j < ndf; j++)
+      ra(a * ndf + j) = Raccel(j);
+  }
+  if (diagOnly) {
+    const int n = nen * ndf;
+    for (int i = 0; i < n; i++)
+      Q(i) += -M(i, i) * ra(i);
+  } else
+    Q.addMatrixVector(1.0, M, ra, -1.0);
+  return 0;
 }
 
 } // namespace LadrunoShell

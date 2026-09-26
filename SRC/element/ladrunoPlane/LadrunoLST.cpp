@@ -407,26 +407,11 @@ int LadrunoLST::addInertiaLoadToUnbalance(const Vector &accel)
   if (sum == 0.0)
     return 0;
 
-  static double ra[12];
-  for (int a = 0; a < numnodes; a++) {
-    const Vector &Raccel = theNodes[a]->getRV(accel);
-    if (Raccel.Size() != 2) {
-      opserr << "LadrunoLST::addInertiaLoadToUnbalance - incompatible sizes\n";
-      return -1;
-    }
-    ra[2 * a]     = Raccel(0);
-    ra[2 * a + 1] = Raccel(1);
-  }
-// Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
-  // called getMass() for its side effect of filling the class-static K and
-  // then read K(i,i) directly -- with the per-instance cache a HIT returns
-  // *Mi without touching K (which still holds the last TANGENT), so the
-  // side-effect contract is dead. Caught by
-  // test_dynamic_rayleigh_preserves_inertia[quad/lst].
+  // Ladruno (WP-124): lumped (diagonal) mass -- LadrunoShell::addGroundInertia.
+  static Vector ra(12);
   const Matrix &Mq = this->getMass();
-  for (int i = 0; i < 2 * numnodes; i++)
-    Q(i) += -Mq(i, i) * ra[i];
-  return 0;
+  return LadrunoShell::addGroundInertia(Q, Mq, theNodes, numnodes, 2, true, accel, ra,
+                                        "LadrunoLST");
 }
 
 const Vector &LadrunoLST::getResistingForce(void)

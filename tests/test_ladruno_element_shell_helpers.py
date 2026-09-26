@@ -33,6 +33,9 @@ TET = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
 TET_EDGES = [(0, 1), (1, 2), (0, 2), (0, 3), (2, 3), (1, 3)]
 
 
+_SUPPORTS = [True]          # False: the builders skip their fix() calls (rigid-body probes)
+
+
 def _mids(verts, edges):
     return [tuple(0.5 * (verts[a][d] + verts[b][d]) for d in range(len(verts[0])))
             for a, b in edges]
@@ -43,7 +46,7 @@ def _plane(coords, fixes, finite=False):
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     for i, (x, y) in enumerate(coords):
         ops.node(i + 1, x, y)
-    for n, fx in fixes:
+    for n, fx in (fixes if _SUPPORTS[0] else []):
         ops.fix(n, *fx)
     ops.nDMaterial("ElasticIsotropic", 1, E, NU, RHO)
     if finite:
@@ -57,7 +60,7 @@ def _solid(coords, fixed):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for i, xyz in enumerate(coords):
         ops.node(i + 1, *xyz)
-    for n in fixed:
+    for n in (fixed if _SUPPORTS[0] else []):
         ops.fix(n, 1, 1, 1)
     ops.nDMaterial("ElasticIsotropic", 1, E, NU, RHO)
     return 1
@@ -216,3 +219,36 @@ def test_live_restore_drops_Ki(name, tmp_path):
     ops.analysis("Static", "-noWarnings")
     assert ops.analyze(1) == 0, f"{name}: stale Ki after a live restore"
     assert ops.testIter() <= 3
+
+
+# ---- ground-motion inertia (addGroundInertia) -------------------------------------------
+# Rigid-body probe (ladruno-new-element guide): an UNSUPPORTED element under a constant
+# UniformExcitation a_g moves rigidly, so every node's RELATIVE acceleration is exactly
+# -a_g. A sign flip gives +a_g, a skipped load gives 0, and a full (consistent) mass reduced
+# to its diagonal breaks the nodal balance. Horizontal and vertical ground motion.
+@pytest.mark.parametrize("direction", [1, 2])
+@pytest.mark.parametrize("name", list(ELEMENTS))
+def test_ground_inertia_rigid_body(name, direction):
+    _SUPPORTS[0] = False
+    try:
+        ELEMENTS[name]()
+    finally:
+        _SUPPORTS[0] = True
+    ndf = len(ops.nodeDisp(ops.getNodeTags()[0]))
+    ag = 1.5
+    ops.timeSeries("Constant", 3, "-factor", ag)
+    ops.pattern("UniformExcitation", 3, direction, "-accel", 3)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-14, 10, 0)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient", "-noWarnings")
+    for _ in range(3):
+        assert ops.analyze(1, 0.01) == 0
+    for n in ops.getNodeTags():
+        acc = ops.nodeAccel(n)
+        for d in range(ndf):
+            want = -ag if d == direction - 1 else 0.0
+            assert abs(acc[d] - want) <= 1.0e-9 * ag,                 f"{name} node {n} dof {d + 1}: relative accel {acc[d]!r}, want {want!r}"
