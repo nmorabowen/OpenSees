@@ -634,3 +634,9 @@ Not modelled: OOFEM's in-step unload/reload search (`checkForUnAndReloading`). `
 - **B5:** the honest-convergence tolerance on the (dimensionless) yield function after a return is units-free,
   `F_TOL_HONEST = 3.1e-6` (was `1e-7·(fc+1)`: 3.1e-6 in MPa but 0.3 in Pa, so SI models accepted returns ~30 % off the
   surface). Equal to the old MPa value at fc = 30, so every MPa fixture is unchanged.
+- **One-substep con2dpm2 (5e-4 compressive strain per step, past the peak):** the C++ element (global Newton on
+  the lateral DOFs, damaged tangent) reaches step 3 and reports an HONEST non-convergence at step 4 (one
+  elastic-trial-fallback warning), while the oracle's uniaxial driver (bracketed bisection on the lateral strain)
+  reaches step 5 (−1.54 MPa). Same constitutive map; the difference is the lateral equilibrium solver on a
+  non-smooth, multi-branch response (lateral-cracking branch). Accepted: a single implicit 5e-4 step past the
+  compressive peak is outside the intended step size; the spurious σ ≡ 0 root is gone (ω ≤ 1 − 1e-6).
