@@ -1377,6 +1377,22 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   regression in each Zone-A battery (empirically reproduced: pre-fix the smoke test segfaults
   `0xC0000005`, post-fix 77/77 pass). See [[LEDGER_implementations]] rows 33005/33006, PR #220.
   2026-06-07 (RBE3) / 2026-06-09 (embedded).
+- **Status (WP-123, 2026-09-25):** the four copies are now ONE base,
+  `SRC/element/ladrunoEmbeddedRebar/LadrunoUndampedElement.h` — a new element that ignores
+  Rayleigh derives from it. **Correction:** the `getRayleighDampingForces` half of the fix above
+  never did anything: `Element::getRayleighDampingForces` is NOT virtual, so the four copies only
+  shadowed it and nothing called them (`eleResponse … dampingForce` reaches the base, which answers
+  zero because the refused factors stay 0). Only `setRayleighDampingFactors` and `getDamp` are live.
+  And since the 2026-07-28 `Element.cpp` fix (next entry, "makes 11 `Element` methods") the base
+  `getDamp` no longer crashes either; the override is now defence-in-depth against that vanilla edit
+  being lost in an upstream sync. `tests/test_ladruno_undamped_couplings.py` pins the contract.
+- **Test-design trap (WP-123 mutation row C):** for an element whose residual carries no D·v, a
+  spurious nonzero `getDamp` reaches only the TANGENT, and Newton iterates it away: same converged
+  answer, just slower. A "no damping" assertion run under `algorithm Newton` therefore cannot see it.
+  In WP-123 it caught 1 of 4 elements, and only because Newton stalled on a tiny mass. Use
+  `algorithm Linear` (one solve with the element's own tangent), so the polluted tangent shows up as a
+  wrong response. Likewise, comparing damped vs undamped runs in the SAME build cannot see a C that does
+  not depend on the Rayleigh factors; use an absolute oracle (energy conservation under Newmark γ=½, β=¼).
 
 ### `LadrunoArcLength -stabilize` (33004): what viscous regularization can and cannot pass
 Measured on the live build (2026-06-16) while building the ADR-31 rung-4 seam. Four

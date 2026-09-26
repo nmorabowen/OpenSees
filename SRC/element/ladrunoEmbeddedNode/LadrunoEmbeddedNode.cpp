@@ -68,7 +68,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         bool matMode_, bool corot_, const Vector* normalDir_, const Vector* orientDir_,
         UniaxialMaterial* matN_, UniaxialMaterial* matT1_, UniaxialMaterial* matT2_,
         bool initGapCapture_)
-  : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
+  : LadrunoUndampedElement(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape),
     Ku(ku), Kp(kp_), upActive(false), lambda_p(0.0),
@@ -83,7 +83,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     mPenalty(0.0), iPenalty(0.0), bpResolved(false), bpHostWarned(false),
     nDOF(0), nodeNdf(1 + hostNodes.Size()), dofOffset(1 + hostNodes.Size()),
     pflag(pressure_ ? 1 : 0),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0),
+    theNodes(0), K(0), P(0), M0(0),
     initGapCapture(initGapCapture_), g0Computed(false),
     g0(ndm_), gp0(0.0), gr0((ndm_ == 3) ? 3 : 1)
 {
@@ -115,7 +115,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
 }
 
 LadrunoEmbeddedNode::LadrunoEmbeddedNode()
-  : Element(0, ELE_TAG_LadrunoEmbeddedNode),
+  : LadrunoUndampedElement(0, ELE_TAG_LadrunoEmbeddedNode),
     ndm(0), nHost(0), connectedNodes(0), Nshape(),
     Ku(0.0), Kp(0.0), upActive(false), lambda_p(0.0),
     rflag(0), nrot(0), rActive(false),
@@ -127,7 +127,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
     mPenalty(0.0), iPenalty(0.0), bpResolved(false), bpHostWarned(false),
     nDOF(0), nodeNdf(), dofOffset(), pflag(0),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0),
+    theNodes(0), K(0), P(0), M0(0),
     initGapCapture(true), g0Computed(false), g0(), gp0(0.0), gr0()
 {
   for (int d = 0; d < 3; d++) { matDir[d] = 0; hasMat[d] = false; }
@@ -139,8 +139,6 @@ LadrunoEmbeddedNode::~LadrunoEmbeddedNode()
   if (K != 0) delete K;
   if (P != 0) delete P;
   if (M0 != 0) delete M0;
-  if (C0 != 0) delete C0;
-  if (dampF != 0) delete dampF;
   for (int d = 0; d < 3; d++) if (matDir[d] != 0) delete matDir[d];   // D9 — owned copies
 }
 
@@ -157,9 +155,7 @@ void LadrunoEmbeddedNode::allocate(void)
   if (K != 0) delete K;   K = new Matrix(nDOF, nDOF);
   if (P != 0) delete P;   P = new Vector(nDOF);
   if (M0 != 0) delete M0; M0 = new Matrix(nDOF, nDOF);
-  // damping is identically zero (pure penalty coupling) — allocate once, never refilled.
-  if (C0 != 0) delete C0; C0 = new Matrix(nDOF, nDOF); C0->Zero();
-  if (dampF != 0) delete dampF; dampF = new Vector(nDOF); dampF->Zero();
+  // damping is identically zero (pure penalty coupling): LadrunoUndampedElement (WP-123).
 }
 
 void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
@@ -610,29 +606,8 @@ void LadrunoEmbeddedNode::resolveBipenalty(void)
   bpResolved = true;
 }
 
-int LadrunoEmbeddedNode::setRayleighDampingFactors(double, double, double, double)
-{
-  return 0;   // a pure penalty coupling carries no physical Rayleigh damping
-}
-
-// ADR 23 D5 — D == 0 for a pure penalty coupling. The base Element::getDamp lazily
-// allocates its damping matrix the first time it is called, INSIDE the very
-// setRayleighDampingFactors we no-op above; with that allocation suppressed the base
-// would dereference theMatrices[-1] and crash on the first implicit-transient step
-// (Newmark/HHT c2·C is always nonzero ⇒ FE_Element::addCtoTang → getDamp). Return our
-// own pre-zeroed C0 instead, so the coupling contributes exactly zero damping and never
-// touches the unallocated base scratch.
-const Matrix& LadrunoEmbeddedNode::getDamp(void)
-{
-  C0->Zero();
-  return *C0;
-}
-
-const Vector& LadrunoEmbeddedNode::getRayleighDampingForces(void)
-{
-  dampF->Zero();
-  return *dampF;
-}
+// ADR 23 D5 — D == 0 for a pure penalty coupling. setRayleighDampingFactors /
+// getDamp: inherited from LadrunoUndampedElement (WP-123).
 
 double LadrunoEmbeddedNode::getExplicitCriticalTimeStep(void)
 {

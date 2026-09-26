@@ -61,7 +61,7 @@
 #ifndef LadrunoDistributingCoupling_h
 #define LadrunoDistributingCoupling_h
 
-#include <Element.h>
+#include <LadrunoUndampedElement.h>   // WP-123: refuses Rayleigh, zero getDamp
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
@@ -71,7 +71,7 @@ class Channel;
 class FEM_ObjectBroker;
 class Response;
 
-class LadrunoDistributingCoupling : public Element
+class LadrunoDistributingCoupling : public LadrunoUndampedElement
 {
  public:
   LadrunoDistributingCoupling(int tag, int ndm, int refNode, const ID& indepNodes,
@@ -105,19 +105,9 @@ class LadrunoDistributingCoupling : public Element
   const Vector& getResistingForce(void);
   const Vector& getResistingForceIncInertia(void);
 
-  // a pure penalty coupling carries no physical Rayleigh damping (refuse the
-  // factors so a βK can't spuriously shrink dt_cr — ADR 28 §5). getDamp /
-  // getRayleighDampingForces are ALSO overridden to return zero: the no-op
-  // setRayleighDampingFactors never allocates the base Element's lazy damping
-  // matrix slot (index stays −1), so the base getDamp/getRayleighDampingForces
-  // would dereference theMatrices[-1] the first time a TRANSIENT integrator forms
-  // the C-tangent (FE_Element::addCtoTang with a nonzero c-factor — always nonzero
-  // in Newmark) → crash. Overriding both bypasses that index path entirely and is
-  // physically correct (D ≡ 0). Mass/inertia come from getMass + the bipenalty m_p.
-  int setRayleighDampingFactors(double alphaM, double betaK,
-                                double betaK0, double betaKc);
-  const Matrix& getDamp(void);
-  const Vector& getRayleighDampingForces(void);
+  // a pure penalty coupling carries no physical Rayleigh damping (D ≡ 0): the
+  // factors are refused and getDamp is zero — inherited from LadrunoUndampedElement
+  // (WP-123; ADR 28 §5). Mass/inertia come from getMass + the bipenalty m_p.
   // self-reported explicit critical step: min over the (translational, rotational)
   // penalty classes of 2√(m/k) (ADR 28 §5). −1 when bipenalty off / unbounded.
   double getExplicitCriticalTimeStep(void);
@@ -187,8 +177,6 @@ class LadrunoDistributingCoupling : public Element
   Matrix* K;                // nDOF × nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // mass (nDOF × nDOF; zero unless bipenalty)
-  Matrix* C0;               // damping (nDOF × nDOF; ALWAYS zero — getDamp bypass)
-  Vector* dampF;            // Rayleigh damping force (nDOF; ALWAYS zero)
 
   void allocate(void);
   void resolveGeometry(void);    // x_c, r_i, dRef, W, ℓ², I_c eigen → I_c⁺/P, nKept
