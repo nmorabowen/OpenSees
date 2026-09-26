@@ -552,6 +552,18 @@ static void run_robustness() {
         }
         check(bad == 0 && worst < 0.05, "Gc calibration: uniaxial compression dissipates Gc within 5% (3 Gc/lch pairs)");
         std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", worst);
+        {   // the same calibration with the B1 CDPM2 potential + sub-incrementation (the wrapper default)
+            Params qc = q; qc.flowPotential = 1; qc.maxSubIncr = 10; qc.Df = 0.85;
+            double efc2[GC_TABLE_N], g2[GC_TABLE_N];
+            calibrateEpsFcTable(qc, efc2, g2);
+            double w2 = 0.0; int b2 = 0;
+            for (const auto& pr : pairs) {
+                int st = 0; const double e = epsFcFromGc(efc2, g2, pr[0], pr[1], &st);
+                w2 = std::fmax(w2, std::fabs(compressionEnergyDensity(qc, e) * pr[1] - pr[0]) / pr[0]); if (st != 0) ++b2;
+            }
+            check(b2 == 0 && w2 < 0.05, "Gc calibration with the CDPM2 potential: dissipates Gc within 5%");
+            std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", w2);
+        }
         Params a = q; a.Gc = 30.0; a.lch = 100.0; a.epsFc = 0.0;          // legacy Gc/(fc lch)
         Params b = a; b.epsFc = a.Gc / (a.fc * a.lch);                    // the same value, given directly
         State sa, sb; bool same = true;

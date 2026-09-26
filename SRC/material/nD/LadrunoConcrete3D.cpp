@@ -52,7 +52,7 @@ using Ladruno::Concrete3D::State;
 //       <-e e? | -kupfer ratio?> <-Df Df?> <-As As?> <-rho rho?>
 //       <-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?>
 //       <-lch lch?> <-autoRegularization>
-//       <-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy>
+//       <-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy> <-flowPotential cdpm2|legacy>
 //  (fc, ft are POSITIVE magnitudes; compression is negative in the model.)
 //  Gf = tensile fracture energy (CDPM2 bilinear law, wf = 4.444 Gf/ft, regularized as wf/lch);
 //  Gc = PHYSICAL compressive fracture energy per unit area (eps_fc calibrated so that uniaxial compression
@@ -66,7 +66,7 @@ void* OPS_LadrunoConcrete3D(void)
            << "<-e e? | -kupfer ratio?> <-Df Df?> <-As As?> <-rho rho?> "
            << "<-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?> <-lch lch?> <-autoRegularization> "
            << "<-implex> <-eta eta?> <-ctTemper none|alphat|proj> <-hoop K? <-hoopFy fy?>> "
-           << "<-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy>\n";
+           << "<-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy> <-flowPotential cdpm2|legacy>\n";
     return 0;
   }
 
@@ -100,6 +100,7 @@ void* OPS_LadrunoConcrete3D(void)
   double hoopFy = 1.0e30;      //                                     hoop yield (caps the confining pressure)
   int tensionLaw = 1;          // CDPM2 bilinear (Grassl 2013 Eq.58) — DEFAULT since WP concrete3d-oracle-diagnosis
   double epsFcUser = 0.0;      // >0: raw CDPM2 eps_fc (bypasses Gc); 0: Gc is the physical compressive energy
+  int flowPotential = 1;       // B1: full CDPM2 plastic potential (Eq.22-29) — DEFAULT; 0 = legacy v1 flow
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -168,6 +169,12 @@ void* OPS_LadrunoConcrete3D(void)
       else if (strcmp(law, "exp") == 0 || strcmp(law, "exponential") == 0) tensionLaw = 0;
       else { opserr << "WARNING LadrunoConcrete3D: -tensionLaw wants {bilinear|exp}\n"; return 0; }
     }
+    else if (strcmp(flag, "-flowPotential") == 0) {
+      const char* fp = OPS_GetString();
+      if      (strcmp(fp, "cdpm2") == 0)  flowPotential = 1;
+      else if (strcmp(fp, "legacy") == 0) flowPotential = 0;
+      else { opserr << "WARNING LadrunoConcrete3D: -flowPotential wants {cdpm2|legacy}\n"; return 0; }
+    }
     else if (strcmp(flag, "-gcLegacy") == 0) {
       epsFcUser = -1.0;        // legacy eps_fc = Gc/(fc*lch) at the CURRENT lch (Gc is NOT an energy)
     }
@@ -192,6 +199,7 @@ void* OPS_LadrunoConcrete3D(void)
   if (ft >= fc)                      { opserr << "WARNING LadrunoConcrete3D: need ft < fc (m0 = 3(fc^2-ft^2)/(fc ft) e/(e+1) > 0)\n"; return 0; }
   if (Gf <= 0.0 || Gc <= 0.0)        { opserr << "WARNING LadrunoConcrete3D: Gf, Gc must be > 0\n"; return 0; }
   if (As < 1.0)                      { opserr << "WARNING LadrunoConcrete3D: As must be >= 1 (ductility amplitude)\n"; return 0; }
+  if (flowPotential == 1 && Df <= 0.5) { opserr << "WARNING LadrunoConcrete3D: -Df must be > 0.5 with the CDPM2 plastic potential (B_g contains ln(2Df-1)); use -flowPotential legacy for Df <= 0.5\n"; return 0; }
   if (kupfer <= 1.0)                 { opserr << "WARNING LadrunoConcrete3D: -kupfer fcc/fc must be > 1\n"; return 0; }
 
   if (!haveE)
@@ -246,6 +254,9 @@ void* OPS_LadrunoConcrete3D(void)
              << "ONLY — -implex / -eta are INERT in this view (the 3D / plane views still use them).\n";
   }
 
+  if (flowPotential == 0)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -flowPotential legacy - the pre-B1 always-dilatant flow "
+           << "(no compactive cap normal; hydrostatic/confined compression returns less robust; no sub-incrementation).\n";
   if (tensionLaw == 0)
     opserr << "LadrunoConcrete3D (tag " << tag << "): -tensionLaw exp — LEGACY exponential tensile softening "
            << "(dissipates more than Gf; the CDPM2 bilinear law is the default).\n";
@@ -258,7 +269,8 @@ void* OPS_LadrunoConcrete3D(void)
 
   NDMaterial* mat = new LadrunoConcrete3D(tag, E, nu, fc, ft, Gf, Gc, ecc, Df, As,
                                           qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta, ctTemper,
-                                          hoopK, hoopFy, LadrunoConcrete3D::DIM_3D, tensionLaw, epsFcUser);
+                                          hoopK, hoopFy, LadrunoConcrete3D::DIM_3D, tensionLaw, epsFcUser,
+                                          flowPotential);
   if (mat == 0) {
     opserr << "WARNING LadrunoConcrete3D: failed to allocate material\n";
     return 0;
@@ -275,7 +287,7 @@ LadrunoConcrete3D::LadrunoConcrete3D()
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
     rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0), ctTemper(0),
     hoopK(0.0), hoopFy(1.0e30),
-    tensionLaw(1), epsFcUser(0.0), gcTabReady(false), gcLch(-1.0), gcEpsFc(0.0), gcWarned(false),
+    tensionLaw(1), epsFcUser(0.0), flowPotential(1), gcTabReady(false), gcLch(-1.0), gcEpsFc(0.0), gcWarned(false),
     dim(DIM_3D), ncomp(6), condense(false), confined(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
@@ -295,14 +307,15 @@ LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
                                      double rho_, double lch_, bool autoReg_, bool implex_, double eta_,
                                      int ctTemper_, double hoopK_, double hoopFy_, int dimMode,
-                                     int tensionLaw_, double epsFcUser_)
+                                     int tensionLaw_, double epsFcUser_, int flowPotential_)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
     rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_), ctTemper(ctTemper_),
     hoopK(hoopK_), hoopFy(hoopFy_),
-    tensionLaw(tensionLaw_), epsFcUser(epsFcUser_), gcTabReady(false), gcLch(-1.0), gcEpsFc(0.0), gcWarned(false),
+    tensionLaw(tensionLaw_), epsFcUser(epsFcUser_), flowPotential(flowPotential_), gcTabReady(false), gcLch(-1.0),
+    gcEpsFc(0.0), gcWarned(false),
     dim(dimMode), ncomp(6), condense(false), confined(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
@@ -384,6 +397,8 @@ int LadrunoConcrete3D::integrate(bool doTangent)
   }
   p.lch = lch; p.lch_ref = lch;
   p.tensionLaw = tensionLaw;                      // CDPM2 bilinear (default) / legacy exponential
+  p.flowPotential = flowPotential;                // B1: CDPM2 Eq.22-29 potential (default) / legacy v1 flow
+  p.maxSubIncr = (flowPotential == 1) ? 10 : 0;   // B1: return-map sub-incrementation with the CDPM2 potential
   p.epsFc = this->compressiveEpsFc(lch);          // -epsFc, or Gc (physical energy) -> eps_fc at this lch
 
   State in;
@@ -695,6 +710,7 @@ void LadrunoConcrete3D::ensureGcTable(void)
   p.Gf = Gf; p.Gc = Gc; p.Df = Df; p.As = As;
   p.qh0 = qh0; p.Hp = Hp; p.Ah = Ah; p.Bh = Bh; p.Ch = Ch; p.Dh = Dh;
   p.ctTemper = ctTemper; p.tensionLaw = tensionLaw; p.lch = lchFixed; p.lch_ref = lchFixed;
+  p.flowPotential = flowPotential; p.maxSubIncr = (flowPotential == 1) ? 10 : 0;
   Ladruno::Concrete3D::calibrateEpsFcTable(p, gcEfc, gcG);
   gcTabReady = true;
 }
@@ -724,7 +740,7 @@ NDMaterial* LadrunoConcrete3D::getCopy(void)
   this->ensureGcTable();
   LadrunoConcrete3D* c = new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
                                qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper,
-                               hoopK, hoopFy, dim, tensionLaw, epsFcUser);
+                               hoopK, hoopFy, dim, tensionLaw, epsFcUser, flowPotential);
   for (int k = 0; k < 8; k++) { c->gcEfc[k] = gcEfc[k]; c->gcG[k] = gcG[k]; }
   c->gcTabReady = gcTabReady;
   return c;
@@ -746,7 +762,7 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
   this->ensureGcTable();
   LadrunoConcrete3D* c = new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
                                qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper,
-                               hoopK, hoopFy, d, tensionLaw, epsFcUser);
+                               hoopK, hoopFy, d, tensionLaw, epsFcUser, flowPotential);
   for (int k = 0; k < 8; k++) { c->gcEfc[k] = gcEfc[k]; c->gcG[k] = gcG[k]; }
   c->gcTabReady = gcTabReady;
   return c;
@@ -755,10 +771,10 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 1 + 11 + 2 + 3 + 16;
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 1 + 11 + 2 + 3 + 16 + 1;
 // tag +18 params +autoReg +dim +25 state +2 P2g(sigtmax,sigcmax) +cEps22 +implex +eta
 // +1 ctTemper(P2h) +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6]) +2 P5 hoop(hoopK,hoopFy)
-// +3 (tensionLaw, epsFcUser, gcTabReady) +16 the Gc-energy table (gcEfc[8], gcG[8])
+// +3 (tensionLaw, epsFcUser, gcTabReady) +16 the Gc-energy table (gcEfc[8], gcG[8]) +1 flowPotential (B1)
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -788,6 +804,7 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = (double)tensionLaw; data(c++) = epsFcUser; data(c++) = gcTabReady ? 1.0 : 0.0;
   for (int k = 0; k < 8; k++) data(c++) = gcEfc[k];
   for (int k = 0; k < 8; k++) data(c++) = gcG[k];
+  data(c++) = (double)flowPotential;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoConcrete3D::sendSelf - failed to send vector\n";
@@ -828,6 +845,7 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   tensionLaw = (int)data(c++); epsFcUser = data(c++); gcTabReady = (data(c++) != 0.0);
   for (int k = 0; k < 8; k++) gcEfc[k] = data(c++);
   for (int k = 0; k < 8; k++) gcG[k] = data(c++);
+  flowPotential = (int)data(c++);
   gcLch = -1.0; gcWarned = false;
 
   this->setupDim();             // rebuild vmap/ncomp/condense + resize the return buffers
@@ -848,6 +866,7 @@ void LadrunoConcrete3D::Print(OPS_Stream& s, int)
   s << "  Gf, Gc   : " << Gf << ", " << Gc << "   (lch=" << lchFixed
     << (autoReg ? ", auto-regularized" : "") << ")" << endln;
   s << "  Df, As   : " << Df << ", " << As << endln;
+  s << "  flow     : " << (flowPotential == 1 ? "CDPM2 plastic potential (Eq.22-29), sub-incremented return" : "legacy v1 flow") << endln;
   s << "  tension  : " << (tensionLaw == 1 ? "CDPM2 bilinear (Eq.58, wf = 4.444 Gf/ft)" : "legacy exponential") << endln;
   if (epsFcUser > 0.0) s << "  compr.   : raw eps_fc = " << epsFcUser << " (-epsFc; Gc ignored)" << endln;
   else if (epsFcUser < 0.0) s << "  compr.   : legacy eps_fc = Gc/(fc*lch) (-gcLegacy)" << endln;

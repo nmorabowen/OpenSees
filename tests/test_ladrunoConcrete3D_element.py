@@ -50,10 +50,10 @@ def _mat(tag, **kw):
     # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
     # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). The battery runs the SHIPPED defaults
     # (law="default"); only tests that compare numbers against the numpy oracle's LEGACY semantics
-    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch)) pin law="legacy". Measured 2026-09-26:
+    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch), v1 flow) pin law="legacy". Measured 2026-09-26:
     # those two (explicit backbone, confined-fiber reduce-to-oracle) are the only ones that fail unpinned.
     if kw.get("law", "default") == "legacy":
-        args += ["-tensionLaw", "exp", "-gcLegacy"]
+        args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy"]   # + B1: legacy v1 flow
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:

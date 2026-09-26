@@ -81,7 +81,7 @@ class LadrunoConcrete3D : public NDMaterial {
                     double rho, double lch, bool autoReg, bool implex = false,
                     double eta = 0.0, int ctTemper = 0,
                     double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D,
-                    int tensionLaw = 1, double epsFcUser = 0.0);
+                    int tensionLaw = 1, double epsFcUser = 0.0, int flowPotential = 1);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -141,6 +141,10 @@ class LadrunoConcrete3D : public NDMaterial {
   // serialized) inverted at Gc/lch (cached per lch).
   int    tensionLaw;
   double epsFcUser;
+  // B1 (WP concrete3d-flow-potential): plastic potential. 1 = full CDPM2 Eq.22-29 (DEFAULT; Df = the CDPM2
+  // dilation constant, must be > 0.5; return-map sub-incrementation on, depth 10); 0 = the legacy v1 flow
+  // (m_v = Df m0/(sqrt3 fc), always dilatant; no sub-incrementation — the pre-B1 behaviour).
+  int    flowPotential;
   double gcEfc[8], gcG[8];     // Ladruno::Concrete3D::GC_TABLE_N = 8
   bool   gcTabReady;
   double gcLch, gcEpsFc;       // cache of the last inversion (lch -> eps_fc)
