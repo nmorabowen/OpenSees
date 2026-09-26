@@ -231,15 +231,21 @@ shared seams (`LadrunoMassCache.h`, `LadrunoResponseTokens.h`, `CriticalTimeStep
 `LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it. Nothing in CI ran
 `--check` — since WP-122 the `static-gates` job does ("header stamp covers GLOBS").
 And `--check` only saw files already in GLOBS, so a file never added to GLOBS stayed
-unstamped with a green check. Since WP-122 `--check` also fails on any `SRC` source
-whose path contains `ladruno` (any case) that is missing from GLOBS — **but a fork file
-with a neutral name (`CriticalTimeStep.cpp`, `PythonMPIModule.cpp`, the ASDPlastic kit
-headers: 17 of the 31) still gets through: adding it to GLOBS is on you.** Also keep GLOBS honest when files are deleted or
-already stamped by hand: WP-122 found 5 GLOBS entries matching nothing (the
-`ExplicitBathe*` family #419 deleted) and 10 hand-stamped files missing from GLOBS.
-To list fork files that lack the stamp:
-`python Ladruno_implementation/wp120_code_health/inventory.py` (needs the `upstream`
-remote; lands with WP-120 #855).
+unstamped with a green check. Since WP-122 `--check` also fails on any tracked `SRC`
+source that upstream OpenSees does not have and that is missing from GLOBS, whatever its
+name. "Upstream has it" is read from the committed `Ladruno_scripts/upstream_src_manifest.txt`,
+so CI needs no network. (A separate Ladruno-in-the-path rule stays as a
+manifest-independent backstop.) Consequences:
+- **New fork file → add it to GLOBS and stamp**, or CI goes red naming it.
+- **After merging `OpenSees/OpenSees` into `ladruno`**, upstream's new files are not in
+  the manifest yet and CI names them as "fork sources not in GLOBS". Do **not** add them
+  to GLOBS — refresh the manifest (needs the `upstream` remote):
+  `git fetch upstream master && python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest`.
+- A fork-added file that must not be stamped (vendored third-party code) goes in
+  `NOT_STAMPED` in `stamp_headers.py` with a reason; an exemption that no longer
+  exempts anything fails `--check`.
+- Keep GLOBS honest when files are deleted: WP-122 found 5 entries matching nothing
+  (the `ExplicitBathe*` family #419 deleted); nothing fails on a dead entry yet.
 
 ---
 

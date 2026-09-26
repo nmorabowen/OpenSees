@@ -72,6 +72,34 @@ with the tree: 10 stamped files missing from it, 5 entries matching no file.
    unstamped**, plus all 10 stamped-but-outside-GLOBS files, i.e. both drift classes WP-120 found (PASS).
    It cannot see the other 17 fork files, which have neutral names: `CriticalTimeStep.{h,cpp}`,
    `PythonMPIModule.cpp`, `DRMHigherOrderNode.h` and the 13 ASDPlastic kit headers.
+9. **Upstream-manifest rule: the exact version (added at the owner's request, 2026-09-25).**
+   `Ladruno_scripts/upstream_src_manifest.txt` is committed: the 3,311 `SRC` C/C++ files present on
+   `upstream/master` (`93f7e8e58`) or at the merge-base (`e1237189a`), plus a header naming both shas.
+   `--check` now also fails on any **tracked** `SRC` source (`git ls-files`; a directory walk in an
+   archive copy) that is in neither the manifest nor GLOBS, whatever its name. CI needs no network.
+   - `--refresh-upstream-manifest [ref]` regenerates the manifest. It needs the `upstream` remote. The
+     step is documented where upstream syncs are (`LEDGER_vanilla_files.md`, "how to resolve the next
+     upstream sync") and in `WORKFLOW_GOTCHAS.md` §5.
+   - A stale manifest fails **loudly**: after an upstream merge, upstream's new files are named, with the
+     refresh command in the message.
+   - `NOT_STAMPED` holds reasoned exemptions (fork-added code that must not be stamped, such as vendored
+     third-party files). It is empty; an exemption that no longer exempts anything fails.
+   - The Ladruno-path rule (step 8) stays as a backstop that does not depend on the manifest; the two
+     lists are de-duplicated in the output.
+
+   *Accept* (`wp122_stamp/stamp_gate_acceptance.py`; each case in its own `git archive` copy):
+
+   | Case | Expected | Result |
+   |---|---|---|
+   | unchanged | exit 0 | PASS |
+   | stamp removed / stale | exit 1, file named | PASS / PASS |
+   | unlisted `LadrunoWp122Plant.h` | exit 1, file named | PASS |
+   | unlisted **neutral** `Wp122NeutralPlant.cpp` (the `CriticalTimeStep` shape) | exit 1, file named | PASS |
+   | manifest missing `FourNodeQuad.cpp` (a stale manifest) | exit 1, file named + refresh hint | PASS |
+   | `NOT_STAMPED` exemption for the neutral plant | exit 0 | PASS |
+   | `NOT_STAMPED` entry for a GLOBS file | exit 1 (stale exemption) | PASS |
+   | manifest file deleted | exit 1 | PASS |
+   | **history:** both coverage rules on `origin/ladruno` with its own GLOBS | all 31 of WP-120 R1 flagged | PASS: 41 flagged = **31 unstamped + 10 stamped-outside-GLOBS; 0 unstamped fork files missed** |
 
 ## Results
 
@@ -106,10 +134,8 @@ one-shot-latch convention WP-115 accepted.
 
 ## Open questions
 
-1. **The second trap is closed only for Ladruno-named files.** CI now runs `--check` (step 7), which with
-   the Ladruno-path rule (step 8) catches a GLOBS file losing its stamp and a Ladruno-named file never
-   added to GLOBS. A neutral-named fork file (17 of the 31) still escapes. The exact fix is WP-120's
-   `inventory.py` against `upstream/master` in CI. It needs CI to fetch the upstream remote (`--depth 1`
-   of `master` plus the merge-base). Owner's decision, together with WP-120 (ii).
+1. ~~The second trap.~~ Closed by step 9 for every tracked fork source. It stays closed only while the
+   manifest is refreshed after upstream syncs, and a missed refresh fails loudly. A dead GLOBS entry (a
+   deleted file) still does not fail; cheap to add if wanted.
 2. **Before allowlisting ASDPlasticMaterial3D for the WP-107 threaded loop**, make
    `MohrCoulombTensionCutoff_YF.h`'s two statics atomic or per-instance.

@@ -81,7 +81,11 @@ def mutate(root, how):
              'NOT_STAMPED: dict[str, str] = {"%s": "acceptance: exempt but also in GLOBS"}' % TARGET)
         return TARGET
     if how == "manifest_stale":
-        edit(root / MANIFEST, UPSTREAM_FILE + "\n", "")
+        p = root / MANIFEST
+        raw = p.read_bytes().decode("utf-8")
+        new, n = re.subn(r"^" + re.escape(UPSTREAM_FILE) + r"\r?\n", "", raw, flags=re.M)
+        assert n == 1
+        p.write_bytes(new.encode("utf-8"))
         return UPSTREAM_FILE
     if how == "manifest_gone":
         (root / MANIFEST).unlink()
