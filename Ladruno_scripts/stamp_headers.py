@@ -13,6 +13,8 @@ endings (LF/CRLF) and any BOM are preserved so the stamp produces a clean diff.
 
     python Ladruno_scripts/stamp_headers.py            # stamp all authored files
     python Ladruno_scripts/stamp_headers.py --check     # report only, exit 1 if any stale
+                                                        # or any Ladruno-named SRC source
+                                                        # is missing from GLOBS (CI gate)
 """
 from __future__ import annotations
 
@@ -162,6 +164,23 @@ def authored_files() -> list[Path]:
     return sorted(seen)
 
 
+# WP-122: --check only sees files already in GLOBS, so a fork file nobody added
+# there stays unstamped -- and invisible to the quirk lint -- with a green check
+# (how 31 files escaped, WP-120 R1). Any SRC source whose path names Ladruno is
+# fork-authored by construction, so it must be in GLOBS. Not exhaustive: a fork
+# file with a neutral name (CriticalTimeStep.cpp, the ASDPlastic kit headers)
+# still relies on its author adding it to GLOBS.
+LADRUNO_PATH = re.compile(r"ladruno", re.I)
+
+
+def ladruno_named_outside_globs(root: Path, authored) -> list[Path]:
+    auth = {p.resolve() for p in authored}
+    return [p for p in sorted((root / "SRC").rglob("*"))
+            if p.is_file() and p.suffix in SUFFIXES
+            and LADRUNO_PATH.search(p.relative_to(root).as_posix())
+            and p.resolve() not in auth]
+
+
 def build_block(eol: str) -> str:
     art = (ROOT / "Ladruno_scripts" / "banner_ASCII.txt").read_text(
         encoding="utf-8").rstrip("\n").split("\n")
@@ -220,13 +239,21 @@ def main() -> int:
                     fh.write(new)
 
     rel = lambda p: p.relative_to(ROOT).as_posix()
+    outside = ladruno_named_outside_globs(ROOT, files)
+    if outside:
+        print("Ladruno-named sources NOT in GLOBS ({}) -- add each to GLOBS, then stamp:"
+              .format(len(outside)))
+        for p in outside:
+            print("  " + rel(p))
     if check:
         if changed:
             print("STALE / unstamped ({}):".format(len(changed)))
             for p in changed:
                 print("  " + rel(p))
+        if changed or outside:
             return 1
-        print("All {} authored files carry a current header.".format(len(files)))
+        print("All {} authored files carry a current header; every Ladruno-named source "
+              "is in GLOBS.".format(len(files)))
         return 0
 
     print("Stamped {} of {} authored files (already-current files unchanged):"
