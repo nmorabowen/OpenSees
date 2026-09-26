@@ -730,7 +730,11 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
 
   LadrunoShell::cacheKi(Ki, stiff);
   LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
-  return stiff;
+  // Ladruno (WP-124 C1): return the cache, never the class-static scratch. This
+  // branch returned `stiff` since #228 (the fix reached Quad/CST only): the
+  // FIRST call handed out a reference the next getTangentStiff of ANY brick
+  // overwrites, and one the ADR-87 tangent mutation never touched.
+  return *Ki;
 }
 
 //----------------------------------------------------------------------
