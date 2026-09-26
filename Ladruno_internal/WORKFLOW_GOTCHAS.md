@@ -230,8 +230,11 @@ unstamped fork file is invisible to L1/L2/L4. It happened twice: LadrunoDispBeam
 shared seams (`LadrunoMassCache.h`, `LadrunoResponseTokens.h`, `CriticalTimeStep`,
 `LadrunoHHT`/`LadrunoGeneralizedAlpha`). Two traps behind it. Nothing in CI ran
 `--check` — since WP-122 the `static-gates` job does ("header stamp covers GLOBS").
-And `--check` only sees files already in GLOBS, so a file never added to GLOBS stays
-unstamped with a green check — **still open: adding the new file to GLOBS is on you.** Also keep GLOBS honest when files are deleted or
+And `--check` only saw files already in GLOBS, so a file never added to GLOBS stayed
+unstamped with a green check. Since WP-122 `--check` also fails on any `SRC` source
+whose path contains `ladruno` (any case) that is missing from GLOBS — **but a fork file
+with a neutral name (`CriticalTimeStep.cpp`, `PythonMPIModule.cpp`, the ASDPlastic kit
+headers: 17 of the 31) still gets through: adding it to GLOBS is on you.** Also keep GLOBS honest when files are deleted or
 already stamped by hand: WP-122 found 5 GLOBS entries matching nothing (the
 `ExplicitBathe*` family #419 deleted) and 10 hand-stamped files missing from GLOBS.
 To list fork files that lack the stamp:

@@ -61,6 +61,17 @@ with the tree: 10 stamped files missing from it, 5 entries matching no file.
    | branch, unchanged | exit 0 | PASS ("All 268 authored files carry a current header.") |
    | stamp block removed from `LadrunoMassCache.h` | exit 1, file named | PASS |
    | stamp block stale (credit line edited) | exit 1, file named | PASS |
+8. **Ladruno-path rule (added at the owner's request, 2026-09-25).** `--check` also fails when an `SRC`
+   C/C++ source whose path contains `ladruno` (any case) is missing from GLOBS
+   (`ladruno_named_outside_globs`). The same CI step runs it, and a plain stamping run prints the list as a
+   warning. It closes the second trap for every fork file that names itself. On this branch all 203
+   Ladruno-named sources are in GLOBS.
+   *Accept:* in the same acceptance script, an unstamped `SRC/element/LadrunoWp122Plant.h` added without a
+   GLOBS entry → exit 1, file named (PASS). **History:** the rule run on `origin/ladruno` with that tree's
+   own GLOBS flags 24 files. These are **exactly the 14 Ladruno-named files among WP-120 R1's 31
+   unstamped**, plus all 10 stamped-but-outside-GLOBS files, i.e. both drift classes WP-120 found (PASS).
+   It cannot see the other 17 fork files, which have neutral names: `CriticalTimeStep.{h,cpp}`,
+   `PythonMPIModule.cpp`, `DRMHigherOrderNode.h` and the 13 ASDPlastic kit headers.
 
 ## Results
 
@@ -95,10 +106,10 @@ one-shot-latch convention WP-115 accepted.
 
 ## Open questions
 
-1. **The second trap is still open.** CI now runs `--check` (step 7), which catches a GLOBS file that
-   loses its stamp. It cannot see a fork file that was never added to GLOBS; that is how all 31 escaped.
-   Further options: (b) fail if a file whose path contains `ladruno`/`Ladruno` lacks the stamp (would have
-   caught 14 of the 31, nearly free); (c) WP-120's `inventory.py` against `upstream/master`. That is exact,
-   but CI would have to fetch the upstream remote. Owner's decision, together with WP-120 (ii).
+1. **The second trap is closed only for Ladruno-named files.** CI now runs `--check` (step 7), which with
+   the Ladruno-path rule (step 8) catches a GLOBS file losing its stamp and a Ladruno-named file never
+   added to GLOBS. A neutral-named fork file (17 of the 31) still escapes. The exact fix is WP-120's
+   `inventory.py` against `upstream/master` in CI. It needs CI to fetch the upstream remote (`--depth 1`
+   of `master` plus the merge-base). Owner's decision, together with WP-120 (ii).
 2. **Before allowlisting ASDPlasticMaterial3D for the WP-107 threaded loop**, make
    `MohrCoulombTensionCutoff_YF.h`'s two statics atomic or per-instance.
