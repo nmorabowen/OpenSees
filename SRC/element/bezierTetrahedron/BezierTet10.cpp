@@ -651,24 +651,12 @@ int BezierTet10::addInertiaLoadToUnbalance(const Vector &accel)
         return 0;
 
     static Vector a(NELD);
-    for (int i = 0; i < NEN; i++) {
-        const Vector &Raccel = theNodes[i]->getRV(accel);
-        if (Raccel.Size() != NDOF) {
-            opserr << "BezierTet10::addInertiaLoadToUnbalance - "
-                   << "matrix and target sizes mismatch\n";
-            return -1;
-        }
-        a(3*i)     = Raccel(0);
-        a(3*i + 1) = Raccel(1);
-        a(3*i + 2) = Raccel(2);
-    }
-
     // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
     // so the unbalance gains -M·R·a_g). Was `+1.0` until WP-117, which drove
     // the element mass with -a_g under UniformExcitation. Matches
     // TenNodeTetrahedron / LadrunoBrick / every other fork element.  // Ladruno
-    Q.addMatrixVector(1.0, M, a, -1.0);
-    return 0;
+    return LadrunoShell::addGroundInertia(Q, M, theNodes, NEN, NDOF, false, accel, a,
+                                          "BezierTet10");
 }
 
 

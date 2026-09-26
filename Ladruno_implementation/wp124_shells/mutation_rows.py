@@ -38,6 +38,18 @@ ROWS = {
            "default build: every consumer copies the reference at once",
            [(SHELL, "lit", "  Ki = new Matrix(formed);\n  return *Ki;\n",
              "  Ki = new Matrix(formed);\n  return formed;   // MUTATION K4\n")]),
+    # --- stage 2: ground-motion inertia (addGroundInertia)
+    "G1": ("full-M branch adds +M R a_g (the pre-#852 Bezier sign)",
+           [(SHELL, "lit", "    Q.addMatrixVector(1.0, M, ra, -1.0);\n",
+             "    Q.addMatrixVector(1.0, M, ra, 1.0);   // MUTATION G1\n")]),
+    "G2": ("diagonal branch adds +M(i,i) R a_g",
+           [(SHELL, "lit", "      Q(i) += -M(i, i) * ra(i);\n",
+             "      Q(i) += M(i, i) * ra(i);   // MUTATION G2\n")]),
+    "G3": ("a FULL mass is reduced to its diagonal (diagOnly ignored)",
+           [(SHELL, "lit", "  if (diagOnly) {\n", "  if (true) {   // MUTATION G3\n")]),
+    "G4": ("every DOF takes the x-component of R a_g",
+           [(SHELL, "lit", "      ra(a * ndf + j) = Raccel(j);\n",
+             "      ra(a * ndf + j) = Raccel(0);   // MUTATION G4\n")]),
     # --- C1 evidence: the ADR-87 CONTINUUM tangent gate in IDENT mode, with and without the fix
     "C1a": ("CONTINUUM=IDENT mutant + the C1 fix REVERTED (std/bbar returns the scratch) -- "
             "the probe must FAIL: the mutation never reaches the caller",

@@ -610,16 +610,11 @@ LadrunoBrick20::addInertiaLoadToUnbalance(const Vector &accel)
   // A diagonal M0 makes addMatrixVector below a per-DOF scaling — correct.  // Ladruno
   this->ensureMassCache();
 
-  int count = 0;
-  for (int i = 0; i < NEN; i++) {
-    const Vector &Raccel = nodePointers[i]->getRV(accel);
-    for (int j = 0; j < NDF; j++)
-      resid(count++) = Raccel(j);
-  }
-
+  // Ladruno (WP-124): LadrunoShell::addGroundInertia; resid is the R a_g scratch as
+  // before. checkSize=false: the historical no-check behaviour (gap C13).
   if (load == 0) load = new Vector(NDOF);
-  load->addMatrixVector(1.0, *M0, resid, -1.0);
-  return 0;
+  return LadrunoShell::addGroundInertia(*load, *M0, nodePointers, NEN, NDF, false,
+                                        accel, resid, "LadrunoBrick20", false);
 }
 
 //residual

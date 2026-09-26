@@ -787,16 +787,11 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
   // formInertiaTerms(1)'s resid side-effect on a cache hit changes nothing.
   const Matrix &M = this->getMass();
 
-  int count = 0;
-  for (int i = 0; i < numberNodes; i++) {
-    const Vector &Raccel = nodePointers[i]->getRV(accel);
-    for (int j = 0; j < ndf; j++)
-      resid(count++) = Raccel(j);
-  }
-
+  // Ladruno (WP-124): LadrunoShell::addGroundInertia; resid is the R a_g scratch as
+  // before. checkSize=false: the historical no-check behaviour (gap C13).
   if (load == 0) load = new Vector(numberNodes * ndf);
-  load->addMatrixVector(1.0, M, resid, -1.0);
-  return 0;
+  return LadrunoShell::addGroundInertia(*load, M, nodePointers, numberNodes, ndf, false,
+                                        accel, resid, "LadrunoBrick", false);
 }
 
 //residual
