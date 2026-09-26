@@ -63,6 +63,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Domain.h>
@@ -210,9 +211,6 @@ BezierTet10::BezierTet10(int tag,
         controlPts[i][0] = controlPts[i][1] = controlPts[i][2] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
-
     // Allocate 3D materials at the NGAUSS Gauss points
     theMaterial = new NDMaterial*[NGAUSS];
     for (int i = 0; i < NGAUSS; i++) {
@@ -246,8 +244,6 @@ BezierTet10::BezierTet10()
         controlPts[i][0] = controlPts[i][1] = controlPts[i][2] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
 }
 
 
@@ -517,9 +513,7 @@ const Matrix &BezierTet10::getInitialStiff()
         theGeom->globalizeStiff(K_return, zeroF, K_return);
     }
 
-    Ki = new Matrix(Ki_data, NELD, NELD);
-    *Ki = K_return;
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K_return);
 }
 
 
