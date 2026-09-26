@@ -68,6 +68,21 @@ jobs:
         run: pytest -q ci/test_check_quirk_patterns.py
       - name: quirk-pattern lints (WP-115)
         run: python ci/check_quirk_patterns.py
+      # Viewer-tools ledger gate (WP-121): a change that adds a source file to a
+      # Ladruno_tools/<tool>/ must add a LEDGER_implementations.md line naming
+      # that tool (#35, #53, #485, #487 did not). It runs on EVERY event, because
+      # a workflow_dispatch run also produces this required check for its SHA and
+      # ladruno needs no PR to land: on a PR it diffs the PR (base...head); on any
+      # other event it diffs origin/ladruno...HEAD, which is empty on a push to
+      # ladruno and on the nightly schedule, and is the branch's change on a
+      # dispatch. Last in the job so it never hides the gates above.
+      - name: viewer ledger gate self-test (WP-121)
+        run: pytest -q ci/test_check_viewer_ledger.py
+      - name: viewer ledger gate (WP-121)
+        env:
+          BASE_REV: ${{ github.event.pull_request.base.sha || 'origin/ladruno' }}
+          HEAD_REV: ${{ github.event.pull_request.head.sha || 'HEAD' }}
+        run: python ci/check_viewer_ledger.py --base "$BASE_REV" --head "$HEAD_REV"
 
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
