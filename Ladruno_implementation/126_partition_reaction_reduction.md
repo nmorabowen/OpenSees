@@ -2,7 +2,8 @@
 
 Revision 1. Reproduction only; not adversarially reviewed. From WP-120 (#855) open question 1.
 
-Status: **OpenSees side implemented and verified locally; draft PR #861.** The owner chose "flag in file +
+Status: **OpenSees side implemented and verified on the final build; PR #861 marked ready 2026-09-26. The
+owner merges.** The owner chose "flag in file +
 apeGmsh sums" (2026-09-25). The apeGmsh stitch fix runs in its own session, as a separate apeGmsh PR.
 
 Scoped 2026-09-25. Branch `wp/126-partition-reaction-reduction`, cut from `ladruno` @ `bc5c33453`.
@@ -86,6 +87,9 @@ apeGmsh).
 | `tests/test_ladruno_partition_reduction.py` (zone_a; skips without h5py) | 4/4: DISPLACEMENT=NONE, REACTION_FORCE/UNBALANCED_FORCE=SUM, energy=UNSUPPORTED, serial SUM envelope kept, partitioned reaction envelope refused (single process, `PMI_SIZE=2` subprocess) |
 | Two-rank gate `mp_reaction_model.py` + `mp_reaction_check.py` | **ALL PASS**: both parts flag REACTION_FORCE=SUM / DISPLACEMENT=NONE; contract stitch at the shared support = **(20, 30) = serial** (first-wins would give (0, 10)); displacement unchanged; partitioned reaction envelope refused on both ranks with the warning; serial envelope kept |
 | Validator on all six real output files | valid |
+| **Final full 5-target build**: live recorder regression battery `run_regression.bat` (every gate vs frozen MPCO: nodal/element parity 1e-12, multi-stage, envelopes, local axes, energy, Bezier, truss/zeroLength, frame3D, shell, eigen, f32 precision, rank-env probe, Tcl flag order) | **ALL GATES PASSED**: the attribute changes no recorded value |
+| Final build: `mp_parallel` gate (3 ranks, openseesmp) | ALL PASS |
+| Final build: new pytest, two-rank gate, D5 harness | 4/4, ALL PASS, 27/27 |
 
 ## Proposed fix (owner's decision, 2026-09-25: this option)
 
