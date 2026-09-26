@@ -3,8 +3,9 @@
 Revision 1. Not yet adversarially reviewed. One Opus subagent built the §4 reuse inventory (read-only); every
 claim from it that this doc repeats was re-checked by running the command (see "Verification of delegated claims").
 
-Status: **survey complete; draft PR #855. Read-only — no production code changed. The owner decides whether
-to start any refactor.**
+Status: **survey complete; PR #855 marked ready 2026-09-26. Read-only — no production code changed.** The
+survey's follow-ups are under way as their own WPs: WP-122 (#857, merged) for R1; WP-123 (#858, refactor
+candidate 1); WP-124 (#859, candidate 2); WP-126 (#861, open question 1). The owner merges.
 
 Scoped 2026-09-25. Branch `wp/120-code-health-survey`, cut from `ladruno` @ `bc5c33453`. This is
 Phase 0 ("measure before building") of the `agent-surface` method, applied to code health. Tooling:
@@ -257,8 +258,12 @@ one number here that directly limits the quirk lint.
 1. **`requiresPartitionReduction()` has no caller.** Are reaction forces at partition-boundary nodes summed in
    the Ladruno recorder under OpenSeesMP? A 2-partition run with a reaction recorder on a shared node would
    answer it. This may be a live bug; it deserves its own WP rather than a note.
-2. **Stamp the 31 fork files?** The WP-116 pattern, ×31: fix GLOBS (+10 missing, −5 dead), stamp, then run the
-   quirk lint on them — new lint findings are likely. Recommended as the next small WP, before any refactor.
+   **→ It was a live bug: WP-126 (#861).** Reproduced 2026-09-25. apeGmsh's stitch returned (0, 10) where the
+   serial reaction is (20, 30). The fix is in progress (a `PARTITION_REDUCTION` attribute plus an apeGmsh PR).
+2. ~~**Stamp the 31 fork files?**~~ **Done: WP-122 (#857, merged 2026-09-26).** All 31 files are stamped (the
+   change is comment-only, proven by fingerprint); GLOBS is +41/−5. The lint found 0 issues, because no rule
+   has anything to read in these files yet. `stamp_headers.py --check` is now a CI gate, including the
+   upstream-manifest and dead-entry rules.
 3. **Coverage.** A gcov/lcov build of Zone-A (Ubuntu) would answer 3(d) and show which of the 37 unreferenced
    functions and the 3 `#ifdef` opt-ins are untested as well as uncalled. Cost: one more CI build (~2× build time).
 4. **ContactFE 2D/3D intra-file clones (608 lines).** Not checked hunk-by-hunk for replicated 2D↔3D fixes.
