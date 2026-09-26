@@ -39,7 +39,13 @@
 //   bbar — mean-dilatation B-bar (2D factor 1/2; PlaneStrain only) — cures
 //          volumetric locking
 //   ssp  — stabilized single-point (port of SSPquad::GetStab) + Tier-A
-//          damage-scaled hourglass Kstab  (ADR 25 Phase 2)
+//          damage-scaled hourglass Kstab  (ADR 25 Phase 2):
+//          s = max(hgFloor, 1 - max(omega_t, omega_c)), hgFloor = 1e-4 (C1);
+//          '-hourglassFloor', f  sets it ('-hgLegacy' = 0.01, the pre-C1 value;
+//          '-hourglassFloor', 1 = stock SSPquad, no damage scaling)
+//          '-hgDamage', <gauss|centroid>: omega sampled at the centroid AND at 4
+//          shadow Gauss points (committed, one-step lag; default gauss) or at the
+//          centroid only (pre-C1). '-hgLegacy' = centroid + floor 0.01 (pre-C1).
 //   eas  — Q1/E4 Simo-Rifai enhanced assumed strain, 4 enhanced parameters
 //          (2 natural bubbles xi/eta x 2 dofs), the 2D sibling of LadrunoBrick's
 //          E9 (ADR 25 Phase 3); small-strain only, no artificial stabilization
@@ -74,6 +80,16 @@ class LadrunoQuad : public Element
   public:
       // Ladruno (ADR-77 G2 ext): escape = -noMassCache
       void setMassCache(bool s) { massCache.setEnabled(s); }
+      // Ladruno (C1): floor on the ssp Tier-A hourglass multiplier s = max(floor, 1 - omega).
+      // Default kHgFloorDefault (1e-4); -hgLegacy = 0.01 (pre-C1); -hourglassFloor 1 = stock SSPquad.
+      void setHourglassFloor(double f) { hgFloor = f; }
+      // Ladruno (C1): where the Tier-A damage is sampled. 1 = gauss (default): the max of the
+      // centroid omega and the COMMITTED omega of 4 shadow material points driven with the
+      // full bilinear strain at the 2x2 Gauss points (sees a bending/hourglass-mode crack the
+      // centroid is blind to). 0 = centroid (pre-C1 probe only).
+      void setHourglassDamageMode(int m) { hgDamageMode = m; }
+      static constexpr double kHgFloorDefault = 1.0e-4;
+      static constexpr double kHgFloorLegacy  = 1.0e-2;
 
     enum class Formulation { STD = 0, BBAR = 1, SSP = 2, EAS = 3 };
     // geometry axis (ADR 70). LINEAR = small strain; FINITE = updated-Lagrangian
@@ -191,6 +207,13 @@ class LadrunoQuad : public Element
     Matrix Kstab;                      // 8x8 elastic stabilization stiffness
     double J0, J1, J2;                 // jacobian terms (SSPquad convention)
     Response *damageResponse;          // cached "damage" probe on slot-0 material (Tier-A)
+    double hgFloor;                    // Ladruno (C1): Tier-A floor (default kHgFloorDefault; serialized)
+    int hgDamageMode;                  // Ladruno (C1): 1 gauss shadow sampling (default) | 0 centroid
+    NDMaterial *hgShadow[4];           // Ladruno (C1): shadow GP materials (ssp + damage channel + gauss)
+    Response *hgShadowDmg[4];          // Ladruno (C1): their cached "damage" probes
+    double hgOmegaShadow;              // Ladruno (C1): committed max shadow omega (monotone; serialized)
+    void clearHgShadows(void);
+    int  commitHgShadows(void);
 
     // --- EAS (Q1/E4 Simo-Rifai) state (formulation == EAS) ---
     Vector alpha;                      // 4 enhanced parameters (trial)
