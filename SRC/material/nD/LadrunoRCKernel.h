@@ -33,7 +33,8 @@
 //  gate-verified): MCFT compression softening applied to the STRENGTH axis:
 //
 //      sigma = (1 - dt_bar) ST  +  beta * (1 - dc_bar) SC
-//      beta  = clamp( 1/(0.8 + 170 eps_1), betaFloor, 1 )
+//      beta  = clamp( 1/(0.8 + C eps_1), betaFloor, 1 ),  C = P.betaC (default 170,
+//              -betaC; Vecchio-Collins 1986 is 0.34/|eps'c|, e.g. 189 for PV20)
 //      eps_1 = in-plane principal TENSILE strain (transverse to the strut)
 //
 //  beta multiplies ONLY the assembled compressive cone -- never the strain
@@ -425,18 +426,20 @@ inline void decompose(const double S[6], double cdf, Decomp& D)
 // ---------------------------------------------------------------------------
 // MCFT compression-softening factor (applied to the STRENGTH axis only).
 // ---------------------------------------------------------------------------
-inline double betaCompr(double e1, double floorv)
+// Ladruno (C2): the coefficient C (hard-wired 170 = 0.34/0.002 before C2) is P.betaC;
+// the default 170.0 keeps the arithmetic bit-identical to the pre-C2 kernel.
+inline double betaCompr(double e1, double floorv, double C = 170.0)
 {
-    double b = 1.0 / (0.8 + 170.0 * e1);
+    double b = 1.0 / (0.8 + C * e1);
     if (b > 1.0) b = 1.0;
     if (b < floorv) b = floorv;
     return b;
 }
-inline double dBetaCompr(double e1, double floorv)   // 0 when clamped
+inline double dBetaCompr(double e1, double floorv, double C = 170.0)   // 0 when clamped
 {
-    double b = 1.0 / (0.8 + 170.0 * e1);
+    double b = 1.0 / (0.8 + C * e1);
     if (b >= 1.0 || b <= floorv) return 0.0;
-    return -170.0 * b * b;
+    return -C * b * b;
 }
 
 // ---------------------------------------------------------------------------
@@ -555,13 +558,18 @@ struct Params {
     double implexTimeRedLim;       // min dt fraction for -implexControl (default 0.01)
     // --- Phase 3: tension stiffening (default off => baseline-identical) ---
     int    tensStiffMode;          // 0 off | 1 vc (Bentz) | 2 cm (Collins-Mitchell)
-    double tensStiffC;             // vc-mode sqrt coefficient c (default 500)
+    double tensStiffC;             // vc-mode sqrt coefficient c (parser default 200 = Vecchio-Collins
+                                   // 1986 since C2; 500 before, = Collins-Mitchell 1991)
     double tensStiffAlpha;         // cm-mode alpha1*alpha2 (default 1)
     double ftPeak;                 // tension-backbone peak ft, cached by setupParams
     // --- Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical) ---
     bool   autoReg;                // -autoRegularization: scale softening so G_f is mesh-objective
     double lchRef;                 // reference characteristic length the backbone was authored at
     Backbone ht, hc;                   // tension / compression backbones
+    // --- Ladruno C2 (defaults = pre-C2 behaviour, so every existing Params builder is unchanged) ---
+    double betaC = 170.0;          // MCFT softening coefficient C in beta = 1/(0.8 + C eps1) (-betaC)
+    double crackedNu = -1.0;       // <0 => off. >=0: Poisson ratio of C0 once eps1 >= crackStrain
+                                   // (irreversible latch RCHist::nuCracked) (-crackedNu)
 };
 
 inline void setupParams(Params& P)    // call after ht/hc are filled
@@ -595,6 +603,8 @@ struct RCHist {
     // --- Phase 4: IMPL-EX previous-committed (n-1) generation for explicit extrapolation ---
     double xt_old, xc_old;  // committed tensile/compressive equiv strain at step n-1
     double eps1_old;        // committed in-plane principal tensile strain at step n-1
+    // --- Ladruno C2: cracked-Poisson latch (0/1), set once eps1 >= crackStrain with crackedNu on ---
+    double nuCracked;
 };
 
 inline void histZero(RCHist& h)
@@ -605,6 +615,7 @@ inline void histZero(RCHist& h)
     h.tauCr = 0.0; h.gammaCr = 0.0;
     h.cracked2 = 0.0; h.slipCum = 0.0;
     h.xt_old = h.xc_old = 0.0; h.eps1_old = 0.0;
+    h.nuCracked = 0.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -649,7 +660,21 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
 {
     const bool implexExplicit = (P.implex && do_implex);
     const double E = P.E;
-    double C0[6][6]; elasticTangent(E, P.nu, C0);
+    // Ladruno (C2) -crackedNu: once the in-plane principal tensile strain reaches the cracking
+    // strain, the elastic operator of the effective-stress predictor (and of every tangent built
+    // on it) switches to nu = crackedNu (irreversible latch). The MCFT/DSFM convention is nu = 0
+    // once cracked: with nu retained, the transverse tensile strain unloads the strut effective
+    // stress (sig2_eff ~ eps2 + nu eps1). The effective stress is incremental, so the switch is
+    // stress-continuous; the step that cracks uses the cracked operator for its whole increment.
+    // Off (crackedNu < 0, the default) => C0(E, nu) exactly as before.
+    double nuCr = in.nuCracked;
+    if (P.crackedNu >= 0.0 && nuCr < 0.5) {
+        double p1c[2]; int dgc = 0;
+        if (eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc) >= P.crackStrain && P.crackStrain > 0.0)
+            nuCr = 1.0;
+    }
+    const double nuAct = (P.crackedNu >= 0.0 && nuCr >= 0.5) ? P.crackedNu : P.nu;
+    double C0[6][6]; elasticTangent(E, nuAct, C0);
 
     // elastic predictor: SEFFn = SEFF_commit + C0:(En - En-1)
     double seff[6];
@@ -673,7 +698,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
         e1_beta = in.eps1 + time_factor * (in.eps1 - in.eps1_old);
         if (e1_beta < 0.0) e1_beta = 0.0;
     }
-    double beta = P.betaOn ? betaCompr(e1_beta, P.betaFloor) : 1.0;
+    double beta = P.betaOn ? betaCompr(e1_beta, P.betaFloor, P.betaC) : 1.0;
     double k1c  = (P.betaOn && P.lublinerTCReduced) ? 0.0 : 1.0;
 
     // committed hardening
@@ -864,7 +889,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             if (P.interlockCyclic) {
                 il_cyclic = true;
                 // crack-shear slip stiffness G_slip per -shearRetention mode (cap unchanged).
-                double Gfull = 0.5 * E / (1.0 + P.nu);          // full elastic shear modulus G
+                double Gfull = 0.5 * E / (1.0 + nuAct);         // full elastic shear modulus G (C2: live nu)
                 il_Gint = Gfull;                                 // mcft (default): full G
                 if (P.shearRetMode == 1)      il_Gint = P.shearRetFactor * Gfull;  // const: mu*G
                 else if (P.shearRetMode == 2) il_Gint = Gfull * (0.31 / denom);    // dsfm: width-degraded
@@ -911,6 +936,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // IMPL-EX (n-1) generation: carried through verbatim; the rolling n->n-1 is done
     // by the host material at commit (so a mid-step explicit pass never corrupts it).
     out.xt_old = in.xt_old; out.xc_old = in.xc_old; out.eps1_old = in.eps1_old;
+    out.nuCracked = nuCr;   // Ladruno (C2)
 
     // tangent
     if (do_tangent) {
@@ -948,7 +974,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             //   d sigma/d eps += (1-dc_bar) SC (x) [dBeta/deps1 * deps1/deps]
             //   deps1/deps (engineering dual) = [p1x^2, p1y^2, 0, p1x p1y, 0, 0]
             if (P.tangentMode == 0 && P.betaOn && !implexExplicit) {
-                double dbeta = dBetaCompr(e1, P.betaFloor);
+                double dbeta = dBetaCompr(e1, P.betaFloor, P.betaC);
                 if (dbeta != 0.0) {
                     double P1[6] = { 0,0,0,0,0,0 };
                     if (degen) { P1[0] = 0.5; P1[1] = 0.5; }   // equibiaxial blend
