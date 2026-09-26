@@ -775,7 +775,53 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
                 u[1] = 0.0
         return u, False, False
 
-    u, converged, apex = _newton(False)
+    def _newton_glob():
+        # B1 GLOBALIZED Newton (cdpm2 flow only): OOFEM's projections (rho >= 0, dlam >= 0, kp >= kp_n) + a
+        # backtracking line search on the scaled residual. The plain Newton fails SPORADICALLY on far trials
+        # (the iterate crosses the kp = 1 kink / goes kp < 0), which made the sub-incremented fallback kick in
+        # at isolated strains => a DISCONTINUOUS stress(strain) map with spurious roots for the element Newton
+        # (OOFEM con2dpm2 at one sub-step: C++ -3.22 vs -2.55). A trial whose solution is the VERTEX cannot
+        # satisfy R2 with rho pinned at 0 => it stops early (rho stuck at 0) and returns apex=True.
+        sc = np.array([1.0 / fc, 1.0 / fc, 1.0, 1.0])
+        u = np.array([xi_tr, rho_tr, 0.0, kp_n])
+        Rr = resid(u)
+        stuck = 0
+        for _ in range(100):
+            if (abs(Rr[0]) < tol * fc and abs(Rr[1]) < tol * fc and abs(Rr[2]) < tol and abs(Rr[3]) < tol):
+                return u, True, False
+            J = np.zeros((4, 4))
+            for j in range(4):
+                du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
+                up = u.copy()
+                up[j] += du
+                J[:, j] = (resid(up) - Rr) / du
+            try:
+                step = np.linalg.solve(J, -Rr)
+            except np.linalg.LinAlgError:
+                return u, False, False
+            if not np.all(np.isfinite(step)):
+                return u, False, False
+            n0 = float(np.linalg.norm(Rr * sc))
+            a = 1.0
+            while True:
+                un = u + a * step
+                un[1] = max(un[1], 0.0); un[2] = max(un[2], 0.0); un[3] = max(un[3], kp_n)
+                Rn = resid(un)
+                if (np.all(np.isfinite(Rn)) and float(np.linalg.norm(Rn * sc)) < (1.0 - 1.0e-4 * a) * n0) or a < 1.0 / 64.0:
+                    break
+                a *= 0.5
+            u, Rr = un, Rn
+            stuck = stuck + 1 if u[1] == 0.0 else 0
+            if stuck >= 3:
+                return u, False, True
+        return u, False, False
+
+    if cdpm2_flow:                            # globalized first; plain scheme (+ vertex + clamped retry) as fallback
+        u, converged, apex = _newton_glob()
+        if not converged and not apex:
+            u, converged, apex = _newton(False)
+    else:
+        u, converged, apex = _newton(False)
     xi, rho, dlam, kp = u
     if not apex:
         p_new = xi / SQRT3
@@ -3940,9 +3986,17 @@ def run_flow_potential_gate(verbose=True, fuzz_n=1500):
                           eps_fc=1e-4, flow_potential=flow, max_subincr=10)
         o, nf = uni(m, 210.95, 30.0, 0.1, 5.0, -5e-4, 5, 10)
         f2[flow] = (o[0][1] / 1e6, o[4][1] / 1e6, nf)
+    # ONE sub-step per 5e-4 step (the far-outside trial; the coordinator's C++ -3.22 MPa regression): step 1 must
+    # equal OOFEM's own regression value (-2.5448) and the OOFEM transcription (-2.5457) — the globalized Newton
+    # converges the DIRECT return here instead of dropping into the sub-increment fallback.
+    m1 = make_material(30e9, 0.15, 3e6, 1e6, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, tension_law="bilinear",
+                       eps_fc=1e-4, flow_potential="cdpm2", max_subincr=10)
+    o1, nf1 = uni(m1, 210.95, 30.0, 0.1, 5.0, -5e-4, 5, 1)
+    f2["cdpm2_1sub"] = (o1[0][1] / 1e6, o1[4][1] / 1e6, nf1)
     res["F2"] = f2
     res["F2_ok"] = bool(abs(f2["cdpm2"][0] / -2.7895 - 1) < 0.005 and abs(f2["cdpm2"][1] / -1.3222 - 1) < 0.05
-                        and abs(f2["legacy"][1] / -1.3222 - 1) > 0.15 and f2["cdpm2"][2] == 0)
+                        and abs(f2["legacy"][1] / -1.3222 - 1) > 0.15 and f2["cdpm2"][2] == 0
+                        and abs(f2["cdpm2_1sub"][0] / -2.5448 - 1) < 0.005 and nf1 == 0)
     # F3 Kupfer -1/0 (MPa, mm)
     f3 = {}
     for flow, efc in (("cdpm2", 1e-4), ("cdpm2", 6e-4), ("legacy", 1e-4)):
@@ -3984,6 +4038,7 @@ def run_flow_potential_gate(verbose=True, fuzz_n=1500):
         print(f"  F1 potential FD: grad {wg:.1e} hess {wh:.1e}; cap dg/dsigV = {cap_gs:+.3e} (compactive)  ok={res['F1_ok']}")
         print(f"  F2 con2dpm2 (10 sub): cdpm2 {f2['cdpm2'][0]:+.4f}/{f2['cdpm2'][1]:+.4f}  legacy {f2['legacy'][0]:+.4f}/"
               f"{f2['legacy'][1]:+.4f}  (OOFEM-transcription -2.7895/-1.3222; OOFEM 1-step -2.545/-1.682)  ok={res['F2_ok']}")
+        print(f"     1 sub-step: {f2['cdpm2_1sub'][0]:+.4f}/{f2['cdpm2_1sub'][1]:+.4f} (OOFEM -2.5448/-1.6820; transcription -2.5457/-1.6183)")
         for key, v in f3.items():
             print(f"  F3 Kupfer {key}: peak {v[0]:.2f} at {v[1]:.2f} mm/m  s(-3)={v[2]:.2f} s(-3.29)={v[3]:.2f} s(-4)={v[4]:.2f}")
         print(f"  F4 fuzz {fuzz_n}: plastic {pl}, failed {nf}, sign flips {flips}  ok={res['F4_ok']}   PASS={res['PASS']}")
