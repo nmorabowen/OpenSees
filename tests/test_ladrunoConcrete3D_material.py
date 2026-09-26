@@ -437,6 +437,49 @@ def test_p3_eta_gate():
     assert r["PASS"]
 
 
+def test_vertex_return_gate():
+    """Dedicated hydrostatic-axis VERTEX return (WP concrete3d-oracle-diagnosis) on the OOFEM ConcreteDPM2
+    con2dpm3/4 parameters. V1 hydrostatic compression YIELDS on the closed [1-qh1] cap vertex (pre-fix:
+    purely elastic, -21.43 MPa, every increment a silent non-converged fallback); V2 hydrostatic tension
+    converges under step refinement (pre-fix: aborted-Newton-iterate kp => step-size dependent); V3 no
+    converged return sign-flips a compressive-mean trial onto the tension vertex (pre-fix: 169/1496 in this
+    fuzz, all 'admissible'); V4 the cone of normals delimits the vertex region."""
+    r = ref.run_vertex_gate(verbose=False)
+    assert r["V1_ok"], r["V1_sigma_MPa"]
+    assert r["V2_ok"], (r["V2_rel"], r["V2_rel100"])
+    assert r["V3_ok"] and r["V3_flips"] == 0
+    assert r["V4_ok"]
+    assert r["PASS"]
+
+
+def test_tension_law_gate():
+    """CDPM2 BILINEAR tension law (Grassl 2013 Eq.51/58/59 + the literal Eq.45 kdt2 history; the nDMaterial
+    default since WP concrete3d-oracle-diagnosis) on the paper's own Fig.7 parameters. T1 the softening curve
+    matches the paper's CDPM2 envelope within 5% at 0.2/0.3/0.4 mm/m (legacy exp: 2.3/1.2/0.63 vs 0.96/0.77/
+    0.58 MPa); T2 total work = Gf + pre-peak plastic work (residual -1.4%, the Eq.44 Frobenius-norm effect)
+    while legacy 'exp' over-dissipates by +40%; T3 lch-objective to <1%; T4 analytic == FD damaged tangent."""
+    r = ref.run_tension_law_gate(verbose=False)
+    assert r["T1_ok"], (r["T1_sigma"], r["T1_rel"])
+    assert r["T2_ok"], (r["T2_residual"], r["T2_exp_excess"])
+    assert r["T3_ok"], r["T3_dissipation"]
+    assert r["T4_ok"], r["T4_rel"]
+    assert r["PASS"]
+
+
+@pytest.mark.slow
+def test_gc_energy_gate():
+    """Gc = PHYSICAL compressive fracture energy (WP concrete3d-oracle-diagnosis). ~5 min in numpy => opt-in
+    (--runslow); the same energy gate runs in the g++ self-check (C5) on every CI run, and the C++ energy
+    driver is pinned to this oracle by the fixture's GCT block. G1 three (Gc, lch) pairs dissipate Gc within
+    5% with eps_fc from the calibration table; G2 the legacy eps_fc = Gc/(fc lch) over-dissipates ~20x; G3 a
+    direct eps_fc (-epsFc) reproduces the legacy path byte-for-byte."""
+    r = ref.run_gc_energy_gate(verbose=False)
+    assert r["G1_ok"], r["G1_rel"]
+    assert r["G2_ok"], r["G2_legacy_ratio"]
+    assert r["G3_byte"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

@@ -125,6 +125,11 @@ def main(out=None):
     add_driven(mp_h, np.linspace(0, -0.006, 120), True, "hard_uniax_comp", confine="free")
     add_driven(mp_h, np.linspace(0, -0.012, 120), True, "hard_confined_comp",
                confine="active", sigma3=0.10 * 30.0)
+    # VERTEX returns (WP concrete3d-oracle-diagnosis): strain-driven HYDROSTATIC paths through the dedicated
+    # vertex return — compression onto the closed [1-qh1] cap vertex (pre-fix: elastic, never yielded) and
+    # tension onto the apex with the consistent vertex kp (pre-fix: aborted-iterate kp, step-size dependent).
+    add_fixed(mp_h, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, True, "hard_hydro_comp_vertex")
+    add_fixed(mp_h, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, True, "hard_hydro_tens_vertex")
 
     lines.append(f"NPATH {len(emitted)}")
     for label, pblock, hardening, deps_list, rows in emitted:
@@ -163,6 +168,11 @@ def main(out=None):
     # recompose AND the 4x4 hardening principal Jacobian on a non-axisymmetric trial.
     tans.append((mp_h, sig_h.copy(), kp_h, np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]),
                  True, "tan_hard_shear"))
+    # VERTEX tangent (analytic vertexPrincipalJacobian vs the oracle FD): committed plastic hydrostatic-
+    # compression cap-vertex state, probe a further hydrostatic increment with a small shear (the trial
+    # stays inside the compressive cone of normals, so every FD perturbation also returns to the vertex).
+    add_tan(mp_h, [-5.0e-5, -5.0e-5, -5.0e-5, 2.0e-7, 0, 0], True, "tan_hard_vertex_comp",
+            prestep=[[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 20)
 
     lines.append(f"NTAN {len(tans)}")
     for mp, sig_n, kp_n, deps, hardening, label in tans:
@@ -232,11 +242,29 @@ def main(out=None):
     # eigenvectors — the P2e/I4 frozen-eigenvector limitation, not a drive bug).
     bipath = [np.array([e, 0.6 * e, 0, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 300)]
     add_dmg("dmg_biaxial_tension", mp_h, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    # CDPM2 BILINEAR tension law (WP concrete3d-oracle-diagnosis; the nDMaterial default): uniaxial-strain
+    # tension into branch 1 (w < wf1) and branch 2 (wf1 < w < wf), a biaxial-tension state (E*eps_tilde
+    # drive), and 'proj' ctTemper (exercises the pre-peak kdt2 + d(w_t) chain). Pins omegaT/solveOmegaBilinear,
+    # tensionHistUpdate (literal Eq.44/45) and the bilinear IFT tangent against the oracle.
+    mp_hb = dict(mp_h); mp_hb["tension_law"] = "bilinear"
+    add_dmg("dmg_tension_bilin_b1", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 2.5e-4, 300)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_tension_bilin_b2", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 9.0e-4, 400)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_biaxial_bilin", mp_hb, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    mp_hbp = dict(mp_hb); mp_hbp["ct_temper"] = "proj"
+    add_dmg("dmg_cttemper_proj_bilin", mp_hbp, lch, tp_pr, [2.0e-6, 0, 0, 0, 0, 0])
+    # direct eps_fc (the wrapper's -epsFc / its Gc-calibrated value) on the confined-compression state
+    mp_efc = dict(mp_h); mp_efc["eps_fc"] = 2.0e-3
+    add_dmg("dmg_compression_epsfc", mp_efc, lch, cpath,
+            [dconf["eps11"][ic] - cpath[-1][0], dconf["eps_lat"][ic] - cpath[-1][1], dconf["eps_lat"][ic] - cpath[-1][2], 0, 0, 0])
 
+    _TL = {"exp": 0, "bilinear": 1}
     lines.append(f"NDMG {len(dmgs)}")
     for label, mp, lch, st, deps, sig_nom in dmgs:
         lines.append(f"DMG {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
-                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
+                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))}")
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
@@ -356,6 +384,20 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))
+
+    # ---- (B9) Gc-as-energy calibration (WP concrete3d-oracle-diagnosis): the post-peak uniaxial-compression
+    #      energy per unit volume g(eps_fc) the wrapper tabulates and inverts at Gc/lch. Pins the C++
+    #      compressionEnergyDensity (free uniaxial stress via driveConfinedFiber, fixed step, 1% stop + tail)
+    #      to the oracle compression_energy_density at two direct eps_fc values (cheap, low-eps_fc end). ----
+    gcts = []
+    for k_rel in (0.05, 0.3):
+        efc = mp_h["fc"] / mp_h["E"] * k_rel
+        g, pk, n = ref.compression_energy_density(mp_h, efc, Gf, As)
+        gcts.append((f"gct_{k_rel}", mp_h, efc, g, pk))
+    lines.append(f"NGCT {len(gcts)}")
+    for label, mp, efc, g, pk in gcts:
+        lines.append(f"GCT {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(As))} {repr(float(efc))} "
+                     f"{repr(float(g))} {repr(float(pk))}")
 
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")

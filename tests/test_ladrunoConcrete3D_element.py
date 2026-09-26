@@ -47,6 +47,13 @@ def _mat(tag, **kw):
     fc = kw.get("fc", _FC); ft = kw.get("ft", _FT)
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
+    # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
+    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). The battery runs the SHIPPED defaults
+    # (law="default"); only tests that compare numbers against the numpy oracle's LEGACY semantics
+    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch)) pin law="legacy". Measured 2026-09-26:
+    # those two (explicit backbone, confined-fiber reduce-to-oracle) are the only ones that fail unpinned.
+    if kw.get("law", "default") == "legacy":
+        args += ["-tensionLaw", "exp", "-gcLegacy"]
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:
@@ -216,9 +223,11 @@ def test_response_wiring():
 
 
 @pytest.mark.t1
-def test_database_roundtrip():
+@pytest.mark.parametrize("law", ["default", "legacy"])
+def test_database_roundtrip(law):
+    # both laws: the -tensionLaw / -gcLegacy selection (and the calibrated eps_fc) must survive sendSelf/recvSelf
     def build():
-        _build(lambda t: _mat(t))
+        _build(lambda t: _mat(t, law=law))
         ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,
@@ -929,7 +938,8 @@ def test_explicit_backbone_matches_oracle():
     peak_o = float(sig_o.max())
     end_o = float(sig_o[-1])                                       # ~1.22 at eps=0.03 (softened, omega_t~1)
 
-    expl = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0)
+    # law="legacy": the oracle driver implements the legacy exponential law (ADR-31 §11)
+    expl = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, law="legacy")
     assert len(expl) == _NSTEPS_EXPL
     sig_e = [s for _, s, _ in expl]
     assert max(sig_e) == pytest.approx(peak_o, rel=0.10), (
@@ -971,14 +981,14 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
 _CFIB_LCH = 1.0   # the material's default lch (no -lch / -autoRegularization) => gradual, convergent softening
 
 
-def _build_confined_zls(hoopK, hoopFy=None):
+def _build_confined_zls(hoopK, hoopFy=None, law="default"):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
     ops.node(1, 0.0, 0.0, 0.0)
     ops.node(2, 0.0, 0.0, 0.0)
     ops.fix(1, 1, 1, 1, 1, 1, 1)
     ops.fix(2, 0, 1, 1, 1, 1, 1)              # free axial (dof 1) only => pure axial fiber strain
-    kw = {"hoop": hoopK}
+    kw = {"hoop": hoopK, "law": law}
     if hoopFy is not None:
         kw["hoopFy"] = hoopFy
     _mat(1, **kw)
@@ -1001,10 +1011,10 @@ def _Paxial():
     return float(ops.eleResponse(1, "section", "force")[0])   # section axial resultant P (= sig_axial, A=1)
 
 
-def _run_confined(hoopK, eps_target, nsteps, hoopFy=None):
+def _run_confined(hoopK, eps_target, nsteps, hoopFy=None, law="default"):
     """DisplacementControl the axial dof to eps_target over nsteps; collect (eps, P). Stops on the first
     non-converged step (records what it reached) so a snap-back never fails the harness."""
-    _build_confined_zls(hoopK, hoopFy)
+    _build_confined_zls(hoopK, hoopFy, law)
     deps = eps_target / nsteps
     out = []
     for _ in range(nsteps):
@@ -1022,7 +1032,8 @@ def test_confined_fiber_reduce_to_oracle():
     is condensed exactly as the oracle."""
     eps_t = -1.8e-3
     n = 180
-    rec = _run_confined(0.0, eps_t, n)
+    # law="legacy": drive_confined_fiber uses the oracle's legacy eps_fc = Gc/(fc lch) (ADR-31 §11)
+    rec = _run_confined(0.0, eps_t, n, law="legacy")
     assert len(rec) == n, f"hoop=0 confined fiber stalled at step {len(rec)}/{n}"
     mp = ref.make_material(_E, _NU, _FC, _FT)
     path = ref.np.array([e for e, _ in rec])

@@ -546,3 +546,41 @@ total). 15 blocking + 22 major findings; all blocking findings are resolved in t
 above (§4–§5) and itemized in §8. The synthesis draft's three worst errors — the false
 "port IMPL-EX wholesale" premise, the impossible reduce-to-ASDConcrete3D byte gate, and a
 phantom `33016` classTag — were caught by the recon/red-team split and corrected here.
+
+---
+
+## 11. Amendment 2026-09 — WP `concrete3d-oracle-diagnosis` (OOFEM ConcreteDPM2 code-to-code)
+
+Triggered by the validation repo's OOFEM `con2dpm1-4` oracle and Grassl 2013 Fig. 7. Decisions (branch
+`wp/concrete3d-oracle-diagnosis`):
+1. **Dedicated hydrostatic VERTEX return** (§4.2 "apex owed", now shipped for the hardening map):
+   `returnMapVertex` solves `f(σV, ρ=0; κp(σV)) = 0` with `κp` consistent with the vertex plastic strain
+   (Eq.32, Frobenius norm, θ=π/3), on the tension apex or — while `qh1<1` closes the cap — the COMPRESSIVE
+   cap vertex, accepted only inside the cone of plastic-potential normals (compression uses the CDPM2
+   Eq.22-29 potential gradient at ρ=0, because the v1 flow has no cap term and hence no compressive cone).
+   Rank-1 volumetric analytic vertex tangent. Deliberate OOFEM difference: OOFEM's `computeTempKappa`
+   weights the volumetric term by 1/9 instead of 1/3 (1/√3 of its own regular-return norm).
+2. **Tension law default = CDPM2 bilinear** (Eq.51/58/59, `s1=0.3ft` at `wf1=0.15wf`, `wf=4.444Gf/ft`,
+   regularized `w = lch·ε_i`) **with the literal Eq.44/45 histories** (`κdt2` accumulates `Δκdt/xs` from the
+   start of loading, as OOFEM; the v1 `κdt2=(κdt−ε0)/xs` under-counted the crack opening by `ωt ε0 h` and
+   over-dissipated +25–40 %). Legacy law behind `-tensionLaw exp` (byte-identical).
+3. **`Gc` = physical compressive fracture energy per unit area** (default): the compressive law is in strain
+   form and its driver is scaled by `βc/xs` (Eq.48/50), so `εfc = Gc/(fc·lch)` dissipated ~20× `Gc`
+   (Grassl §5 itself only states `GFc = fc·εfc·lc·As`, ignoring `βc`). The uniaxial response depends on
+   `εfc` but not on `lch`, so `g(εfc)` (post-peak energy/volume) is tabulated once per material
+   (`calibrateEpsFcTable`, 8 log points, ~0.2 s) and inverted at `Gc/lch`. `-epsFc` gives the raw CDPM2
+   `εfc` (Gc ignored) — byte-identical to the old mapping when `εfc = Gc/(fc·lch)`; `-gcLegacy` keeps the old
+   `Gc/(fc·lch)` mapping itself (follows `-autoRegularization`). Tests: the element battery runs the new defaults and pins
+   `-tensionLaw exp -gcLegacy` only on its two numpy-oracle cross-checks (the oracle's `make_material` is
+   legacy by construction); the G8 punching band holds on the new defaults (317.1 vs 315.6 kN legacy, +0.5 %).
+   **Residual tangent stiffness:** the bilinear law reaches `ωt = 1` exactly, which made every tensile
+   direction stiffness-free (singular global system; single-brick tension: NaN / runaway lateral strains).
+   The damaged TANGENT keeps `(1−ω) ≥ 1e-6`; the stress is untouched (fixtures unchanged).
+4. **Still open (need a decision):** (a) the v1 flow potential (`m_v = Df·m0/(√3fc)`, no `[1−qh1]` cap, no
+   `mg(σV)`) is the dominant reason uniaxial compression softens ~25 % faster than CDPM2 at matched `εfc`
+   and makes near-axis cap returns unsolvable off the vertex — port Eq.22-29 in full; (b) the compressive
+   damage drive is `−σ̄min` vs `fc` instead of CDPM2's `E·κdc` vs `ft` (Eq.53/55): under confinement the
+   nominal stress drops from `fcc` to `fc` in the first damaging step (σ3/fc = 0.05/0.1/0.2: 38/46/58 → 30
+   MPa); (c) wrapper default `Hp = 0.5` vs CDPM2 `0.01`; (d) no material-level sub-incrementation
+   (OOFEM halves the step up to 10×; the fork fails single CDPM2-scale steps in uniaxial compression);
+   (e) `f_after` honesty tolerance `1e-7·(fc+1)` is units-dependent (0.3 in Pa).

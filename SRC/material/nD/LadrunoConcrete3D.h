@@ -80,7 +80,8 @@ class LadrunoConcrete3D : public NDMaterial {
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
                     double rho, double lch, bool autoReg, bool implex = false,
                     double eta = 0.0, int ctTemper = 0,
-                    double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D);
+                    double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D,
+                    int tensionLaw = 1, double epsFcUser = 0.0);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -133,6 +134,17 @@ class LadrunoConcrete3D : public NDMaterial {
   // condensation balances. hoopK = confining stiffness d(p_conf)/d(eps_lat) (>=0; 0 => free reduction =
   // plain BeamFiber); hoopFy = hoop yield (caps p_conf). Circular/spiral hoops (symmetric two-normal).
   double hoopK, hoopFy;
+  // WP concrete3d-oracle-diagnosis: tensile softening law (1 = CDPM2 bilinear Eq.58, the DEFAULT; 0 = the
+  // legacy exponential) and the compressive softening mapping. epsFcUser > 0 (-epsFc) = the direct CDPM2
+  // eps_fc (bypasses Gc); else Gc is the PHYSICAL compressive fracture energy per unit area: eps_fc is
+  // obtained from the uniaxial-compression energy table g(eps_fc) (built once, copied to every copy,
+  // serialized) inverted at Gc/lch (cached per lch).
+  int    tensionLaw;
+  double epsFcUser;
+  double gcEfc[8], gcG[8];     // Ladruno::Concrete3D::GC_TABLE_N = 8
+  bool   gcTabReady;
+  double gcLch, gcEpsFc;       // cache of the last inversion (lch -> eps_fc)
+  bool   gcWarned;
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*
@@ -172,6 +184,8 @@ class LadrunoConcrete3D : public NDMaterial {
 
   // helpers
   void integrate(bool doTangent);
+  double compressiveEpsFc(double lch);   // -epsFc, or the Gc-energy table inversion at this lch
+  void   ensureGcTable(void);
   void setupDim(void);             // fill ncomp/vmap/condense + size the return buffers
   void condenseTangent(void);      // static condensation of the 33 dof (sigma_22 = 0)
 
