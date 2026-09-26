@@ -620,3 +620,17 @@ surface; Imran-Pantazopoulou peaks equal the paper's CDPM2 curves at all 7 confi
 (−47.4…−194.8 vs −47.3…−194.9); Caner-Bažant within the paper's own scatter; Kupfer now equals the OOFEM
 transcription exactly (−13.0 MPa at −3 mm/m with As = 1.5 — the paper's Fig.9 curve needs As ≈ 10–15, not εfc 6e-4).
 Not modelled: OOFEM's in-step unload/reload search (`checkForUnAndReloading`). `-compressionDrive legacy` = pre-B2.
+
+## 14. Amendment 2026-09 — B3 defaults, B5 units-free tolerance
+
+- **B3:** parser defaults are now CDPM2's `Df = 0.85`, `Hp = 0.01` (were 1.0 / 0.5; `-Df 1.0 -hardening 0.3 0.5`
+  restores them; the element battery and the punching test pin the old values). Ductility `Ah..Dh` unchanged: with the
+  new defaults the Kupfer uniaxial peak is −32.79 MPa at −2.20 mm/m (paper −2.19; old defaults −1.70).
+- **Known CDPM2 property (not a defect, decided 2026-09):** after full tensile cracking the EFFECTIVE stress keeps
+  hardening — κp grows ~10³ in tension because the ductility measure xh ≈ Dh = 1e-6 there — so with `Hp = 0.01` the
+  effective axial stress is ≈ 20·ft at 5e-3 strain in G&S uniaxial tension (κp ≈ 2000; ≈ 39·ft with `Hp = 0.5`).
+  OOFEM shows the same κp growth. The NOMINAL stress is what matters: with ω ≤ 1 − 1e-6 the residual on an unloaded
+  point is ≤ 1e-6·σ̄ (~70 Pa here). No qh2 cap / Dh change.
+- **B5:** the honest-convergence tolerance on the (dimensionless) yield function after a return is units-free,
+  `F_TOL_HONEST = 3.1e-6` (was `1e-7·(fc+1)`: 3.1e-6 in MPa but 0.3 in Pa, so SI models accepted returns ~30 % off the
+  surface). Equal to the old MPa value at fc = 30, so every MPa fixture is unchanged.

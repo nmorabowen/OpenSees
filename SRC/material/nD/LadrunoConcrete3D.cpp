@@ -90,8 +90,11 @@ void* OPS_LadrunoConcrete3D(void)
   double ecc = -1.0;            // <0 => derive from Kupfer ratio below
   double kupfer = 1.16;
   bool haveE = false;
-  double Df = 1.0, As = 2.0, rho = 0.0;
-  double qh0 = 0.3, Hp = 0.5, Ah = 0.08, Bh = 0.003, Ch = 2.0, Dh = 1.0e-6;
+  // B3 (WP concrete3d-damage-drive): CDPM2's published defaults Df = 0.85, Hp = 0.01 (Grassl 2013 Sec.5; the
+  // pre-B3 fork used Df = 1.0, Hp = 0.5 — reachable with -Df 1.0 -hardening 0.3 0.5). The ductility defaults
+  // Ah..Dh are CDPM2's (they reproduce the Kupfer uniaxial peak strain, -2.20 vs -2.19 mm/m).
+  double Df = 0.85, As = 2.0, rho = 0.0;
+  double qh0 = 0.3, Hp = 0.01, Ah = 0.08, Bh = 0.003, Ch = 2.0, Dh = 1.0e-6;
   double lch = 1.0;
   bool autoReg = false;
   bool implex = false;
