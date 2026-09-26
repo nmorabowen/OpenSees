@@ -52,11 +52,9 @@
 //   footing / equipment), so -bipenalty DEFAULTS OFF and, when on, lumps a penalty
 //   mass only on tied DOFs that are ACTUALLY massless (scan over R AND every slave —
 //   a massless slave is the RBE2-specific hazard), sized from the Gershgorin row-sum
-//   of the assembled penalty tangent (≥ λ_max ⇒ conservative). getDamp /
-//   getRayleighDampingForces are overridden to return zero (the no-op
-//   setRayleighDampingFactors never allocates the base Element's lazy damping slot,
-//   so the base path would dereference theMatrices[-1] when a TRANSIENT integrator
-//   forms the C-tangent → crash; D ≡ 0 is physically correct).
+//   of the assembled penalty tangent (≥ λ_max ⇒ conservative). D ≡ 0: the Rayleigh
+//   factors are refused and getDamp is zero, inherited from LadrunoUndampedElement
+//   (WP-123; that header explains the transient-crash history).
 //
 //   classTag ELE_TAG_LadrunoKinematicCoupling = 33012 (next free after RBE3=33011;
 //   33009/33010 reserved VEM/SBFEM). Sibling of LadrunoDistributingCoupling.
@@ -65,7 +63,7 @@
 #ifndef LadrunoKinematicCoupling_h
 #define LadrunoKinematicCoupling_h
 
-#include <Element.h>
+#include <LadrunoUndampedElement.h>   // WP-123: refuses Rayleigh, zero getDamp
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
@@ -75,7 +73,7 @@ class Channel;
 class FEM_ObjectBroker;
 class Response;
 
-class LadrunoKinematicCoupling : public Element
+class LadrunoKinematicCoupling : public LadrunoUndampedElement
 {
  public:
   LadrunoKinematicCoupling(int tag, int ndm, int refNode, const ID& slaveNodes,
@@ -108,14 +106,7 @@ class LadrunoKinematicCoupling : public Element
   const Vector& getResistingForce(void);
   const Vector& getResistingForceIncInertia(void);
 
-  // a pure penalty coupling carries no physical Rayleigh damping (refuse the
-  // factors so a βK can't spuriously shrink dt_cr). getDamp / getRayleighDampingForces
-  // are ALSO overridden to return zero — see the class note + ADR 29 §6 (the base
-  // lazy-damping-slot index-landmine that crashes a TRANSIENT run).
-  int setRayleighDampingFactors(double alphaM, double betaK,
-                                double betaK0, double betaKc);
-  const Matrix& getDamp(void);
-  const Vector& getRayleighDampingForces(void);
+  // setRayleighDampingFactors (refused) / getDamp (zero): LadrunoUndampedElement (WP-123).
   // self-reported explicit critical step: min over lumped (massless) DOFs of
   // 2√(m_p/k_dof). −1 when bipenalty off / no massless DOF.
   double getExplicitCriticalTimeStep(void);
@@ -231,8 +222,6 @@ class LadrunoKinematicCoupling : public Element
   Matrix* K;                // nDOF × nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // diagonal lumped bipenalty mass (nDOF × nDOF; zero unless bipenalty)
-  Matrix* C0;               // damping (nDOF × nDOF; ALWAYS zero — getDamp bypass)
-  Vector* dampF;            // Rayleigh damping force (nDOF; ALWAYS zero)
 
   void allocate(void);
   void resolveGeometry(void);    // d_i, ragged layout, ℓ², refuse checks

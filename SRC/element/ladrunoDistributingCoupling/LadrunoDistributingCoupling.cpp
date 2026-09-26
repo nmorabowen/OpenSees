@@ -95,7 +95,7 @@ LadrunoDistributingCoupling::LadrunoDistributingCoupling(int tag, int ndm_, int 
         double kr, bool krUser_, int enforce_,
         bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
         double kAlpha_, int hostEleTag_, bool ktAuto_, bool initGapCapture_)
-  : Element(tag, ELE_TAG_LadrunoDistributingCoupling),
+  : LadrunoUndampedElement(tag, ELE_TAG_LadrunoDistributingCoupling),
     ndm(ndm_), nrot((ndm_ == 3) ? 3 : 1), nIndep(indepNodes.Size()),
     connectedNodes(1 + indepNodes.Size()), weights(weights_),
     Kt(kt), Kr(kr), krUser(krUser_), ktAuto(ktAuto_), kAlpha(kAlpha_),
@@ -109,7 +109,7 @@ LadrunoDistributingCoupling::LadrunoDistributingCoupling(int tag, int ndm_, int 
     nDOF(0), nodeNdf(1 + indepNodes.Size()), dofOffset(1 + indepNodes.Size()),
     B(0), initGapCapture(initGapCapture_), g0Computed(false),
     g0(ndm_), gr0((ndm_ == 3) ? 3 : 1),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0)
+    theNodes(0), K(0), P(0), M0(0)
 {
   connectedNodes(0) = refNode;
   for (int i = 0; i < nIndep; i++) connectedNodes(1 + i) = indepNodes(i);
@@ -122,7 +122,7 @@ LadrunoDistributingCoupling::LadrunoDistributingCoupling(int tag, int ndm_, int 
 }
 
 LadrunoDistributingCoupling::LadrunoDistributingCoupling()
-  : Element(0, ELE_TAG_LadrunoDistributingCoupling),
+  : LadrunoUndampedElement(0, ELE_TAG_LadrunoDistributingCoupling),
     ndm(0), nrot(0), nIndep(0), connectedNodes(), weights(),
     Kt(0.0), Kr(0.0), krUser(false), ktAuto(false), kAlpha(0.0),
     hostEleTag(-1), ktResolved(false),
@@ -133,7 +133,7 @@ LadrunoDistributingCoupling::LadrunoDistributingCoupling()
     Icplus(), Pproj(), nKept(0),
     nDOF(0), nodeNdf(), dofOffset(),
     B(0), initGapCapture(true), g0Computed(false), g0(), gr0(),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0)
+    theNodes(0), K(0), P(0), M0(0)
 {
 }
 
@@ -144,8 +144,6 @@ LadrunoDistributingCoupling::~LadrunoDistributingCoupling()
   if (K != 0) delete K;
   if (P != 0) delete P;
   if (M0 != 0) delete M0;
-  if (C0 != 0) delete C0;
-  if (dampF != 0) delete dampF;
 }
 
 // ===========================================================================
@@ -161,8 +159,6 @@ void LadrunoDistributingCoupling::allocate(void)
   if (K != 0) delete K;       K = new Matrix(nDOF, nDOF);
   if (P != 0) delete P;       P = new Vector(nDOF);
   if (M0 != 0) delete M0;     M0 = new Matrix(nDOF, nDOF);
-  if (C0 != 0) delete C0;     C0 = new Matrix(nDOF, nDOF);   // always zero (getDamp)
-  if (dampF != 0) delete dampF; dampF = new Vector(nDOF);    // always zero
 }
 
 void LadrunoDistributingCoupling::setDomain(Domain* theDomain)
@@ -458,28 +454,7 @@ void LadrunoDistributingCoupling::resolveBipenalty(void)
   bpResolved = true;
 }
 
-int LadrunoDistributingCoupling::setRayleighDampingFactors(double, double, double, double)
-{
-  return 0;   // a pure penalty coupling carries no physical Rayleigh damping
-}
-
-// D ≡ 0. Overridden (with getRayleighDampingForces) so the base Element's lazy
-// damping-matrix slot is never needed: the no-op setRayleighDampingFactors above
-// leaves the base index = −1, so base getDamp would dereference theMatrices[-1] the
-// first time a transient integrator forms the C-tangent (FE_Element::addCtoTang) or
-// the residual damping force (addD_Force) — a hard crash. Returning a zeroed,
-// element-owned matrix bypasses that path. (allocate() builds C0 sized nDOF.)
-const Matrix& LadrunoDistributingCoupling::getDamp(void)
-{
-  C0->Zero();
-  return *C0;
-}
-
-const Vector& LadrunoDistributingCoupling::getRayleighDampingForces(void)
-{
-  dampF->Zero();
-  return *dampF;
-}
+// setRayleighDampingFactors / getDamp: inherited from LadrunoUndampedElement (WP-123).
 
 double LadrunoDistributingCoupling::getExplicitCriticalTimeStep(void)
 {
