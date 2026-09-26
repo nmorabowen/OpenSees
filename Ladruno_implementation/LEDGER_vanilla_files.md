@@ -42,6 +42,13 @@ Low blast radius, measured 2026-09-08: `makeWIN.bat`, `makeMac.sh` and
 `OpenSeesAWS-Ubuntu22.04.sh` about the same. Last sync from `OpenSees/OpenSees`
 was 2026-04-26. So this is one conflict, once, if ever.
 
+**After every upstream sync, refresh the upstream manifest** (WP-122). The CI step
+"header stamp covers GLOBS" treats any tracked `SRC` source missing from
+`Ladruno_scripts/upstream_src_manifest.txt` as fork-authored, so upstream's new files
+turn it red until you run
+`git fetch upstream master && python Ladruno_scripts/stamp_headers.py --refresh-upstream-manifest`
+and commit the result. Do not add upstream files to GLOBS to silence it.
+
 This costs nothing in the other direction: the upstream PR campaign builds every
 package as a *fresh branch off `jaabell/ladruño`* with files copied in
 (`upstream_pr_campaign.md` — "our git history is not portable. No

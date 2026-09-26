@@ -13,6 +13,7 @@ target_sources(OPS_Element
     PUBLIC
     LadrunoEmbeddedRebar.h
     LadrunoEmbeddedKernel.h
+    LadrunoUndampedElement.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})

@@ -1,0 +1,1950 @@
+[
+ {
+  "files": [
+   "SRC/element/bezierTetrahedron/BezierTet10.cpp",
+   "SRC/element/bezierTriangle/BezierTri6.cpp",
+   "SRC/element/ladrunoBrick/LadrunoBrick.cpp",
+   "SRC/element/ladrunoBrick/LadrunoBrick20.cpp",
+   "SRC/element/ladrunoPlane/LadrunoCST.cpp",
+   "SRC/element/ladrunoPlane/LadrunoCSTPair.cpp",
+   "SRC/element/ladrunoPlane/LadrunoLST.cpp",
+   "SRC/element/ladrunoPlane/LadrunoQuad.cpp"
+  ],
+  "copies": 8,
+  "shared_lines_sum_pairs": 1002,
+  "prs_touching_2plus": 24,
+  "fix_prs": [
+   {
+    "sha": "e5eb679d3",
+    "label": "WP-117: fix the Bezier ground-motion sign (BezierTri6, BezierTet10)",
+    "files": [
+     "BezierTet10.cpp",
+     "BezierTri6.cpp"
+    ]
+   },
+   {
+    "sha": "6792ecc58",
+    "label": "docs+test(brick): Tier-A Kstab scope challenge closed \u2014 tangent-norm rule rejected, ssp one-deep never-plastif",
+    "files": [
+     "LadrunoBrick.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "a208d8625",
+    "label": "fix(element): BezierTet10/Tri6 symmetrized an unsymmetric plastic tangent",
+    "files": [
+     "BezierTet10.cpp",
+     "BezierTri6.cpp"
+    ]
+   },
+   {
+    "sha": "4c9a40c02",
+    "label": "fix(eas): spurious inner-Newton non-convergence warning spam (LadrunoBrick + LadrunoQuad)",
+    "files": [
+     "LadrunoBrick.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "e140f4a02",
+    "label": "fix(element): mass-cache lifecycle hardening from the ADR-77 review wave",
+    "files": [
+     "BezierTet10.cpp",
+     "BezierTri6.cpp",
+     "LadrunoBrick.cpp",
+     "LadrunoCST.cpp",
+     "LadrunoCSTPair.cpp",
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "BezierTet10.cpp",
+     "BezierTri6.cpp",
+     "LadrunoBrick.cpp",
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "444e7ce1d",
+    "label": "Post-merge adversarial battery on the #542 eas line found a REAL guard hole:",
+    "files": [
+     "LadrunoBrick.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "f89687274",
+    "label": "Post-merge adversarial gate on LadrunoCSTPair (#558) CONFIRMED the mechanics",
+    "files": [
+     "LadrunoCST.cpp",
+     "LadrunoCSTPair.cpp",
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "ce9e65272",
+    "label": "fix(plane): LadrunoQuad/CST getInitialStiff returns cached *Ki + doc sync",
+    "files": [
+     "LadrunoCST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "ef3f8a2ae",
+    "label": "fix(bezier): forward setParameter/updateParameter to GP materials",
+    "files": [
+     "BezierTet10.cpp",
+     "BezierTri6.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "A new element registered ONLY in `OpenSeesElementCommands.cpp` (Python functionMap) is SILENTLY unreachable fr",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "Crack-band materials read element size via `ops_TheActiveElement->getCharacteristicLength()` \u2014 and the base de",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6",
+     "LadrunoBrick"
+    ]
+   },
+   {
+    "heading": "A node-embedding ROTATION tie needs the host's `\u2202N/\u2202x`, not its weights `N_i` (ADR 23 Phase 2 / UR)",
+    "classes": [
+     "BezierTet10",
+     "LadrunoBrick"
+    ]
+   },
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoCST",
+     "LadrunoCSTPair",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "`ops_TheActiveElement` is a mutable GLOBAL written per-element inside `Domain::update()`'s loop and read by ma",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "The Tcl `nDMaterial` command is a hand-written strcmp ladder \u2014 the fork's own nD materials are openseespy-ONLY",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "The bare `this->getMass();` side-effect idiom still lives in the cache-LESS `LadrunoCST`/`LadrunoCSTPair` \u2014 fo",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoCSTPair"
+    ]
+   },
+   {
+    "heading": "A relative-to-first-residual convergence test with a `count >= 1` guard can NEVER pass when the loop starts co",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Bezier elements (BezierTet10/BezierTri6): Lagrange-consistent surface loads on control DOFs are an OSCILLATORY",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "`LadrunoDynamicRelaxation -mass gershgorin` marched EXACTLY ON the central-difference stability boundary, so a",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal \u2014 a THIRD silent accept, in a vanilla ELEMENT ",
+    "classes": [
+     "BezierTet10",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "`ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap \u2014 only a `dT_min` floor \u2014 so one `analyze(",
+    "classes": [
+     "BezierTet10",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "`\u2016D_current\u2016/\u2016D_initial\u2016` is NOT a usable material-degradation proxy \u2014 the Frobenius norm is bulk-dominated (s",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Two vanilla quadratic solids (`TenNodeTetrahedron`, `Twenty_Node_Brick`) had `sendSelf`/`recvSelf` implemented",
+    "classes": [
+     "BezierTet10",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`H5DRMLoadPattern::CalculateBoundaryForces` had a fixed 8-node buffer (`BoundaryNodes`/`ExteriorNodes`) that s",
+    "classes": [
+     "BezierTet10",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "ASDPlasticMaterial3D's tangent is a CLASS-STATIC \u2014 every Gauss point is assembled with the last GP's tangent (",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoCST"
+    ]
+   },
+   {
+    "heading": "A post-commit re-read of a DruckerPrager tangent (`printA`, `eleResponse 'stiffness'`, a recorder) is the ELAS",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "`Domain::commit()` discards element commit returns \u2014 a material cannot refuse at commit; `LadrunoQuad` propaga",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Plane-strain B-bar with the 3D \u00f73 split relieves NOTHING under isochoric flow \u2014 a 3-row plane-strain B needs t",
+    "classes": [
+     "BezierTri6",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "A Jacobian degeneracy guard must normalize by the LARGEST column \u2014 `|det|/\u220f\u2016cols\u2016` is blind to axis COLLAPSE, ",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "An element's ground-motion load vector accumulates \u2212M\u00b7R\u00b7a_g, and the residual SUBTRACTS it \u2014 write `+M\u00b7a` and ",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6",
+     "LadrunoBrick"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 771,
+  "prs_touching_2plus": 2,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/material/nD/LadrunoConcrete3D.cpp",
+   "SRC/material/nD/LadrunoJ2.cpp",
+   "SRC/material/nD/LadrunoJ2Finite.cpp",
+   "SRC/material/nD/LadrunoRCConcrete.cpp",
+   "SRC/material/nD/LadrunoRCFiniteStrain.cpp",
+   "SRC/material/uniaxial/LadrunoUniaxialJ2.cpp"
+  ],
+  "copies": 6,
+  "shared_lines_sum_pairs": 642,
+  "prs_touching_2plus": 5,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "The generic LogStrainNDMaterial wrapper is UNSOUND for a stiffness-degrading (damage) inner \u2014 lift damage mate",
+    "classes": [
+     "LadrunoJ2",
+     "LadrunoRCConcrete",
+     "LadrunoRCFiniteStrain"
+    ]
+   },
+   {
+    "heading": "`ops_TheActiveElement` is a mutable GLOBAL written per-element inside `Domain::update()`'s loop and read by ma",
+    "classes": [
+     "LadrunoConcrete3D",
+     "LadrunoJ2",
+     "LadrunoRCConcrete",
+     "LadrunoRCFiniteStrain"
+    ]
+   },
+   {
+    "heading": "The Tcl `nDMaterial` command is a hand-written strcmp ladder \u2014 the fork's own nD materials are openseespy-ONLY",
+    "classes": [
+     "LadrunoConcrete3D",
+     "LadrunoJ2",
+     "LadrunoJ2Finite",
+     "LadrunoRCConcrete",
+     "LadrunoRCFiniteStrain"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/OPS_LadrunoDistributingCoupling.cpp",
+   "SRC/element/ladrunoEmbeddedNode/OPS_LadrunoEmbeddedNode.cpp",
+   "SRC/element/ladrunoEmbeddedRebar/OPS_LadrunoEmbeddedRebar.cpp",
+   "SRC/element/ladrunoKinematicCoupling/OPS_LadrunoKinematicCoupling.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 307,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance reco",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "D9 interface material returns FORCE, not stress \u2014 no `bondScale` (unlike the rebar)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override \u21d2 hard crash in implicit transient",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A token that answers to the wrong quantity can permanently SHADOW a later branch in the same `strcmp` ladder",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "`OPS_GetStringFromAll` never filled the buffer under classic Tcl (WP-103, #840)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoPlane/OPS_LadrunoCST.cpp",
+   "SRC/element/ladrunoPlane/OPS_LadrunoCSTPair.cpp",
+   "SRC/element/ladrunoPlane/OPS_LadrunoLST.cpp",
+   "SRC/element/ladrunoPlane/OPS_LadrunoQuad.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 236,
+  "prs_touching_2plus": 3,
+  "fix_prs": [
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "OPS_LadrunoLST.cpp",
+     "OPS_LadrunoQuad.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoCSTPair",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "The bare `this->getMass();` side-effect idiom still lives in the cache-LESS `LadrunoCST`/`LadrunoCSTPair` \u2014 fo",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoCSTPair"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Plane-strain B-bar with the 3D \u00f73 split relieves NOTHING under isochoric flow \u2014 a 3-row plane-strain B needs t",
+    "classes": [
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/integrator/CentralDifferenceLadruno.cpp",
+   "SRC/analysis/integrator/CentralDifferenceSMS.cpp",
+   "SRC/analysis/integrator/CentralDifferenceSMSConsistent.cpp",
+   "SRC/analysis/integrator/ExplicitBathe.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 206,
+  "prs_touching_2plus": 11,
+  "fix_prs": [
+   {
+    "sha": "87833877c",
+    "label": "* feat(porous ADR-73 P3): 3.A pins \u2014 explicit lane contract frozen",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "155745d38",
+    "label": "* fix(explicit review P3): SMS kernel guards + diagnostics batch",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "d86045c94",
+    "label": "* fix(explicit review P2): ExplicitBathe update-guard, -sms lumping default, sub-step-2 rc, serialization supe",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "b68871553",
+    "label": "* fix(explicit review P1): betaKinit/betaKcomm damped sizing + revertToLastStep + NaN-capable breaker",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "CentralDifferenceSMS.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "79fd854d2",
+    "label": "W1-E3a: -cflAbort/-recompute under selective mass scaling no longer refuse to",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp"
+    ]
+   },
+   {
+    "sha": "4c1a1c6d5",
+    "label": "* docs(ADR36/T-MPI): lumped SMS is parallel-correct (validated) \u2014 correct false \"not reduced across ranks\" war",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`criticalTimeStep()` under SMS returns the PRE-scaling element pencil \u2014 the post-scaling effective limit is re",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "CentralDifferenceSMS",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "Adopting LadrunoProjection in a MULTI-SOLVE explicit integrator: `buildMass` can't ride the algorithm's solve ",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "A time-varying prescribed SP (support motion) DOES work under explicit (CentralDifference / ExplicitBathe) \u2014 i",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "The explicit accel solve `a=M\u207b\u00b9r` is driven by the ALGORITHM, not the integrator \u2014 inject a non-diagonal mass ",
+    "classes": [
+     "CentralDifferenceSMSConsistent",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "LUMPED SMS is parallel-correct WITHOUT an explicit \u0394M reduction \u2014 the distributed/MPI diagonal solver already ",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "CentralDifferenceSMS",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "SMS mass scaling + LadrunoPorousOverlay = certified-stable-but-actually-UNSTABLE (UNSUPPORTED until ADR-73 P3b",
+    "classes": [
+     "CentralDifferenceSMS",
+     "CentralDifferenceSMSConsistent"
+    ]
+   },
+   {
+    "heading": "Consistent/Olovsson SMS + LadrunoPorousOverlay: correct undrained PRICING but measured UNDER-DELIVERY on the c",
+    "classes": [
+     "CentralDifferenceSMS",
+     "CentralDifferenceSMSConsistent"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoIMKBeam/LadrunoIMKBeam.cpp",
+   "SRC/element/ladrunoIMKBeam/LadrunoIMKBeam2d.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 122,
+  "prs_touching_2plus": 4,
+  "fix_prs": [
+   {
+    "sha": "2a8b59575",
+    "label": "WP-118: refresh Kc on commit in LadrunoIMKBeam (betaKc damping)",
+    "files": [
+     "LadrunoIMKBeam.cpp",
+     "LadrunoIMKBeam2d.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 45,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/LadrunoDistributingCoupling.cpp",
+   "SRC/element/ladrunoKinematicCoupling/LadrunoKinematicCoupling.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 44,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/integrator/LadrunoArcLength.cpp",
+   "SRC/analysis/integrator/LadrunoIndirectControl.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 41,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "Cyclic softening RC shell wall (ASDShellQ4 + LadrunoRCConcrete) walls on Newton convergence past first crack",
+    "classes": [
+     "LadrunoArcLength",
+     "LadrunoIndirectControl"
+    ]
+   },
+   {
+    "heading": "Quasi-static EXPLICIT is the cyclic-softening tool; the monotonic solvers are NOT \u2014 and ASDShellQ4 has no per-",
+    "classes": [
+     "LadrunoArcLength",
+     "LadrunoIndirectControl"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoIMKBeam/OPS_LadrunoIMKBeam.cpp",
+   "SRC/element/ladrunoIMKBeam/OPS_LadrunoIMKBeam2d.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 39,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/material/nD/InitDefGradNDMaterial.cpp",
+   "SRC/material/nD/StagedStrainNDMaterial.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 38,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoEmbeddedNode/LadrunoEmbeddedNode.cpp",
+   "SRC/element/ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 33,
+  "prs_touching_2plus": 2,
+  "fix_prs": [
+   {
+    "sha": "ad4b155d0",
+    "label": "fix(embedded): getDamp override to dodge implicit-transient crash (33005/33006)",
+    "files": [
+     "LadrunoEmbeddedNode.cpp",
+     "LadrunoEmbeddedRebar.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance reco",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "D9 interface material returns FORCE, not stress \u2014 no `bondScale` (unlike the rebar)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override \u21d2 hard crash in implicit transient",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A token that answers to the wrong quantity can permanently SHADOW a later branch in the same `strcmp` ladder",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "`OPS_GetStringFromAll` never filled the buffer under classic Tcl (WP-103, #840)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoBrick/OPS_LadrunoBrick.cpp",
+   "SRC/element/ladrunoBrick/OPS_LadrunoBrick20.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 31,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "The Tcl `nDMaterial` command is a hand-written strcmp ladder \u2014 the fork's own nD materials are openseespy-ONLY",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`LadrunoDynamicRelaxation -mass gershgorin` marched EXACTLY ON the central-difference stability boundary, so a",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal \u2014 a THIRD silent accept, in a vanilla ELEMENT ",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap \u2014 only a `dT_min` floor \u2014 so one `analyze(",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/handler/LadrunoContactHandler.cpp",
+   "SRC/analysis/handler/LadrunoProjectionHandler.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 30,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/LadrunoDistributingCoupling.h",
+   "SRC/element/ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 30,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoPlane/LadrunoCST.h",
+   "SRC/element/ladrunoPlane/LadrunoLST.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 30,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/LadrunoDistributingCoupling.cpp",
+   "SRC/element/ladrunoEmbeddedNode/LadrunoEmbeddedNode.cpp",
+   "SRC/element/ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.cpp",
+   "SRC/element/ladrunoKinematicCoupling/LadrunoKinematicCoupling.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 594,
+  "prs_touching_2plus": 2,
+  "fix_prs": [
+   {
+    "sha": "ad4b155d0",
+    "label": "fix(embedded): getDamp override to dodge implicit-transient crash (33005/33006)",
+    "files": [
+     "LadrunoEmbeddedNode.cpp",
+     "LadrunoEmbeddedRebar.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance reco",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "D9 interface material returns FORCE, not stress \u2014 no `bondScale` (unlike the rebar)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override \u21d2 hard crash in implicit transient",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A token that answers to the wrong quantity can permanently SHADOW a later branch in the same `strcmp` ladder",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "`OPS_GetStringFromAll` never filled the buffer under classic Tcl (WP-103, #840)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/OPS_LadrunoDistributingCoupling.cpp",
+   "SRC/element/ladrunoEmbeddedNode/OPS_LadrunoEmbeddedNode.cpp",
+   "SRC/element/ladrunoEmbeddedRebar/OPS_LadrunoEmbeddedRebar.cpp",
+   "SRC/element/ladrunoKinematicCoupling/OPS_LadrunoKinematicCoupling.cpp",
+   "SRC/material/uniaxial/LadrunoRebarBuckling.cpp"
+  ],
+  "copies": 5,
+  "shared_lines_sum_pairs": 455,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance reco",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "D9 interface material returns FORCE, not stress \u2014 no `bondScale` (unlike the rebar)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override \u21d2 hard crash in implicit transient",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A token that answers to the wrong quantity can permanently SHADOW a later branch in the same `strcmp` ladder",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "`OPS_GetStringFromAll` never filled the buffer under classic Tcl (WP-103, #840)",
+    "classes": [
+     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/integrator/CentralDifferenceLadruno.cpp",
+   "SRC/analysis/integrator/CentralDifferenceSMS.cpp",
+   "SRC/analysis/integrator/CentralDifferenceSMSConsistent.cpp",
+   "SRC/analysis/integrator/ExplicitBathe.cpp",
+   "SRC/analysis/integrator/LadrunoDynamicRelaxation.cpp"
+  ],
+  "copies": 5,
+  "shared_lines_sum_pairs": 359,
+  "prs_touching_2plus": 11,
+  "fix_prs": [
+   {
+    "sha": "87833877c",
+    "label": "* feat(porous ADR-73 P3): 3.A pins \u2014 explicit lane contract frozen",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "155745d38",
+    "label": "* fix(explicit review P3): SMS kernel guards + diagnostics batch",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "d86045c94",
+    "label": "* fix(explicit review P2): ExplicitBathe update-guard, -sms lumping default, sub-step-2 rc, serialization supe",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "ExplicitBathe.cpp"
+    ]
+   },
+   {
+    "sha": "b68871553",
+    "label": "* fix(explicit review P1): betaKinit/betaKcomm damped sizing + revertToLastStep + NaN-capable breaker",
+    "files": [
+     "CentralDifferenceLadruno.cpp",
+     "CentralDifferenceSMS.cpp",
+     "ExplicitBathe.cpp",
+     "LadrunoDynamicRelaxation.cpp"
+    ]
+   },
+   {
+    "sha": "79fd854d2",
+    "label": "W1-E3a: -cflAbort/-recompute under selective mass scaling no longer refuse to",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp"
+    ]
+   },
+   {
+    "sha": "4c1a1c6d5",
+    "label": "* docs(ADR36/T-MPI): lumped SMS is parallel-correct (validated) \u2014 correct false \"not reduced across ranks\" war",
+    "files": [
+     "CentralDifferenceSMS.cpp",
+     "CentralDifferenceSMSConsistent.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`criticalTimeStep()` under SMS returns the PRE-scaling element pencil \u2014 the post-scaling effective limit is re",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "CentralDifferenceSMS",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "Adopting LadrunoProjection in a MULTI-SOLVE explicit integrator: `buildMass` can't ride the algorithm's solve ",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "Quasi-static EXPLICIT is the cyclic-softening tool; the monotonic solvers are NOT \u2014 and ASDShellQ4 has no per-",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "LadrunoDynamicRelaxation"
+    ]
+   },
+   {
+    "heading": "A time-varying prescribed SP (support motion) DOES work under explicit (CentralDifference / ExplicitBathe) \u2014 i",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "The explicit accel solve `a=M\u207b\u00b9r` is driven by the ALGORITHM, not the integrator \u2014 inject a non-diagonal mass ",
+    "classes": [
+     "CentralDifferenceSMSConsistent",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "LUMPED SMS is parallel-correct WITHOUT an explicit \u0394M reduction \u2014 the distributed/MPI diagonal solver already ",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "CentralDifferenceSMS",
+     "ExplicitBathe"
+    ]
+   },
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "CentralDifferenceLadruno",
+     "ExplicitBathe",
+     "LadrunoDynamicRelaxation"
+    ]
+   },
+   {
+    "heading": "SMS mass scaling + LadrunoPorousOverlay = certified-stable-but-actually-UNSTABLE (UNSUPPORTED until ADR-73 P3b",
+    "classes": [
+     "CentralDifferenceSMS",
+     "CentralDifferenceSMSConsistent"
+    ]
+   },
+   {
+    "heading": "Consistent/Olovsson SMS + LadrunoPorousOverlay: correct undrained PRICING but measured UNDER-DELIVERY on the c",
+    "classes": [
+     "CentralDifferenceSMS",
+     "CentralDifferenceSMSConsistent"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/material/nD/InitDefGradNDMaterial.cpp",
+   "SRC/material/nD/LogStrain2D.cpp",
+   "SRC/material/nD/LogStrainNDMaterial.cpp",
+   "SRC/material/nD/StagedStrainNDMaterial.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 163,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/solidTransformation/SolidTransformationFinite.cpp",
+   "SRC/element/solidTransformation/SolidTransformationHypo.cpp",
+   "SRC/element/solidTransformation/SolidTransformationLinear.cpp"
+  ],
+  "copies": 3,
+  "shared_lines_sum_pairs": 144,
+  "prs_touching_2plus": 3,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoPlane/LadrunoCST.h",
+   "SRC/element/ladrunoPlane/LadrunoLST.h",
+   "SRC/element/ladrunoPlane/LadrunoQuad.h"
+  ],
+  "copies": 3,
+  "shared_lines_sum_pairs": 109,
+  "prs_touching_2plus": 4,
+  "fix_prs": [
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "LadrunoLST.h",
+     "LadrunoQuad.h"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Plane-strain B-bar with the 3D \u00f73 split relieves NOTHING under isochoric flow \u2014 a 3-row plane-strain B needs t",
+    "classes": [
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/ladrunoDistributingCoupling/LadrunoDistributingCoupling.h",
+   "SRC/element/ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.h",
+   "SRC/element/ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"
+  ],
+  "copies": 3,
+  "shared_lines_sum_pairs": 100,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override \u21d2 hard crash in implicit transient",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedRebar"
+    ]
+   },
+   {
+    "heading": "An element that overrides `setRayleighDampingFactors` to ignore Rayleigh damping makes 11 `Element` methods de",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "A singular tangent can pass on Windows and fail on Linux \u2014 a green local run is not proof the model is well-po",
+    "classes": [
+     "LadrunoDistributingCoupling",
+     "LadrunoKinematicCoupling"
+    ]
+   },
+   {
+    "heading": "`OPS_GetStringFromAll` never filled the buffer under classic Tcl (WP-103, #840)",
+    "classes": [
+     "LadrunoEmbeddedRebar",
+     "LadrunoKinematicCoupling"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/bezierTetrahedron/BezierTet10.h",
+   "SRC/element/bezierTriangle/BezierTri6.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 45,
+  "prs_touching_2plus": 4,
+  "fix_prs": [
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "BezierTet10.h",
+     "BezierTri6.h"
+    ]
+   },
+   {
+    "sha": "ef3f8a2ae",
+    "label": "fix(bezier): forward setParameter/updateParameter to GP materials",
+    "files": [
+     "BezierTet10.h",
+     "BezierTri6.h"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "A new element registered ONLY in `OpenSeesElementCommands.cpp` (Python functionMap) is SILENTLY unreachable fr",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "Crack-band materials read element size via `ops_TheActiveElement->getCharacteristicLength()` \u2014 and the base de",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "`ops_TheActiveElement` is a mutable GLOBAL written per-element inside `Domain::update()`'s loop and read by ma",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "Bezier elements (BezierTet10/BezierTri6): Lagrange-consistent surface loads on control DOFs are an OSCILLATORY",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "A post-commit re-read of a DruckerPrager tangent (`printA`, `eleResponse 'stiffness'`, a recorder) is the ELAS",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   },
+   {
+    "heading": "An element's ground-motion load vector accumulates \u2212M\u00b7R\u00b7a_g, and the residual SUBTRACTS it \u2014 write `+M\u00b7a` and ",
+    "classes": [
+     "BezierTet10",
+     "BezierTri6"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/material/nD/LadrunoSANISAND3D.cpp",
+   "SRC/material/nD/LadrunoSANISANDPlaneStrain.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 39,
+  "prs_touching_2plus": 3,
+  "fix_prs": [
+   {
+    "sha": "904b36efc",
+    "label": "ADR 92 / P1: IMPL-EX integration on LadrunoSANISAND (-implex) -- fixed after red/blue review, warrant package ",
+    "files": [
+     "LadrunoSANISAND3D.cpp",
+     "LadrunoSANISANDPlaneStrain.cpp"
+    ]
+   },
+   {
+    "sha": "cf3d6b117",
+    "label": "fix(sanisand): ADR-86 follow-up \u2014 ModifiedEuler substep cap, consistent TanType default, tolerance guidance (W",
+    "files": [
+     "LadrunoSANISAND3D.cpp",
+     "LadrunoSANISANDPlaneStrain.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`ManzariDafalias::getState()` is SHADOWED by all four wrappers and reports a different `alpha_in` than they do",
+    "classes": [
+     "LadrunoSANISAND3D",
+     "LadrunoSANISANDPlaneStrain"
+    ]
+   },
+   {
+    "heading": "`ManzariDafaliasPlaneStrain`'s null constructor sets the WRONG classTag, and a broker restore never repairs it",
+    "classes": [
+     "LadrunoSANISAND3D",
+     "LadrunoSANISANDPlaneStrain"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/LHMYS/BeamColumnwLHNMYS.cpp",
+   "SRC/element/componentElement/ComponentElement2d.cpp",
+   "SRC/element/componentElement/ComponentElement3d.cpp",
+   "SRC/element/dispBeamColumn/AxEqDispBeamColumn2d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn2d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn2dThermal.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn2dWithSensitivity.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn3d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn3dID.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn3dThermal.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumn3dWithSensitivity.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumnAsym3d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumnNL2d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumnNL3d.cpp",
+   "SRC/element/dispBeamColumn/DispBeamColumnWarping3d.cpp",
+   "SRC/element/dispBeamColumn/TimoshenkoBeamColumn2d.cpp",
+   "SRC/element/dispBeamColumn/TimoshenkoBeamColumn3d.cpp",
+   "SRC/element/dispBeamColumnInt/DispBeamColumn2dInt.cpp",
+   "SRC/element/elasticBeamColumn/ElasticBeam2d.cpp",
+   "SRC/element/elasticBeamColumn/ElasticBeam3d.cpp",
+   "SRC/element/elasticBeamColumn/ElasticBeamWarping3d.cpp",
+   "SRC/element/elasticBeamColumn/ModElasticBeam2d.cpp",
+   "SRC/element/elasticBeamColumn/ModElasticBeam3d.cpp",
+   "SRC/element/forceBeamColumn/ElasticForceBeamColumn2d.cpp",
+   "SRC/element/forceBeamColumn/ElasticForceBeamColumn3d.cpp",
+   "SRC/element/forceBeamColumn/ElasticForceBeamColumnWarping2d.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumn2d.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumn2dThermal.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumn3d.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumn3dThermal.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumnCBDI2d.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumnCBDI3d.cpp",
+   "SRC/element/forceBeamColumn/ForceBeamColumnWarping2d.cpp",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp"
+  ],
+  "copies": 35,
+  "shared_lines_sum_pairs": 17941,
+  "prs_touching_2plus": 12,
+  "fix_prs": [
+   {
+    "sha": "0b14cc117",
+    "label": "Fixing mesh for 3d",
+    "files": [
+     "DispBeamColumn3d.cpp",
+     "TimoshenkoBeamColumn3d.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "Vanilla `ElasticBeam2d` subtracts the ground-motion load Q TWICE with element `-mass` \u2014 `UniformExcitation` dr",
+    "classes": [
+     "ElasticBeam2d",
+     "ElasticBeam3d"
+    ]
+   },
+   {
+    "heading": "Vanilla `ElasticBeam2d` / `ElasticTimoshenkoBeam2d` / `ElasticTimoshenkoBeam3d` subtracted the ground-motion l",
+    "classes": [
+     "ElasticBeam2d",
+     "ElasticBeam3d"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/UP-ucsd/BBarBrickUP.cpp",
+   "SRC/element/UP-ucsd/BrickUP.cpp",
+   "SRC/element/UP-ucsd/Twenty_Eight_Node_BrickUP.cpp",
+   "SRC/element/UWelements/SSPbrick.cpp",
+   "SRC/element/UWelements/SSPbrickUP.cpp",
+   "SRC/element/brick/BbarBrick.cpp",
+   "SRC/element/brick/BbarBrickWithSensitivity.cpp",
+   "SRC/element/brick/Brick.cpp",
+   "SRC/element/brick/Twenty_Node_Brick.cpp",
+   "SRC/element/ladrunoBrick/LadrunoBrick.cpp",
+   "SRC/element/ladrunoBrick/LadrunoBrick20.cpp",
+   "SRC/element/tetrahedron/FourNodeTetrahedron.cpp",
+   "SRC/element/tetrahedron/TenNodeTetrahedron.cpp"
+  ],
+  "copies": 13,
+  "shared_lines_sum_pairs": 2061,
+  "prs_touching_2plus": 7,
+  "fix_prs": [
+   {
+    "sha": "4a6aeec55",
+    "label": "fix(recorder): warn on silently dropped -E requests; tet singular tokens; latch size-mismatch flood",
+    "files": [
+     "FourNodeTetrahedron.cpp",
+     "TenNodeTetrahedron.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "Crack-band materials read element size via `ops_TheActiveElement->getCharacteristicLength()` \u2014 and the base de",
+    "classes": [
+     "LadrunoBrick",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "Assumed-strain hourglass: the dev-projection vs reduced-shear interaction is nu-coupled",
+    "classes": [
+     "LadrunoBrick",
+     "SSPbrick"
+    ]
+   },
+   {
+    "heading": "`BbarBrick` has no `update()` \u2014 a bare `eleResponse(\"stresses\")` reads the *predictor* (u=0) state",
+    "classes": [
+     "BbarBrick",
+     "Brick",
+     "LadrunoBrick"
+    ]
+   },
+   {
+    "heading": "LadrunoBrick `-formulation eas` is a misnomer (it's SSPbrick) \u2192 rename to `ssp` RECOMMENDED",
+    "classes": [
+     "LadrunoBrick",
+     "SSPbrick"
+    ]
+   },
+   {
+    "heading": "`NDMaterial::getInitialTangent()` DEFAULTS to `getTangent()` \u2014 so on most solid models `algorithm Newton -init",
+    "classes": [
+     "SSPbrick",
+     "SSPbrickUP"
+    ]
+   },
+   {
+    "heading": "The Tcl `nDMaterial` command is a hand-written strcmp ladder \u2014 the fork's own nD materials are openseespy-ONLY",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`Vector::operator()` is UNCHECKED outside `_G3DEBUG` \u2014 a mis-sized `static Vector` in `getResponse` is a silen",
+    "classes": [
+     "Brick",
+     "FourNodeTetrahedron",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "`ssp` elements + `ManzariDafalias`: the initial tangent is built at `p = P_atm`, reproducing the known `ssp` s",
+    "classes": [
+     "SSPbrick",
+     "SSPbrickUP",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "`LadrunoDynamicRelaxation -mass gershgorin` marched EXACTLY ON the central-difference stability boundary, so a",
+    "classes": [
+     "LadrunoBrick",
+     "LadrunoBrick20"
+    ]
+   },
+   {
+    "heading": "`stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal \u2014 a THIRD silent accept, in a vanilla ELEMENT ",
+    "classes": [
+     "BbarBrick",
+     "Brick",
+     "BrickUP",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "SSPbrick",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "The contact handler guards `ndf == 3` on every node of a pair -- so the whole contact engine is UNAVAILABLE on",
+    "classes": [
+     "BrickUP",
+     "LadrunoBrick",
+     "SSPbrickUP"
+    ]
+   },
+   {
+    "heading": "`ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap \u2014 only a `dT_min` floor \u2014 so one `analyze(",
+    "classes": [
+     "BbarBrick",
+     "Brick",
+     "BrickUP",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "SSPbrick"
+    ]
+   },
+   {
+    "heading": "Two vanilla quadratic solids (`TenNodeTetrahedron`, `Twenty_Node_Brick`) had `sendSelf`/`recvSelf` implemented",
+    "classes": [
+     "LadrunoBrick20",
+     "TenNodeTetrahedron",
+     "Twenty_Node_Brick"
+    ]
+   },
+   {
+    "heading": "`H5DRMLoadPattern::CalculateBoundaryForces` had a fixed 8-node buffer (`BoundaryNodes`/`ExteriorNodes`) that s",
+    "classes": [
+     "LadrunoBrick20",
+     "TenNodeTetrahedron",
+     "Twenty_Node_Brick"
+    ]
+   },
+   {
+    "heading": "ASDPlasticMaterial3D's tangent is a CLASS-STATIC \u2014 every Gauss point is assembled with the last GP's tangent (",
+    "classes": [
+     "Brick",
+     "LadrunoBrick",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "`LadrunoBrick` compares ONLY `== LADRUNO_MATERIAL_REFUSED` \u2014 a bare `-1` from a material is treated as success",
+    "classes": [
+     "LadrunoBrick",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "`strict_convergence 1` is the whole fail-loud contract for ASDPlasticMaterial3D \u2014 what it does and does not pr",
+    "classes": [
+     "Brick",
+     "LadrunoBrick",
+     "TenNodeTetrahedron"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "BBarBrickUP",
+     "BbarBrick",
+     "BbarBrickWithSensitivity",
+     "Brick",
+     "BrickUP",
+     "FourNodeTetrahedron",
+     "LadrunoBrick",
+     "LadrunoBrick20",
+     "SSPbrick",
+     "SSPbrickUP",
+     "TenNodeTetrahedron",
+     "Twenty_Eight_Node_BrickUP",
+     "Twenty_Node_Brick"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/recorder/Ladruno_ElementResults.h",
+   "SRC/recorder/Ladruno_Hdf5.h",
+   "SRC/recorder/Ladruno_NodeResults.cpp",
+   "SRC/recorder/Ladruno_Types.h",
+   "SRC/recorder/MPCORecorder.cpp"
+  ],
+  "copies": 5,
+  "shared_lines_sum_pairs": 1536,
+  "prs_touching_2plus": 4,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/element/fourNodeQuad/EightNodeQuad.cpp",
+   "SRC/element/fourNodeQuad/FourNodeQuad.cpp",
+   "SRC/element/fourNodeQuad/FourNodeQuad3d.cpp",
+   "SRC/element/fourNodeQuad/FourNodeQuadWithSensitivity.cpp",
+   "SRC/element/fourNodeQuad/NineNodeQuad.cpp",
+   "SRC/element/fourNodeQuad/SixNodeTri.cpp",
+   "SRC/element/ladrunoPlane/LadrunoCST.cpp",
+   "SRC/element/ladrunoPlane/LadrunoLST.cpp",
+   "SRC/element/ladrunoPlane/LadrunoQuad.cpp",
+   "SRC/element/triangle/Tri31.cpp"
+  ],
+  "copies": 10,
+  "shared_lines_sum_pairs": 697,
+  "prs_touching_2plus": 13,
+  "fix_prs": [
+   {
+    "sha": "e140f4a02",
+    "label": "fix(element): mass-cache lifecycle hardening from the ADR-77 review wave",
+    "files": [
+     "LadrunoCST.cpp",
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "4869f1c9b",
+    "label": "* fix(elements): serialize element rho in quad/tri sendSelf/recvSelf (upstream DB/parallel restart mass bug)",
+    "files": [
+     "EightNodeQuad.cpp",
+     "FourNodeQuad.cpp",
+     "FourNodeQuad3d.cpp",
+     "NineNodeQuad.cpp",
+     "SixNodeTri.cpp",
+     "Tri31.cpp"
+    ]
+   },
+   {
+    "sha": "f89687274",
+    "label": "Post-merge adversarial gate on LadrunoCSTPair (#558) CONFIRMED the mechanics",
+    "files": [
+     "LadrunoCST.cpp",
+     "LadrunoLST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "ce9e65272",
+    "label": "fix(plane): LadrunoQuad/CST getInitialStiff returns cached *Ki + doc sync",
+    "files": [
+     "LadrunoCST.cpp",
+     "LadrunoQuad.cpp"
+    ]
+   },
+   {
+    "sha": "c8aef625c",
+    "label": "Fix NdMaterialOutput setResponse tags in Lagrange quad/tri elements",
+    "files": [
+     "EightNodeQuad.cpp",
+     "FourNodeQuad.cpp",
+     "NineNodeQuad.cpp",
+     "SixNodeTri.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "Gauss-point ordering is per-element, NOT a standard tensor order",
+    "classes": [
+     "FourNodeQuad",
+     "NineNodeQuad"
+    ]
+   },
+   {
+    "heading": "`getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces",
+    "classes": [
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "T6 quirks: constant-mean B-bar/F-bar is RANK-DEFICIENT; nodal-lumped corner masses are ZERO (ADR 70 P3)",
+    "classes": [
+     "LadrunoLST",
+     "SixNodeTri"
+    ]
+   },
+   {
+    "heading": "FourNodeQuad-family element `rho` is NOT serialized and is uninitialized by the broker ctor \u2192 garbage mass on ",
+    "classes": [
+     "EightNodeQuad",
+     "FourNodeQuad",
+     "FourNodeQuad3d",
+     "NineNodeQuad",
+     "SixNodeTri",
+     "Tri31"
+    ]
+   },
+   {
+    "heading": "`stdBrick`/`BbarBrick`/`BrickUP` swallow the material's refusal \u2014 a THIRD silent accept, in a vanilla ELEMENT ",
+    "classes": [
+     "FourNodeQuad",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "`ManzariDafalias`'s substepped `ModifiedEuler` has NO iteration cap \u2014 only a `dT_min` floor \u2014 so one `analyze(",
+    "classes": [
+     "FourNodeQuad",
+     "LadrunoQuad"
+    ]
+   },
+   {
+    "heading": "Element refusal roster \u2014 who acts on a material's `setTrialStrain` return code (full audit, WP-99)",
+    "classes": [
+     "EightNodeQuad",
+     "FourNodeQuad",
+     "FourNodeQuad3d",
+     "FourNodeQuadWithSensitivity",
+     "LadrunoCST",
+     "LadrunoLST",
+     "LadrunoQuad",
+     "NineNodeQuad",
+     "SixNodeTri",
+     "Tri31"
+    ]
+   },
+   {
+    "heading": "Plane-strain B-bar with the 3D \u00f73 split relieves NOTHING under isochoric flow \u2014 a 3-row plane-strain B needs t",
+    "classes": [
+     "LadrunoLST",
+     "LadrunoQuad"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/integrator/LadrunoGeneralizedAlpha.cpp",
+   "SRC/analysis/integrator/LadrunoHHT.cpp",
+   "SRC/analysis/integrator/Newmark.cpp",
+   "SRC/reliability/FEsensitivity/NewmarkSensitivityIntegrator.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 300,
+  "prs_touching_2plus": 2,
+  "fix_prs": [
+   {
+    "sha": "eeaeefc40",
+    "label": "ADR-77 implicit transient solvers: study complete + C0 wave + GeneralizedAlpha fix + element mass caches",
+    "files": [
+     "LadrunoGeneralizedAlpha.cpp",
+     "Newmark.cpp"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "GeneralizedAlpha's tangent is INCONSISTENT with its own residual for \u03b1M\u22601 (matters for DDM/Newton)",
+    "classes": [
+     "LadrunoGeneralizedAlpha",
+     "Newmark"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/MohrCoulombTensionCutoff_PF.h",
+   "SRC/material/nD/ASDPlasticMaterial3D/PlasticFlowDirections/MohrCoulomb_PF.h",
+   "SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/MohrCoulombTensionCutoff_YF.h",
+   "SRC/material/nD/ASDPlasticMaterial3D/YieldFunctions/MohrCoulomb_YF.h"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 273,
+  "prs_touching_2plus": 5,
+  "fix_prs": [
+   {
+    "sha": "bbf657d49",
+    "label": "ADR 94 wp/94c: one shear-slot convention (Voigt), DP gradient fix, opt-in relative tolerance, live apex return",
+    "files": [
+     "MohrCoulombTensionCutoff_PF.h",
+     "MohrCoulombTensionCutoff_YF.h",
+     "MohrCoulomb_PF.h",
+     "MohrCoulomb_YF.h"
+    ]
+   },
+   {
+    "sha": "279bce001",
+    "label": "ASDPlasticMaterial3D: robust backward-Euler integration, expanded yield/flow options, internal-variable I/O + ",
+    "files": [
+     "MohrCoulomb_PF.h",
+     "MohrCoulomb_YF.h"
+    ]
+   }
+  ],
+  "quirk_sections": [
+   {
+    "heading": "`system(\"FullGeneral\")` hard-crashes the whole process on a model with zero free equations",
+    "classes": [
+     "MohrCoulombTensionCutoff_YF",
+     "MohrCoulomb_YF"
+    ]
+   },
+   {
+    "heading": "ASDPlasticMaterial3D \u2014 Mohr-Coulomb principal-space return (ADR-97 P2)",
+    "classes": [
+     "MohrCoulombTensionCutoff_YF",
+     "MohrCoulomb_PF",
+     "MohrCoulomb_YF"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/material/nD/LadrunoSANISANDPlaneStrain.cpp",
+   "SRC/material/nD/UANDESmaterials/SAniSandMSPlaneStrain.cpp",
+   "SRC/material/nD/UWmaterials/ManzariDafaliasPlaneStrain.cpp",
+   "SRC/material/nD/UWmaterials/ManzariDafaliasPlaneStrainRO.cpp"
+  ],
+  "copies": 4,
+  "shared_lines_sum_pairs": 105,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "`ManzariDafalias::getState()` is SHADOWED by all four wrappers and reports a different `alpha_in` than they do",
+    "classes": [
+     "LadrunoSANISANDPlaneStrain",
+     "ManzariDafaliasPlaneStrain",
+     "ManzariDafaliasPlaneStrainRO"
+    ]
+   },
+   {
+    "heading": "`ManzariDafaliasPlaneStrain`'s null constructor sets the WRONG classTag, and a broker restore never repairs it",
+    "classes": [
+     "LadrunoSANISANDPlaneStrain",
+     "ManzariDafaliasPlaneStrain",
+     "ManzariDafaliasPlaneStrainRO"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/analysis/numberer/LadrunoParallelNumberer.cpp",
+   "SRC/analysis/numberer/ParallelNumberer.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 52,
+  "prs_touching_2plus": 1,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "`ParallelNumberer` silently FUSES node-less DOF groups (Lagrange multipliers) across ranks \u2014 `getRef()` return",
+    "classes": [
+     "LadrunoParallelNumberer",
+     "ParallelNumberer"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/dispBeamColumn/DispBeamColumn2d.h",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 33,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": []
+ },
+ {
+  "files": [
+   "SRC/analysis/integrator/ArcLength.cpp",
+   "SRC/analysis/integrator/LadrunoArcLength.cpp"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 32,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": [
+   {
+    "heading": "A first-pivot singularity on `system BandGeneral` / `FullGeneral` / `BandSPD` returned SUCCESS \u2014 `analyze` gav",
+    "classes": [
+     "ArcLength",
+     "LadrunoArcLength"
+    ]
+   }
+  ]
+ },
+ {
+  "files": [
+   "SRC/element/dispBeamColumn/DispBeamColumn3d.h",
+   "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"
+  ],
+  "copies": 2,
+  "shared_lines_sum_pairs": 31,
+  "prs_touching_2plus": 0,
+  "fix_prs": [],
+  "quirk_sections": []
+ }
+]

@@ -38,9 +38,11 @@ class MonitorReader:
 
     # -- open helpers -------------------------------------------------------
     def _open(self):
-        # h5py raises a bare OSError (not FileNotFoundError) for a missing file,
-        # which the server relies on to distinguish "waiting for the sink" (503)
-        # from a real error. Normalise it here so that contract is deterministic.
+        # A missing sink must raise FileNotFoundError: the server relies on it to
+        # tell "waiting for the sink" (503) from a real error. h5py 3.12.1,
+        # 3.15.1 and 3.16.0 already raise FileNotFoundError (an OSError
+        # subclass) with or without swmr=True; older h5py was not checked. This
+        # explicit check keeps the contract independent of the h5py version.
         if not os.path.exists(self.path):
             raise FileNotFoundError(self.path)
         try:

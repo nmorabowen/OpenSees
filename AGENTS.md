@@ -13,6 +13,7 @@ that explains it; the guides point into the ledgers, they do not replace them.
 |---|---|
 | Adding or changing an element (`SRC/element/`) | [`.claude/skills/ladruno-new-element/SKILL.md`](.claude/skills/ladruno-new-element/SKILL.md) |
 | Adding or changing a material (`SRC/material/`) | [`.claude/skills/ladruno-new-material/SKILL.md`](.claude/skills/ladruno-new-material/SKILL.md) |
+| Changing the profiler or monitor viewers (`Ladruno_tools/`) | [`.claude/skills/ladruno-viewer-tools/SKILL.md`](.claude/skills/ladruno-viewer-tools/SKILL.md) |
 
 The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it

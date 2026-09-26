@@ -44,9 +44,11 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       rigid-body probe: every node's relative acceleration must be exactly `−a_g`.
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
-- [ ] Ignoring Rayleigh? Override `getDamp` AND `getRayleighDampingForces` too. Quirks: "A no-op
-      `setRayleighDampingFactors` WITHOUT a `getDamp` override" and "makes 11 `Element` methods
-      dereference `theMatrices[-1]`".
+- [ ] Ignoring Rayleigh (a pure penalty/constraint tie)? Derive from `LadrunoUndampedElement`
+      (`SRC/element/ladrunoEmbeddedRebar/`, WP-123) instead of writing the overrides again; the four
+      coupling elements do. A `getRayleighDampingForces` "override" does nothing — it is not virtual in
+      `Element`. Quirks: "A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override" and
+      "makes 11 `Element` methods dereference `theMatrices[-1]`".
 - [ ] Quadratic/serendipity/T6: nodal-lumped corner masses can be zero or negative; use HRZ.
       Quirks: "T6 quirks", "runs 8/27 mass-deficient".
 - [ ] `rho` and every construction input are serialized in `sendSelf`/`recvSelf` and
