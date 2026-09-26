@@ -218,7 +218,18 @@ second viewer; "live" is just "tail instead of read-all."
   `PerfClock`, with an overhead microbench as acceptance gate; (3) network kept
   outside C++ — single local sink impl, sidecar-next-to-engine + SSE for remote.
   Plan is now decision-complete and ready to implement.
-- 2026-07-05 — **Review follow-ups fixed (2 engine findings).**
+- 2026-07-05 — **Viewer shipped, #487 (logged 2026-09-25 by WP-125).** New
+  `Ladruno_tools/monitor_viewer`, pure tooling on the unchanged sink (no rebuild):
+  `monitor_reader.py` (`MonitorReader`: opens the sink per call with `swmr=True` and
+  refreshes, plain-read fallback for an at-rest file), `monitor_view.py` (matplotlib
+  CLI: static, `--save`, `--x step`, `--channels`, `--watch` live tail), and
+  `monitor_server.py` + `monitor_page.html` (FastAPI `/health`, `/api/meta`,
+  `/api/frames?since=`, plus a dependency-free page that polls for new frames and draws
+  SVG line charts with Follow/Pause). A missing sink answers 503 ("waiting"), not 500.
+  `test_monitor_view.py` is binary-free. This delivers the viewer from the "NEXT (P1)"
+  item above, but by polling instead of SSE, and as its own page instead of a React
+  live mode. The PR's two engine follow-ups are the next entry (#489).
+- 2026-07-05 — **Review follow-ups fixed (2 engine findings), #489 (merged 2026-07-06).**
   (A) **Node-removal safety.** `record()` previously read from a `std::vector<Node*>`
   resolved once at first commit, and `domainChanged()` was a no-op — so removing a
   monitored node mid-run (progressive collapse / `remove node`) dereferenced freed
