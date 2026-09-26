@@ -299,7 +299,8 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # ===========================================================================
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
                   qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
-                  ct_temper="none", tension_law="exp", eps_fc=0.0):
+                  ct_temper="none", tension_law="exp", eps_fc=0.0, flow_potential="legacy",
+                  max_subincr=0):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -315,7 +316,8 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
     #   strain used DIRECTLY (the wrapper's -epsFc, or its Gc-calibrated value); 0 => legacy Gc/(fc*lch).
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
                 qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper,
-                tension_law=tension_law, eps_fc=eps_fc)
+                tension_law=tension_law, eps_fc=eps_fc, flow_potential=flow_potential,
+                max_subincr=max_subincr)
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +610,109 @@ def _yf_inv_hard(xi, rho, r, kp, mp):
     return ((1.0 - q1) * AV * AV + quad) ** 2 + m0 * q1 * q1 * q2 * RR - (q1 * q1) * (q2 * q2)
 
 
+# ---------------------------------------------------------------------------
+# FULL CDPM2 PLASTIC POTENTIAL (WP concrete3d-flow-potential, plan item B1). Grassl et al. 2013 Eq.22-29 in
+# the OOFEM ConcreteDPM2 form (computeDGDInv / computeDDGDDInv), sigV = I1/3:
+#   g  = Al^2 + qh1^2 (m0 rho/(sqrt6 fc) + m_g/fc),  Al = (1-qh1) Bl^2 + sqrt(3/2) rho/fc,  Bl = sigV/fc + rho/(sqrt6 fc)
+#   m_g = A_g B_g fc exp(R),  R = (sigV - qh2 ft/3)/(B_g fc),  A_g = 3 ft qh2/fc + m0/2,
+#   B_g = qh2/3 (1+ft/fc) / (ln A_g + ln(Df+1) - ln(2Df-1) - ln(3 qh2 + m0/2))      (Df = CDPM2 dilation constant)
+#   dg/dsigV = 4(1-qh1) Al Bl/fc + qh1^2 A_g e^R/fc ,  dg/drho = Al/(sqrt6 fc) (4(1-qh1) Bl + 6) + m0 qh1^2/(sqrt6 fc)
+# The [1-qh1] cap term makes the volumetric flow COMPACTIVE on the closed cap (dg/dsigV < 0 for Bl << 0 while
+# qh1 < 1); the legacy v1 flow (m_v = Df m0/(sqrt3 fc), qh1=1-shaped m_s) is always dilatant. Post-peak
+# (qh1 = 1) dg/drho reduces EXACTLY to the legacy m_s; only the volumetric part (A_g e^R vs Df m0) differs.
+# In the fork's orthonormal (xi, rho) frame: m_v = dg/dxi = (dg/dsigV)/sqrt3, m_s = dg/drho.
+# mp["flow_potential"]: 'legacy' (the ORACLE default — every pre-B1 gate/fixture byte-identical) | 'cdpm2' (the
+# nDMaterial default since B1).
+# ---------------------------------------------------------------------------
+def _dqh1(kp, qh0, Hp):
+    if kp >= 1.0:
+        return 0.0
+    return (1.0 - qh0) * (3.0 * kp * kp - 6.0 * kp + 3.0) - Hp * (3.0 * kp * kp - 6.0 * kp + 2.0)
+
+
+def _dqh2(kp, Hp):
+    return 0.0 if kp < 1.0 else Hp
+
+
+def _flowp(mp):
+    return mp.get("flow_potential", "legacy")
+
+
+def cdpm2_potential(sigV, rho, kp, mp):
+    """Value of the CDPM2 plastic potential g (Eq.22) — used only to FD-verify the analytic gradient."""
+    fc, ft, m0 = mp["fc"], mp["ft"], mp["m0"]
+    Df = max(mp["Df"], 0.5 + 1.0e-6)
+    q1, q2 = qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"])
+    AG = 3.0 * ft * q2 / fc + m0 / 2.0
+    BG = q2 / 3.0 * (1.0 + ft / fc) / (np.log(AG) + np.log(Df + 1.0) - np.log(2.0 * Df - 1.0) - np.log(3.0 * q2 + m0 / 2.0))
+    mg = AG * BG * fc * np.exp(min((sigV - ft * q2 / 3.0) / (fc * BG), 700.0))
+    Bl = sigV / fc + rho / (SQRT6 * fc)
+    Al = (1.0 - q1) * Bl * Bl + SQRT1_5 * rho / fc
+    return Al * Al + q1 * q1 * (m0 * rho / (SQRT6 * fc) + mg / fc)
+
+
+def cdpm2_potential_derivs(sigV, rho, kp, mp):
+    """Analytic (dg/dsigV, dg/drho) AND their derivatives w.r.t. (sigV, rho, kp) — the Hessian rows the
+    hardening-map Jacobian and the consistent tangent need. Returns (gs, gr, [gs_s, gs_r, gs_k], [gr_s, gr_r, gr_k]).
+    Df clamped > 0.5 (B_g contains ln(2Df-1))."""
+    fc, ft, m0 = mp["fc"], mp["ft"], mp["m0"]
+    Df = max(mp["Df"], 0.5 + 1.0e-6)
+    q1, q2 = qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"])
+    dq1, dq2 = _dqh1(kp, mp["qh0"], mp["Hp"]), _dqh2(kp, mp["Hp"])
+    a = 1.0 - q1
+    c = 1.0 + ft / fc
+    AG = 3.0 * ft * q2 / fc + m0 / 2.0
+    AG_k = 3.0 * ft * dq2 / fc
+    L = np.log(AG) + np.log(Df + 1.0) - np.log(2.0 * Df - 1.0) - np.log(3.0 * q2 + m0 / 2.0)
+    L_k = AG_k / AG - 3.0 * dq2 / (3.0 * q2 + m0 / 2.0)
+    BG = q2 / 3.0 * c / L
+    BG_k = (dq2 / 3.0 * c * L - q2 / 3.0 * c * L_k) / (L * L)
+    X = sigV - ft * q2 / 3.0
+    R = min(X / (fc * BG), 700.0)             # overflow guard for far-off Newton iterates (never a real state)
+    eR = np.exp(R)
+    mQ = AG * eR
+    R_s = 1.0 / (fc * BG)
+    R_k = -(ft * dq2 / 3.0) / (fc * BG) - X * BG_k / (fc * BG * BG)
+    mQ_s = mQ * R_s
+    mQ_k = AG_k * eR + mQ * R_k
+    Bl = sigV / fc + rho / (SQRT6 * fc)
+    Bl_s, Bl_r = 1.0 / fc, 1.0 / (SQRT6 * fc)
+    Al = a * Bl * Bl + SQRT1_5 * rho / fc
+    Al_s = 2.0 * a * Bl * Bl_s
+    Al_r = 2.0 * a * Bl * Bl_r + SQRT1_5 / fc
+    Al_k = -dq1 * Bl * Bl
+    gs = 4.0 * a * Al * Bl / fc + q1 * q1 * mQ / fc
+    gr = Al / (SQRT6 * fc) * (4.0 * a * Bl + 6.0) + m0 * q1 * q1 / (SQRT6 * fc)
+    gs_s = 4.0 * a * (Al_s * Bl + Al * Bl_s) / fc + q1 * q1 * mQ_s / fc
+    gs_r = 4.0 * a * (Al_r * Bl + Al * Bl_r) / fc
+    gs_k = (-4.0 * dq1 * Al * Bl + 4.0 * a * Al_k * Bl) / fc + (2.0 * q1 * dq1 * mQ + q1 * q1 * mQ_k) / fc
+    gr_s = (Al_s * (4.0 * a * Bl + 6.0) + Al * 4.0 * a * Bl_s) / (SQRT6 * fc)
+    gr_r = (Al_r * (4.0 * a * Bl + 6.0) + Al * 4.0 * a * Bl_r) / (SQRT6 * fc)
+    gr_k = (Al_k * (4.0 * a * Bl + 6.0) - Al * 4.0 * dq1 * Bl) / (SQRT6 * fc) + 2.0 * m0 * q1 * dq1 / (SQRT6 * fc)
+    return gs, gr, [gs_s, gs_r, gs_k], [gr_s, gr_r, gr_k]
+
+
+def flow_grad(xi, rho, kp, mp):
+    """(m_v, m_s) = (dg/dxi, dg/drho) of the ACTIVE plastic potential in the fork's (xi, rho) frame."""
+    if _flowp(mp) == "cdpm2":
+        gs, gr, _, _ = cdpm2_potential_derivs(xi / SQRT3, rho, kp, mp)
+        return gs / SQRT3, gr
+    fc, m0 = mp["fc"], mp["m0"]
+    return mp["Df"] * m0 / (SQRT3 * fc), 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc)
+
+
+def flow_grad_jac(xi, rho, kp, mp):
+    """(m_v, m_s, dm_v/d(xi,rho,kp), dm_s/d(xi,rho,kp)) of the active potential (d/dxi = d/dsigV / sqrt3)."""
+    if _flowp(mp) == "cdpm2":
+        gs, gr, dgs, dgr = cdpm2_potential_derivs(xi / SQRT3, rho, kp, mp)
+        return (gs / SQRT3, gr, [dgs[0] / 3.0, dgs[1] / SQRT3, dgs[2] / SQRT3],
+                [dgr[0] / SQRT3, dgr[1], dgr[2]])
+    fc, m0 = mp["fc"], mp["m0"]
+    return (mp["Df"] * m0 / (SQRT3 * fc), 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc),
+            [0.0, 0.0, 0.0], [0.0, 3.0 / (fc * fc), 0.0])
+
+
+
 def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
     """sig_tr = 3 trial principal stresses, kp_n = committed kappa_p.
     Returns (sig_new[3], kp_new, plastic, f_after, converged)."""
@@ -623,13 +728,19 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
     cos2 = (2.0 * np.cos(th_tr)) ** 2
     m_v = Df * m0 / (SQRT3 * fc)
 
+    cdpm2_flow = _flowp(mp) == "cdpm2"
+
     def resid(u):
         xi, rho, dlam, kp = u
-        m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc)
-        mnorm = np.sqrt(m_v * m_v + m_s * m_s)
+        if cdpm2_flow:                        # B1: full CDPM2 potential (cap-compactive volumetric flow)
+            m_v_, m_s = flow_grad(xi, rho, kp, mp)
+        else:                                 # legacy v1 flow (byte-identical)
+            m_v_ = m_v
+            m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc)
+        mnorm = np.sqrt(m_v_ * m_v_ + m_s * m_s)
         xh = ductility_xh(xi / SQRT3, fc, mp["Ah"], mp["Bh"], mp["Ch"], mp["Dh"])
         return np.array([
-            xi - xi_tr + 3.0 * K * dlam * m_v,
+            xi - xi_tr + 3.0 * K * dlam * m_v_,
             rho - rho_tr + 2.0 * G * dlam * m_s,
             _yf_inv_hard(xi, rho, r, kp, mp),
             kp - kp_n - dlam * mnorm / xh * cos2,
@@ -790,7 +901,9 @@ def return_map_vertex(sigV_tr, rho_tr, mp, kp_n):
             b = mid
     s = 0.5 * (a + b)
     kp = _vertex_kappa(kp_n, sigV_tr, rho_tr, s, mp)
-    if tension:
+    if tension and _flowp(mp) == "cdpm2":     # B1: the SAME potential as the regular map
+        dgs, dgr, _, _ = cdpm2_potential_derivs(s, 0.0, kp, mp)
+    elif tension:
         dgs, dgr = mp["Df"] * mp["m0"] / fc, mp["m0"] / (SQRT6 * fc)
     else:
         dgs, dgr = cdpm2_vertex_potential_grad(s, kp, mp)
@@ -976,7 +1089,36 @@ def elastic_pred_tensor(sig_n, deps, mp):
 
 def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
     """6-tensor return: elastic predict -> eigendecompose -> principal return -> recompose.
-    Returns (sig_new[6], kp_new, plastic, converged)."""
+    Returns (sig_new[6], kp_new, plastic, converged).
+
+    SUB-INCREMENTATION (B1; mp["max_subincr"] > 0, hardening map only): if the direct return fails, the
+    strain increment is halved (OOFEM ConcreteDPM2::performPlasticityReturn) and the sub-increments are
+    integrated in sequence from the committed state, doubling back up after each success, down to a floor
+    of 2^-max_subincr of the increment. max_subincr = 0 (the oracle default) => the direct return only,
+    byte-identical to the pre-B1 map. The damage update downstream sees only the final effective state."""
+    out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
+    nmax = int(mp.get("max_subincr", 0))
+    if out[3] or nmax <= 0 or not hardening:
+        return out
+    s = np.array(sig_n, float).copy()
+    k = kp_n
+    done, frac, floor = 0.0, 0.5, 0.5 ** nmax
+    deps = np.asarray(deps, float)
+    while done < 1.0:
+        f = min(frac, 1.0 - done)
+        sn, kn, _pl, cv = _return_map_tensor_1(s, deps * f, mp, k, True)
+        if cv:
+            s, k, done = sn, kn, done + f
+            frac = min(2.0 * frac, 1.0)
+        else:
+            frac *= 0.5
+            if frac < floor:
+                return out                     # honest failure: the direct-return fallback (elastic predictor)
+    return s, k, True, True
+
+
+def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True):
+    """One direct (un-sub-incremented) tensor return — the pre-B1 return_map_tensor."""
     sig_tr = elastic_pred_tensor(sig_n, deps, mp)
     w, V = np.linalg.eigh(voigt_to_mat(sig_tr))           # w ascending, V columns = eigenvectors
     if hardening:
@@ -3709,6 +3851,142 @@ def run_gc_energy_gate(verbose=True):
             print(f"  Gc={Gc:6.1f} N/mm lch={lch:6.1f} mm -> eps_fc={efc:.4e} (status {stt}): dissipated {G:7.3f} "
                   f"({rl*100:+.2f}%)   legacy eps_fc=Gc/(fc lch) -> {Gl:8.2f} ({Gl/Gc:.1f}x)")
         print(f"  G3 -epsFc == legacy byte-for-byte: {same}   PASS={res['PASS']}")
+    return res
+
+
+def _uniaxial_stress_step(st, exx, mp, Gf, Gc, lch, As):
+    """Uniaxial-STRESS damaged step: eps_xx prescribed, eps_yy = eps_zz bracketed-bisected so the NOMINAL
+    lateral stress vanishes (the bracket grows outward from the elastic guess). Returns (sig, state, info)."""
+    lat0 = st["eps"][1]
+    dexx = exx - st["eps"][0]
+
+    def ev(lat):
+        e6 = np.array([exx, lat, lat, 0.0, 0.0, 0.0])
+        return damaged_step_tensor(st, e6 - st["eps"], mp, Gf, Gc, lch, As)
+
+    g = lambda lat: ev(lat)[0][1]
+    guess = lat0 - mp["nu"] * dexx
+    h = abs(dexx) * 0.05 + 1.0e-10
+    a, b = guess - h, guess + h
+    fa, fb = g(a), g(b)
+    k = 0
+    while fa * fb > 0.0 and k < 80:
+        h *= 1.3
+        a, b = guess - h, guess + h
+        fa, fb = g(a), g(b)
+        k += 1
+    m = 0.5 * (a + b)
+    for _ in range(200):
+        m = 0.5 * (a + b)
+        fm = g(m)
+        if abs(fm) < 1.0e-9 * mp["fc"] or b - a < 1.0e-16:
+            break
+        if fa * fm <= 0.0:
+            b, fb = m, fm
+        else:
+            a, fa = m, fm
+    return ev(m)
+
+
+def run_flow_potential_gate(verbose=True, fuzz_n=1500):
+    """B1 — the FULL CDPM2 plastic potential (Eq.22-29) replacing the v1 always-dilatant flow.
+      F1 the analytic gradient (dg/dsigV, dg/drho) and its Hessian rows == central FD of the potential value
+         (grad < 1e-6, Hessian < 1e-4 relative) at cap / pre-peak / post-peak / tension / deep-compression states;
+         on the closed cap the volumetric flow is COMPACTIVE (dg/dsigV < 0).
+      F2 OOFEM con2dpm2 uniaxial compression (SI, eps_fc = 1e-4, bilinear, 10 sub-steps per 5e-4 step): step 1
+         == the independent numpy transcription of OOFEM ConcreteDPM2 at the same sub-steps (-2.7895, 0.5 %) —
+         the PLASTICITY is now OOFEM's; step 5 within 5 % of that transcription's -1.3222 (the residual is the
+         fork's compressive damage driver, ADR-31 §11-4b). OOFEM's own -2.545/-1.682 are ONE-step values; the
+         step-converged CDPM2 is -2.82/-1.26. Legacy flow: step 5 is >15 % off (discriminating).
+      F3 Kupfer -1/0 (Grassl Fig.9: E=32e9-equivalent MPa units, fc=32.8, ft=3.3, As=1.5, Hp=0.01, e=0.525,
+         Df=0.85): peak -32.81 MPa at -2.19 mm/m reproduced (peak 2 %, strain 15 %; legacy peaks at -1.50);
+         post-peak with eps_fc = 6e-4 within 5 % of the paper curve (-30.05 at -3, -28.96 at -3.29 mm/m). With
+         the paper's stated eps_fc = 1e-4, BOTH this kernel and the OOFEM transcription give ~-13..-19 MPa at -3
+         mm/m (reported, not gated) — the figure is not reproducible with 1e-4 in OOFEM's CDPM2 either.
+      F4 fuzz (fuzz_n random committed-origin tensor increments, random kappa_p in [0,1.5]: generic, deep
+         near-axis compression, uniaxial-ish compression) with sub-incrementation: 0 failed returns, 0 sign flips."""
+    res = {}
+    # F1
+    mp = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, flow_potential="cdpm2")
+    wg = wh = 0.0
+    for (sV, rho, kp) in [(-40., 5., 0.1), (-20., 20., 0.5), (-10., 24.5, 0.95), (-10., 24.5, 1.5), (2., 5., 0.3),
+                          (1., 2., 3.), (-60., 1., 0.05), (-5., 30., 0.8)]:
+        gs, gr, dgs, dgr = cdpm2_potential_derivs(sV, rho, kp, mp)
+        h = 1.0e-6
+        fs = (cdpm2_potential(sV + h, rho, kp, mp) - cdpm2_potential(sV - h, rho, kp, mp)) / (2 * h)
+        fr = (cdpm2_potential(sV, rho + h, kp, mp) - cdpm2_potential(sV, rho - h, kp, mp)) / (2 * h)
+        wg = max(wg, abs(fs - gs) / abs(gs), abs(fr - gr) / abs(gr))
+        for j, dd in enumerate([(h, 0, 0), (0, h, 0), (0, 0, 1.0e-7)]):
+            p = cdpm2_potential_derivs(sV + dd[0], rho + dd[1], kp + dd[2], mp)
+            m = cdpm2_potential_derivs(sV - dd[0], rho - dd[1], kp - dd[2], mp)
+            d = 2.0 * sum(dd)
+            wh = max(wh, abs((p[0] - m[0]) / d - dgs[j]) / max(abs(dgs[j]), 1e-9 * abs(gs)),
+                     abs((p[1] - m[1]) / d - dgr[j]) / max(abs(dgr[j]), 1e-9 * abs(gr)))
+    cap_gs = cdpm2_potential_derivs(-40.0, 5.0, 0.1, mp)[0]
+    res.update(F1_grad=wg, F1_hess=wh, F1_cap_dgdsigV=cap_gs,
+               F1_ok=bool(wg < 1e-6 and wh < 1e-4 and cap_gs < 0.0))
+    # F2 OOFEM con2dpm2
+    def uni(m, Gf, Gc, lch, As, inc, nsteps, sub):
+        st = make_damage_state(m); out = []; nf = 0
+        for k in range(1, nsteps + 1):
+            for j in range(sub):
+                s, st, info = _uniaxial_stress_step(st, inc * ((k - 1) + (j + 1) / sub), m, Gf, Gc, lch, As)
+                nf += (not info["conv"])
+            out.append((st["eps"][0], s[0]))
+        return out, nf
+    f2 = {}
+    for flow in ("cdpm2", "legacy"):
+        m = make_material(30e9, 0.15, 3e6, 1e6, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, tension_law="bilinear",
+                          eps_fc=1e-4, flow_potential=flow, max_subincr=10)
+        o, nf = uni(m, 210.95, 30.0, 0.1, 5.0, -5e-4, 5, 10)
+        f2[flow] = (o[0][1] / 1e6, o[4][1] / 1e6, nf)
+    res["F2"] = f2
+    res["F2_ok"] = bool(abs(f2["cdpm2"][0] / -2.7895 - 1) < 0.005 and abs(f2["cdpm2"][1] / -1.3222 - 1) < 0.05
+                        and abs(f2["legacy"][1] / -1.3222 - 1) > 0.15 and f2["cdpm2"][2] == 0)
+    # F3 Kupfer -1/0 (MPa, mm)
+    f3 = {}
+    for flow, efc in (("cdpm2", 1e-4), ("cdpm2", 6e-4), ("legacy", 1e-4)):
+        m = make_material(32000.0, 0.2, 32.8, 3.3, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, tension_law="bilinear",
+                          eps_fc=efc, flow_potential=flow, max_subincr=10)
+        o, nf = uni(m, 0.1, 1.0, 100.0, 1.5, -1e-4, 42, 1)
+        e = -np.array([x[0] for x in o]) * 1e3; s = np.array([x[1] for x in o]); i = int(np.argmin(s))
+        f3[(flow, efc)] = (s[i], -e[i], float(np.interp(3.0, e, s)), float(np.interp(3.29, e, s)),
+                           float(np.interp(4.0, e, s)), nf)
+    a, b = f3[("cdpm2", 1e-4)], f3[("cdpm2", 6e-4)]
+    res["F3"] = f3
+    res["F3_ok"] = bool(abs(a[0] / -32.81 - 1) < 0.02 and abs(a[1] / -2.19 - 1) < 0.15
+                        and abs(b[2] / -30.05 - 1) < 0.05 and abs(b[3] / -28.96 - 1) < 0.05
+                        and abs(f3[("legacy", 1e-4)][1] / -2.19 - 1) > 0.15 and a[5] == 0 and b[5] == 0)
+    # F4 fuzz
+    mf = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, flow_potential="cdpm2",
+                       max_subincr=10)
+    rng = np.random.default_rng(3)
+    nf = flips = pl = 0
+    for t in range(fuzz_n):
+        mode = t % 3
+        if mode == 0:
+            d = (rng.random(6) * 2 - 1) * 3e-3; d[3:] *= 0.5
+        elif mode == 1:
+            v = -rng.random() * 6e-3
+            d = np.array([v, v, v, 0, 0, 0.0]) + (rng.random(6) * 2 - 1) * 2e-4
+        else:
+            d = np.array([-rng.random() * 4e-3, (rng.random() * 2 - 1) * 1e-3, (rng.random() * 2 - 1) * 1e-3, 0, 0, 0.0])
+        with np.errstate(all="ignore"):
+            s, k, p, c = return_map_tensor(np.zeros(6), d, mf, rng.random() * 1.5)
+        pl += bool(p)
+        nf += (not c)
+        tr = elastic_pred_tensor(np.zeros(6), d, mf)
+        if c and p and tr[:3].sum() < 0 and np.linalg.eigvalsh(voigt_to_mat(s)).min() > 0:
+            flips += 1
+    res.update(F4_plastic=pl, F4_failed=nf, F4_flips=flips, F4_ok=bool(nf == 0 and flips == 0 and pl > fuzz_n // 3))
+    res["PASS"] = bool(res["F1_ok"] and res["F2_ok"] and res["F3_ok"] and res["F4_ok"])
+    if verbose:
+        print(f"  F1 potential FD: grad {wg:.1e} hess {wh:.1e}; cap dg/dsigV = {cap_gs:+.3e} (compactive)  ok={res['F1_ok']}")
+        print(f"  F2 con2dpm2 (10 sub): cdpm2 {f2['cdpm2'][0]:+.4f}/{f2['cdpm2'][1]:+.4f}  legacy {f2['legacy'][0]:+.4f}/"
+              f"{f2['legacy'][1]:+.4f}  (OOFEM-transcription -2.7895/-1.3222; OOFEM 1-step -2.545/-1.682)  ok={res['F2_ok']}")
+        for key, v in f3.items():
+            print(f"  F3 Kupfer {key}: peak {v[0]:.2f} at {v[1]:.2f} mm/m  s(-3)={v[2]:.2f} s(-3.29)={v[3]:.2f} s(-4)={v[4]:.2f}")
+        print(f"  F4 fuzz {fuzz_n}: plastic {pl}, failed {nf}, sign flips {flips}  ok={res['F4_ok']}   PASS={res['PASS']}")
     return res
 
 
