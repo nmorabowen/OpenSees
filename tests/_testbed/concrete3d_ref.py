@@ -3589,6 +3589,124 @@ def run_tension_law_gate(verbose=True):
     return res
 
 
+# ---------------------------------------------------------------------------
+# Gc = PHYSICAL compressive fracture energy (WP concrete3d-oracle-diagnosis). The CDPM2 compressive law is
+# in STRAIN form, sigma_c = f exp(-(kdc1 + wc kdc2)/eps_fc), with the plastic driver kdc1 = sum alpha_c beta_c
+# ||d eps_p||/x_s (Eq.48/50): beta_c ~ ft/(fc sqrt(1+2Df^2)) and x_s = As in uniaxial compression scale the
+# driver, so the legacy mapping eps_fc = Gc/(fc lch) dissipates ~(x_s/beta_c)/(||d eps_p||/d eps_p,11) ~ 14x Gc
+# per unit crack area (Grassl 2013 Sec.5 itself only writes G_Fc = fc eps_fc l_c As). Because the uniaxial
+# stress-strain response depends on eps_fc but NOT on lch (lch only enters through eps_fc), the post-peak
+# energy per unit VOLUME g(eps_fc) = int_peak sigma d(eps - sigma/E) is a material function; Gc per unit area
+# = lch g(eps_fc). calibrate_eps_fc_table tabulates g on a log grid of eps_fc with the SAME single-step
+# contract the C++ kernel uses (confined_step, hoop_K=0 == driveConfinedFiber free uniaxial stress), and
+# eps_fc_from_gc inverts it (log-log interpolation) for the target Gc/lch. Mirrored by the C++
+# calibrateEpsFcTable / epsFcFromGc (the wrapper default; -epsFc bypasses it).
+# ---------------------------------------------------------------------------
+GC_TABLE_N = 8
+GC_TABLE_LO, GC_TABLE_HI = 0.01, 3.0          # eps_fc range in units of fc/E (the elastic peak strain)
+
+
+def compression_energy_density(mp, eps_fc, Gf, As=2.0, max_steps=20000):
+    """Post-peak dissipated energy per unit volume in uniaxial compression for a DIRECT eps_fc:
+    g = int_{peak}^{end} sigma d(eps11 - sigma/E) (+ an exponential tail estimate), driven with
+    confined_step(hoop_K=0) (free uniaxial stress) at a FIXED axial step fc/(20E) (the fork's compressive
+    response is step-converged to ~1.5% there; an adaptive step invited return-map failures that
+    corrupt the integral). Stops at sigma < 1% of the peak (tail sigma^2/|d sigma/d eps_inel| added) or at
+    max_steps. Returns (g, sigma_peak, n_steps)."""
+    m = dict(mp); m["eps_fc"] = eps_fc
+    E, fc = m["E"], m["fc"]
+    st = _confined_state0()
+    de = fc / (20.0 * E)
+    e11 = 0.0
+    s_prev = 0.0; einel_prev = 0.0
+    peak = 0.0; post = False; g = 0.0
+    n = 0
+    for n in range(1, max_steps + 1):
+        e11 -= de
+        sig, _p, st, _d = confined_step(st, e11, m, Gf, 1.0, 1.0, As, 0.0, 1.0e30)
+        s = -float(sig[0]); e = -e11
+        einel = e - s / E
+        if s > peak and not post:
+            peak = s
+        elif s < peak:
+            post = True
+        if post:
+            g += 0.5 * (s + s_prev) * (einel - einel_prev)
+            if s < 0.01 * peak or n == max_steps:
+                ds = s_prev - s
+                if ds > 0.0:                                   # exponential tail beyond the stop
+                    g += s * s * (einel - einel_prev) / ds
+                break
+        s_prev, einel_prev = s, einel
+    return g, peak, n
+
+
+def calibrate_eps_fc_table(mp, Gf, As=2.0, npts=GC_TABLE_N):
+    """Tabulate g(eps_fc) on a log grid eps_fc = (fc/E) * logspace(lo, hi) — returns (eps_fc[], g[])."""
+    base = mp["fc"] / mp["E"]
+    lo, hi = np.log(GC_TABLE_LO), np.log(GC_TABLE_HI)
+    efc = [base * float(np.exp(lo + (hi - lo) * k / (npts - 1))) for k in range(npts)]
+    g = [compression_energy_density(mp, x, Gf, As)[0] for x in efc]
+    return efc, g
+
+
+def eps_fc_from_gc(table, Gc, lch):
+    """Invert the monotone g(eps_fc) table for g = Gc/lch (log-log linear; clamped to the table ends).
+    Returns (eps_fc, status): status 0 inside, -1 below (Gc too small for this lch: brittle / snap-back
+    limit, clamped to the smallest eps_fc), +1 above (clamped to the largest)."""
+    efc, g = table
+    tgt = Gc / lch
+    if tgt <= g[0]:
+        return efc[0], -1
+    if tgt >= g[-1]:
+        return efc[-1], 1
+    for k in range(1, len(g)):
+        if tgt <= g[k]:
+            t = (np.log(tgt) - np.log(g[k - 1])) / (np.log(g[k]) - np.log(g[k - 1]))
+            return float(np.exp(np.log(efc[k - 1]) + t * (np.log(efc[k]) - np.log(efc[k - 1])))), 0
+    return efc[-1], 1
+
+
+def run_gc_energy_gate(verbose=True):
+    """Gc-as-energy gate. Fork wrapper defaults (Df=1, As=2, qh0=0.3, Hp=0.5), E=30 GPa nu=0.2 fc=30 ft=3 MPa,
+    Gf=0.1 N/mm (units MPa/mm). G1: for three (Gc, lch) pairs the single-element uniaxial compression
+    dissipates Gc (post-peak lch*int sigma d eps_inel) within 5% when eps_fc comes from the calibration table.
+    G2: the legacy mapping eps_fc = Gc/(fc lch) over-dissipates by >5x (the defect). G3: a direct eps_fc
+    (the wrapper's -epsFc) reproduces the legacy Gc/(fc lch) path byte-for-byte."""
+    E, nu, fc, ft, Gf, As = 30000.0, 0.2, 30.0, 3.0, 0.1, 2.0
+    mp = make_material(E, nu, fc, ft, Df=1.0, qh0=0.3, Hp=0.5)
+    table = calibrate_eps_fc_table(mp, Gf, As)
+    res = {"table": table}
+    rows = []
+    for Gc, lch in ((30.0, 100.0), (10.0, 50.0), (40.0, 50.0)):
+        efc, stt = eps_fc_from_gc(table, Gc, lch)
+        g, pk, n = compression_energy_density(mp, efc, Gf, As)
+        g_leg, _, _ = compression_energy_density(mp, Gc / (fc * lch), Gf, As)
+        rows.append((Gc, lch, efc, stt, lch * g, lch * g_leg))
+    res["G1_rel"] = [abs(r[4] - r[0]) / r[0] for r in rows]
+    res["G1_ok"] = bool(max(res["G1_rel"]) < 0.05 and all(r[3] == 0 for r in rows))
+    res["G2_legacy_ratio"] = [r[5] / r[0] for r in rows]
+    res["G2_ok"] = bool(min(res["G2_legacy_ratio"]) > 5.0)
+    # G3: direct eps_fc == legacy Gc/(fc lch) byte-for-byte (damaged_step_tensor on a compression path)
+    Gc3, lch3 = 30.0, 100.0
+    mdir = dict(mp); mdir["eps_fc"] = Gc3 / (fc * lch3)
+    sa = make_damage_state(mp); sb = make_damage_state(mdir); same = True
+    for k in range(1, 80):
+        d6 = np.array([-5.0e-5, 1.2e-5, 1.2e-5, 0, 0, 0.0])
+        s1, sa, _ = damaged_step_tensor(sa, d6, mp, Gf, Gc3, lch3, As)
+        s2, sb, _ = damaged_step_tensor(sb, d6, mdir, Gf, Gc3, lch3, As)
+        same = same and bool(np.array_equal(s1, s2))
+    res["G3_byte"] = same
+    res["rows"] = rows
+    res["PASS"] = bool(res["G1_ok"] and res["G2_ok"] and res["G3_byte"])
+    if verbose:
+        for (Gc, lch, efc, stt, G, Gl), rl in zip(rows, res["G1_rel"]):
+            print(f"  Gc={Gc:6.1f} N/mm lch={lch:6.1f} mm -> eps_fc={efc:.4e} (status {stt}): dissipated {G:7.3f} "
+                  f"({rl*100:+.2f}%)   legacy eps_fc=Gc/(fc lch) -> {Gl:8.2f} ({Gl/Gc:.1f}x)")
+        print(f"  G3 -epsFc == legacy byte-for-byte: {same}   PASS={res['PASS']}")
+    return res
+
+
 def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     mp = make_material(E, nu, fc, ft)
     eps0 = ft / E

@@ -1953,6 +1953,77 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     return status;
 }
 
+// ===========================================================================
+// Gc = PHYSICAL compressive fracture energy (WP concrete3d-oracle-diagnosis; mirrors the oracle
+// compression_energy_density / calibrate_eps_fc_table / eps_fc_from_gc). The compressive law is in STRAIN
+// form (eps_fc) and its plastic driver is scaled by beta_c/x_s (Eq.48/50), so the legacy eps_fc = Gc/(fc lch)
+// dissipates ~an order of magnitude more than Gc per unit area. The uniaxial stress-strain response depends
+// on eps_fc but NOT on lch, so g(eps_fc) = int_peak sigma d(eps - sigma/E) (post-peak energy per unit volume)
+// is a material function and Gc = lch g(eps_fc): tabulate g once (at material construction, free uniaxial
+// stress via driveConfinedFiber hoopK=0, the kernel's own single-step contract), invert per lch.
+// ===========================================================================
+static const int    GC_TABLE_N  = 8;
+static const double GC_TABLE_LO = 0.01, GC_TABLE_HI = 3.0;   // eps_fc range in units of fc/E
+
+inline double compressionEnergyDensity(const Params& mp0, double epsFc, int maxSteps = 20000, double* peakOut = nullptr)
+{
+    Params mp = mp0; mp.epsFc = epsFc; mp.implex = false; mp.eta = 0.0;
+    const double E = mp.E, fc = mp.fc, de = fc / (20.0 * E);        // FIXED step (see the oracle docstring)
+    double e11 = 0.0, sPrev = 0.0, eiPrev = 0.0, peak = 0.0, g = 0.0;
+    bool post = false;
+    State in;
+    for (int n = 1; n <= maxSteps; ++n) {
+        e11 -= de;
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i];
+        strain[0] = e11; strain[3] = strain[5] = 0.0;
+        State out; double sig[6], sigEff[6], Dt[6][6];
+        driveConfinedFiber(mp, strain, in, out, sig, sigEff, Dt, false, 0.0, 1.0e30, 0.0);
+        in = out;
+        const double s = -sig[0], e = -e11, ei = e - s / E;
+        if (s > peak && !post) peak = s;
+        else if (s < peak) post = true;
+        if (post) {
+            g += 0.5 * (s + sPrev) * (ei - eiPrev);
+            if (s < 0.01 * peak || n == maxSteps) {
+                const double ds = sPrev - s;
+                if (ds > 0.0) g += s * s * (ei - eiPrev) / ds;       // exponential tail beyond the stop
+                break;
+            }
+        }
+        sPrev = s; eiPrev = ei;
+    }
+    if (peakOut) *peakOut = peak;
+    return g;
+}
+
+inline void calibrateEpsFcTable(const Params& mp, double efc[GC_TABLE_N], double g[GC_TABLE_N])
+{
+    const double base = mp.fc / mp.E, lo = std::log(GC_TABLE_LO), hi = std::log(GC_TABLE_HI);
+    for (int k = 0; k < GC_TABLE_N; ++k) {
+        efc[k] = base * std::exp(lo + (hi - lo) * k / (GC_TABLE_N - 1));
+        g[k] = compressionEnergyDensity(mp, efc[k]);
+    }
+}
+
+// Invert the monotone table for g = Gc/lch (log-log linear). status 0 inside, -1 below (Gc too small for this
+// lch — the brittle/snap-back limit; clamped to the smallest eps_fc), +1 above (clamped to the largest).
+inline double epsFcFromGc(const double efc[GC_TABLE_N], const double g[GC_TABLE_N], double Gc, double lch,
+                          int* status = nullptr)
+{
+    const double tgt = Gc / lch;
+    if (status) *status = 0;
+    if (!(tgt > g[0])) { if (status) *status = -1; return efc[0]; }
+    if (!(tgt < g[GC_TABLE_N - 1])) { if (status) *status = 1; return efc[GC_TABLE_N - 1]; }
+    for (int k = 1; k < GC_TABLE_N; ++k) {
+        if (tgt <= g[k]) {
+            const double t = (std::log(tgt) - std::log(g[k - 1])) / (std::log(g[k]) - std::log(g[k - 1]));
+            return std::exp(std::log(efc[k - 1]) + t * (std::log(efc[k]) - std::log(efc[k - 1])));
+        }
+    }
+    if (status) *status = 1;
+    return efc[GC_TABLE_N - 1];
+}
+
 } // namespace Concrete3D
 } // namespace Ladruno
 

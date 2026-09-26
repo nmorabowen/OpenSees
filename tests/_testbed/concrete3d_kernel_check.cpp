@@ -390,6 +390,23 @@ static void run_oracle_dump(const char* path) {
         std::printf("  eta nontrivial (max viscous-inviscid gap >1e-3): %s (gap=%.2e)\n",
                     eta_nontrivial ? "ok" : "FAIL", max_eta_gap);
 
+    // ---- (B9) Gc-as-energy calibration: C++ compressionEnergyDensity == oracle compression_energy_density ----
+    if (fh >> tok && tok == "NGCT") {
+        int ngct; fh >> ngct;
+        for (int d = 0; d < ngct; ++d) {
+            fh >> tok; std::string label; fh >> label;   // GCT <label>
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            double efc, gO, pkO; fh >> mp.Gf >> mp.As >> efc >> gO >> pkO;
+            double pkC = 0.0;
+            const double gC = compressionEnergyDensity(mp, efc, 20000, &pkC);
+            const double rel = std::fabs(gC - gO) / std::fabs(gO), relp = std::fabs(pkC - pkO) / pkO;
+            const bool ok = rel < 1.0e-6 && relp < 1.0e-7;
+            if (!ok) ++fails;
+            std::printf("  %-24s g_rel=%.2e peak_rel=%.2e  %s\n", label.c_str(), rel, relp, ok ? "ok" : "FAIL");
+        }
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
                 "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);
@@ -464,6 +481,36 @@ static void run_robustness() {
         int st = returnMapTensor(mp, sig_n, deps, 0.05, true, sigN, kpN, Dt, true);
         const double devmax = std::fmax(std::fabs(Dt[3][3]), std::fabs(Dt[0][0] - Dt[1][0]));
         check(st == 0 && devmax < 1e-9 * mp.E, "vertex tangent is purely volumetric (zero deviatoric stiffness)");
+    }
+
+    // C5 — Gc = PHYSICAL compressive energy (WP concrete3d-oracle-diagnosis): with eps_fc from the calibration
+    // table, single-point uniaxial compression dissipates Gc (post-peak, per unit area over lch) within 5% for
+    // three (Gc, lch) pairs; a direct epsFc equal to the legacy Gc/(fc lch) is byte-identical to the legacy path.
+    {
+        Params q = mp; q.Df = 1.0; q.As = 2.0; q.Gf = 0.1; q.Gc = 1.0; q.lch = 1.0;
+        double efc[GC_TABLE_N], g[GC_TABLE_N];
+        calibrateEpsFcTable(q, efc, g);
+        const double pairs[3][2] = {{30.0, 100.0}, {10.0, 50.0}, {40.0, 50.0}};
+        double worst = 0.0; int bad = 0;
+        for (const auto& pr : pairs) {
+            int st = 0; const double e = epsFcFromGc(efc, g, pr[0], pr[1], &st);
+            const double rel = std::fabs(compressionEnergyDensity(q, e) * pr[1] - pr[0]) / pr[0];
+            worst = std::fmax(worst, rel); if (st != 0) ++bad;
+        }
+        check(bad == 0 && worst < 0.05, "Gc calibration: uniaxial compression dissipates Gc within 5% (3 Gc/lch pairs)");
+        std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", worst);
+        Params a = q; a.Gc = 30.0; a.lch = 100.0; a.epsFc = 0.0;          // legacy Gc/(fc lch)
+        Params b = a; b.epsFc = a.Gc / (a.fc * a.lch);                    // the same value, given directly
+        State sa, sb; bool same = true;
+        for (int k = 1; k < 80; ++k) {
+            double stn[6] = {-5e-5 * k, 1.2e-5 * k, 1.2e-5 * k, 0, 0, 0};
+            State oa, ob; double s1[6], s2[6], e1[6], e2[6], D1[6][6], D2[6][6];
+            returnMap(a, stn, sa, oa, s1, e1, D1, true, -1.0, true);
+            returnMap(b, stn, sb, ob, s2, e2, D2, true, -1.0, true);
+            for (int i = 0; i < 6; ++i) if (s1[i] != s2[i]) same = false;
+            sa = oa; sb = ob;
+        }
+        check(same, "-epsFc = Gc/(fc lch) reproduces the legacy compression path byte-for-byte");
     }
 
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;

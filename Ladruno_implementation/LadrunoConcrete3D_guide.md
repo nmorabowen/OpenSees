@@ -349,8 +349,13 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-Df $Df>  <-As $As>  <-rho $rho>                     \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
-    <-lch $lch>  <-autoRegularization>  <-implex>
+    <-lch $lch>  <-autoRegularization>  <-implex>         \
+    <-tensionLaw bilinear|exp>  <-epsFc $epsFc | -gcLegacy>
 ```
+**2026-09 (ADR-31 §11):** `Gf` drives the CDPM2 **bilinear** tension law by default (`wf = 4.444 Gf/ft`,
+`w = lch·ε_i`; `-tensionLaw exp` = the legacy exponential). `Gc` is the **physical** compressive fracture
+energy per unit area (the wrapper calibrates `εfc` so single-element uniaxial compression dissipates `Gc`
+post-peak over `lch`); `-epsFc $v` passes the raw CDPM2 `εfc` instead (Gc ignored; OOFEM default 1e-4); `-gcLegacy` = the pre-2026-09 `εfc = Gc/(fc·lch)`.
 ```python
 ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-Df", 0.85)
 ```

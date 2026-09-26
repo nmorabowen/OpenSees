@@ -47,6 +47,12 @@ def _mat(tag, **kw):
     fc = kw.get("fc", _FC); ft = kw.get("ft", _FT)
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
+    # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
+    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). This battery cross-checks against
+    # the oracle's LEGACY semantics (make_material defaults: exponential law, eps_fc = Gc/(fc lch)), so pin
+    # them explicitly unless a test asks for the new defaults (law="default").
+    if kw.get("law", "legacy") == "legacy":
+        args += ["-tensionLaw", "exp", "-gcLegacy"]
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:

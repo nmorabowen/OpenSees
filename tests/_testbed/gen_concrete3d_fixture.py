@@ -385,6 +385,20 @@ def main(out=None):
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))
 
+    # ---- (B9) Gc-as-energy calibration (WP concrete3d-oracle-diagnosis): the post-peak uniaxial-compression
+    #      energy per unit volume g(eps_fc) the wrapper tabulates and inverts at Gc/lch. Pins the C++
+    #      compressionEnergyDensity (free uniaxial stress via driveConfinedFiber, fixed step, 1% stop + tail)
+    #      to the oracle compression_energy_density at two direct eps_fc values (cheap, low-eps_fc end). ----
+    gcts = []
+    for k_rel in (0.05, 0.3):
+        efc = mp_h["fc"] / mp_h["E"] * k_rel
+        g, pk, n = ref.compression_energy_density(mp_h, efc, Gf, As)
+        gcts.append((f"gct_{k_rel}", mp_h, efc, g, pk))
+    lines.append(f"NGCT {len(gcts)}")
+    for label, mp, efc, g, pk in gcts:
+        lines.append(f"GCT {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(As))} {repr(float(efc))} "
+                     f"{repr(float(g))} {repr(float(pk))}")
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "

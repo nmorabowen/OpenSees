@@ -466,6 +466,20 @@ def test_tension_law_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
+def test_gc_energy_gate():
+    """Gc = PHYSICAL compressive fracture energy (WP concrete3d-oracle-diagnosis). ~5 min in numpy => opt-in
+    (--runslow); the same energy gate runs in the g++ self-check (C5) on every CI run, and the C++ energy
+    driver is pinned to this oracle by the fixture's GCT block. G1 three (Gc, lch) pairs dissipate Gc within
+    5% with eps_fc from the calibration table; G2 the legacy eps_fc = Gc/(fc lch) over-dissipates ~20x; G3 a
+    direct eps_fc (-epsFc) reproduces the legacy path byte-for-byte."""
+    r = ref.run_gc_energy_gate(verbose=False)
+    assert r["G1_ok"], r["G1_rel"]
+    assert r["G2_ok"], r["G2_legacy_ratio"]
+    assert r["G3_byte"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
