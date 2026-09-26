@@ -1,0 +1,105 @@
+unbuilt: fork .cpp=1 .h=0 | vanilla .cpp=118 .h=23
+    SRC/utility/profiler/profiler_selftest.cpp
+guards_fork: false-const flags=0 guarding 0 uses; #define-0 flags used=0; if(0/false)=0; #if0 lines=0; undefined #ifdef=3; commented-out stmts=34 (0.28/KLOC)
+   D ('SRC/material/nD/LadrunoJ2Finite.cpp', 'LADRUNO_J2FINITE_CHANNELB_NUMERIC', 2)
+   D ('SRC/recorder/Ladruno_Types.h', 'LADRUNO_USE_SWMR', 2)
+   D ('SRC/recorder/Ladruno_Hdf5.h', 'LADRUNO_USE_SWMR', 1)
+   C ('SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp', 10)
+   C ('SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp', 6)
+   C ('SRC/material/nD/LadrunoSANISAND.cpp', 3)
+   C ('SRC/material/nD/LadrunoSANISAND.h', 3)
+   C ('SRC/analysis/integrator/LadrunoIndirectControl.h', 2)
+   C ('SRC/domain/constraints/LadrunoTie.cpp', 1)
+   C ('SRC/domain/contact/LadrunoFrictionKernel.h', 1)
+   C ('SRC/domain/pattern/ladrunoPorousOverlay/LadrunoPorousOverlay.h', 1)
+   C ('SRC/element/ladrunoBrick/LadrunoBrick20.h', 1)
+   C ('SRC/element/ladrunoUP/LadrunoUP.cpp', 1)
+guards_vanilla: false-const flags=6 guarding 111 uses; #define-0 flags used=12; if(0/false)=5; #if0 lines=55; undefined #ifdef=95; commented-out stmts=6398 (4.70/KLOC)
+   F ('SRC/material/nD/UANDESmaterials/SAniSandMS.cpp', 'SAniSandMS::debugFlag', 15)
+   F ('SRC/material/nD/UWmaterials/ManzariDafalias.cpp', 'ManzariDafalias::debugFlag', 53)
+   F ('SRC/material/nD/UWmaterials/PM4Sand.cpp', 'PM4Sand::debugFlag', 19)
+   F ('SRC/material/nD/UWmaterials/PM4Silt.cpp', 'PM4Silt::debugFlag', 19)
+   F ('SRC/runtime/python/OpenSeesPyRT.cpp', 'verbose', 2)
+   F ('SRC/tcl/commands.cpp', 'cms', 3)
+   0 ('SRC/database/OracleDatastore.cpp', 'IsCreateTable', 1)
+   0 ('SRC/domain/partitioner/DomainPartitioner.cpp', 'DOMAINPARTITIONER_REPARTITION_DEBUG_DISABLED_LV_1', 1)
+   0 ('SRC/domain/partitioner/DomainPartitioner.cpp', 'DOMAINPARTITIONER_REPARTITION_DEBUG_DISABLED_LV_2', 1)
+   0 ('SRC/element/updatedLagrangianBeamColumn/InelasticYS2DGNL.cpp', 'updateDebug', 1)
+   0 ('SRC/element/updatedLagrangianBeamColumn/InelasticYS2DGNL.cpp', 'plastkDebug', 10)
+   0 ('SRC/element/updatedLagrangianBeamColumn/TclElement2dYS.cpp', 'tcl_debug', 11)
+   0 ('SRC/element/updatedLagrangianBeamColumn/UpdatedLagrangianBeam2D.cpp', '_debug', 1)
+   0 ('SRC/element/updatedLagrangianBeamColumn/UpdatedLagrangianBeam2D.cpp', '_Kdebug', 1)
+   0 ('SRC/material/yieldSurface/evolution/PlasticHardening2D.cpp', 'strnDebug', 2)
+   0 ('SRC/material/yieldSurface/evolution/YS_Evolution2D.cpp', 'evolDebug', 1)
+   0 ('SRC/material/yieldSurface/yieldSurfaceBC/YieldSurface_BC2D.cpp', 'returnDebug', 2)
+   0 ('SRC/material/yieldSurface/yieldSurfaceBC/YieldSurface_BC2D.cpp', 'driftDebug', 5)
+   D ('SRC/tcl/include/tkIntDecls.h', 'MAC_TCL', 60)
+   D ('SRC/utility/Timer.cpp', 'TIMER_USE_MPIWTIME', 6)
+   D ('SRC/tcl/include/tclIntDecls.h', 'MAC_TCL', 4)
+   D ('SRC/tcl/tclInt.h', 'TCL_COMPILE_STATS', 4)
+   D ('SRC/modelbuilder/tcl/TclModelBuilder.cpp', 'OPSDEF_Element_PFEM', 3)
+   D ('SRC/tcl/include/tkIntPlatDecls.h', 'MAC_TCL', 3)
+   D ('SRC/tcl/include/tkPlatDecls.h', 'MAC_TCL', 3)
+   D ('SRC/tcl/mpiMain.cpp', 'TCL_XT_TEST', 3)
+   D ('SRC/tcl/mpiParameterMain.cpp', 'TCL_XT_TEST', 3)
+   D ('SRC/tcl/tclAppInit.cpp', 'TCL_XT_TEST', 3)
+   C ('SRC/element/IGA/IGAKLShell_BendingStrip.cpp', 334)
+   C ('SRC/element/IGA/IGAKLShell.cpp', 330)
+   C ('SRC/material/nD/UWmaterials/ManzariDafalias.cpp', 158)
+   C ('SRC/material/nD/UWmaterials/PM4Sand.cpp', 96)
+   C ('SRC/material/nD/UWmaterials/PM4Silt.cpp', 92)
+   C ('SRC/material/nD/ASDPlasticMaterial3D/ASDPlasticMaterial3D.h', 77)
+   C ('SRC/coordTransformation/CorotCrdTransfWarping3d.cpp', 76)
+   C ('SRC/coordTransformation/CorotCrdTransf3d.cpp', 75)
+   C ('SRC/element/UWelements/EmbeddedBeamInterfaceL.cpp', 63)
+   C ('SRC/material/uniaxial/Concrete05.cpp', 61)
+unreferenced fork functions: 49
+   invalidateMass  [('SRC/analysis/handler/LadrunoConstraintProjector.h', 95, 'LadrunoConstraintProjector::invalidateMass')]
+   getTieForces  [('SRC/analysis/handler/LadrunoConstraintProjector.h', 101, 'LadrunoConstraintProjector::getTieForces')]
+   getUnbalanceNorm  [('SRC/analysis/integrator/ExplicitBathe.cpp', 1516, 'ExplicitBathe::getUnbalanceNorm')]
+   getStabilizedTrueResidual  [('SRC/analysis/integrator/LadrunoArcLength.cpp', 677, 'LadrunoArcLength::getStabilizedTrueResidual')]
+   anyDeclared  [('SRC/analysis/integrator/LadrunoEnergyChannels.h', 148, 'EnergyChannelRegistry::anyDeclared')]
+   cross2  [('SRC/domain/contact/LadrunoContact2DKernel.h', 154, 'cross2')]
+   numSegments  [('SRC/domain/contact/LadrunoContactBucketSort.h', 162, 'Grid::numSegments')]
+   runawayGuardFired  [('SRC/domain/contact/LadrunoContactBucketSort.h', 163, 'Grid::runawayGuardFired')]
+   buildAdapterCount  [('SRC/domain/contact/LadrunoContactDomain.h', 290, 'LadrunoContactDomain::buildAdapterCount')]
+   getNumMortarNormalStates  [('SRC/domain/contact/LadrunoContactDomain.h', 403, 'LadrunoContactDomain::getNumMortarNormalStates')]
+   getNumEdgeEdgeStates  [('SRC/domain/contact/LadrunoContactDomain.h', 448, 'LadrunoContactDomain::getNumEdgeEdgeStates')]
+   getNumFrictionStates  [('SRC/domain/contact/LadrunoContactDomain.h', 509, 'LadrunoContactDomain::getNumFrictionStates')]
+   getNumReemitContacts  [('SRC/domain/contact/LadrunoContactDomain.h', 524, 'LadrunoContactDomain::getNumReemitContacts')]
+   getNumSegments  [('SRC/domain/contact/LadrunoContactSurface.cpp', 38, 'LadrunoContactSurface::getNumSegments')]
+   linearizePair  [('SRC/domain/contact/LadrunoMortarKernel.h', 511, 'linearizePair')]
+   externalStepping  [('SRC/domain/pattern/ladrunoPorousOverlay/LadrunoPorousOverlay.cpp', 1647, 'LadrunoPorousOverlay::externalStepping')]
+   consistentMass  [('SRC/element/ladrunoBrick/LadrunoHex20Shape.h', 263, 'consistentMass')]
+   rowSumLump  [('SRC/element/ladrunoBrick/LadrunoHex20Shape.h', 283, 'rowSumLump')]
+   stiffnessElastic  [('SRC/element/ladrunoBrick/LadrunoHex20Shape.h', 304, 'stiffnessElastic')]
+   frameTimeVarying  [('SRC/element/solidTransformation/SolidTransformationCorot.h', 134, 'SolidTransformationCorot::frameTimeVarying'), ('SRC/element/solidTransformation/SolidTransformationFinite.h', 86, 'SolidTransformationFinite::frameTimeVarying'), ('SRC/element/solidTransformation/SolidTransformationHypo.h', 81, 'SolidTransformationHypo::frameTimeVarying')]
+   setTrialFincr  [('SRC/material/nD/FiniteStrainNDMaterial.h', 126, 'FiniteStrainNDMaterial::setTrialFincr')]
+   getJ  [('SRC/material/nD/InitDefGradNDMaterial.cpp', 242, 'InitDefGradNDMaterial::getJ'), ('SRC/material/nD/LadrunoJ2Finite.h', 119, 'LadrunoJ2Finite::getJ'), ('SRC/material/nD/LadrunoRCFiniteStrain.h', 105, 'LadrunoRCFiniteStrain::getJ')]
+   lateralResidual  [('SRC/material/nD/LadrunoConcrete3DKernel.h', 625, 'lateralResidual')]
+   getLadrunoImplexOptions  [('SRC/material/nD/LadrunoSANISAND.h', 327, 'LadrunoSANISAND::getLadrunoImplexOptions')]
+   numFramesWritten  [('SRC/recorder/LadrunoMonitorSink.h', 88, 'MonitorSink::numFramesWritten')]
+   requiresPartitionReduction  [('SRC/recorder/Ladruno_DomainResults.h', 83, 'EnergyBalanceSource::requiresPartitionReduction'), ('SRC/recorder/Ladruno_ElementResults.h', 2263, 'ElementResultSource::requiresPartitionReduction'), ('SRC/recorder/Ladruno_NodeResults.h', 202, 'ReactionForceSource::requiresPartitionReduction')]
+   makeResultName  [('SRC/recorder/Ladruno_NodeResults.cpp', 58, 'makeResultName')]
+   currentMode  [('SRC/recorder/Ladruno_NodeResults.h', 319, 'ModesOfVibrationSource::currentMode')]
+   getEmin  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 266, 'FeastEigenSOE::getEmin')]
+   getEmax  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 267, 'FeastEigenSOE::getEmax')]
+   getSubspaceSize  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 268, 'FeastEigenSOE::getSubspaceSize')]
+   getNumQuad  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 269, 'FeastEigenSOE::getNumQuad')]
+   getMaxRefine  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 270, 'FeastEigenSOE::getMaxRefine')]
+   getVerbose  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 272, 'FeastEigenSOE::getVerbose')]
+   getCertify  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 273, 'FeastEigenSOE::getCertify')]
+   getBlockZGate  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 274, 'FeastEigenSOE::getBlockZGate')]
+   getRci  [('SRC/system_of_eqn/eigenSOE/FeastEigenSOE.cpp', 275, 'FeastEigenSOE::getRci')]
+   lastSolveSeconds  [('SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.h', 92, 'LadrunoBlockZKernel::lastSolveSeconds')]
+   getFineLabels  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSEigenSOE.cpp', 198, 'LadrunoCMSEigenSOE::getFineLabels')]
+   getWorldSize  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSEigenSOE.cpp', 213, 'LadrunoCMSEigenSOE::getWorldSize')]
+   getFineSubdomainsPerCoarse  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSEigenSOE.cpp', 223, 'LadrunoCMSEigenSOE::getFineSubdomainsPerCoarse')]
+   getDiagnostics  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSEigenSolver.cpp', 462, 'LadrunoCMSEigenSolver::getDiagnostics')]
+   getNormalizedResiduals  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSEigenSolver.cpp', 468, 'LadrunoCMSEigenSolver::getNormalizedResiduals')]
+   solveTwoLevelHierarchy  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSHierarchy.cpp', 1214, 'solveTwoLevelHierarchy')]
+   persistentCrossNonzeros  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSMumps.cpp', 206, 'StaticCondensation::persistentCrossNonzeros')]
+   estimateDenseRootMemory  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSOptions.cpp', 396, 'estimateDenseRootMemory')]
+   compareAssemblyRecords  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSOptions.cpp', 580, 'compareAssemblyRecords')]
+   classifyEffectiveOwnership  [('SRC/system_of_eqn/ladrunoCMS/LadrunoCMSOptions.cpp', 666, 'classifyEffectiveOwnership')]
+   setInstance  [('SRC/utility/profiler/Profiler.cpp', 222, 'Profiler::setInstance')]
