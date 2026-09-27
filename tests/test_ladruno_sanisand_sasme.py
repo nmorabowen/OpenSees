@@ -334,11 +334,11 @@ def test_tangentEP_matches_finite_difference(protos):
     Cep = o0["tangent_ep"]
     worst = 0.0
     for dd in (d, [0.2, 1.0, 0.1, 0.0, 0.0, 0.0], [0.3, 1.0, 0.0, 0.5, 0.0, 0.0]):
-        h = 1e-7
+        h = 1e-9
         de = [h * x for x in dd]
         new, o = W.step(ops, 8, st, de, prev)
         assert o["rc"] == 0 and o["sas"]["elastic"] == 0   # a PLASTIC probe
         fd = [(a - b) / h for a, b in zip(new["sigma"], st["sigma"])]
         an = [sum(Cep[i][j] * dd[j] for j in range(6)) for i in range(6)]
         worst = max(worst, W.norm([a - b for a, b in zip(fd, an)]) / W.norm(an))
-    assert worst < 1e-3, worst
+    assert worst < 1e-4, worst
