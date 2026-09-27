@@ -136,6 +136,8 @@ test file `tests/test_ladruno_element_shell_helpers.py`):
 | N3 | full M reduced to its diagonal in the residual | caught (6) |
 | N4 | every DOF takes the x trial acceleration | caught (24) |
 | C14 | Brick20 `recvSelf` without the rebuild | caught (2) |
+| C15 | vanilla `inertialForce` evaluated in GCC's order (references kept) | caught (11) — reproduces the Zone-A Ubuntu failure (run 36336984894: six elements at exactly 0.0) on MSVC |
+| C15m | the ORIGINAL one-expression form (MSVC's order) | caught (1: CSTPair, betaK arm) — the Windows-side corruption through the tangent re-entry |
 
 **Gap evidence** is in the Gaps table (each fix's commit and before/after).
 
