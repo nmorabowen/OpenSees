@@ -186,3 +186,4 @@ after: 40 iterations  current Norm: 0.31725 (max: 0.041521, Norm deltaX: 4.16851
 NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
 StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163826
 OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:27:57] [   4617.8s] step    39 s/B 0.007040 q   212.154 kPa ds 1.000e-03 rung K it  13 fails 0 wall   535.11s | sub 39093866 maxpt 39972 cap 0 rejErr 2148736 dtmin 0 | p'min 4.282 eta_max 1.798 rho_max 0.937 n>1 0

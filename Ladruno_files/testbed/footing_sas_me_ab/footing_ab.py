@@ -328,6 +328,9 @@ SAS_REF_CODES = {16: "startOutsideYield", 17: "startAlphaOutsideBounding",
                  23: "alphaOutsideAtDTmin", 24: "maxSubsteps"}
 
 
+DEADEND = {}     # SAS-ME: Gauss point index -> step first flagged
+
+
 def read_field(deck, want_stats=True, want_f=False):
     """Every Gauss point's committed state. Arrays of shape (nGP, ...)."""
     tags = deck["tags"]
@@ -668,6 +671,26 @@ def main(argv=None):
                                   for k in ks if dst[k, C["cap"]] > 0)
                 log(f"  refusals step {nstep}: {cen[2]} by code {bycode}; "
                     f"n points {int(np.sum(dst[:, C['cap']] > 0))}; top: {where}")
+            if C is CENSUS_SAS:
+                # DEAD-END census (WP-129 review finding): a point whose committed
+                # rho_alpha > 1 + kappa refuses EVERY later increment with
+                # startAlphaOutsideBounding, and no step cut can help. Flag points
+                # whose refusals this step are ALL refStartAlpha, and every point
+                # whose COMMITTED rho_alpha already exceeds 1.1.
+                de = np.where((dst[:, 15] > 0) & (dst[:, 17] == dst[:, 15]))[0]
+                over = np.where(Dn["rho"] > 1.1)[0]
+                xy = gp_xy(deck)
+                for k in list(de) + list(over):
+                    if k not in DEADEND:
+                        DEADEND[k] = nstep
+                        log(f"  DEAD-END candidate first seen step {nstep} (s/B {sB:.6f}): "
+                            f"ele {xy[k][0]} gp {k%4+1} ({xy[k][1]:+.3f},{xy[k][2]:+.3f}) "
+                            f"p' {Dn['p'][k]:.3f} rho_a {Dn['rho'][k]:.4f} "
+                            f"refStartAlpha this step {int(dst[k, 17])} of "
+                            f"{int(dst[k, 15])} refusals")
+                if len(de) or len(over):
+                    log(f"  dead-end census step {nstep}: all-startAlpha refusers {len(de)}, "
+                        f"committed rho_a>1.1 {len(over)}, cumulative flagged {len(DEADEND)}")
             minp, maxeta = float(Dn["p"].min()), float(np.nanmax(Dn["eta"]))
             maxrho = float(np.nanmax(Dn["rho"]))
             nrho = int(np.sum(Dn["rho"] > 1.0))
@@ -719,7 +742,8 @@ def main(argv=None):
                    args=vars(args), matdesc=deck["matdesc"], solver=deck["solver"],
                    k0_patch_err=deck["k0_patch_err"],
                    grav_resultant_err=deck["grav_resultant_err"],
-                   applied=deck["applied"], ptol=ptol)
+                   applied=deck["applied"], ptol=ptol,
+                   dead_end_first_step={int(k): int(v) for k, v in DEADEND.items()})
 
     # ---- post-mortem at the wall (SANISAND): replay rows + one probe --------
     if san and mode in ("FLOOR", "WALL", "PROBETEST") and nstep > 0:
