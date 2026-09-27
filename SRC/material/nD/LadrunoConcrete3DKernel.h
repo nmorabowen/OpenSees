@@ -1820,6 +1820,17 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         C[i][j] = v;
     }
 
+    // (C3c, cost) dω_t/dε and dω_c/dε are NON-zero only for an interior damage 0<ω<1 (see the IFT
+    // branches below: a clamped or inactive ω is insensitive). Everything from here to the assembly
+    // feeds ONLY dwt/dwc -- three micro-FD scalar gradients (36 eigendecompositions), the dnorm
+    // gradient, and under loading two more composite FDs through the return map. Skipping it when
+    // neither ω is interior (every ELASTIC point) leaves dwt = dwc = 0, i.e. the SAME assembly
+    // arithmetic and a bit-identical tangent. Re-applied on the damage-drive kernel: the interior test
+    // is the union of the IFT branch conditions (wt < OMEGA_MAX && bilin; wc < OMEGA_MAX && cdc; wc < 1
+    // legacy), so `< 1.0` is a safe superset.
+    double dwt[6] = {0, 0, 0, 0, 0, 0}, dwc[6] = {0, 0, 0, 0, 0, 0};
+    const bool needDw = (wt > 0.0 && wt < 1.0) || (wc > 0.0 && wc < 1.0);
+    if (needDw) {
     // --- chain-rule gradient pieces (each d(.)/dε, 6-vector) ---
     // Ceff^T @ g  (d(scalar of sig_eff)/dε = (d sig_eff/dε)^T @ (d scalar/d sig_eff))
     auto CeffT = [&](const double g[6], double out[6]) {
@@ -2010,7 +2021,6 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
     // (P2g) D = the MONOTONE drive sigtMax/sigcMax; dDt_deps/dDc_deps are already zeroed on unload, so an
     // unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
-    double dwt[6], dwc[6];
     if (wt > 0.0 && wt < OMEGA_MAX && bilin) {
         // IFT on F(w) = (1-w)D - sigma(h(kd1+w kd2)): F_w = -D - sigma' h kd2 (sigma' = active branch slope)
         const double wf_b = mp.Gf / (BILIN_GF * mp.ft);
@@ -2040,6 +2050,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         const double a2 = -(1.0 - wc) * sigcMax * wc / (eps_fc * Hc);
         for (int i = 0; i < 6; ++i) dwc[i] = a0 * dDc_deps[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
     } else for (int i = 0; i < 6; ++i) dwc[i] = 0.0;
+
+    }   // needDw (C3c)
 
     // assemble: C - sig_t (x) dω_t - sig_c (x) dω_c
     for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)

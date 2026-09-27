@@ -294,6 +294,17 @@ fixture) — and cross-checked directly against the oracle's analytic tangent (~
   micro-FDs; `∂λ_extreme/∂σ̄` is the analytic eigenprojection (with the **Voigt `[1,1,1,2,2,2]`
   double-contraction weight** on the shear off-diagonals — §23); `∂‖Δε_p‖/∂ε` is closed form.
 
+> [!note] Cost — the `∂ω/∂ε` block is skipped when no `ω` is interior (Ladruno C3c, 2026-09-26)
+> `∂ω_t/∂ε`, `∂ω_c/∂ε` are non-zero only for an interior `0 < ω < 1` (a clamped or inactive `ω` is
+> insensitive). The whole gradient block (three micro-FD scalar gradients = 36 eigendecompositions per
+> Gauss point, the `‖Δε_p‖` gradient, and under loading two composite FDs through the return map) is
+> therefore skipped when neither `ω` is interior — every elastic and every fully-open point — leaving
+> `dwt = dwc = 0` and the SAME assembly arithmetic: stress and tangent are **bit-identical** (320
+> steps × std/bbar × implicit/IMPL-EX through cracking, softening and unloading: every stress and every
+> 24×24 element stiffness entry equal). Per elastic Newton iteration, LadrunoConcrete3D vs
+> ASDConcrete3D: L&W beam coarse (864 bbar bricks, SparseGeneral) 0.71–0.84 vs 0.20 s (3.6–4.2×) →
+> 0.26–0.30 vs 0.20–0.23 s (**1.3×**); 512-brick elastic block 4.7× → 1.2×.
+
 The damaged tangent is **degraded + INDEFINITE on the softening branch** (`C[0,0]<0`, `λ_min(symC)<0`)
 — the concrete **Tier-2 IMPL-EX motivation** — and stays finite across a load reversal and (as a valid
 subgradient) at the `σ̄_lat=0` Macaulay kink.
@@ -350,9 +361,7 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
     <-lch $lch>  <-autoRegularization>  <-implex>         \
-    <-tensionLaw bilinear|exp>  <-epsFc $epsFc | -gcLegacy>  \
-    <-flowPotential cdpm2|legacy>  <-compressionDrive cdpm2|legacy>  \
-    <-tcTemper proj|none>  <-verbose>
+    <-tensionLaw bilinear|exp>  <-epsFc $epsFc | -gcLegacy>  \n    <-flowPotential cdpm2|legacy>
 ```
 **2026-09 (ADR-31 §11):** `Gf` drives the CDPM2 **bilinear** tension law by default (`wf = 4.444 Gf/ft`,
 `w = lch·ε_i`; `-tensionLaw exp` = the legacy exponential). `Gc` is the **physical** compressive fracture
@@ -360,13 +369,6 @@ energy per unit area (the wrapper calibrates `εfc` so single-element uniaxial c
 post-peak over `lch`); `-epsFc $v` passes the raw CDPM2 `εfc` instead (Gc ignored; OOFEM default 1e-4); `-gcLegacy` = the pre-2026-09 `εfc = Gc/(fc·lch)`.
 **B1 (ADR-31 §12):** the plastic flow is the full CDPM2 potential (Eq.22-29; `-Df` = CDPM2's dilation constant,
 > 0.5, CDPM2 default 0.85) with return-map sub-incrementation; `-flowPotential legacy` = the pre-B1 always-dilatant flow.
-**B2 (ADR-31 §13):** compressive damage is CDPM2's `E·κdc` vs `ft` drive (`-compressionDrive legacy` = the pre-B2
-`−σ̄min` vs `fc`); recorders `substeps` / `returnFailures` count sub-incremented and failed returns; `-verbose` prints them.
-**B3:** defaults are now CDPM2's `Df = 0.85`, `Hp = 0.01` (pre-B3: `-Df 1.0 -hardening 0.3 0.5`).
-**PV20 (ADR-31 §15):** `-tcTemper proj` (default) keeps crack opening out of the compressive damage history. The
-crack-direction plastic strain does not feed `κdc1`, and the hardened crack stress does not feed `κdc`, so a cracked
-strut (an RC panel or wall in shear) carries about `fc` instead of softening at about 0.2 `fc`. `-tcTemper none`
-gives literal CDPM2 Eq.47/48. The two are identical when no effective principal stress is tensile.
 ```python
 ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-Df", 0.85)
 ```
