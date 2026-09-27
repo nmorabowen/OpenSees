@@ -131,7 +131,6 @@ LadrunoBrick::LadrunoBrick()
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
    applyLoad(0), load(0), Ki(0),
-   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
    massType(0),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
@@ -180,7 +179,6 @@ LadrunoBrick::LadrunoBrick(int tag,
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
    applyLoad(0), load(0), Ki(0),
-   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
    massType(matype),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
@@ -247,7 +245,6 @@ LadrunoBrick::~LadrunoBrick()
 
   if (load != 0) delete load;
   if (Ki != 0) delete Ki;
-  if (Mi != 0) delete Mi;   // Ladruno (ADR-77 T2/G2)
 
   for (int i = 0; i < 8; i++) {
     if (theDamping[i]) {
@@ -544,40 +541,19 @@ const Matrix &  LadrunoBrick::getTangentStiff(void)
 // Cost: ~4.6 KB + 256 B per element. Escape: element ... -noMassCache.
 const Matrix &  LadrunoBrick::getMass(void)
 {
-  if (massCache && Mi != 0) {
-    bool clean = true;
-    for (int i = 0; i < 8 && clean; i++)
-      if (materialPointers[i]->getRho() != MiRho[i]) clean = false;
-    for (int i = 0; i < 8 && clean; i++) {
-      // Ladruno (WP-124 C9): a warm cache can outlive the nodes (setDomain(0) on
-      // element removal); never dereference them -- the LadrunoMassCache rule.
-      if (nodePointers[i] == 0) { clean = false; break; }
-      const Vector &crd = nodePointers[i]->getCrds();
-      if (crd(0) != MiCrd[3*i] || crd(1) != MiCrd[3*i+1] || crd(2) != MiCrd[3*i+2])
-        clean = false;
-    }
-    if (clean)
-      return *Mi;
-    delete Mi;          // guard tripped (rho or coords changed): re-form + re-fill
-    Mi = 0;
-  }
+  // Ladruno (WP-124 stage 4): the shared LadrunoMassCache, same guards in the same
+  // order (per-GP rho, then nodal coords) as the ad hoc cache it replaces.
+  double sig[8];
+  for (int i = 0; i < 8; i++)
+    sig[i] = materialPointers[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(sig, 8, nodePointers, 8, 3))
+    return *Mc;
 
   formInertiaTerms(1);
 
-  // Ladruno (WP-124 C9): pre-setDomain / node-less -- cannot guard geometry,
-  // stay uncached (the LadrunoMassCache::fill rule).
-  bool haveNodes = true;
-  for (int i = 0; i < 8; i++)
-    if (nodePointers[i] == 0) haveNodes = false;
-  if (massCache && haveNodes) {
-    Mi = new Matrix(mass);
-    for (int i = 0; i < 8; i++) {
-      MiRho[i] = materialPointers[i]->getRho();
-      const Vector &crd = nodePointers[i]->getCrds();
-      MiCrd[3*i] = crd(0); MiCrd[3*i+1] = crd(1); MiCrd[3*i+2] = crd(2);
-    }
-    return *Mi;
-  }
+  massCache.fill(mass, sig, 8, nodePointers, 8, 3);
+  if (const Matrix *Mc = massCache.cached())   // per-instance copy, not the class static
+    return *Mc;
   return mass;
 }
 
@@ -3722,7 +3698,7 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // (construction-fixed in normal flows), but a restore into a live element
   // can flip it with rho and coords unchanged -- a clean-guard hit would then
   // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
-  if (Mi != 0) { delete Mi; Mi = 0; }
+  massCache.invalidate();
   // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
   // formulation; a restore into a LIVE element must not keep serving it.
   LadrunoShell::dropKi(Ki);
