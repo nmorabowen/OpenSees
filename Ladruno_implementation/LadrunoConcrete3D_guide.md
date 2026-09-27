@@ -294,6 +294,17 @@ fixture) — and cross-checked directly against the oracle's analytic tangent (~
   micro-FDs; `∂λ_extreme/∂σ̄` is the analytic eigenprojection (with the **Voigt `[1,1,1,2,2,2]`
   double-contraction weight** on the shear off-diagonals — §23); `∂‖Δε_p‖/∂ε` is closed form.
 
+> [!note] Cost — the `∂ω/∂ε` block is skipped when no `ω` is interior (Ladruno C3c, 2026-09-26)
+> `∂ω_t/∂ε`, `∂ω_c/∂ε` are non-zero only for an interior `0 < ω < 1` (a clamped or inactive `ω` is
+> insensitive). The whole gradient block (three micro-FD scalar gradients = 36 eigendecompositions per
+> Gauss point, the `‖Δε_p‖` gradient, and under loading two composite FDs through the return map) is
+> therefore skipped when neither `ω` is interior — every elastic and every fully-open point — leaving
+> `dwt = dwc = 0` and the SAME assembly arithmetic: stress and tangent are **bit-identical** (320
+> steps × std/bbar × implicit/IMPL-EX through cracking, softening and unloading: every stress and every
+> 24×24 element stiffness entry equal). Per elastic Newton iteration, LadrunoConcrete3D vs
+> ASDConcrete3D: L&W beam coarse (864 bbar bricks, SparseGeneral) 0.71–0.84 vs 0.20 s (3.6–4.2×) →
+> 0.26–0.30 vs 0.20–0.23 s (**1.3×**); 512-brick elastic block 4.7× → 1.2×.
+
 The damaged tangent is **degraded + INDEFINITE on the softening branch** (`C[0,0]<0`, `λ_min(symC)<0`)
 — the concrete **Tier-2 IMPL-EX motivation** — and stays finite across a load reversal and (as a valid
 subgradient) at the `σ̄_lat=0` Macaulay kink.
