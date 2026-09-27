@@ -402,6 +402,15 @@ class LadrunoSANISAND : public ManzariDafalias
     // Returns 0 and fills `out` (layout: OPS_LadrunoSANISANDReplay), or -1.
     int ladrunoReplayRun(const LadrunoReplayRequest &q, std::vector<double> &out);   // Ladruno WP-127
 
+    // Ladruno WP-129: the SAS-ME (IntScheme 129) option set, applied after
+    // construction by the parser (and carried by getCopy / the wire). The
+    // scheme itself lives in the base (LadrunoSANISANDSasME.cpp); this class
+    // is what makes it reachable (mLadrunoSas.allowed, set in
+    // applyLadrunoConstants) because its wrappers forward the refusal.
+    void setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose = true);  // Ladruno WP-129
+    // Ladruno WP-129 (TIMs F20(c)): the `tangentEP` response's operator.
+    Matrix ladrunoTangentEP(void);                                                  // Ladruno WP-129
+
   protected:
 
     // Ladruno (ADR-86b): the status the wrappers' setTrialStrain returns.

@@ -190,6 +190,9 @@ OPS_LadrunoSANISAND(void)
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
+               << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaProject 0|1>"  // Ladruno WP-129
+               << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
+               << " (the last five: IntScheme 129 = SAS-ME only)"                     // Ladruno WP-129
                << endln;
         return 0;
     }
@@ -237,6 +240,8 @@ OPS_LadrunoSANISAND(void)
     // default-valued, and inferring would let exactly those two slip past the
     // check that refuses an option nothing will read.
     bool sawImplexToken = false;                                                // Ladruno (ADR-92)
+    LadrunoSasOptions sasOpt;                                                   // Ladruno WP-129
+    bool sawSasToken = false;                                                   // Ladruno WP-129
 
     int numData = 1;
     if (OPS_GetIntInput(&numData, &tag) != 0) {
@@ -771,6 +776,74 @@ OPS_LadrunoSANISAND(void)
                 return 0;
             }
         }
+        // Ladruno WP-129: the SAS-ME (IntScheme 129) options. Refused below on
+        // any other scheme -- a flag nothing reads must not be accepted.
+        else if (strcmp(argTok, "-errFloor") == 0 || strcmp(argTok, "-errfloor") == 0 ||
+                 strcmp(argTok, "-alphaBoundTol") == 0 || strcmp(argTok, "-alphaboundtol") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const bool isFloor = (argTok[1] == 'e');
+            double v = 0.0;
+            numData = 1;
+            if (OPS_GetDoubleInput(&numData, &v) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << " wants one value" << endln;
+                return 0;
+            }
+            if (isFloor ? !(v > 0.0) : !(v >= 0.0)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << (isFloor ? " must be > 0 (sigma_ref of SAS-ME's stress error, in this"
+                                     " deck's stress units; omit it for P_atm/101 = 1 kPa)"
+                                   : " must be >= 0 (kappa: alpha/alpha^b > 1 + kappa is"
+                                     " inadmissible)")
+                       << " (got " << v << ")" << endln;
+                return 0;
+            }
+            if (isFloor) sasOpt.errFloor = v; else sasOpt.alphaBoundTol = v;
+        }
+        else if (strcmp(argTok, "-alphaProject") == 0 || strcmp(argTok, "-alphaproject") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            numData = 1;
+            if (OPS_GetIntInput(&numData, &sasOpt.alphaProject) != 0 ||
+                (sasOpt.alphaProject != 0 && sasOpt.alphaProject != 1)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -alphaProject wants 0 (DEFAULT: an alpha outside the bounding"
+                          " surface is rejected / refused) or 1 (radial projection, counted)" << endln;
+                return 0;
+            }
+        }
+        else if (strcmp(argTok, "-sasAlphaIn") == 0 || strcmp(argTok, "-sasalphain") == 0 ||
+                 strcmp(argTok, "-sasErrorVars") == 0 || strcmp(argTok, "-saserrorvars") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const bool isAin = (argTok[4] == 'A' || argTok[4] == 'a');
+            const char *rawMode = OPS_GetString();
+            char modeTok[32];
+            int  mc = 0;
+            while (rawMode != 0 && mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+            int mode = -1;
+            if (isAin) {
+                if (strcmp(modeTok, "reseat") == 0) mode = 0;
+                else if (strcmp(modeTok, "bracket") == 0) mode = 1;
+                else if (strcmp(modeTok, "stale") == 0) mode = 2;
+            } else {
+                if (strcmp(modeTok, "full") == 0) mode = 0;
+                else if (strcmp(modeTok, "stress") == 0) mode = 1;
+            }
+            if (mode < 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << (isAin ? " wants reseat (DEFAULT) | bracket | stale (attribution only:"
+                                   " ModifiedEuler's once-per-increment alpha_in, WP-128 finding G)"
+                                 : " wants full (DEFAULT: stress, alpha and fabric) | stress"
+                                   " (attribution only: ModifiedEuler's stress-only error,"
+                                   " WP-128 finding E)")
+                       << ", got '" << modeTok << "'" << endln;
+                return 0;
+            }
+            if (isAin) sasOpt.alphaInMode = mode; else sasOpt.errorVars = mode;
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -796,7 +869,8 @@ OPS_LadrunoSANISAND(void)
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
                        << " -reversalTol / -reversalRel /"
-                       << " -flipAlphaIn" << endln;                                  // Ladruno ADR-92 P2-7c
+                       << " -flipAlphaIn / -errFloor / -alphaBoundTol / -alphaProject /"   // Ladruno WP-129
+                       << " -sasAlphaIn / -sasErrorVars" << endln;                         // Ladruno WP-129
                 return 0;
             }
             nPos++;
@@ -843,6 +917,16 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno WP-129: the SAS-ME options are read by IntScheme 129 only.
+    if (sawSasToken && (int)oData[0] != LADRUNO_INT_SAS_ME) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
+                  " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
+               << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
+                  " accepted and ignored." << endln;
+        return 0;
+    }
+
     NDMaterial *theMaterial =
         new LadrunoSANISAND(tag, ND_TAG_LadrunoSANISAND,
                             dData[0],  dData[1],  dData[2],  dData[3],  dData[4],  dData[5],
@@ -859,6 +943,8 @@ OPS_LadrunoSANISAND(void)
                << tag << endln;
         return 0;
     }
+
+    ((LadrunoSANISAND *)theMaterial)->setLadrunoSasOptions(sasOpt);   // Ladruno WP-129
 
     // Ladruno (ADR-92 P1): the IMPL-EX request, applied after construction (see
     // the LadrunoImplexOptions note in the header for why it is not a
@@ -1107,6 +1193,37 @@ LadrunoSANISAND::applyLadrunoConstants(void)
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
     mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
+    // Ladruno WP-129: SAS-ME is reachable from THIS class only -- its wrappers
+    // forward the refusal (ladrunoUpdateStatus). Inert unless IntScheme 129.
+    mLadrunoSas.allowed = true;            // Ladruno WP-129
+}
+
+// Ladruno WP-129: the SAS-ME options (see the parser and LadrunoSANISANDSasME.cpp).
+void
+LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose)
+{
+    mLadrunoSas.opt = opt;
+    if (!verbose || this->getClassTag() != ND_TAG_LadrunoSANISAND)
+        return;
+    if ((int)mScheme == LADRUNO_INT_SAS_ME) {
+        opserr << "LadrunoSANISAND tag " << this->getTag()
+               << ": IntScheme 129 = SAS-ME (WP-129): substep error on stress, alpha"
+               << (opt.errorVars == 0 ? " and fabric" : " -- STRESS ONLY (attribution switch, NOT for production)")
+               << " <= TolR = " << mTolR << " (always honoured; ~1e-4 is ModifiedEuler's scale),"
+               << " sigma_ref = " << (opt.errFloor < 0.0 ? m_P_atm / 101.0 : opt.errFloor)
+               << (opt.errFloor < 0.0 ? " (default P_atm/101 = 1 kPa at P_atm 101)" : " (-errFloor)")
+               << ", alpha_in " << (opt.alphaInMode == 0 ? "reseat (DEFAULT)"
+                                    : opt.alphaInMode == 1 ? "bracket"
+                                    : "STALE (attribution switch, NOT for production)")
+               << ", alpha/alpha^b bound 1 + " << opt.alphaBoundTol
+               << (opt.alphaProject ? " PROJECTED (counted)" : " (outside: reject, refuse at dT_min)")
+               << "; TanType 1 and 2 both return the continuum tangent at the end state."
+               << " Refusals reach the element as " << LADRUNO_MATERIAL_REFUSED
+               << "; census: the `sasStats` response." << endln;
+        if (mHonorTolR != 0)
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
+    }
 }
 
 // Ladruno (ADR-93 II.1): re-derive the INITIAL elastic operator with the floor in
@@ -1480,6 +1597,7 @@ LadrunoSANISAND::revertToStart(void)
     // analysis that keeps its state still starts a new count here. NOT reset by
     // revertToLastCommit (a failed step's cost must survive for the post-mortem).
     this->ladrunoResetMEStats();          // Ladruno WP-127
+    this->ladrunoResetSasStats();         // Ladruno WP-129: sasStats, same rule
 
     return 0;
 }
@@ -1548,6 +1666,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
             clone->mLadrunoMEStats[i] = mLadrunoMEStats[i];                         // Ladruno WP-127
+        clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
+        for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
+            clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1575,6 +1696,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
             clone->mLadrunoMEStats[i] = mLadrunoMEStats[i];                         // Ladruno WP-127
+        clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
+        for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
+            clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1743,7 +1867,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
+    static Vector ladrunoData(35 + LMS_COUNT + 5 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1810,6 +1934,20 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     for (int i = 0; i < LMS_COUNT; i++)
         ladrunoData(35 + i) = mLadrunoMEStats[i];
 
+    // Ladruno WP-129: the SAS-ME option set (the deck's request) and its
+    // per-instance census, after the WP-127 block. Indexed off LMS_COUNT so a
+    // wider WP-127 census shifts this block instead of colliding with it.
+    {
+        const int b = 35 + LMS_COUNT;
+        ladrunoData(b + 0) = mLadrunoSas.opt.errFloor;
+        ladrunoData(b + 1) = mLadrunoSas.opt.alphaBoundTol;
+        ladrunoData(b + 2) = (double)mLadrunoSas.opt.alphaProject;
+        ladrunoData(b + 3) = (double)mLadrunoSas.opt.alphaInMode;
+        ladrunoData(b + 4) = (double)mLadrunoSas.opt.errorVars;
+        for (int i = 0; i < LSAS_COUNT; i++)
+            ladrunoData(b + 5 + i) = mLadrunoSas.stats[i];
+    }
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1829,7 +1967,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
+    static Vector ladrunoData(35 + LMS_COUNT + 5 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1842,6 +1980,16 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
     for (int i = 0; i < LMS_COUNT; i++)                        // Ladruno WP-127
         mLadrunoMEStats[i] = ladrunoData(35 + i);              // Ladruno WP-127
+    {                                                          // Ladruno WP-129
+        const int b = 35 + LMS_COUNT;
+        mLadrunoSas.opt.errFloor      = ladrunoData(b + 0);
+        mLadrunoSas.opt.alphaBoundTol = ladrunoData(b + 1);
+        mLadrunoSas.opt.alphaProject  = (int)ladrunoData(b + 2);
+        mLadrunoSas.opt.alphaInMode   = (int)ladrunoData(b + 3);
+        mLadrunoSas.opt.errorVars     = (int)ladrunoData(b + 4);
+        for (int i = 0; i < LSAS_COUNT; i++)
+            mLadrunoSas.stats[i] = ladrunoData(b + 5 + i);
+    }
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -4473,7 +4621,8 @@ LadrunoSANISAND::updateParameter(int parameterID, Information &info)
 int
 LadrunoSANISAND::ladrunoUpdateStatus(void) const
 {
-    return mSubstepCapHitInME ? LADRUNO_MATERIAL_REFUSED : 0;
+    // Ladruno WP-129: an SAS-ME refusal (never set on any other scheme).
+    return (mSubstepCapHitInME || mLadrunoSas.refused) ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 // Ladruno (ADR-86b): "substeps" / "substepsME" -- what the last update cost.
@@ -4520,6 +4669,11 @@ constexpr int LadrunoSanisandYieldDistanceResponseID = 33095;   // Ladruno (TIMs
 // Ladruno WP-127 (TIMs F20a): `substepStats`, the per-instance ModifiedEuler
 // census. Same band, same rule.
 constexpr int LadrunoSanisandSubstepStatsResponseID    = 33097;   // Ladruno WP-127
+// Ladruno WP-129: `sasStats` (the SAS-ME census, per instance) and `tangentEP`
+// (the continuum elastoplastic tangent at the COMMITTED state, whatever
+// TanType -- TIMs F20(c)). Same band, same rule.
+constexpr int LadrunoSanisandSasStatsResponseID        = 33098;   // Ladruno WP-129
+constexpr int LadrunoSanisandTangentEPResponseID       = 33099;   // Ladruno WP-129
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -4655,7 +4809,51 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         Vector probe(LMS_COUNT);
         return new MaterialResponse(this, LadrunoSanisandSubstepStatsResponseID, probe);
     }
+    // Ladruno WP-129: the SAS-ME census. EVERY column is PER INTEGRATION POINT,
+    // cumulative since revertToStart except the LAST_* ones; survives
+    // revertToLastCommit. Layout: ManzariDafalias.h, LSAS_*; guide "choosing an IntScheme".
+    if (argc > 0 && (strcmp(argv[0], "sasStats") == 0 || strcmp(argv[0], "SasStats") == 0)) {
+        static const char *names[LSAS_COUNT] = {
+            "sas_updates", "sas_elastic", "sas_substeps", "sas_accepted", "sas_rejectedErr",
+            "sas_rejectedLowP", "sas_rejectedNonPosH", "sas_rejectedDrift", "sas_rejectedAlpha",
+            "sas_elasticStages", "sas_driftCorrections", "sas_alphaInReseats", "sas_hBrackets",
+            "sas_alphaProjected", "sas_intersectFail", "sas_refusals", "sas_refStartF",
+            "sas_refStartAlpha", "sas_refStartOther", "sas_refDTmin", "sas_refNonPosH",
+            "sas_refLowP", "sas_refDrift", "sas_refAlpha", "sas_refCap",
+            "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
+            "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF"};
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        for (int i = 0; i < LSAS_COUNT; i++)
+            output.tag("ResponseType", names[i]);
+        output.endTag();
+        Vector probe(LSAS_COUNT);
+        return new MaterialResponse(this, LadrunoSanisandSasStatsResponseID, probe);
+    }
+    // Ladruno WP-129 (TIMs F20(c)): 6x6, internal (compression-positive) Voigt,
+    // which is also the element convention for a tangent (both signs flip).
+    if (argc > 0 && (strcmp(argv[0], "tangentEP") == 0 || strcmp(argv[0], "TangentEP") == 0)) {
+        Matrix probe(6, 6);
+        return new MaterialResponse(this, LadrunoSanisandTangentEPResponseID, probe);
+    }
     return ManzariDafalias::setResponse(argv, argc, output);
+}
+
+// Ladruno WP-129 (TIMs F20(c)): the continuum elastoplastic tangent at the
+// COMMITTED state (mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e_n), plastic
+// loading assumed, with the committed-state moduli -- regardless of TanType
+// and of the IntScheme. It is the operator GetElastoPlasticTangent builds, i.e.
+// what TanType 1 hands the element after a plastic step ending at that state.
+Matrix
+LadrunoSANISAND::ladrunoTangentEP(void)
+{
+    Matrix Cep(6, 6);
+    double K, G;
+    const double e = m_e_init - (1 + m_e_init) * GetTrace(mEpsilon_n);
+    GetElasticModuli(mSigma_n, e, K, G);
+    ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, K, G, Cep);
+    return Cep;
 }
 
 int
@@ -4760,6 +4958,15 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
             out(i) = mLadrunoMEStats[i];
         return matInformation.setVector(out);
     }
+    // Ladruno WP-129
+    if (responseID == LadrunoSanisandSasStatsResponseID) {
+        Vector out(LSAS_COUNT);
+        for (int i = 0; i < LSAS_COUNT; i++)
+            out(i) = mLadrunoSas.stats[i];
+        return matInformation.setVector(out);
+    }
+    if (responseID == LadrunoSanisandTangentEPResponseID)
+        return matInformation.setMatrix(this->ladrunoTangentEP());
     return ManzariDafalias::getResponse(responseID, matInformation);
 }
 
@@ -5064,8 +5271,13 @@ LadrunoSANISAND::ladrunoReplayRun(const LadrunoReplayRequest &q,
     mDEpsNormCommit = q.prevIncrNorm;
     mImplexCommitRefusedLatch = false;
     this->ladrunoResetMEStats();
+    this->ladrunoResetSasStats();                              // Ladruno WP-129
 
     const double fBefore = this->GetF(mSigma_n, mAlpha_n);
+    // Ladruno WP-129: the loaded state's alpha/alpha^b and continuum tangent,
+    // for the appended SAS-ME tail block (see the command's docs below).
+    const double ratioBefore = this->ladrunoSasAlphaRatio(mAlpha_n, mSigma_n, mVoidRatio);
+    const Matrix tangentEPBefore = this->ladrunoTangentEP();
 
     LadrunoMESubstepTrace trace;
     trace.capRecords = q.traceCap;
@@ -5119,6 +5331,20 @@ LadrunoSANISAND::ladrunoReplayRun(const LadrunoReplayRequest &q,
     out.push_back(tr0[1]);
     out.push_back(tr0[2]);
     out.insert(out.end(), trace.rec.begin(), trace.rec.end());
+    // Ladruno WP-129: an appended TAIL (format version stays 1; a v1 reader
+    // that stops after the trace records is unaffected):
+    //   129 (tail tag), LSAS_COUNT, the `sasStats` census of this update,
+    //   alpha/alpha^b before, alpha/alpha^b after (Lode angle of alpha itself),
+    //   the continuum tangentEP at the LOADED state (36, row-major).
+    out.push_back((double)LADRUNO_INT_SAS_ME);
+    out.push_back((double)LSAS_COUNT);
+    for (int i = 0; i < LSAS_COUNT; i++)
+        out.push_back(mLadrunoSas.stats[i]);
+    out.push_back(ratioBefore);
+    out.push_back(this->ladrunoSasAlphaRatio(mAlpha, mSigma, mVoidRatio));
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 6; j++)
+            out.push_back(tangentEPBefore(i, j));
     return 0;
 }
 

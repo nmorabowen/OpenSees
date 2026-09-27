@@ -1035,6 +1035,7 @@ void ManzariDafalias::integrate()
     mLadrunoMEEnteredThisUpdate = false;                            // Ladruno WP-127
     mLadrunoLastPath = -1;                                          // Ladruno WP-127
     mLadrunoLastElasticRatio = std::numeric_limits<double>::quiet_NaN(); // Ladruno WP-127
+    mLadrunoSas.refused = false;                                    // Ladruno WP-129
 
     // update alpha_in in case of unloading
 	// I assume full elastic step and check if the new stress direction is "dramatically" 
@@ -1065,6 +1066,9 @@ void ManzariDafalias::integrate()
             BackwardEuler_CPPM(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,
                 mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio, mG, 
                 mK, mCe, mCep, mCep_Consistent);
+        // Ladruno WP-129: SAS-ME, only where a refusal can reach analyze
+        else if (mLadrunoSas.allowed && mScheme == LADRUNO_INT_SAS_ME)   // Ladruno WP-129
+            ladrunoSasIntegrate();                                      // Ladruno WP-129
         // explicit schemes
         else
             explicit_integrator(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,
