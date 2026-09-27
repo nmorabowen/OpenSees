@@ -117,7 +117,7 @@ class Material:
     def __init__(self, params, TolF=1e-7, TolE=1e-4, Pres=0.0, Pmin=0.0101,
                  maxSubsteps=20000, reversalTol=1e-10, reversalRel=0.05,
                  err_floor=None, dT_min=1e-6, forced_policy="vanilla",
-                 drag="vanilla", correction=True, alpha_err=False):
+                 drag="vanilla", correction=True, alpha_err=False, fabric_err=False):
         (self.G0, self.nu, self.e_init, self.Mc, self.c, self.lamc, self.e0,
          self.ksi, self.Patm, self.m, self.h0, self.ch, self.nb, self.A0,
          self.nd, self.zmax, self.cz, self.den) = params
@@ -138,6 +138,8 @@ class Material:
         self.drag = drag
         self.correction = correction
         self.alpha_err = alpha_err
+        #   fabric_err True: ... and on the fabric stages (same form)
+        self.fabric_err = fabric_err
 
     # ------------------------------------------------------------ model
     def g(self, c3):
@@ -296,6 +298,11 @@ class Material:
                 ea = ncontr(sub(da2, da1))
                 ea = ea if an < 0.5 else ea / (2 * an)
                 err = max(err, ea)
+            if self.fabric_err:
+                zn = ncontr(Z)
+                ez = ncontr(sub(dz2, dz1))
+                ez = ez if zn < 0.5 else ez / (2 * zn)
+                err = max(err, ez)
             info = dict(kinds=(k1, k2), Kp=(Kp1, Kp2), h=(st1["h"], st2["h"]),
                         aain=(st1["aain"], st2["aain"]), bn=(contr(st1["b"], st1["n"]),),
                         errabs=dd, snorm=sn, nS=nS, nA=nA, e=e,

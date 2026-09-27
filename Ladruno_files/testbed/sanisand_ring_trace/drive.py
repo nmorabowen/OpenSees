@@ -72,6 +72,36 @@ def diag(st):
                 norm_z=B.norm(st["z"]))
 
 
+def run_const_p(st, dyy, n, tag, p_target=None, tol=1e-10):
+    """Plane-strain CONSTANT-p compression: each increment prescribes
+    d_eps_yy = dyy and solves d_eps_xx (secant, on committed replays) so the
+    returned p equals p_target (default: the start p).  Returns the history
+    like run(); `de` is the increment actually committed."""
+    p0 = B.tr(st["sigma"]) / 3.0 if p_target is None else p_target
+    hist, prev = [], 0.0
+    for k in range(n):
+        def g(x):
+            de = [x, dyy, 0.0, 0.0, 0.0, 0.0]
+            new, info = step_cpp(tag, st, de, prev)
+            return B.tr(new["sigma"]) / 3.0 - p0, de, new, info
+        x0, x1 = -dyy, -0.8 * dyy
+        g0, de, new, info = g(x0)
+        g1, de, new, info = g(x1)
+        for _ in range(40):
+            if abs(g1) < tol * p0 or g1 == g0:
+                break
+            x0, x1 = x1, x1 - g1 * (x1 - x0) / (g1 - g0)
+            g0 = g1
+            g1, de, new, info = g(x1)
+        info.pop("trace", None)
+        d = diag(new)
+        hist.append(dict(k=k, de=de, before=st, after=new, p_miss=g1, **info, **d))
+        if info["rc"] != 0:
+            break
+        st, prev = new, ncov(de)
+    return hist
+
+
 def run(st, incs, backend="cpp", tag=None, mat=None, stop_on_fail=False,
         keep_trace=False):
     hist = []

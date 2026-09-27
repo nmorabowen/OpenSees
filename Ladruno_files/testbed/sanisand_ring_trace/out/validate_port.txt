@@ -36,4 +36,4 @@ MISMATCH 4896/1 isoComp@1e-04: C++ rc=0 sub=244 acc=201 forced=1 | py rc=0 sub=2
 MISMATCH 4896/2 isoExt@1e-05: C++ rc=0 sub=101 acc=68 forced=0 | py rc=0 sub=107 acc=72 forced=0 path C++=unloadThenPlastic py=4 dsig=7.08e-04 dalpha=1.97e-04
    C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=20001 -> ROUND-OFF CHAOTIC
 MISMATCH 4896/2 isoExt@1e-04: C++ rc=0 sub=18643 acc=18583 forced=0 | py rc=-3 sub=20001 acc=19974 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
-cases 1600, mismatches 19 (of which C++ itself round-off chaotic: 18), worst rel diff on census-identical cases 6.35e-03
+cases 1600, mismatches 19 (of which C++ itself round-off chaotic: 18), worst rel diff on the matching cases 5.13e-11

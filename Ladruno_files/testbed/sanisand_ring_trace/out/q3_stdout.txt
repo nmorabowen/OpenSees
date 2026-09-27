@@ -51,6 +51,19 @@
   CPPM(1e-10)     isoExt@1e-05   rc=  0 unloadThenPlastic  sub=  6657 acc=  6553 forced=    1 clampMc=    1 abandon=0 cap=0 pnR=0 p=0.127 eta=1.329 eta_a=1.324 f0=7.5e-10 f1=2.84e-10 maxErr=0.87
   CPPM(1e-10)     shear+@1e-05   rc=  0 unloadThenPlastic  sub=  5780 acc=  5720 forced=    1 clampMc=    1 abandon=0 cap=0 pnR=0 p=0.3516 eta=1.326 eta_a=1.331 f0=7.5e-10 f1=-5.35e-10 maxErr=0.0024
   CPPM(1e-10)     shear-@1e-05   rc=  0 plastic            sub=  2420 acc=  2415 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.3521 eta=12.86 eta_a=12.86 f0=7.5e-10 f1=7.5e-10 maxErr=0.0093
+  ME+aErr(port)   zero           rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3519 eta=12.87 eta_a=12.87 f1=7.5e-10
+  ME+aErr(port)   isoComp@1e-07  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3541 eta=12.79 eta_a=12.79 f1=7.55e-10
+  ME+aErr(port)   isoExt@1e-07   rc=  0 path=4   sub=     7 acc=     3 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3496 eta=12.96 eta_a=12.95 f1=8.21e-10
+  ME+aErr(port)   shear+@1e-07   rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3519 eta=12.87 eta_a=12.87 f1=-0.000478
+  ME+aErr(port)   shear-@1e-07   rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3519 eta=12.87 eta_a=12.87 f1=3.03e-10
+  ME+aErr(port)   isoComp@1e-06  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3744 eta=12.1 eta_a=12.1 f1=7.98e-10
+  ME+aErr(port)   isoExt@1e-06   rc=  0 path=4   sub=   144 acc=    41 forced=    1 clampMc=    1 corrGiveUp=0 p=0.3313 eta=1.331 eta_a=1.326 f1=8.5e-08
+  ME+aErr(port)   shear+@1e-06   rc=  0 path=4   sub=   215 acc=   149 forced=    0 clampMc=    0 corrGiveUp=0 p=0.352 eta=12.85 eta_a=12.85 f1=2.37e-10
+  ME+aErr(port)   shear-@1e-06   rc=  0 path=3   sub=     8 acc=     6 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3519 eta=12.87 eta_a=12.87 f1=4.86e-12
+  ME+aErr(port)   isoComp@1e-05  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.5771 eta=7.857 eta_a=7.852 f1=1.23e-09
+  ME+aErr(port)   isoExt@1e-05   rc=  0 path=4   sub=   404 acc=   257 forced=    1 clampMc=    1 corrGiveUp=0 p=0.1279 eta=1.329 eta_a=1.324 f1=1.91e-09
+  ME+aErr(port)   shear+@1e-05   rc=  0 path=4   sub=   388 acc=   225 forced=    1 clampMc=    1 corrGiveUp=0 p=0.3518 eta=1.327 eta_a=1.331 f1=6.54e-12
+  ME+aErr(port)   shear-@1e-05   rc=  0 path=3   sub=    59 acc=    56 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3521 eta=12.86 eta_a=12.86 f1=6.75e-09
 == b8 el 1950 gp 2: p=0.353, eta=12.06, eta_alpha=12.05, f=7.809e-11, f_over_p=2.212e-10, cone_radius=0.001441, Mb_theta=2.061, alpha_b_theta=2.056, psi=-0.1301, alpha_over_alpha_b=5.862, b_dot_n=-7.578, alpha_minus_in_dot_n=9.257, tr_alpha=-2e-10, tr_alpha_in=0, tr_z=-0.0003773, norm_z=9.692
   ME(campaign)    zero           rc=  0 elastic            sub=     0 acc=     0 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.353 eta=12.06 eta_a=12.05 f0=7.81e-11 f1=7.81e-11 maxErr=nan
   ME(campaign)    isoComp@1e-07  rc=  0 plastic            sub=     1 acc=     1 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.3553 eta=11.98 eta_a=11.98 f0=7.81e-11 f1=7.86e-11 maxErr=0
@@ -104,6 +117,19 @@
   CPPM(1e-10)     isoExt@1e-05   rc=  0 unloadThenPlastic  sub=  6452 acc=  6361 forced=    1 clampMc=    1 abandon=0 cap=0 pnR=0 p=0.1282 eta=1.329 eta_a=1.324 f0=7.81e-11 f1=4.16e-11 maxErr=0.87
   CPPM(1e-10)     shear+@1e-05   rc=  0 plastic            sub=  2004 acc=  1997 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.3528 eta=11.86 eta_a=11.86 f0=7.81e-11 f1=1.38e-12 maxErr=0.00011
   CPPM(1e-10)     shear-@1e-05   rc=  0 plastic            sub=  1511 acc=  1506 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.3532 eta=12.05 eta_a=12.05 f0=7.81e-11 f1=7.8e-11 maxErr=0.0087
+  ME+aErr(port)   zero           rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.353 eta=12.06 eta_a=12.05 f1=7.81e-11
+  ME+aErr(port)   isoComp@1e-07  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3553 eta=11.98 eta_a=11.98 f1=7.86e-11
+  ME+aErr(port)   isoExt@1e-07   rc=  0 path=4   sub=     7 acc=     3 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3507 eta=12.14 eta_a=12.13 f1=6.64e-10
+  ME+aErr(port)   shear+@1e-07   rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.353 eta=12.06 eta_a=12.05 f1=-0.000584
+  ME+aErr(port)   shear-@1e-07   rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.353 eta=12.06 eta_a=12.05 f1=5.16e-11
+  ME+aErr(port)   isoComp@1e-06  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3756 eta=11.34 eta_a=11.33 f1=8.31e-11
+  ME+aErr(port)   isoExt@1e-06   rc=  0 path=4   sub=   118 acc=    36 forced=    1 clampMc=    1 corrGiveUp=0 p=0.3306 eta=1.331 eta_a=1.326 f1=2.54e-12
+  ME+aErr(port)   shear+@1e-06   rc=  0 path=4   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.353 eta=12.04 eta_a=12.04 f1=1.22e-09
+  ME+aErr(port)   shear-@1e-06   rc=  0 path=3   sub=     8 acc=     6 forced=    0 clampMc=    0 corrGiveUp=0 p=0.353 eta=12.06 eta_a=12.05 f1=1.39e-11
+  ME+aErr(port)   isoComp@1e-05  rc=  0 path=3   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.5786 eta=7.365 eta_a=7.36 f1=1.28e-10
+  ME+aErr(port)   isoExt@1e-05   rc=  0 path=4   sub=   390 acc=   257 forced=    1 clampMc=    1 corrGiveUp=0 p=0.1277 eta=1.329 eta_a=1.324 f1=4.21e-10
+  ME+aErr(port)   shear+@1e-05   rc=  0 path=4   sub=    14 acc=    10 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3528 eta=11.86 eta_a=11.86 f1=1.01e-08
+  ME+aErr(port)   shear-@1e-05   rc=  0 path=3   sub=    59 acc=    56 forced=    0 clampMc=    0 corrGiveUp=0 p=0.3532 eta=12.05 eta_a=12.05 f1=5.32e-09
 == b8 el 1859 gp 2: p=0.9308, eta=1.568, eta_alpha=1.564, f=1.103e-10, f_over_p=1.185e-10, cone_radius=0.0038, Mb_theta=1.519, alpha_b_theta=1.514, psi=-0.1356, alpha_over_alpha_b=1.033, b_dot_n=0.3297, alpha_minus_in_dot_n=0.9062, tr_alpha=0.002265, tr_alpha_in=0, tr_z=-1e-09, norm_z=3.809
   ME(campaign)    zero           rc=  0 elastic            sub=     0 acc=     0 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.9308 eta=1.568 eta_a=1.564 f0=-0.0002 f1=-0.0002 maxErr=nan
   ME(campaign)    isoComp@1e-07  rc=  0 elastic            sub=     0 acc=     0 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.9345 eta=1.562 eta_a=1.564 f0=-0.0002 f1=-0.00199 maxErr=nan
@@ -157,3 +183,16 @@
   CPPM(1e-10)     isoExt@1e-05   rc=  0 elasticToPlastic   sub= 35358 acc= 35352 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.5661 eta=1.712 eta_a=1.707 f0=-0.0002 f1=-4.72e-08 maxErr=0.12
   CPPM(1e-10)     shear+@1e-05   rc=  0 notExplicit        sub=     0 acc=     0 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.9309 eta=1.541 eta_a=1.539 f0=-0.0002 f1=-9.11e-18 maxErr=nan
   CPPM(1e-10)     shear-@1e-05   rc=  0 notExplicit        sub=     0 acc=     0 forced=    0 clampMc=    0 abandon=0 cap=0 pnR=0 p=0.9307 eta=1.557 eta_a=1.556 f0=-0.0002 f1=7.36e-14 maxErr=nan
+  ME+aErr(port)   zero           rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9308 eta=1.568 eta_a=1.564 f1=-0.0002
+  ME+aErr(port)   isoComp@1e-07  rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9345 eta=1.562 eta_a=1.564 f1=-0.00199
+  ME+aErr(port)   isoExt@1e-07   rc=  0 path=2   sub=    11 acc=     9 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9271 eta=1.573 eta_a=1.568 f1=6.33e-08
+  ME+aErr(port)   shear+@1e-07   rc=  0 path=0   sub=     0 acc=     0 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9308 eta=1.568 eta_a=1.564 f1=-0.000135
+  ME+aErr(port)   shear-@1e-07   rc=  0 path=2   sub=     1 acc=     1 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9308 eta=1.568 eta_a=1.564 f1=-2.19e-08
+  ME+aErr(port)   isoComp@1e-06  rc=  0 path=2   sub=    13 acc=     9 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9638 eta=1.565 eta_a=1.568 f1=7.74e-13
+  ME+aErr(port)   isoExt@1e-06   rc=  0 path=2   sub=    29 acc=    26 forced=    0 clampMc=    0 corrGiveUp=0 p=0.8944 eta=1.6 eta_a=1.595 f1=2.51e-08
+  ME+aErr(port)   shear+@1e-06   rc=  0 path=2   sub=    11 acc=     9 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9308 eta=1.566 eta_a=1.563 f1=8e-08
+  ME+aErr(port)   shear-@1e-06   rc=  0 path=2   sub=    10 acc=     8 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9308 eta=1.566 eta_a=1.564 f1=2.26e-12
+  ME+aErr(port)   isoComp@1e-05  rc=  0 path=2   sub=    75 acc=    69 forced=    0 clampMc=    0 corrGiveUp=0 p=1.236 eta=1.611 eta_a=1.615 f1=3.22e-12
+  ME+aErr(port)   isoExt@1e-05   rc=  0 path=2   sub=   234 acc=   230 forced=    0 clampMc=    0 corrGiveUp=0 p=0.5661 eta=1.712 eta_a=1.707 f1=9.57e-08
+  ME+aErr(port)   shear+@1e-05   rc=  0 path=2   sub=    35 acc=    31 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9309 eta=1.543 eta_a=1.541 f1=1.76e-09
+  ME+aErr(port)   shear-@1e-05   rc=  0 path=2   sub=    42 acc=    37 forced=    0 clampMc=    0 corrGiveUp=0 p=0.9307 eta=1.557 eta_a=1.556 f1=5.21e-11

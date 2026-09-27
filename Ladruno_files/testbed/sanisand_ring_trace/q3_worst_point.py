@@ -12,6 +12,7 @@ import math
 
 import _boot as B
 from _boot import ops, sr
+import md_port
 
 ROWS = [(1950, 3), (1950, 2), (1859, 2)]
 
@@ -74,6 +75,21 @@ def main():
                       f"abandon={row['abandonLowP']} cap={row['cap']} pnR={row['pnReset']} "
                       f"p={p:.4g} eta={row['eta']:.4g} eta_a={row['eta_alpha']:.4g} "
                       f"f0={row['f_before']:.3g} f1={row['f_after']:.3g} maxErr={row['maxErr']:.2g}")
+        # the validated port, ME with alpha ALSO in the substep error (finding E)
+        m = md_port.Material(B.P, alpha_err=True)
+        for pname, de in probes().items():
+            o = m.update(r["sigma"], B.dev(r["alpha"]), B.dev(r["alpha_in"]), B.dev(r["z"]), r["e"], de)
+            sig, al = o["sigma"], o["alpha"]
+            p = B.tr(sig) / 3
+            row = dict(rc=o["rc"], path=o["path"], substeps=o["substeps"], accepted=o["acc"],
+                       forced=o["forced"], clampMc=o["clamp"], corrGiveUp=o["corrGiveUp"],
+                       p=p, eta=B.eta_sigma(sig), eta_alpha=B.eta_alpha(al),
+                       f_after=o["f_after"], sigma=sig, alpha=al)
+            res[str(key)]["runs"][f"ME+aErr(port)|{pname}"] = row
+            print(f"  {'ME+aErr(port)':<15} {pname:<14} rc={row['rc']:>3} path={row['path']:<3}"
+                  f" sub={row['substeps']:>6} acc={row['accepted']:>6} forced={row['forced']:>5} "
+                  f"clampMc={row['clampMc']:>5} corrGiveUp={row['corrGiveUp']} "
+                  f"p={p:.4g} eta={row['eta']:.4g} eta_a={row['eta_alpha']:.4g} f1={row['f_after']:.3g}")
     with open(f"{B.OUT}/q3_worst_point.json", "w") as fh:
         json.dump(res, fh, indent=1)
 
