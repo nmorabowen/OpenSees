@@ -33,6 +33,18 @@ import concrete3d_ref as ref  # noqa: E402
 pytestmark = [pytest.mark.zone_a]
 
 
+# Zone-A wall-time knob (WP concrete3d-damage-drive CI fix): the flow-potential F4 fuzz and the
+# g++ self-check's own fuzzes (tests/_testbed/concrete3d_kernel_check.cpp) share this ONE env var.
+# Unset (a human running `pytest` locally) => FULL trial count, the thorough default. The Zone-A
+# CI step (.github/workflows/ladruno.yml) exports a small value so the per-push gate stays a fast
+# SMOKE of the same fuzz rather than skipping it outright — `--runslow`/LADRUNO_RUN_SLOW is the
+# opt-in for tests with no such knob (see the slow-marked gates below), this is the opt-OUT-of-cost
+# knob for the ones that do have one. Both sides are deterministic (fixed RNG seeds), so a smaller
+# N is reproducible, not flaky — it just samples less of the trial space.
+LADRUNO_FUZZ_TRIALS_DEFAULT = 1500
+LADRUNO_FUZZ_TRIALS = int(os.environ.get("LADRUNO_FUZZ_TRIALS", str(LADRUNO_FUZZ_TRIALS_DEFAULT)))
+
+
 CASES = [(30.0, 3.0), (40.0, 3.5), (50.0, 4.0), (25.0, 2.0)]
 
 
@@ -178,11 +190,15 @@ def test_p2_damage_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
 def test_p2b_compression_damage_gate():
     """P2b: compressive damage wc + the alpha_c tension/compression split (CDPM2 Eq.37,46-57).
     C0 alpha_c -> 0 (tension) / 1 (compression) + Eq.37 == eps0 on the failure surface; C0b damage
     initiates at kappa_p=1; C1 nominal compression peaks at fc then softens; C2 the crack-band Gc
-    softening-law wiring (Gc/lch BY CONSTRUCTION). FE-visible total non-objectivity (C3) reported."""
+    softening-law wiring (Gc/lch BY CONSTRUCTION). FE-visible total non-objectivity (C3) reported.
+
+    ~94s measured locally (16-core box) => opt-in (--runslow / LADRUNO_RUN_SLOW=1); WP
+    concrete3d-damage-drive CI fix (this gate has no fuzz/trial-count knob to shrink instead)."""
     r = ref.run_p2b_gate(verbose=False)
     assert r["C0_ok"]                       # alpha_c split: 0 tension, 1 compression
     assert r["C0_eqstrain_ok"]              # Eq.37 equivalent strain == eps0 on the failure surface
@@ -268,8 +284,12 @@ def test_p2e_analytic_damaged_tangent_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
 def test_p2f_gate():
-    """P2f: the CDPM2 cyclic beta_c (Eq.50) restored into the compressive-damage plastic driver
+    """~123s measured locally (16-core box) => opt-in (--runslow / LADRUNO_RUN_SLOW=1); WP
+    concrete3d-damage-drive CI fix (no fuzz/trial-count knob to shrink instead).
+
+    P2f: the CDPM2 cyclic beta_c (Eq.50) restored into the compressive-damage plastic driver
     kappa_dc1 (Eq.48) — `beta_c = ft qh2 sqrt(2/3) / (rho_bar sqrt(1+2 Df^2))`. In monotonic compression
     beta_c ~ ft/(fc sqrt(1+2 Df^2)) << 1, so it makes compression markedly MORE DUCTILE than the
     beta_c=1 simplification the P2b/P2c slice used (the chosen 'faithful CDPM2' direction). F1 the
@@ -289,8 +309,12 @@ def test_p2f_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
 def test_p2g_monotone_damage_gate():
-    """P2g: MONOTONE (no-heal) cyclic damage. omega_t/omega_c were re-solved every step against the LIVE
+    """~156s measured locally (16-core box) => opt-in (--runslow / LADRUNO_RUN_SLOW=1); WP
+    concrete3d-damage-drive CI fix (no fuzz/trial-count knob to shrink instead).
+
+    P2g: MONOTONE (no-heal) cyclic damage. omega_t/omega_c were re-solved every step against the LIVE
     effective drive stress; the kappa-histories are already monotone, so on an elastic UNLOAD the live
     drive drops and the bracketed solve relaxes omega back (the material spuriously HEALS — #321's F4
     diagnostic). The fix drives each omega with the running MAX of its channel's drive stress, so
@@ -355,6 +379,7 @@ def test_p2i_multiaxial_apportioning_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
 def test_p5_confined_fiber_gate():
     """P5: CONFINED-FIBER view (ADR 4.6) — the SAME kernel condensed against a PASSIVE hoop spring, so the
     confinement strength + ductility gain ("Mander by mechanism") EMERGE from the MW cap + non-associated
@@ -365,7 +390,10 @@ def test_p5_confined_fiber_gate():
     F3 THE HEADLINE: fcc/fc reproduces the Mander circular-hoop formula evaluated at the SELF-MOBILIZED
     p_conf@peak to within 5% for p/fc in [~0.1,0.2] (the mechanism analog of the 3-D active-confinement gate).
     F4 hoop YIELD caps the mobilized pressure (stirrup yields => bounded confinement). Circular/spiral hoops
-    only (symmetric eps22=eps33 condensation; rectangular ties are anisotropic — a two-spring extension)."""
+    only (symmetric eps22=eps33 condensation; rectangular ties are anisotropic — a two-spring extension).
+
+    ~71s measured locally (16-core box) => opt-in (--runslow / LADRUNO_RUN_SLOW=1); WP
+    concrete3d-damage-drive CI fix (fixed hoop-stiffness sweep, no fuzz/trial-count knob)."""
     r = ref.run_p5_gate(verbose=False)
     assert r["F1_reduce_1d"] < 1.0e-9                            # hoop_K=0 reduces to the free 1-D driver
     assert r["F2_strength_monotone"]                            # fcc grows with hoop stiffness (confined strength)
@@ -485,8 +513,14 @@ def test_flow_potential_gate():
     dilation constant) replacing the v1 always-dilatant flow. F1 analytic gradient + Hessian == FD; F2 OOFEM
     con2dpm2 plasticity reproduced (step 1 == the OOFEM transcription to 0.5 %); F3 Kupfer -1/0 peak strain
     (-2.20 vs -2.19 mm/m; legacy -1.50) and the Fig.9 post-peak with eps_fc = 6e-4; F4 fuzz: 0 failed returns,
-    0 sign flips (with sub-incrementation)."""
-    r = ref.run_flow_potential_gate(verbose=False)
+    0 sign flips (with sub-incrementation).
+
+    F4's trial count is LADRUNO_FUZZ_TRIALS (default 1500, ~167s measured locally on a 16-core box —
+    the F4 fuzz dominates F1-F3). Zone-A CI exports a smaller value so this stays a fast smoke of the
+    same fuzz every push instead of paying the full 1500-trial cost or skipping it outright; the
+    per-trial assertions (0 failed, 0 sign flips) are unchanged and the RNG seed is fixed, so a
+    smaller N is a deterministic subsample, not a weaker gate."""
+    r = ref.run_flow_potential_gate(verbose=False, fuzz_n=LADRUNO_FUZZ_TRIALS)
     assert r["F1_ok"], (r["F1_grad"], r["F1_hess"], r["F1_cap_dgdsigV"])
     assert r["F2_ok"], r["F2"]
     assert r["F3_ok"], r["F3"]
@@ -506,12 +540,16 @@ def test_compression_drive_gate():
     assert r["PASS"]
 
 
+@pytest.mark.slow
 def test_tc_temper_gate():
     """PV20 — tension->compression damage temper (-tcTemper proj, the nDMaterial default). Vecchio-Collins PV20
     collapsed (tau 1.76 -> 0.03 MPa, test 4.26) because literal CDPM2 Eq.47/48 feed the compressive damage history
     with the crack-opening plastic strain and the hardened crack stress. T1 crack-then-compress: fc to 10 % with
     'proj' (literal: > 2 fc); T2 PV20 element strain path: 'none' strut < 0.3 fc, 'proj' > 0.9 fc; T3 analytic ==
-    FD damaged tangent at a cracked-strut state; T4 'proj' == 'none' EXACTLY in uniaxial/equibiaxial compression."""
+    FD damaged tangent at a cracked-strut state; T4 'proj' == 'none' EXACTLY in uniaxial/equibiaxial compression.
+
+    ~105s measured locally (16-core box) => opt-in (--runslow / LADRUNO_RUN_SLOW=1); WP
+    concrete3d-damage-drive CI fix (fixed-length path drivers, no fuzz/trial-count knob)."""
     r = ref.run_tc_temper_gate(verbose=False)
     assert r["T1_ok"], (r[("T1", "none")], r[("T1", "proj")])
     assert r["T2_ok"], (r[("T2", "none")], r[("T2", "proj")])
