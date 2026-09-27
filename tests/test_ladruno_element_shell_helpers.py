@@ -296,8 +296,7 @@ def test_ground_inertia_rigid_body(name, direction):
 # through the forall broadcast ("E") or one "material k E" parameter per Gauss point.
 N_POINTS = {"LadrunoQuad": 4, "LadrunoCST": 1, "LadrunoLST": 3, "LadrunoCSTPair": 2,
             "LadrunoBrick": 8, "LadrunoBrick20": 27, "BezierTri6": 3, "BezierTet10": 4}
-C3 = pytest.mark.xfail(strict=True, reason="C3: LadrunoCSTPair has no setParameter")
-PARAM = [pytest.param(n, marks=C3) if n == "LadrunoCSTPair" else n for n in ELEMENTS]
+PARAM = list(ELEMENTS)   # C3 fixed: LadrunoCSTPair forwards parameters too
 
 
 def _solve_disp(name, params=()):

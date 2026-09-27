@@ -626,6 +626,20 @@ int LadrunoCSTPair::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
   return res;
 }
 
+// Ladruno (WP-124 C3): parameters forward to the two triangle materials -- the
+// element had NO setParameter, so 'parameter ... E' (and every material
+// parameter, the class of defect #224 fixed for Bezier) was silently unclaimed.
+// 'material k <args>' targets triangle k (1..2); anything else is broadcast.
+// materialState is NOT a GP address (the staged-analysis switch): it broadcasts.
+int LadrunoCSTPair::setParameter(const char **argv, int argc, Parameter &param)
+{
+  if (argc < 1)
+    return -1;
+  if (strstr(argv[0], "material") != 0 && strcmp(argv[0], "materialState") != 0)
+    return LadrunoShell::forwardToMaterialPoint(theMaterial, numtri, false, argv, argc, param);
+  return LadrunoShell::forwardToMaterials(theMaterial, numtri, argv, argc, param);
+}
+
 void LadrunoCSTPair::Print(OPS_Stream &s, int flag)
 {
   if (flag == OPS_PRINT_CURRENTSTATE) {
