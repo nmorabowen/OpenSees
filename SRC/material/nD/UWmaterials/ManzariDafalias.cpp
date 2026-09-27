@@ -56,6 +56,10 @@
 // to miss this class's 1..8 and LadrunoSANISAND's 33086..33096; it is a response
 // id, not a class tag, and nothing may derive one from it.
 constexpr int LadrunoManzariTangentResponseID = 33110;          // Ladruno WP-110 (F15)
+// Ladruno WP-130 (review r1): -cppmStart explicit accepts a guess-started CPPM
+// root only if it agrees with the 50-substep explicit walk to this relative
+// stress distance (see BackwardEuler_CPPM).
+static const double LADRUNO_GUESS_AGREE = 0.02;                     // Ladruno WP-130
 
 // Ladruno WP-130 (TIMs F18(c); WP-131 inventory D6): a re-entrant Matrix::Invert
 // for NewtonSol's three small inverses. Matrix::Invert runs DGETRF/DGETRI on the
@@ -1173,6 +1177,7 @@ void ManzariDafalias::integrate()
                 if (rc == 1 && !mLadrunoCPPMRefused) {                       // Ladruno WP-130
                     mSubstepCapHitInME = false;                              // Ladruno WP-130
                     mLadrunoMEStats[LMS_ME_FALLBACK_OK] += 1.0;              // Ladruno WP-130
+                    mLadrunoMEStats[LMS_LAST_CAP] = 2.0;                     // Ladruno WP-130 (review r1): cap hit, RESCUED
                 } else {                                                     // Ladruno WP-130
                     mLadrunoCPPMRefused = true;                              // Ladruno WP-130
                     mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 1.0;            // Ladruno WP-130
@@ -2832,9 +2837,26 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
                 // A 50-substep ForwardEuler walk moves alpha off alpha_in in its
                 // first substep (dGamma ~ 1/h there, so dAlpha stays finite) and
                 // lands near the return. Off by default (mLadrunoCPPMStart == 0).
+                // Review round 1 (#868): (i) the guess must not CLOBBER the
+                // trial-start errFlag -- a trial non-convergence (0: halve)
+                // followed by a singular guess (-1: explicit) skipped halving;
+                // the trial's errFlag and state are restored whenever the guess
+                // is not accepted. (ii) A guess-started root is ONE backward-Euler
+                // step over the whole increment, found only because the start is
+                // good -- where the trial start failed, the ladder would have
+                // halved, which is far more accurate (measured errors up to 0.77
+                // relative vs an oracle). So the root is ACCEPTED only if it is
+                // plastically admissible (dGamma >= 0, p > 0) AND agrees with the
+                // 50-substep explicit walk itself to LADRUNO_GUESS_AGREE in
+                // stress: two different integrators agreeing is the error
+                // estimate. Otherwise the ladder runs exactly as without the flag.
                 if (mLadrunoCPPMStart != 0 && !ladrunoGuessTried) {        // Ladruno WP-130
                     ladrunoGuessTried = true;                               // Ladruno WP-130
                     mLadrunoMEStats[LMS_CPPM_GUESS_TRIES] += 1.0;           // Ladruno WP-130
+                    const int errTrial = errFlag;                           // Ladruno WP-130 (review r1)
+                    Vector sS(NextStress), sA(NextAlpha), sZ(NextFabric);   // Ladruno WP-130 (review r1)
+                    const double sDG = NextDGamma;                          // Ladruno WP-130 (review r1)
+                    bool gAccepted = false;                                 // Ladruno WP-130 (review r1)
                     const int nG = 50;                                      // Ladruno WP-130
                     Vector gInc(NextStrain); gInc -= CurStrain; gInc /= (double)nG;  // Ladruno WP-130
                     Vector gS(CurStress), gA(CurAlpha), gZ(CurFabric);      // Ladruno WP-130
@@ -2850,23 +2872,40 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
                         gDG += (dg > 0.0) ? dg : 0.0;                       // Ladruno WP-130: FE applies Macauley(dg)
                         gS = nS; gA = nA; gZ = nZ; gStr = nStr; gE = nE;    // Ladruno WP-130
                         for (int ic = 0; ic < 6; ic++)                      // Ladruno WP-130
-                            if (!(gS(ic) == gS(ic)) || !(gA(ic) == gA(ic))) gOk = false; // Ladruno WP-130: NaN
+                            if (!(gS(ic) == gS(ic)) || !(gA(ic) == gA(ic)) || !(gZ(ic) == gZ(ic))) // Ladruno WP-130: NaN (gZ: review r1)
+                                gOk = false;                                // Ladruno WP-130
                     }                                                       // Ladruno WP-130
                     if (gOk) {                                              // Ladruno WP-130
                         Delta0  = SetManzariComponent(gS, gA, gZ, gDG);     // Ladruno WP-130
-                        errFlag = NewtonIter2(Delta0, InVariants, Delta, aCepConsistent); // Ladruno WP-130
-                        if (errFlag == 1) {                                 // Ladruno WP-130
+                        int gErr = NewtonIter2(Delta0, InVariants, Delta, aCepConsistent); // Ladruno WP-130
+                        if (gErr == 1) {                                    // Ladruno WP-130
                             NextStress.Extract(Delta, 0, 1.0);              // Ladruno WP-130
                             NextAlpha.Extract(Delta, 6, 1.0);               // Ladruno WP-130
                             NextFabric.Extract(Delta, 12, 1.0);             // Ladruno WP-130
                             NextDGamma = Delta(18);                         // Ladruno WP-130
-                            errFlag = Check(TrialStress, NextStress, CurAlpha, NextAlpha); // Ladruno WP-130
-                            if (errFlag == 1) {                             // Ladruno WP-130
-                                mLadrunoMEStats[LMS_CPPM_GUESS_OK] += 1.0;  // Ladruno WP-130
-                                continue;                                   // Ladruno WP-130: loop exits
+                            gErr = Check(TrialStress, NextStress, CurAlpha, NextAlpha); // Ladruno WP-130
+                            if (gErr == 1) {                                // Ladruno WP-130 (review r1): the gate
+                                double dn = 0.0, gn = 0.0;                  // Ladruno WP-130
+                                for (int ic = 0; ic < 6; ic++) {            // Ladruno WP-130
+                                    double w = (ic < 3) ? 1.0 : 2.0;        // Ladruno WP-130: tensor norm
+                                    dn += w * (NextStress(ic) - gS(ic)) * (NextStress(ic) - gS(ic)); // Ladruno WP-130
+                                    gn += w * gS(ic) * gS(ic);              // Ladruno WP-130
+                                }                                           // Ladruno WP-130
+                                const double pN = one3 * GetTrace(NextStress); // Ladruno WP-130
+                                gAccepted = (NextDGamma >= 0.0) && (pN > 0.0) && // Ladruno WP-130
+                                    (sqrt(dn) <= LADRUNO_GUESS_AGREE * sqrt(gn)); // Ladruno WP-130
                             }                                               // Ladruno WP-130
                         }                                                   // Ladruno WP-130
                     }                                                       // Ladruno WP-130
+                    if (gAccepted) {                                        // Ladruno WP-130
+                        mLadrunoMEStats[LMS_CPPM_GUESS_OK] += 1.0;          // Ladruno WP-130
+                        errFlag = 1;                                        // Ladruno WP-130
+                        continue;                                           // Ladruno WP-130: loop exits
+                    }                                                       // Ladruno WP-130
+                    // not accepted: back to exactly where the trial start left off
+                    errFlag = errTrial;                                     // Ladruno WP-130 (review r1)
+                    NextStress = sS; NextAlpha = sA; NextFabric = sZ;       // Ladruno WP-130 (review r1)
+                    NextDGamma = sDG;                                       // Ladruno WP-130 (review r1)
                 }                                                           // Ladruno WP-130
                 if (errFlag == -1) SchemeControl = 3; // do an explicit integration
                 if (errFlag == -2) SchemeControl = 2; // do sub-stepping
@@ -3549,6 +3588,7 @@ ManzariDafalias::NewtonIter2(const Vector& xo, const Vector& inVar, Vector& sol,
 					break;                                                  // Ladruno WP-130
 				}                                                           // Ladruno WP-130
 				step *= 0.5;                                                // Ladruno WP-130
+				mLadrunoMEStats[LMS_CPPM_LS_CUTS] += 1.0;                   // Ladruno WP-130 (review r1)
 			}                                                               // Ladruno WP-130
 			if (!found) {                                                   // Ladruno WP-130
 				trial = sol;                                                // Ladruno WP-130
@@ -3769,6 +3809,21 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
 		double be = 7.2713 * 101.0 / m_P_atm;
 		double temp1 = exp(7.6349 - be * p);
 		double D_factor = 1.0 / (1.0 + (exp(7.6349 - be * p)));
+		// Ladruno WP-130 (review r1): with D = D_factor(p) * D0 (GetStateDependent
+		// already applied the factor) the chain rule gives
+		//   dD/dsigma = D_factor dD0/dsigma + D0 dD_factor/dp * (1/3) I,
+		//   dD_factor/dp = +be e^(a - be p) / (1 + e^(a - be p))^2,
+		// i.e. `+ one3 * (D / D_factor) * be * temp1 / (1 + temp1)^2 * I`. Vanilla
+		// writes `- one3 * Macauley(D) * ...`: wrong sign, and Macauley(D) drops the
+		// D < 0 (dilative) branch. It enters the LOCAL Jacobian (so Newton's rate)
+		// and the algorithmic tangent. Corrected under -cppmTangent fixed only
+		// (the LadrunoSANISAND default); vanilla ManzariDafalias and
+		// `-cppmTangent vanilla` keep the vanilla expression verbatim.
+		if (mLadrunoCPPMTangentFix != 0)                                    // Ladruno WP-130
+		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
+			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) +
+			one3 * (D / D_factor) * be * temp1 / pow(1 + temp1, 2) * mI1;  // Ladruno WP-130
+		else                                                                // Ladruno WP-130
 		dDOverdSigma = D_factor * (dAdOverdSigma * (root23 * alphaDtheta - DoubleDot2_2_Contr(alpha, n)) +
 			A * (root23 * dAlphaDOverdSigma - DoubleDot2_4(alpha, ToCovariant(dnOverdSigma)))) -
 			one3 * Macauley(D) * be * temp1 / pow(1 + temp1, 2) * mI1;

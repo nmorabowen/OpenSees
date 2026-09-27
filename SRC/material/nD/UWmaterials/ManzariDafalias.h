@@ -354,8 +354,8 @@ class ManzariDafalias : public NDMaterial
 	//   ModifiedEuler call, so an elastic or zero-increment settle pass -- e.g.
 	//   the one Domain::revertToLastCommit pushes through -- does not erase it):
 	//     LAST_SUBSTEPS, LAST_FORCED, LAST_ABANDON, LAST_CAP
-	// Ladruno WP-130 (TIMs F18(c)/(d)) appends eleven BackwardEuler_CPPM columns
-	// (17..27). Same rules: per instance, diagnostics only, read by nothing in
+	// Ladruno WP-130 (TIMs F18(c)/(d)) appends twelve BackwardEuler_CPPM columns
+	// (17..28). Same rules: per instance, diagnostics only, read by nothing in
 	// the integrator. Cumulative since revertToStart:
 	//     CPPM_CALLS       top-level BackwardEuler_CPPM calls from integrate()
 	//                      (IntScheme 2 plastic updates + ME->CPPM fallbacks)
@@ -373,7 +373,12 @@ class ManzariDafalias : public NDMaterial
 	//     ME_FALLBACK_OK   ... and the CPPM returned it (the update stands)
 	//     CPPM_GUESS_TRIES -cppmStart explicit: local Newton restarts from the
 	//                      explicit guess
-	//     CPPM_GUESS_OK    ... that returned a valid state
+	//     CPPM_GUESS_OK    ... that returned a root the gate ACCEPTED (admissible
+	//                      and within LADRUNO_GUESS_AGREE of the explicit walk)
+	//     CPPM_LS_CUTS     -cppmLineSearch on: step halvings taken by the search
+	//   and LAST_CAP (col 16) is 2, not 1, when the cap hit was RESCUED by the
+	//   ME->CPPM fallback (capHits still counts every cap event; refused cap
+	//   hits = capHits - meFallbackOk).
 	//   the last update whose top-level BackwardEuler_CPPM call left the elastic
 	//   branch (so a zero-increment settle pass does not erase it):
 	//     LAST_CPPM_REFUSED 1 if it refused
@@ -386,7 +391,7 @@ class ManzariDafalias : public NDMaterial
 	    LMS_CPPM_CALLS, LMS_CPPM_NEWTON_FAIL, LMS_CPPM_HALVINGS,             // Ladruno WP-130
 	    LMS_CPPM_EXPL_FAIL, LMS_CPPM_EXPL_LOWP, LMS_CPPM_REFUSALS,           // Ladruno WP-130
 	    LMS_ME_FALLBACKS, LMS_ME_FALLBACK_OK, LMS_LAST_CPPM_REFUSED,         // Ladruno WP-130
-	    LMS_CPPM_GUESS_TRIES, LMS_CPPM_GUESS_OK,                             // Ladruno WP-130
+	    LMS_CPPM_GUESS_TRIES, LMS_CPPM_GUESS_OK, LMS_CPPM_LS_CUTS,           // Ladruno WP-130
 	    LMS_COUNT                                                            // Ladruno WP-127
 	};                                                                       // Ladruno WP-127
 	double  mLadrunoMEStats[LMS_COUNT];                                      // Ladruno WP-127

@@ -493,6 +493,11 @@ class LadrunoSANISAND : public ManzariDafalias
     int    mMEFallback;       // 0 off, 1 cppm
     int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
     int    mCPPMTangentFix;   // 1 fixed (DEFAULT, owner decision WP-130), 0 vanilla (sign-flipped)
+    // WP-130 review r1: WHY the WP-99 commit latch (mImplexCommitRefusedLatch)
+    // was set -- 0 the -implex companion hit -maxSubsteps, 1 a CPPM refusal on
+    // the plain commit path. Only the warning text reads it; crosses the wire
+    // with the latch.
+    int    mLadrunoLatchCause;
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset
