@@ -22,7 +22,8 @@ THE DECK. A small SELF-WEIGHT PLANE-STRAIN strip: 12 x 6 `LadrunoQuad
 `LoadControl(0)` holds (the F14 trigger -- measured below), `updateMaterialStage
 1`, then a rigid 1 m footing (`equalDOF` on its surface nodes) pushed by
 `DisplacementControl` at 5e-5 m per step, `system Pardiso` (MKL), `KrylovNewton`,
-`NormDispIncr 1e-8`. The output per step is the footing load (the load factor
+`NormDispIncr 1e-8` for gravity and holds, and `FixedNumIter 20` for the push
+(WP-136, below). The output per step is the footing load (the load factor
 of the unit reference load on the footing master node, kN/m), compared by
 `float.hex`, i.e. bit for bit.
 
@@ -61,6 +62,31 @@ init` explicitly -- WP-112 changes nothing else):
     and later branch decisions amplify it; `init` removes the step-1 sign
     lottery at the flip, not every sensitivity of the model to its state.
 
+WP-136 (2026-09-27): WHY THE PUSH IS `FixedNumIter 20`, AND WHY NO LOAD IS PINNED.
+The numbers above were measured on 48c0e99bc, which predates WP-110's tangent
+fix `dee04dbe3` (TanType 2 is built from `GetElastoPlasticTangent`; WP-112
+merged after WP-110 without re-measuring). On the tip (877ee112) the first
+push step returned -3 under `NormDispIncr 1e-8` / 100 iterations. Measured:
+  * the push step has NO reachable equilibrium under any tangent: a
+    `NormUnbalance` test stalls at a 0.2-1 kN residual floor (TanType 0/1/2,
+    and with WP-110 reverted too). A tighter ModifiedEuler tolerance
+    (`-honorTolR 1`, TolR 1e-8) only halves it and moves the "converged" load
+    25% (7.239 kN/m): the floor is ModifiedEuler's non-smooth stress response
+    (WP-134 mechanism F), the level is its discretisation error (WP-134 U9).
+  * `NormDispIncr` therefore "converges" wherever a tangent's increments get
+    small: 9.626 / 9.647 kN/m under TanType 0 / 1. With WP-110 reverted on the
+    tip the first step reproduces 9.659111 -- in 96 of its 100 iterations. The
+    fix changed the Newton path on the same plateau; it is not a regression,
+    and it did not create the floor.
+F14 is a DETERMINISM property, not an accuracy one, so the push runs a fixed
+20 Newton iterations: same arithmetic, same bits, and no convergence verdict
+to lose. Measured on 877ee112: the ten push steps are bit-identical at
+MKL_NUM_THREADS 1/2/4/8 (step 1 = 0x1.352c8302675e0p+3 = 9.661684 kN/m); the
+default's first step spreads 2e-14 relative over 0..3 holds while vanilla's
+reads 4.084 / 6.994 / 8.264 / 9.530 (0.57). No load value is asserted: it
+measures the integrator's error, and WP-129's integrator work (#871) will move
+it legitimately. See LEDGER_quirks "stale pins" (WP-128/WP-136).
+
 Each thread count runs in its OWN subprocess because MKL reads
 MKL_NUM_THREADS once, at its first initialisation. `system Pardiso -stats`
 prints `threads=<mkl_get_max_threads()>`, which the test reads back to prove
@@ -91,6 +117,10 @@ _HOLDS = 2
 # outright failures). A spread above 1e-2 is a branch, not round-off.
 _ROUNDOFF_SPREAD = 1.0e-9
 _BRANCH_SPREAD = 1.0e-2
+# WP-136: the push runs this many Newton iterations, no convergence test. The
+# step has no reachable equilibrium (a 0.2-1 kN residual floor, see the
+# docstring), and F14 is about identical arithmetic, not accuracy.
+_PUSH_ITERS = 20
 
 # The child: builds the deck once per (mode, holds) config, in order, and
 # prints ONE `RESULT <json>` line. `mode` is 'default' (no -flipAlphaIn token),
@@ -107,6 +137,7 @@ GAMMA, Q_SUR, NG, DS = 9.81, 20.0, 10, 5.0e-5
 configs = json.loads(sys.argv[2])
 n_push = int(sys.argv[3])
 stats = sys.argv[4] == '1'
+push_iters = int(sys.argv[5])
 
 
 def run(mode, holds):
@@ -178,6 +209,7 @@ def run(mode, holds):
         if n != master:
             ops.equalDOF(master, n, 2)
     ops.load(master, 0.0, -1.0)
+    ops.test('FixedNumIter', push_iters, 0)
     ops.integrator('DisplacementControl', master, 2, -DS)
     steps = []
     for s in range(n_push):
@@ -205,7 +237,7 @@ def _run_child(configs, threads=1, n_push=_N_PUSH, stats=False):
     env.setdefault('LADRUNO_OPENSEES_QUIET', '1')
     p = subprocess.run(
         [sys.executable, '-u', '-c', _CHILD, _TESTS_DIR, json.dumps(configs),
-         str(n_push), '1' if stats else '0'],
+         str(n_push), '1' if stats else '0', str(_PUSH_ITERS)],
         env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
         timeout=600)
@@ -213,7 +245,16 @@ def _run_child(configs, threads=1, n_push=_N_PUSH, stats=False):
     lines = [l for l in p.stdout.splitlines() if l.startswith('RESULT ')]
     assert p.returncode == 0 and lines, (
         'child failed (threads=%d, rc=%d)' % (threads, p.returncode), text[-3000:])
-    return json.loads(lines[-1][len('RESULT '):]), text
+    res = json.loads(lines[-1][len('RESULT '):])
+    # WP-136: every leg, not only the thread leg, must run the parent's engine.
+    # The warning test once had no such check, so a child that loaded another
+    # pyd (or none: WP-124's battery launched them without PYTHONPATH and got
+    # ModuleNotFoundError) was indistinguishable from a real result.
+    assert res['build'] == ops.ladrunoBuild(), (
+        'the child imported a different engine from the parent -- a stale '
+        'or shadowing opensees.pyd; nothing below would mean anything',
+        res['build'], ops.ladrunoBuild())
+    return res, text
 
 
 def _pardiso_threads(text):
@@ -226,14 +267,9 @@ def test_first_ten_push_steps_bit_identical_across_mkl_threads():
     """F14's own test: under the DEFAULT (no -flipAlphaIn token), the first ten
     push steps after `updateMaterialStage` are bit-identical at MKL_NUM_THREADS
     1 / 2 / 4 / 8."""
-    parent_build = ops.ladrunoBuild()
     ref = None
     for t in _THREADS:
         res, text = _run_child([['default', _HOLDS]], threads=t, stats=True)
-        assert res['build'] == parent_build, (
-            'the child imported a different engine from the parent -- a stale '
-            'or shadowing opensees.pyd; nothing below would mean anything',
-            res['build'], parent_build)
         assert _pardiso_threads(text) == {t}, (
             'system Pardiso -stats did not report threads=%d -- MKL_NUM_THREADS '
             'did not reach MKL, so this leg would not test what it claims' % t,
@@ -245,7 +281,9 @@ def test_first_ten_push_steps_bit_identical_across_mkl_threads():
             '48c0e99bc)', run)
         steps = run['steps']
         assert len(steps) == _N_PUSH and all(s[0] == 0 for s in steps), (
-            'a push step failed to converge at threads=%d under the default' % t,
+            'a push step returned nonzero at threads=%d under the default -- under '
+            'FixedNumIter that is a material or solver failure, not '
+            'non-convergence' % t,
             steps)
         hexes = [s[1] for s in steps]
         if ref is None:
@@ -272,6 +310,10 @@ def test_default_first_step_is_immune_to_the_hold_lottery():
     # and the default's first step moves with it -- by ULPs (measured spread
     # 3e-14 relative: 0x1.351770cc47098p+3 .. 0x1.351770cc47124p+3), never by
     # a branch. Vanilla's moves by the branch: 4.107 / FAIL / 8.332 / 9.483.
+    # WP-136, FixedNumIter push on 877ee112: default 0x1.352c8302675e0p+3 ..
+    # 0x1.352c83026762cp+3 (2e-14); vanilla 4.084 / 6.994 / 8.264 / 9.530 --
+    # no FAIL any more (a fixed count cannot fail to converge), the spread
+    # alone carries the non-vacuity.
     default_first = {h: runs[('default', h)]['steps'][0] for h in (0, 1, 2, 3)}
     assert all(v[0] == 0 for v in default_first.values()), (
         'the default leg failed its first push step', default_first)
