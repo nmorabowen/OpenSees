@@ -162,34 +162,30 @@ def prof():
     cases = {"ring (b16 row 1)": (ring, [0, 0, 0, 1e-5, 0, 0]),
              "deep (p ~ 200 kPa, on the cone)": (st, [3e-6, 1e-5, 0, 0, 0, 0])}
     res = {}
-    for name, (s0, de) in cases.items():
+    for i, (name, (s0, de)) in enumerate(cases.items()):
         ops.profiler("reset")
         ops.profiler("start")
         for _ in range(200):
             W.step(ops, W.TAG_SAS, s0, de)
         ops.profiler("stop")
-        fn = os.path.join(tempfile.gettempdir(), "wp129_prof.h5")
-        ops.profiler("report", fn, "-run", "sas")
+        fn = os.path.join(tempfile.gettempdir(), f"wp129_prof_{i}_{os.getpid()}.h5")
+        if os.path.exists(fn):
+            os.remove(fn)
+        ops.profiler("report", fn, "-run", f"sas{i}")
         ops.profiler("reset")
         times = {}
         with h5py.File(fn, "r") as f:
             def visit(nm, obj):
-                if "sanisand.sasME" in nm and isinstance(obj, h5py.Group):
-                    key = [p for p in nm.split("/") if p.startswith("sanisand.sasME")][-1]
-                    for a in ("total_ns", "self_ns", "calls", "total_s"):
-                        if a in obj.attrs:
-                            times.setdefault(key, {})[a] = float(obj.attrs[a])
-                    for dname in obj:
-                        if isinstance(obj[dname], h5py.Dataset) and obj[dname].shape in ((), (1,)):
-                            try:
-                                times.setdefault(key, {})[dname] = float(obj[dname][()])
-                            except Exception:
-                                pass
+                leaf = nm.split("/")[-1]
+                if leaf.startswith("sanisand.sasME") and "wall_ns" in obj.attrs:
+                    times[leaf] = dict(calls=int(obj.attrs["calls"]),
+                                       wall_ms=float(obj.attrs["wall_ns"]) / 1e6)
             f.visititems(visit)
+        tot = times.get("sanisand.sasME.update", {}).get("wall_ms", float("nan"))
         res[name] = times
-        say(f"  {name}:")
-        for k, v in sorted(times.items()):
-            say(f"    {k:<36} {v}")
+        say(f"  {name}: total {tot:.2f} ms over 200 updates")
+        for k, v in sorted(times.items(), key=lambda kv: -kv[1]["wall_ms"]):
+            say(f"    {k:<36} calls {v['calls']:>7}  wall {v['wall_ms']:8.2f} ms  ({100 * v['wall_ms'] / tot:5.1f} %)")
     DATA["PROF"] = res
 
 

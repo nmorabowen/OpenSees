@@ -78,12 +78,11 @@
 //      Stress_Correction's give-up returned f > 0 as success). Stress_Correction
 //      itself is not called and not changed.
 //   G  alpha_in follows the PAPER's rule inside the increment (default
-//      `-sasAlphaIn reseat`): alpha_in := alpha at every plastic ONSET (the
-//      elastic->plastic and unload->plastic intersections, and a plastic stage
-//      after an elastic one) and whenever (alpha - alpha_in):n reaches 0
-//      (a stage with (alpha - alpha_in):n <= 0 takes the model's own h = 1e10
-//      sentinel, i.e. alpha_in at that stage; after an accepted substep
-//      alpha_in := alpha where it went negative). WP-134: with this rule
+//      `-sasAlphaIn reseat`, = WP-134's oracle): wherever a stage finds
+//      (alpha - alpha_in):n < 0 a new loading process starts there and
+//      alpha_in := alpha at THAT stage; an accepted substep ending with it
+//      negative re-seats at its end. integrate()'s once-per-increment test on
+//      the elastic trial (UW's rule) is undone. WP-134: with this rule
 //      h < 0 is impossible (0/960 runs); UW's once-per-increment rule gives it
 //      in 146/480 exact ring runs. `bracket` keeps the stage sentinel only;
 //      `stale` reproduces ModifiedEuler's rule (attribution only).
@@ -430,13 +429,11 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
 
     Vector ds1(6), da1(6), dz1(6), dep1(6), ds2(6), da2(6), dz2(6), dep2(6);
     Vector S1(6), A1(6), Z1(6), nS(6), nA(6), nZ(6), nEe(6), tmp(6), ddev(6);
-    Vector ain1(6), ain2(6);
+    Vector ain1(6), ain2(6), tmpN(6);
     double T = 0.0, dT = 1.0;
     bool lastRejected = false;
-    // paper rule: alpha_in := alpha at a plastic onset -- at the start of the
-    // portion when it begins at an intersection, and at a plastic stage that
-    // follows an elastic one.
-    bool prevElastic = onset;
+    (void)onset;   // the paper rule below needs no onset flag: DM04 re-seats at an
+                   // onset only when (alpha - alpha_in):n < 0 there (WP-134 oracle)
     lamSum = 0.0;
     lastPlastic = false;
 
@@ -463,14 +460,20 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
 
         double lam1 = 0.0, lam2 = 0.0;
         int k1, k2 = ST_ELASTIC;
-        bool onsetHere = false;
-        ain1 = (paperRule && prevElastic) ? A : ain;
+        // paper rule (DM04, = WP-134's decide()): at a stage where
+        // (alpha - alpha_in):n < 0 a new loading process starts there:
+        // alpha_in := alpha at THAT stage's state.
+        bool reseat1 = false, reseat2 = false;
+        ain1 = ain;
+        if (paperRule) {
+            tmpN = GetNormalToYield(S, A);
+            tmp = A; tmp -= ain;
+            if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) { ain1 = A; reseat1 = true; }
+        }
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.stages");
             k1 = ladrunoSasStage(S, A, Z, e0, ain1, dv, ddev, ds1, da1, dz1, dep1, lam1);
         }
-        if (k1 == ST_PLASTIC && paperRule && prevElastic)
-            onsetHere = true;
         if (k1 == ST_NONPOS_H) {
             // a property of the accepted start of this substep: no cut can change it
             ladrunoTraceSubstep(T, dT, std::numeric_limits<double>::quiet_NaN(), TR_REFUSED, atMin);
@@ -486,14 +489,16 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             if (!(one3 * GetTrace(S1) + m_Presidual > 0.0)) {
                 rej = TR_REJ_LOWP1;
             } else {
-                // onset inside the substep: stage 1 elastic, stage 2 loads
-                ain2 = onsetHere ? A : ((paperRule && k1 == ST_ELASTIC) ? A1 : ain);
+                ain2 = ain1;
+                if (paperRule) {
+                    tmpN = GetNormalToYield(S1, A1);
+                    tmp = A1; tmp -= ain1;
+                    if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) { ain2 = A1; reseat2 = true; }
+                }
                 {
                     OPS_PROFILE_SCOPE("sanisand.sasME.stages");
                     k2 = ladrunoSasStage(S1, A1, Z1, e1, ain2, dv, ddev, ds2, da2, dz2, dep2, lam2);
                 }
-                if (k2 == ST_PLASTIC && paperRule && k1 == ST_ELASTIC)
-                    onsetHere = true;
                 if (k2 == ST_TENSION)
                     rej = TR_REJ_LOWP2;
                 else if (k2 == ST_NONPOS_H)
@@ -524,8 +529,8 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             }
         }
 
-        // the alpha_in this substep ends with (paper rule: the onset point)
-        Vector ainEnd(onsetHere ? A : ain);
+        // the alpha_in this substep ends with (paper rule: the re-seat point)
+        Vector ainEnd(reseat2 ? ain2 : (reseat1 ? ain1 : ain));
         if (rej == 0) {
             // candidate accepted by the error test: drift, then alpha
             nEe = dStrain; nEe *= dT; nEe += Ee;
@@ -583,11 +588,10 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         S = nS; A = nA; Z = nZ; Ee = nEe;
         lamSum += 0.5 * (lam1 + lam2);
         lastPlastic = (k2 == ST_PLASTIC);   // the loading index nearest the end state
-        if (onsetHere) {
+        if (reseat1 || reseat2) {
             ain = ainEnd;
             st[LSAS_ALPHA_IN_RESEATS] += 1.0;
         }
-        prevElastic = (k2 == ST_ELASTIC);
         // (alpha - alpha_in):n reaching 0 re-seats alpha_in (the paper's rule)
         if (paperRule) {
             Vector nEnd = GetNormalToYield(S, A);
