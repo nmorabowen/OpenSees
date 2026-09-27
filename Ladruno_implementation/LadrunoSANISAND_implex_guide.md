@@ -734,10 +734,10 @@ parser refuses the combination). A flag that could not act on the deck is refuse
   increment goes to `BackwardEuler_CPPM` (halving allowed, NO explicit exit); the update is refused
   only if the CPPM fails too. One-element test: a leg that `-maxSubsteps 20` refuses at step 1 runs
   all 10 steps with the fallback, stress within 1.3 % of the uncapped integration.
-- **What refusing fast buys, and what it does not**: see the WP-130 PR (#868) and
-  `Ladruno_files/testbed/hypo_bearing/wp130_f18c/` for the F12 bearing-deck rerun. A fast refusal
-  lets the step controller act in milliseconds; it does not make an iterate the CPPM cannot return
-  returnable.
+- **What it buys on a BVP** (`Ladruno_files/testbed/hypo_bearing/wp130_f18c/tables.md`): F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
+  Recipe measured there: `2 2 ... -cppmTangent fixed -cppmOnFail refuse -cppmHalvings 3
+  -cppmStart explicit -cppmLineSearch on`. Without `fixed`, no combination of the other flags got
+  past s/B 0.0002.
 - **WP-128's smallest reproducer** (`sigma = 0.0101 I`, `alpha = alpha_in = z = 0`, plane-strain
   `d eps_yy = 1e-4`): ModifiedEuler returns `alpha/alpha^b` 5.10 in one accepted substep; the CPPM
   returns 0.18 with rc 0 in one local Newton (every variant), against ~0.27 from WP-128's alpha-aware

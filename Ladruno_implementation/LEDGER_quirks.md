@@ -7498,8 +7498,9 @@ Three things to carry forward:
   2 kPa push step the CPPM cannot return) the default grinds 31 global iterations, 224 local-Newton
   failures, 440 half-increments and 4 silent explicit fallbacks in 5.6 s before analyze returns
   -3; `-cppmOnFail refuse -cppmHalvings 0` returns -3 in 8-22 ms (pinned,
-  `tests/test_ladruno_sanisand_cppm_newton.py`). Refusing fast does not make the bearing leg
-  converge -- see the WP-130 bearing rows in `wp130_f18c/` and the PR.
+  `tests/test_ladruno_sanisand_cppm_newton.py`). Refusing fast ALONE does not carry the bearing
+  leg (vanilla tangent: s/B 0.00000-0.00017); with the sign-corrected tangent it does -- see
+  "IntScheme 2's TanType-2 tangent is MINUS" below.
 
 ### `ManzariDafalias::integrate()` discards `BackwardEuler_CPPM`'s return value, and the CPPM's own ladder can never fail anyway — a scheme-2 non-convergence is invisible in every channel
 - **Bites:** a CPPM step whose Newton diverged, whose Jacobian was singular, or which recursed
@@ -7792,5 +7793,4 @@ Three things to carry forward:
 - **Workaround/status (WP-130, #868):** `-cppmTangent fixed` hands out `+CSigma`
   (`tests/test_ladruno_sanisand_cppm_newton.py` pins both: vanilla -T within 1e-2 of D_fd, fixed
   +T within 1e-2). Default kept vanilla (byte identity was the WP's contract); **making `fixed`
-  the LadrunoSANISAND default is an owner decision** -- the vanilla sign is simply wrong. The bearing
-  deck with the fixed tangent: see the WP-130 PR.
+  the LadrunoSANISAND default is an owner decision** -- the vanilla sign is simply wrong. F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
