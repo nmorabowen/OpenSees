@@ -24,9 +24,9 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// Ladruno WP-129 (TIMs F18(a), F20(b)/(c); amended by the WP-128 verdict):
-// SAS-ME, IntScheme 129 -- a Sloan-Abbo-Sheng-style explicit modified Euler
-// for ManzariDafalias / LadrunoSANISAND.
+// Ladruno WP-129 (TIMs F18(a), F20(b)/(c); amended by the WP-128 verdict and
+// the WP-134 oracle): SAS-ME, IntScheme 129 -- a Sloan-Abbo-Sheng-style
+// explicit modified Euler for ManzariDafalias / LadrunoSANISAND.
 //
 // These are MEMBER functions of the vanilla class ManzariDafalias (declared in
 // UWmaterials/ManzariDafalias.h behind `// Ladruno WP-129`), defined here so the
@@ -35,7 +35,17 @@
 // true, i.e. from a LadrunoSANISAND instance, whose wrappers forward the
 // refusal to the element (LADRUNO_MATERIAL_REFUSED) and so to analyze().
 //
+// THE TARGET is WP-134's `uw_model` oracle (DM04 rate equations with the UW
+// constitutive additions U1-U5, the PAPER's alpha_in rule, continuous moduli,
+// integrated exactly): SAS-ME is an explicit integrator of THOSE equations.
+//
 // WHAT IT CLOSES, relative to ModifiedEuler (IntScheme 1), item by item:
+//   U9 every stage evaluates EVERYTHING at its own state: K, G (GetElasticModuli
+//      at the stage stress and the stage's void ratio), n, b, d, h, D, B, C.
+//      ModifiedEuler freezes K, G at the committed state over the whole
+//      increment (WP-134: 0.6 / 6 / 24 % of the stress increment at
+//      1e-5 / 1e-4 / 1e-3, invisible to its error test). The elastic predictor
+//      and the elastic part of an intersected increment use Heun on the moduli.
 //   E  the substep error measures stress, back-stress alpha AND fabric z:
 //        err = max( |dS2-dS1| / max(2|S|, sigma_ref),
 //                   |dA2-dA1| / max(2|A|, 1),
@@ -46,13 +56,16 @@
 //      "0.5 kPa switch" is the continuous max(2|S|, 1 kPa)); `-errFloor`
 //      sets it. alpha and z are dimensionless and use the unit reference: the
 //      alpha error IS a stress error in units of p (d(p alpha)/p = d alpha).
-//   F  each stage is classified from the elastic trial -- the loading-index
-//      numerator N = n_f : C : d_eps -- never from the sign of the full plastic
-//      multiplier. N <= 0: elastic stage, alpha and z UNCHANGED (never
-//      re-derived from the stress ratio). N > 0 with a non-positive
-//      denominator H = Kp + n_f:C:R: at stage 1 (a property of the accepted
-//      start state, which no cut can change) a REFUSAL; at stage 2 a cut, a
-//      refusal at dT_min.
+//   F/U10 each stage is classified from the elastic trial with the TRUE yield
+//      gradient: N = df/dsigma : C : d_eps, df/dsigma = n - (1/3)(n:alpha +
+//      sqrt(2/3) m) I (ModifiedEuler's n:r differs off the surface; the
+//      predictor's unload test used n:dsigma). N <= 0: elastic stage, alpha and
+//      z UNCHANGED (never re-derived from the stress ratio). N > 0 with a
+//      non-positive denominator H = Kp + df/dsigma:C:R: at stage 1 (a property
+//      of the accepted start state, which no cut can change) a REFUSAL; at
+//      stage 2 a cut, a refusal at dT_min. Never "elastic" (WP-134: that path,
+//      with the uncapped q, drives err to exactly 0 and is behind all 25
+//      campaign-ME ring escapes from admissible starts).
 //   q  step factor clamp(0.9 sqrt(TolR/err), 0.1, 1.1), err floored at
 //      DBL_EPSILON (no q = inf jump), no growth on the substep after a
 //      rejection.
@@ -64,35 +77,27 @@
 //      -then-normal correction; if neither reduces |f| it FAILS (WP-128 Q2:
 //      Stress_Correction's give-up returned f > 0 as success). Stress_Correction
 //      itself is not called and not changed.
-//   G  alpha_in is kept consistent INSIDE the increment (WP-128: the trigger of
-//      the alpha escape). Default `reseat`: a stage with (alpha - alpha_in):n
-//      <= 0 uses the model's own h = 1e10 sentinel (the value GetStateDependent
-//      gives for (alpha - alpha_in):n = 0, i.e. alpha_in re-seated at that
-//      stage), and after every ACCEPTED substep alpha_in := alpha where
-//      (alpha - alpha_in):n < 0 -- Dafalias-Manzari's alpha_in is the
-//      back-stress at the last reversal, and (alpha - alpha_in):n < 0 is a
-//      reversal the once-per-increment test in integrate() cannot see.
-//      `bracket` keeps the stage rule only (h = b0/<(alpha-alpha_in):n>);
-//      `stale` reproduces ModifiedEuler's defect (attribution only).
+//   G  alpha_in follows the PAPER's rule inside the increment (default
+//      `-sasAlphaIn reseat`): alpha_in := alpha at every plastic ONSET (the
+//      elastic->plastic and unload->plastic intersections, and a plastic stage
+//      after an elastic one) and whenever (alpha - alpha_in):n reaches 0
+//      (a stage with (alpha - alpha_in):n <= 0 takes the model's own h = 1e10
+//      sentinel, i.e. alpha_in at that stage; after an accepted substep
+//      alpha_in := alpha where it went negative). WP-134: with this rule
+//      h < 0 is impossible (0/960 runs); UW's once-per-increment rule gives it
+//      in 146/480 exact ring runs. `bracket` keeps the stage sentinel only;
+//      `stale` reproduces ModifiedEuler's rule (attribution only).
 //   alpha  after every accepted substep alpha is checked against the bounding
-//      surface: ratio = sqrt(3/2)|alpha| / alpha^b(theta_alpha, psi) with the
-//      Lode angle of alpha ITSELF (an alpha-space radius, n-independent, so an
-//      elastic rotation of n cannot make a state inadmissible). Default:
-//      reject and cut (refuse at dT_min); `-alphaProject 1`: radial projection
-//      alpha -> s alpha with the deviatoric stress translated by p*(dalpha),
-//      which keeps f and n exactly, counted.
+//      surface: rho_alpha = sqrt(3/2)|alpha| / alpha^b(theta_alpha, psi), the
+//      Lode angle of alpha ITSELF (WP-134's geometric inside/outside test,
+//      n-independent). Default: reject and cut (refuse at dT_min);
+//      `-alphaProject 1`: radial projection alpha -> s alpha with the
+//      deviatoric stress translated by p*(dalpha), which keeps f and n exactly,
+//      counted.
 //   tangent  rate-form stages (dS = C:d_eps - lambda C:R directly, no 6x6 per
 //      stage, TIMs F18(b)); ONE continuum tangent at the end state for TanType
 //      1 AND 2 (SAS practice). ModifiedEuler's TanType-2 chain is not
-//      reproduced: it accumulates `T` where the recurrence needs `dT`, so with
-//      N equal substeps and elastic stages it returns (N+1)/2 x Ce (quirks).
-//
-// MODULI: K, G are those of the committed state (as every other explicit
-// scheme and the elastic predictor), frozen over the increment, and recomputed
-// here rather than read from mK/mG (which can be stale-by-stage after the
-// elastic->plastic flip). e is taken at the substep start for both stages.
-// Hence SAS-ME and ModifiedEuler integrate the SAME rate equations; where none
-// of the fixes binds, they agree to integration tolerance.
+//      reproduced: it accumulates `T` where the recurrence needs `dT` (quirks).
 //
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
@@ -109,7 +114,7 @@
 namespace {
 const double kSasDTmin     = 1.0e-6;   // as ModifiedEuler
 const int    kSasDriftIter = 20;
-// substep trace codes (the WP-127 replay trace; 0/1/4/5 as ModifiedEuler)
+// substep trace codes (the WP-127 replay trace; 0/1/4/5/7 as ModifiedEuler)
 enum { TR_ACCEPT = 0, TR_REJ_ERR = 1, TR_REJ_LOWP1 = 4, TR_REJ_LOWP2 = 5, TR_CAP = 7,
        TR_REJ_NONPOS_H = 8, TR_REJ_DRIFT = 9, TR_REJ_ALPHA = 10, TR_REFUSED = 11,
        TR_ACCEPT_PROJECTED = 12 };
@@ -153,7 +158,8 @@ ManzariDafalias::ladrunoResetSasStats(void)
 }
 
 // h with the alpha_in rule applied: a stage whose (alpha - alpha_in):n is not
-// positive takes the model's own sentinel for (alpha - alpha_in):n = 0.
+// positive takes the model's own sentinel for (alpha - alpha_in):n = 0
+// (alpha_in re-seated at that stage).
 double
 ManzariDafalias::ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h)
 {
@@ -167,7 +173,7 @@ ManzariDafalias::ladrunoSasBracketH(const Vector& a, const Vector& ain, const Ve
     return h;
 }
 
-// alpha / alpha^b with the Lode angle of alpha itself and psi at (e, p(S)).
+// rho_alpha: alpha / alpha^b with the Lode angle of alpha itself and psi at (e, p(S)).
 double
 ManzariDafalias::ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e)
 {
@@ -187,15 +193,17 @@ ManzariDafalias::ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e
 }
 
 // -alphaProject 1: alpha -> s*alpha onto the bounding surface (the Lode angle
-// of alpha is unchanged by the scaling, so ratio == 1 exactly), deviatoric
+// of alpha is unchanged by the scaling, so rho_alpha == 1 exactly), deviatoric
 // stress translated by p*(alpha' - alpha) so dev(S) - p alpha, hence f and n,
 // are unchanged. Elastic strain follows the stress change.
 void
-ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e, double K, double G)
+ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e)
 {
     const double r = ladrunoSasAlphaRatio(A, S, e);
     if (!(r > 1.0) || !std::isfinite(r))
         return;
+    double K, G;
+    GetElasticModuli(S, e, K, G);
     const double p = one3 * GetTrace(S) + m_Presidual;
     Vector dA(A);
     dA *= (1.0 / r - 1.0);
@@ -207,10 +215,28 @@ ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e, d
     mLadrunoSas.stats[LSAS_ALPHA_PROJECTED] += 1.0;
 }
 
-// One rate-form stage. Returns ST_ELASTIC / ST_PLASTIC / ST_NONPOS_H / ST_TENSION.
+// Elastic stress increment for d_eps, Heun on the pressure-dependent moduli
+// (U9: the moduli are not frozen at the start). e0/e1: void ratio at start/end.
+Vector
+ManzariDafalias::ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1)
+{
+    double K, G;
+    GetElasticModuli(S, e0, K, G);
+    Vector d1 = DoubleDot4_2(GetStiffness(K, G), dEps);
+    Vector S1(S);
+    S1 += d1;
+    GetElasticModuli(S1, e1, K, G);
+    Vector d2 = DoubleDot4_2(GetStiffness(K, G), dEps);
+    d1 += d2;
+    d1 *= 0.5;
+    return d1;
+}
+
+// One rate-form stage, everything evaluated at (s, a, z, e).
+// Returns ST_ELASTIC / ST_PLASTIC / ST_NONPOS_H / ST_TENSION.
 int
 ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,
-    const Vector& ain, double dv, const Vector& ddev, double K, double G,
+    const Vector& ain, double dv, const Vector& ddev,
     Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam)
 {
     const double p = one3 * GetTrace(s) + m_Presidual;
@@ -218,10 +244,11 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
         return ST_TENSION;
 
     Vector n(6), d(6), b(6), R(6);
-    double cos3Theta, h, psi, aB, aD, b0, A, D, B, C;
+    double cos3Theta, h, psi, aB, aD, b0, A, D, B, C, K, G;
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.stateDependent");
         GetStateDependent(s, a, z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, A, D, B, C, R);
+        GetElasticModuli(s, e, K, G);                      // U9: the stage's own moduli
     }
     OPS_PROFILE_SCOPE("sanisand.sasME.stageArithmetic");
     {
@@ -231,12 +258,12 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
             mLadrunoSas.stats[LSAS_H_BRACKETS] += 1.0;
     }
 
-    Vector r = GetDevPart(s);
-    r /= p;
-    const double nr = DoubleDot2_2_Contr(n, r);
+    // U10: the TRUE yield gradient Q = n - (1/3)(n:alpha + sqrt(2/3) m) I, so
+    // Q : C : d_eps = 2G n:de_dev - K dv (n:alpha + sqrt(2/3) m)
+    const double qv = DoubleDot2_2_Contr(n, a) + root23 * m_m;
     const double Kp = two3 * p * h * DoubleDot2_2_Contr(b, n);
-    const double H  = Kp + 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * nr;
-    const double N  = 2.0 * G * DoubleDot2_2_Mixed(n, ddev) - K * dv * nr;
+    const double H  = Kp + 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
+    const double N  = 2.0 * G * DoubleDot2_2_Mixed(n, ddev) - K * dv * qv;
 
     // elastic trial part, common to both kinds
     ds = ToContraviant(ddev);
@@ -253,7 +280,7 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
         mLadrunoSas.stats[LSAS_ELASTIC_STAGES] += 1.0;
         return ST_ELASTIC;
     }
-    if (!(H > small))                        // loading with H <= 0: no plastic solution
+    if (!(H > small) || !std::isfinite(H))   // loading with H <= 0: no plastic solution
         return ST_NONPOS_H;
 
     lam = N / H;
@@ -286,16 +313,15 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
     return ST_PLASTIC;
 }
 
-// Consistent (Potts-Gens) then normal drift correction. true = |f| <= TolF
-// (or f <= TolF when !bothSides). false = neither direction reduces |f|, the
-// iteration limit, or tension -- the caller turns that into a cut / refusal.
+// Consistent (Potts-Gens) then normal drift correction, moduli at the current
+// state. true = |f| <= TolF (or f <= TolF when !bothSides). false = neither
+// direction reduces |f|, the iteration limit, or tension -- the caller turns
+// that into a cut / refusal, never into an accepted f > TolF.
 bool
 ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,
-    const Vector& ain, double K, double G, bool bothSides)
+    const Vector& ain, bool bothSides)
 {
     OPS_PROFILE_SCOPE("sanisand.sasME.drift");
-    const Matrix aC = GetStiffness(K, G);
-    const Matrix aD = GetCompliance(K, G);
     bool corrected = false;
     for (int it = 0; it <= kSasDriftIter; it++) {
         const double f = GetF(S, A);
@@ -313,9 +339,11 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
             return false;
 
         Vector n(6), d(6), b(6), R(6);
-        double cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C;
+        double cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, K, G;
         GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, R);
+        GetElasticModuli(S, e, K, G);
         h = ladrunoSasBracketH(A, ain, n, h);
+        const Matrix aC = GetStiffness(K, G);
 
         // exact df/dsigma = n - (1/3)(n:alpha + sqrt(2/3) m) I ; df/dalpha = -p n
         Vector Q(mI1);
@@ -357,21 +385,23 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
             if (!(std::isfinite(f1) && fabs(f1) < fabs(f) && one3 * GetTrace(S1) + m_Presidual > 0.0))
                 return false;    // the give-up: FAIL, never hand back f > TolF
             S = S1;
-            Ee -= DoubleDot4_2(aD, t);
+            Ee -= DoubleDot4_2(GetCompliance(K, G), t);
         }
         corrected = true;
     }
     return false;
 }
 
-// The continuum elastoplastic tangent at (S, A, Z), loading assumed.
+// The continuum elastoplastic tangent at (S, A, Z), plastic loading assumed,
+// moduli at that state.
 void
 ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,
-    const Vector& ain, double e, double K, double G, Matrix& Cep)
+    const Vector& ain, double e, Matrix& Cep)
 {
     Vector n(6), d(6), b(6), R(6);
-    double cos3Theta, h, psi, aB, aD, b0, Af, D, B, C;
+    double cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, K, G;
     GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, R);
+    GetElasticModuli(S, e, K, G);
     h = ladrunoSasBracketH(A, ain, n, h);
     Vector dummy(6);
     Cep = GetElastoPlasticTangent(S, 1.0, dummy, dummy, G, K, B, C, D, h, n, d, b);
@@ -379,14 +409,16 @@ ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, co
 
 // The substep loop over the plastic portion curStrain -> nextStrain. Returns 0
 // or a refusal code (RC_*). On 0, (S, Ee, A, Z, ain) hold the end state.
+// `onset`: the portion starts at a plastic onset (paper alpha_in rule).
 int
 ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,
-    const Vector& curStrain, const Vector& nextStrain, double K, double G,
+    const Vector& curStrain, const Vector& nextStrain, bool onset,
     double& lamSum, bool& lastPlastic)
 {
     OPS_PROFILE_SCOPE("sanisand.sasME.substeps");
     double* st = mLadrunoSas.stats;
     const LadrunoSasOptions& o = mLadrunoSas.opt;
+    const bool paperRule = (o.alphaInMode == 0);
     const double TolE   = mTolR;
     const double sigRef = (o.errFloor < 0.0) ? m_P_atm / 101.0 : o.errFloor;
     const double kappa  = o.alphaBoundTol;
@@ -398,8 +430,13 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
 
     Vector ds1(6), da1(6), dz1(6), dep1(6), ds2(6), da2(6), dz2(6), dep2(6);
     Vector S1(6), A1(6), Z1(6), nS(6), nA(6), nZ(6), nEe(6), tmp(6), ddev(6);
+    Vector ain1(6), ain2(6);
     double T = 0.0, dT = 1.0;
     bool lastRejected = false;
+    // paper rule: alpha_in := alpha at a plastic onset -- at the start of the
+    // portion when it begins at an intersection, and at a plastic stage that
+    // follows an elastic one.
+    bool prevElastic = onset;
     lamSum = 0.0;
     lastPlastic = false;
 
@@ -418,22 +455,28 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         }
 
         tmp = dStrain; tmp *= T; tmp += curStrain;
-        const double e = m_e_init - (1 + m_e_init) * GetTrace(tmp);
+        const double e0 = m_e_init - (1 + m_e_init) * GetTrace(tmp);
+        tmp = dStrain; tmp *= (T + dT); tmp += curStrain;
+        const double e1 = m_e_init - (1 + m_e_init) * GetTrace(tmp);
         const double dv = dT * trD;
         ddev = devD; ddev *= dT;
 
         double lam1 = 0.0, lam2 = 0.0;
         int k1, k2 = ST_ELASTIC;
+        bool onsetHere = false;
+        ain1 = (paperRule && prevElastic) ? A : ain;
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.stages");
-            k1 = ladrunoSasStage(S, A, Z, e, ain, dv, ddev, K, G, ds1, da1, dz1, dep1, lam1);
+            k1 = ladrunoSasStage(S, A, Z, e0, ain1, dv, ddev, ds1, da1, dz1, dep1, lam1);
         }
+        if (k1 == ST_PLASTIC && paperRule && prevElastic)
+            onsetHere = true;
         if (k1 == ST_NONPOS_H) {
             // a property of the accepted start of this substep: no cut can change it
             ladrunoTraceSubstep(T, dT, std::numeric_limits<double>::quiet_NaN(), TR_REFUSED, atMin);
             return RC_NONPOS_H;
         }
-        int rej = 0;   // 0 none, else trace code
+        int rej = 0;   // 0 none, > 0 trace code of the rejection, -1 accepted after projection
         if (k1 == ST_TENSION) {
             rej = TR_REJ_LOWP1;
         } else {
@@ -443,10 +486,14 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             if (!(one3 * GetTrace(S1) + m_Presidual > 0.0)) {
                 rej = TR_REJ_LOWP1;
             } else {
+                // onset inside the substep: stage 1 elastic, stage 2 loads
+                ain2 = onsetHere ? A : ((paperRule && k1 == ST_ELASTIC) ? A1 : ain);
                 {
                     OPS_PROFILE_SCOPE("sanisand.sasME.stages");
-                    k2 = ladrunoSasStage(S1, A1, Z1, e, ain, dv, ddev, K, G, ds2, da2, dz2, dep2, lam2);
+                    k2 = ladrunoSasStage(S1, A1, Z1, e1, ain2, dv, ddev, ds2, da2, dz2, dep2, lam2);
                 }
+                if (k2 == ST_PLASTIC && paperRule && k1 == ST_ELASTIC)
+                    onsetHere = true;
                 if (k2 == ST_TENSION)
                     rej = TR_REJ_LOWP2;
                 else if (k2 == ST_NONPOS_H)
@@ -477,6 +524,8 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             }
         }
 
+        // the alpha_in this substep ends with (paper rule: the onset point)
+        Vector ainEnd(onsetHere ? A : ain);
         if (rej == 0) {
             // candidate accepted by the error test: drift, then alpha
             nEe = dStrain; nEe *= dT; nEe += Ee;
@@ -485,23 +534,21 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             const bool anyPlastic = (k1 == ST_PLASTIC || k2 == ST_PLASTIC);
             // the plastic portion belongs ON the surface; an unloading stage may leave it inside
             const bool bothSides = anyPlastic && !anyElastic;
-            if (!ladrunoSasDrift(nS, nA, nZ, nEe, e, ain, K, G, bothSides)) {
+            if (!ladrunoSasDrift(nS, nA, nZ, nEe, e1, ainEnd, bothSides)) {
                 rej = TR_REJ_DRIFT;
             } else {
                 OPS_PROFILE_SCOPE("sanisand.sasME.alphaCheck");
-                tmp = dStrain; tmp *= (T + dT); tmp += curStrain;
-                const double eEnd = m_e_init - (1 + m_e_init) * GetTrace(tmp);
-                const double ratio = ladrunoSasAlphaRatio(nA, nS, eEnd);
+                const double ratio = ladrunoSasAlphaRatio(nA, nS, e1);
                 if (!(ratio <= 1.0 + kappa)) {
                     if (o.alphaProject != 0 && std::isfinite(ratio)) {
-                        ladrunoSasProject(nS, nA, nEe, eEnd, K, G);
+                        ladrunoSasProject(nS, nA, nEe, e1);
                         rej = -1;   // accepted, projected
                     } else {
                         rej = TR_REJ_ALPHA;
                     }
                 }
                 if (rej <= 0) {
-                    const double r2 = ladrunoSasAlphaRatio(nA, nS, eEnd);
+                    const double r2 = ladrunoSasAlphaRatio(nA, nS, e1);
                     if (r2 > st[LSAS_MAX_RATIO_B])
                         st[LSAS_MAX_RATIO_B] = r2;
                 }
@@ -536,8 +583,13 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         S = nS; A = nA; Z = nZ; Ee = nEe;
         lamSum += 0.5 * (lam1 + lam2);
         lastPlastic = (k2 == ST_PLASTIC);   // the loading index nearest the end state
-        // G: a reversal inside the increment re-seats alpha_in (Dafalias-Manzari's definition)
-        if (o.alphaInMode == 0) {
+        if (onsetHere) {
+            ain = ainEnd;
+            st[LSAS_ALPHA_IN_RESEATS] += 1.0;
+        }
+        prevElastic = (k2 == ST_ELASTIC);
+        // (alpha - alpha_in):n reaching 0 re-seats alpha_in (the paper's rule)
+        if (paperRule) {
             Vector nEnd = GetNormalToYield(S, A);
             tmp = A; tmp -= ain;
             if (DoubleDot2_2_Contr(tmp, nEnd) < 0.0) {
@@ -568,7 +620,6 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     st[LSAS_LAST_REFUSE_CODE] = 0.0;
     mLadrunoSas.refused = false;
 
-    const Vector& CurStress = mSigma_n;
     const Vector& CurStrain = mEpsilon_n;
     const Vector& NextStrain = mEpsilon;
 
@@ -576,10 +627,6 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     dStrain -= CurStrain;
     const double eN = m_e_init - (1 + m_e_init) * GetTrace(CurStrain);
     mVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(NextStrain);
-
-    double K, G;
-    GetElasticModuli(CurStress, eN, K, G);
-    const Matrix aC = GetStiffness(K, G);
 
     Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n), ain(mAlpha_in);
     int code = 0;
@@ -598,22 +645,23 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             const double r0 = ladrunoSasAlphaRatio(A, S, eN);
             if (!(r0 <= 1.0 + o.alphaBoundTol)) {
                 if (o.alphaProject != 0 && std::isfinite(r0))
-                    ladrunoSasProject(S, A, Ee, eN, K, G);
+                    ladrunoSasProject(S, A, Ee, eN);
                 else
                     code = RC_START_ALPHA;
             }
         }
     }
 
+    double K, G;
     double lamSum = 0.0;
     bool lastPlastic = false;
     if (code == 0) {
         // ---- 1. elastic predictor / intersection ----------------------------
         double a = 0.0;
-        bool elastic = false;
+        bool elastic = false, onset = false;
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.predictor");
-            Vector dSe = DoubleDot4_2(aC, dStrain);
+            Vector dSe = ladrunoSasElastic(S, dStrain, eN, mVoidRatio);
             Vector St(S);
             St += dSe;
             const double ft = GetF(St, A);
@@ -625,26 +673,36 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                 mLadrunoLastPath = 0;
             } else {
                 const double f0 = GetF(S, A);
-                const double nd = GetNorm_Contr(dSe);
+                // U10: the loading test on the TRUE gradient
+                Vector nY = GetNormalToYield(S, A);
+                Vector Q(mI1);
+                Q *= (-one3 * (DoubleDot2_2_Contr(nY, A) + root23 * m_m));
+                Q += nY;
+                const double qn = GetNorm_Contr(Q), nd = GetNorm_Contr(dSe);
                 if (f0 < -mTolF) {
                     a = IntersectionFactor(S, CurStrain, NextStrain, A, 0.0, 1.0);
                     mLadrunoLastPath = 2;
-                } else if (DoubleDot2_2_Contr(GetNormalToYield(S, A), dSe) / (nd == 0 ? 1.0 : nd)
+                    onset = true;
+                } else if (DoubleDot2_2_Contr(Q, dSe) / ((qn == 0 ? 1.0 : qn) * (nd == 0 ? 1.0 : nd))
                            > (-sqrt(mTolF))) {
                     a = 0.0;
                     mLadrunoLastPath = 3;
                 } else {
                     a = IntersectionFactor_Unloading(S, CurStrain, NextStrain, A);
                     mLadrunoLastPath = 4;
+                    onset = true;
                 }
                 mLadrunoLastElasticRatio = a;
                 if (a > 0.0) {
                     Vector dEa(dStrain);
                     dEa *= a;
-                    S += DoubleDot4_2(aC, dEa);
+                    const double ea = eN - (1 + m_e_init) * GetTrace(dEa);
+                    S += ladrunoSasElastic(S, dEa, eN, ea);
                     Ee += dEa;
-                    if (fabs(GetF(S, A)) > mTolF)
+                    if (f0 < -mTolF && !(a < 1.0) )
                         st[LSAS_INTERSECT_FAIL] += 1.0;
+                } else if (onset && f0 < -mTolF) {
+                    st[LSAS_INTERSECT_FAIL] += 1.0;   // IntersectionFactor gave up (a = 0)
                 }
             }
         }
@@ -652,7 +710,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             st[LSAS_ELASTIC] += 1.0;
             mSigma = S; mAlpha = A; mFabric = Z; mEpsilonE = Ee;
             mDGamma = 0.0;
-            mCe = aC; mCep = aC; mCep_Consistent = aC;
+            GetElasticModuli(S, mVoidRatio, K, G);
+            mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
             st[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(A, S, mVoidRatio);
             st[LSAS_LAST_F] = GetF(S, A);
             return;
@@ -661,7 +720,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         Vector curP(dStrain);
         curP *= a;
         curP += CurStrain;
-        code = ladrunoSasSubsteps(S, Ee, A, Z, ain, curP, NextStrain, K, G, lamSum, lastPlastic);
+        code = ladrunoSasSubsteps(S, Ee, A, Z, ain, curP, NextStrain, onset, lamSum, lastPlastic);
     } else {
         mLadrunoLastPath = 7;
         ladrunoTraceSubstep(0.0, 1.0, std::numeric_limits<double>::quiet_NaN(), TR_REFUSED, false);
@@ -687,7 +746,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         }
         mSigma = mSigma_n; mAlpha = mAlpha_n; mFabric = mFabric_n; mEpsilonE = mEpsilonE_n;
         mDGamma = 0.0;
-        mCe = aC; mCep = aC; mCep_Consistent = aC;
+        GetElasticModuli(mSigma_n, eN, K, G);
+        mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
         // PROCESS-WIDE warning budget (every Gauss point is an instance)
         static std::atomic<int> ladrunoSasWarnCount(0);   // Ladruno WP-129 (diagnostic budget)
         if (ladrunoSasWarnCount.load() < 10) {
@@ -708,11 +768,12 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mDGamma = lamSum;
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.tangent");
-        mCe = aC;
+        GetElasticModuli(S, mVoidRatio, K, G);
+        mCe = GetStiffness(K, G);
         if (lastPlastic)
-            ladrunoSasContinuumTangent(S, A, Z, ain, mVoidRatio, K, G, mCep);
+            ladrunoSasContinuumTangent(S, A, Z, ain, mVoidRatio, mCep);
         else
-            mCep = aC;
+            mCep = mCe;
         mCep_Consistent = mCep;
     }
     st[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(A, S, mVoidRatio);

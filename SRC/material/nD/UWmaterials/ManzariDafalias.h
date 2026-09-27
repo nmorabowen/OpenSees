@@ -379,18 +379,19 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	int     ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,  // Ladruno WP-129
-	                const Vector& ain, double dv, const Vector& ddev, double K, double G,   // Ladruno WP-129
+	                const Vector& ain, double dv, const Vector& ddev,   // Ladruno WP-129
 	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);   // Ladruno WP-129
 	int     ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,  // Ladruno WP-129
-	                const Vector& curStrain, const Vector& nextStrain, double K, double G,   // Ladruno WP-129
+	                const Vector& curStrain, const Vector& nextStrain, bool onset,   // Ladruno WP-129
 	                double& lamSum, bool& lastPlastic);   // Ladruno WP-129
 	bool    ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,       // Ladruno WP-129
-	                const Vector& ain, double K, double G, bool bothSides);   // Ladruno WP-129
+	                const Vector& ain, bool bothSides);   // Ladruno WP-129
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
-	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e, double K, double G); // Ladruno WP-129
+	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e);             // Ladruno WP-129
 	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h); // Ladruno WP-129
+	Vector  ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1);  // Ladruno WP-129
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
-	                const Vector& ain, double e, double K, double G, Matrix& Cep);   // Ladruno WP-129
+	                const Vector& ain, double e, Matrix& Cep);   // Ladruno WP-129
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
 	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,

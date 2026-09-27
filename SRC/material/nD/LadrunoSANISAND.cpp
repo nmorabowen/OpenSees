@@ -4849,10 +4849,8 @@ Matrix
 LadrunoSANISAND::ladrunoTangentEP(void)
 {
     Matrix Cep(6, 6);
-    double K, G;
     const double e = m_e_init - (1 + m_e_init) * GetTrace(mEpsilon_n);
-    GetElasticModuli(mSigma_n, e, K, G);
-    ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, K, G, Cep);
+    ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, Cep);
     return Cep;
 }
 
