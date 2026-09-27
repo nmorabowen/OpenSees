@@ -43,6 +43,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] The substep error must measure EVERY evolved internal variable (back-stress, fabric,
+      ...), not only the stress: a stress-only test accepts an O(1) back-stress jump when both
+      stages are elastic in stress. Quirks: "substep error is STRESS-ONLY" (WP-128).
 - [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
       step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
       Quirks: "ACCEPTS a substep that FAILED its error test".
