@@ -500,6 +500,8 @@ def main(argv=None):
                     help="read the full field every step (1) or only at checkpoints (0)")
     ap.add_argument("--deterministic", type=int, default=0)
     ap.add_argument("--ds-min", type=float, default=DS_MIN)
+    ap.add_argument("--probe-test-step", type=int, default=0,
+                    help="TEST ONLY: stop after N steps and run the wall post-mortem")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
 
@@ -577,6 +579,9 @@ def main(argv=None):
             break
         if time.time() - T0 > args.wall:
             mode = "WALL"
+            break
+        if args.probe_test_step and nstep >= args.probe_test_step:
+            mode = "PROBETEST"
             break
         ds = min(ds, smax - s_now)
         fails_before = 0
@@ -676,7 +681,7 @@ def main(argv=None):
                    applied=deck["applied"], ptol=ptol)
 
     # ---- post-mortem at the wall (SANISAND): replay rows + one probe --------
-    if san and mode in ("FLOOR", "WALL") and nstep > 0:
+    if san and mode in ("FLOOR", "WALL", "PROBETEST") and nstep > 0:
         Fn = read_field(deck, want_stats=True, want_f=True)
         Dn = derived(Fn)
         save_field(os.path.join(out, "ckpt", "field_last_converged.npz"), deck, Fn,
@@ -695,7 +700,7 @@ def main(argv=None):
                          sB_pp, sub_prev, cap_prev, dt_prev)
             log("wrote replay_wall_last_pair.csv (state at step n-1 + dStrain of "
                 "the last converged step n)")
-        if mode == "FLOOR":
+        if mode in ("FLOOR", "PROBETEST"):
             # probe: from the last converged state, ONE Newton iteration of the
             # first increment the wall step tried (FixedNumIter 1 commits it; the
             # run is over, so committing a non-equilibrium iterate is harmless).
