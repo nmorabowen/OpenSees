@@ -96,6 +96,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Tune test paths against plastic response, not elastic estimates. Quirks:
       "must be tuned against PLASTIC response".
 - [ ] Break each new gate on purpose once. Quirks: "A test can be GREEN because of the very bug".
+- [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
+      `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
+      tangent stopped".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.
