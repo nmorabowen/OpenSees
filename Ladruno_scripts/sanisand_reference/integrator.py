@@ -86,7 +86,8 @@ class Result:
     start: dict                 # bounding report at the start
     end: dict                   # bounding report at t_end
     f_end: float
-    max_rho_b: float            # max ||alpha|| / ||alpha^b_theta|| along the path
+    max_rho_b: float            # max ||alpha|| / ||alpha^b_theta(n)|| along the path
+    max_rho_alpha: float        # max ||alpha|| / bounding radius in alpha's own direction
     max_abs_f_plastic: float    # consistency drift: max |f| over plastic segments
     min_H_sign_margin: float    # min Hs/scale over plastic segments (<0 never taken)
     segments: list = field(default_factory=list)
@@ -95,12 +96,15 @@ class Result:
     nfev: int = 0
     path: dict = field(default_factory=dict)
     deps_total: list = field(default_factory=list)   # the realised strain increment
-    uw_negative_h: bool = False   # UW alpha_in rule: plastic with (alpha-alpha_in):n < 0
+    uw_negative_h: bool = False   # plastic with (alpha-alpha_in):n < 0 (h < 0) anywhere
+    min_a_plastic: float = float("inf")   # min (alpha-alpha_in):n over plastic samples
 
     def summary(self):
         s = self.state
         return dict(status=self.status, t_end=self.t_end, f_end=self.f_end,
                     max_rho_b=self.max_rho_b, rho_b_end=self.end.get("rho_b"),
+                    max_rho_alpha=self.max_rho_alpha,
+                    rho_alpha_end=self.end.get("rho_alpha"),
                     p_end=self.end.get("p"), eta_end=self.end.get("eta"),
                     e_end=s.e, n_segments=len(self.segments),
                     n_reseats=len(self.reseats), nfev=self.nfev,
@@ -363,8 +367,10 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
     t = 0.0
     status = "ok"
     max_rho = start["rho_b"]
+    max_rho_a = start["rho_alpha"]
     max_abs_f_pl = 0.0
     min_hmargin = float("inf")
+    min_a_pl = float("inf")
     tt, yy = [0.0], [y.copy()]
     stall = 0
     while t < 1.0:
@@ -412,8 +418,10 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
             q = inc.q_of(sol.y[:, k], mode)
             if q.rho_b > max_rho:
                 max_rho = q.rho_b
+            max_rho_a = max(max_rho_a, q.rho_alpha)
             if mode == "plastic":
                 max_abs_f_pl = max(max_abs_f_pl, abs(q.f))
+                min_a_pl = min(min_a_pl, q.a)
                 sc = max(abs(q.Hs), 1e-300)
                 min_hmargin = min(min_hmargin, q.Hs / (abs(q.Hs) + abs(q.a * q.X) + 1e-300))
         stall = stall + 1 if (t_new - t) <= 1e-13 else 0
@@ -441,10 +449,12 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
         path = dict(t=np.array(tt), y=Y)
     res = Result(status=status, t_end=t, state=end_state, start=start, end=end,
                  f_end=end["f"], max_rho_b=max(max_rho, end["rho_b"]),
+                 max_rho_alpha=max(max_rho_a, end["rho_alpha"]),
                  max_abs_f_plastic=max_abs_f_pl,
                  min_H_sign_margin=min_hmargin, segments=segments,
                  reseats=reseats, notes=notes, nfev=inc.nfev, path=path,
-                 deps_total=y[20:26].tolist(), uw_negative_h=inc.uw_negative_h)
+                 deps_total=y[20:26].tolist(), min_a_plastic=min_a_pl,
+                 uw_negative_h=inc.uw_negative_h or min_a_pl < -1.0e-12)
     return res
 
 

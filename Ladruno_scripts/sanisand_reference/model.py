@@ -269,8 +269,10 @@ class Quantities:
     K: float
     X: float          # Q:E:R = 2G n:R' - K D n:r
     Hs: float         # regularised denominator a*H = (2/3) p b0 b:n + a X
-    rho_b: float      # ||alpha|| / (sqrt(2/3) ab)  (alpha relative to bounding)
+    rho_b: float      # ||alpha|| / (sqrt(2/3) ab)  (ab at the Lode angle of n; WP-128's measure)
     bn: float         # b:n
+    rho_alpha: float  # ||alpha|| / (sqrt(2/3) ab(theta_alpha)): ab at alpha's OWN Lode
+    #                   angle -- the geometric test "alpha inside the bounding surface"
 
 
 def quantities(sig, alpha, z, e, alpha_in, P, O, moduli=None):
@@ -314,10 +316,11 @@ def quantities(sig, alpha, z, e, alpha_in, P, O, moduli=None):
     bn = ddot(b, n)
     Hs = (2.0 / 3.0) * p * b0 * bn + a * X
     rho_b = norm(alpha) / (SQ23 * ab) if ab > 0.0 else float("inf")
+    rho_alpha = rho_alpha_of(alpha, psi, P)
     return Quantities(p=p, p_true=p_true, s=s, r=r, x=x, f=f, n=n, cos3t=c3, g=g,
                       psi=psi, ab=ab, ad=ad, b=b, d=d, b0=b0, a=a, A=A, D=D, B=B,
                       C=C, Rdev=Rdev, R=R, nr=nr, G=G, K=K, X=X, Hs=Hs,
-                      rho_b=rho_b, bn=bn)
+                      rho_b=rho_b, bn=bn, rho_alpha=rho_alpha)
 
 
 def plastic_weights(q, O):
@@ -356,11 +359,24 @@ def elastic_mandel(G, K):
     return K * np.outer(one, one) + 2.0 * G * (np.eye(6) - np.outer(one, one) / 3.0)
 
 
+def rho_alpha_of(alpha, psi, P):
+    """||alpha|| over the bounding surface's radius IN alpha's OWN direction:
+    the surface in alpha-space is {sqrt(2/3) ab(theta(u)) u : u unit deviatoric},
+    so alpha is inside iff this is < 1 (ambiguity A9 in the doc)."""
+    na = norm(alpha)
+    if na == 0.0:
+        return 0.0
+    u = alpha / na
+    c3 = max(-1.0, min(1.0, SQ6 * float(np.trace(u @ u @ u))))
+    ab = g_lode(c3, P.c) * P.Mc * math.exp(-P.nb * psi) - P.m
+    return na / (SQ23 * ab) if ab > 0.0 else float("inf")
+
+
 def bounding_report(sig, alpha, z, e, alpha_in, P, O):
     """alpha relative to the bounding surface at the point's own Lode angle."""
     q = quantities(sig, alpha, z, e, alpha_in, P, O)
     return dict(p=q.p, f=q.f, psi=q.psi, Mb=q.ab + P.m, alpha_b=q.ab,
-                rho_b=q.rho_b, b_dot_n=q.bn, alpha_dot_n=ddot(alpha, q.n),
+                rho_b=q.rho_b, rho_alpha=q.rho_alpha, b_dot_n=q.bn, alpha_dot_n=ddot(alpha, q.n),
                 eta=math.sqrt(1.5) * norm(q.s) / q.p if q.p > 0 else float("nan"),
                 cos3t=q.cos3t)
 

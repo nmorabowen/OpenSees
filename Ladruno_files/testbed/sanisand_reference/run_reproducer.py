@@ -39,7 +39,8 @@ def main():
         for vn, O in V.items():
             r = integrate(st, Control.strain(de), P, O)
             row[vn] = dict(status=r.status, eta=r.end["eta"], rho_end=r.end["rho_b"],
-                           max_rho=r.max_rho_b, f_end=r.f_end, p_end=r.end["p"],
+                           max_rho=r.max_rho_b, max_rhoa=r.max_rho_alpha,
+                           f_end=r.f_end, p_end=r.end["p"],
                            dp_over_p=(r.end["p"] - p_s) / p_s, segs=len(r.segments),
                            reseats=len(r.reseats), negh=r.uw_negative_h)
         res.append(row)
@@ -54,17 +55,18 @@ def main():
                 br = bounding_report(sig, al, v2t(c["z"]), c["e"], v2t(c["alpha_in"]),
                                      P, ring_variants()["uw_model"])
                 row[pr] = dict(rc=c["rc"], substeps=c["substeps"], eta=br["eta"],
-                               rho_end=br["rho_b"], f_after=c["f_after"], p=c["p"])
+                               rho_end=br["rho_b"], rhoa=br["rho_alpha"],
+                               f_after=c["f_after"], p=c["p"])
     json.dump(res, open(os.path.join(OUT, "reproducer.json"), "w"), indent=1)
-    L = ["| p_s | delta | Δp/p (ref) | paper η / ρ_b | uw_model η / ρ_b (max ρ_b) | uw_rule η / ρ_b | C++ ME rc/sub η / ρ_b / f | C++ ME8 rc/sub η / ρ_b |",
+    L = ["| p_s | delta | Δp/p (ref) | paper η / ρ_b | uw_model η / ρ_b (max ρ_b, max ρ_α) | uw_rule η / ρ_b | C++ ME rc/sub η / ρ_b / ρ_α / f | C++ ME8 rc/sub η / ρ_b |",
          "|---|---|---|---|---|---|---|---|"]
     for r in res:
         a, b, c = r["paper"], r["uw_model"], r["uw_rule"]
         s = (f"| {r['p_s']} | {r['delta']:.0e} | {b['dp_over_p']:.2f} | {a['eta']:.3f} / {a['rho_end']:.3f} | "
-             f"{b['eta']:.3f} / {b['rho_end']:.3f} ({b['max_rho']:.3f}) | {c['eta']:.3f} / {c['rho_end']:.3f} {c['status']} |")
+             f"{b['eta']:.3f} / {b['rho_end']:.3f} ({b['max_rho']:.3f}, {b['max_rhoa']:.3f}) | {c['eta']:.3f} / {c['rho_end']:.3f} {c['status']} |")
         if have_cxx:
             m, m8 = r["ME"], r["ME8"]
-            s += (f" {m['rc']}/{m['substeps']:.0f} {m['eta']:.2f} / {m['rho_end']:.2f} / {m['f_after']:.1e} |"
+            s += (f" {m['rc']}/{m['substeps']:.0f} {m['eta']:.2f} / {m['rho_end']:.2f} / {m['rhoa']:.2f} / {m['f_after']:.1e} |"
                   f" {m8['rc']}/{m8['substeps']:.0f} {m8['eta']:.2f} / {m8['rho_end']:.2f} |")
         else:
             s += " n/a | n/a |"
