@@ -82,6 +82,7 @@ TRACE_CODES = {
     10: "rejectAlpha",       # alpha/alpha^b > 1 + kappa after the substep: dT cut
     11: "refused",           # the update was REFUSED here (code: sas LAST_REFUSE_CODE)
     12: "acceptProjected",   # accepted after -alphaProject 1 projected alpha
+    13: "rejectReversal",    # (alpha - alpha_in):n < 0 inside a plastic substep: cut to locate it
 }
 # WP-129: the `sasStats` columns (and the appended replay tail)
 SAS_NAMES = [
@@ -91,7 +92,7 @@ SAS_NAMES = [
     "intersectFail", "refusals", "refStartF", "refStartAlpha", "refStartOther",
     "refDTmin", "refNonPosH", "refLowP", "refDrift", "refAlpha", "refCap",
     "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode", "maxAlphaRatio",
-    "lastAlphaRatio", "lastF",
+    "lastAlphaRatio", "lastF", "entryOverKappa", "rejectedReversal",
 ]
 SAS_REFUSE_CODES = {0: "none", 1: "startOutsideYield", 2: "startAlphaOutsideBounding",
                     3: "startInadmissible", 4: "errorAtDTmin", 5: "loadingNonPosH",

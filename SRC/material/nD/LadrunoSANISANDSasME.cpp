@@ -115,7 +115,7 @@ const int    kSasDriftIter = 20;
 // substep trace codes (the WP-127 replay trace; 0/1/4/5/7 as ModifiedEuler)
 enum { TR_ACCEPT = 0, TR_REJ_ERR = 1, TR_REJ_LOWP1 = 4, TR_REJ_LOWP2 = 5, TR_CAP = 7,
        TR_REJ_NONPOS_H = 8, TR_REJ_DRIFT = 9, TR_REJ_ALPHA = 10, TR_REFUSED = 11,
-       TR_ACCEPT_PROJECTED = 12 };
+       TR_ACCEPT_PROJECTED = 12, TR_REJ_REVERSAL = 13 };
 // refusal codes (sasStats LAST_REFUSE_CODE)
 enum { RC_START_F = 1, RC_START_ALPHA = 2, RC_START_OTHER = 3, RC_DTMIN = 4,
        RC_NONPOS_H = 5, RC_LOWP = 6, RC_DRIFT = 7, RC_ALPHA = 8, RC_CAP = 9 };
@@ -213,21 +213,120 @@ ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e)
     mLadrunoSas.stats[LSAS_ALPHA_PROJECTED] += 1.0;
 }
 
-// Elastic stress increment for d_eps, Heun on the pressure-dependent moduli
-// (U9: the moduli are not frozen at the start). e0/e1: void ratio at start/end.
+// Elastic stress increment for d_eps along a straight strain path, EXACT
+// (review of #871, numerics item 1: one Heun step was 4-32 % off the oracle,
+// independent of TolR). With the calibrated form G = g*sqrt(max(p + pRe, p_min)),
+// K = c*G (c fixed by nu), dp = K dv has the closed form
+//     sqrt(x) = sqrt(x0) + c*g*t*dv/2   (x = p + pRe > p_min)
+//     x linear in t at the floor modulus  (x <= p_min),
+// and the deviatoric part is ds = 2 G(t) de_dev dt with G linear in t on the
+// first branch and constant on the second, so int_0^1 G dt is exact too.
+// Only the `mUseCurrentVoidRatioInG` seam (G through the CURRENT e) breaks the
+// closed form; that case falls back to 64 Heun sub-steps.
 Vector
 ManzariDafalias::ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1)
 {
-    double K, G;
-    GetElasticModuli(S, e0, K, G);
-    Vector d1 = DoubleDot4_2(GetStiffness(K, G), dEps);
-    Vector S1(S);
-    S1 += d1;
-    GetElasticModuli(S1, e1, K, G);
-    Vector d2 = DoubleDot4_2(GetStiffness(K, G), dEps);
-    d1 += d2;
-    d1 *= 0.5;
-    return d1;
+    if (mUseCurrentVoidRatioInG) {
+        const int nsub = 64;
+        Vector Sx(S), dE(dEps), d1(6), d2(6), S1(6);
+        dE /= (double)nsub;
+        double K, G;
+        for (int k = 0; k < nsub; k++) {
+            const double ea = e0 + (e1 - e0) * (double)k / nsub;
+            const double eb = e0 + (e1 - e0) * (double)(k + 1) / nsub;
+            GetElasticModuli(Sx, ea, K, G);
+            d1 = DoubleDot4_2(GetStiffness(K, G), dE);
+            S1 = Sx; S1 += d1;
+            GetElasticModuli(S1, eb, K, G);
+            d2 = DoubleDot4_2(GetStiffness(K, G), dE);
+            d1 += d2; d1 *= 0.5;
+            Sx += d1;
+        }
+        Sx -= S;
+        return Sx;
+    }
+    double K0, G0;
+    GetElasticModuli(S, e0, K0, G0);
+    const double x0 = one3 * GetTrace(S) + m_PreElastic;
+    const double xe0 = (x0 <= m_Pmin) ? m_Pmin : x0;
+    const double g = G0 / sqrt(xe0);
+    const double c = K0 / G0;
+    const double dv = GetTrace(dEps);
+    const double spm = sqrt(m_Pmin);
+    double t = 0.0, x = x0, I = 0.0;   // I = int_0^1 G(t) dt
+    for (int seg = 0; seg < 4 && t < 1.0; seg++) {
+        const double rest = 1.0 - t;
+        if (x > m_Pmin || (x == m_Pmin && dv > 0.0)) {
+            // sqrt branch
+            const double u0 = sqrt(x);
+            double dt = rest;
+            if (dv < 0.0) {
+                const double tHit = 2.0 * (spm - u0) / (c * g * dv);   // >= 0
+                if (tHit < rest)
+                    dt = tHit;
+            }
+            const double u1 = u0 + 0.5 * c * g * dt * dv;
+            I += g * 0.5 * (u0 + u1) * dt;
+            x = (dt < rest) ? m_Pmin : u1 * u1;
+            if (dt < rest && dv < 0.0)
+                x = m_Pmin - 1.0e-300;   // continue on the floor branch
+            t += dt;
+        } else {
+            // floor branch: G = g*sqrt(p_min), K = c*G, both constant
+            const double kf = c * g * spm;
+            double dt = rest;
+            if (dv > 0.0) {
+                const double tHit = (m_Pmin - x) / (kf * dv);
+                if (tHit < rest)
+                    dt = tHit;
+            }
+            I += g * spm * dt;
+            x = (dt < rest) ? m_Pmin : x + kf * dv * dt;
+            t += dt;
+        }
+    }
+    Vector dS = ToContraviant(GetDevPart(dEps));
+    dS *= (2.0 * I);
+    Vector dp(mI1);
+    dp *= (x - x0);
+    dS += dp;
+    return dS;
+}
+
+// Where the EXACT elastic path from S along dEps meets the yield surface of A:
+// Pegasus on [lo, hi] with f(lo) < 0 < f(hi) (the same path the predictor uses,
+// so the plastic portion starts ON the surface -- review numerics item 3).
+double
+ManzariDafalias::ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,
+    double e0, double lo, double hi)
+{
+    Vector dE(dEps), St(6);
+    auto fAt = [&](double a) {
+        dE = dEps; dE *= a;
+        St = S; St += ladrunoSasElastic(S, dE, e0, e0);
+        return GetF(St, A);
+    };
+    double f0 = fAt(lo), f1 = fAt(hi);
+    if (!(f0 < 0.0 && f1 > 0.0))
+        return -1.0;
+    double a0 = lo, a1 = hi, a = hi;
+    for (int it = 0; it < 60; it++) {
+        a = a1 - f1 * (a1 - a0) / (f1 - f0);
+        if (!(a > a0 && a < a1))
+            a = 0.5 * (a0 + a1);
+        const double f = fAt(a);
+        if (fabs(f) < mTolF)
+            return a;
+        if (f * f1 < 0.0) {
+            a0 = a1; f0 = f1;
+        } else {
+            f0 = f0 * f1 / (f1 + f);   // Pegasus
+        }
+        a1 = a; f1 = f;
+        if (fabs(a1 - a0) < 1.0e-15)
+            return a;
+    }
+    return a;
 }
 
 // One rate-form stage, everything evaluated at (s, a, z, e).
@@ -462,9 +561,12 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         // paper rule (DM04, = WP-134's decide()): at a stage where
         // (alpha - alpha_in):n < 0 a new loading process starts there:
         // alpha_in := alpha at THAT stage's state.
+        // Only ON the surface (the oracle decides modes, and re-seats, only
+        // there -- review numerics item 7).
         bool reseat1 = false, reseat2 = false;
+        const bool onSurface = (fabs(GetF(S, A)) <= mTolF);
         ain1 = ain;
-        if (paperRule) {
+        if (paperRule && onSurface) {
             tmpN = GetNormalToYield(S, A);
             tmp = A; tmp -= ain;
             if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) { ain1 = A; reseat1 = true; }
@@ -489,12 +591,18 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
                 rej = TR_REJ_LOWP1;
             } else {
                 ain2 = ain1;
-                if (paperRule) {
+                if (paperRule && k1 == ST_PLASTIC) {
+                    // a reversal INSIDE a plastic substep: locate it at a substep
+                    // start (cut) rather than re-seating on the Euler predictor;
+                    // at dT_min re-seat at the stage state.
                     tmpN = GetNormalToYield(S1, A1);
                     tmp = A1; tmp -= ain1;
-                    if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) { ain2 = A1; reseat2 = true; }
+                    if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) {
+                        if (atMin) { ain2 = A1; reseat2 = true; }
+                        else rej = TR_REJ_REVERSAL;
+                    }
                 }
-                {
+                if (rej == 0) {
                     OPS_PROFILE_SCOPE("sanisand.sasME.stages");
                     k2 = ladrunoSasStage(S1, A1, Z1, e1, ain2, dv, ddev, ds2, da2, dz2, dep2, lam2);
                 }
@@ -537,13 +645,20 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             const bool anyElastic = (k1 == ST_ELASTIC || k2 == ST_ELASTIC);
             const bool anyPlastic = (k1 == ST_PLASTIC || k2 == ST_PLASTIC);
             // the plastic portion belongs ON the surface; an unloading stage may leave it inside
-            const bool bothSides = anyPlastic && !anyElastic;
+            // ... and only when the substep STARTED on it: a start inside (f < -TolF)
+            // is corrected only if it ends outside (review numerics item 3)
+            const bool bothSides = anyPlastic && !anyElastic && onSurface;
             if (!ladrunoSasDrift(nS, nA, nZ, nEe, e1, ainEnd, bothSides)) {
                 rej = TR_REJ_DRIFT;
             } else {
                 OPS_PROFILE_SCOPE("sanisand.sasME.alphaCheck");
+                // Rejected only when PLASTIC FLOW carried alpha outward beyond
+                // 1 + kappa -- measured against the END surface with the start
+                // alpha, so psi moving the surface is never the reason (review
+                // numerics item 2: that was a dead end).
                 const double ratio = ladrunoSasAlphaRatio(nA, nS, e1);
-                if (!(ratio <= 1.0 + kappa)) {
+                const double ratioFixed = ladrunoSasAlphaRatio(A, nS, e1);
+                if (!(ratio <= 1.0 + kappa) && !(ratio <= ratioFixed)) {
                     if (o.alphaProject != 0 && std::isfinite(ratio)) {
                         ladrunoSasProject(nS, nA, nEe, e1);
                         rej = -1;   // accepted, projected
@@ -571,6 +686,7 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             case TR_REJ_NONPOS_H: q = 0.5; rc = RC_NONPOS_H; st[LSAS_REJ_NONPOS_H] += 1.0; break;
             case TR_REJ_DRIFT:    q = 0.5; rc = RC_DRIFT; st[LSAS_REJ_DRIFT] += 1.0; break;
             case TR_REJ_ALPHA:    q = 0.5; rc = RC_ALPHA; st[LSAS_REJ_ALPHA] += 1.0; break;
+            case TR_REJ_REVERSAL: q = 0.5; rc = RC_DTMIN; st[LSAS_REJ_REVERSAL] += 1.0; break;
             }
             if (!std::isfinite(q)) q = 0.1;
             ladrunoTraceSubstep(T, dT, err, atMin ? TR_REFUSED : rej, atMin);
@@ -591,8 +707,9 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             ain = ainEnd;
             st[LSAS_ALPHA_IN_RESEATS] += 1.0;
         }
-        // (alpha - alpha_in):n reaching 0 re-seats alpha_in (the paper's rule)
-        if (paperRule) {
+        // (alpha - alpha_in):n reaching 0 re-seats alpha_in (the paper's rule),
+        // on the surface only
+        if (paperRule && fabs(GetF(S, A)) <= mTolF) {
             Vector nEnd = GetNormalToYield(S, A);
             tmp = A; tmp -= ain;
             if (DoubleDot2_2_Contr(tmp, nEnd) < 0.0) {
@@ -654,12 +771,20 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         else if (GetF(S, A) > mTolF)
             code = RC_START_F;
         else {
+            // ENTRY threshold 1 + kappa_entry (review numerics item 2): the
+            // continuum itself carries alpha past the bounding surface when psi
+            // shrinks it around a fixed alpha (elastic compression), so a start
+            // between 1 + kappa and 1 + kappa_entry is ADMISSIBLE (counted, not
+            // refused -- refusing it was a dead end no cut could leave). Beyond
+            // it is a state no path of the model reaches (b8 1950/2-3: 6.8/7.3).
             const double r0 = ladrunoSasAlphaRatio(A, S, eN);
-            if (!(r0 <= 1.0 + o.alphaBoundTol)) {
+            if (!(r0 <= 1.0 + o.alphaEntryTol)) {
                 if (o.alphaProject != 0 && std::isfinite(r0))
                     ladrunoSasProject(S, A, Ee, eN);
                 else
                     code = RC_START_ALPHA;
+            } else if (r0 > 1.0 + o.alphaBoundTol) {
+                st[LSAS_ENTRY_OVER_KAPPA] += 1.0;
             }
         }
     }
@@ -685,14 +810,25 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                 mLadrunoLastPath = 0;
             } else {
                 const double f0 = GetF(S, A);
-                // U10: the loading test on the TRUE gradient
+                // Paper alpha_in rule at the increment START (= WP-134's decide()
+                // at t = 0, review numerics item 4): on the surface with
+                // (alpha - alpha_in):n < 0 a new loading process starts here.
                 Vector nY = GetNormalToYield(S, A);
+                if (paperRule && fabs(f0) <= mTolF) {
+                    Vector t0(A); t0 -= ain;
+                    if (DoubleDot2_2_Contr(t0, nY) < 0.0) {
+                        ain = A;
+                        st[LSAS_ALPHA_IN_RESEATS] += 1.0;
+                    }
+                }
+                // U10: the loading test on the TRUE gradient
                 Vector Q(mI1);
                 Q *= (-one3 * (DoubleDot2_2_Contr(nY, A) + root23 * m_m));
                 Q += nY;
                 const double qn = GetNorm_Contr(Q), nd = GetNorm_Contr(dSe);
                 if (f0 < -mTolF) {
-                    a = IntersectionFactor(S, CurStrain, NextStrain, A, 0.0, 1.0);
+                    a = ladrunoSasIntersect(S, A, dStrain, eN, 0.0, 1.0);
+                    if (a < 0.0) { st[LSAS_INTERSECT_FAIL] += 1.0; a = 0.0; }
                     mLadrunoLastPath = 2;
                     onset = true;
                 } else if (DoubleDot2_2_Contr(Q, dSe) / ((qn == 0 ? 1.0 : qn) * (nd == 0 ? 1.0 : nd))
@@ -700,7 +836,27 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                     a = 0.0;
                     mLadrunoLastPath = 3;
                 } else {
-                    a = IntersectionFactor_Unloading(S, CurStrain, NextStrain, A);
+                    // unload then reload: find the first sampled point inside,
+                    // then the first one back outside, and Pegasus between them
+                    a = -1.0;
+                    const int ns = 64;
+                    Vector dE(6), St2(6);
+                    double prevA = -1.0;
+                    bool inside = false;
+                    for (int k = 1; k <= ns; k++) {
+                        const double ak = (double)k / ns;
+                        dE = dStrain; dE *= ak;
+                        St2 = S; St2 += ladrunoSasElastic(S, dE, eN, eN);
+                        const double fk = GetF(St2, A);
+                        if (!inside) {
+                            if (fk < -mTolF) inside = true;
+                        } else if (fk > 0.0) {
+                            a = ladrunoSasIntersect(S, A, dStrain, eN, prevA, ak);
+                            break;
+                        }
+                        prevA = ak;
+                    }
+                    if (a < 0.0) { st[LSAS_INTERSECT_FAIL] += 1.0; a = 0.0; }
                     mLadrunoLastPath = 4;
                     onset = true;
                 }
@@ -711,10 +867,6 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                     const double ea = eN - (1 + m_e_init) * GetTrace(dEa);
                     S += ladrunoSasElastic(S, dEa, eN, ea);
                     Ee += dEa;
-                    if (f0 < -mTolF && !(a < 1.0) )
-                        st[LSAS_INTERSECT_FAIL] += 1.0;
-                } else if (onset && f0 < -mTolF) {
-                    st[LSAS_INTERSECT_FAIL] += 1.0;   // IntersectionFactor gave up (a = 0)
                 }
             }
         }

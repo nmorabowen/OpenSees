@@ -192,7 +192,7 @@ OPS_LadrunoSANISAND(void)
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
-               << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaProject 0|1>"  // Ladruno WP-129
+               << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
                << " (the last five: IntScheme 129 = SAS-ME only)"                     // Ladruno WP-129
                << endln;
@@ -784,10 +784,12 @@ OPS_LadrunoSANISAND(void)
         // Ladruno WP-129: the SAS-ME (IntScheme 129) options. Refused below on
         // any other scheme -- a flag nothing reads must not be accepted.
         else if (strcmp(argTok, "-errFloor") == 0 || strcmp(argTok, "-errfloor") == 0 ||
-                 strcmp(argTok, "-alphaBoundTol") == 0 || strcmp(argTok, "-alphaboundtol") == 0) {
+                 strcmp(argTok, "-alphaBoundTol") == 0 || strcmp(argTok, "-alphaboundtol") == 0 ||
+                 strcmp(argTok, "-alphaEntryTol") == 0 || strcmp(argTok, "-alphaentrytol") == 0) {
             seenFlag = true;
             sawSasToken = true;
             const bool isFloor = (argTok[1] == 'e');
+            const bool isEntry = (argTok[6] == 'E' || argTok[6] == 'e');
             double v = 0.0;
             numData = 1;
             if (OPS_GetDoubleInput(&numData, &v) != 0) {
@@ -804,7 +806,9 @@ OPS_LadrunoSANISAND(void)
                        << " (got " << v << ")" << endln;
                 return 0;
             }
-            if (isFloor) sasOpt.errFloor = v; else sasOpt.alphaBoundTol = v;
+            if (isFloor) sasOpt.errFloor = v;
+            else if (isEntry) sasOpt.alphaEntryTol = v;
+            else sasOpt.alphaBoundTol = v;
         }
         else if (strcmp(argTok, "-alphaProject") == 0 || strcmp(argTok, "-alphaproject") == 0) {
             seenFlag = true;
@@ -1237,7 +1241,8 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                << ", alpha_in " << (opt.alphaInMode == 0 ? "reseat (DEFAULT)"
                                     : opt.alphaInMode == 1 ? "bracket"
                                     : "STALE (attribution switch, NOT for production)")
-               << ", alpha/alpha^b bound 1 + " << opt.alphaBoundTol
+               << ", rho_alpha: flow bound 1 + " << opt.alphaBoundTol
+               << ", entry refusal above 1 + " << opt.alphaEntryTol
                << (opt.alphaProject ? " PROJECTED (counted)" : " (outside: reject, refuse at dT_min)")
                << "; TanType 1 and 2 both return the continuum tangent at the end state."
                << " Refusals reach the element as " << LADRUNO_MATERIAL_REFUSED
@@ -1894,7 +1899,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 5 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1971,8 +1976,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 2) = (double)mLadrunoSas.opt.alphaProject;
         ladrunoData(b + 3) = (double)mLadrunoSas.opt.alphaInMode;
         ladrunoData(b + 4) = (double)mLadrunoSas.opt.errorVars;
+        ladrunoData(b + 5) = mLadrunoSas.opt.alphaEntryTol;
         for (int i = 0; i < LSAS_COUNT; i++)
-            ladrunoData(b + 5 + i) = mLadrunoSas.stats[i];
+            ladrunoData(b + 6 + i) = mLadrunoSas.stats[i];
     }
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
@@ -1994,7 +2000,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 5 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -2014,8 +2020,9 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         mLadrunoSas.opt.alphaProject  = (int)ladrunoData(b + 2);
         mLadrunoSas.opt.alphaInMode   = (int)ladrunoData(b + 3);
         mLadrunoSas.opt.errorVars     = (int)ladrunoData(b + 4);
+        mLadrunoSas.opt.alphaEntryTol = ladrunoData(b + 5);
         for (int i = 0; i < LSAS_COUNT; i++)
-            mLadrunoSas.stats[i] = ladrunoData(b + 5 + i);
+            mLadrunoSas.stats[i] = ladrunoData(b + 6 + i);
     }
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
@@ -4907,7 +4914,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_refStartAlpha", "sas_refStartOther", "sas_refDTmin", "sas_refNonPosH",
             "sas_refLowP", "sas_refDrift", "sas_refAlpha", "sas_refCap",
             "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
-            "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF"};
+            "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF", "sas_entryOverKappa",
+            "sas_rejectedReversal"};
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
