@@ -381,7 +381,14 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
         sol = solve_ivp(fun, (t, 1.0), y, method=method, rtol=rtol, atol=inc.atol,
                         events=evs, jac=jac)
         if sol.status == -1:
-            status = "solver_failed: " + str(sol.message)
+            # keep the last accepted point: where the solver gave up is the finding
+            t, y = float(sol.t[-1]), sol.y[:, -1].copy()
+            pq = float(np.trace(v2t(y[0:6]))) / 3.0
+            status = "solver_failed"
+            qf = inc.q_of(y, mode)
+            notes.append(f"solver failed at t={t:.6g}, p={pq:.4g} kPa, mode {mode}, "
+                         f"(alpha-alpha_in):n={qf.a:.3e}, b:n={qf.bn:.3e}, "
+                         f"Hs={qf.Hs:.3e}, rho_b={qf.rho_b:.3f}: {sol.message}")
             break
         fired = None
         if sol.status == 1:
