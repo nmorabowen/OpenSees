@@ -1104,16 +1104,28 @@ nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm
     <-maxSubsteps $n> <-Pmin ...> <-Presidual ...> ...
 ```
 
-- `TolR` IS the substep tolerance (always honoured; `-honorTolR` is inert and warned). `1e-4` is
-  ModifiedEuler's scale; the default `1e-7` is sized for the CPPM Newton and costs substeps.
+- `TolR` IS the substep tolerance of the PLASTIC part (`-honorTolR` is inert and warned); the
+  elastic part is exact (closed form, below), so it has no tolerance to honour. Recommended range
+  **1e-4 to 1e-7**: `1e-4` is ModifiedEuler's scale, `1e-7` lands on the oracle to ~1e-7. Below
+  ~1e-8 the first-substep error of a large low-p increment (~6e2·dT² at 20 kPa, 1e-3 shear) cannot
+  meet the tolerance above `dT_min = 1e-6`, so the update refuses (`errorAtDTmin`) or hits
+  `-maxSubsteps`: a global cut then handles it, at a cost. The default `1e-7` is inside the range.
 - `-errFloor` σ_ref of the stress error `‖dσ₂−dσ₁‖ / max(2‖σ‖, σ_ref)`; default `P_atm/101`
   (1 kPa at P_atm 101 — exactly ModifiedEuler's implicit floor, WP-128 §5.1). α and z use the unit
   reference (`max(2‖α‖, 1)`): the α error is a stress error in units of p. **The floor is not the
   lever** — at low p the cost is stability-limited (WP-128 §5.3).
-- `-alphaBoundTol κ` (default 0.1): ρ_α = √(3/2)‖α‖ / α^b(θ_α, ψ) with α's OWN Lode angle; a start
-  state with ρ_α > 1 + κ is refused, an accepted substep ending there is rejected (refused at dT_min).
+- `-alphaBoundTol κ` (default 0.1): ρ_α = √(3/2)‖α‖ / α^b(θ_α, ψ) with α's OWN Lode angle. An
+  accepted substep is rejected (refused at dT_min) only when PLASTIC FLOW carried α outward past
+  1 + κ (ρ_α with the substep's end surface is larger than with its start α) — never because ψ moved
+  the surface: the continuum itself carries α outside when elastic compression raises ψ (review of
+  #871: proportional compression from ρ_α 0.999 at 20 kPa gives 1.13 at 430 kPa, 2.04 at 12.5 MPa).
+- `-alphaEntryTol κ_e` (default 2): a START with ρ_α > 1 + κ_e is refused
+  (`startAlphaOutsideBounding`); 1 + κ < ρ_α ≤ 1 + κ_e is counted (`entryOverKappa`), not refused.
+  Why 2: on that compression path ρ_α reaches 3 only past ~30 MPa, far outside the model's range,
+  while the dumped TIMs states b8 1950/2-3 sit at 6.8/7.3 (b:n = −8.2).
 - `-alphaProject 1`: instead, project α radially onto the bounding surface (the deviatoric stress
-  follows by p·Δα, so f and n are unchanged); counted. OFF by default: it rewrites history.
+  follows by p·Δα, so f, n, p and ψ are unchanged); counted. OFF by default: it rewrites history,
+  and the stress jump is ≥ 9 % of p·‖α‖ whenever it fires (review of #871).
 - `-sasAlphaIn`: `reseat` (DEFAULT) = the paper's rule — wherever (α − α_in):n < 0 a new loading
   process starts, α_in := α there; integrate()'s once-per-increment trial test is undone.
   `bracket` = keep UW's trial test and only use h = 1e10 where (α − α_in):n ≤ 0. `stale` and
@@ -1123,17 +1135,25 @@ nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm
 
 ### 13.2 What it does, per substep
 
-1. Elastic predictor (Heun on the pressure-dependent moduli); elastic if f_trial ≤ TolF. Otherwise
-   the intersection (the vanilla Pegasus/unloading search), the plastic loading test on the TRUE
-   gradient ∂f/∂σ = n − ⅓(n:α + √(2/3)m)I.
+1. Elastic predictor, EXACT: with G = g·√max(p + pRe, p_min) and K = cG, √p is linear in the
+   volumetric strain (√x = √x₀ + c·g·t·dε_v/2 above p_min, linear below) and ∫G dt is exact for the
+   deviatoric part (review of #871: one Heun step was 4–32 % off, independent of TolR). Elastic if
+   f_trial ≤ TolF. Otherwise: on the surface with (α − α_in):n < 0, α_in := α (the oracle's t = 0
+   rule); the loading test on the TRUE gradient ∂f/∂σ = n − ⅓(n:α + √(2/3)m)I; the intersection by
+   Pegasus on the SAME exact path (unload-then-reload: 64 samples to bracket the exit), so the
+   plastic part starts on the surface.
 2. Two Heun stages, each evaluated entirely at its own state (K, G, n, b, d, h, D, B, C — U9).
    Stage classification from N = ∂f/∂σ : C : dε: N ≤ 0 elastic (α, z unchanged); N > 0, H > 0
    plastic; N > 0, H ≤ 0 has no plastic solution — REFUSED at stage 1, cut at stage 2.
 3. Error on σ, α, z; accept iff err ≤ TolR; q = clamp(0.9√(TolR/err), 0.1, 1.1), no growth after a
    rejection.
 4. Drift correction (consistent with σ, α, z; then normal); if neither direction reduces |f| the
-   substep is cut, refused at dT_min — never returned with f > TolF.
-5. ρ_α check (above). α_in re-seat check.
+   substep is cut, refused at dT_min — never returned with f > TolF. Both-sided (|f| ≤ TolF) only
+   for an all-plastic substep that STARTED on the surface; otherwise only f > TolF is corrected.
+5. ρ_α check (above). α_in, the paper's rule, decided only ON the surface: a stage whose start is
+   on the surface with (α − α_in):n < 0 re-seats there; a reversal detected at stage 2 of a plastic
+   substep cuts the substep (so it is located at a substep start), re-seating at dT_min only; an
+   accepted substep ending on the surface with it negative re-seats at its end.
 
 Refusal codes (`sasStats` column `lastRefuseCode`, and the warning text): 1 startOutsideYield,
 2 startAlphaOutsideBounding, 3 startInadmissible (trace / tension / non-finite), 4 errorAtDTmin,
