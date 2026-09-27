@@ -1,0 +1,86 @@
+=================== vertUnload, p0 = 2 kPa, delta = 1e-4, 40 increments
+C++ vs port chain: worst rel sigma difference over 40 increments 0.00e+00
+ k  path              sub  forced clamp  corrGiveUp  p_after   eta_after  eta_alpha  alpha/alpha_b  psi     Mb      f_after
+ 0  elasticToPlastic  7505      0     0          0    0.0101         0         0            0  -0.1350  1.773 -4.12e-05
+ 1  elasticToPlastic  1929      0     0          0    0.0101         0         0            0  -0.1348  1.772 -4.12e-05
+ 2  elasticToPlastic  1929      0     0          0    0.0101         0         0            0  -0.1347  1.771 -4.12e-05
+ 3  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1345  1.770 -4.12e-05
+ 4  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1343  1.769 -4.12e-05
+ 5  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1342  1.767 -4.12e-05
+ 6  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1340  1.766 -4.12e-05
+ 7  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1338  1.765 -4.12e-05
+ 8  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1336  1.764 -4.12e-05
+ 9  elasticToPlastic  1930      0     0          0    0.0101         0         0            0  -0.1335  1.763 -4.12e-05
+10  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1333  1.762 -4.12e-05
+11  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1331  1.761 -4.12e-05
+12  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1330  1.760 -4.12e-05
+13  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1328  1.759 -4.12e-05
+14  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1326  1.758 -4.12e-05
+15  elasticToPlastic  1931      0     0          0    0.0101         0         0            0  -0.1325  1.757 -4.12e-05
+16  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1323  1.756 -4.12e-05
+17  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1321  1.755 -4.12e-05
+18  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1320  1.754 -4.12e-05
+19  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1318  1.753 -4.12e-05
+20  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1316  1.752 -4.12e-05
+21  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1314  1.751 -4.12e-05
+22  elasticToPlastic  1932      0     0          0    0.0101         0         0            0  -0.1313  1.750 -4.12e-05
+23  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1311  1.749 -4.12e-05
+24  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1309  1.748 -4.12e-05
+25  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1308  1.747 -4.12e-05
+26  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1306  1.746 -4.12e-05
+27  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1304  1.745 -4.12e-05
+28  elasticToPlastic  1933      0     0          0    0.0101         0         0            0  -0.1303  1.744 -4.12e-05
+29  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1301  1.743 -4.12e-05
+30  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1299  1.741 -4.12e-05
+31  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1298  1.740 -4.12e-05
+32  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1296  1.739 -4.12e-05
+33  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1294  1.738 -4.12e-05
+34  elasticToPlastic  1934      0     0          0    0.0101         0         0            0  -0.1292  1.737 -4.12e-05
+35  elasticToPlastic  1935      0     0          0    0.0101         0         0            0  -0.1291  1.736 -4.12e-05
+36  elasticToPlastic  1935      0     0          0    0.0101         0         0            0  -0.1289  1.735 -4.12e-05
+37  elasticToPlastic  1935      0     0          0    0.0101         0         0            0  -0.1287  1.734 -4.12e-05
+38  elasticToPlastic  1935      0     0          0    0.0101         0         0            0  -0.1286  1.733 -4.12e-05
+39  elasticToPlastic  1935      0     0          0    0.0101         0         0            0  -0.1284  1.732 -4.12e-05
+=================== extShear, p0 = 2 kPa, delta = 1e-4, 40 increments
+C++ vs port chain: worst rel sigma difference over 40 increments 2.06e-14
+ k  path              sub  forced clamp  corrGiveUp  p_after   eta_after  eta_alpha  alpha/alpha_b  psi     Mb      f_after
+ 0  elasticToPlastic   751      0     0          0    0.1052     0.611    0.6103       0.2985  -0.1343  2.050  9.36e-12
+ 1  plastic           7404      0     0          0    0.0101         0         0            0  -0.1349  1.772 -4.12e-05
+ 2  elasticToPlastic  2514      0     0          0    0.0101         0         0            0  -0.1348  1.772 -4.12e-05
+ 3  elasticToPlastic  2514      0     0          0    0.0101         0         0            0  -0.1347  1.771 -4.12e-05
+ 4  elasticToPlastic  2514      0     0          0    0.0101         0         0            0  -0.1346  1.770 -4.12e-05
+ 5  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1345  1.769 -4.12e-05
+ 6  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1343  1.769 -4.12e-05
+ 7  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1342  1.768 -4.12e-05
+ 8  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1341  1.767 -4.12e-05
+ 9  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1340  1.766 -4.12e-05
+10  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1339  1.766 -4.12e-05
+11  elasticToPlastic  2515      0     0          0    0.0101         0         0            0  -0.1337  1.765 -4.12e-05
+12  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1336  1.764 -4.12e-05
+13  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1335  1.764 -4.12e-05
+14  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1334  1.763 -4.12e-05
+15  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1333  1.762 -4.12e-05
+16  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1332  1.761 -4.12e-05
+17  elasticToPlastic  2516      0     0          0    0.0101         0         0            0  -0.1330  1.761 -4.12e-05
+18  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1329  1.760 -4.12e-05
+19  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1328  1.759 -4.12e-05
+20  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1327  1.758 -4.12e-05
+21  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1326  1.758 -4.12e-05
+22  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1324  1.757 -4.12e-05
+23  elasticToPlastic  2517      0     0          0    0.0101         0         0            0  -0.1323  1.756 -4.12e-05
+24  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1322  1.755 -4.12e-05
+25  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1321  1.755 -4.12e-05
+26  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1320  1.754 -4.12e-05
+27  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1319  1.753 -4.12e-05
+28  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1317  1.753 -4.12e-05
+29  elasticToPlastic  2518      0     0          0    0.0101         0         0            0  -0.1316  1.752 -4.12e-05
+30  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1315  1.751 -4.12e-05
+31  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1314  1.750 -4.12e-05
+32  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1313  1.750 -4.12e-05
+33  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1311  1.749 -4.12e-05
+34  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1310  1.748 -4.12e-05
+35  elasticToPlastic  2519      0     0          0    0.0101         0         0            0  -0.1309  1.747 -4.12e-05
+36  elasticToPlastic  2520      0     0          0    0.0101         0         0            0  -0.1308  1.747 -4.12e-05
+37  elasticToPlastic  2520      0     0          0    0.0101         0         0            0  -0.1307  1.746 -4.12e-05
+38  elasticToPlastic  2520      0     0          0    0.0101         0         0            0  -0.1305  1.745 -4.12e-05
+39  elasticToPlastic  2520      0     0          0    0.0101         0         0            0  -0.1304  1.745 -4.12e-05

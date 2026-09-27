@@ -1,0 +1,39 @@
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=7.41e-01 sub=425 -> ROUND-OFF CHAOTIC
+MISMATCH 1859/2 isoComp@1e-04: C++ rc=0 sub=546 acc=535 forced=0 | py rc=0 sub=546 acc=535 forced=0 path C++=elasticToPlastic py=2 dsig=1.01e-04 dalpha=1.86e-05
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=3.17e-09 sub=48 -> ROUND-OFF CHAOTIC
+MISMATCH 1794/3 isoExt@1e-05: C++ rc=0 sub=48 acc=40 forced=0 | py rc=0 sub=48 acc=40 forced=0 path C++=unloadThenPlastic py=4 dsig=1.19e-08 dalpha=1.05e-08
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=7635 -> ROUND-OFF CHAOTIC
+MISMATCH 1794/3 isoExt@1e-04: C++ rc=0 sub=19368 acc=19330 forced=0 | py rc=0 sub=8750 acc=8695 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=5.71e-02 sub=860 -> ROUND-OFF CHAOTIC
+MISMATCH 1806/1 isoExt@1e-04: C++ rc=0 sub=890 acc=871 forced=0 | py rc=0 sub=933 acc=909 forced=0 path C++=unloadThenPlastic py=4 dsig=1.59e-03 dalpha=1.07e-04
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=5.45e-08 sub=46 -> ROUND-OFF CHAOTIC
+MISMATCH 1794/2 isoExt@1e-05: C++ rc=0 sub=46 acc=38 forced=0 | py rc=0 sub=46 acc=38 forced=0 path C++=unloadThenPlastic py=4 dsig=2.98e-08 dalpha=3.36e-08
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=4.82e+02 sub=526 -> ROUND-OFF CHAOTIC
+MISMATCH 1794/2 isoExt@1e-04: C++ rc=-33086 sub=20001 acc=19958 forced=0 | py rc=-3 sub=20001 acc=19961 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=9379 -> ROUND-OFF CHAOTIC
+MISMATCH 5424/2 isoExt@1e-04: C++ rc=0 sub=9372 acc=9328 forced=0 | py rc=0 sub=9374 acc=9328 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=1.05e-01 sub=156 -> ROUND-OFF CHAOTIC
+MISMATCH 5448/2 isoExt@1e-05: C++ rc=0 sub=143 acc=109 forced=0 | py rc=0 sub=71 acc=49 forced=0 path C++=unloadThenPlastic py=4 dsig=6.82e-02 dalpha=1.11e-01
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=20001 -> PORT DIFFERENCE
+MISMATCH 5448/2 isoExt@1e-04: C++ rc=-33086 sub=20001 acc=19956 forced=0 | py rc=0 sub=19717 acc=19663 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=8.29e-03 sub=260 -> ROUND-OFF CHAOTIC
+MISMATCH 5471/3 triax@1e-04: C++ rc=0 sub=258 acc=241 forced=1 | py rc=0 sub=197 acc=184 forced=0 path C++=unloadThenPlastic py=4 dsig=1.36e-01 dalpha=2.81e-01
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=3.54e-02 sub=258 -> ROUND-OFF CHAOTIC
+MISMATCH 5496/2 shear-@1e-04: C++ rc=0 sub=542 acc=507 forced=1 | py rc=0 sub=839 acc=786 forced=2 path C++=plastic py=3 dsig=5.23e-02 dalpha=8.76e-02
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=3.64e-03 sub=75 -> ROUND-OFF CHAOTIC
+MISMATCH 4968/4 isoExt@1e-05: C++ rc=0 sub=70 acc=56 forced=0 | py rc=0 sub=70 acc=56 forced=0 path C++=unloadThenPlastic py=4 dsig=6.35e-03 dalpha=4.30e-04
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=19660 -> ROUND-OFF CHAOTIC
+MISMATCH 4968/4 isoExt@1e-04: C++ rc=0 sub=19669 acc=19623 forced=0 | py rc=0 sub=19661 acc=19617 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=8.98e-01 sub=512 -> ROUND-OFF CHAOTIC
+MISMATCH 5496/4 isoComp@1e-04: C++ rc=0 sub=1057 acc=963 forced=4 | py rc=0 sub=1006 acc=910 forced=4 path C++=plastic py=3 dsig=7.11e-02 dalpha=1.16e-01
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=1.33e-03 sub=117 -> ROUND-OFF CHAOTIC
+MISMATCH 5496/4 triax@1e-04: C++ rc=0 sub=117 acc=83 forced=0 | py rc=0 sub=117 acc=83 forced=0 path C++=unloadThenPlastic py=4 dsig=2.43e-04 dalpha=4.36e-04
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=1.05e-03 sub=127 -> ROUND-OFF CHAOTIC
+MISMATCH 5496/1 triax@1e-04: C++ rc=0 sub=128 acc=108 forced=0 | py rc=0 sub=127 acc=109 forced=0 path C++=unloadThenPlastic py=4 dsig=2.15e-04 dalpha=3.30e-04
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=1.98e-02 sub=204 -> ROUND-OFF CHAOTIC
+MISMATCH 4896/1 isoComp@1e-04: C++ rc=0 sub=244 acc=201 forced=1 | py rc=0 sub=247 acc=205 forced=1 path C++=plastic py=3 dsig=2.72e-02 dalpha=2.73e-02
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=1.16e-01 sub=69 -> ROUND-OFF CHAOTIC
+MISMATCH 4896/2 isoExt@1e-05: C++ rc=0 sub=101 acc=68 forced=0 | py rc=0 sub=107 acc=72 forced=0 path C++=unloadThenPlastic py=4 dsig=7.08e-04 dalpha=1.97e-04
+   C++ self-sensitivity (sigma*(1+1e-14)): dsig=0.00e+00 sub=20001 -> ROUND-OFF CHAOTIC
+MISMATCH 4896/2 isoExt@1e-04: C++ rc=0 sub=18643 acc=18583 forced=0 | py rc=-3 sub=20001 acc=19974 forced=0 path C++=unloadThenPlastic py=4 dsig=0.00e+00 dalpha=0.00e+00
+cases 1600, mismatches 19 (of which C++ itself round-off chaotic: 18), worst rel diff on census-identical cases 6.35e-03
