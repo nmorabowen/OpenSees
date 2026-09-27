@@ -117,7 +117,8 @@ class Material:
     def __init__(self, params, TolF=1e-7, TolE=1e-4, Pres=0.0, Pmin=0.0101,
                  maxSubsteps=20000, reversalTol=1e-10, reversalRel=0.05,
                  err_floor=None, dT_min=1e-6, forced_policy="vanilla",
-                 drag="vanilla", correction=True, alpha_err=False, fabric_err=False):
+                 drag="vanilla", correction=True, alpha_err=False, fabric_err=False,
+                 h_mode="vanilla", q_max=None):
         (self.G0, self.nu, self.e_init, self.Mc, self.c, self.lamc, self.e0,
          self.ksi, self.Patm, self.m, self.h0, self.ch, self.nb, self.A0,
          self.nd, self.zmax, self.cz, self.den) = params
@@ -140,6 +141,11 @@ class Material:
         self.alpha_err = alpha_err
         #   fabric_err True: ... and on the fabric stages (same form)
         self.fabric_err = fabric_err
+        #   h_mode "macaulay": h = b0/<(alpha-alpha_in):n> (1e10 when <= 0) -- candidate G
+        #   q_max: cap on the accepted-substep growth factor q -- candidate F's "uncapped q"
+        self.h_mode = h_mode
+        self.q_max = q_max
+        self.stage_log = []   # (temp4, numerator, Kp, aain, kind) per stage, last update only
 
     # ------------------------------------------------------------ model
     def g(self, c3):
@@ -183,7 +189,10 @@ class Material:
         b0 = self.G0 * self.h0 * (1.0 - self.ch * e) / math.sqrt(p / self.Patm)
         d = sub(scal(ROOT23 * ad, n), a)
         b = sub(scal(ROOT23 * ab, n), a)
-        h = 1.0e10 if abs(aain) < SMALL else b0 / aain
+        if getattr(self, "h_mode", "vanilla") == "macaulay":
+            h = 1.0e10 if aain < SMALL else b0 / aain
+        else:
+            h = 1.0e10 if abs(aain) < SMALL else b0 / aain
         zn = contr(z, n)
         A = self.A0 * (1 + (zn if zn > 0 else 0.0))
         D = A * contr(d, n)
@@ -206,9 +215,12 @@ class Material:
         Kp = TWO3 * p * h * contr(b, n)
         nnn = tr(single_dot(n, single_dot(n, n)))
         temp4 = Kp + 2.0 * G * (B - C * nnn) - K * D * contr(n, r)
+        num = 2.0 * G * mixed(n, ddev) - K * dvol * contr(n, r)
         if abs(temp4) < SMALL:
+            self.stage_log.append((temp4, num, Kp, st["aain"], "neutral"))
             return [0.0] * 6, [0.0] * 6, [0.0] * 6, None, "neutral", st, Kp
-        dg = (2.0 * G * mixed(n, ddev) - K * dvol * contr(n, r)) / temp4
+        dg = num / temp4
+        self.stage_log.append((temp4, num, Kp, st["aain"], "drag" if (dg < -SMALL if strict else dg < 0.0) else "plastic"))
         neg = dg < -SMALL if strict else dg < 0.0
         if neg:
             ds = add(scal(2.0 * G, to_contra(ddev)), scal(K * dvol, I1))
@@ -306,7 +318,8 @@ class Material:
             info = dict(kinds=(k1, k2), Kp=(Kp1, Kp2), h=(st1["h"], st2["h"]),
                         aain=(st1["aain"], st2["aain"]), bn=(contr(st1["b"], st1["n"]),),
                         errabs=dd, snorm=sn, nS=nS, nA=nA, e=e,
-                        dA=(da1, da2), dS=(ds1, ds2), S=S, A=A, dT=dT)
+                        dA=(da1, da2), dS=(ds1, ds2), S=S, A=A, dT=dT,
+                        sl=tuple(self.stage_log[-2:]))
             if err > TolE:
                 q = max(0.8 * math.sqrt(TolE / err), 0.1)
                 if dT == dT_min:
@@ -337,6 +350,8 @@ class Material:
                     S, A, Z = self.stress_correction(S0, A0, Z0, a_in, S, A, Z, e, K, G, out)
                 T += dT
                 q = max(0.8 * math.sqrt(TolE / err), 0.5) if err > 0 else float("inf")
+                if self.q_max is not None:
+                    q = min(q, self.q_max)
                 dT = max(q * dT, dT_min)
                 dT = min(dT, 1 - T)
         return S, A, Z, True
@@ -449,6 +464,7 @@ class Material:
     def update(self, sig, alpha, alpha_in, z, e, dstrain, primed=True,
                prev_incr_norm=0.0, dt=1.0):
         """== ladrunoSANISANDReplay (compressionPositive, 3D)."""
+        self.stage_log = []
         out = dict(meCalls=0, nsub=0, substeps=0, acc=0, rej=0, forced=0, clamp=0,
                    lowp=0, abandon=0, cap=0, entryPmin=0, pnReset=0, corrCalls=0,
                    corrGiveUp=0, corrMaxIter=0, corrLowP=0, trace=[], path=-1, rc=0)

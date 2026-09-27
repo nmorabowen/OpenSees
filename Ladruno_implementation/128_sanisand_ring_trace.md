@@ -30,6 +30,15 @@ commands). Source lines are the WP-127 tree (`e8fb51cdb`) unless stated.
      nothing. `Stress_Correction` supplies the launch state, but it is not the jump.
    - An error test that also measures α removes the escape on every path tried:
      the port with α in the error, and RK45 in C++. Measured in §2.4 and §6.
+   - With the orchestrator's candidates F and G (§2.5), the ranking is:
+     - **G** is the trigger: α_in is re-seated once per increment, so
+       `(α − α_in):n` goes to 0 (h = 1e10) and then negative (h < 0) inside the
+       substep. 37 of 38 crossing substeps have it, and a Macaulay bracket on it alone
+       keeps α inside.
+     - **E** is the enabler: the stress-only error.
+     - **F**, the negative-denominator elastic drag, compounds the escape but is
+       not necessary. The uncapped q, the dT_min forced accept and the
+       `Stress_Correction` exit do not produce it.
 2. **The f > 0 anomaly is a defect.** On an unloading increment through the tiny
    cone (`m = 0.005`), the same pair of stages is accepted with α moved. Then
    `Stress_Correction` cannot reduce `|f|` and takes its silent return: the
@@ -244,6 +253,77 @@ A milder, slower excursion also exists: vertUnload δ 1e-5 reaches 1.19 at
 p ≈ 80 kPa after 223 increments. That chain is round-off chaotic (C++ vs port
 diverge by 0.9 in α/α^b over 900 increments), so it is **not attributed**. The
 α-aware port holds it to 0.574.
+
+### 2.5 Candidates F and G (orchestrator's survey), and the ranking (`q1fg_candidates.py`)
+
+- **F — negative-denominator misclassification.** `temp4 = Kp + 2G(B − C tr n³) −
+  K D n:r < 0` makes a LOADING stage (numerator `n:Ce:dε > 0`) take the `dγ < 0`
+  elastic+drag branch. On top of that, `q = max(0.8√(TolE/err), 0.5)` has no upper
+  cap after an `err = 0` acceptance (`:2038`).
+- **G — α_in staleness.** α_in is re-seated only once per global increment
+  (`integrate()`, `:1049-1054`), so `(α − α_in):n` can go through 0 or negative
+  inside the substeps. `h = b0/((α−α_in):n)` (`:5398-5401`) then blows up or
+  flips sign.
+
+The stage-by-stage signs, logged by the port:
+
+| case | stage 1 | stage 2 |
+|---|---|---|
+| reproducer (floor, `dε_yy` 1e-4) | plastic: temp4 + (1.2e8), aain **= 0** (h = 1e10) | drag: temp4 + , numerator **−**, aain **−13** (h < 0, Kp < 0) |
+| 1950/3 `shear+ 1e-5` (the f > 0 case) | plastic: temp4 +, aain = 0 | drag: temp4 +, numerator −, aain −0.16 |
+| 1950/3 `isoExt 1e-6` (f = 0.118) | **drag by F**: temp4 **−1.9e10**, numerator + (loading), aain = 0 | **F** again: temp4 −2e10, numerator + |
+| 1950/3 committed state | Kp = −368 (b:n = −8.19 because α is already outside), h = +192 | |
+
+Every accepted substep that carried α/α^b across 1 on the two reversal chains,
+classified by the signs of its two stages:
+
+| chain | stage pattern | count |
+|---|---|---|
+| vertUnload | plastic(aain = 0) + drag(temp4 +, num −, aain −) | 3 (all) |
+| extShear | plastic(aain = 0) + drag(temp4 +, num −, aain −) | 5 |
+| extShear | plastic(aain = 0) + drag(**temp4 −, num +**, aain −), i.e. **F** | 9 |
+| extShear | drag(temp4 −, num +, aain −) + plastic, i.e. **F** in stage 1 | 8 |
+| extShear | plastic + plastic, with aain − in at least one stage (G, both stages "plastic" but h < 0) | 10 |
+| extShear | plastic + plastic, aain + in both | 1 |
+| extShear | drag + drag (num −: genuine unloading classification) | 2 |
+
+Every crossing happened in an increment whose α_in was reset at its start, and
+**37 of the 38 crossing substeps (3 vertUnload + 35 extShear) have `(α − α_in):n ≤ 0` in at least one stage**.
+The exception is one small substep (dT 0.0017) in a chain already driven far out.
+
+Counterfactuals, one switch each (port, same chains + the reproducer):
+
+| variant | vertUnload | extShear | reproducer α/α^b | reproducer substeps |
+|---|---|---|---|---|
+| as built | 5.18 | 7.01 | 5.14 | 1 |
+| **G-fix: h = b0/⟨(α−α_in):n⟩** (1e10 when ≤ 0) | **0.59** | **0.93** | **0.55** | 1 |
+| F-q: cap q ≤ 2 | 5.18 | 7.01 | 5.14 | 1 |
+| F-drag: `dγ<0` stage leaves α alone | 5.73 | 7.52 | 4.90 | 1 |
+| G-fix + F-drag | 0.59 | 0.93 | 0.55 | 1 |
+| **E-fix: α in the substep error** | **0.475** | **0.509** | **0.266** (≈ RK45 0.25) | 200 |
+
+**Ranking of the B candidates** (which of them, removed alone, removes the escape):
+
+| candidate | reproduces α outside? | smallest reproducer | verdict |
+|---|---|---|---|
+| **G — stale α_in, h < 0 / h = 1e10 mid-increment** | **yes, it is the trigger.** 37/38 crossing substeps have `(α−α_in):n ≤ 0`, and a Macaulay bracket on it alone keeps α inside (0.55–0.93) at no substep cost | §2.3 floor reproducer: `σ = 0.0101 I, α = α_in = z = 0, dε_yy = 1e-4` | primary **cause** |
+| **E — stress-only error test** | **yes, it is the enabler.** It is why the G-corrupted stages are accepted at `dT = 1`. Adding α to the error alone keeps α inside and gives the right answer (0.27, = RK45) | same | primary **fix** (accuracy) |
+| overshoot of the α law at the start-pressure (i) | the mechanism by which G's stage-1 moves α (`h·dγ` finite, evaluated at p_start) | same | the arithmetic of G+E, not separate |
+| **F — negative denominator → elastic drag** | **contributes, not necessary.** It produces 17 of the 35 extShear crossings and the 1950/3 `isoExt` f > 0, but freezing the drag does NOT remove the escape (5.7 / 7.5). It also arises on its own once α is outside: b:n < 0 → Kp < 0 → temp4 < 0 | 1950/3 `isoExt 1e-6`: loading misread as elastic in both stages, err 0, f = 0.118 | a **consequence** that then compounds |
+| F — uncapped q | no effect: the escapes already happen at `dT = 1` or `0.1`; capping q ≤ 2 changes nothing | — | not a mechanism here |
+| dT_min forced accept (C) | no. Refusing it changes nothing on the escape chains (§2.2). It teleports η back to Mc on inadmissible states (§4) | — | separate defect |
+| `Stress_Correction` silent exit | not the escape. It is the reason a misclassified increment returns **f > 0** as success (§3). Its low-p branch supplies the α = 0 launch state | 1950/3 `shear+ 1e-5` (f = 0.0139, rc 0) | separate defect (Q2) |
+| start state with f > TolF not corrected before substepping | not observed as a trigger: all escapes start on or inside the cone (f ≤ 2e-8) | — | not reproduced |
+
+What this means for WP-129: G and E are both needed.
+
+- **G's fix is the model-level one.** Dafalias–Manzari's `α_in` is the
+  back-stress at the last reversal, so `(α − α_in):n ≥ 0` must hold. Either
+  re-seat α_in inside the substep loop when it goes negative, or at least
+  Macaulay-bracket h.
+- **Alone, G's fix is cheap but inaccurate.** It returns 0.55 on the reproducer
+  where the α-aware answer is 0.27.
+- **E's fix gives accuracy and the substep control that exposes the stiffness.**
 
 ## 3. Q2 — why an outside-the-yield-surface point returns success
 
@@ -488,12 +568,23 @@ flag for the act, ship it byte-identical with **default 1 kPa** and document §5
 **The minimal α-stability fix**, in the order that matters. Measured on the port
 (`q5_error_variants.txt`):
 
-| variant | reversal chains: max α/α^b (vertUnload / extShear) | substeps (vU / eS) | forced / refused | ring: in→out, f>0, forced, refused | constant-p cost (p₀ 2 / 20 median) |
+| variant | reversal chains: max α/α^b (vertUnload / extShear) | substeps (vU / eS) | forced / refused (chains) | ring 640: substeps med/p95/max; in→out; forced; refused; f>1e-6 | constant-p, one increment per committed state: substeps med (p₀ 2 / 20); max \|Δσ\| vs today |
 |---|---|---|---|---|---|
-| today | 5.18 / 7.07 | 115k / 142k | 0 / 0 | 9, 4, 0, 0 | 51 / 18 |
-| + α in error | Q5A | | | | |
-| + α + z in error | Q5B | | | | |
-| + α + z, refuse at dT_min | Q5C | | | | |
+| today | 5.18 / 7.01 | 115k / 141k | 2 / 0 | 4/81/1336; 10; 2; 0; **5** | 51 / 18; — |
+| + α in error | **0.475 / 0.509** | 798k / 863k | 0 / 18 (all cap hits) | 15/120/1369; **1**; **5**; 0; **0** | 51 / 18 (max 23); 2e-4 / **0.27** kPa |
+| + α + z in error | identical to + α | | | identical | identical |
+| + α + z, refuse at dT_min | identical to + α | | 0 / 18 | 15/120/1369; 1; 5 → **5 refused**; 0 | identical |
+
+Reading it:
+
+- **Adding z to the error changes nothing measured.** The fabric only moves when
+  `D < 0` (dilation), and it is already bounded by `zmax`.
+- **α alone removes 9 of 10 ring escapes and every `f > 0`.** It leaves 5 Mc-clamp
+  teleports on the ring. Only refusing at dT_min turns those into refusals.
+- **At p₀ = 20, α in the error moved one smooth-chain increment by 0.27 kPa.**
+  Today's α-blind acceptance was not harmless there either.
+- **The 18 refusals on extShear are `-maxSubsteps` 20000 cap hits.** On
+  floor-bouncing paths the honest cost exceeds the campaign cap.
 
 1. **(a) α and z in ModifiedEuler's substep error, Sloan–Abbo–Sheng style.** Use
    `err = max(‖dσ₂−dσ₁‖/max(2‖σ‖,1), ‖dα₂−dα₁‖/max(2‖α‖,1), ‖dz₂−dz₁‖/max(2‖z‖,1))`,
@@ -505,6 +596,12 @@ flag for the act, ship it byte-identical with **default 1 kPa** and document §5
    refusal, counted by the existing `forcedAtDTmin`. Without (a) this refuses
    nothing on the escape paths, where the escape happens at dT = 1, so it is not a
    substitute. With (a) it converts the remaining teleports into step cuts.
+2b. **(a') Keep `(α − α_in):n ≥ 0` inside the substeps (candidate G).** Re-seat
+   α_in at the substep where it goes negative, which is the model's definition of a
+   reversal, or at minimum use `h = b0/⟨(α−α_in):n⟩`. Measured alone, the
+   Macaulay form keeps α inside (0.55–0.93) at zero substep cost but is
+   inaccurate (0.55 vs 0.27). Ship it **with** (a), not instead of it. Test: T1/T2
+   with (a) disabled must still show α/α^b ≤ 1.
 3. **(c) `Stress_Correction`'s give-up and "still outside" branches must fail**
    the update (Q2). Cheap, vanilla-additive (`// Ladruno`), and the checklist
    requires it.
@@ -585,6 +682,7 @@ $PY -S q4_baseline.py        # F18(a) baseline                                  
 $PY -S q4_stiffness.py       # stability-limited substeps                       (<1 min)
 $PY -S q4_refcheck.py        # alpha-blind reference caveat                     (~5 min)
 $PY -S q5_error_variants.py  # WP-129 variants                                  (~15 min)
+$PY -S q1fg_candidates.py    # orchestrator candidates F and G + ranking        (~5 min)
 $PY -S flipdet_probe.py      # section 7                                        (~2 min)
 ```
 
