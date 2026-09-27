@@ -1,11 +1,10 @@
 # WP-124 — Shared Element-contract helpers for the continuum element shells
 
-Revision 1 (scoping complete). Refactor candidate 2 of WP-120 (#855) R3. The inventory was built by a
-read-only Opus subagent; the four findings marked **verified** were re-checked by running the command.
-Everything else carries the subagent's evidence (file:line) and is marked as such.
+Revision 2 (implemented). Refactor candidate 2 of WP-120 (#855) R3. The inventory was built by a
+read-only Opus subagent; its findings were then verified by running them (see **Gaps** and **Results**).
 
-Status: **scoping done; draft PR #859.** No production code changed. Implementation waits for WP-123's local
-builds (one build machine) and for the owner's choice on the gap fixes (C below).
+Status: **stages 1–5 done, every refactor bit-identical; gap fixes C1–C6, C9, C10, C14 landed as separate
+behaviour commits; C7, C8, C11–C13 remain open (owner decisions, see Gaps).** Draft PR #859.
 
 Scoped 2026-09-25. Branch `wp/124-continuum-shell-helpers`, cut from `ladruno` @ `bc5c33453`.
 
@@ -54,19 +53,20 @@ free helper cannot do the Rayleigh tail. The snapshot + Rayleigh step stays in e
 
 | # | Gap | Evidence | Status |
 |---|---|---|---|
-| C1 | **#228 never reached LadrunoBrick**: its std/bbar/finite `getInitialStiff` builds `Ki`, then returns the class-static `stiff` | `LadrunoBrick.cpp:731-732`, `LadrunoBrick.h:250` (`static Matrix stiff;`) | **verified** |
-| C2 | **Bezier never chains to `Element::setResponse`/`getResponse`**: globalForce, dampingForce, dynamicForce and inertialForce return nothing; no `stiffInitial`; no canonical aliases | `grep -c "Element::setResponse\|Element::getResponse"` = 0 in BezierTri6.cpp and BezierTet10.cpp (Quad: 3) | **verified** |
-| C3 | **CSTPair has no `setParameter`/`updateParameter`**: `parameter`/`addToParameter` are a silent −1 (the class of defect #224 fixed for Bezier) | grep count 0 (CST: 4) | **verified** |
-| C4 | CSTPair has no `stressPlaneStrain` (ID 21) token; the other three plane elements do | grep count: CST/LST/Quad 1, CSTPair 0 | **verified** |
-| C5 | Quad SSP: `setParameter "material" k` targets slot k−1, but under SSP only slot 0 is live (setResponse and Brick remap) | Quad:1667 vs 1557, Brick:4243 | suspected (subagent) |
-| C6 | `Ki` is invalidated in `recvSelf` only by Brick20, while Quad/LST/Brick/Tri6/Tet10 rewrite Ki-relevant state there | Brick20:1467; Quad:1422, LST:758, Brick:3611-3620, Tri6:1264, Tet10:1662-1673 | suspected: live-object re-receive only |
-| C7 | Brick `updateParameter` keeps the last material's return; Brick20 fixed that ("F7") | Brick:4266-4270 vs Brick20:1305-1313 | divergence verified by subagent; reachability unverified |
-| C8 | Brick `massType==1`: consistent residual inertia vs lumped `getMass` (tangent, αM, ground load). Brick20 fixed this pattern (F-1); Brick documents it as intentional | Brick:915 vs 926-929, 533-538; Brick20:862-912 | suspected |
-| C9 | Brick's ad hoc mass-cache guard dereferences node pointers without the null check the shared helper gained | Brick:551 vs `LadrunoMassCache.h:87-90` | low impact |
-| C10 | `materialState` token not excluded from the `material` branch in Quad/CST/LST/Brick/Brick20 (Bezier, SixNodeTri and LadrunoUP exclude it) | Tri6:1843, `SixNodeTri.cpp:1258`, LadrunoUP:1946 | suspected |
-| C11 | Tri6 `getInitialStiff` caches even on a degenerate Jacobian; Tet10 refuses | Tri6:555-598 vs Tet10:476-480 | suspected |
-| C12 | Bezier `recvSelf` ignores a material class change | Tri6:1286, Tet10:1691 | latent |
-| C13 | Brick/Brick20: no `getRV` size check; Bezier reads `argv[0]` before an argc guard | Brick:787-789, Brick20:614-616, Tri6:1454, Tet10:1806 | minor |
+| C1 | **#228 never reached LadrunoBrick**: its std/bbar/finite `getInitialStiff` builds `Ki`, then returns the class-static `stiff` | `LadrunoBrick.cpp:731-732`, `LadrunoBrick.h:250` (`static Matrix stiff;`) | ✅ **fixed** `6e8bc9033` — invisible in a default build (every consumer copies at once); it was a hole in the ADR-87 CONTINUUM gate (rows C1a/C1b) |
+| C2 | **Bezier never chains to `Element::setResponse`/`getResponse`**: globalForce, dampingForce, dynamicForce and inertialForce return nothing; no `stiffInitial`; no canonical aliases | `grep -c "Element::setResponse\|Element::getResponse"` = 0 in BezierTri6.cpp and BezierTet10.cpp (Quad: 3) | ✅ **fixed** `db1eb6875` — `test_base_response_vocabulary[Bezier*]` ("globalForce records nothing" before) |
+| C3 | **CSTPair has no `setParameter`/`updateParameter`**: `parameter`/`addToParameter` are a silent −1 (the class of defect #224 fixed for Bezier) | grep count 0 (CST: 4) | ✅ **fixed** `56fa1ab50` — `parameter … E`: displacement ratio 1.0 before, 2.0 after |
+| C4 | CSTPair has no `stressPlaneStrain` (ID 21) token; the other three plane elements do | grep count: CST/LST/Quad 1, CSTPair 0 | ✅ **fixed** `e10b8d560` — length 0 before, 8 after |
+| C5 | Quad SSP: `setParameter "material" k` targets slot k−1, but under SSP only slot 0 is live (setResponse and Brick remap) | Quad:1667 vs 1557, Brick:4243 | ✅ **verified + fixed** `6fbfbdc25` — `material 2\|3\|4 E`: ratio exactly 1.0 vs 1.875 for `material 1 E` |
+| C6 | `Ki` is invalidated in `recvSelf` only by Brick20, while Quad/LST/Brick/Tri6/Tet10 rewrite Ki-relevant state there | Brick20:1467; Quad:1422, LST:758, Brick:3611-3620, Tri6:1264, Tet10:1662-1673 | ✅ **verified + fixed** `9fb453372` — checkpoint restore into the live domain: `-initial` never converged (factor 1 − K/K0 = −1) on six elements |
+| C7 | Brick `updateParameter` keeps the last material's return; Brick20 fixed that ("F7") | Brick:4266-4270 vs Brick20:1305-1313 | open — element-level `updateParameter` is only reached for element-registered parameters, none here; left for the owner |
+| C8 | Brick `massType==1`: consistent residual inertia vs lumped `getMass` (tangent, αM, ground load). Brick20 fixed this pattern (F-1); Brick documents it as intentional | Brick:915 vs 926-929, 533-538; Brick20:862-912 | **observed**, open (owner decision): an elastic `-lumped` transient does not converge under Newton to 1e-10 (linear convergence) |
+| C9 | Brick's ad hoc mass-cache guard dereferences node pointers without the null check the shared helper gained | Brick:551 vs `LadrunoMassCache.h:87-90` | ✅ **fixed** `33030b203` — latent (no script path found); made the stage-4 swap bit-identical on every path |
+| C10 | `materialState` token not excluded from the `material` branch in Quad/CST/LST/Brick/Brick20 (Bezier, SixNodeTri and LadrunoUP exclude it) | Tri6:1843, `SixNodeTri.cpp:1258`, LadrunoUP:1946 | ✅ **verified + fixed** `05524f3f8` — `materialState` unclaimed on the five (DruckerPrager) before; Bezier as control |
+| C11 | Tri6 `getInitialStiff` caches even on a degenerate Jacobian; Tet10 refuses | Tri6:555-598 vs Tet10:476-480 | open |
+| C12 | Bezier `recvSelf` ignores a material class change | Tri6:1286, Tet10:1691 | open |
+| C13 | Brick/Brick20: no `getRV` size check; Bezier reads `argv[0]` before an argc guard | Brick:787-789, Brick20:614-616, Tri6:1454, Tet10:1806 | open — the ground-inertia helper keeps the bricks' no-check behaviour (`checkSize=false`) |
+| C14 | **Brick20 singular after a live restore**: `recvSelf` cleared `geomCached` and relied on the `setDomain` that follows a broker-built receive; the live branch of `Domain::recvSelf` calls `recvSelf` + `update()` only | found in WP-124 (C6 probe) | ✅ **fixed** `4849f0c2f` — `test_live_restore_is_usable` (singular before, Brick20 only) |
 
 ## Shape (proposed)
 
