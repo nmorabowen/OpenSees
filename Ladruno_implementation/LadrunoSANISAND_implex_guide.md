@@ -397,8 +397,9 @@ after a failed `analyze` it reads 0 everywhere (the TIMs ring dump). `substepSta
 post-mortem counter: **every column is per integration point** (one material instance), none is
 process-wide; the cumulative ones count since `revertToStart` (`reset()`), are **not** reset by
 `revertToLastCommit`, cross `getCopy` and the MP/database wire. Reading them never changes a number
-(byte-identity pinned, `tests/test_ladruno_sanisand_replay_counters.py`). Only `ModifiedEuler`
-(IntScheme 1, and 0 through `MaxEnergyInc`) is instrumented; on other schemes the substep columns stay 0.
+(byte-identity pinned, `tests/test_ladruno_sanisand_replay_counters.py`). Columns 0-16 instrument
+`ModifiedEuler` (IntScheme 1, and 0 through `MaxEnergyInc`); columns 17-27 (WP-130) instrument
+`BackwardEuler_CPPM` (IntScheme 2, and the `-meFallback cppm` retry). 28 columns in all.
 
 | slot | name (`substepStats_*`) | meaning |
 |---|---|---|
@@ -419,6 +420,17 @@ process-wide; the cumulative ones count since `revertToStart` (`reset()`), are *
 | 14 | `lastForcedAtDTmin` | `[5]` for that update |
 | 15 | `lastAbandonedLowP` | `[8]` for that update |
 | 16 | `lastCapHit` | 0/1 for that update |
+| 17 | `cppmCalls` | top-level `BackwardEuler_CPPM` calls (IntScheme 2 plastic-branch updates + ME fallbacks) |
+| 18 | `cppmNewtonFail` | local Newton (+ `Check`) did not return a valid state, at any halving level |
+| 19 | `cppmHalvings` | recursive half-increment calls that did work |
+| 20 | `cppmExplicitFail` | **vanilla's SILENT explicit fallback** after a failed Newton / exhausted ladder (F12 §5.2) |
+| 21 | `cppmExplicitLowP` | the trial-`p < p_min` branch's explicit integration (by design) |
+| 22 | `cppmRefusals` | the CPPM REFUSED the update (`-cppmOnFail refuse`, or inside the ME fallback) |
+| 23 | `meFallbacks` | ModifiedEuler hit `-maxSubsteps` and the increment went to the CPPM |
+| 24 | `meFallbackOk` | ... and the CPPM returned it (the update stands) |
+| 25 | `lastCppmRefused` | 0/1 for the last update whose top-level CPPM call left the elastic branch |
+| 26 | `cppmGuessTries` | `-cppmStart explicit`: local Newton restarted from the explicit guess |
+| 27 | `cppmGuessOk` | ... and that returned a valid state |
 
 ```python
 s = ops.eleResponse(ele, "material", ip, "substepStats")
@@ -454,7 +466,7 @@ ladrunoSANISANDReplay $matTag -convention compressionPositive|tensionPositive
   a plastic point with no history. `-dt 0` makes the call a hold.
 - `-type PlaneStrain` requires `d33 = g23 = g31 = 0`.
 
-Returns one flat list (format 1): `[1, rc, 17, nRec, 5, dropped]`, the 17 `substepStats` columns of
+Returns one flat list (format 1): `[1, rc, nStats, nRec, 5, dropped]` (`nStats` = 28 since WP-130), the `substepStats` columns of
 this one update, 34 state values (`sigma` in the request convention, `alpha`, `alpha_in`, `z`, `e`,
 `p` (compression-positive), `q`, `f` before, `f` after, path code, elastic ratio, given `tr(alpha)`,
 `tr(alpha_in)`, `tr(z)`), then `nRec` records `T, dT, err, code, atDTmin`. Path codes: -1 not the
@@ -683,6 +695,47 @@ Full numbers, the replay/free-standing/floor/bearing tables, and the "could not 
 [[Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md]] (also see
 `LEDGER_quirks.md` for the two related defects this same study found: the `-maxSubsteps` inertness
 warning is wrong for scheme 2, and a CPPM non-convergence is invisible end to end).
+
+### `IntScheme 2` under a global Newton -- the WP-130 flags (TIMs F18(c)/(d))
+
+```
+nDMaterial LadrunoSANISAND ... 2 2 ...                  (IntScheme 2, TanType 2)
+    <-cppmOnFail explicit|refuse>   default explicit (vanilla)
+    <-cppmHalvings n>               0..9, default 9 (vanilla: up to 2^9 half-increments)
+    <-cppmLineSearch on|off>        default off
+    <-cppmStart trial|explicit>     default trial (vanilla)
+nDMaterial LadrunoSANISAND ... 1 ... -maxSubsteps N
+    <-meFallback cppm|off>          default off; needs IntScheme 1 and -maxSubsteps > 0
+```
+
+All defaults are vanilla's control flow, **byte-identical** (seven IntScheme-2 decks incl. a
+free-DOF Newton deck, `tests/wp130_sanisand_byteid.py`). None is qualified with `-implex` (the
+parser refuses the combination). A flag that could not act on the deck is refused.
+
+- **`-cppmOnFail refuse`**: where vanilla, after a failed local Newton and the halving ladder,
+  integrates the increment explicitly and reports success, the material REFUSES
+  (`LADRUNO_MATERIAL_REFUSED`), so a forwarding element fails `Domain::update` and the step is
+  cut. With `-cppmHalvings 0` that happens on the first try: measured 8-22 ms per refused step on a
+  one-quad deck against 5.6 s at the defaults. The trial-`p < p_min` explicit branch is kept (it is
+  the designed low-p route, and ModifiedEuler's own `-maxSubsteps` guards it).
+- **`-cppmStart explicit`**: when the local Newton from the elastic trial fails, retry it once from
+  a 50-substep ForwardEuler guess before halving. It targets the first plastic increment after a
+  reversal or the stage flip (`alpha_in = alpha`, `h = 1e10`), where the trial start is worst.
+- **`-cppmLineSearch on`**: backtracking (halving, at most 8 cuts) on the residual norm the local
+  convergence test reads; a full step is taken if no cut helps.
+- **`-meFallback cppm`** (IntScheme 1, F10b(b)): when ModifiedEuler hits `-maxSubsteps`, the SAME
+  increment goes to `BackwardEuler_CPPM` (halving allowed, NO explicit exit); the update is refused
+  only if the CPPM fails too. One-element test: a leg that `-maxSubsteps 20` refuses at step 1 runs
+  all 10 steps with the fallback, stress within 1.3 % of the uncapped integration.
+- **What refusing fast buys, and what it does not**: see the WP-130 PR (#868) and
+  `Ladruno_files/testbed/hypo_bearing/wp130_f18c/` for the F12 bearing-deck rerun. A fast refusal
+  lets the step controller act in milliseconds; it does not make an iterate the CPPM cannot return
+  returnable.
+- **WP-128's smallest reproducer** (`sigma = 0.0101 I`, `alpha = alpha_in = z = 0`, plane-strain
+  `d eps_yy = 1e-4`): ModifiedEuler returns `alpha/alpha^b` 5.10 in one accepted substep; the CPPM
+  returns 0.18 with rc 0 in one local Newton (every variant), against ~0.27 from WP-128's alpha-aware
+  references (`wp130_f18c/q128_reproducer.txt`). The implicit return does not escape the bounding
+  surface there; its one-step error is its own.
 
 ## 10. Verification
 
