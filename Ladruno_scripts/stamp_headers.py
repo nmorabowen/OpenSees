@@ -139,6 +139,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoLoadControl.*",
     "SRC/analysis/numberer/LadrunoParallelNumberer.*",
     "SRC/domain/pattern/drm/DRMHigherOrderNode.h",
+    "SRC/element/LadrunoElementShell.h",   # WP-124 shared Element-contract helpers
     "SRC/element/LadrunoMassCache.h",
     "SRC/element/LadrunoResponseTokens.h",
     "SRC/interpreter/PythonMPIModule.cpp",
