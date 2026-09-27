@@ -89,33 +89,33 @@ struct LadrunoMETraceSlot {                                                 // L
 // changes and every existing scheme is byte-identical (tests/wp129_*).
 #define LADRUNO_INT_SAS_ME 129                                              // Ladruno WP-129
 struct LadrunoSasOptions {                                                  // Ladruno WP-129
-    double errFloor;       // sigma_ref of the stress error, stress units; < 0 = P_atm/101 (1 kPa at P_atm 101)
-    double alphaBoundTol;  // kappa: alpha/alpha^b > 1 + kappa is inadmissible
-    int    alphaProject;   // 0 = reject/refuse (DEFAULT); 1 = radial projection, counted
-    int    alphaInMode;    // 0 = reseat (DEFAULT), 1 = bracket h only, 2 = stale (attribution only)
-    int    errorVars;      // 0 = stress+alpha+fabric (DEFAULT), 1 = stress only (attribution only)
+    double errFloor;       // Ladruno WP-129: sigma_ref of the stress error, stress units; < 0 = P_atm/101 (1 kPa at P_atm 101)
+    double alphaBoundTol;  // Ladruno WP-129: kappa: alpha/alpha^b > 1 + kappa is inadmissible
+    int    alphaProject;   // Ladruno WP-129: 0 = reject/refuse (DEFAULT); 1 = radial projection, counted
+    int    alphaInMode;    // Ladruno WP-129: 0 = reseat (DEFAULT), 1 = bracket h only, 2 = stale (attribution only)
+    int    errorVars;      // Ladruno WP-129: 0 = stress+alpha+fabric (DEFAULT), 1 = stress only (attribution only)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaProject(0),
-                          alphaInMode(0), errorVars(0) {}
-};
+                          alphaInMode(0), errorVars(0) {}   // Ladruno WP-129
+};   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
-    LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,
-    LSAS_REJ_LOWP, LSAS_REJ_NONPOS_H, LSAS_REJ_DRIFT, LSAS_REJ_ALPHA,
-    LSAS_ELASTIC_STAGES, LSAS_DRIFT_CORRECTIONS, LSAS_ALPHA_IN_RESEATS,
-    LSAS_H_BRACKETS, LSAS_ALPHA_PROJECTED, LSAS_INTERSECT_FAIL, LSAS_REFUSALS,
-    LSAS_REF_START_F, LSAS_REF_START_ALPHA, LSAS_REF_START_OTHER, LSAS_REF_DTMIN,
-    LSAS_REF_NONPOS_H, LSAS_REF_LOWP, LSAS_REF_DRIFT, LSAS_REF_ALPHA, LSAS_REF_CAP,
-    LSAS_MAX_ONE_UPDATE, LSAS_LAST_SUBSTEPS, LSAS_LAST_REFUSE_CODE,
-    LSAS_MAX_RATIO_B, LSAS_LAST_RATIO_B, LSAS_LAST_F, LSAS_COUNT
-};
+    LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
+    LSAS_REJ_LOWP, LSAS_REJ_NONPOS_H, LSAS_REJ_DRIFT, LSAS_REJ_ALPHA,   // Ladruno WP-129
+    LSAS_ELASTIC_STAGES, LSAS_DRIFT_CORRECTIONS, LSAS_ALPHA_IN_RESEATS,   // Ladruno WP-129
+    LSAS_H_BRACKETS, LSAS_ALPHA_PROJECTED, LSAS_INTERSECT_FAIL, LSAS_REFUSALS,   // Ladruno WP-129
+    LSAS_REF_START_F, LSAS_REF_START_ALPHA, LSAS_REF_START_OTHER, LSAS_REF_DTMIN,   // Ladruno WP-129
+    LSAS_REF_NONPOS_H, LSAS_REF_LOWP, LSAS_REF_DRIFT, LSAS_REF_ALPHA, LSAS_REF_CAP,   // Ladruno WP-129
+    LSAS_MAX_ONE_UPDATE, LSAS_LAST_SUBSTEPS, LSAS_LAST_REFUSE_CODE,   // Ladruno WP-129
+    LSAS_MAX_RATIO_B, LSAS_LAST_RATIO_B, LSAS_LAST_F, LSAS_COUNT   // Ladruno WP-129
+};   // Ladruno WP-129
 struct LadrunoSasState {                                                    // Ladruno WP-129
     bool   allowed;             // set only by LadrunoSANISAND (the refusal can reach analyze)
     LadrunoSasOptions opt;
-    double stats[LSAS_COUNT];   // per instance, since revertToStart; survives revertToLastCommit
-    bool   refused;             // the LAST update was refused (reset at every integrate())
+    double stats[LSAS_COUNT];   // Ladruno WP-129: per instance, since revertToStart; survives revertToLastCommit
+    bool   refused;             // Ladruno WP-129: the LAST update was refused (reset at every integrate())
     LadrunoSasState() : allowed(false), refused(false) {
-        for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;
-    }
-};
+        for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
+    }   // Ladruno WP-129
+};   // Ladruno WP-129
 
 class ManzariDafalias : public NDMaterial
 {
@@ -379,18 +379,18 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	int     ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,  // Ladruno WP-129
-	                const Vector& ain, double dv, const Vector& ddev, double K, double G,
-	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);
+	                const Vector& ain, double dv, const Vector& ddev, double K, double G,   // Ladruno WP-129
+	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);   // Ladruno WP-129
 	int     ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,  // Ladruno WP-129
-	                const Vector& curStrain, const Vector& nextStrain, double K, double G,
-	                double& lamSum, bool& lastPlastic);
+	                const Vector& curStrain, const Vector& nextStrain, double K, double G,   // Ladruno WP-129
+	                double& lamSum, bool& lastPlastic);   // Ladruno WP-129
 	bool    ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,       // Ladruno WP-129
-	                const Vector& ain, double K, double G, bool bothSides);
+	                const Vector& ain, double K, double G, bool bothSides);   // Ladruno WP-129
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
 	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e, double K, double G); // Ladruno WP-129
 	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h); // Ladruno WP-129
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
-	                const Vector& ain, double e, double K, double G, Matrix& Cep);
+	                const Vector& ain, double e, double K, double G, Matrix& Cep);   // Ladruno WP-129
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
 	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,
