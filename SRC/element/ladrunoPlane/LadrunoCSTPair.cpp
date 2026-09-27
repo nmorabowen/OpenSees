@@ -699,6 +699,24 @@ Response *LadrunoCSTPair::setResponse(const char **argv, int argc, OPS_Stream &o
     }
   } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(3 * numtri));
+  } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
+    // Ladruno (WP-124 C4): plane-strain stress incl. sigma_zz (NaN when the
+    // material doesn't expose it) per triangle, as LadrunoCST/LST/Quad expose it;
+    // full GaussPoint/NdMaterialOutput tags for XML-driven recorders.
+    for (int t = 0; t < numtri; t++) {
+      output.tag("GaussPoint");
+      output.attr("number", t + 1);
+      output.tag("NdMaterialOutput");
+      output.attr("classType", theMaterial[t]->getClassTag());
+      output.attr("tag", theMaterial[t]->getTag());
+      output.tag("ResponseType", "sigma11");
+      output.tag("ResponseType", "sigma22");
+      output.tag("ResponseType", "sigma12");
+      output.tag("ResponseType", "sigma33");
+      output.endTag(); // NdMaterialOutput
+      output.endTag(); // GaussPoint
+    }
+    theResponse = new ElementResponse(this, 21, Vector(4 * numtri));
   } else if (LadrunoResp::is(argv[0], "strain")) {
     // Ladruno — the family exposes strain everywhere else; this element had
     // stress only.
@@ -732,6 +750,16 @@ int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)
       s6(3 * t) = s(0); s6(3 * t + 1) = s(1); s6(3 * t + 2) = s(2);
     }
     return eleInfo.setVector(s6);
+  }
+  if (responseID == 21) {
+    // Ladruno (WP-124 C4): [sxx, syy, sxy, szz] per triangle
+    static Vector v4(4 * numtri);
+    for (int t = 0; t < numtri; t++) {
+      const Vector &s = theMaterial[t]->getStress();
+      v4(4 * t) = s(0); v4(4 * t + 1) = s(1); v4(4 * t + 2) = s(2);
+      v4(4 * t + 3) = theMaterial[t]->getStressZZ();
+    }
+    return eleInfo.setVector(v4);
   }
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());

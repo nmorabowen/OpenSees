@@ -399,10 +399,6 @@ def test_base_response_vocabulary(name):
     assert abs(fx - want) <= 1.0e-9 * want, f"{name}: sum dampingForce_x {fx!r}, want {want!r}"
 
 # ---- gap fixes C4, C5, C10 --------------------------------------------------------------
-C4 = pytest.mark.xfail(strict=True, reason="C4: LadrunoCSTPair has no stressPlaneStrain token")
-
-
-@C4
 def test_cstpair_stress_plane_strain():
     """C4: the fourth plane element exposes the 4-component plane-strain stress per triangle
     ([sxx, syy, sxy, szz] x 2), in-plane parts identical to 'stress'."""
