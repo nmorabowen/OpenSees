@@ -134,8 +134,19 @@ def test_cracked_nu_latch_is_irreversible():
     ops.test("NormDispIncr", 1.0e-9, 100, 0)
     ops.algorithm("KrylovNewton")
     ops.integrator("LoadControl", 0.05)
+    # This unloading path sits right at a marginal corner of the Newton basin (confirmed locally:
+    # KrylovNewton and NewtonLineSearch both converge here at 20 steps/1e-9, but plain Newton, more
+    # steps, or a looser tolerance all fail even on Windows/MKL -- the step is genuinely tight, not
+    # merely mistuned). The Zone-A Ubuntu runner failed this exact step with -3 (AcceleratedNewton,
+    # KrylovNewton's base class) while it passes here, i.e. a platform BLAS/LAPACK-level difference in
+    # how close the two algorithms land to that basin boundary. Retry each step with NewtonLineSearch
+    # before failing so the assertion below (the physical claim: the latch is irreversible) is not at
+    # the mercy of that platform-dependent margin.
     for _ in range(20):
-        assert ops.analyze(1) == 0
+        if ops.analyze(1) != 0:
+            ops.algorithm("NewtonLineSearch")
+            assert ops.analyze(1) == 0, "latch unload step failed to converge under both algorithms"
+            ops.algorithm("KrylovNewton")
     ops.eleResponse(1, "forces")
     assert ops.eleResponse(1, "material", 1, "nuCracked")[0] == 1.0
 
