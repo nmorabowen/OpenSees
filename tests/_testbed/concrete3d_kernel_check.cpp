@@ -34,6 +34,21 @@ static void check(bool ok, const char* name) {
     else      std::printf("  ok  : %s\n", name);
 }
 
+// Zone-A wall-time knob (WP concrete3d-damage-drive CI fix), shared with the LADRUNO_FUZZ_TRIALS
+// env var the Python oracle's test_flow_potential_gate reads (tests/test_ladrunoConcrete3D_material.py):
+// unset => the FULL, thorough trial count (a human running this self-check directly); Zone-A CI
+// exports a small value so C1/C4/C7 below stay a fast SMOKE of the same fuzz every push instead of
+// paying their full cost. Every fuzz here uses a fixed LCG seed, so a smaller N is a deterministic
+// subsample (reproducible either way), never a source of flakiness.
+static long fuzzTrials(long defaultN) {
+    const char* e = std::getenv("LADRUNO_FUZZ_TRIALS");
+    if (!e || !*e) return defaultN;
+    char* end = nullptr;
+    const long v = std::strtol(e, &end, 10);
+    if (end == e || v <= 0) return defaultN;
+    return v;
+}
+
 // ---- (A) algebraic identities -------------------------------------------------------------
 static void run_identities() {
     std::printf("[A] surface + hardening identities\n");
@@ -559,9 +574,10 @@ static void run_robustness() {
     // sign-flipped tension apex for deep-compression trials.)
     unsigned s = 12345u; auto rnd = [&]() { s = s*1664525u + 1013904223u; return (s>>8)*(1.0/16777216.0); };
     int bad = 0, conv = 0, total = 0;
+    const long N1 = fuzzTrials(60000);   // LADRUNO_FUZZ_TRIALS knob; full run = 180000 trials (3 Df values)
     for (double Df : {0.3, 0.85, 1.0}) {
         mp.Df = Df;
-        for (int t = 0; t < 60000; ++t) {
+        for (long t = 0; t < N1; ++t) {
             double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rnd()*2.0 - 1.0) * 80.0;
             double kp_n = rnd() * 1.2;
             PrincipalResult pr = returnMapHardening(w, mp, kp_n);
@@ -597,9 +613,10 @@ static void run_robustness() {
     {
         unsigned s2 = 777u; auto rn = [&]() { s2 = s2*1664525u + 1013904223u; return (s2>>8)*(1.0/16777216.0); };
         int flips = 0;
+        const long N4 = fuzzTrials(30000);   // LADRUNO_FUZZ_TRIALS knob; full run = 90000 trials (3 Df values)
         for (double Df : {0.3, 0.85, 1.0}) {
             mp.Df = Df;
-            for (int t = 0; t < 30000; ++t) {
+            for (long t = 0; t < N4; ++t) {
                 double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rn()*2.0 - 1.0) * 80.0;
                 PrincipalResult pr = returnMapHardening(w, mp, rn() * 1.2);
                 if (pr.plastic && pr.converged && (w[0]+w[1]+w[2]) < 0.0 && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0) ++flips;
@@ -705,7 +722,8 @@ static void run_robustness() {
         Params q = mp; q.flowPotential = 1; q.maxSubIncr = 10;
         unsigned s3 = 2024u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
         long plastic = 0, fail = 0, flips = 0, bad = 0;
-        for (int t = 0; t < 120000; ++t) {
+        const long N7 = fuzzTrials(120000);   // LADRUNO_FUZZ_TRIALS knob (Zone-A CI: WP concrete3d-damage-drive)
+        for (long t = 0; t < N7; ++t) {
             const int mode = t % 4;
             q.Df = (t % 3 == 0) ? 0.85 : ((t % 3 == 1) ? 1.0 : 0.6);
             q.Hp = (t % 2) ? 0.01 : 0.5;
@@ -726,9 +744,12 @@ static void run_robustness() {
             double B[3][3], ws[3], Vs[3][3]; voigtToMat(sn, B); eig3sym(B, ws, Vs);
             if (tr[0] + tr[1] + tr[2] < 0 && ws[0] > 0 && ws[1] > 0 && ws[2] > 0) ++flips;
         }
-        check(fail == 0 && flips == 0 && bad == 0 && plastic > 60000,
-              "CDPM2 potential fuzz (120k): 0 failed returns, 0 sign flips, 0 non-finite");
-        std::printf("       (plastic %ld, failed %ld, flips %ld, bad %ld)\n", plastic, fail, flips, bad);
+        // plastic > N7/2 is the SAME ratio as the original hardcoded 60000/120000 (measured ~72% plastic
+        // at full N); parametrized so the check keeps its selectivity at any LADRUNO_FUZZ_TRIALS value
+        // instead of becoming unsatisfiable (or vacuous) at a reduced N.
+        check(fail == 0 && flips == 0 && bad == 0 && plastic > N7 / 2,
+              "CDPM2 potential fuzz: 0 failed returns, 0 sign flips, 0 non-finite");
+        std::printf("       (N=%ld, plastic %ld, failed %ld, flips %ld, bad %ld)\n", N7, plastic, fail, flips, bad);
     }
 
     // C8 — B1 + B2 end-to-end vs the paper: Imran & Pantazopoulou triaxial compression (Grassl 2013 Fig.11
