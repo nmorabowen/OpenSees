@@ -98,6 +98,7 @@ class Result:
     deps_total: list = field(default_factory=list)   # the realised strain increment
     uw_negative_h: bool = False   # plastic with (alpha-alpha_in):n < 0 (h < 0) anywhere
     min_a_plastic: float = float("inf")   # min (alpha-alpha_in):n over plastic samples
+    max_f_elastic: float = -float("inf")  # max f over elastic samples (must stay <~ ftol)
 
     def summary(self):
         s = self.state
@@ -308,9 +309,16 @@ class _Increment:
         add(e_pfloor, "p_floor", -1, 1.0)
 
         if mode == "elastic":
+            # threshold: ftol above the surface, or ftol above the segment's own
+            # start value when it starts inside the accepted band but above ftol
+            # (a start accepted by ftol_abs_start) -- otherwise the event, which
+            # needs a sign change, could never fire and f would run away.
+            q0 = self.q_of(y0, "elastic")
+            f_start_excess = max(q0.f - self.ftol(q0), 0.0)
+
             def e_f(t, y):
                 q = self.q_of(y, "elastic")
-                return q.f - self.ftol(q)
+                return q.f - self.ftol(q) - f_start_excess - (self.ftol(q) if f_start_excess > 0 else 0.0)
             add(e_f, "yield", 1, 1.0)
         else:
             def e_N(t, y):
@@ -371,6 +379,7 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
     max_abs_f_pl = 0.0
     min_hmargin = float("inf")
     min_a_pl = float("inf")
+    max_f_el = -float("inf")
     tt, yy = [0.0], [y.copy()]
     stall = 0
     while t < 1.0:
@@ -425,6 +434,8 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
             if q.rho_b > max_rho:
                 max_rho = q.rho_b
             max_rho_a = max(max_rho_a, q.rho_alpha)
+            if mode == "elastic":
+                max_f_el = max(max_f_el, q.f)
             if mode == "plastic":
                 max_abs_f_pl = max(max_abs_f_pl, abs(q.f))
                 min_a_pl = min(min_a_pl, q.a)
@@ -460,6 +471,7 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
                  min_H_sign_margin=min_hmargin, segments=segments,
                  reseats=reseats, notes=notes, nfev=inc.nfev, path=path,
                  deps_total=y[20:26].tolist(), min_a_plastic=min_a_pl,
+                 max_f_elastic=max_f_el,
                  uw_negative_h=inc.uw_negative_h or min_a_pl < -1.0e-12)
     return res
 

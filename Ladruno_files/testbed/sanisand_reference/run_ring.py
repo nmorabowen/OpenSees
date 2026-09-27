@@ -38,6 +38,7 @@ def _one(args):
                 alpha=t2v(r.state.alpha).tolist(), z=t2v(r.state.z).tolist(),
                 e=r.state.e, segs=[(s["mode"], s["event"]) for s in r.segments],
                 reseats=len(r.reseats), negh=r.uw_negative_h, min_a=r.min_a_plastic,
+                max_f_el=r.max_f_elastic,
                 notes=r.notes[:2] + r.notes[-1:],
                 f_start=r.start["f"])
 
