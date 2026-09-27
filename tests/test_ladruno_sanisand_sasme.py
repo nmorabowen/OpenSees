@@ -27,6 +27,7 @@ Runtime: ~2-4 min (the ring and the chains are C++ replays).
 import json
 import math
 import os
+import sys
 
 import pytest
 
@@ -56,7 +57,28 @@ def _sas_sub(o):
 
 
 # ---------------------------------------------------------------------- (a)
+def _rows_equal(cur, ref):
+    """EXACT on the baseline's platform (win32, MSVC); elsewhere the fork's
+    1e-6 cross-platform floor on floats (test_adr97_p4_inertness.py:146 --
+    GCC/libm differ from MSVC in the last bits), non-floats (rc) exact."""
+    if sys.platform == "win32":
+        return cur == ref
+    if len(cur) != len(ref):
+        return False
+    for rc_, rr in zip(cur, ref):
+        if len(rc_) != len(rr) or rc_[0] != rr[0]:
+            return False
+        xs = [float.fromhex(x) for x in rc_[1:]]
+        ys = [float.fromhex(y) for y in rr[1:]]
+        scale = max([abs(y) for y in ys] + [1.0])
+        if any(abs(x - y) > 1e-6 * scale for x, y in zip(xs, ys)):
+            return False
+    return True
+
+
 def test_existing_schemes_byte_identical():
+    """Every existing IntScheme vs the unmodified WP-127 binary (Windows).
+    Bit-exact on win32; the 1e-6 cross-platform floor elsewhere."""
     import wp129_sanisand_byteid as B
     with open(B.BASELINE) as fh:
         ref = json.load(fh)["decks"]
@@ -70,11 +92,11 @@ def test_existing_schemes_byte_identical():
             # run to run in the SAME process on the unmodified binary too
             # (LEDGER_quirks, WP-129). Only its elastic-stage rows are pinned.
             n0 = B.NONDETERMINISTIC[name]
-            if cur[name][:n0] != ref[name][:n0]:
+            if not _rows_equal(cur[name][:n0], ref[name][:n0]):
                 bad.append(f"{name}: elastic-stage rows differ")
             continue
-        if cur[name] != ref[name]:
-            nrow = sum(1 for a, b in zip(cur[name], ref[name]) if a != b)
+        if not _rows_equal(cur[name], ref[name]):
+            nrow = sum(1 for x, y in zip(cur[name], ref[name]) if not _rows_equal([x], [y]))
             bad.append(f"{name}: {nrow} rows differ")
     assert not bad, "existing schemes moved: " + "; ".join(bad)
 
