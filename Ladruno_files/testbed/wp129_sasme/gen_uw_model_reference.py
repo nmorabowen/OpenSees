@@ -49,6 +49,54 @@ def run(case):
                               "z", "alpha_in", "n_reseats")}
 
 
+def deadend_chain(p0=20.0, n=120):
+    """Review numerics item 2 (reviewer's p5.py): alpha = r just inside the
+    bounding surface (rho_alpha 0.999) at p0, then PROPORTIONAL elastic
+    compression; psi rises and the bounding surface shrinks around the fixed
+    alpha. The oracle's chain, each increment from its own previous state."""
+    u = [2 / math.sqrt(6), -1 / math.sqrt(6), -1 / math.sqrt(6), 0, 0, 0]
+
+    def state(k):
+        a = [k * x for x in u]
+        return dict(sigma=[p0 * (1 + a[i]) if i < 3 else 0.0 for i in range(6)], alpha=a,
+                    alpha_in=list(a), z=[0.0] * 6, e=E_INIT)
+
+    def rho(st):
+        r = integrate(State.from_voigt(st["sigma"], st["alpha"], st["z"], st["e"], st["alpha_in"]),
+                      [0.0] * 6, CAMPAIGN, O)
+        return r.summary()["rho_alpha_end"]
+    lo, hi = 0.1, 2.0
+    for _ in range(50):
+        k = 0.5 * (lo + hi)
+        if rho(state(k)) > 1.0:
+            hi = k
+        else:
+            lo = k
+    st = state(lo * 0.999)
+    # proportional elastic direction: C^-1 sigma (K, G scale together with sqrt p)
+    G = 264.32 * 101.0 * (2.97 - E_INIT) ** 2 / (1 + E_INIT) * math.sqrt(p0 / 101.0)
+    K = 2.0 / 3.0 * (1 + NU) / (1 - 2 * NU) * G
+    S = st["sigma"]
+    pS = sum(S[:3]) / 3.0
+    d = [(S[i] - pS) / (2 * G) + pS / (3 * K) if i < 3 else 0.0 for i in range(6)]
+    m = max(abs(x) for x in d)
+    d = [x / m for x in d]
+    out = []
+    cur = st
+    for j in range(n):
+        de = [1e-4 * (1 + j // 10) * x for x in d]
+        c = dict(cur)
+        c.update(kind="deadend", step=j, dstrain=de)
+        c["ref"] = run(c)
+        out.append(c)
+        if c["ref"]["status"] != "ok":
+            break
+        r = c["ref"]
+        cur = dict(sigma=r["sigma"], alpha=r["alpha"], alpha_in=r["alpha_in"], z=r["z"],
+                   e=cur["e"] - (1 + E_INIT) * sum(de[:3]))
+    return out
+
+
 def probes(delta):
     return {"isoComp": [delta, delta, 0, 0, 0, 0], "isoExt": [-delta, -delta, 0, 0, 0, 0],
             "shear+": [0, 0, 0, delta, 0, 0], "shear-": [0, 0, 0, -delta, 0, 0]}
@@ -85,10 +133,35 @@ def main():
                         c = dict(base)
                         c.update(probe=pn, delta=delta, dstrain=de)
                         cases.append(c)
+    # review of #871 (numerics): elastic predictor cases (iso Delta p, loading and
+    # unloading, from alpha = r at three cone offsets), the convergence set
+    # (K0 x 8 directions x 1e-4/1e-3), and the psi-driven "dead-end" chain.
+    cone = math.sqrt(2.0 / 3.0) * 0.005
+    u = [2 / math.sqrt(6), -1 / math.sqrt(6), -1 / math.sqrt(6), 0, 0, 0]
+    for k in (0.5, 2.0, 1.2):
+        for p0 in (20.0, 100.0):
+            for eps in (5e-5, 1.15e-4, 3e-4):
+                for sgn in (1, -1):
+                    r0 = [k * cone * x for x in u]
+                    sig = [p0 * (1 + r0[0]), p0 * (1 + r0[1]), p0 * (1 + r0[2]), 0, 0, 0]
+                    cases.append(dict(kind="elastic", sigma=sig, alpha=r0, alpha_in=list(r0),
+                                      z=[0.0] * 6, e=E_INIT, dstrain=[sgn * eps] * 3 + [0, 0, 0],
+                                      k=k, p0=p0, eps=sgn * eps))
+    cdirs = {"isoC": [1, 1, 1, 0, 0, 0], "triaxC": [1, -0.3, -0.3, 0, 0, 0],
+             "volshear": [1, 1, 1, 0.5, 0, 0], "act": [0.3, 1, 0, 0, 0, 0],
+             "pas": [1, -0.3, 0, 0, 0, 0], "ext": [-0.2, -1, -0.2, 0, 0, 0],
+             "shear": [0, 0, 0, 1, 0, 0], "vcomp_sh": [0.5, 1, 0.5, 0.3, 0, 0]}
+    for p0 in (5.0, 20.0, 100.0):
+        for dn, d in cdirs.items():
+            for delta in (1e-4, 1e-3):
+                c = k0_state(p0)
+                c.update(kind="conv", p0=p0, dir=dn, delta=delta, dstrain=[delta * x for x in d])
+                cases.append(c)
     for i, c in enumerate(cases):
         c["ref"] = run(c)
         if i % 50 == 0:
             print(i, len(cases), c["kind"], c["ref"]["status"], flush=True)
+    cases += deadend_chain()
     out = os.path.join(ROOT, "tests", "data", "wp129_uw_model_reference.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as fh:

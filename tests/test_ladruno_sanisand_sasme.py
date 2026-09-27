@@ -523,3 +523,87 @@ def test_no_hold_skip_census_under_sas(capfd):
     assert ops.eleResponse(1, "material", 1, "implexGuards")[5] == g0
     _define_all()
 
+
+
+# ------------------------------------------------ review of #871 (numerics)
+def test_elastic_path_is_exact(protos):
+    """Numerics item 1: the elastic predictor is the closed form (sqrt p linear
+    in dv), so it lands on the oracle to its own tolerance whatever TolR."""
+    worst = 0.0
+    for c in _ref_cases("elastic"):
+        new, o = W.step(ops, W.TAG_SAS, c, c["dstrain"])
+        assert o["rc"] == 0
+        if o["sas"]["elastic"] == 1:
+            worst = max(worst, _rel(new["sigma"], c["ref"]["sigma"]))
+    assert worst < 1e-8, worst
+
+
+def test_convergence_with_tolR_against_oracle(protos):
+    """Numerics items 1/3/5: the error against the oracle falls with TolR --
+    no floor from the elastic part, the intersection or the drift correction."""
+    errs = {1e-4: [], 1e-7: []}
+    for tol, tag in ((1e-4, W.TAG_SAS), (1e-7, 7)):
+        for c in _ref_cases("conv"):
+            if c["ref"]["status"] != "ok":
+                continue
+            new, o = W.step(ops, tag, c, c["dstrain"])
+            errs[tol].append(_rel(new["sigma"], c["ref"]["sigma"]) if o["rc"] == 0 else None)
+    pairs = [(a, b) for a, b in zip(errs[1e-4], errs[1e-7]) if a is not None and b is not None]
+    assert len(pairs) >= 0.8 * len(errs[1e-4])
+    b = sorted(x[1] for x in pairs)
+    assert b[len(b) // 2] < CONV_MED and b[-1] < CONV_MAX, (b[len(b) // 2], b[-1])
+    a = sorted(x[0] for x in pairs)
+    assert b[len(b) // 2] < 0.1 * a[len(a) // 2]
+
+
+CONV_MED, CONV_MAX = 1.0e-6, 1.0e-4
+
+
+def test_psi_driven_exceedance_is_not_a_dead_end(protos):
+    """Numerics item 2 (reviewer's p5.py): proportional elastic compression from
+    rho_alpha 0.999 -- psi shrinks the bounding surface around a fixed alpha.
+    Every increment integrates (no refusal) and follows the oracle's chain."""
+    chain = _ref_cases("deadend")
+    assert len(chain) >= 60
+    st = {k: chain[0][k] for k in ("sigma", "alpha", "alpha_in", "z", "e")}
+    prev = 0.0
+    maxrho = 0.0
+    for c in chain:
+        new, o = W.step(ops, W.TAG_SAS, st, c["dstrain"], prev)
+        assert o["rc"] == 0, (c["step"], o["sas"]["lastRefuseCode"])
+        assert _rel(new["sigma"], c["ref"]["sigma"]) < 1e-7, c["step"]
+        maxrho = max(maxrho, W.alpha_over_b(new["sigma"], new["alpha"], new["e"]))
+        st, prev = new, W.ncov(c["dstrain"])
+    assert maxrho > 1.1 + 1e-3   # the path really does leave 1 + kappa
+
+
+def test_step_factor_cap(protos):
+    """Numerics item 5: accepted substeps grow by at most 1.1."""
+    c = next(x for x in _ref_cases("conv") if x["p0"] == 20.0 and x["dir"] == "act" and x["delta"] == 1e-3)
+    _, o = W.step(ops, W.TAG_SAS, c, c["dstrain"], trace=100000)
+    acc = [r for r in o["trace"] if r["outcome"] == "accept"]
+    ratios = [b["dT"] / a["dT"] for a, b in zip(acc, acc[1:]) if b["T"] + b["dT"] < 1.0 - 1e-12]
+    assert ratios and max(ratios) <= 1.1 * (1 + 1e-12), max(ratios)
+
+
+def test_alpha_project_keeps_f_and_lands_on_the_surface(protos):
+    """-alphaProject 1 on the inadmissible 1950/3: projected (counted), f stays
+    on the cone, rho_alpha is brought to the bounding surface."""
+    r = next(x for x in sr.read_ring_csv(sr.RING_CSVS[0]) if x["element"] == 1950 and x["gp"] == 3)
+    new, o = W.step(ops, W.TAG_SAS_PRJ, r, [0, 0, 0, 1e-7, 0, 0])
+    assert o["rc"] == 0 and o["sas"]["alphaProjected"] >= 1
+    assert o["f_after"] <= 1e-6
+    assert W.alpha_over_b(new["sigma"], new["alpha"], new["e"]) <= 1.0 + 1e-3
+
+
+def test_ring_oracle_gap_closed(protos):
+    """Numerics item 4: b16 element 5496 (the start-of-increment on-surface
+    alpha_in rule) now lands on the oracle."""
+    cs = [c for c in _ref_cases("ring") if c["mesh"] == "b16" and c["element"] == 5496]
+    worst = 0.0
+    for c in cs:
+        new, o = W.step(ops, W.TAG_SAS, c, c["dstrain"])
+        if o["rc"] == 0 and c["ref"]["status"] == "ok":
+            worst = max(worst, _rel(new["sigma"], c["ref"]["sigma"]))
+    assert worst < 1e-3, worst
+
