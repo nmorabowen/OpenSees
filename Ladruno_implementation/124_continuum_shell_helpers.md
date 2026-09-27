@@ -90,6 +90,54 @@ Riskiest: part 1 (GRFII), because of the per-element massless predicate and Rayl
 the massless path; V2 does not), diagonal vs full M·a, and the snapshot ordering (LEDGER_quirks "MUST snapshot
 the shared static `resid`"). Do it last.
 
+As built: all five stages as planned. Two things were NOT shared: the Brick/Brick20 V3 residual tail (kept in
+the bricks, their residual is not M·a) and the massless predicates (they differ per element and stay local).
+Stage 4 added `LadrunoMassCache::cached()` so the brick keeps returning its per-instance copy on a miss.
+
+## Results (2026-09-27)
+
+**Proof method.** Baseline = the unchanged code (`ladruno` merged at the WP start). `fingerprint.py --suite
+shells` (models: `wp124_shells/shell_models.py`): 35 formulation variants × static DisplacementControl into the
+plastic range (LadrunoJ2) with every setResponse token, ModifiedNewton -initial, algorithm Linear, eigen,
+Newmark with each Rayleigh factor ALONE from a plastic preload (K, Kc, K0 differ), HHT, UniformExcitation,
+CentralDifference, element parameters. 707 series, 1,884,982 values; two baseline runs identical. Builds are
+done from the uncommitted tree and committed after the evidence (a named `build.bat OpenSeesPy` is incremental
+then; the first pyd build of a tree compiles everything).
+
+| Step | Fingerprint vs previous step |
+|---|---|
+| stage 1 Ki cache (1a, 1b, 1c) + C1 + C6 | 0 / 707 differ |
+| stage 2 ground inertia (2a, 2b, 2c) | 0 / 707 |
+| C14 | 0 / 707 |
+| stage 3 parameters + responses | 0 / 707 |
+| C2, C3, C4, C5, C10 (one build) | 170 differ, **all explained**: 163 only inside the NEW response blocks (Bezier globalForce/dampingForce/dynamicForce/inertialForce, CSTPair stressPlaneStrain; every other value byte-equal once those blocks are stripped) + 7 CSTPair parameter runs whose parameter now reaches the material (C3); 0 unexplained |
+| C9 + stage 4 Brick → LadrunoMassCache | 0 / 707 (against the post-fix fingerprint) |
+| stage 5 inertia residual | 0 / 707 |
+
+**Mutation rows** (`wp124_shells/mutation_rows.py`: one-line edit of the helper, pyd rebuilt, sources restored;
+test file `tests/test_ladruno_element_shell_helpers.py`):
+
+| Row | Mutation | Result |
+|---|---|---|
+| K1 | `cacheKi` stores a zero matrix | caught (21) |
+| K3 | `dropKi` keeps the stale Ki | caught (6) |
+| K4 | `cacheKi` returns the scratch (the C1 shape) | EQUIVALENT in a default build: every consumer copies at once (predicted) |
+| C1a / C1b | CONTINUUM=IDENT mutant, C1 fix reverted / kept | probe fails (the mutation never reaches the solver) / passes |
+| G1 / G2 | ground inertia sign, full / diagonal branch | caught (8 / 8) |
+| G3 | full M reduced to its diagonal | caught (4 → 8 after adding `-cMass` Bezier probes: Bezier defaults to LUMPED) |
+| G4 | every DOF takes the x ground acceleration | caught (16) |
+| P1 / P2 | forall asks only material 1 / every `material k` → slot 0 | caught (7 / 7; CST has one GP) |
+| P3 | `finishResponse` drops the `Element::setResponse` fallback | caught (8) |
+| P4 | `materialState` taken as a GP address again | caught (5) |
+| P5 | `finishResponse` does not `endTag()` first | EQUIVALENT: `eleResponse` writes no XML, and `XmlFileStream` closes open tags itself (an XML-recorder well-formedness test also passes); the rule stays documented, no observer found |
+| M1 | Brick cache signature without ρ | caught (1) — only after the rho-guard test moved from `inertialForce` to `dampingForce`: Brick's residual integrates ρ per GP and never reads the cache, so the first version of the test could not see M1 |
+| N1 / N2 | residual inertia sign, diagonal / full | caught (14 / 14) |
+| N3 | full M reduced to its diagonal in the residual | caught (6) |
+| N4 | every DOF takes the x trial acceleration | caught (24) |
+| C14 | Brick20 `recvSelf` without the rebuild | caught (2) |
+
+**Gap evidence** is in the Gaps table (each fix's commit and before/after).
+
 ## Rejected approaches
 
 - **A common base class.** The eight derive from `Element` with different node counts, DOF layouts and
@@ -103,7 +151,8 @@ the shared static `resid`"). Do it last.
 
 ## Open questions (owner)
 
-- Fix the four verified gaps (C1–C4) in this WP as separate commits, or as their own small WPs? C1 and C2 are
-  user-visible. For example, `recorder Element … globalForce` on a Bezier element currently records nothing.
+- ~~Fix C1–C4 here?~~ Decided: here, as separate behaviour commits (done, with C5, C6, C9, C10, C14).
 - C8 (Brick lumped/consistent mismatch): documented as intentional in Brick; does the owner accept Brick20's
-  F-1 reasoning for Brick too?
+  F-1 reasoning for Brick too? Now observed: an elastic `-lumped` transient converges only linearly under
+  Newton (the fingerprint's `Brick/lumped` needs a 1e-7 / 300-iteration test to run at all).
+- C7, C11, C12, C13 stay open (low impact; C13's brick size check is behind `checkSize=false`).

@@ -505,9 +505,11 @@ def test_inertia_residual_is_M_a(name):
 
 # ---- mass-cache guards (LadrunoMassCache, incl. LadrunoBrick since stage 4) --------------
 # The cache is filled on first use; a later 'rho' parameter update must trip its guard, so
-# the next inertia evaluation uses the NEW density: sum_x inertialForce == rho_new V a0.
-# (The Bezier builders put -rho on the ELEMENT, which overrides the material's: there the
-# update must leave the mass unchanged -- and the cache must not serve anything else.)
+# the next getMass() uses the NEW density. Observed through alphaM Rayleigh (dampingForce =
+# alphaM M v reads getMass()): sum_x == alphaM rho_new V v0. NOT through inertialForce:
+# LadrunoBrick's residual integrates rho per Gauss point and never reads the cache (mutation
+# row M1 survived that version of this test). The Bezier builders put -rho on the ELEMENT,
+# which overrides the material's: there the update must leave the mass unchanged.
 @pytest.mark.parametrize("name", ["LadrunoQuad", "LadrunoLST", "LadrunoBrick", "LadrunoBrick20",
                                   "BezierTri6", "BezierTet10"])
 def test_mass_cache_follows_a_rho_update(name):
@@ -518,19 +520,20 @@ def test_mass_cache_follows_a_rho_update(name):
         _SUPPORTS[0] = True
     tags = ops.getNodeTags()
     ndf = len(ops.nodeDisp(tags[0]))
-    a0 = 1.3
+    aM, v0 = 0.3, 1.3
+    ops.rayleigh(aM, 0.0, 0.0, 0.0)
     for n in tags:
-        ops.setNodeAccel(n, 1, a0, "-commit")
+        ops.setNodeVel(n, 1, v0, "-commit")
 
     def fx():
-        f = ops.eleResponse(1, "inertialForce")
+        f = ops.eleResponse(1, "dampingForce")
         return sum(f[i] for i in range(0, len(f), ndf))
     first = fx()                                     # fills the cache
-    assert abs(first - RHO * VOLUME[name] * a0) <= 1.0e-9 * first
+    assert abs(first - aM * RHO * VOLUME[name] * v0) <= 1.0e-9 * first
     ops.parameter(1, "element", 1, "rho")
     ops.updateParameter(1, 3.0 * RHO)
     if name.startswith("Bezier"):
         assert abs(fx() - first) <= 1.0e-12 * first
     else:
-        want = 3.0 * RHO * VOLUME[name] * a0
+        want = 3.0 * aM * RHO * VOLUME[name] * v0
         assert abs(fx() - want) <= 1.0e-9 * want, f"{name}: stale mass after a rho update"
