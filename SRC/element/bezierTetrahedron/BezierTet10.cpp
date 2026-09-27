@@ -1941,8 +1941,10 @@ Response *BezierTet10::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 7, Vector(1));
     }
 
-    output.endTag();  // ElementOutput
-    return theResponse;
+    // Ladruno (WP-124 C2): close ElementOutput FIRST, then fall back to the base
+    // vocabulary (globalForce, dampingForce, dynamicForce, inertialForce), which
+    // this element never offered -- a recorder on those tokens wrote nothing.
+    return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 
@@ -2052,7 +2054,8 @@ int BezierTet10::getResponse(int responseID, Information &eleInfo)
     }
 
     default:
-        return -1;
+        // Ladruno (WP-124 C2): the base IDs 111111..444444 (globalForce, ...)
+        return this->Element::getResponse(responseID, eleInfo);
     }
 }
 

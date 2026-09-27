@@ -333,8 +333,7 @@ def test_material_point_parameters_cover_every_point(name):
 
 
 # ---- response finalise (finishResponse + Element::getResponse fallback) -----------------
-C2 = pytest.mark.xfail(strict=True, reason="C2: Bezier never chains to Element::setResponse")
-RESP = [pytest.param(n, marks=C2) if n.startswith("Bezier") else n for n in ELEMENTS]
+RESP = list(ELEMENTS)   # C2 fixed: Bezier chains to Element::setResponse too
 
 
 def _hex_volume(X):
