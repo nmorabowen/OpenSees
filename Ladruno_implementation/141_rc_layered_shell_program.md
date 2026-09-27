@@ -30,6 +30,8 @@ concrete materials. The architecture (fixed crack + interlock + smeared rebar la
 shell) is how ATENA, VecTor and PARC_CL do it. The measurable gaps are the **regularization length**
 and **transverse shear**, not the crack model.
 
+Tasks, models, effort and oracles: [[_wp141_implementation_plan]].
+
 This document records the assessment (§2), the decisions (§3), and four phases (§4). It was assembled
 from four read-only code/doc audits of `ladruno` @ `64a0341a6`, a literature scan, PR #877, and the
 external validation study. Each phase gets its own `wp/<n>-<slug>` branch when it is opened.
@@ -75,7 +77,7 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
   PV19/PV20/PV27 pure-shear panels are within +6.4 / +5.0 / −0.9 % of test with `C = 0.34/ε'c`.
 - **`LadrunoConcrete3D`** — PlateFiber view exists but is **untested in a shell** and its σ33 Newton is
   undamped with a fixed tolerance and **returns 0 on non-convergence** (`LadrunoConcrete3D.cpp:440-459`;
-  unchanged on the #877 branch). The study's fix plan item **B4** owns this. lch re-read every call
+  unchanged on the #877 branch). Study fix-plan item **B4**; WP-141 P1a takes the PlateFiber part. lch re-read every call
   (not latched), silent fallback to `-lch`. Plastic dissipation not regularized (~30 % lch-dependent).
   `-hoop` is inert outside the BeamFiber view.
 - **`ASDConcrete3D`** (vanilla) — only via the silent `PlateFiberMaterial` wrapper.
@@ -134,7 +136,7 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 
 | Item | Gate |
 |---|---|
-| P1a `LadrunoConcrete3D` plate view: tolerance relative to `ft`, damped Newton, return −1 on failure — **delivered by study fix_plan B4**; this program only adds the shell gate | PV20 with `LadrunoConcrete3D` layers: 0 silent failures (every failure is a cut step); a `LadrunoConcrete3D`-in-`ASDShellQ4` Zone-A test (there is none today) |
+| P1a `LadrunoConcrete3D` plate view: tolerance relative to `ft`, damped Newton, return −1 on failure — the PlateFiber part of study fix_plan B4, **handed to WP-141 by the study session (2026-09-27)**; branch after #877 | PV20 with `LadrunoConcrete3D` layers: 0 silent failures (every failure is a cut step); a `LadrunoConcrete3D`-in-`ASDShellQ4` Zone-A test (there is none today) |
 | P1b D3b `PlateRebar` response forwarding (vanilla, additive) | `eleResponse(e,'material',gp,'fiber',k,'stress')` still returns the 5-comp plate stress; a new key reaches the bar (`LadrunoRebarBuckling` state, `ASDSteel1D` damage) |
 | P1c Guidance: in shells, `ASDSteel1D` without `-auto_regularization`, `-buckling` with the **tie spacing**; always pin `ASDShellQ4 -local` when a section has `PlateRebar` layers (G9 — confirm the frame difference in the fork and upstream sources first) | RC guide + `LEDGER_quirks` rows |
 | P1d Doc drift G8 — after #877 merges (it edits ADR-19 and the RC guide) | grep clean |
