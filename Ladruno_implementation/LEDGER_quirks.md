@@ -7735,6 +7735,20 @@ Three things to carry forward:
   unqualified beyond the WP-130 decks. `-cppmLineSearch on` (halving on ||R||) cut the local-Newton
   failures on the 10 kPa quad from 36 to 2 but did not make that global step converge either.
 
+### A CPPM refusal under a DISCARDING element was committed -- the plain `commitState` path never read the refusal flag (WP-130, from WP-129's adversarial review)
+- **Bites:** SSPquad, stdBrick (= Brick), BbarBrick, SSPbrick, BrickUP and LadrunoSolidShell drop
+  `setTrialStrain`'s return code (F7 roster), so a `-cppmOnFail refuse` (or failed ME->CPPM
+  fallback) refusal never cuts their step; Newton can converge on the refused, UNINTEGRATED trial
+  state and `LadrunoSANISAND::commitState`'s plain (non-IMPL-EX) path committed it -- the refusal
+  was honoured by forwarding elements only. WP-129's review found the same hole for the ME cap.
+- **Fixed (WP-130, #868):** the plain path checks `mLadrunoCPPMRefused` first: declare to
+  `Domain::commit()` (`ladrunoNoteCommitRefusal`, element-independent abort), latch
+  (`mImplexCommitRefusedLatch`, reported in `implexRefusals[4]`), restore the trial, return
+  `LADRUNO_MATERIAL_REFUSED`. Pinned on SSPquad (`test_cppm_refusal_under_a_discarding_element_does_not_commit`:
+  analyze < 0, strain = last committed, further steps refused). WP-129 adds `mSubstepCapHitInME`
+  to the same check: whichever merges second ORs the flags. The trial-time latch warning still
+  says "-implex companion"; its text predates this second writer.
+
 ### Inside the ME -> CPPM fallback the CPPM ladder is guarded by `mScheme == INT_BackwardEuler` and its explicit exits re-enter ModifiedEuler (WP-130)
 - **Bites:** calling `BackwardEuler_CPPM` from an IntScheme-1 material skips the whole retry ladder
   (vanilla returns an UNCONVERGED state with errFlag 0), and any explicit exit (low-p branch, ladder
@@ -7792,5 +7806,7 @@ Three things to carry forward:
   with free equations (`ladruno-new-material`, "Verifying a tangent").
 - **Workaround/status (WP-130, #868):** `-cppmTangent fixed` hands out `+CSigma`
   (`tests/test_ladruno_sanisand_cppm_newton.py` pins both: vanilla -T within 1e-2 of D_fd, fixed
-  +T within 1e-2). Default kept vanilla (byte identity was the WP's contract); **making `fixed`
-  the LadrunoSANISAND default is an owner decision** -- the vanilla sign is simply wrong. F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
+  +T within 1e-2, 3D and -- by a whole-run FD, sigma_33 not being exposed -- the plane-strain
+  wrapper). **Owner decision (WP-130): `fixed` is the LadrunoSANISAND DEFAULT**; `-cppmTangent
+  vanilla` reproduces the old binary; vanilla `ManzariDafalias` keeps the wrong sign (upstream
+  report deferred). F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.

@@ -704,21 +704,30 @@ nDMaterial LadrunoSANISAND ... 2 2 ...                  (IntScheme 2, TanType 2)
     <-cppmHalvings n>               0..9, default 9 (vanilla: up to 2^9 half-increments)
     <-cppmLineSearch on|off>        default off
     <-cppmStart trial|explicit>     default trial (vanilla)
-    <-cppmTangent vanilla|fixed>    default vanilla -- the vanilla TanType-2 tangent has the WRONG SIGN
+    <-cppmTangent fixed|vanilla>    default FIXED (owner decision); vanilla = ManzariDafalias' WRONG SIGN, reproduction only
 nDMaterial LadrunoSANISAND ... 1 ... -maxSubsteps N
     <-meFallback cppm|off>          default off; needs IntScheme 1 and -maxSubsteps > 0
 ```
 
 All defaults are vanilla's control flow, **byte-identical** (seven IntScheme-2 decks incl. a
-free-DOF Newton deck, `tests/wp130_sanisand_byteid.py`). None is qualified with `-implex` (the
+free-DOF Newton deck, `tests/wp130_sanisand_byteid.py`) -- **except the tangent sign**: on
+LadrunoSANISAND `-cppmTangent fixed` is the DEFAULT (owner decision, WP-130), so an IntScheme 2 +
+TanType 2 deck hands its elements a different (correct) tangent than before. Every deck NOT on
+IntScheme 2 + TanType 2, and vanilla `nDMaterial ManzariDafalias` everywhere, is bit-identical;
+`-cppmTangent vanilla` reproduces the old binary bit for bit. On zero-free-DOF decks only the
+`tangent` response changes (its sign); with free DOF the global Newton path changes. None is qualified with `-implex` (the
 parser refuses the combination). A flag that could not act on the deck is refused.
 
-- **`-cppmTangent fixed` -- use it with TanType 2.** Vanilla's CPPM hands the element MINUS its
+- **`-cppmTangent fixed` -- the DEFAULT on LadrunoSANISAND.** Vanilla's CPPM hands the element MINUS its
   algorithmic tangent (`NewtonSol`: `Cep = -1.0 * CSigma`): a negative-definite stiffness, so the
   global Newton diverges from its first iteration and only a Krylov/relaxed rung ever commits a
   step. `fixed` hands out `+CSigma`, which matches a finite difference of the return map to 1.2e-3
-  (`LEDGER_quirks`, "IntScheme 2's TanType-2 tangent is MINUS"). The default stays vanilla only
-  for byte identity.
+  (`LEDGER_quirks`, "IntScheme 2's TanType-2 tangent is MINUS"); the plane-strain wrapper hands
+  out the same object (FD-checked). `-cppmTangent vanilla` is kept for reproduction only.
+- **A CPPM refusal under a DISCARDING element** (SSPquad, stdBrick, BbarBrick, SSPbrick, BrickUP,
+  LadrunoSolidShell) is caught at `commitState`: the refusal is declared to `Domain::commit()`
+  (WP-99's channel), the commit aborts and the point latches -- analyze < 0, nothing drifts.
+  Recover by restarting with a smaller step or the forwarding element family.
 - **`-cppmOnFail refuse`**: where vanilla, after a failed local Newton and the halving ladder,
   integrates the increment explicitly and reports success, the material REFUSES
   (`LADRUNO_MATERIAL_REFUSED`), so a forwarding element fails `Domain::update` and the step is
