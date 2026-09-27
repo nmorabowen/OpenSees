@@ -151,7 +151,7 @@ def test_benign_agreement_with_oracle(tight):
     assert worst[0][0] < BENIGN_TOL, worst[:3]
 
 
-BENIGN_TOL = 1.0e-3
+BENIGN_TOL = 5.0e-8   # measured 6.9e-9 at TolR 1e-7
 
 
 def test_reproducer_matches_oracle(tight):
@@ -294,7 +294,10 @@ def test_T3_ring_matches_oracle(protos):
                             probe=r["c"]["probe"], delta=r["c"]["delta"], rc=r["rc"],
                             code=r["code"], f=r["f"], rho=r["rho"], d=r["d"],
                             ref_status=r["c"]["ref"]["status"]) for r in rows], fh)
-    assert ds[len(ds) // 2] < 1e-2, ds[len(ds) // 2]     # median within 1 %
+    # measured at TolR 1e-4: median 8e-6, p95 5e-5
+    assert ds[len(ds) // 2] < 1e-4, ds[len(ds) // 2]
+    assert ds[int(0.95 * len(ds))] < 5e-4, ds[int(0.95 * len(ds))]
+    assert ds[-1] < 5e-3, ds[-1]
 
 
 def test_T4_1950_3_shear_plus_refused(protos):
@@ -563,7 +566,7 @@ def test_convergence_with_tolR_against_oracle(protos):
     assert b[len(b) // 2] < 0.1 * a[len(a) // 2]
 
 
-CONV_MED, CONV_MAX = 1.0e-6, 1.0e-4
+CONV_MED, CONV_MAX = 1.0e-7, 5.0e-7   # measured 1.1e-8 / 6.3e-8 at TolR 1e-7
 
 
 def test_psi_driven_exceedance_is_not_a_dead_end(protos):
