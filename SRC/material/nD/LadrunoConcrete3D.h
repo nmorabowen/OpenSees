@@ -80,7 +80,9 @@ class LadrunoConcrete3D : public NDMaterial {
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
                     double rho, double lch, bool autoReg, bool implex = false,
                     double eta = 0.0, int ctTemper = 0,
-                    double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D);
+                    double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D,
+                    int tensionLaw = 1, double epsFcUser = 0.0, int flowPotential = 1,
+                    int compDrive = 1, bool verbose = false, int tcTemper = 2);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -133,6 +135,30 @@ class LadrunoConcrete3D : public NDMaterial {
   // condensation balances. hoopK = confining stiffness d(p_conf)/d(eps_lat) (>=0; 0 => free reduction =
   // plain BeamFiber); hoopFy = hoop yield (caps p_conf). Circular/spiral hoops (symmetric two-normal).
   double hoopK, hoopFy;
+  // WP concrete3d-oracle-diagnosis: tensile softening law (1 = CDPM2 bilinear Eq.58, the DEFAULT; 0 = the
+  // legacy exponential) and the compressive softening mapping. epsFcUser > 0 (-epsFc) = the direct CDPM2
+  // eps_fc (bypasses Gc); else Gc is the PHYSICAL compressive fracture energy per unit area: eps_fc is
+  // obtained from the uniaxial-compression energy table g(eps_fc) (built once, copied to every copy,
+  // serialized) inverted at Gc/lch (cached per lch).
+  int    tensionLaw;
+  double epsFcUser;
+  // B1 (WP concrete3d-flow-potential): plastic potential. 1 = full CDPM2 Eq.22-29 (DEFAULT; Df = the CDPM2
+  // dilation constant, must be > 0.5; return-map sub-incrementation on, depth 10); 0 = the legacy v1 flow
+  // (m_v = Df m0/(sqrt3 fc), always dilatant; no sub-incrementation — the pre-B1 behaviour).
+  int    flowPotential;
+  // B2 (WP concrete3d-damage-drive): compressive damage drive. 1 = CDPM2 Eq.47-49/53/55 (DEFAULT: E*kappa_dc vs ft,
+  // histories from the start, post-onset fraction); 0 = the legacy fork drive (-sigma_min vs fc).
+  int    compDrive;
+  bool   verbose;                // -verbose: every final return failure + a per-commit summary of the counters
+  int    tcTemper;             // PV20 tension->compression damage temper: 2=proj (default) 0=none (literal CDPM2)
+  // return-map diagnostics (cumulative over ALL integrate() calls incl. Newton iterates; getResponse
+  // "substeps" / "returnFailures"): nSub = returns rescued by sub-incrementation, nFail = FINAL failures
+  // (elastic-trial fallback); *Step = since the last commitState (the -verbose summary).
+  double nSub, nFail, nSubStep, nFailStep;
+  double gcEfc[8], gcG[8];     // Ladruno::Concrete3D::GC_TABLE_N = 8
+  bool   gcTabReady;
+  double gcLch, gcEpsFc;       // cache of the last inversion (lch -> eps_fc)
+  bool   gcWarned;
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*
@@ -151,6 +177,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double kdt1_n, kdt2_n;       // committed tensile damage histories (Eq.44-45)
   double kdc_n, kdc1_n, kdc2_n;// committed compressive damage histories (Eq.47-49)
   double sigtmax_n, sigcmax_n; // committed monotone drive maxima (P2g: no-heal cyclic damage)
+  double eqc_n, etp_n;         // B2: committed compressive equivalent strain + previous eps_tilde
   // committed IMPL-EX bookkeeping (the implicit damage + per-variable increments + dt, for the next
   // step's extrapolation; unused when !implex)
   double wt_n, wc_n;           // committed IMPLICIT dual damage
@@ -165,6 +192,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double kp_t;
   double etmax_t, kdt1_t, kdt2_t, kdc_t, kdc1_t, kdc2_t;
   double sigtmax_t, sigcmax_t;                         // trial monotone drive maxima (P2g)
+  double eqc_t, etp_t;                                 // B2 trial compressive-drive history
   double wt_t, wc_t, dwt_t, dwc_t, depl_t[6], dtn_t;   // trial IMPL-EX bookkeeping
   double Dtan6[6][6];          // trial damaged tangent (kernel TENSOR convention)
   double omegaT, omegaC;       // trial damage variables (for recorders)
@@ -172,6 +200,8 @@ class LadrunoConcrete3D : public NDMaterial {
 
   // helpers
   void integrate(bool doTangent);
+  double compressiveEpsFc(double lch);   // -epsFc, or the Gc-energy table inversion at this lch
+  void   ensureGcTable(void);
   void setupDim(void);             // fill ncomp/vmap/condense + size the return buffers
   void condenseTangent(void);      // static condensation of the 33 dof (sigma_22 = 0)
 

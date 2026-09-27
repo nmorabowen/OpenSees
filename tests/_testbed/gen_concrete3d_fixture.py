@@ -125,6 +125,11 @@ def main(out=None):
     add_driven(mp_h, np.linspace(0, -0.006, 120), True, "hard_uniax_comp", confine="free")
     add_driven(mp_h, np.linspace(0, -0.012, 120), True, "hard_confined_comp",
                confine="active", sigma3=0.10 * 30.0)
+    # VERTEX returns (WP concrete3d-oracle-diagnosis): strain-driven HYDROSTATIC paths through the dedicated
+    # vertex return — compression onto the closed [1-qh1] cap vertex (pre-fix: elastic, never yielded) and
+    # tension onto the apex with the consistent vertex kp (pre-fix: aborted-iterate kp, step-size dependent).
+    add_fixed(mp_h, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, True, "hard_hydro_comp_vertex")
+    add_fixed(mp_h, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, True, "hard_hydro_tens_vertex")
 
     lines.append(f"NPATH {len(emitted)}")
     for label, pblock, hardening, deps_list, rows in emitted:
@@ -163,6 +168,11 @@ def main(out=None):
     # recompose AND the 4x4 hardening principal Jacobian on a non-axisymmetric trial.
     tans.append((mp_h, sig_h.copy(), kp_h, np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]),
                  True, "tan_hard_shear"))
+    # VERTEX tangent (analytic vertexPrincipalJacobian vs the oracle FD): committed plastic hydrostatic-
+    # compression cap-vertex state, probe a further hydrostatic increment with a small shear (the trial
+    # stays inside the compressive cone of normals, so every FD perturbation also returns to the vertex).
+    add_tan(mp_h, [-5.0e-5, -5.0e-5, -5.0e-5, 2.0e-7, 0, 0], True, "tan_hard_vertex_comp",
+            prestep=[[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 20)
 
     lines.append(f"NTAN {len(tans)}")
     for mp, sig_n, kp_n, deps, hardening, label in tans:
@@ -232,11 +242,29 @@ def main(out=None):
     # eigenvectors — the P2e/I4 frozen-eigenvector limitation, not a drive bug).
     bipath = [np.array([e, 0.6 * e, 0, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 300)]
     add_dmg("dmg_biaxial_tension", mp_h, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    # CDPM2 BILINEAR tension law (WP concrete3d-oracle-diagnosis; the nDMaterial default): uniaxial-strain
+    # tension into branch 1 (w < wf1) and branch 2 (wf1 < w < wf), a biaxial-tension state (E*eps_tilde
+    # drive), and 'proj' ctTemper (exercises the pre-peak kdt2 + d(w_t) chain). Pins omegaT/solveOmegaBilinear,
+    # tensionHistUpdate (literal Eq.44/45) and the bilinear IFT tangent against the oracle.
+    mp_hb = dict(mp_h); mp_hb["tension_law"] = "bilinear"
+    add_dmg("dmg_tension_bilin_b1", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 2.5e-4, 300)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_tension_bilin_b2", mp_hb, lch,
+            [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 9.0e-4, 400)], [1.0e-6, 0, 0, 0, 0, 0])
+    add_dmg("dmg_biaxial_bilin", mp_hb, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
+    mp_hbp = dict(mp_hb); mp_hbp["ct_temper"] = "proj"
+    add_dmg("dmg_cttemper_proj_bilin", mp_hbp, lch, tp_pr, [2.0e-6, 0, 0, 0, 0, 0])
+    # direct eps_fc (the wrapper's -epsFc / its Gc-calibrated value) on the confined-compression state
+    mp_efc = dict(mp_h); mp_efc["eps_fc"] = 2.0e-3
+    add_dmg("dmg_compression_epsfc", mp_efc, lch, cpath,
+            [dconf["eps11"][ic] - cpath[-1][0], dconf["eps_lat"][ic] - cpath[-1][1], dconf["eps_lat"][ic] - cpath[-1][2], 0, 0, 0])
 
+    _TL = {"exp": 0, "bilinear": 1}
     lines.append(f"NDMG {len(dmgs)}")
     for label, mp, lch, st, deps, sig_nom in dmgs:
         lines.append(f"DMG {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
-                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
+                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))}")
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
@@ -356,6 +384,139 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))
+
+    # ---- (B9) Gc-as-energy calibration (WP concrete3d-oracle-diagnosis): the post-peak uniaxial-compression
+    #      energy per unit volume g(eps_fc) the wrapper tabulates and inverts at Gc/lch. Pins the C++
+    #      compressionEnergyDensity (free uniaxial stress via driveConfinedFiber, fixed step, 1% stop + tail)
+    #      to the oracle compression_energy_density at two direct eps_fc values (cheap, low-eps_fc end). ----
+    gcts = []
+    for k_rel in (0.05, 0.3):
+        efc = mp_h["fc"] / mp_h["E"] * k_rel
+        g, pk, n = ref.compression_energy_density(mp_h, efc, Gf, As)
+        gcts.append((f"gct_{k_rel}", mp_h, efc, g, pk))
+    lines.append(f"NGCT {len(gcts)}")
+    for label, mp, efc, g, pk in gcts:
+        lines.append(f"GCT {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(As))} {repr(float(efc))} "
+                     f"{repr(float(g))} {repr(float(pk))}")
+
+    # ---- (B10) FULL CDPM2 PLASTIC POTENTIAL (B1, WP concrete3d-flow-potential): hardening paths and tangents
+    #      with flow_potential='cdpm2' (+ one sub-incremented large-step path). Pins cdpm2FlowGradJac, the
+    #      Hessian-based analytic 4x4 Jacobian, the consistent tangent and returnMapTensor sub-incrementation
+    #      to the oracle (numerical-Jacobian return + FD tangent). Legacy blocks above are untouched. ----
+    mp_c = dict(mp_h); mp_c["flow_potential"] = "cdpm2"; mp_c["Df"] = 0.85; mp_c["Hp"] = 0.01
+    mp_cs = dict(mp_c); mp_cs["max_subincr"] = 10
+    pathfs = []
+
+    def add_pathf(mp, dl, label):
+        pathfs.append((label, mp, dl, run_path(mp, dl, True)))
+
+    dlc, _ = driven_strain_path(mp_c, np.linspace(0, -0.006, 120), True, "free")
+    add_pathf(mp_c, dlc, "cdpm2_uniax_comp")
+    dlk, _ = driven_strain_path(mp_c, np.linspace(0, -0.012, 120), True, "active", sigma3=0.10 * 30.0)
+    add_pathf(mp_c, dlk, "cdpm2_confined_comp")
+    add_pathf(mp_c, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, "cdpm2_hydro_comp")
+    add_pathf(mp_c, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, "cdpm2_hydro_tens")
+    add_pathf(mp_c, [[-4.0e-4, 1.5e-4, 0.5e-4, 1.0e-4, 0, 0]] * 12, "cdpm2_offaxis_shear")
+    add_pathf(mp_cs, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep")
+    # OOFEM con2dpm2 at ONE sub-step per 5e-4 step (SI units, the coordinator's C++ -3.22 MPa regression): the
+    # far-outside uniaxial trial that the plain Newton failed sporadically on (=> sub-increment fallback =>
+    # discontinuous map). Pins the globalized Newton + sub-incrementation on exactly this path.
+    mp_oo = ref.make_material(30e9, 0.15, 3e6, 1e6, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, flow_potential="cdpm2",
+                              max_subincr=10)
+    dlo, _ = driven_strain_path(mp_oo, np.array([-5.0e-4 * k for k in range(1, 6)]), True, "free")
+    add_pathf(mp_oo, dlo, "cdpm2_con2dpm2_1substep")
+    lines.append(f"NPATHF {len(pathfs)}")
+    for label, mp, dl, rows in pathfs:
+        lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} {len(dl)}")
+        for deps, (sig, kp) in zip(dl, rows):
+            lines.append(f"{_fmt(deps)}  {_fmt(sig)}  {repr(float(kp))}")
+    tanfs = []
+    dlt, rt = driven_strain_path(mp_c, np.linspace(0, -0.0018, 60), True, "free")
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]), "tanf_cdpm2_uniax"))
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]), "tanf_cdpm2_shear"))
+    sgc = np.zeros(6); kpc = 0.0                    # a CAP state: low kp, compression-dominated triaxial trial
+    tanfs.append((mp_c, sgc, 0.05, np.array([-2.0e-3, -1.2e-3, -1.0e-3, 1.0e-4, 0, 0]), "tanf_cdpm2_cap"))
+    lines.append(f"NTANF {len(tanfs)}")
+    for mp, sig_n, kp_n, deps, label in tanfs:
+        C = ref.consistent_tangent(sig_n, deps, mp, kp_n, hardening=True)
+        lines.append(f"TANF {label} {_fmt(_pblock(mp))} 1")
+        lines.append(_fmt(sig_n))
+        lines.append(repr(float(kp_n)))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(C.flatten()))
+
+    # ---- (B11) CDPM2 COMPRESSIVE DAMAGE DRIVE (B2): committed damage states driven with
+    #      compression_drive='cdpm2' (+ the CDPM2 flow), one more increment -> the oracle NOMINAL stress. Carries
+    #      the two extra history fields (eqc, etp). The C++ also checks its analytic damaged tangent against the
+    #      numerical tangent of its own stress (the DMG B4 contract). ----
+    mp_cd = dict(mp_c); mp_cd["compression_drive"] = "cdpm2"; mp_cd["tension_law"] = "bilinear"
+    mp_cd["max_subincr"] = 10
+    dmgcs = []
+
+    def add_dmgc(label, mp, lch_, build_path, deps):
+        st = ref.make_damage_state(mp)
+        st, _, _, _ = ref._advance_damaged(st, build_path, mp, Gf, Gc, lch_, As)
+        sig_nom, _, info = ref.damaged_step_tensor(st, np.asarray(deps, float), mp, Gf, Gc, lch_, As)
+        dmgcs.append((label, mp, lch_, st, np.asarray(deps, float), sig_nom))
+
+    mp_cd["eps_fc"] = 2.0e-4                      # a softening compressive branch inside the path range
+    def _dpath(d, i):
+        return [np.array([d["eps11"][k], d["eps_lat"][k], d["eps_lat"][k], 0, 0, 0]) for k in range(i)],             [d["eps11"][i] - d["eps11"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], 0, 0, 0]
+    # a LIGHT confinement (0.02 fc) keeps the lateral effective principals off the sigma_lat = 0 Macaulay kink
+    # (a pure uniaxial-stress state sits ON it: the numerical tangent straddles the tension/compression split)
+    du = ref.drive_damaged_unified(mp_cd, np.linspace(0, -6.0e-3, 150), Gf, Gc, lch, As, sigma3=0.02 * 30.0)
+    pu, du1 = _dpath(du, int(np.argmax(du["wc"] > 0.3)))
+    add_dmgc("dmgc_uniax_softening", mp_cd, lch, pu, du1)
+    pu0, du0 = _dpath(du, int(np.argmax(du["wc"] > 0.0)))         # the ONSET step (post-onset fraction)
+    add_dmgc("dmgc_uniax_onset", mp_cd, lch, pu0, du0)
+    dcf = ref.drive_damaged_unified(mp_cd, np.linspace(0, -8.0e-3, 150), Gf, Gc, lch, As, sigma3=0.05 * 30.0)
+    pc, dc1 = _dpath(dcf, int(np.argmax(dcf["wc"] > 0.2)))
+    add_dmgc("dmgc_confined", mp_cd, lch, pc, dc1)
+    spc = [np.array([-e, 0.3 * e, 0.2 * e, 0.4 * e, 0, 0]) for e in np.linspace(0, 2.5e-3, 200)]
+    add_dmgc("dmgc_shear_comp", mp_cd, lch, spc, [-1.0e-5, 3.0e-6, 2.0e-6, 4.0e-6, 0, 0])
+    lines.append(f"NDMGC {len(dmgcs)}")
+    for label, mp, lch_, st, deps, sig_nom in dmgcs:
+        lines.append(f"DMGC {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} {repr(float(lch_))} "
+                     f"{repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} {_TL[mp.get('tension_law', 'exp')]} "
+                     f"{repr(float(mp.get('eps_fc', 0.0)))} 1 {int(mp.get('max_subincr', 0))} 1")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
+
+    # ---- (B12) PV20 TENSION->COMPRESSION TEMPER (-tcTemper): committed damage states on the PV20 element strain
+    #      path (plane stress, the PlateFiber-view kinematics), one more increment -> the oracle NOMINAL stress; the
+    #      C++ also checks its analytic damaged tangent against the FD of its own stress. Same record as DMGC + the
+    #      trailing tcTemper mode (0 none / 2 proj). ----
+    dmgts = []
+    D = ref.PV20_DMG
+    for tc, knots, nst, pick, label in (
+            ("none", ref.PV20_KNOTS, 128, lambda r: 0.2 < r[3] < 0.7, "dmgt_pv20_none_soft"),
+            ("proj", ref.PV20_KNOTS, 128, lambda r: r[0] > 4.0e-3, "dmgt_pv20_proj_strut"),
+            ("proj", np.vstack([ref.PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]]), 200, lambda r: 0.2 < r[3] < 0.7,
+             "dmgt_pv20_proj_soft")):
+        mpt = ref.pv20_material(tc)
+        pp = ref.pv20_path(mpt, nst, knots)
+        k = next(i for i, r in enumerate(pp) if pick(r))
+        st0, dps = pp[k][4], pp[k][5]
+        sig_nom, _, _ = ref.damaged_step_tensor(st0, dps, mpt, D["Gf"], D["Gc"], D["lch"], D["As"])
+        dmgts.append((label, mpt, st0, dps, sig_nom))
+    lines.append(f"NDMGT {len(dmgts)}")
+    for label, mp, st, deps, sig_nom in dmgts:
+        lines.append(f"DMGT {label} {_fmt(_pblock(mp))} {repr(float(D['Gf']))} {repr(float(D['Gc']))} "
+                     f"{repr(float(D['lch']))} {repr(float(D['As']))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))} 1 "
+                     f"{int(mp.get('max_subincr', 0))} 1 {_CT[mp.get('tc_temper', 'none')]}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
 
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")

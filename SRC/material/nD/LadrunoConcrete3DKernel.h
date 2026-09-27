@@ -116,6 +116,34 @@ struct Params {
     // POSITIVE effective-stress directions). Both temper modes => w_t~0 in compression (no tension
     // pre-damage). See tensileDamageWeight.
     int    ctTemper = 0;
+    // PV20 tension->compression damage-coupling temper (the -tcTemper modes; mirror of ctTemper). 0 = none (literal
+    // CDPM2 Eq.47/48, byte-identical; the kernel/oracle default). 2 = proj — the nDMaterial DEFAULT: the kdc1 plastic
+    // measure is the part of ||d eps_p|| along NON-tensile effective-stress directions, and the CDPM2 compressive drive
+    // eqc is fed by eps_tilde of <sig_bar>- (tensile principals zeroed). Identical to none whenever no effective
+    // principal is tensile. See compressiveDamageWeight / compressiveEquivStrain.
+    int    tcTemper = 0;
+    // Tensile softening law (WP concrete3d-oracle-diagnosis). 0 = legacy exponential sigma = ft exp(-eps_i/eps_f),
+    // eps_f = Gf/(ft lch), with the legacy kdt2 = (kdt - eps0)/x_s history (byte-identical to the pre-2026-09
+    // kernel; the kernel/oracle default so every fixture stays pinned). 1 = CDPM2 BILINEAR (Grassl 2013
+    // Eq.51/58/59: s1 = 0.3 ft at wf1 = 0.15 wf, wf = 4.444 Gf/ft, w = lch*eps_i) with the literal Eq.44/45
+    // histories — the nDMaterial wrapper DEFAULT (-tensionLaw bilinear|exp).
+    int    tensionLaw = 0;
+    // Compressive softening strain eps_fc used DIRECTLY when > 0 (the wrapper's -epsFc, or its Gc-energy
+    // calibration calibrateEpsFc). 0 => legacy eps_fc = Gc/(fc lch).
+    double epsFc = 0.0;
+    // Plastic potential (WP concrete3d-flow-potential, B1). 0 = legacy v1 flow (m_v = Df m0/(sqrt3 fc), qh1=1-shaped
+    // m_s — always dilatant; the kernel/oracle default so every fixture stays pinned). 1 = the FULL CDPM2 potential
+    // (Grassl 2013 Eq.22-29: [1-qh1] cap + m_g(sigV,kp), Df = CDPM2 dilation constant) — the nDMaterial DEFAULT
+    // (-flowPotential cdpm2|legacy).
+    int    flowPotential = 0;
+    // Return-map sub-incrementation depth (B1): if the direct return fails, halve the strain increment down to
+    // 2^-maxSubIncr (OOFEM performPlasticityReturn). 0 => the direct return only (byte-identical legacy).
+    int    maxSubIncr = 0;
+    // Compressive damage drive (B2, WP concrete3d-damage-drive). 0 = legacy fork drive ((1-wc)(-sig_min) = fc exp(..),
+    // histories from the onset only; the kernel/oracle default). 1 = CDPM2 Eq.47-49/53/55 (OOFEM computeDamage /
+    // computeDamageParamCompression): eqc += alpha_c d(eps_tilde), kappa_dc = max eqc, kdc2 from the start, kdc1 with
+    // the post-onset fraction, (1-wc) E kappa_dc = ft exp(..) — the nDMaterial DEFAULT (-compressionDrive cdpm2|legacy).
+    int    compDrive = 0;
     // rate / robustness
     double eta = 0.0;            // Duvaut-Lions viscosity (0 => inviscid, byte-identical)
     bool   implex = false;       // Tier-2 (IMPL-EX)
@@ -131,6 +159,10 @@ struct Params {
 static const double SQRT3 = 1.7320508075688772;
 static const double SQRT6 = 2.449489742783178;
 static const double SQRT1_5 = 1.224744871391589;
+// B5: units-free acceptance tolerance on the (dimensionless) yield function after a return. Was 1e-7*(fc+1):
+// 3.1e-6 in MPa (fc = 30) but 0.3 in Pa (fc = 3e6), so an SI model accepted returns 30 % off the surface. The
+// value equals the MPa one at fc = 30 (every fixture unchanged).
+static const double F_TOL_HONEST = 3.1e-6;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -366,6 +398,40 @@ inline double tensileDamageWeight(const Params& mp, double ac, const double depl
     return 1.0;                                              // none (literal CDPM2)
 }
 
+// PV20 -tcTemper proj (mirror the oracle compressive_damage_weight): kdc1 (Eq.48) weight w_c = ||Phi depl Phi|| /
+// ||depl|| in the effective-stress eigenframe, phi_a = tcPhi (1 on non-tensile directions incl. a 1e-3 ft dead zone,
+// 0 on a crack direction; continuous). EXACTLY 1.0 when no effective principal is > TC_DEAD ft (every compressive backbone, the Gc
+// table). Literal CDPM2 counts the crack-opening plastic strain of a cracked-then-compressed state (RC panel in shear)
+// as crushing history: the strut softened at ~0.2 fc in PV20 (tau 1.76 -> 0.03 MPa vs 4.26 in the test).
+// phi_a = 1 (sigma_bar_a <= TC_DEAD ft) .. 0 (sigma_bar_a >= TC_BAND ft), linear between (oracle _tc_phi)
+static const double TC_DEAD = 1.0e-3, TC_BAND = 0.05;
+inline double tcPhi(const Params& mp, double s)
+{
+    const double v = 1.0 - (s - TC_DEAD * mp.ft) / ((TC_BAND - TC_DEAD) * mp.ft);
+    return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+}
+inline double compressiveDamageWeight(const Params& mp, const double depl6[6],
+                                      const double w_stress[3], const double V[3][3])
+{
+    if (mp.tcTemper != 2) return 1.0;
+    double mx = w_stress[0]; for (int a = 1; a < 3; ++a) if (w_stress[a] > mx) mx = w_stress[a];
+    if (mx <= TC_DEAD * mp.ft) return 1.0;
+    double M[3][3]; voigtToMat(depl6, M);
+    double nrm2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) nrm2 += M[i][j] * M[i][j];
+    if (nrm2 <= 1.0e-300) return 1.0;
+    double phi[3];
+    for (int a = 0; a < 3; ++a) phi[a] = tcPhi(mp, w_stress[a]);
+    double p2 = 0.0;                                         // ||Phi (V^T M V) Phi||_F^2
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        double d = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d += V[i][a] * M[i][j] * V[j][b];
+        const double q = phi[a] * d * phi[b];
+        p2 += q * q;
+    }
+    return std::sqrt(p2) / std::sqrt(nrm2);
+}
+
 inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, double& ac, double& xs)
 {
     et = equivStrainGeneral(sig_pr, mp);
@@ -375,6 +441,20 @@ inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, 
     const double sigV = xi / SQRT3;
     const double Rs = (sigV <= 0.0 && rho > 1.0e-12) ? (-SQRT6 * sigV / rho) : 0.0;   // Eq.57
     xs = 1.0 + (mp.As - 1.0) * Rs;                                                     // Eq.56
+}
+
+// PV20 -tcTemper proj (mirror the oracle compressive_equiv_strain): the equivalent strain feeding the CDPM2
+// compressive history (Eq.47) is eps_tilde of the COMPRESSIVE part (tensile principals scaled by tcPhi -> zeroed on
+// a crack); `et` (the full eps_tilde) otherwise and whenever no effective principal is > TC_DEAD ft. Stops the hardened crack stress (qh2 ft, qh2 ~ 3 across a crack)
+// from pushing kappa_dc past eps0 while the strut is at ~0.2 fc.
+inline double compressiveEquivStrain(const Params& mp, const double w_stress[3], double et)
+{
+    if (mp.tcTemper != 2) return et;
+    double mx = w_stress[0]; for (int a = 1; a < 3; ++a) if (w_stress[a] > mx) mx = w_stress[a];
+    if (mx <= TC_DEAD * mp.ft) return et;
+    double wc[3];
+    for (int a = 0; a < 3; ++a) wc[a] = w_stress[a] < 0.0 ? w_stress[a] : tcPhi(mp, w_stress[a]) * w_stress[a];
+    return equivStrainGeneral(wc, mp);
 }
 
 inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double f, double eps_f)
@@ -393,6 +473,117 @@ inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double
         w = (lo < wn && wn < hi) ? wn : 0.5 * (lo + hi);         // ...bisection fallback
     }
     return w < 0.0 ? 0.0 : (w > 1.0 ? 1.0 : w);
+}
+
+// ---------------------------------------------------------------------------
+// CDPM2 BILINEAR tension law + literal Eq.45 history (mirror of the oracle _bilinear_sigma /
+// _solve_omega_bilinear / _omega_t / _tension_hist_update / _eps_fc byte-for-byte). See Params::tensionLaw.
+// ---------------------------------------------------------------------------
+static const double BILIN_S1 = 0.3, BILIN_W1 = 0.15;
+static const double OMEGA_TAN_FLOOR = 1.0e-6;                // residual (1-omega) in the damaged TANGENT only
+// B2: omega is capped at OMEGA_MAX for the STRESS too. With omega = 1 exactly (bilinear law past wf) every fully
+// cracked state carries IDENTICALLY zero stress, i.e. a whole plateau of far states is an exact root of any
+// equilibrium (OOFEM con2dpm2 at one sub-step: the element Newton jumped at step 5 from the physical lateral root
+// +2.04e-3 to a fully cracked +1.21e-2 with sigma == 0). The 1e-6 residual of the effective stress removes the
+// plateau root. Only omega > 1 - 1e-6 is affected (every fixture regenerates byte-identically).
+static const double OMEGA_MAX = 1.0 - 1.0e-6;
+static const double BILIN_GF = 0.5 * (0.15 + 0.3);           // Gf/(ft wf) = 0.225  =>  wf = 4.444 Gf/ft
+
+inline double epsFcOf(const Params& mp) { return mp.epsFc > 0.0 ? mp.epsFc : mp.Gc / (mp.fc * mp.lch); }
+
+inline double bilinearSigma(double wcr, double ft, double wf, double* slope = nullptr)
+{
+    const double wf1 = BILIN_W1 * wf, s1 = BILIN_S1 * ft;
+    if (wcr <= wf1) { if (slope) *slope = -(ft - s1) / wf1; return ft - (ft - s1) * wcr / wf1; }
+    if (wcr <= wf)  { if (slope) *slope = -s1 / (wf - wf1);  return s1 * (wf - wcr) / (wf - wf1); }
+    if (slope) *slope = 0.0;
+    return 0.0;
+}
+
+inline double solveOmegaBilinear(double kd1, double kd2, double D, double ft, double Gf, double lch)
+{
+    const double wf = Gf / (BILIN_GF * ft);
+    const double wf1 = BILIN_W1 * wf, s1 = BILIN_S1 * ft, h = lch;
+    if (D <= ft) return 0.0;
+    double den = D * wf1 + (s1 - ft) * kd2 * h;
+    if (den > 0.0) {
+        const double w = ((D - ft) * wf1 - (s1 - ft) * kd1 * h) / den;
+        if (0.0 <= w && w <= 1.0 && h * (kd1 + w * kd2) <= wf1) return w;
+    }
+    den = D * (wf - wf1) - s1 * kd2 * h;
+    if (den > 0.0) {
+        const double w = (D * (wf - wf1) + s1 * (kd1 * h - wf)) / den;
+        const double wi = h * (kd1 + w * kd2);
+        if (0.0 <= w && w <= 1.0 && wf1 < wi && wi <= wf) return w;
+    }
+    if (h * kd1 >= wf) return 1.0;
+    auto F = [&](double w) { return (1.0 - w) * D - bilinearSigma(h * (kd1 + w * kd2), ft, wf); };
+    double lo = 0.0, hi = 1.0;
+    if (F(lo) <= 0.0) return 0.0;
+    if (F(hi) >= 0.0) return 1.0;
+    for (int it = 0; it < 200; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        if (mid <= lo || mid >= hi) break;
+        if (F(mid) > 0.0) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
+inline double omegaT(const Params& mp, double kdt1, double kdt2, double D)
+{
+    if (mp.tensionLaw != 1) return solveOmegaBracketed(kdt1, kdt2, D, mp.ft, mp.Gf / (mp.ft * mp.lch));   // legacy: uncapped
+    const double w = solveOmegaBilinear(kdt1, kdt2, D, mp.ft, mp.Gf, mp.lch);
+    return w < OMEGA_MAX ? w : OMEGA_MAX;
+}
+
+// Compressive damage for the active drive (mirror of the oracle _omega_c); <= OMEGA_MAX.
+inline double omegaC(const Params& mp, double kdc, double kdc1, double kdc2, double sigcMax, double eps_fc)
+{
+    if (mp.compDrive != 1)                                   // legacy drive: uncapped (byte-identical)
+        return (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc) ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
+    const double w = (kdc > mp.ft / mp.E) ? solveOmegaBracketed(kdc1, kdc2, mp.E * kdc, mp.ft, eps_fc) : 0.0;
+    return w < OMEGA_MAX ? w : OMEGA_MAX;
+}
+
+// CDPM2 compressive histories after one step (B2; mirror of the oracle _comp_hist_update_cdpm2).
+inline void compHistUpdateCdpm2(const Params& mp, double& kdc, double& kdc1, double& kdc2, double& eqc,
+                                double etp, double et, double ac, double bc, double dnorm, double xs)
+{
+    const double eps0 = mp.ft / mp.E;
+    const double eqcNew = eqc + ac * (et - etp);
+    if (eqcNew > kdc) {
+        const double d = eqcNew - kdc;
+        if (eqcNew > eps0) {
+            const double frac = (kdc >= eps0) ? 1.0 : (eqcNew - eps0) / d;
+            kdc1 += ac * bc * frac * dnorm / xs;
+        }
+        kdc2 += d / xs;
+        kdc = eqcNew;
+    }
+    eqc = eqcNew;
+}
+
+inline void tensionHistUpdate(const Params& mp, double& kdt1, double& kdt2, double et, double et_max_n,
+                              double dnorm, double xs, double wtw)
+{
+    const double eps0 = mp.ft / mp.E;
+    const double det_raw = (et - et_max_n > 0.0) ? (et - et_max_n) : 0.0;
+    if (mp.tensionLaw == 1) {
+        if (det_raw > 0.0) {
+            kdt2 += wtw * det_raw / xs;
+            if (et > eps0) {
+                const double frac = (et_max_n >= eps0) ? 1.0 : (et - eps0) / det_raw;
+                kdt1 += wtw * frac * dnorm / xs;
+            }
+        }
+        return;
+    }
+    if (det_raw > 0.0 && et > eps0) {
+        const double lo = et_max_n > eps0 ? et_max_n : eps0;
+        const double above = (et - lo > 0.0) ? (et - lo) : 0.0;
+        kdt2 += wtw * above / xs;
+        kdt1 += wtw * dnorm / xs;
+    }
 }
 
 // ===========================================================================
@@ -488,11 +679,182 @@ inline PrincipalResult returnMapPrincipal(const double sigTr[3], const Params& m
 }
 
 // ---------------------------------------------------------------------------
+// VERTEX (hydrostatic-axis) return — mirrors the oracle _vertex_kappa / cdpm2_vertex_potential_grad /
+// return_map_vertex byte-for-byte (same bisection, same acceptance test).
+//   vertexKappa: kp consistent with the vertex projection (Grassl Eq.32): kp_n + ||d eps_p||/xh(sigV),
+//     ||d eps_p||_F = sqrt((sigV_tr-sigV)^2/(3K^2) + (rho_tr/2G)^2) (volumetric + deviatoric, the same
+//     Frobenius norm as the regular map's R4), theta=pi/3 on the axis => (2cos)^2 = 1 (OOFEM's choice).
+//     NB OOFEM computeTempKappa uses 1/9 instead of 1/3 on the volumetric term (1/sqrt3 of the norm its
+//     own regular return uses) — the one deliberate difference to OOFEM on the axis.
+//   cdpm2VertexPotentialGrad: (dg/dsigV, dg/drho) of the FULL CDPM2 potential (Eq.22-29) at rho=0; used
+//     ONLY for the compressive-vertex cone test (the v1 regular flow m_v=Df m0/(sqrt3 fc) has no cap
+//     term => its volumetric flow is always dilatant => it has NO compressive cone). Df clamped >0.5.
+//   returnMapVertex: F(sigV)=f_p(sigV,0;kp(sigV))=0 by bisection in (sigV_tr,0); the yield function is
+//     regular on the axis (Lode r multiplies rho=0). Accept iff dlam=(sigV_tr-sigV)/(K dg/dsigV)>=0 and
+//     rho_tr <= 2G dlam dg/drho (trial inside the cone of normals).
+// ---------------------------------------------------------------------------
+inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp)
+{
+    const double K = bulkK(mp), G = shearG(mp);
+    const double d = sigV_tr - sigV, g = rho_tr / (2.0 * G);
+    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    return kp_n + eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+}
+
+inline void cdpm2VertexPotentialGrad(double sigV, double kp, const Params& mp, double& dgs, double& dgr)
+{
+    const double fc = mp.fc, ft = mp.ft, m0 = mp.m0;
+    const double Df = mp.Df > 0.5 + 1.0e-6 ? mp.Df : 0.5 + 1.0e-6;
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double AG = 3.0 * ft * q2 / fc + m0 / 2.0;
+    const double BG = q2 / 3.0 * (1.0 + ft / fc) / (std::log(AG) + std::log(Df + 1.0) - std::log(2.0 * Df - 1.0)
+                                                  - std::log(3.0 * q2 + m0 / 2.0));
+    const double mQ = AG * std::exp((sigV - ft * q2 / 3.0) / (fc * BG));
+    const double Bl = sigV / fc;
+    const double Al = (1.0 - q1) * Bl * Bl;
+    dgs = 4.0 * (1.0 - q1) / fc * Al * Bl + q1 * q1 * mQ / fc;
+    dgr = Al / (SQRT6 * fc) * (4.0 * (1.0 - q1) * Bl + 6.0) + m0 * q1 * q1 / (SQRT6 * fc);
+}
+
+// ---------------------------------------------------------------------------
+// FULL CDPM2 PLASTIC POTENTIAL (B1; mirror of the oracle cdpm2_potential_derivs / flow_grad_jac). Grassl 2013
+// Eq.22-29 in the OOFEM ConcreteDPM2 form (sigV = I1/3):
+//   g = Al^2 + qh1^2 (m0 rho/(sqrt6 fc) + m_g/fc), Al = (1-qh1) Bl^2 + sqrt(3/2) rho/fc, Bl = sigV/fc + rho/(sqrt6 fc),
+//   m_g = A_g B_g fc e^R, R = (sigV - qh2 ft/3)/(B_g fc), A_g = 3 ft qh2/fc + m0/2,
+//   B_g = qh2/3 (1+ft/fc) / (ln A_g + ln(Df+1) - ln(2Df-1) - ln(3 qh2 + m0/2)).
+// Returns dg/dsigV (gs), dg/drho (gr) and their (sigV, rho, kp) derivatives (the Hessian rows the analytic
+// return-map Jacobian and consistent tangent need). Df clamped > 0.5; R capped at 700 (overflow guard for
+// far-off Newton iterates only).
+// ---------------------------------------------------------------------------
+inline void cdpm2PotentialDerivs(double sigV, double rho, double kp, const Params& mp,
+                                 double& gs, double& gr, double dgs[3], double dgr[3])
+{
+    const double fc = mp.fc, ft = mp.ft, m0 = mp.m0;
+    const double Df = mp.Df > 0.5 + 1.0e-6 ? mp.Df : 0.5 + 1.0e-6;
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
+    const double a = 1.0 - q1, c = 1.0 + ft / fc;
+    const double AG = 3.0 * ft * q2 / fc + m0 / 2.0, AG_k = 3.0 * ft * dq2 / fc;
+    const double L = std::log(AG) + std::log(Df + 1.0) - std::log(2.0 * Df - 1.0) - std::log(3.0 * q2 + m0 / 2.0);
+    const double L_k = AG_k / AG - 3.0 * dq2 / (3.0 * q2 + m0 / 2.0);
+    const double BG = q2 / 3.0 * c / L;
+    const double BG_k = (dq2 / 3.0 * c * L - q2 / 3.0 * c * L_k) / (L * L);
+    const double X = sigV - ft * q2 / 3.0;
+    double Rg = X / (fc * BG); if (Rg > 700.0) Rg = 700.0;
+    const double eR = std::exp(Rg), mQ = AG * eR;
+    const double R_s = 1.0 / (fc * BG);
+    const double R_k = -(ft * dq2 / 3.0) / (fc * BG) - X * BG_k / (fc * BG * BG);
+    const double mQ_s = mQ * R_s, mQ_k = AG_k * eR + mQ * R_k;
+    const double Bl = sigV / fc + rho / (SQRT6 * fc), Bl_s = 1.0 / fc, Bl_r = 1.0 / (SQRT6 * fc);
+    const double Al = a * Bl * Bl + SQRT1_5 * rho / fc;
+    const double Al_s = 2.0 * a * Bl * Bl_s, Al_r = 2.0 * a * Bl * Bl_r + SQRT1_5 / fc, Al_k = -dq1 * Bl * Bl;
+    gs = 4.0 * a * Al * Bl / fc + q1 * q1 * mQ / fc;
+    gr = Al / (SQRT6 * fc) * (4.0 * a * Bl + 6.0) + m0 * q1 * q1 / (SQRT6 * fc);
+    dgs[0] = 4.0 * a * (Al_s * Bl + Al * Bl_s) / fc + q1 * q1 * mQ_s / fc;
+    dgs[1] = 4.0 * a * (Al_r * Bl + Al * Bl_r) / fc;
+    dgs[2] = (-4.0 * dq1 * Al * Bl + 4.0 * a * Al_k * Bl) / fc + (2.0 * q1 * dq1 * mQ + q1 * q1 * mQ_k) / fc;
+    dgr[0] = (Al_s * (4.0 * a * Bl + 6.0) + Al * 4.0 * a * Bl_s) / (SQRT6 * fc);
+    dgr[1] = (Al_r * (4.0 * a * Bl + 6.0) + Al * 4.0 * a * Bl_r) / (SQRT6 * fc);
+    dgr[2] = (Al_k * (4.0 * a * Bl + 6.0) - Al * 4.0 * dq1 * Bl) / (SQRT6 * fc) + 2.0 * m0 * q1 * dq1 / (SQRT6 * fc);
+}
+
+// (m_v, m_s) = (dg/dxi, dg/drho) of the CDPM2 potential in the (xi, rho) frame + d/d(xi, rho, kp).
+inline void cdpm2FlowGradJac(double xi, double rho, double kp, const Params& mp,
+                             double& m_v, double& m_s, double dmv[3], double dms[3])
+{
+    double gs, gr, dgs[3], dgr[3];
+    cdpm2PotentialDerivs(xi / SQRT3, rho, kp, mp, gs, gr, dgs, dgr);
+    m_v = gs / SQRT3; m_s = gr;
+    dmv[0] = dgs[0] / 3.0; dmv[1] = dgs[1] / SQRT3; dmv[2] = dgs[2] / SQRT3;
+    dms[0] = dgr[0] / SQRT3; dms[1] = dgr[1]; dms[2] = dgr[2];
+}
+
+inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, double kp_n,
+                            double& sigV, double& kp, double& dlam)
+{
+    const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
+    bool tension;
+    if (sigV_tr > 0.0) tension = true;
+    else if (sigV_tr < 0.0 && kp_n < 1.0) tension = false;
+    else return false;
+    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp), mp); };
+    if (!(F(sigV_tr) > 0.0 && F(0.0) < 0.0)) return false;   // (also rejects NaN)
+    double a = tension ? 0.0 : sigV_tr, b = tension ? sigV_tr : 0.0;   // a < b
+    double Fa = F(a);
+    for (int it = 0; it < 200; ++it) {
+        const double mid = 0.5 * (a + b);
+        if (mid <= a || mid >= b) break;
+        const double Fm = F(mid);
+        if (Fm == 0.0) { a = b = mid; break; }
+        if ((Fm > 0.0) == (Fa > 0.0)) { a = mid; Fa = Fm; } else b = mid;
+    }
+    const double s = 0.5 * (a + b);
+    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp);
+    double dgs, dgr;
+    if (tension && mp.flowPotential == 1) {          // B1: the SAME potential as the regular map
+        double d1[3], d2[3]; cdpm2PotentialDerivs(s, 0.0, k, mp, dgs, dgr, d1, d2);
+    }
+    else if (tension) { dgs = mp.Df * mp.m0 / fc; dgr = mp.m0 / (SQRT6 * fc); }
+    else cdpm2VertexPotentialGrad(s, k, mp, dgs, dgr);
+    if (dgs == 0.0) return false;
+    const double dl = (sigV_tr - s) / (K * dgs);
+    if (!(dl >= 0.0) || rho_tr > 2.0 * G * dl * dgr * (1.0 + 1.0e-10) + 1.0e-14 * fc) return false;
+    sigV = s; kp = k; dlam = dl;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Hardening principal return (Grassl Eq.18 + Eq.30-36). 4-unknown (xi,rho,dlam,kp)
 // Newton with ANALYTIC 4x4 Jacobian (the oracle uses a NUMERICAL Jacobian — this is
 // the build-PR deliverable); theta frozen; hydrostatic apex fallback; HONEST
 // convergence (independent f at the returned stress w/ its own Lode angle).
 // ---------------------------------------------------------------------------
+// Residual R[4] (and, if J != nullptr, the analytic 4x4 Jacobian) of the hardening return system with the FULL
+// CDPM2 plastic potential (B1): R1 = xi - xi_tr + 3K dlam m_v, R2 = rho - rho_tr + 2G dlam m_s, R3 = f_p (frozen
+// Lode r), R4 = kp - kp_n - dlam ||m||/xh cos2. Used by the globalized Newton (line search needs R alone).
+inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp, double xi_tr, double rho_tr,
+                                   double kp_n, double r, double cos2, const Params& mp, double R[4],
+                                   double J[4][4] = nullptr)
+{
+    const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
+    double m_v, m_s, dmv[3], dms[3];
+    cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
+    const double sigV = xi / SQRT3;
+    const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    R[0] = xi - xi_tr + 3.0 * K * dlam * m_v;
+    R[1] = rho - rho_tr + 2.0 * G * dlam * m_s;
+    R[2] = yfInvHard(xi, rho, r, kp, mp);
+    R[3] = kp - kp_n - dlam * mnorm / xh * cos2;
+    if (!J) return;
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
+    const double sigV_fc = xi / (SQRT3 * fc);
+    const double AV = rho / (SQRT6 * fc) + sigV_fc;
+    const double RR = rho * r / (SQRT6 * fc) + sigV_fc;
+    const double cap = (1.0 - q1) * AV * AV + SQRT1_5 * rho / fc;
+    const double dcap_dxi = (1.0 - q1) * 2.0 * AV / (SQRT3 * fc);
+    const double dcap_drho = (1.0 - q1) * 2.0 * AV / (SQRT6 * fc) + SQRT1_5 / fc;
+    const double dcap_dkp = -dq1 * AV * AV;
+    const double dq1sq_q2 = 2.0 * q1 * q2 * dq1 + q1 * q1 * dq2;
+    const double dq1sq_q2sq = 2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2;
+    const double dxh_dxi = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh) / SQRT3;
+    double dmn[3];
+    for (int j = 0; j < 3; ++j) dmn[j] = (m_v * dmv[j] + m_s * dms[j]) / mnorm;
+    J[0][0] = 1.0 + 3.0 * K * dlam * dmv[0]; J[0][1] = 3.0 * K * dlam * dmv[1];
+    J[0][2] = 3.0 * K * m_v;                 J[0][3] = 3.0 * K * dlam * dmv[2];
+    J[1][0] = 2.0 * G * dlam * dms[0];       J[1][1] = 1.0 + 2.0 * G * dlam * dms[1];
+    J[1][2] = 2.0 * G * m_s;                 J[1][3] = 2.0 * G * dlam * dms[2];
+    J[2][0] = 2.0 * cap * dcap_dxi + m0 * q1 * q1 * q2 / (SQRT3 * fc);
+    J[2][1] = 2.0 * cap * dcap_drho + m0 * q1 * q1 * q2 * r / (SQRT6 * fc);
+    J[2][2] = 0.0;
+    J[2][3] = 2.0 * cap * dcap_dkp + m0 * RR * dq1sq_q2 - dq1sq_q2sq;
+    J[3][0] = -dlam * cos2 * (dmn[0] / xh - mnorm / (xh * xh) * dxh_dxi);
+    J[3][1] = -dlam * cos2 * dmn[1] / xh;
+    J[3][2] = -mnorm / xh * cos2;
+    J[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
+}
+
 inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& mp, double kp_n,
                                           double tol = 1.0e-11)
 {
@@ -518,12 +880,23 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     const double m_v = Df * m0 / (SQRT3 * fc);
     double xi = xi_tr, rho = rho_tr, dlam = 0.0, kp = kp_n;
     bool apex = false, converged = false;
+    // The regular semi-implicit Newton. clampRho=false: the ORIGINAL scheme (an iterate crossing the
+    // hydrostatic axis, rho<0, aborts with apex=true -> vertex candidate). clampRho=true: the RETRY used
+    // only after a rejected vertex (the trial is OUTSIDE the cone of normals, so a regular rho>0 solution
+    // exists and the abort was a Newton overshoot): rho is clamped to >=0 and iteration continues (OOFEM
+    // performRegularReturn's max(rho,0)).
+    const bool cdpm2Flow = (mp.flowPotential == 1);
+    auto newton = [&](bool clampRho) {
+    xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
     for (int it = 0; it < 100; ++it) {
-        const double m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
-        const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
+        // plastic potential gradient (B1): the full CDPM2 potential, or the legacy v1 flow (byte-identical)
+        double m_vv = m_v, m_s, dmv[3] = {0.0, 0.0, 0.0}, dms[3] = {0.0, 0.0, 0.0};
+        if (cdpm2Flow) cdpm2FlowGradJac(xi, rho, kp, mp, m_vv, m_s, dmv, dms);
+        else m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
+        const double mnorm = std::sqrt(m_vv * m_vv + m_s * m_s);
         const double sigV = xi / SQRT3;
         const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
-        const double R1 = xi - xi_tr + 3.0 * K * dlam * m_v;
+        const double R1 = xi - xi_tr + 3.0 * K * dlam * m_vv;
         const double R2 = rho - rho_tr + 2.0 * G * dlam * m_s;
         const double R3 = yfInvHard(xi, rho, r, kp, mp);
         const double R4 = kp - kp_n - dlam * mnorm / xh * cos2;
@@ -557,12 +930,24 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         const double g_val = mnorm / xh;
         const double dg_dxi  = -mnorm / (xh * xh) * dxh_dxi;
         const double dg_drho = dmnorm_drho / xh;
-        const double J[4][4] = {
+        double J[4][4] = {
             { 1.0, 0.0, 3.0 * K * m_v, 0.0 },
             { 0.0, 1.0 + 2.0 * G * dlam * (3.0 / (fc * fc)), 2.0 * G * m_s, 0.0 },
             { dR3_dxi, dR3_drho, 0.0, dR3_dkp },
             { -dlam * cos2 * dg_dxi, -dlam * cos2 * dg_drho, -g_val * cos2, 1.0 }
         };
+        if (cdpm2Flow) {   // B1: rows 1, 2, 4 with the potential Hessian (row 3, the yield function, unchanged)
+            double dmn[3];
+            for (int j = 0; j < 3; ++j) dmn[j] = (m_vv * dmv[j] + m_s * dms[j]) / mnorm;
+            J[0][0] = 1.0 + 3.0 * K * dlam * dmv[0]; J[0][1] = 3.0 * K * dlam * dmv[1];
+            J[0][2] = 3.0 * K * m_vv;                J[0][3] = 3.0 * K * dlam * dmv[2];
+            J[1][0] = 2.0 * G * dlam * dms[0];       J[1][1] = 1.0 + 2.0 * G * dlam * dms[1];
+            J[1][2] = 2.0 * G * m_s;                 J[1][3] = 2.0 * G * dlam * dms[2];
+            J[3][0] = -dlam * cos2 * (dmn[0] / xh - mnorm / (xh * xh) * dxh_dxi);
+            J[3][1] = -dlam * cos2 * dmn[1] / xh;
+            J[3][2] = -g_val * cos2;
+            J[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
+        }
         double b[4] = { -R1, -R2, -R3, -R4 };
         // 4x4 solve via Gauss elimination w/ partial pivot
         double M[4][5];
@@ -576,46 +961,123 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         rho += M[1][4] / M[1][1];
         dlam+= M[2][4] / M[2][2];
         kp  += M[3][4] / M[3][3];
-        if (rho < 0.0) { apex = true; break; }
+        if (rho < 0.0) { if (!clampRho) { apex = true; break; } rho = 0.0; }
     }
-
-    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp;
-    if (apex) {
-        // 1-D apex: f(xi,0;kp)=0 by bisection (mirror the oracle)
-        double lo = 0.0, hi = SQRT3 * fc / m0 * 4.0;
-        for (int it = 0; it < 80; ++it) {
-            double mid = 0.5 * (lo + hi);
-            if (yfInvHard(lo, 0.0, r, kp, mp) * yfInvHard(mid, 0.0, r, kp, mp) <= 0.0) hi = mid; else lo = mid;
+    };
+    // B1 GLOBALIZED Newton for the CDPM2 potential (mirror of the oracle _newton_glob): OOFEM's projections
+    // (rho >= 0, dlam >= 0, kp >= kp_n) + a backtracking line search on the scaled residual. The plain Newton fails
+    // sporadically on far trials (iterates cross the kp = 1 kink / go kp < 0) and the sub-incremented fallback
+    // then made the stress a DISCONTINUOUS function of the strain (spurious element-Newton roots: OOFEM con2dpm2
+    // at one sub-step gave -3.22 MPa + return-map warnings in the C++ build). A vertex solution cannot satisfy R2
+    // with rho pinned at 0 => stop early (rho stuck at 0 for 3 iterations) and flag apex => vertex candidate.
+    auto newtonGlob = [&]() {
+        xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
+        double Rr[4];
+        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr);
+        int stuck = 0;
+        for (int it = 0; it < 100; ++it) {
+            if (std::fabs(Rr[0]) < tol * fc && std::fabs(Rr[1]) < tol * fc
+                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { converged = true; return; }
+            double Rj[4], J[4][4];
+            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J);
+            double M[4][5];
+            for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rr[i]; }
+            for (int c = 0; c < 4; ++c) {
+                int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+                for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+                if (M[c][c] == 0.0) return;
+                for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+            }
+            double step[4];
+            for (int i = 0; i < 4; ++i) { step[i] = M[i][4] / M[i][i]; if (!std::isfinite(step[i])) return; }
+            const double sc[4] = {1.0 / fc, 1.0 / fc, 1.0, 1.0};
+            double n0 = 0.0; for (int i = 0; i < 4; ++i) n0 += (Rr[i] * sc[i]) * (Rr[i] * sc[i]);
+            n0 = std::sqrt(n0);
+            double a = 1.0, un[4], Rn[4];
+            for (;;) {
+                un[0] = xi + a * step[0]; un[1] = rho + a * step[1]; un[2] = dlam + a * step[2]; un[3] = kp + a * step[3];
+                if (un[1] < 0.0) un[1] = 0.0;
+                if (un[2] < 0.0) un[2] = 0.0;
+                if (un[3] < kp_n) un[3] = kp_n;
+                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn);
+                double nn = 0.0; bool fin = true;
+                for (int i = 0; i < 4; ++i) { fin = fin && std::isfinite(Rn[i]); nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]); }
+                if ((fin && std::sqrt(nn) < (1.0 - 1.0e-4 * a) * n0) || a < 1.0 / 64.0) break;
+                a *= 0.5;
+            }
+            xi = un[0]; rho = un[1]; dlam = un[2]; kp = un[3];
+            for (int i = 0; i < 4; ++i) Rr[i] = Rn[i];
+            stuck = (rho == 0.0) ? stuck + 1 : 0;
+            if (stuck >= 3) { apex = true; return; }
         }
-        xi = 0.5 * (lo + hi);
-        const double p_new = xi / SQRT3;
-        for (int a = 0; a < 3; ++a) R.sp[a] = p_new;
-        R.xi = xi; R.rho = 0.0; R.apex = true;
-    } else {
+    };
+    // cdpm2: the globalized Newton first; if it fails (not an axis overshoot), fall back to the plain scheme
+    // (whose rho<0 abort feeds the vertex test + the clamped retry below) before giving up.
+    if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
+    else newton(false);
+    const bool overshot = apex;
+
+    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
+    if (!apex) {
         const double p_new = xi / SQRT3;
         const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
         for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
+        // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
+        double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
+        R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
+        // ADMISSIBILITY (PR #249 adversarial-review fix): a valid plastic return needs dlam>=0 and a
+        // NON-DECREASING hardening variable (kp>=kp_n). Never report converged for an inadmissible/
+        // off-surface state.
+        const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
+        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
+            R.converged = true;
+            return R;
+        }
     }
-    // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
-    double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
-    R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-    // ADMISSIBILITY + SAFETY (PR #249 adversarial-review fix). A valid plastic return needs
-    // dlam>=0 and a NON-DECREASING hardening variable (kp>=kp_n). The semi-implicit hardening
-    // Newton can overshoot to rho<0; the apex bisection then returns a SIGN-FLIPPED hydrostatic-
-    // tension vertex with kp<kp_n (or kp<0) for a deep-COMPRESSION trial — the documented KNOWN
-    // GAP (handoff §6: low-kp / off-meridian first-yield + the apex needs sub-stepping + a
-    // dedicated apex sub-algorithm). Be HONEST (never report converged for an inadmissible/off-
-    // surface state — the old `(converged||apex)&&|f|<tol` lied here) and SAFE (never hand back
-    // the garbage iterate — kp<kp_n would poison the committed history): fall back to the elastic
-    // predictor so the caller's status!=0 cuts the step. This deliberately diverges from the
-    // numpy oracle's (equally-arbitrary) apex teleport — the kernel is the safe reference here.
-    const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-    R.converged = (converged || apex) && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible;
-    if (!R.converged) {
-        for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
-        R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
+    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex). Reached when
+    // the regular (radial) return overshot the hydrostatic axis (rho<0), did not converge, or landed
+    // inadmissible. The OLD branch projected EVERY such trial onto the hydrostatic-TENSION vertex with the
+    // kp of the ABORTED Newton iterate: a deep-compression trial was sign-flipped to tension (then rejected
+    // by the PR #249 gate => ELASTIC fallback — hydrostatic compression never yielded, OOFEM con2dpm3), and
+    // the tension-vertex kp was an arbitrary iterate value (hydrostatic tension step-size dependent, no
+    // convergence under refinement, con2dpm4). returnMapVertex solves f(sigV, rho=0; kp(sigV)) = 0 with kp
+    // CONSISTENT with the vertex plastic strain, on the TENSION vertex (sigV_tr>0) or — while the [1-qh1]
+    // cap closes the surface (kp_n<1) — the COMPRESSION vertex, accepted only inside the cone of plastic-
+    // potential normals. Otherwise: SAFE honest failure (elastic predictor, converged=false => the
+    // caller's status!=0 cuts the step) — the PR #249 contract is unchanged.
+    {
+        double sV = 0.0, kpv = kp_n, dlv = 0.0;
+        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv)) {
+            double svv[6] = {sV, sV, sV, 0, 0, 0};
+            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
+            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
+                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
+                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
+                R.apex = true; R.converged = true; R.f_after = fv;
+                return R;
+            }
+        }
     }
-    R.plastic = true;
+    // Regular RETRY with rho clamped at 0 (only after an axis overshoot whose vertex was rejected).
+    if (overshot) {
+        newton(true);
+        if (converged && rho > 0.0) {
+            const double p_new = xi / SQRT3;
+            const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
+            for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
+            double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
+            R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
+            const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
+            if (std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
+                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
+                return R;
+            }
+        }
+    }
+    for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
+    R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
+    R.f_after = yfInvHard(xi_tr, rho_tr, r, kp_n, mp);
+    R.converged = false;
     return R;
 }
 
@@ -788,12 +1250,28 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
         const double g_val = mnorm / xh;
         const double dg_dxi  = -mnorm / (xh * xh) * dxh_dxi;
         const double dg_drho = dmnorm_drho / xh;
-        const double Ju[4][4] = {
+        double Ju[4][4] = {
             { 1.0, 0.0, 3.0 * K * m_v, 0.0 },
             { 0.0, 1.0 + 2.0 * G * dlam * (3.0 / (fc * fc)), 2.0 * G * m_s, 0.0 },
             { dR3_dxi, dR3_drho, 0.0, dR3_dkp },
             { -dlam * cos2 * dg_dxi, -dlam * cos2 * dg_drho, -g_val * cos2, 1.0 }
         };
+        double gvAct = g_val;          // ||m||/xh of the ACTIVE potential (the R4 trial-cos2 derivative below)
+        if (mp.flowPotential == 1) {   // B1: the CDPM2-potential rows (mirror of the returnMapHardening Jacobian)
+            double mv, ms, dmv[3], dms[3], dmn[3];
+            cdpm2FlowGradJac(xi, rho, kp, mp, mv, ms, dmv, dms);
+            const double mn = std::sqrt(mv * mv + ms * ms), gv = mn / xh;
+            for (int j = 0; j < 3; ++j) dmn[j] = (mv * dmv[j] + ms * dms[j]) / mn;
+            Ju[0][0] = 1.0 + 3.0 * K * dlam * dmv[0]; Ju[0][1] = 3.0 * K * dlam * dmv[1];
+            Ju[0][2] = 3.0 * K * mv;                  Ju[0][3] = 3.0 * K * dlam * dmv[2];
+            Ju[1][0] = 2.0 * G * dlam * dms[0];       Ju[1][1] = 1.0 + 2.0 * G * dlam * dms[1];
+            Ju[1][2] = 2.0 * G * ms;                  Ju[1][3] = 2.0 * G * dlam * dms[2];
+            Ju[3][0] = -dlam * cos2 * (dmn[0] / xh - mn / (xh * xh) * dxh_dxi);
+            Ju[3][1] = -dlam * cos2 * dmn[1] / xh;
+            Ju[3][2] = -gv * cos2;
+            Ju[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
+            gvAct = gv;
+        }
         // dr depends on theta (frozen) which depends on w; the R4 cos2 term ALSO depends on
         // theta(w). For the principal-block Jacobian we include the dominant trial couplings
         // (xi_tr,rho_tr) analytically and the r/theta coupling via dr/dw (R3) + dcos2/dw (R4).
@@ -818,7 +1296,7 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
             // dR3/dr = d(yfInvHard)/dr = m0 q1^2 q2 * rho/(sqrt6 fc)  (q1^2 q2 == 1 only when
             // perfect-plastic; omitting it was a hardening-only tangent bug).
             const double rhs2 = (m0 * q1 * q1 * q2 * rho / (SQRT6 * fc)) * dr_dw[b];
-            const double rhs3 = -dlam * g_val * dcos2_dw[b];            // dR4/dcos2 * dcos2/dw_b
+            const double rhs3 = -dlam * gvAct * dcos2_dw[b];            // dR4/dcos2 * dcos2/dw_b
             double rhs[4] = { rhs0, rhs1, rhs2, rhs3 };
             // solve Ju u = -rhs  (Gauss w/ pivot)
             double M[4][5];
@@ -841,6 +1319,44 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 }
 
 // ---------------------------------------------------------------------------
+// Principal Jacobian of the hardening VERTEX return (returnMapVertex). sp_a = sigV for all a, where
+// F(sigV; sigV_tr, rho_tr) = f(sigV, 0; kp(sigV, sigV_tr, rho_tr)) = 0 (implicit-function theorem):
+//   dsigV/dw_b = -(F_sigVtr * 1/3 + F_rhotr * s_tr_b/rho_tr) / F_sigV ,
+//   F_x = f_x + f_kp kp_x ;  kp = kp_n + eq/xh(sigV), eq = sqrt((sigV_tr-sigV)^2/(3K^2) + (rho_tr/2G)^2).
+// The rho_tr/rho_tr factor cancels analytically (kp_rhotr * s_b/rho_tr = s_b/(4G^2 eq xh)), so an exactly
+// hydrostatic trial is regular. Every row equal => zero deviatoric stiffness (the stress is pinned to the
+// axis) — the rank-deficient apex tangent handoff §6 listed as owed. Returns false on a degenerate state.
+// ---------------------------------------------------------------------------
+inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3])
+{
+    const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
+    const double sigV = pr.xi / SQRT3, kp = pr.kp;
+    const double sigV_tr = (w[0] + w[1] + w[2]) / 3.0;
+    const double d = sigV_tr - sigV, g = pr.rho_tr / (2.0 * G);
+    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    const double dxh = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    if (!(eq > 0.0) || !(xh > 0.0)) return false;
+    const double kp_s  = (-d / (3.0 * K * K)) / (eq * xh) - eq * dxh / (xh * xh);   // dkp/dsigV
+    const double kp_st = ( d / (3.0 * K * K)) / (eq * xh);                           // dkp/dsigV_tr
+    // f on the axis: f = cap^2 + m0 q1^2 q2 s - q1^2 q2^2, cap = (1-q1) s^2, s = sigV/fc
+    const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
+    const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
+    const double s = sigV / fc, cap = (1.0 - q1) * s * s;
+    const double f_s = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
+    const double f_k = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
+                     - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
+    const double F_s = f_s + f_k * kp_s;
+    if (!(std::fabs(F_s) > 0.0)) return false;
+    for (int b = 0; b < 3; ++b) {
+        const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
+        const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
+        for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Consistent (algorithmic) tangent dsigma/depsilon (6x6, oracle tensor convention).
 // Spectral lift of the principal Jacobian D[a][b]: dsigma/dsig_tr (isotropic
 // tensor-function derivative, de Souza Neto-Peric-Owen 2008 Box A.6) then : C.
@@ -858,12 +1374,19 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     // can slow the global Newton. That is acceptable for P1 because the apex is the deferred
     // KNOWN-GAP regime (handoff §6) and the return map flags it (converged=false ⇒ step-cut);
     // the dedicated rank-deficient apex tangent lands with the apex sub-algorithm (P2+).
-    if (!pr.plastic || !pr.converged || pr.apex) { elasticC(mp, Dtan6); return; }
+    // (WP concrete3d-oracle-diagnosis) the HARDENING vertex return now has its own analytic principal
+    // Jacobian (vertexPrincipalJacobian: rank-1, purely volumetric, zero deviatoric stiffness); the
+    // perfect-plastic apex (returnMapPrincipal) keeps the elastic surrogate.
+    if (!pr.plastic || !pr.converged || (pr.apex && !hardening)) { elasticC(mp, Dtan6); return; }
     // eigenprojections E_a = e_a (x) e_a (rank-1)
     double E[3][3][3];
     for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
     double D[3][3];
-    principalJacobian(w, pr, mp, hardening, D);
+    if (pr.apex) {
+        if (!vertexPrincipalJacobian(w, pr, mp, D)) { elasticC(mp, Dtan6); return; }
+    } else {
+        principalJacobian(w, pr, mp, hardening, D);
+    }
 
     // dsigma/dsig_tr as a 4th-order tensor 𝔻_ijkl
     double Dt[3][3][3][3];
@@ -929,6 +1452,11 @@ struct State {
     // histories frozen) omega stays FIXED (no healing) and the nominal stress unloads along the damage
     // secant (1-omega)*sig_bar. On any monotonic path max == live => byte-identical to the pre-P2g kernel.
     double sigtMax = 0.0, sigcMax = 0.0;
+    // B2 CDPM2 compressive drive: the compressive equivalent strain eqc = sum alpha_c d(eps_tilde) (Eq.47) and the
+    // previous step's eps_tilde (unused by the legacy drive; zero-initialized => legacy byte-identical).
+    double eqc = 0.0, etPrev = 0.0;
+    // diagnostic of the LAST return (not history): 0 direct, n >= 2 sub-incremented pieces, -1 final failure
+    int subInfo = 0;
     // P3 Tier-2 IMPL-EX bookkeeping (committed IMPLICIT damage + the per-variable increments and the
     // committed dt, for the next step's extrapolation x~ = x_n + (dt/dt_n)*dx_n). Unused when !implex.
     double wt = 0.0, wc = 0.0;             // committed IMPLICIT dual damage
@@ -954,7 +1482,7 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
 // returnMapTensor is defined further down)
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent);
+                           bool doTangent, int* subInfo = nullptr);
 
 // CDPM2 beta_c (Eq.50, P2f): the factor scaling the PLASTIC-strain part of the compressive-damage
 // driver kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)), rho_bar = sqrt(2 J2)
@@ -986,8 +1514,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
                           double* wtOut = nullptr, double* wcOut = nullptr)
 {
     const double eps0 = mp.ft / mp.E;
-    const double eps_f  = mp.Gf / (mp.ft * mp.lch);
-    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+    const double eps_fc = epsFcOf(mp);
 
     double A[3][3], w[3], V[3][3];
     voigtToMat(sig_eff, A);
@@ -1014,12 +1541,20 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     const bool loading = det_raw > 0.0 && et > eps0;
 
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
-    if (loading) {
+    double dnc = dnorm;
+    {
         double depl[6]; for (int i = 0; i < 6; ++i) depl[i] = epl[i] - epl_n[i];
         const double wtw = tensileDamageWeight(mp, ac, depl, w, V);     // P2h ctTemper weight (1 if none)
-        kdt2 += wtw * above / xs;     kdt1 += wtw * dnorm / xs;          // Eq.45 / Eq.44 (w_t tempers C->T)
+        tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw); // Eq.44/45 (law-dependent)
+        dnc = dnorm * compressiveDamageWeight(mp, depl, w, V);          // PV20 tcTemper (== dnorm for none)
+    }
+    const double etc = compressiveEquivStrain(mp, w, et);                // PV20 tcTemper (== et for none)
+    double eqc = in.eqc;
+    if (mp.compDrive == 1) {                                             // B2: CDPM2 Eq.47-49
+        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqc, in.etPrev, etc, ac, betaC(w, kp, mp), dnc, xs);
+    } else if (loading) {
         kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
-        kdc1 += ac * betaC(w, kp, mp) * dnorm / xs;                      // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
+        kdc1 += ac * betaC(w, kp, mp) * dnc / xs;                        // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     }
     const double et_max = et_max_n > et ? et_max_n : et;
 
@@ -1038,9 +1573,8 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     const double sigtMax = in.sigtMax > Dt ? in.sigtMax : Dt;
     const double sigcMax = in.sigcMax > Dc ? in.sigcMax : Dc;
     const double wt = (et_max > eps0 && sigtMax > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
-    const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
-                    ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
+                    ? omegaT(mp, kdt1, kdt2, sigtMax) : 0.0;
+    const double wc = omegaC(mp, kdc, kdc1, kdc2, sigcMax, eps_fc);
 
     // nominal principal stresses (Eq.1) then recompose on the SAME eigenvectors
     double sp[3];
@@ -1058,6 +1592,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     out.et_max = et_max; out.kdt1 = kdt1; out.kdt2 = kdt2;
     out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
     out.sigtMax = sigtMax; out.sigcMax = sigcMax;   // P2g monotone drive history
+    out.eqc = eqc; out.etPrev = etc;                // B2 CDPM2 compressive drive history (PV20: eps_tilde_c)
     if (wtOut) *wtOut = wt;   // expose the damage variables for the wrapper's recorders (read-only)
     if (wcOut) *wcOut = wc;
 }
@@ -1146,6 +1681,7 @@ inline double scalarDriver(int which, const double sig6[6], const Params& mp)
     double A[3][3], w[3], V[3][3]; voigtToMat(sig6, A); eig3sym(A, w, V);
     if (which == 0) return equivStrainGeneral(w, mp);
     if (which == 1) { double et, ac, xs; damageDrivers(w, mp, et, ac, xs); return xs; }
+    if (which == 3) return compressiveEquivStrain(mp, w, equivStrainGeneral(w, mp));   // PV20 tcTemper
     return alphaCompression(w);
 }
 
@@ -1183,7 +1719,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
     const double eps0   = mp.ft / mp.E;
     const double eps_f  = mp.Gf / (mp.ft * mp.lch);
-    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+    const double eps_fc = epsFcOf(mp);
+    const bool bilin = (mp.tensionLaw == 1);
 
     double A[3][3], w[3], V[3][3];
     voigtToMat(sig_eff, A);
@@ -1207,12 +1744,21 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 
     const double bc = betaC(w, kp_new, mp);              // Eq.50 (P2f): scales the kdc1 plastic part
     const double wtw = tensileDamageWeight(mp, ac, depl, w, V);   // P2h ctTemper weight (1 if none)
+    const double wcw = compressiveDamageWeight(mp, depl, w, V);   // PV20 tcTemper weight (1 if none)
+    const double dnc = dnorm * wcw;                               // kdc1 plastic measure (== dnorm for none)
+    const double etc = compressiveEquivStrain(mp, w, et);         // kdc drive (== et for none)
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
-    if (loading) {
-        kdt2 += wtw * above / xs;    kdt1 += wtw * dnorm / xs;
+    tensionHistUpdate(mp, kdt1, kdt2, et, et_max_n, dnorm, xs, wtw);
+    const bool cdc = (mp.compDrive == 1);
+    const double kdc_n = in.kdc, eqc_n = in.eqc, etp_n = in.etPrev;
+    double eqcNew = eqc_n;
+    if (cdc) {                                                           // B2: CDPM2 Eq.47-49
+        compHistUpdateCdpm2(mp, kdc, kdc1, kdc2, eqcNew, etp_n, etc, ac, bc, dnc, xs);
+    } else if (loading) {
         kdc  += ac * above;          kdc2 += ac * above / xs;
-        kdc1 += ac * bc * dnorm / xs;
+        kdc1 += ac * bc * dnc / xs;
     }
+    const bool cAdv = cdc && (eqcNew > kdc_n);
     const double et_max2 = et_max_n > et ? et_max_n : et;
 
     // extreme effective principals + their eigenprojections (argmax/argmin; eig3sym is unsorted)
@@ -1229,17 +1775,24 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const bool tLoading = Dt >= in.sigtMax;
     const bool cLoading = Dc >= in.sigcMax;
     const double wt = (et_max2 > eps0 && sigtMax > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
-    const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
-                    ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
+                    ? omegaT(mp, kdt1, kdt2, sigtMax) : 0.0;
+    const double wc = omegaC(mp, kdc, kdc1, kdc2, sigcMax, eps_fc);
 
     // D_dam = spectral derivative of the per-principal damaged stress with ω FROZEN
+    // RESIDUAL TANGENT STIFFNESS (WP concrete3d-oracle-diagnosis): the bilinear tension law reaches omega_t = 1
+    // EXACTLY at w = wf, so on a fully open crack every TENSILE principal direction (incl. the uniaxial-tension
+    // laterals, whose effective stress sits on the Macaulay kink) has ZERO tangent stiffness => a singular
+    // global system (single-element tension: NaN / runaway lateral strains, thousands of return-map
+    // warnings). The TANGENT keeps (1-omega) >= OMEGA_TAN_FLOOR; the STRESS is untouched (exact zero), so
+    // the dissipated energy and every stress fixture are unchanged — only omega within 1e-6 of 1 is affected.
+    const double kT = (1.0 - wt) > OMEGA_TAN_FLOOR ? (1.0 - wt) : OMEGA_TAN_FLOOR;
+    const double kC = (1.0 - wc) > OMEGA_TAN_FLOOR ? (1.0 - wc) : OMEGA_TAN_FLOOR;
     double yv[3], ypv[3];
     for (int a = 0; a < 3; ++a) {
         const double st = w[a] > 0.0 ? w[a] : 0.0;
         const double sc = w[a] < 0.0 ? w[a] : 0.0;
-        yv[a]  = (1.0 - wt) * st + (1.0 - wc) * sc;
-        ypv[a] = (w[a] > 0.0) ? (1.0 - wt) : (1.0 - wc);
+        yv[a]  = kT * st + kC * sc;
+        ypv[a] = (w[a] > 0.0) ? kT : kC;
     }
     double Ddam[6][6];
     isotropicTangent(w, V, yv, ypv, Ddam);
@@ -1318,7 +1871,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // micro-FD THROUGH the return map captures the full gradient (mirror of the oracle; same step as the
     // numerical reference so the FD truncation correlates). Only needed under compressive loading.
     double dbc_deps[6] = {0,0,0,0,0,0};
-    if (loading && bc > 0.0) {
+    const bool needBc = cdc ? (cAdv && eqcNew > eps0) : loading;
+    if (needBc && bc > 0.0) {
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
         const double base = mp.fc / mp.E;
         for (int j = 0; j < 6; ++j) {
@@ -1339,9 +1893,10 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // (analytic, reuses dac_deps); proj -> composite micro-FD through the return map (w_t = the tensile-
     // stress-projected plastic-strain fraction). Only under loading.
     double dwtw_deps[6] = {0,0,0,0,0,0};
-    if (loading && mp.ctTemper == 1) {
+    const bool tAdv = bilin ? (det_raw > 0.0) : loading;         // the tensile history advances this step
+    if (tAdv && mp.ctTemper == 1) {
         for (int i = 0; i < 6; ++i) dwtw_deps[i] = -dac_deps[i];
-    } else if (loading && mp.ctTemper == 2) {
+    } else if (tAdv && mp.ctTemper == 2) {
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
         const double base = mp.fc / mp.E;
         double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
@@ -1366,32 +1921,119 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     }
 
+    // PV20 tcTemper proj: d(dnorm w_c)/dε (w_c by composite micro-FD through the return map, as the ctTemper proj
+    // weight) and d(eps_tilde_c)/dε. none (or no tensile effective principal) -> dnc_deps == dnorm_deps,
+    // detc_deps == det_deps (byte-identical).
+    double dnc_deps[6], detc_deps[6];
+    for (int i = 0; i < 6; ++i) { dnc_deps[i] = dnorm_deps[i]; detc_deps[i] = det_deps[i]; }
+    {
+        double mxw = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mxw) mxw = w[a];
+        if (mp.tcTemper == 2 && mxw > TC_DEAD * mp.ft) {
+            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
+            const double base = mp.fc / mp.E;
+            double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
+            double dwcw[6];
+            for (int j = 0; j < 6; ++j) {
+                const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
+                double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
+                dp[j] += hh; dm[j] -= hh;
+                double sbp[6], sbm[6], kpp, kpm, dum[6][6];
+                returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
+                returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+                double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
+                voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
+                voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
+                double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
+                for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
+                plasticStrain6(sbp, epsp, mp, eplp);
+                plasticStrain6(sbm, epsm, mp, eplm);
+                for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
+                dwcw[j] = (compressiveDamageWeight(mp, dplp, wp, Vp) - compressiveDamageWeight(mp, dplm, wm, Vm))
+                        / (2.0 * hh);
+            }
+            for (int i = 0; i < 6; ++i) dnc_deps[i] = wcw * dnorm_deps[i] + dnorm * dwcw[i];
+            double g_etc[6]; dscalarDsig(3, sig_eff, mp, g_etc); CeffT(g_etc, detc_deps);
+        }
+    }
+
     // dkd*/dε under loading (else zero).  kdc1 = ac * bc * dnorm / xs (Eq.48 with beta_c) => product rule.
     // kdt2 = w_t * above / xs, kdt1 = w_t * dnorm / xs (Eq.45/44 with the ctTemper weight) => product rule.
     double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
+    for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = 0.0; }
+    if (bilin && det_raw > 0.0) {
+        // literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
+        const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
+        const bool cross = et_max_n < eps0;
+        const double frac = cross ? (et - eps0) / det_raw : 1.0;
+        const double dfr = cross ? (eps0 - et_max_n) / (det_raw * det_raw) : 0.0;   // d frac / d et
+        for (int i = 0; i < 6; ++i) {
+            dkdt2[i] = wtw * (det_deps[i] * ixs - det_raw * dxs_deps[i] * ixs2) + (det_raw * ixs) * dwtw_deps[i];
+            if (et > eps0)
+                dkdt1[i] = wtw * (frac * dnorm_deps[i] * ixs + dnorm * dfr * det_deps[i] * ixs
+                                  - frac * dnorm * dxs_deps[i] * ixs2) + (frac * dnorm * ixs) * dwtw_deps[i];
+        }
+    }
     if (loading) {
         const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
         for (int i = 0; i < 6; ++i) {
-            dkdt2[i] = wtw * (det_deps[i] * ixs - above * dxs_deps[i] * ixs2) + (above * ixs) * dwtw_deps[i];
-            dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
+            if (!bilin) {
+                dkdt2[i] = wtw * (det_deps[i] * ixs - above * dxs_deps[i] * ixs2) + (above * ixs) * dwtw_deps[i];
+                dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
+            }
             dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
-            dkdc1[i] = (dac_deps[i] * bc * dnorm + ac * dbc_deps[i] * dnorm + ac * bc * dnorm_deps[i]) * ixs
-                     - ac * bc * dnorm * dxs_deps[i] * ixs2;
+            dkdc1[i] = (dac_deps[i] * bc * dnc + ac * dbc_deps[i] * dnc + ac * bc * dnc_deps[i]) * ixs
+                     - ac * bc * dnc * dxs_deps[i] * ixs2;
         }
-    } else for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = dkdc1[i] = dkdc2[i] = 0.0; }
+    } else for (int i = 0; i < 6; ++i) { if (!bilin) { dkdt1[i] = dkdt2[i] = 0.0; } dkdc1[i] = dkdc2[i] = 0.0; }
+    double dkdc[6] = {0, 0, 0, 0, 0, 0};
+    if (cdc) {   // B2: kappa_dc = eqc_n + ac (et - etp_n) while advancing; kdc2 += d/xs; kdc1 += ac bc frac dnorm/xs
+        for (int i = 0; i < 6; ++i) { dkdc1[i] = dkdc2[i] = 0.0; }
+        if (cAdv) {
+            const double dd = eqcNew - kdc_n, ixs = 1.0 / xs;
+            for (int i = 0; i < 6; ++i) {
+                dkdc[i] = ac * detc_deps[i] + (etc - etp_n) * dac_deps[i];
+                dkdc2[i] = dkdc[i] * ixs - dd * dxs_deps[i] * ixs * ixs;
+            }
+            if (eqcNew > eps0) {
+                const bool cross = kdc_n < eps0;
+                const double frac = cross ? (eqcNew - eps0) / dd : 1.0;
+                const double dfr = cross ? (eps0 - kdc_n) / (dd * dd) : 0.0;
+                const double inc = ac * bc * frac * dnc * ixs;
+                for (int i = 0; i < 6; ++i)
+                    dkdc1[i] = (dac_deps[i] * bc * frac * dnc + ac * dbc_deps[i] * frac * dnc
+                                + ac * bc * dfr * dkdc[i] * dnc + ac * bc * frac * dnc_deps[i]) * ixs
+                             - inc * dxs_deps[i] * ixs;
+            }
+        }
+    }
 
     // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
     // (P2g) D = the MONOTONE drive sigtMax/sigcMax; dDt_deps/dDc_deps are already zeroed on unload, so an
     // unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
     double dwt[6], dwc[6];
-    if (wt > 0.0 && wt < 1.0) {
+    if (wt > 0.0 && wt < OMEGA_MAX && bilin) {
+        // IFT on F(w) = (1-w)D - sigma(h(kd1+w kd2)): F_w = -D - sigma' h kd2 (sigma' = active branch slope)
+        const double wf_b = mp.Gf / (BILIN_GF * mp.ft);
+        double slope = 0.0; bilinearSigma(mp.lch * (kdt1 + wt * kdt2), mp.ft, wf_b, &slope);
+        const double spd = slope * mp.lch;
+        const double Fw = -sigtMax - spd * kdt2;
+        for (int i = 0; i < 6; ++i)
+            dwt[i] = (-(1.0 - wt) / Fw) * dDt_deps[i] + (spd / Fw) * dkdt1[i] + (spd * wt / Fw) * dkdt2[i];
+    } else if (wt > 0.0 && wt < 1.0) {
         const double Ht = sigtMax * ((1.0 - wt) * kdt2 / eps_f - 1.0);
         const double a0 = -(1.0 - wt) / Ht;
         const double a1 = -(1.0 - wt) * sigtMax / (eps_f * Ht);
         const double a2 = -(1.0 - wt) * sigtMax * wt / (eps_f * Ht);
         for (int i = 0; i < 6; ++i) dwt[i] = a0 * dDt_deps[i] + a1 * dkdt1[i] + a2 * dkdt2[i];
     } else for (int i = 0; i < 6; ++i) dwt[i] = 0.0;
-    if (wc > 0.0 && wc < 1.0) {
+    if (wc > 0.0 && wc < OMEGA_MAX && cdc) {     // B2: D = E kappa_dc (the IFT does not depend on f = ft)
+        const double Dcc = mp.E * kdc;
+        const double Hc = Dcc * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
+        const double a0 = -(1.0 - wc) / Hc;
+        const double a1 = -(1.0 - wc) * Dcc / (eps_fc * Hc);
+        const double a2 = -(1.0 - wc) * Dcc * wc / (eps_fc * Hc);
+        for (int i = 0; i < 6; ++i) dwc[i] = a0 * mp.E * dkdc[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
+    } else if (wc > 0.0 && wc < 1.0) {
         const double Hc = sigcMax * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
         const double a0 = -(1.0 - wc) / Hc;
         const double a1 = -(1.0 - wc) * sigcMax / (eps_fc * Hc);
@@ -1410,9 +2052,51 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 // (radial, preserves V) -> recompose. Consistent tangent on request.
 //   hardening=true  : full CDPM2 (qh1/qh2/kp).  false : perfect-plastic failure surface.
 // ---------------------------------------------------------------------------
+inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                            bool doTangent);
+
+// Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
+// return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
+// sub-increments integrated in sequence from the committed state (doubling back after each success) down to
+// 2^-maxSubIncr. The reported tangent is the LAST sub-increment's consistent tangent (an approximation of the
+// sub-stepped algorithmic tangent). maxSubIncr = 0 => byte-identical to the direct return.
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent)
+                           bool doTangent, int* subInfo)
+{
+    // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
+    if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+    if (st0 == 0 || mp.maxSubIncr <= 0 || !hardening) return st0;
+    int pieces = 0;
+    double s[6], k = kp_n, done = 0.0, frac = 0.5;
+    const double floorFrac = std::ldexp(1.0, -mp.maxSubIncr);
+    for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
+    double sn[6], kn, Dt[6][6];
+    while (done < 1.0) {
+        const double f = (frac < 1.0 - done) ? frac : 1.0 - done;
+        double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * f;
+        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (done + f >= 1.0));
+        if (st == 0) {
+            for (int i = 0; i < 6; ++i) s[i] = sn[i];
+            k = kn; done += f; ++pieces;
+            frac = (2.0 * frac < 1.0) ? 2.0 * frac : 1.0;
+        } else {
+            frac *= 0.5;
+            if (frac < floorFrac) return st0;          // honest failure: keep the direct-return fallback
+        }
+    }
+    for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
+    kp_new = k;
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dt[i][j];
+    if (subInfo) *subInfo = pieces;
+    return 0;
+}
+
+inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                            bool doTangent)
 {
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
@@ -1479,7 +2163,8 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
     // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
     double sig_eff[6], kp_new;
-    int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent);
+    int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+                                 &out.subInfo);
     // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
     //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
     //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
@@ -1651,7 +2336,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     // and flag a genuinely unmet lateral balance as non-converged (status 2 => the caller cuts the step).
     {
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true);
+        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true, &out.subInfo);
         const double rf[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                                sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                                sig_eff[4] };
@@ -1691,6 +2376,77 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
         }
     }
     return status;
+}
+
+// ===========================================================================
+// Gc = PHYSICAL compressive fracture energy (WP concrete3d-oracle-diagnosis; mirrors the oracle
+// compression_energy_density / calibrate_eps_fc_table / eps_fc_from_gc). The compressive law is in STRAIN
+// form (eps_fc) and its plastic driver is scaled by beta_c/x_s (Eq.48/50), so the legacy eps_fc = Gc/(fc lch)
+// dissipates ~an order of magnitude more than Gc per unit area. The uniaxial stress-strain response depends
+// on eps_fc but NOT on lch, so g(eps_fc) = int_peak sigma d(eps - sigma/E) (post-peak energy per unit volume)
+// is a material function and Gc = lch g(eps_fc): tabulate g once (at material construction, free uniaxial
+// stress via driveConfinedFiber hoopK=0, the kernel's own single-step contract), invert per lch.
+// ===========================================================================
+static const int    GC_TABLE_N  = 8;
+static const double GC_TABLE_LO = 0.01, GC_TABLE_HI = 3.0;   // eps_fc range in units of fc/E
+
+inline double compressionEnergyDensity(const Params& mp0, double epsFc, int maxSteps = 20000, double* peakOut = nullptr)
+{
+    Params mp = mp0; mp.epsFc = epsFc; mp.implex = false; mp.eta = 0.0;
+    const double E = mp.E, fc = mp.fc, de = fc / (20.0 * E);        // FIXED step (see the oracle docstring)
+    double e11 = 0.0, sPrev = 0.0, eiPrev = 0.0, peak = 0.0, g = 0.0;
+    bool post = false;
+    State in;
+    for (int n = 1; n <= maxSteps; ++n) {
+        e11 -= de;
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i];
+        strain[0] = e11; strain[3] = strain[5] = 0.0;
+        State out; double sig[6], sigEff[6], Dt[6][6];
+        driveConfinedFiber(mp, strain, in, out, sig, sigEff, Dt, false, 0.0, 1.0e30, 0.0);
+        in = out;
+        const double s = -sig[0], e = -e11, ei = e - s / E;
+        if (s > peak && !post) peak = s;
+        else if (s < peak) post = true;
+        if (post) {
+            g += 0.5 * (s + sPrev) * (ei - eiPrev);
+            if (s < 0.01 * peak || n == maxSteps) {
+                const double ds = sPrev - s;
+                if (ds > 0.0) g += s * s * (ei - eiPrev) / ds;       // exponential tail beyond the stop
+                break;
+            }
+        }
+        sPrev = s; eiPrev = ei;
+    }
+    if (peakOut) *peakOut = peak;
+    return g;
+}
+
+inline void calibrateEpsFcTable(const Params& mp, double efc[GC_TABLE_N], double g[GC_TABLE_N])
+{
+    const double base = mp.fc / mp.E, lo = std::log(GC_TABLE_LO), hi = std::log(GC_TABLE_HI);
+    for (int k = 0; k < GC_TABLE_N; ++k) {
+        efc[k] = base * std::exp(lo + (hi - lo) * k / (GC_TABLE_N - 1));
+        g[k] = compressionEnergyDensity(mp, efc[k]);
+    }
+}
+
+// Invert the monotone table for g = Gc/lch (log-log linear). status 0 inside, -1 below (Gc too small for this
+// lch — the brittle/snap-back limit; clamped to the smallest eps_fc), +1 above (clamped to the largest).
+inline double epsFcFromGc(const double efc[GC_TABLE_N], const double g[GC_TABLE_N], double Gc, double lch,
+                          int* status = nullptr)
+{
+    const double tgt = Gc / lch;
+    if (status) *status = 0;
+    if (!(tgt > g[0])) { if (status) *status = -1; return efc[0]; }
+    if (!(tgt < g[GC_TABLE_N - 1])) { if (status) *status = 1; return efc[GC_TABLE_N - 1]; }
+    for (int k = 1; k < GC_TABLE_N; ++k) {
+        if (tgt <= g[k]) {
+            const double t = (std::log(tgt) - std::log(g[k - 1])) / (std::log(g[k]) - std::log(g[k - 1]));
+            return std::exp(std::log(efc[k - 1]) + t * (std::log(efc[k]) - std::log(efc[k - 1])));
+        }
+    }
+    if (status) *status = 1;
+    return efc[GC_TABLE_N - 1];
 }
 
 } // namespace Concrete3D
