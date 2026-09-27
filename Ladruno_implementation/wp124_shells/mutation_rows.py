@@ -50,6 +50,23 @@ ROWS = {
     "G4": ("every DOF takes the x-component of R a_g",
            [(SHELL, "lit", "      ra(a * ndf + j) = Raccel(j);\n",
              "      ra(a * ndf + j) = Raccel(0);   // MUTATION G4\n")]),
+    # --- stage 3: parameter forwarding + response finalise
+    "P1": ("forwardToMaterials asks only the FIRST material",
+           [(SHELL, "lit", "  for (int i = 0; i < n; i++) {\n    int matRes = mats[i]->setParameter(argv, argc, param);\n",
+             "  for (int i = 0; i < 1; i++) {   // MUTATION P1\n    int matRes = mats[i]->setParameter(argv, argc, param);\n")]),
+    "P2": ("forwardToMaterialPoint sends every k to slot 0",
+           [(SHELL, "lit", "    return mats[singlePoint ? 0 : pointNum - 1]->setParameter(&argv[2], argc - 2, param);\n",
+             "    return mats[0]->setParameter(&argv[2], argc - 2, param);   // MUTATION P2\n")]),
+    "P3": ("finishResponse drops the Element::setResponse fallback",
+           [(SHELL, "lit", "    return ele->Element::setResponse(argv, argc, output);\n",
+             "    return 0;   // MUTATION P3\n")]),
+    "P4": ("isMaterialPointToken takes materialState as a GP address again",
+           [(SHELL, "lit", "  return strstr(token, \"material\") != 0 && strcmp(token, \"materialState\") != 0;\n",
+             "  return strstr(token, \"material\") != 0;   // MUTATION P4\n")]),
+    "P5": ("finishResponse does not close ElementOutput -- expected EQUIVALENT under eleResponse "
+           "(no XML is serialized; only an XML recorder sees the tag nesting)",
+           [(SHELL, "lit", "  output.endTag();\n  if (theResponse == 0)\n",
+             "  // MUTATION P5\n  if (theResponse == 0)\n")]),
     # --- C14: LadrunoBrick20 rebuilds its geometry cache in recvSelf (live restore)
     "C14": ("LadrunoBrick20::recvSelf does not rebuild the geometry cache (the pre-fix shape)",
             [(ROOT / "SRC/element/ladrunoBrick/LadrunoBrick20.cpp", "lit",
