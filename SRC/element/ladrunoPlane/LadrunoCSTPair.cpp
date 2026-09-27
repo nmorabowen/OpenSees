@@ -701,14 +701,9 @@ Response *LadrunoCSTPair::setResponse(const char **argv, int argc, OPS_Stream &o
     theResponse = new ElementResponse(this, 8, Matrix(P.Size(), P.Size()));
   }
 
-  output.endTag();
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)

@@ -51,6 +51,12 @@
 #include <Vector.h>
 #include <Node.h>
 #include <OPS_Globals.h>
+#include <NDMaterial.h>
+#include <Parameter.h>
+#include <Element.h>
+#include <Response.h>
+#include <OPS_Stream.h>
+#include <stdlib.h>
 
 namespace LadrunoShell {
 
@@ -108,6 +114,51 @@ inline int addGroundInertia(Vector &Q, const Matrix &M, Node **nodes, int nen,
   } else
     Q.addMatrixVector(1.0, M, ra, -1.0);
   return 0;
+}
+
+// ---- parameter forwarding (setParameter) ------------------------------------
+// forall-material broadcast: every GP material is asked; the LAST answer that is
+// not -1 wins (the upstream FourNodeQuad convention every shell copied).
+inline int forwardToMaterials(NDMaterial **mats, int n, const char **argv,
+                              int argc, Parameter &param)
+{
+  int res = -1;
+  for (int i = 0; i < n; i++) {
+    int matRes = mats[i]->setParameter(argv, argc, param);
+    if (matRes != -1)
+      res = matRes;
+  }
+  return res;
+}
+
+// "material k <args>": k is 1-based over nPoints. singlePoint (SSP/URI-type
+// formulations whose only live material is slot 0) maps EVERY k to slot 0, as
+// setResponse does -- otherwise k > 1 edits a dead slot and silently does nothing.
+inline int forwardToMaterialPoint(NDMaterial **mats, int nPoints, bool singlePoint,
+                                  const char **argv, int argc, Parameter &param)
+{
+  if (argc < 3)
+    return -1;
+  int pointNum = atoi(argv[1]);
+  if (pointNum > 0 && pointNum <= nPoints)
+    return mats[singlePoint ? 0 : pointNum - 1]->setParameter(&argv[2], argc - 2, param);
+  return -1;
+}
+
+// ---- response finalise (setResponse) ---------------------------------------
+// Close the element's ElementOutput tag FIRST, then fall back to the base
+// vocabulary (globalForce, dampingForce, dynamicForce, inertialForce):
+// Element::setResponse opens its OWN ElementOutput tag (LEDGER_quirks).
+//     return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
+// Pair it with `return this->Element::getResponse(id, info);` as the default of
+// getResponse, or the base IDs (111111..444444) record nothing.
+inline Response *finishResponse(Element *ele, Response *theResponse,
+                                const char **argv, int argc, OPS_Stream &output)
+{
+  output.endTag();
+  if (theResponse == 0)
+    return ele->Element::setResponse(argv, argc, output);
+  return theResponse;
 }
 
 } // namespace LadrunoShell

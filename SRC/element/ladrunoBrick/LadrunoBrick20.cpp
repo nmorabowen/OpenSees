@@ -1162,14 +1162,9 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
-  output.endTag(); // ElementOutput
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int
@@ -1273,21 +1268,12 @@ LadrunoBrick20::setParameter(const char **argv, int argc, Parameter &param)
   }
 
   // specific material point
-  if (strstr(argv[0], "material") != 0) {
-    if (argc < 3) return -1;
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= this->nGP())
-      return materialPointers[pointNum - 1]->setParameter(&argv[2], argc - 2, param);
-    else
-      return -1;
-  }
+  if (strstr(argv[0], "material") != 0)
+    return LadrunoShell::forwardToMaterialPoint(materialPointers, this->nGP(), false,
+                                                argv, argc, param);
 
   // all material points
-  for (int i = 0; i < this->nGP(); i++) {
-    int matRes = materialPointers[i]->setParameter(argv, argc, param);
-    if (matRes != -1) res = matRes;
-  }
-  return res;
+  return LadrunoShell::forwardToMaterials(materialPointers, this->nGP(), argv, argc, param);
 }
 
 //F7: honest aggregation — any GP material failing (<0) fails the element

@@ -289,3 +289,113 @@ def test_ground_inertia_rigid_body(name, direction):
         for d in range(ndf):
             want = -ag if d == direction - 1 else 0.0
             assert abs(acc[d] - want) <= 1.0e-9 * ag,                 f"{name} node {n} dof {d + 1}: relative accel {acc[d]!r}, want {want!r}"
+
+
+# ---- parameter forwarding (forwardToMaterials / forwardToMaterialPoint) -------------------
+# Linear elastic: halving E everywhere doubles every displacement EXACTLY (ratio 2), whether
+# through the forall broadcast ("E") or one "material k E" parameter per Gauss point.
+N_POINTS = {"LadrunoQuad": 4, "LadrunoCST": 1, "LadrunoLST": 3, "LadrunoCSTPair": 2,
+            "LadrunoBrick": 8, "LadrunoBrick20": 27, "BezierTri6": 3, "BezierTet10": 4}
+C3 = pytest.mark.xfail(strict=True, reason="C3: LadrunoCSTPair has no setParameter")
+PARAM = [pytest.param(n, marks=C3) if n == "LadrunoCSTPair" else n for n in ELEMENTS]
+
+
+def _solve_disp(name, params=()):
+    node, load = ELEMENTS[name]()
+    for tag, argv in enumerate(params, start=1):
+        ops.parameter(tag, "element", 1, *argv)
+        ops.updateParameter(tag, 0.5 * E)
+    _static(node, load, ("Newton",), iters=20)
+    assert ops.analyze(1) == 0
+    return _all_disp(len(ops.getNodeTags()))
+
+
+def _ratio(ref, got):
+    k = max(range(len(ref)), key=lambda i: abs(ref[i]))
+    return got[k] / ref[k]
+
+
+@pytest.mark.parametrize("name", PARAM)
+def test_forall_parameter_reaches_every_material(name):
+    ref = _solve_disp(name)
+    r = _ratio(ref, _solve_disp(name, [("E",)]))
+    tol = 1.0e-5 if name == "LadrunoCSTPair" else 1.0e-9   # finite-only element
+    assert abs(r - 2.0) <= tol, f"{name}: forall E/2 gives displacement ratio {r!r}, want 2"
+
+
+@pytest.mark.parametrize("name", PARAM)
+def test_material_point_parameters_cover_every_point(name):
+    ref = _solve_disp(name)
+    n = N_POINTS[name]
+    r = _ratio(ref, _solve_disp(name, [("material", str(k), "E") for k in range(1, n + 1)]))
+    tol = 1.0e-5 if name == "LadrunoCSTPair" else 1.0e-9
+    assert abs(r - 2.0) <= tol, f"{name}: 'material k E' for k=1..{n} gives ratio {r!r}, want 2"
+
+
+# ---- response finalise (finishResponse + Element::getResponse fallback) -----------------
+C2 = pytest.mark.xfail(strict=True, reason="C2: Bezier never chains to Element::setResponse")
+RESP = [pytest.param(n, marks=C2) if n.startswith("Bezier") else n for n in ELEMENTS]
+
+
+def _hex_volume(X):
+    """Exact volume of a trilinear hex (detJ is at most quadratic per axis: 2-pt Gauss)."""
+    g = 1.0 / 3.0 ** 0.5
+    s = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+         (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]
+    vol = 0.0
+    for a in (-g, g):
+        for b in (-g, g):
+            for c in (-g, g):
+                J = [[0.0] * 3 for _ in range(3)]
+                for (si, ti, ui), x in zip(s, X):
+                    d = (si * (1 + ti * b) * (1 + ui * c) / 8, ti * (1 + si * a) * (1 + ui * c) / 8,
+                         ui * (1 + si * a) * (1 + ti * b) / 8)
+                    for r in range(3):
+                        for q in range(3):
+                            J[r][q] += x[r] * d[q]
+                vol += (J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1])
+                        - J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0])
+                        + J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]))
+    return vol
+
+
+def _shoelace(P):
+    return 0.5 * abs(sum(P[i][0] * P[(i + 1) % len(P)][1] - P[(i + 1) % len(P)][0] * P[i][1]
+                         for i in range(len(P))))
+
+
+VOLUME = {"LadrunoQuad": _shoelace(QUAD) * 0.8, "LadrunoCST": _shoelace(TRI) * 0.8,
+          "LadrunoLST": _shoelace(TRI) * 0.8, "LadrunoCSTPair": _shoelace(QUAD) * 0.8,
+          "BezierTri6": _shoelace(TRI) * 0.8, "LadrunoBrick": _hex_volume(HEX),
+          "LadrunoBrick20": 1.0, "BezierTet10": 1.0 / 6.0}
+
+
+@pytest.mark.parametrize("name", RESP)
+def test_base_response_vocabulary(name):
+    """globalForce == force; on an unsupported element translating at v0 with alphaM only,
+    the x-components of dampingForce sum to alphaM * rho * V * v0 (row sums of M: exact for
+    lumped and consistent mass alike)."""
+    _SUPPORTS[0] = False
+    try:
+        ELEMENTS[name]()
+    finally:
+        _SUPPORTS[0] = True
+    tags = ops.getNodeTags()
+    ndf = len(ops.nodeDisp(tags[0]))
+    for i, n in enumerate(tags):                   # a non-trivial deformation for 'force'
+        ops.setNodeDisp(n, 1, 1.0e-3 * (i % 3), "-commit")
+    force = ops.eleResponse(1, "force")
+    glob = ops.eleResponse(1, "globalForce")
+    assert glob and len(glob) == len(force), f"{name}: globalForce records nothing"
+    assert glob == force
+    for n in tags:
+        ops.setNodeDisp(n, 1, 0.0, "-commit")
+    aM, v0 = 0.3, 2.0
+    ops.rayleigh(aM, 0.0, 0.0, 0.0)
+    for n in tags:
+        ops.setNodeVel(n, 1, v0, "-commit")
+    damp = ops.eleResponse(1, "dampingForce")
+    assert damp, f"{name}: dampingForce records nothing"
+    fx = sum(damp[i] for i in range(0, len(damp), ndf))
+    want = aM * RHO * VOLUME[name] * v0
+    assert abs(fx - want) <= 1.0e-9 * want, f"{name}: sum dampingForce_x {fx!r}, want {want!r}"

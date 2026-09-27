@@ -2085,31 +2085,17 @@ BezierTet10::setParameter(const char **argv, int argc, Parameter &param)
     if (argc < 1)
         return -1;
 
-    int res = -1;
-
     // "pressure" on the element itself (+z volume hack, as the response)
     if (strcmp(argv[0], "pressure") == 0)
         return param.addObject(2, this);
 
     // a specific Gauss-point material: "material $gp <args>"
     if ((strstr(argv[0], "material") != 0) &&
-        (strcmp(argv[0], "materialState") != 0)) {
-        if (argc < 3)
-            return -1;
-        int pointNum = atoi(argv[1]);
-        if (pointNum > 0 && pointNum <= NGAUSS)
-            return theMaterial[pointNum-1]->setParameter(&argv[2], argc-2, param);
-        return -1;
-    }
+        (strcmp(argv[0], "materialState") != 0))
+        return LadrunoShell::forwardToMaterialPoint(theMaterial, NGAUSS, false, argv, argc, param);
 
     // otherwise a forall-material parameter — broadcast to every GP
-    for (int i = 0; i < NGAUSS; i++) {
-        int matRes = theMaterial[i]->setParameter(argv, argc, param);
-        if (matRes != -1)
-            res = matRes;
-    }
-
-    return res;
+    return LadrunoShell::forwardToMaterials(theMaterial, NGAUSS, argv, argc, param);
 }
 
 int

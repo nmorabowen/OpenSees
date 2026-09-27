@@ -892,14 +892,9 @@ Response *LadrunoLST::setResponse(const char **argv, int argc, OPS_Stream &outpu
     theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
   }
 
-  output.endTag();
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int LadrunoLST::getResponse(int responseID, Information &eleInfo)
@@ -946,26 +941,16 @@ int LadrunoLST::getResponse(int responseID, Information &eleInfo)
 
 int LadrunoLST::setParameter(const char **argv, int argc, Parameter &param)
 {
-  int res = -1;
   if (argc < 1)
     return -1;
 
   if (strcmp(argv[0], "pressure") == 0)
     return param.addObject(2, this);
 
-  if (strstr(argv[0], "material") != 0) {
-    if (argc < 3) return -1;
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= numgp)
-      return theMaterial[pointNum - 1]->setParameter(&argv[2], argc - 2, param);
-    return -1;
-  }
+  if (strstr(argv[0], "material") != 0)
+    return LadrunoShell::forwardToMaterialPoint(theMaterial, numgp, false, argv, argc, param);
 
-  for (int i = 0; i < numgp; i++) {
-    int matRes = theMaterial[i]->setParameter(argv, argc, param);
-    if (matRes != -1) res = matRes;
-  }
-  return res;
+  return LadrunoShell::forwardToMaterials(theMaterial, numgp, argv, argc, param);
 }
 
 int LadrunoLST::updateParameter(int parameterID, Information &info)
