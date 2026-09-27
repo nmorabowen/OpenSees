@@ -67,35 +67,38 @@ def main():
                                                  segments=ref[vn][i]["segments"],
                                                  reseats=ref[vn][i]["reseats"],
                                                  f_end=ref[vn][i]["f_end"],
-                                                 max_rho_b=ref[vn][i]["max_rho_b"])
-        # effect of each UW toggle alone: || ref(uw) - ref(uw with k = paper) ||
+                                                 max_rho_b=ref[vn][i]["max_rho_b"],
+                                                 negh=ref[vn][i]["negh"])
+        # effect of each UW toggle alone: || ref(uw_me) - ref(uw_me with k = paper) ||
         for vn in variants:
-            if vn.startswith("uw-"):
-                es, _ = rel_incr_diff(s0, ref[vn][i], ref["uw"][i], "sigma")
-                row.setdefault("toggle_effect", {})[vn[3:]] = es
+            if vn.startswith("uw_me-"):
+                es, _ = rel_incr_diff(s0, ref[vn][i], ref["uw_me"][i], "sigma")
+                row.setdefault("toggle_effect", {})[vn[6:]] = es
         rows.append(row)
     json.dump(dict(rows=rows, cxx=c, ref=ref), open(os.path.join(OUT, "crosscheck.json"), "w"),
               indent=1, default=float)
     # --- markdown summary ---------------------------------------------------
     L = []
-    L.append("| state | probe | delta | ME8 substeps | paper vs ME8 dsig | uw vs ME8 dsig | uw vs ME8 dalpha | largest UW toggle effect | uw vs RK45 dsig | uw vs ME(campaign) dsig |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|")
+    L.append("| state | probe | delta | ME8 substeps | paper vs ME8 dsig | uw_me vs ME8 dsig | uw_me vs ME8 dalpha | uw_me UW-rule h<0 | largest single-toggle effect (from uw_me) | uw vs RK45 dsig | uw_me vs ME(campaign) dsig |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         te = r.get("toggle_effect", {})
         big = max(te.items(), key=lambda kv: kv[1] if math.isfinite(kv[1]) else -1) if te else ("-", float("nan"))
         L.append(f"| {r['state']} | {r['probe']} | {r['delta']:.0e} | {r['ME8']['substeps']:.0f} | "
-                 f"{r['ME8']['paper']['dsig_rel']:.2e} | {r['ME8']['uw']['dsig_rel']:.2e} | "
-                 f"{r['ME8']['uw']['dalpha_rel']:.2e} | {big[0]} {big[1]:.1e} | "
+                 f"{r['ME8']['paper']['dsig_rel']:.2e} | {r['ME8']['uw_me']['dsig_rel']:.2e} | "
+                 f"{r['ME8']['uw_me']['dalpha_rel']:.2e} | {r['ref']['uw_me']['negh']} | {big[0]} {big[1]:.1e} | "
                  f"{r.get('RK45', {}).get('uw', {}).get('dsig_rel', float('nan')):.2e} | "
-                 f"{r.get('ME', {}).get('uw', {}).get('dsig_rel', float('nan')):.2e} |")
+                 f"{r.get('ME', {}).get('uw_me', {}).get('dsig_rel', float('nan')):.2e} |")
     open(os.path.join(OUT, "crosscheck.md"), "w").write("\n".join(L) + "\n")
     # console digest
     for d in args.deltas:
         sub = [r for r in rows if r["delta"] == d]
-        for vn in ["paper", "uw"]:
-            vals = [r["ME8"][vn]["dsig_rel"] for r in sub]
-            vala = [r["ME8"][vn]["dalpha_rel"] for r in sub]
-            print(f"delta {d:.0e} {vn:>6} vs ME8: dsig_rel max {max(vals):.2e} median {np.median(vals):.2e}; "
+        for vn, pr in [("paper", "ME8"), ("uw_me", "ME8"), ("uw", "RK45"), ("uw_me", "ME")]:
+            if pr not in sub[0]:
+                continue
+            vals = [r[pr][vn]["dsig_rel"] for r in sub]
+            vala = [r[pr][vn]["dalpha_rel"] for r in sub]
+            print(f"delta {d:.0e} {vn:>6} vs {pr:>4}: dsig_rel max {max(vals):.2e} median {np.median(vals):.2e}; "
                   f"dalpha_rel max {max(vala):.2e} median {np.median(vala):.2e}")
     print("wrote", os.path.join(OUT, "crosscheck.md"))
 

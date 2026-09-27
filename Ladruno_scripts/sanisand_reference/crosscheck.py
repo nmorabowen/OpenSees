@@ -69,7 +69,8 @@ def _ref_one(args):
                 alpha=t2v(r.state.alpha).tolist(), z=t2v(r.state.z).tolist(),
                 e=r.state.e, f_end=r.f_end, max_rho_b=r.max_rho_b,
                 segments=[(s["mode"], s["event"]) for s in r.segments],
-                reseats=len(r.reseats), notes=r.notes)
+                reseats=len(r.reseats), notes=r.notes,
+                negh=r.uw_negative_h)
 
 
 def run_reference(cases, P, variants, rtol=1.0e-10, workers=None):

@@ -95,6 +95,7 @@ class Result:
     nfev: int = 0
     path: dict = field(default_factory=dict)
     deps_total: list = field(default_factory=list)   # the realised strain increment
+    uw_negative_h: bool = False   # UW alpha_in rule: plastic with (alpha-alpha_in):n < 0
 
     def summary(self):
         s = self.state
@@ -106,7 +107,8 @@ class Result:
                     max_abs_f_plastic=self.max_abs_f_plastic,
                     sigma=t2v(s.sigma).tolist(), alpha=t2v(s.alpha).tolist(),
                     z=t2v(s.z).tolist(), alpha_in=t2v(s.alpha_in).tolist(),
-                    deps=self.deps_total, notes=self.notes)
+                    deps=self.deps_total, notes=self.notes,
+                    uw_negative_h=self.uw_negative_h)
 
 
 def _pack(sig, alpha, z, e, lcum, eps):
@@ -435,7 +437,7 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
                  max_abs_f_plastic=max_abs_f_pl,
                  min_H_sign_margin=min_hmargin, segments=segments,
                  reseats=reseats, notes=notes, nfev=inc.nfev, path=path,
-                 deps_total=y[20:26].tolist())
+                 deps_total=y[20:26].tolist(), uw_negative_h=inc.uw_negative_h)
     return res
 
 
