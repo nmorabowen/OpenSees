@@ -26,6 +26,19 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `GLOBS` in `Ladruno_scripts/stamp_headers.py`, then run it); banner line via
       `banner_features.txt` → `patch_banner.py`. See `AGENTS.md`.
 
+## Shared shell helpers — use them, don't copy another element's shell
+
+- [ ] A continuum element includes `SRC/element/LadrunoElementShell.h` (WP-124) instead of
+      copying Quad/Brick/Bezier code: `cacheKi`/`dropKi` (initial stiffness; return `*Ki`,
+      never the scratch — #228/C1), `addGroundInertia` (the `−M·R·a_g` sign), `addNodalInertia`
+      (the `M·a` term of `getResistingForceIncInertia`), `forwardToMaterials` /
+      `forwardToMaterialPoint` / `isMaterialPointToken` (parameters; SSP maps every GP to
+      slot 0; `materialState` is a broadcast, not a GP address), `finishResponse` (endTag,
+      then the `Element` base vocabulary — pair it with `Element::getResponse` as the
+      `getResponse` default). The snapshot + Rayleigh tail stays in the element (protected
+      members). Mass caching: `SRC/element/LadrunoMassCache.h`. Pin them with the patterns in
+      `tests/test_ladruno_element_shell_helpers.py`.
+
 ## Dynamics, mass and damping
 
 - [ ] **[lint]** In `getResistingForceIncInertia`, snapshot the shared static residual into a
@@ -54,6 +67,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] `rho` and every construction input are serialized in `sendSelf`/`recvSelf` and
       zero-initialized in the broker ctor. Quirks: "element `rho` is NOT serialized",
       "FileDatastore silently CLOBBERS", "`recvSelf` into a LIVE element".
+- [ ] `recvSelf` drops every cache it can invalidate (`dropKi`, mass cache) and REBUILDS any
+      geometry cache itself when the element is live (`getDomain() != 0`): a checkpoint
+      restore into the live domain calls `recvSelf` + `update()`, never `setDomain` (WP-124
+      C6/C14). Test it with a save → change → restore into the SAME domain, not wipe+restore.
 
 ## State and re-entrancy
 

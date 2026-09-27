@@ -91,6 +91,9 @@ public:
   void setEnabled(bool e) { enabled = e; if (!e) invalidate(); }
   bool isEnabled() const { return enabled; }
   void invalidate() { if (M != 0) { delete M; M = 0; } }
+  // the matrix fill() just stored (0 when disabled or uncacheable) -- lets an
+  // element return its per-instance copy on the MISS path too (WP-124: LadrunoBrick)
+  const Matrix *cached() const { return M; }
 
   // 0 = miss (form + fill); non-null = hit (return *it from getMass)
   const Matrix *lookup(const double *sig, int nsig,
