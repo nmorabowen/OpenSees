@@ -379,13 +379,26 @@ def gp_xy(deck):
 
 
 # ------------------------------------------------------------ replay CSVs ---
+# SIGN CONVENTION of every replay CSV: COMPRESSION POSITIVE for sigma, dStrain
+# and sigma_next (the model's internal convention, and what the TIMs ring CSVs
+# actually carry -- WP-127 finding A), so a row feeds
+# `ladrunoSANISANDReplay -convention compressionPositive` and WP-134's
+# sanisand_reference unchanged. Shear strain is ENGINEERING (gamma_xy) in slot
+# 3. alpha, alpha_in, z are the raw internal ratios. `dt_next` is the pseudo-
+# time increment of the next step (= ops_Dt, negative: the push runs time
+# down); `prevIncrNorm` is GetNorm_Cov of the increment that produced the
+# committed state (the -reversalRel reference the material had).
 REPLAY_HEAD = (["element", "gp", "x_m", "y_m", "p_kPa", "eta",
                 "eta_over_Mb_compression", "e", "psi"]
                + [f"sigma_{i}" for i in range(6)] + [f"alpha_{i}" for i in range(6)]
                + [f"alpha_in_{i}" for i in range(6)] + [f"z_{i}" for i in range(6)]
                + [f"dStrain_{i}" for i in range(6)]
                + ["step", "s_over_B", "gp_x_m", "gp_y_m", "rho_alpha", "f_read",
-                  "f_recomputed", "substeps_next", "capHit_next", "select"])
+                  "f_recomputed", "substeps_next", "capHit_next", "dt_next",
+                  "prevIncrNorm"]
+               + [f"sigma_next_{i}" for i in range(6)]
+               + [f"alpha_next_{i}" for i in range(6)]
+               + ["e_next", "select"])
 
 
 def select_worst(D, F, stats_next=None, n_rho=20, n_p=15, n_sub=15):
@@ -402,22 +415,36 @@ def select_worst(D, F, stats_next=None, n_rho=20, n_p=15, n_sub=15):
     return sel
 
 
-def write_replay(path, deck, F, D, eps_next, sel, step, sB, sub_next, cap_next):
+def write_replay(path, deck, F, D, Fn, Dn, eps_prev, sel, step, sB, sub_next,
+                 cap_next, dt_next):
+    """Committed state (F, D) at `step` + the increment to (Fn, Dn).
+
+    Fn may be a committed next step or a committed probe iterate; Dn may be
+    None (next-state columns then NaN)."""
     xy = gp_xy(deck)
+    nan6 = [float("nan")] * 6
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(REPLAY_HEAD)
         for k in sorted(sel, key=lambda k: -np.nan_to_num(D["rho"][k])):
             tag, gx, gy = xy[k]
             inf = deck["info"][tag]
-            de = eps_next[k] - F["eps"][k]
+            de = -(Fn["eps"][k] - F["eps"][k])            # compression positive
             de6 = [de[0], de[1], 0.0, de[2], 0.0, 0.0]
+            if eps_prev is not None:
+                dp = F["eps"][k] - eps_prev[k]
+                pin = math.sqrt(dp[0]**2 + dp[1]**2 + 0.5 * dp[2]**2)
+            else:
+                pin = 0.0
             st = F["st"][k]
+            sn = (-Dn["s6"][k]).tolist() if Dn is not None else nan6
+            an = Fn["st"][k][6:12].tolist() if Dn is not None else nan6
+            en = float(Fn["st"][k][24]) if Dn is not None else float("nan")
             w.writerow([tag, k % 4 + 1, f"{inf['xc']:.4f}", f"{inf['yc']:.4f}",
                         repr(float(D["p"][k])), repr(float(D["eta"][k])),
                         repr(float(D["eta_mb"][k])), repr(float(D["e"][k])),
                         repr(float(F["psi"][k]))]
-                       + [repr(float(v)) for v in D["s6"][k]]
+                       + [repr(float(v)) for v in -D["s6"][k]]
                        + [repr(float(v)) for v in st[6:12]]
                        + [repr(float(v)) for v in st[18:24]]
                        + [repr(float(v)) for v in st[12:18]]
@@ -427,7 +454,10 @@ def write_replay(path, deck, F, D, eps_next, sel, step, sB, sub_next, cap_next):
                           repr(float(D["frec"][k])),
                           int(sub_next[k]) if sub_next is not None else -1,
                           int(cap_next[k]) if cap_next is not None else -1,
-                          "+".join(sel[k])])
+                          repr(float(dt_next)), repr(float(pin))]
+                       + [repr(float(v)) for v in sn]
+                       + [repr(float(v)) for v in an]
+                       + [repr(en), "+".join(sel[k])])
 
 
 def save_field(path, deck, F, D, step, sB):
@@ -469,6 +499,7 @@ def main(argv=None):
     ap.add_argument("--field-every-step", type=int, default=1,
                     help="read the full field every step (1) or only at checkpoints (0)")
     ap.add_argument("--deterministic", type=int, default=0)
+    ap.add_argument("--ds-min", type=float, default=DS_MIN)
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
 
@@ -531,7 +562,9 @@ def main(argv=None):
     prev_stats = F["stats"].copy() if san else None
     Fprev, Dprev = F, D                 # committed state of the previous step
     Fpp = Dpp = None                    # ... and of the one before it
-    sub_prev = cap_prev = None
+    sub_prev = cap_prev = eps_ppp = None
+    sB_prev = sB_pp = 0.0
+    dt_prev = 0.0
     pending = []                        # checkpoint (F, D, step, sB) awaiting dS
     t_push = time.time()
     rows = []
@@ -566,10 +599,10 @@ def main(argv=None):
             ds *= 0.5
             log(f"  step {nstep+1}: ladder failed, ds -> {ds:.4e} m "
                 f"(s/B {s_now/B_FOOT:.6f})")
-            if ds < DS_MIN or time.time() - T0 > args.wall:
+            if ds < args.ds_min or time.time() - T0 > args.wall:
                 break
         if not ok:
-            mode = "FLOOR" if ds < DS_MIN else "WALL"
+            mode = "FLOOR" if ds < args.ds_min else "WALL"
             break
         nstep += 1
         good += 1
@@ -582,7 +615,7 @@ def main(argv=None):
         cen = [0, 0, 0, 0, 0, 0, 0]
         minp = maxeta = maxrho = float("nan"); nrho = 0
         if san and (args.field_every_step or ck):
-            Fn = read_field(deck, want_stats=True, want_f=ck)
+            Fn = read_field(deck, want_stats=True, want_f=True)
             Dn = derived(Fn)
             dst = Fn["stats"] - prev_stats
             prev_stats = Fn["stats"].copy()
@@ -594,20 +627,23 @@ def main(argv=None):
             maxrho = float(np.nanmax(Dn["rho"]))
             nrho = int(np.sum(Dn["rho"] > 1.0))
             # replay rows: committed state of the PREVIOUS step + this step's dS
-            for (Fc, Dc, stc, sbc) in pending:
+            for (Fc, Dc, stc, sbc, epsc) in pending:
                 sel = select_worst(Dc, Fc, sub_pt)
                 write_replay(os.path.join(out, "replay", f"replay_step{stc:05d}.csv"),
-                             deck, Fc, Dc, Fn["eps"], sel, stc, sbc, sub_pt, dst[:, 9])
+                             deck, Fc, Dc, Fn, Dn, epsc, sel, stc, sbc, sub_pt,
+                             dst[:, 9], -ds)
             pending = []
             if ck:
                 save_field(os.path.join(out, "ckpt", f"field_step{nstep:05d}.npz"),
                            deck, Fn, Dn, nstep, sB)
-                pending.append((Fn, Dn, nstep, sB))
+                pending.append((Fn, Dn, nstep, sB, Fprev["eps"]))
                 log(f"  checkpoint step {nstep} s/B {sB:.6f}: max|f_read - f_rec| = "
                     f"{np.nanmax(np.abs(Fn['f'] - Dn['frec'])):.3e}\n"
                     + ring_summary(deck, Dn, Fn))
-            Fpp, Dpp = Fprev, Dprev
-            Fprev, Dprev, sub_prev, cap_prev = Fn, Dn, sub_pt, dst[:, 9]
+            eps_ppp = Fpp["eps"] if Fpp is not None else None
+            Fpp, Dpp, sB_pp = Fprev, Dprev, sB_prev
+            Fprev, Dprev, sub_prev, cap_prev, dt_prev = Fn, Dn, sub_pt, dst[:, 9], -ds
+            sB_prev = sB
         wr.writerow([nstep, f"{s:.9e}", f"{sB:.9e}", f"{q:.6f}", f"{ds:.4e}", rung,
                      iters, fails_before, f"{wall_step:.3f}",
                      f"{time.time()-t_push:.1f}", *cen,
@@ -651,11 +687,18 @@ def main(argv=None):
                    np.column_stack([np.arange(len(Dn["p"])), Fn["stats"]]),
                    delimiter=",", header="k," + ",".join(STAT_NAMES), comments="",
                    fmt="%.10g")
+        # the last converged PAIR: committed state n-1 + the increment of step n
+        if args.field_every_step and Fpp is not None:
+            sel = select_worst(Dpp, Fpp, sub_prev)
+            write_replay(os.path.join(out, "replay", "replay_wall_last_pair.csv"),
+                         deck, Fpp, Dpp, Fprev, Dprev, eps_ppp, sel, nstep - 1,
+                         sB_pp, sub_prev, cap_prev, dt_prev)
+            log("wrote replay_wall_last_pair.csv (state at step n-1 + dStrain of "
+                "the last converged step n)")
         if mode == "FLOOR":
             # probe: from the last converged state, ONE Newton iteration of the
             # first increment the wall step tried (FixedNumIter 1 commits it; the
             # run is over, so committing a non-equilibrium iterate is harmless).
-            sel_base = select_worst(Dn, Fn, sub_prev if args.field_every_step else None)
             dsp = first_try_ds
             got = False
             for _ in range(12):
@@ -665,28 +708,23 @@ def main(argv=None):
                 if ops.analyze(1) == 0:
                     got = True
                     break
+                log(f"wall probe: iterate 1 at ds = {dsp:.4e} refused; halving")
                 dsp *= 0.5
             if got:
-                Fp = read_field(deck, want_stats=True, want_f=False)
+                Fp = read_field(deck, want_stats=True, want_f=True)
+                Dp = derived(Fp)
                 subp = Fp["stats"][:, 13]
                 capp = Fp["stats"][:, 16]
                 sel = select_worst(Dn, Fn, subp)
                 write_replay(os.path.join(out, "replay", "replay_wall_probe_iter1.csv"),
-                             deck, Fn, Dn, Fp["eps"], sel, nstep, s_end, subp, capp)
+                             deck, Fn, Dn, Fp, Dp, Fpp["eps"] if Fpp is not None else None,
+                             sel, nstep, s_end, subp, capp, -dsp)
                 log(f"wall probe: 1 Newton iterate at ds = {dsp:.4e} m committed "
                     f"(first try was {first_try_ds:.4e}); iterate-1 substeps total "
                     f"{int(subp.sum())}, max/pt {int(subp.max())}, capHits {int(capp.sum())}")
                 summary["probe_ds"] = dsp
             else:
                 log("wall probe: every probe increment refused at iterate 1")
-        # the last converged PAIR: committed state n-1 + the increment of step n
-        if args.field_every_step and Fpp is not None:
-            sel = select_worst(Dpp, Fpp, sub_prev)
-            write_replay(os.path.join(out, "replay", "replay_wall_last_pair.csv"),
-                         deck, Fpp, Dpp, Fprev["eps"], sel, nstep - 1,
-                         rows[-2][0] if len(rows) > 1 else 0.0, sub_prev, cap_prev)
-            log("wrote replay_wall_last_pair.csv (state at step n-1 + dStrain of "
-                "the last converged step n)")
     with open(os.path.join(out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1, default=str)
     log("DONE")
