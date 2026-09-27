@@ -628,7 +628,16 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     const double eN = m_e_init - (1 + m_e_init) * GetTrace(CurStrain);
     mVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(NextStrain);
 
-    Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n), ain(mAlpha_in);
+    // Paper alpha_in rule (the default): alpha_in changes ONLY at a plastic
+    // onset or where (alpha - alpha_in):n reaches 0 -- both decided inside this
+    // update. integrate()'s once-per-increment test on the elastic trial
+    // ((alpha_n - alpha_in_n):Ce:d_eps < 0, UW's rule U6) is therefore UNDONE
+    // here: start from the committed alpha_in. (WP-134: with UW's rule 146/480
+    // exact ring runs reach h < 0; with the paper's, 0/960.) bracket / stale
+    // keep UW's pre-decision.
+    const bool paperRule = (o.alphaInMode == 0);
+    Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n),
+           ain(paperRule ? mAlpha_in_n : mAlpha_in);
     int code = 0;
 
     // ---- 0. entry: the committed state must be admissible ------------------
@@ -709,6 +718,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         if (elastic) {
             st[LSAS_ELASTIC] += 1.0;
             mSigma = S; mAlpha = A; mFabric = Z; mEpsilonE = Ee;
+            mAlpha_in = ain;
             mDGamma = 0.0;
             GetElasticModuli(S, mVoidRatio, K, G);
             mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
@@ -745,6 +755,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         case RC_CAP:         st[LSAS_REF_CAP] += 1.0; break;
         }
         mSigma = mSigma_n; mAlpha = mAlpha_n; mFabric = mFabric_n; mEpsilonE = mEpsilonE_n;
+        if (paperRule)
+            mAlpha_in = mAlpha_in_n;
         mDGamma = 0.0;
         GetElasticModuli(mSigma_n, eN, K, G);
         mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;

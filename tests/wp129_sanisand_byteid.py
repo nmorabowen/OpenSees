@@ -87,6 +87,11 @@ _INCS_CYC = ([(-_E / 10, _E / 10)] * 8 + [(_E / 10, -_E / 10)] * 12
              + [(-_E / 10, _E / 10)] * 8)
 
 LS_SCHEMES = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 45)
+# decks whose PLASTIC rows are not reproducible even on the unmodified binary
+# (measured: two runs of ls3d_s4 in one process differ) -> number of leading
+# rows (the elastic stage) that ARE pinned. Cause: MaxEnergyInc's uninitialised
+# `double nG, nK` handed to ForwardEuler when it sub-steps (LEDGER_quirks).
+NONDETERMINISTIC = {"ls3d_s4": 10}
 MD_SCHEMES = (1, 2, 45)
 
 

@@ -195,9 +195,6 @@ def prof():
 
 def main():
     W.define_prototypes(ops)
-    ops.nDMaterial("LadrunoSANISAND", W.TAG_SAS_ABL, *W.P,
-                   *W.sas_opts(1e-4, extra=("-sasAlphaIn", "stale", "-sasErrorVars", "stress",
-                                            "-alphaBoundTol", 1.0e6)))
     which = sys.argv[1:] or ["t1", "t2", "t3", "cp", "prof"]
     for w in which:
         globals()[w]()

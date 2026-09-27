@@ -2784,7 +2784,13 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
     if (!this->ladrunoImplexActive()) {
         mImplexTrialDone = false;   // so commitState() takes the base path
         this->integrate();
-        this->ladrunoGuardReversalNoise();   // Ladruno ADR-92 P2-5
+        // Ladruno WP-129: SAS-ME under the paper's alpha_in rule decides
+        // alpha_in itself (onset / (alpha - alpha_in):n = 0) and ignores
+        // integrate()'s trial-based reset, so the P2-5 noise guard -- which
+        // exists to undo THAT reset -- must not overwrite its answer.
+        if (!(mLadrunoSas.allowed && (int)mScheme == LADRUNO_INT_SAS_ME
+              && mLadrunoSas.opt.alphaInMode == 0))
+            this->ladrunoGuardReversalNoise();   // Ladruno ADR-92 P2-5
         return this->ladrunoUpdateStatus();
     }
     return this->ladrunoImplexTrial();

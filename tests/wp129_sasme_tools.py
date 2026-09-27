@@ -48,8 +48,12 @@ def define_prototypes(ops, tolr=1.0e-4):
     ops.nDMaterial("LadrunoSANISAND", TAG_SAS, *P, *sas_opts(tolr))
     ops.nDMaterial("LadrunoSANISAND", TAG_SAS_BR, *P, *sas_opts(tolr, extra=("-sasAlphaIn", "bracket")))
     ops.nDMaterial("LadrunoSANISAND", TAG_SAS_ABL, *P,
-                   *sas_opts(tolr, extra=("-sasAlphaIn", "stale", "-sasErrorVars", "stress")))
-    ops.nDMaterial("LadrunoSANISAND", TAG_SAS_NOE, *P, *sas_opts(tolr, extra=("-sasErrorVars", "stress")))
+                   *sas_opts(tolr, extra=("-sasAlphaIn", "stale", "-sasErrorVars", "stress",
+                                          "-alphaBoundTol", 1.0e6)))
+    # attribution prototypes: the alpha backstop is out of the way (kappa 1e6),
+    # so what is measured is the ablated mechanism itself
+    ops.nDMaterial("LadrunoSANISAND", TAG_SAS_NOE, *P,
+                   *sas_opts(tolr, extra=("-sasErrorVars", "stress", "-alphaBoundTol", 1.0e6)))
     ops.nDMaterial("LadrunoSANISAND", TAG_SAS_PRJ, *P, *sas_opts(tolr, extra=("-alphaProject", 1)))
 
 

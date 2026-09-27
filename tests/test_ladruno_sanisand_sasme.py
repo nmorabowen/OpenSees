@@ -38,18 +38,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 KAPPA = W.KAPPA
 
 
-@pytest.fixture(scope="module")
-def protos():
+def _define_all():
     W.define_prototypes(ops)
-    # attribution prototypes need the alpha check out of the way, so that the
-    # thing measured is the ablated mechanism, not the backstop
-    ops.nDMaterial("LadrunoSANISAND", W.TAG_SAS_ABL, *W.P,
-                   *W.sas_opts(1e-4, extra=("-sasAlphaIn", "stale", "-sasErrorVars", "stress",
-                                            "-alphaBoundTol", 1.0e6)))
-    ops.nDMaterial("LadrunoSANISAND", W.TAG_SAS_NOE, *W.P,
-                   *W.sas_opts(1e-4, extra=("-sasErrorVars", "stress", "-alphaBoundTol", 1.0e6)))
     ops.nDMaterial("LadrunoSANISAND", 7, *W.P, *W.sas_opts(1e-7))    # tight, for (b)
     ops.nDMaterial("LadrunoSANISAND", 8, *W.P, *W.sas_opts(1e-10))   # tighter, for (f)
+
+
+@pytest.fixture(scope="module")
+def protos():
+    _define_all()
     yield
     ops.wipe()
 
@@ -67,6 +64,15 @@ def test_existing_schemes_byte_identical():
     assert set(cur) == set(ref)
     bad = []
     for name in ref:
+        if name in B.NONDETERMINISTIC:
+            # IntScheme 4: vanilla MaxEnergyInc passes UNINITIALISED `nG, nK`
+            # into ForwardEuler once it sub-steps, so its plastic rows differ
+            # run to run in the SAME process on the unmodified binary too
+            # (LEDGER_quirks, WP-129). Only its elastic-stage rows are pinned.
+            n0 = B.NONDETERMINISTIC[name]
+            if cur[name][:n0] != ref[name][:n0]:
+                bad.append(f"{name}: elastic-stage rows differ")
+            continue
         if cur[name] != ref[name]:
             nrow = sum(1 for a, b in zip(cur[name], ref[name]) if a != b)
             bad.append(f"{name}: {nrow} rows differ")
@@ -169,10 +175,16 @@ def test_T1_reproducer_grid(protos, tag):
     assert r["rc"] == 0 and r["ab_n"] < 0.6, r
 
 
-def test_T1_gate_can_fail_with_both_fixes_ablated(protos):
-    rows = _t1(W.TAG_SAS_ABL)
-    r = next(r for r in rows if r["ps"] == 0.0101 and r["delta"] == 1e-4)
-    assert r["rc"] == 0 and r["ab_n"] > 2.0, r   # the ME escape (5.14) is back
+def test_T1_negative_control_today_escapes(protos):
+    """The gate can fail: today's ModifiedEuler on the same grid escapes
+    (WP-128: 5.14 at p_s 0.0101, delta 1e-4). With BOTH G and E ablated,
+    SAS-ME still stays inside there (0.25): the stage moduli (U9) and the
+    true-gradient loading classification (F/U10) remove this escape on their
+    own -- WP-134's finding that F is load-bearing, not a compounder."""
+    r = next(r for r in _t1(W.TAG_ME) if r["ps"] == 0.0101 and r["delta"] == 1e-4)
+    assert r["rc"] == 0 and r["ab_n"] > 2.0, r
+    r = next(r for r in _t1(W.TAG_SAS_ABL) if r["ps"] == 0.0101 and r["delta"] == 1e-4)
+    assert r["rc"] == 0 and r["ab_n"] < 1.0, r
 
 
 def test_T1_G_fix_alone_keeps_alpha_inside(protos):
@@ -305,7 +317,7 @@ def test_refusal_reaches_analyze():
     assert min(rcs) < 0, rcs
     s = dict(zip(sr.SAS_NAMES, ops.eleResponse(1, "material", 1, "sasStats")))
     assert s["refusals"] >= 1 and s["refCap"] >= 1, s     # survives the failed step
-    ops.wipe()
+    _define_all()   # the module's prototypes for the tests that follow
 
 
 # ---------------------------------------------------------------------- (f)
