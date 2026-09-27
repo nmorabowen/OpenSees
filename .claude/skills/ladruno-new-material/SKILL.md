@@ -48,6 +48,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] A substep count sized from the increment (`|Δε|/h`) must be capped, and past the cap the
+      trial refused: a Newton iterate can be ~1e4 and ask for ~1e9 substeps (an apparent hang).
+      Quirks: "one wild Newton iterate makes `setSubStrainRate()` ask for".
 - [ ] IMPL-EX in a static analysis: `ops_Dt` is pseudo-time and erratic; guard the
       extrapolation factor. Quirks: "IMPL-EX in a STATIC analysis".
 - [ ] `revertToStart()` must not reset calibrated constants mid-analysis. Quirks:
