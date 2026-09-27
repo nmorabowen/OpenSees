@@ -399,3 +399,69 @@ def test_base_response_vocabulary(name):
     fx = sum(damp[i] for i in range(0, len(damp), ndf))
     want = aM * RHO * VOLUME[name] * v0
     assert abs(fx - want) <= 1.0e-9 * want, f"{name}: sum dampingForce_x {fx!r}, want {want!r}"
+
+# ---- gap fixes C4, C5, C10 --------------------------------------------------------------
+C4 = pytest.mark.xfail(strict=True, reason="C4: LadrunoCSTPair has no stressPlaneStrain token")
+
+
+@C4
+def test_cstpair_stress_plane_strain():
+    """C4: the fourth plane element exposes the 4-component plane-strain stress per triangle
+    ([sxx, syy, sxy, szz] x 2), in-plane parts identical to 'stress'."""
+    node, load = _cstpair()
+    _static(node, load, ("Newton",), iters=20)
+    assert ops.analyze(1) == 0
+    s = ops.eleResponse(1, "stress")
+    s4 = ops.eleResponse(1, "stressPlaneStrain")
+    assert len(s) == 6 and len(s4) == 8, (len(s), len(s4))
+    for t in range(2):
+        assert s4[4 * t:4 * t + 3] == s[3 * t:3 * t + 3]
+
+
+C5 = pytest.mark.xfail(strict=True, reason="C5: LadrunoQuad SSP 'material k' edits a dead slot for k > 1")
+
+
+@C5
+@pytest.mark.parametrize("k", [2, 3, 4])
+def test_quad_ssp_material_point_maps_to_the_live_slot(k):
+    """C5: under -formulation ssp the only live material is slot 0 (setResponse and
+    LadrunoBrick already map every k there), so 'material k E' must act like 'material 1 E'."""
+    def solve(param):
+        _plane(QUAD, [(1, (1, 1)), (2, (0, 1))])
+        ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-formulation", "ssp", "-type", "PlaneStrain")
+        if param:
+            ops.parameter(1, "element", 1, *param)
+            ops.updateParameter(1, 0.5 * E)
+        _static(3, (1.0, 0.3), ("Newton",), iters=20)
+        assert ops.analyze(1) == 0
+        return ops.nodeDisp(3, 1)
+    ref = solve(None)
+    one = solve(("material", "1", "E")) / ref
+    kth = solve(("material", str(k), "E")) / ref
+    assert one != 1.0
+    assert kth == one, f"'material {k} E' ratio {kth!r} != 'material 1 E' ratio {one!r}"
+
+
+C10 = pytest.mark.xfail(strict=True, reason="C10: 'materialState' is swallowed by the 'material' branch")
+STATE = [n if n.startswith("Bezier") else pytest.param(n, marks=C10)
+         for n in ELEMENTS if n != "LadrunoCSTPair"]
+
+
+@pytest.mark.parametrize("name", STATE)
+def test_material_state_reaches_the_materials(name, capfd, monkeypatch):
+    """C10: the UW staged-analysis switch ('parameter ... materialState', e.g. DruckerPrager
+    elastic -> plastic) must reach the GP materials. The Ladruno elements' 'material'-prefix
+    test swallowed it (argc < 3 -> -1); Bezier and SixNodeTri exclude it."""
+    orig = ops.nDMaterial
+
+    def dp(*a):
+        if a[0] == "ElasticIsotropic":
+            return orig("DruckerPrager", a[1], 833.3, 384.6, 1.0e3,
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, RHO)
+        return orig(*a)
+    monkeypatch.setattr(ops, "nDMaterial", dp)
+    ELEMENTS[name]()
+    capfd.readouterr()
+    ops.parameter(1, "element", 1, "materialState")
+    err = capfd.readouterr().err
+    assert "no objects were able to identify" not in err, f"{name}: materialState unclaimed"
