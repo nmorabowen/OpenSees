@@ -210,19 +210,29 @@ it sets PARDISO's `iparm(34)` to the MKL thread count at every symbolic phase.
 The first solve prints what MKL reports is actually in force:
 
 ```
-PARDISO deterministic mode: MKL CNR branch AUTO (-> AVX2), iparm(34)=8 thread(s), CNR ACTIVE
+PARDISO deterministic mode: MKL CNR branch AUTO, iparm(34)=8 thread(s), CNR ACTIVE
 ```
+
+On an Intel CPU, where MKL reports the branch AUTO resolved to, it is shown as
+`AUTO (-> AVX2)`.
 
 - **Same machine, same thread count:** `-deterministic` is enough.
 - **Across nodes whose CPUs differ** (the §1.6 case): AUTO chooses a code path
   per CPU, so two nodes can still disagree. Pin one branch that every node
-  supports, e.g. `-cbwr AVX2`, or `-cbwr COMPATIBLE` for any x86 CPU at some
-  speed cost. Add `,STRICT` (`-cbwr AVX2,STRICT`) to make MKL refuse a branch
-  the CPU cannot run exactly. The thread count must match too.
-- **The mode is process-wide and sticky.** It cannot be turned off for a
-  later model in the same interpreter, and MKL refuses to change it once it has
-  computed anything (`MKL_CBWR_ERR_MODE_CHANGE_FAILURE`). If you see that
-  warning, set the environment variable before the process starts:
+  can run. **`-cbwr COMPATIBLE` is the portable choice**: it runs on any x86
+  CPU, at some speed cost. The instruction-set branches (`SSE4_2`, `AVX`,
+  `AVX2`, `AVX512`, `AVX10`) are for Intel CPUs only. On an AMD Ryzen every one
+  of them was refused (rc -3), and only `AUTO` and `COMPATIBLE` worked, so use
+  `-cbwr AVX2` only when every node is an Intel CPU with AVX2. `,STRICT`
+  (`-cbwr COMPATIBLE,STRICT`) makes MKL stricter about the branch. The thread
+  count must match too.
+- **The mode is process-wide and sticky.** It stays on for every later model
+  in the same interpreter, and this command has no way to turn it off. MKL
+  refuses to set it (`MKL_CBWR_ERR_MODE_CHANGE_FAILURE`) once its BLAS/LAPACK
+  dispatch has started in the process. Measured: an `eigen` solve before
+  `system Pardiso -deterministic` triggers the refusal. An earlier PARDISO solve
+  does not. If you see that warning, set the environment variable before the
+  process starts:
   `set MKL_CBWR=AUTO` (or the branch). A bare `-deterministic` keeps a branch
   already fixed by `MKL_CBWR`, so the launcher line stays in charge. Tcl stops
   on a refused mode. Python warns and continues, and the first-solve notice

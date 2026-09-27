@@ -19,6 +19,11 @@ a boot .pth.
   test_env_branch_kept               MKL_CBWR=COMPATIBLE + bare -deterministic:
                                      the launcher's branch is kept
   test_unknown_cbwr_degrades         -cbwr BOGUS warns and falls back to AUTO
+  test_refused_after_lapack_warns_not_active
+                                     eigen (LAPACK) first -> rc -8, relaunch hint,
+                                     notice says CNR NOT ACTIVE
+  test_prior_pardiso_solve_does_not_block
+                                     a PARDISO solve first does NOT block it
   test_mode_on_byte_identical        [slow] ~22k-DOF J2 push at 8 threads, N
                                      runs with the mode on: ONE distinct result
   test_mode_off_reported             [slow] the same N runs with the mode off:
@@ -96,6 +101,16 @@ for j in range(ny + 1):
 ctrl = nid(nx // 2, ny // 2, nz)
 ops.constraints("Plain")
 ops.numberer("RCM")
+if os.environ.get("WP132_PARDISO_FIRST"):
+    ops.system("Pardiso")
+    ops.test("NormDispIncr", 1.0e-8, 40); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.wipeAnalysis()
+if os.environ.get("WP132_EIGEN_FIRST"):
+    # a LAPACK solve BEFORE the request: MKL's dispatch is then initialized
+    ops.mass(ctrl, 1.0, 1.0, 1.0)
+    ops.eigen("-fullGenLapack", 1)
 ops.system(*json.loads(os.environ["WP132_SYSTEM"]))
 ops.test("NormDispIncr", 1.0e-8, 40)
 ops.algorithm("Newton")
@@ -154,7 +169,9 @@ def test_notice_and_iparm34():
     ln = _notice(err)
     assert len(ln) == 1, err            # ONE notice per solver object
     assert "CNR ACTIVE" in ln[0], ln[0]
-    assert "branch AUTO (-> " in ln[0], ln[0]   # AUTO names the concrete branch
+    # AUTO; the "(-> BRANCH)" suffix appears only where MKL resolves one
+    # (Intel). On AMD mkl_cbwr_get_auto_branch() returns AUTO itself.
+    assert "branch AUTO" in ln[0] and "(-> AUTO)" not in ln[0], ln[0]
     assert "iparm(34)=" + THREADS + " thread(s)" in ln[0], ln[0]
 
 
@@ -181,6 +198,25 @@ def test_unknown_cbwr_degrades():
     assert "unknown -cbwr branch BOGUS" in err, err
     ln = _notice(err)
     assert len(ln) == 1 and "branch AUTO" in ln[0] and "CNR ACTIVE" in ln[0], err
+
+
+def test_refused_after_lapack_warns_not_active():
+    # MKL_CBWR_ERR_MODE_CHANGE_FAILURE (-8): measured trigger = an earlier
+    # LAPACK eigen solve. Python degrades (the Tcl parser returns TCL_ERROR).
+    _, err = _child(["Pardiso", "-deterministic"],
+                    extra_env={"WP132_EIGEN_FIRST": "1"})
+    assert "failed (rc -8" in err and "MKL_CBWR=AUTO" in err, err
+    ln = _notice(err)
+    assert len(ln) == 1 and "CNR NOT ACTIVE" in ln[0], err
+
+
+def test_prior_pardiso_solve_does_not_block():
+    # The opposite, also measured: a PARDISO solve (no flag) earlier in the
+    # SAME process does not stop the mode from being set afterwards.
+    _, err = _child(["Pardiso", "-deterministic"],
+                    extra_env={"WP132_PARDISO_FIRST": "1"})
+    ln = _notice(err)
+    assert len(ln) == 1 and "CNR ACTIVE" in ln[0], err
 
 
 # ---------------------------------------------------------------- the F22 gate

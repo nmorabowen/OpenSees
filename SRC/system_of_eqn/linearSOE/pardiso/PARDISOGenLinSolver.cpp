@@ -52,9 +52,12 @@
 // path-dependent nonlinear deck that last bit is amplified — TIMs §1.6 saw a
 // bearing "wall" move 30 % between two identical runs. CNR needs BOTH halves:
 //   * mkl_cbwr_set(branch) — process-wide, sticky, and refused
-//     (MKL_CBWR_ERR_MODE_CHANGE_FAILURE) once MKL has computed anything, so it
-//     is called at `system` time, and the MKL_CBWR environment variable is the
-//     documented fallback;
+//     (MKL_CBWR_ERR_MODE_CHANGE_FAILURE) once MKL's BLAS/LAPACK dispatch is
+//     initialized (measured: an earlier LAPACK eigen solve triggers it, an
+//     earlier PARDISO solve does not), so it is called at `system` time, and
+//     the MKL_CBWR environment variable is the documented fallback;
+//     the instruction-set branches (SSE4_2 ... AVX10) exist on Intel CPUs
+//     only — on AMD only AUTO and COMPATIBLE are accepted (measured);
 //   * iparm(34) = iparm[33] = the thread count — PARDISO's own CNR switch,
 //     re-applied at every symbolic phase because that block zeroes iparm.
 // Off by default: no mkl_cbwr_* call and iparm[33] stays 0, i.e. the solver is
@@ -370,9 +373,14 @@ PARDISOGenLinSolver::solve(void)
 			cnrInForce = (inForce > MKL_CBWR_BRANCH_OFF);
 			opserr << "PARDISO deterministic mode: MKL CNR branch "
 			       << ops_cbwr_name(inForce);
-			if (inForce == MKL_CBWR_AUTO)
-				opserr << " (-> " << ops_cbwr_name(mkl_cbwr_get_auto_branch())
-				       << ")";
+			// Name the concrete branch AUTO resolved to — only when MKL says
+			// something more than "AUTO" (measured on an AMD CPU:
+			// mkl_cbwr_get_auto_branch() returns AUTO itself).
+			if (inForce == MKL_CBWR_AUTO) {
+				const int resolved = mkl_cbwr_get_auto_branch();
+				if (resolved > MKL_CBWR_AUTO)
+					opserr << " (-> " << ops_cbwr_name(resolved) << ")";
+			}
 			if (all & MKL_CBWR_STRICT)
 				opserr << ",STRICT";
 			opserr << ", iparm(34)=" << iparm[33] << " thread(s), CNR "
@@ -666,14 +674,20 @@ PARDISOGenLinSolver::setDeterministic(int branch, int keepEnv)
 	       << ") failed (rc " << rc;
 	switch (rc) {
 	case MKL_CBWR_ERR_MODE_CHANGE_FAILURE:
-		opserr << ": the CNR mode is process-wide and cannot change once MKL "
-		          "has computed anything in this process).\n     Relaunch with "
+		// Measured (WP-132): a LAPACK eigen solve earlier in the process
+		// triggers this; an earlier PARDISO solve does not.
+		opserr << ": the CNR mode is process-wide and MKL refuses to change it "
+		          "once its BLAS/LAPACK dispatch is\n     initialized in this "
+		          "process, e.g. by an earlier eigen solve).\n     Relaunch with "
 		          "the environment variable MKL_CBWR=" << want
 		       << " set before OpenSees starts.\n";
 		break;
 	case MKL_CBWR_ERR_UNSUPPORTED_BRANCH:
-		opserr << ": this CPU cannot run that code branch; use AUTO or "
-		          "COMPATIBLE).\n";
+		// Measured (WP-132): on an AMD CPU every instruction-set branch
+		// (SSE4_2 ... AVX10) returns this; only AUTO and COMPATIBLE work.
+		opserr << ": this CPU cannot run that code branch — the instruction-set "
+		          "branches are for Intel CPUs;\n     use AUTO, or COMPATIBLE "
+		          "for a branch every x86 node can run).\n";
 		break;
 	default:
 		opserr << ": see the MKL CBWR error table).\n";
