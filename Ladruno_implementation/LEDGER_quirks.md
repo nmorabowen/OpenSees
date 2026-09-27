@@ -7493,6 +7493,13 @@ Three things to carry forward:
   `commitState` on an increment nothing proposes off-path — exactly the regime where scheme 2 wins)
   is measured nowhere and remains open. Full tables and scripts:
   `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
+- **Status (WP-130, #868):** the ladder is bounded on request: `-cppmHalvings n` (0..9, vanilla 9 =
+  up to 2^9 half-increments) with `-cppmOnFail refuse`. On a one-quad free-DOF deck (100 kPa, one
+  2 kPa push step the CPPM cannot return) the default grinds 31 global iterations, 224 local-Newton
+  failures, 440 half-increments and 4 silent explicit fallbacks in 5.6 s before analyze returns
+  -3; `-cppmOnFail refuse -cppmHalvings 0` returns -3 in 8-22 ms (pinned,
+  `tests/test_ladruno_sanisand_cppm_newton.py`). Refusing fast does not make the bearing leg
+  converge -- see the WP-130 bearing rows in `wp130_f18c/` and the PR.
 
 ### `ManzariDafalias::integrate()` discards `BackwardEuler_CPPM`'s return value, and the CPPM's own ladder can never fail anyway — a scheme-2 non-convergence is invisible in every channel
 - **Bites:** a CPPM step whose Newton diverged, whose Jacobian was singular, or which recursed
@@ -7528,6 +7535,13 @@ Three things to carry forward:
   `ModifiedEuler`. Until then, treat any scheme-2 run through a global Newton as unauditable for
   silent quality loss — measure cost and stall rate (this entry's numbers), not correctness,
   because correctness has no channel to fail loudly through.
+- **Status (WP-130, #868):** now VISIBLE and, on request, a REFUSAL. `substepStats` columns
+  17-27 count every CPPM call, local-Newton failure, half-increment, **silent explicit fallback**
+  (`cppmExplicitFail`, vanilla's path, still taken at the defaults) and low-p explicit branch, per
+  integration point. `-cppmOnFail refuse` turns the terminal explicit branch into
+  `LADRUNO_MATERIAL_REFUSED` (`BackwardEuler_CPPM` returns -5, `ladrunoUpdateStatus()` ORs
+  `mLadrunoCPPMRefused`), so a forwarding element cuts the step. `integrate()` still discards the
+  return value; the refusal travels in the flag. Default byte-identical.
 
 ### `LadrunoSANISAND::schemeReachesModifiedEuler()` returns false for `IntScheme 2`, so the class prints "`-maxSubsteps` has NO EFFECT" — MEASURED FALSE — fixed (WP-108, #845)
 - **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
@@ -7687,3 +7701,43 @@ Three things to carry forward:
 ### The TIMs ring-point CSVs carry the INTERNAL, compression-POSITIVE `mSigma`, although their README says "compression negative" (finding A, WP-127)
 - **Bites:** `_tims_2d_model_requests_2026-09-25/ring_points_b{8,16}.csv`: on all 80 rows `p_kPa == +tr(sigma)/3` and every normal stress is >= 0. `ManzariDafalias` stores `mSigma` compression-positive; only the wrappers' `getStress()` flips it (`eleResponse ... stress` is tension-positive). A dump taken from internal members (or a post-processor that negated twice) looks exactly like the README's claim until you check `p` against the trace. `alpha`, `alpha_in` and `z` are ratios and are NOT flipped by the wrappers in either direction. b8 row 1859/2 also carries `tr(alpha) = 2.3e-3` (the rest ~1e-10).
 - **Workaround/status:** `ladrunoSANISANDReplay` has **no default convention** — `-convention compressionPositive|tensionPositive` is required — and projects alpha/alpha_in/z to deviatoric with a warning above round-off (the pre-projection traces are returned). `sanisand_replay.check_sign_convention()` verifies a dump row. Tell the act (WP-127 plan, reply doc).
+
+### `ManzariDafalias::NewtonSol` inverted its three 6x6 blocks on `Matrix::matrixWork`, the process-wide scratch; `NewtonIter` kept function-scope STATIC work arrays (WP-130)
+- **Bites:** a threaded state-determination (WP-107 / F19) on IntScheme 2 shares one DGETRF/DGETRI
+  work and pivot array across every Gauss point (a silently WRONG inverse), and anything inverting
+  a matrix larger than 400 doubles REALLOCATES it under the others (use-after-free). The
+  `static Vector sol/R/R2/dX/norms/aux` and `static Matrix jaco/jInv` in `NewtonIter` are also
+  shared and sized by whichever call ran first -- but `NewtonIter` has NO caller (IntScheme 2 runs
+  `NewtonIter2 -> NewtonSol`), so the statics were never the live hazard; WP-131's inventory (D6/D9)
+  says so. The trap is fixing the dead statics and calling IntScheme 2 re-entrant.
+- **Fixed (WP-130, #868):** `NewtonSol` calls a file-static `ladrunoInvertLocal` (same LAPACK pair,
+  pivot/work on the stack, lwork 400) -- bit-identical to `Matrix::Invert` for n = 6 (unblocked
+  DGETRI), pinned on seven IntScheme-2 decks including a free-DOF Newton deck whose iteration counts
+  are compared too. `NewtonIter`'s statics are locals. `ladrunoThreadSafeUpdate()` still answers
+  false: re-entrancy is MEASURED in WP-131, not argued here. Other `Matrix::Invert/Solve` callers
+  in the file (the dead `NewtonSol2`/`NewtonSol_negP`, `NewtonIter`) still use the shared scratch.
+
+### `BackwardEuler_CPPM`'s elastic-trial start fails exactly where SANISAND is stiffest -- the first plastic increment after a reversal or the stage flip (WP-130)
+- **Bites:** with `alpha_in = alpha` (the stage flip under `-flipAlphaIn init`, or any loading
+  reversal) `(alpha - alpha_in):n = 0`, `GetStateDependent` returns its `h = 1e10` sentinel and
+  `NewtonSol` zeroes `dGamma` in the Jacobian; the condensed system is near singular from the
+  elastic trial, the local Newton returns -1 and vanilla goes straight to the explicit fallback, or
+  returns 0 and halves up to 2^9 times. On the one-quad free-DOF decks of WP-130 the failing step
+  is the first plastic push step after the flip.
+- **Status (WP-130, #868):** `-cppmStart explicit` retries the local Newton ONCE per level from a
+  50-substep ForwardEuler guess (vanilla carries this rung as `SchemeControl == 1`, dead code that
+  would also pass uninitialised K, G). On the 100 kPa quad it returns 3 of 4 failing increments
+  (census `cppmGuessOk/cppmGuessTries`) but the global step still fails; it is opt-in and
+  unqualified beyond the WP-130 decks. `-cppmLineSearch on` (halving on ||R||) cut the local-Newton
+  failures on the 10 kPa quad from 36 to 2 but did not make that global step converge either.
+
+### Inside the ME -> CPPM fallback the CPPM ladder is guarded by `mScheme == INT_BackwardEuler` and its explicit exits re-enter ModifiedEuler (WP-130)
+- **Bites:** calling `BackwardEuler_CPPM` from an IntScheme-1 material skips the whole retry ladder
+  (vanilla returns an UNCONVERGED state with errFlag 0), and any explicit exit (low-p branch, ladder
+  exhaustion) calls `explicit_integrator` -> the ModifiedEuler that just hit its `-maxSubsteps`
+  cap, which then hits it again at once (the cap counts per `integrate()`).
+- **Fixed (WP-130, #868):** `-meFallback cppm` sets `mLadrunoInMEFallback` for the call: the ladder
+  runs (`|| mLadrunoInMEFallback`) up to `-cppmHalvings`, and every explicit exit REFUSES. On
+  success the cap flag is cleared; on failure it stays set, so the update is refused exactly as
+  without the fallback, and every existing reader of `mSubstepCapHitInME` (the IMPL-EX companion
+  included) stays consistent. Not qualified with `-implex` (the parser refuses the combination).
