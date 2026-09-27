@@ -215,7 +215,7 @@ if __name__ == "__main__":
         with open(FIXED_BASELINE if fixed else BASELINE, "w") as fh:
             json.dump({"build": ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "?",
                        "decks": res}, fh, indent=0)
-        print("wrote", BASELINE)
+        print("wrote", FIXED_BASELINE if fixed else BASELINE)
     for name, rows in res.items():
         iters = [r[1] for r in rows if len(r) > 1 and isinstance(r[1], int)]
         print(name, len(rows), "rows; rc set", sorted({r[0] for r in rows}),
