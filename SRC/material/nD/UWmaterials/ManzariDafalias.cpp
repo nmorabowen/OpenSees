@@ -295,6 +295,7 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
     mLadrunoCPPMStart      = 0;            // Ladruno WP-130
+    mLadrunoCPPMTangentFix = 0;            // Ladruno WP-130: vanilla's sign
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -393,6 +394,7 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
     mLadrunoCPPMStart      = 0;            // Ladruno WP-130
+    mLadrunoCPPMTangentFix = 0;            // Ladruno WP-130: vanilla's sign
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -468,6 +470,7 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
     mLadrunoCPPMStart      = 0;            // Ladruno WP-130
+    mLadrunoCPPMTangentFix = 0;            // Ladruno WP-130: vanilla's sign
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -542,6 +545,7 @@ ManzariDafalias ::ManzariDafalias()
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
     mLadrunoCPPMStart      = 0;            // Ladruno WP-130
+    mLadrunoCPPMTangentFix = 0;            // Ladruno WP-130: vanilla's sign
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -3916,6 +3920,19 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
     } else {
         delZ           = ZSigma * delSig + delGamma * ZLambda + ZConstant;
         delAlph        = ASigma * delSig + delGamma * ALambda + AConstant;
+        // Ladruno WP-130 (TIMs F18(c)): the condensed system is DSigma d_sigma =
+        // d_eps (R1 = eStrain - TrialElasticStrain + ..., d R1/d eps = -I), so the
+        // algorithmic tangent d sigma/d eps is +DSigma^-1 = +CSigma. Vanilla stores
+        // its NEGATIVE: under IntScheme 2 + TanType 2 the element receives a
+        // negative-definite stiffness and the global Newton diverges from its first
+        // iteration (measured on F12's bearing deck; FD check in
+        // Ladruno_files/testbed/hypo_bearing/wp130_f18c/q_tangent_fd.py). The sign
+        // does not enter the local Newton (del uses CSigma directly), only the
+        // tangent handed out. Opt-in (-cppmTangent fixed) so the default stays
+        // byte-identical.
+        if (mLadrunoCPPMTangentFix != 0)                                    // Ladruno WP-130
+            Cep        = CSigma;                                            // Ladruno WP-130
+        else                                                                // Ladruno WP-130
         Cep            = -1.0 * CSigma;
     }
     del                = SetManzariComponent(delSig, delAlph, delZ, delGamma);

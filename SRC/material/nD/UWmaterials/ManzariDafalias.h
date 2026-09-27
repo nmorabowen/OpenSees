@@ -311,6 +311,11 @@ class ManzariDafalias : public NDMaterial
 	int     mLadrunoCPPMLineSearch;                                          // Ladruno WP-130
 	int     mLadrunoMEFallback;                                              // Ladruno WP-130
 	int     mLadrunoCPPMStart;                                               // Ladruno WP-130
+	// Ladruno WP-130: 0 = vanilla `Cep = -1.0 * CSigma` in NewtonSol, i.e. the
+	// CPPM's algorithmic tangent with the WRONG SIGN (measured: -T matches a
+	// finite-difference d sigma/d eps of the return map to 1.2e-3, T itself is
+	// negative definite); 1 = `Cep = CSigma`.
+	int     mLadrunoCPPMTangentFix;                                          // Ladruno WP-130
 	bool    mLadrunoCPPMRefused;                                             // Ladruno WP-130
 	bool    mLadrunoInMEFallback;                                            // Ladruno WP-130
 	// Ladruno WP-127 (TIMs F20(a)): a per-INSTANCE census of what ModifiedEuler

@@ -360,7 +360,8 @@ class LadrunoSANISAND : public ManzariDafalias
     // re-asserts the base seams through applyLadrunoConstants(). `verbose`
     // echoes one line (the deck-level command only).
     void setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
-                               int meFallback, int start, bool verbose);   // Ladruno WP-130
+                               int meFallback, int start, int tangentFix,
+                               bool verbose);                          // Ladruno WP-130
 
     // `implexError` / `avgImplexError`, on the ASDConcrete3DMaterial.cpp
     // :2073-2077 template, plus this material's own per-point detail response.
@@ -490,6 +491,7 @@ class LadrunoSANISAND : public ManzariDafalias
     int    mCPPMLineSearch;   // 0 off, 1 on
     int    mMEFallback;       // 0 off, 1 cppm
     int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
+    int    mCPPMTangentFix;   // 0 vanilla (sign-flipped algorithmic tangent), 1 fixed
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset
