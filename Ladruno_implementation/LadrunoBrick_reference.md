@@ -115,6 +115,7 @@ element('LadrunoBrick', eleTag, n1,n2,n3,n4,n5,n6,n7,n8, matTag
         [, '-formulation', <std|bbar|uri|ssp|eas>]  # default: std
         [, '-geom',        <linear|corot|finite>]  # default: linear
         [, '-hourglass',   <stiffness|physical|viscous> [, coeff]]  # uri only
+        [, '-hourglassFloor', f] [, '-hgDamage', <gauss|centroid>] [, '-hgLegacy']   # ssp / uri-stiffness Tier-A (§9)
         [, '-lumped']                              # diagonal mass (explicit)
         [, '-b', bx, by, bz]                       # body force / unit volume
         [, '-damp', dampTag])                      # std/bbar only
@@ -676,8 +677,37 @@ keep their elastic stiffness. **Tier-A** fix (PR #101): degrade `Kstab` with the
 material's current damage.
 
 $$
-\mathbf K_{\text{stab}}\;\leftarrow\;\max\!\big(\texttt{floor},\,1-\max(d_t,d_c)\big)\cdot\mathbf K_{\text{stab}}^{\text{elastic}},\qquad \texttt{floor}=1\%\;(\texttt{HG\_DAMAGE\_FLOOR}).
+\mathbf K_{\text{stab}}\;\leftarrow\;\max\!\big(\texttt{floor},\,1-\omega\big)\cdot\mathbf K_{\text{stab}}^{\text{elastic}},\qquad
+\omega=\max\big(\max(d_t,d_c)_{\text{centroid}},\ \omega_{\text{shadow}}\big),\qquad \texttt{floor}=10^{-4}
 $$
+
+**Since Ladruno C3a (2026-09-26)** — the LadrunoQuad C1 treatment. `ω_shadow` is the max over 8
+*shadow* copies of the material driven with the full trilinear strain at the 2×2×2 Gauss points
+(reported damage, plus the secant loss `1 − σ·ε/(ε·C0·ε)` where damage > 1 %; ASDConcrete3D's
+`damage` is `1 − y/q` and omits its plastic part). The shadows are committed every step and,
+once an element's shadows have damaged (and while `s` is above the floor), also evaluated at
+every trial `update()` — a purely committed (lagged) `ω` released the stored stabilization force
+as a jump at the start of the next step that no step halving can shrink (L&W, LadrunoConcrete3D:
+stuck at 0.6 mm through dλ0/64). They never enter the residual. Why: an element whose crack runs
+in its hourglass/bending mode has no centroid strain, never damages at its centroid, and its
+elastic `Kstab` is an uncrackable hinge. The floor was 1 % (`HG_DAMAGE_FLOOR`). Escapes:
+`-hgDamage centroid` (pre-C3a sampling), `-hourglassFloor f` (`f ∈ [0,1]`; 1 = no degradation),
+`-hgLegacy` (= `-hgDamage centroid -hourglassFloor 0.01`, the pre-C3a element bit-for-bit).
+Diagnostic: `eleResponse(e, 'hourglass')` = `[s, ω, d·f_stab, d·f_phys]`
+(`d·f_stab = 2·hourglassEnergy`; summed, `Σ d·f` is the work of the loads).
+
+**L&W beam 5 coarse, embedded rebar, `-formulation ssp` (validation repo, this build):**
+
+| material | variant | peak P [kN] @ Î´ [mm] | stabilization share of the concrete work at the peak | end of run |
+|---|---|---|---|---|
+| ASDConcrete3D | pre-C3a (`-hgLegacy`) | 67.5 @ 2.50 | 6.2 % (s_min 0.019) | no convergence at 2.52 mm |
+| ASDConcrete3D | C3a (default) | **61.1 @ 2.28** | 4.5 % (123 elements at the floor) | no convergence at 2.28 mm |
+| LadrunoConcrete3D | pre-C3a (`-hgLegacy`) | 56.4 @ 3.23 (rising) | 14.8 % (126 elements at 0.01) | wall-time limit |
+| LadrunoConcrete3D | C3a, committed-only shadows (intermediate) | 26.0 @ 0.62 | 2.5 % | **no convergence at first cracking** (lagged-Ï‰ force jump) |
+| LadrunoConcrete3D | C3a (default, trial shadows once damaged) | **52.8 @ 3.94 (rising)** | 6.3 % (181 at the floor) | wall-time limit (1800 s) |
+| reference (`bbar`, README) | | ASD 64.3 @ 2.45; LadrunoConcrete3D 62.9 @ 4.58 | â€” | |
+
+The post-peak branch is not reachable in any ssp run (as for bbar: the diagonal-crack snap-back under sp + LoadControl, README finding 5). Cost: the trial shadows run only in elements whose shadows have damaged and whose s is above the floor; ASD coarse 587 s vs 110 s for the committed-only variant (measured before the at-floor skip; results identical).
 
 - $(d_t,d_c)$ from `getAvgDamage()` = `[tension, compression]` damage, read
   **generically** via a cached `materialPointers[0]->setResponse("damage", …)`
@@ -691,7 +721,7 @@ $$
   hourglass damping in the cracked band).
 - `std`/`bbar`/`uri+physical` have no separable `Kstab` → not applicable.
 
-This is automatic and material-driven (no flag). The full concrete/softening
+This is automatic and material-driven (the §9 flags only select the pre-C3a variants). The full concrete/softening
 workflow — characteristic-length handshake, mesh objectivity, the
 `hourglassEnergy` monitoring dial, solver recipes — is in
 [[11_brick_asdconcrete_integration]].
