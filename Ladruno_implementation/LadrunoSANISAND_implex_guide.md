@@ -704,6 +704,7 @@ nDMaterial LadrunoSANISAND ... 2 2 ...                  (IntScheme 2, TanType 2)
     <-cppmHalvings n>               0..9, default 9 (vanilla: up to 2^9 half-increments)
     <-cppmLineSearch on|off>        default off
     <-cppmStart trial|explicit>     default trial (vanilla)
+    <-cppmTangent vanilla|fixed>    default vanilla -- the vanilla TanType-2 tangent has the WRONG SIGN
 nDMaterial LadrunoSANISAND ... 1 ... -maxSubsteps N
     <-meFallback cppm|off>          default off; needs IntScheme 1 and -maxSubsteps > 0
 ```
@@ -712,6 +713,12 @@ All defaults are vanilla's control flow, **byte-identical** (seven IntScheme-2 d
 free-DOF Newton deck, `tests/wp130_sanisand_byteid.py`). None is qualified with `-implex` (the
 parser refuses the combination). A flag that could not act on the deck is refused.
 
+- **`-cppmTangent fixed` -- use it with TanType 2.** Vanilla's CPPM hands the element MINUS its
+  algorithmic tangent (`NewtonSol`: `Cep = -1.0 * CSigma`): a negative-definite stiffness, so the
+  global Newton diverges from its first iteration and only a Krylov/relaxed rung ever commits a
+  step. `fixed` hands out `+CSigma`, which matches a finite difference of the return map to 1.2e-3
+  (`LEDGER_quirks`, "IntScheme 2's TanType-2 tangent is MINUS"). The default stays vanilla only
+  for byte identity.
 - **`-cppmOnFail refuse`**: where vanilla, after a failed local Newton and the halving ladder,
   integrates the increment explicitly and reports success, the material REFUSES
   (`LADRUNO_MATERIAL_REFUSED`), so a forwarding element fails `Domain::update` and the step is

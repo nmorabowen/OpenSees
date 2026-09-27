@@ -7590,6 +7590,9 @@ Three things to carry forward:
   continuum tangents over the substep chain on scheme 1, and scheme 2 silently degrades into the
   latter on fallback. **Under `-implex` both are inert regardless:** the material hands out
   `Ce(p_n)` and says so (`LadrunoSANISAND.cpp:2097-2099`, "TanType ... is INERT under -implex").
+- **CORRECTION (WP-130, #868): the "genuine algorithmic tangent" has the WRONG SIGN.** See the
+  WP-130 entry "IntScheme 2's TanType-2 tangent is MINUS". The reading above (a return-map
+  Jacobian, one iterate stale) is right about the object and wrong about its sign.
 - **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed; recorded as a
   read-only finding. If you need to know which tangent a step actually used, cross-reference the
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
@@ -7768,3 +7771,26 @@ Three things to carry forward:
 ### `pAtm` is a STATIC member of PDMY01/02/03 — the last material created sets the atmospheric pressure for every material of that class (WP-133, found by reading)
 - **Bites:** each constructor ends with `pAtm = atm;` on `static double pAtm`. Two PDMY03 materials with different `$pa` (e.g. one in kPa, one in Pa, or a sensitivity study) silently share the last one's value in every pressure normalisation (`isCriticalState`, the contraction/dilation `(p/pa)` factors). Found by reading during WP-133; not exercised by a test.
 - **Workaround/status:** keep one `$pa` per process for each PDMY class (the usual case). Not fixed (vanilla; a per-material array would follow the three-edit rule of the entry above).
+
+### `IntScheme 2`'s `TanType 2` tangent is MINUS the derivative of its own return map -- the element gets a negative-definite stiffness (WP-130)
+- **Bites:** `ManzariDafalias::NewtonSol` ends `Cep = -1.0 * CSigma;`. The condensed CPPM system
+  is `DSigma d_sigma = d_eps` (R1 = eStrain - TrialElasticStrain + ..., so d R1/d eps = -I), and
+  `CSigma = (aC DSigma)^-1 aC = DSigma^-1`: the algorithmic tangent is `+CSigma`. The local Newton
+  never uses `Cep` (its update is `delSig = -CSigma SConstant`), so the RETURN is right and only the
+  tangent handed to the element is flipped -- a negative-definite 6x6 under `TanType 2`. Measured
+  (`Ladruno_files/testbed/hypo_bearing/wp130_f18c/q_tangent_fd.py`, 3D cube, a plastic step whose
+  replay reproduces the analysis to 4e-15): `||-T - D_fd|| / ||D_fd|| = 1.24e-3` (the one-iterate
+  staleness), `||T - D_fd|| / ||D_fd|| = 2.0`; the diagonal of T is -1.66e4 where D_fd has +1.66e4.
+- **Why it hid:** WP-105 (F12 §5.1) READ the code and called it "a genuine algorithmic tangent";
+  nobody compared it with a finite difference. Every zero-free-DOF material-point deck converges in
+  one global iteration whatever the tangent (no free equations), and every free-DOF scheme-2 failure
+  was blamed on the recursive-halving ladder, which it also has. On F12's bearing deck the global
+  Newton with the vanilla tangent DIVERGES from its first iteration (unbalance x3-5 per iteration),
+  and only KrylovNewton's relaxed rung commits steps -- that, not the ladder alone, is why F12 found
+  scheme 2 "475x shallower". Checklist rule, again: verify a tangent against a finite difference
+  with free equations (`ladruno-new-material`, "Verifying a tangent").
+- **Workaround/status (WP-130, #868):** `-cppmTangent fixed` hands out `+CSigma`
+  (`tests/test_ladruno_sanisand_cppm_newton.py` pins both: vanilla -T within 1e-2 of D_fd, fixed
+  +T within 1e-2). Default kept vanilla (byte identity was the WP's contract); **making `fixed`
+  the LadrunoSANISAND default is an owner decision** -- the vanilla sign is simply wrong. The bearing
+  deck with the fixed tangent: see the WP-130 PR.
