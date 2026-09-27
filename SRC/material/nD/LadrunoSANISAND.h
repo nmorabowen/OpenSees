@@ -228,6 +228,33 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
         factorMode(FACTOR_FIXED) {}   // Ladruno ADR-92 P2-9: fixed until the gate passes
 };
 
+// ===========================================================================
+//  Ladruno WP-127 (TIMs F21): one material-point state replay request, as the
+//  `ladrunoSANISANDReplay` command parses it. See ladrunoReplayRun().
+// ===========================================================================
+struct LadrunoReplayRequest            // Ladruno WP-127
+{
+    bool   compressionPositive;  // true: sigma/dStrain are the INTERNAL (mSigma) convention
+    bool   planeStrain;          // run on a LadrunoSANISANDPlaneStrain copy (else 3D)
+    double sigma[6];             // Voigt xx yy zz xy yz zx
+    double alpha[6];             // back-stress ratio (no sign flip in either convention)
+    double alphaIn[6];           // alpha at the last load reversal
+    double fabric[6];            // fabric z
+    double e;                    // void ratio
+    double dStrain[6];           // strain increment, ENGINEERING shear
+    int    traceCap;             // max trace records kept (0 = no trace)
+    double dt;                   // ops_Dt for the call (the P2-5c hold rule reads it)
+    bool   primed;               // the P2-7 reversal-noise guard armed (a plastic commit happened)
+    double prevIncrNorm;         // ||last committed d_eps|| for -reversalRel
+    LadrunoReplayRequest()
+      : compressionPositive(true), planeStrain(false), e(0.0), traceCap(10000),
+        dt(1.0), primed(true), prevIncrNorm(0.0)
+    {
+        for (int i = 0; i < 6; i++)
+            sigma[i] = alpha[i] = alphaIn[i] = fabric[i] = dStrain[i] = 0.0;
+    }
+};
+
 class LadrunoSANISAND : public ManzariDafalias
 {
   public:
@@ -364,6 +391,16 @@ class LadrunoSANISAND : public ManzariDafalias
     // determinism the WP exists to preserve. The honest answer for now is to
     // refuse, loudly, and keep the ledger exact.
     virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+
+    // Ladruno WP-127 (TIMs F21): load a state into THIS instance and apply one
+    // strain increment through the ordinary setTrialStrain path (so the
+    // wrapper's sign flip and plane-strain packing are exercised as in an
+    // element), with a bounded per-substep trace attached for the call.
+    // DESTRUCTIVE: meant for a private getCopy() made by the
+    // `ladrunoSANISANDReplay` command, never for a Gauss point of a live model.
+    // The static stage flag (forced to 1) and ops_Dt are restored on return.
+    // Returns 0 and fills `out` (layout: OPS_LadrunoSANISANDReplay), or -1.
+    int ladrunoReplayRun(const LadrunoReplayRequest &q, std::vector<double> &out);   // Ladruno WP-127
 
   protected:
 
@@ -884,5 +921,9 @@ class LadrunoSANISAND : public ManzariDafalias
 // singleton lives in an anonymous namespace; called from
 // OPS_clearAllNDMaterial(). Not called by ops.reset()/revertToStart().
 void ladrunoSanisandResetImplexGlobals(void);
+
+// Ladruno WP-127 (TIMs F21): the `ladrunoSANISANDReplay` command (Tcl and
+// Python). Defined in LadrunoSANISAND.cpp; syntax and output at the definition.
+int OPS_LadrunoSANISANDReplay(void);
 
 #endif

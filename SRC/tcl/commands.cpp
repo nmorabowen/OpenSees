@@ -740,6 +740,14 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
 int
 ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno ADR-87 D2 mutation-gate query
 
+int OPS_LadrunoSANISANDReplay(void);   // Ladruno WP-127 (defined in LadrunoSANISAND.cpp)
+static int
+ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-127
+{
+  OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-127
+  return (OPS_LadrunoSANISANDReplay() < 0) ? TCL_ERROR : TCL_OK;          // Ladruno WP-127
+}
+
 int
 getPID(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
@@ -1589,6 +1597,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "ladrunoThreads", &ladrunoThreads,   // Ladruno WP-107 element-loop thread count
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "ladrunoMutation", &ladrunoMutation,   // Ladruno ADR-87 D2 mutation-gate query
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "ladrunoSANISANDReplay", &ladrunoSANISANDReplay,   // Ladruno WP-127
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
