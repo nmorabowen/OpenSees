@@ -502,3 +502,35 @@ def test_inertia_residual_is_M_a(name):
     want = RHO * VOLUME_GROUND[name] * a0
     assert abs(fx - want) <= 1.0e-9 * want, f"{name}: sum inertia_x {fx!r}, want {want!r}"
     assert abs(fy) <= 1.0e-9 * want, f"{name}: sum inertia_y {fy!r}, want 0"
+
+# ---- mass-cache guards (LadrunoMassCache, incl. LadrunoBrick since stage 4) --------------
+# The cache is filled on first use; a later 'rho' parameter update must trip its guard, so
+# the next inertia evaluation uses the NEW density: sum_x inertialForce == rho_new V a0.
+# (The Bezier builders put -rho on the ELEMENT, which overrides the material's: there the
+# update must leave the mass unchanged -- and the cache must not serve anything else.)
+@pytest.mark.parametrize("name", ["LadrunoQuad", "LadrunoLST", "LadrunoBrick", "LadrunoBrick20",
+                                  "BezierTri6", "BezierTet10"])
+def test_mass_cache_follows_a_rho_update(name):
+    _SUPPORTS[0] = False
+    try:
+        ELEMENTS[name]()
+    finally:
+        _SUPPORTS[0] = True
+    tags = ops.getNodeTags()
+    ndf = len(ops.nodeDisp(tags[0]))
+    a0 = 1.3
+    for n in tags:
+        ops.setNodeAccel(n, 1, a0, "-commit")
+
+    def fx():
+        f = ops.eleResponse(1, "inertialForce")
+        return sum(f[i] for i in range(0, len(f), ndf))
+    first = fx()                                     # fills the cache
+    assert abs(first - RHO * VOLUME[name] * a0) <= 1.0e-9 * first
+    ops.parameter(1, "element", 1, "rho")
+    ops.updateParameter(1, 3.0 * RHO)
+    if name.startswith("Bezier"):
+        assert abs(fx() - first) <= 1.0e-12 * first
+    else:
+        want = 3.0 * RHO * VOLUME[name] * a0
+        assert abs(fx() - want) <= 1.0e-9 * want, f"{name}: stale mass after a rho update"
