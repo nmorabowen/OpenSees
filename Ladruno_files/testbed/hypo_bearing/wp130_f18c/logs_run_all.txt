@@ -1,0 +1,31 @@
+=== s1_T2: IntScheme 1, TanType 2 (F12 baseline) ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 1.14e-04
+    width: w2(z=-0.625) = 6.2995 m, w2(z=-1.375) = 6.3401 m, yielding 84 ele / 80.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2_T2: IntScheme 2, TanType 2, vanilla CPPM (F12 refuted) ===
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000
+    LEG FAILED A CONTROL: h1.0_e0.6944: only 3 converged steps -- the push never started (WALL-CLOCK budget spent at s/B = 0.00003)
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2_ref0: -cppmOnFail refuse -cppmHalvings 0 ===
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000 -cppmOnFail refuse -cppmHalvings 0
+    LEG FAILED A CONTROL: h1.0_e0.6944: only 1 converged steps -- the push never started (step collapsed to the DS_MIN floor at s/B = 0.00000 (every ladder rung failed at ds = 0.000156 mm))
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2_ref0_se_ls: + -cppmStart explicit -cppmLineSearch on ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 1.27e-02
+    width: w2(z=-0.625) = 2.3695 m, w2(z=-1.375) = 3.2617 m, yielding 12 ele / 6.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2_ref3_se_ls: -cppmHalvings 3 + start + LS ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 1.48e-02
+    width: w2(z=-0.625) = 2.1604 m, w2(z=-1.375) = 3.1667 m, yielding 7 ele / 3.500 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2_se_ls: vanilla fallback + start + LS (no refusal) ===
+    wall budget per leg         : 1200 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000 -cppmStart explicit -cppmLineSearch on
+=== DONE ===

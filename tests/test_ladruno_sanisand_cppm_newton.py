@@ -91,6 +91,8 @@ def _mat(*opts):
     (2, 2, 1, 1e-7, 1e-7, "-maxSubsteps", 50, "-meFallback", "cppm"),   # scheme 2
     (2, 2, 1, 1e-7, 1e-7, "-maxSubsteps", 50, "-implex", "-cppmOnFail", "refuse"),
     (1, 2, 1, 1e-7, 1e-7, "-maxSubsteps", 50, "-implex", "-meFallback", "cppm"),
+    (1, 2, 1, 1e-7, 1e-7, "-cppmTangent", "fixed"),                # scheme 1, no fallback
+    (2, 2, 1, 1e-7, 1e-7, "-cppmTangent", "right"),               # bad token
 ])
 def test_parser_refuses_inert_or_unqualified(opts):
     with pytest.raises(Exception):
@@ -234,3 +236,76 @@ def test_me_fallback_refuses_when_the_cppm_fails_too():
     assert rcs[-1] < 0
     assert s[ME_FB] >= 1 and s[ME_FB_OK] < s[ME_FB] and s[CPPM_REF] >= 1, s
     assert s[CPPM_EXPL] == 0 and s[CPPM_LOWP] == 0, s
+
+
+# ---------------------------------------------------------------------------
+#  6. the CPPM's TanType-2 tangent: sign (vanilla) and -cppmTangent fixed
+# ---------------------------------------------------------------------------
+
+def _fd_tangent(extra, h=1.0e-8):
+    """3D cube, IntScheme 2, TanType 2, 5 plastic steps; the element's
+    `tangent` (= getTangent) after step 6 against a central finite
+    difference of the return map from the committed state at step 5
+    (ladrunoSANISANDReplay, which reproduces the analysis' step to ~1e-15).
+    Returns (||T - D||/||D||, ||-T - D||/||D||, replay error)."""
+    import math
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "Ladruno_scripts"))
+    import sanisand_replay as sr
+
+    incs = b127._iso_dev(40, 5.0e-3, 0.5)
+    b127._build_3d("LadrunoSANISAND", b127._PARAMS, (2, 2, 1, 1e-7, 1e-7) + tuple(extra),
+                   10, 3.0e-6, incs)
+    ops.updateMaterialStage("-material", 1, "-stage", 0)
+    for _ in range(10):
+        assert ops.analyze(1) == 0
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+
+    def grab():
+        g = lambda name: list(ops.eleResponse(1, "material", 1, name))
+        return dict(sig=g("stress"), eps=g("strain"), alpha=g("alpha"), ain=g("alpha_in"),
+                    z=g("fabric"), e=g("state")[24], tan=g("tangent"))
+    for _ in range(4):
+        assert ops.analyze(1) == 0
+    prev = grab()
+    assert ops.analyze(1) == 0
+    k = grab()
+    assert ops.analyze(1) == 0
+    k1 = grab()
+    de = [a - b for a, b in zip(k1["eps"], k["eps"])]
+    dn = math.sqrt(sum((a - b) ** 2 for a, b in zip(k["eps"][:3], prev["eps"][:3]))
+                   + 0.5 * sum((a - b) ** 2 for a, b in zip(k["eps"][3:], prev["eps"][3:])))
+    run = lambda d: sr.replay(ops, 1, k["sig"], k["alpha"], k["ain"], k["z"], k["e"], d,
+                              "tensionPositive", prev_incr_norm=dn)
+    base = run(de)
+    rep = max(abs(a - b) for a, b in zip(base["sigma"], k1["sig"])) / max(map(abs, k1["sig"]))
+    D = [[0.0] * 6 for _ in range(6)]
+    for j in range(6):
+        dp = list(de); dp[j] += h
+        dm = list(de); dm[j] -= h
+        rp, rm = run(dp), run(dm)
+        for i in range(6):
+            D[i][j] = (rp["sigma"][i] - rm["sigma"][i]) / (2 * h)
+    T = [[k1["tan"][6 * i + j] for j in range(6)] for i in range(6)]
+    nD = math.sqrt(sum(x * x for r in D for x in r))
+    e_plus = math.sqrt(sum((T[i][j] - D[i][j]) ** 2 for i in range(6) for j in range(6))) / nD
+    e_minus = math.sqrt(sum((T[i][j] + D[i][j]) ** 2 for i in range(6) for j in range(6))) / nD
+    return e_plus, e_minus, rep
+
+
+def test_vanilla_cppm_tangent_has_the_wrong_sign():
+    """Pins the vanilla defect (default kept for byte identity): the TanType-2
+    tangent IntScheme 2 hands the element is MINUS the derivative of its own
+    return map. Measured: ||-T - D_fd||/||D_fd|| = 1.24e-3 (one iterate stale),
+    ||T - D_fd||/||D_fd|| = 2.0."""
+    e_plus, e_minus, rep = _fd_tangent(())
+    assert rep < 1e-9
+    assert e_minus < 1e-2 and e_plus > 1.9, (e_plus, e_minus)
+
+
+def test_cppm_tangent_fixed_is_the_algorithmic_tangent():
+    e_plus, e_minus, rep = _fd_tangent(("-cppmTangent", "fixed"))
+    assert rep < 1e-9
+    assert e_plus < 1e-2 and e_minus > 1.9, (e_plus, e_minus)
