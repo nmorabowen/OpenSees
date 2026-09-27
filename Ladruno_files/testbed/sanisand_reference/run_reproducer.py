@@ -62,7 +62,7 @@ def main():
          "|---|---|---|---|---|---|---|---|"]
     for r in res:
         a, b, c = r["paper"], r["uw_model"], r["uw_rule"]
-        s = (f"| {r['p_s']} | {r['delta']:.0e} | {b['dp_over_p']:.2f} | {a['eta']:.3f} / {a['rho_end']:.3f} | "
+        s = (f"| {r['p_s']} | {r['delta']:.1e} | {b['dp_over_p']:.2f} | {a['eta']:.3f} / {a['rho_end']:.3f} | "
              f"{b['eta']:.3f} / {b['rho_end']:.3f} ({b['max_rho']:.3f}, {b['max_rhoa']:.3f}) | {c['eta']:.3f} / {c['rho_end']:.3f} {c['status']} |")
         if have_cxx:
             m, m8 = r["ME"], r["ME8"]

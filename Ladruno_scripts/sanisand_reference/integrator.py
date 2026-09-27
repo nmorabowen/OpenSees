@@ -290,7 +290,7 @@ class _Increment:
         return ("stop", "no_consistent_mode")
 
     # ------------------------------------------------------------------
-    def events(self, mode, y0):
+    def events(self, mode, y0, kinks=True):
         P, O = self.P, self.O
         evs, names = [], []
 
@@ -325,7 +325,7 @@ class _Increment:
             def e_a(t, y):
                 return self.q_of(y, "plastic").a
             add(e_a, "alpha_in_reversal", -1 if O.alpha_in_rule == "paper" else 0, 1.0)
-            if O.kink_events:
+            if O.kink_events and kinks:
                 def e_zn(t, y):
                     q = self.q_of(y, "plastic")
                     return ddot(v2t(y[12:18]), q.n)
@@ -381,8 +381,14 @@ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
         if isinstance(mode, tuple):
             status = mode[1]
             break
-        evs, names = inc.events(mode, y)
-        fun = (lambda tt_, yy_, m=mode: inc.rates(yy_, m)[0])
+        # a Macaulay kink that fires again at once (z:n or D riding on 0) would
+        # chatter: after two back-to-back near-zero-length kink segments the
+        # kink restarts are dropped for the next segment (accuracy-only events)
+        kink_stall = (len(segments) >= 2 and all(
+            s["event"] in ("kink_zn", "kink_D") and s["t1"] - s["t0"] < 1e-9
+            for s in segments[-2:]))
+        evs, names = inc.events(mode, y, kinks=not kink_stall)
+        fun =(lambda tt_, yy_, m=mode: inc.rates(yy_, m)[0])
         jac = (lambda tt_, yy_, m=mode: inc.jacobian(yy_, m))
         sol = solve_ivp(fun, (t, 1.0), y, method=method, rtol=rtol, atol=inc.atol,
                         events=evs, jac=jac)
