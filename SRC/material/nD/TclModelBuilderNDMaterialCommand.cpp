@@ -1229,6 +1229,32 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 			"numberOfYieldSurf (=20)", "liquefactionParam1=1.0", "liquefactionParam2=0.0",
 			"Atmospheric pressure (=101)", "cohesi (=1.73)" };
 
+		// Ladruno WP-133: optional critical-state flags AFTER all positional
+		// arguments: -ei $e0 -cs1 $v -cs2 $v -cs3 $v (defaults 0.6 0.9 0.02 0.7).
+		// The first recognised flag ends the positional list (argc is cut there).
+		double csEi = 0.6, csCs1 = 0.9, csCs2 = 0.02, csCs3 = 0.7;
+		int wp133ArgcAll = argc;
+		for (int k = 3; k < wp133ArgcAll; k++) {
+			if (strcmp(argv[k], "-ei") == 0 || strcmp(argv[k], "-cs1") == 0 ||
+				strcmp(argv[k], "-cs2") == 0 || strcmp(argv[k], "-cs3") == 0) {
+				argc = k;
+				break;
+			}
+		}
+		for (int k = argc; k < wp133ArgcAll; k += 2) {
+			double* dst = 0;
+			if (strcmp(argv[k], "-ei") == 0) dst = &csEi;
+			else if (strcmp(argv[k], "-cs1") == 0) dst = &csCs1;
+			else if (strcmp(argv[k], "-cs2") == 0) dst = &csCs2;
+			else if (strcmp(argv[k], "-cs3") == 0) dst = &csCs3;
+			if (dst == 0 || k + 1 >= wp133ArgcAll ||
+				Tcl_GetDouble(interp, argv[k + 1], dst) != TCL_OK) {
+				opserr << "WARNING nDMaterial PressureDependMultiYield03: bad option '" << argv[k]
+					<< "'; want -ei $e0 -cs1 $v -cs2 $v -cs3 $v\n";
+				return TCL_ERROR;
+			}
+		}
+
 		if (argc < (3 + numParam)) { // 3 refers to "nDMaterial PressureDependMultiYield03  $tag"
 			opserr << "WARNING insufficient arguments\n";
 			printCommand(argc, argv);
@@ -1297,7 +1323,8 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 				param[9], param[10], param[11],
 				param[12], param[13], param[14],
 				param[15], param[16], param[17], param[18], gredu,
-				param[19], param[20], param[21], param[22]);
+				param[19], param[20], param[21], param[22],
+				csEi, csCs1, csCs2, csCs3); // Ladruno WP-133
 
 		theMaterial = temp;
 		if (gredu != 0) {
