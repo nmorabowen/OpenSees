@@ -1178,13 +1178,12 @@ the u-p family) to get a recoverable, cuttable refusal.
   substeps (oracle 0.252 / 0.531; ModifiedEuler 5.14 in 1 substep).
 - **Ring** (80 rows × ± iso, ± shear at 1e-6, 1e-5): 624/640 integrated, the 16 of b8 1950/2-3
   refused `startAlphaOutsideBounding`; max f at exit 1e-7, max ρ_α 0.983 (= the start value); median
-  substeps 16 (ModifiedEuler 4), p95 77 (82), max 520 (1336). Against the oracle (`uw_model`,
-  624 admissible cases): median 9e-6, p95 6e-5 relative in σ at TolR 1e-4 (1e-8 / 1e-6 at 1e-7);
-  5 cases (b16 element 5496, where the oracle re-seats α_in once) sit 1.7–3.4 % away at EVERY
-  TolR — an α_in-rule timing difference, not integration error (open item, WP-129 PR).
+  substeps 17 (ModifiedEuler 4), p95 153 (82), max 520 (1336). Against the oracle (`uw_model`, 624
+  admissible cases): median 8e-6 / p95 5e-5 / max 2.3e-4 relative in σ at TolR 1e-4; median 4e-9 /
+  p95 3e-8 at TolR 1e-7.
 - **Reversal chains** (WP-128 vertUnload / extShear from p0 2 kPa at 1e-4): ρ ≤ 0.61 / 0.46
   (ModifiedEuler 5.2 / 7.1); the increments that drive p to the floor are REFUSED
-  (`errorAtDTmin`, 38 / 39 of 90) where ModifiedEuler resets the stress to p_min·I — use smaller
+  (38–39 of 90: `tensionAtDTmin` / `errorAtDTmin`) where ModifiedEuler resets the stress to p_min·I — use smaller
   increments there, or accept the global cutback.
 - **Cost**, smooth monotonic chains: 4–6 substeps per 1e-5 increment (ModifiedEuler 1–3); the
   profile split at a ring state is ~60 % stages (half state-dependent quantities), 10 % drift,

@@ -1,44 +1,44 @@
 == T1: sigma = p_s I, alpha = alpha_in = z = 0, d_eps_yy = delta (one increment)
     p_s   delta |               ME               |           SAS reseat           |          SAS bracket           |          SAS ablated          
                   rc    sub  a/ab_n         f |  rc    sub  a/ab_n         f |  rc    sub  a/ab_n         f |  rc    sub  a/ab_n         f
- 0.0101   1e-07 |   0      1   0.005  -7.5e-09 |   0      5   0.005   6.1e-08 |   0      5   0.005   6.1e-08 |   0      1   0.005   6.1e-08
- 0.0101   1e-06 |   0      1   0.097  -2.4e-12 |   0     33   0.044   6.1e-08 |   0     33   0.044   6.1e-08 |   0      3   0.047   8.5e-08
- 0.0101   1e-05 |   0      1   0.797   1.5e-12 |   0     98   0.147   6.6e-08 |   0     98   0.147   6.6e-08 |   0     22   0.148   1.5e-08
- 0.0101   3e-05 |   0      1   2.151   1.7e-09 |   0    144   0.203   8.9e-08 |   0    144   0.203   8.9e-08 |   0     62   0.203   5.6e-08
- 0.0101   1e-04 |   0      1   5.142   2.1e-08 |   0    251   0.252   9.7e-09 |   0    251   0.252   9.7e-09 |   0    171   0.253   7.8e-08
- 0.0101   3e-04 |   0      1  16.441   1.1e+01 |   0    369   0.289   9.7e-08 |   0    369   0.289   9.7e-08 |   0    287   0.289   6.2e-08
-    0.1   1e-07 |   0      1   0.000  -6.4e-14 |   0      1   0.000  -2.5e-18 |   0      1   0.000  -2.5e-18 |   0      1   0.000  -2.5e-18
-    0.1   1e-06 |   0      6   0.017  -6.3e-10 |   0     15   0.018   2.0e-10 |   0     15   0.018   2.0e-10 |   0      7   0.018   5.1e-09
-    0.1   1e-05 |   0      1   0.296  -8.7e-08 |   0     61   0.090   7.2e-09 |   0     61   0.090   7.2e-09 |   0     27   0.090   8.0e-08
-    0.1   3e-05 |   0      1   0.768   4.5e-10 |   0    103   0.145   3.1e-08 |   0    103   0.145   3.1e-08 |   0     66   0.145   9.6e-09
-    0.1   1e-04 |   0      1   1.618   8.0e-08 |   0    188   0.207   7.9e-08 |   0    188   0.207   7.9e-08 |   0    151   0.207   5.8e-08
-    0.1   3e-04 |   0      1   5.441   1.1e+01 |   0    291   0.255   4.1e-08 |   0    291   0.255   4.1e-08 |   0    255   0.255   1.9e-08
+ 0.0101   1e-07 |   0      1   0.005  -7.5e-09 |   0      5   0.005  -2.1e-10 |   0      5   0.005  -2.1e-10 |   0      1   0.005   1.4e-11
+ 0.0101   1e-06 |   0      1   0.097  -2.4e-12 |   0     35   0.044  -4.0e-08 |   0     33   0.044  -4.0e-08 |   0      3   0.047   8.5e-08
+ 0.0101   1e-05 |   0      1   0.797   1.5e-12 |   0    102   0.147  -9.3e-09 |   0     98   0.147  -9.2e-09 |   0     22   0.148   1.5e-08
+ 0.0101   3e-05 |   0      1   2.151   1.7e-09 |   0    149   0.203  -3.2e-09 |   0    144   0.203  -3.2e-09 |   0     62   0.203   5.2e-08
+ 0.0101   1e-04 |   0      1   5.142   2.1e-08 |   0    257   0.252   4.0e-08 |   0    251   0.252   4.0e-08 |   0    171   0.253   7.7e-08
+ 0.0101   3e-04 |   0      1  16.441   1.1e+01 |   0    376   0.289   9.4e-08 |   0    369   0.289   9.4e-08 |   0    287   0.289   6.0e-08
+    0.1   1e-07 |   0      1   0.000  -6.4e-14 |   0      1   0.000  -1.3e-08 |   0      1   0.000  -1.3e-08 |   0      1   0.000  -1.3e-08
+    0.1   1e-06 |   0      6   0.017  -6.3e-10 |   0     15   0.018  -3.6e-08 |   0     15   0.018  -3.6e-08 |   0      7   0.018  -2.9e-08
+    0.1   1e-05 |   0      1   0.296  -8.7e-08 |   0     63   0.090   4.8e-09 |   0     61   0.090   4.9e-09 |   0     27   0.090   7.9e-08
+    0.1   3e-05 |   0      1   0.768   4.5e-10 |   0    107   0.145   2.7e-08 |   0    103   0.145   2.7e-08 |   0     66   0.145   9.0e-09
+    0.1   1e-04 |   0      1   1.618   8.0e-08 |   0    193   0.207   6.2e-08 |   0    188   0.207   6.2e-08 |   0    151   0.207   4.3e-08
+    0.1   3e-04 |   0      1   5.441   1.1e+01 |   0    298   0.255   6.4e-08 |   0    291   0.255   6.4e-08 |   0    255   0.255   4.5e-08
       1   1e-07 |   0      0   0.000  -2.8e-03 |   0      0   0.000  -2.8e-03 |   0      0   0.000  -2.8e-03 |   0      0   0.000  -2.8e-03
-      1   1e-06 |   0      4   0.005  -2.6e-11 |   0      5   0.005   2.2e-10 |   0      5   0.005   2.2e-10 |   0      3   0.005   6.7e-10
-      1   1e-05 |   0      1   0.099   3.5e-11 |   0     33   0.045   1.0e-08 |   0     33   0.045   1.0e-08 |   0     17   0.045   8.8e-08
-      1   3e-05 |   0      1   0.284  -6.1e-10 |   0     60   0.088   6.3e-08 |   0     60   0.088   6.3e-08 |   0     36   0.088   3.5e-08
-      1   1e-04 |   0      1   0.575   4.5e-08 |   0    107   0.150   8.1e-08 |   0    107   0.150   8.1e-08 |   0     83   0.150   5.8e-08
-      1   3e-04 |   0      1   2.156  -3.0e-08 |   0    186   0.209   3.8e-13 |   0    186   0.209   3.8e-13 |   0    161   0.209   8.3e-08
+      1   1e-06 |   0      4   0.005  -2.6e-11 |   0      5   0.005  -2.1e-08 |   0      5   0.005  -2.1e-08 |   0      3   0.005  -1.9e-08
+      1   1e-05 |   0      1   0.099   3.5e-11 |   0     35   0.045  -3.5e-08 |   0     33   0.045  -3.5e-08 |   0     17   0.045   4.5e-08
+      1   3e-05 |   0      1   0.284  -6.1e-10 |   0     62   0.088   4.4e-08 |   0     60   0.088   4.4e-08 |   0     36   0.088   2.8e-08
+      1   1e-04 |   0      1   0.575   4.5e-08 |   0    111   0.150   3.4e-08 |   0    107   0.150   3.3e-08 |   0     83   0.150   2.3e-08
+      1   3e-04 |   0      1   2.156  -3.0e-08 |   0    191   0.209   9.4e-08 |   0    186   0.209   9.4e-08 |   0    161   0.209   8.3e-08
       5   1e-07 |   0      0   0.000  -1.7e-02 |   0      0   0.000  -1.7e-02 |   0      0   0.000  -1.7e-02 |   0      0   0.000  -1.7e-02
-      5   1e-06 |   0      1   0.001  -3.0e-08 |   0      1   0.001   1.2e-13 |   0      1   0.001   1.2e-13 |   0      1   0.001   1.2e-13
-      5   1e-05 |   0     12   0.024  -7.0e-08 |   0     20   0.024   1.4e-08 |   0     20   0.024   1.4e-08 |   0     11   0.024   4.7e-10
-      5   3e-05 |   0      1   0.136   1.8e-08 |   0     39   0.055   8.2e-08 |   0     39   0.055   8.2e-08 |   0     21   0.055   5.7e-08
-      5   1e-04 |   0      1   0.410  -5.5e-08 |   0     72   0.109   7.7e-08 |   0     72   0.109   7.7e-08 |   0     48   0.109   5.1e-08
-      5   3e-04 |   0      1   0.759  -9.0e-08 |   0    125   0.169   4.7e-08 |   0    125   0.169   4.7e-08 |   0    101   0.169   2.3e-08
+      5   1e-06 |   0      1   0.001  -3.0e-08 |   0      1   0.001  -4.2e-09 |   0      1   0.001  -4.2e-09 |   0      1   0.001  -4.2e-09
+      5   1e-05 |   0     12   0.024  -7.0e-08 |   0     20   0.024  -4.2e-09 |   0     20   0.024  -4.2e-09 |   0     11   0.024   4.7e-10
+      5   3e-05 |   0      1   0.136   1.8e-08 |   0     41   0.055   7.8e-08 |   0     39   0.055   7.9e-08 |   0     21   0.055   5.7e-08
+      5   1e-04 |   0      1   0.410  -5.5e-08 |   0     75   0.109   5.2e-08 |   0     72   0.109   5.1e-08 |   0     48   0.109   5.1e-08
+      5   3e-04 |   0      1   0.759  -9.0e-08 |   0    129   0.169   2.4e-08 |   0    125   0.169   2.4e-08 |   0    101   0.169   2.3e-08
 
 == T2: WP-128 reversal chains, K0 p0 = 2 kPa, delta 1e-4, (20 fwd, 10 back) x 3
-vertUnload ME         : max a/ab_n 5.223 (a/ab alpha-Lode 5.223), f>1e-6 ok 0, refused 0 {}, Mc-clamps 0, substeps 115385, wall 1.0s
-vertUnload SAS reseat : max a/ab_n 0.613 (a/ab alpha-Lode 0.438), f>1e-6 ok 0, refused 38 {'errorAtDTmin': 38}, Mc-clamps 0, substeps 304, wall 0.1s
-vertUnload SAS bracket: max a/ab_n 0.613 (a/ab alpha-Lode 0.438), f>1e-6 ok 0, refused 38 {'errorAtDTmin': 38}, Mc-clamps 0, substeps 304, wall 0.0s
-  extShear ME         : max a/ab_n 7.069 (a/ab alpha-Lode 5.566), f>1e-6 ok 3, refused 0 {}, Mc-clamps 0, substeps 141629, wall 1.3s
-  extShear SAS reseat : max a/ab_n 0.456 (a/ab alpha-Lode 0.448), f>1e-6 ok 0, refused 39 {'errorAtDTmin': 39}, Mc-clamps 0, substeps 90618, wall 0.8s
-  extShear SAS bracket: max a/ab_n 0.456 (a/ab alpha-Lode 0.448), f>1e-6 ok 0, refused 39 {'errorAtDTmin': 39}, Mc-clamps 0, substeps 90918, wall 0.7s
+vertUnload ME         : max a/ab_n 5.223 (a/ab alpha-Lode 5.223), f>1e-6 ok 0, refused 0 {}, Mc-clamps 0, substeps 115385, wall 0.9s
+vertUnload SAS reseat : max a/ab_n 0.617 (a/ab alpha-Lode 0.438), f>1e-6 ok 0, refused 39 {'tensionAtDTmin': 39}, Mc-clamps 0, substeps 312, wall 0.0s
+vertUnload SAS bracket: max a/ab_n 0.617 (a/ab alpha-Lode 0.438), f>1e-6 ok 0, refused 39 {'tensionAtDTmin': 39}, Mc-clamps 0, substeps 312, wall 0.0s
+  extShear ME         : max a/ab_n 7.069 (a/ab alpha-Lode 5.566), f>1e-6 ok 3, refused 0 {}, Mc-clamps 0, substeps 141629, wall 1.0s
+  extShear SAS reseat : max a/ab_n 0.456 (a/ab alpha-Lode 0.448), f>1e-6 ok 0, refused 39 {'errorAtDTmin': 39}, Mc-clamps 0, substeps 90814, wall 0.7s
+  extShear SAS bracket: max a/ab_n 0.456 (a/ab alpha-Lode 0.448), f>1e-6 ok 0, refused 39 {'errorAtDTmin': 39}, Mc-clamps 0, substeps 91121, wall 0.7s
 
 == T3: 80 ring rows x 8 probes (+-iso, +-shear at 1e-6, 1e-5)
 SAS-ME: 624/640 integrated, refused by code {'startAlphaOutsideBounding': 16}
-  f at exit (rc 0): max 9.97e-08; count f > 1e-6: 0
+  f at exit (rc 0): max 9.94e-08; count f > 1e-6: 0
   alpha/alpha^b at exit (rc 0): max (alpha Lode) 0.983, max (n Lode, WP-128 metric) 1.001
-  substeps SAS (rc 0) med/p95/max 16/77/520; ME med/p95/max 4/82/1336; totals SAS 15518 vs ME 12553
+  substeps SAS (rc 0) med/p95/max 17/153/520; ME med/p95/max 4/82/1336; totals SAS 22630 vs ME 12553
   ME on the same 640: f > 1e-6 as success 4, Mc-clamp teleports 2, forced@dTmin 2
   refused rows (set el/gp probe delta code):
     b8. 1950/3 isoComp 1e-06 startAlphaOutsideBounding  (ME: rc 0, sub 1, f 8.0e-10, clamp 0)
@@ -60,30 +60,30 @@ SAS-ME: 624/640 integrated, refused by code {'startAlphaOutsideBounding': 16}
 
 == CP: smooth monotonic chains from K0 (30 x 1e-5 'active' = (0.3, 1, 0, 0, 0, 0))
   p0  2.0 ME : substeps/increment med 1 max 9, refused 0, end a/ab_n 0.327
-  p0  2.0 SAS: substeps/increment med 6 max 17, refused 0, end a/ab_n 0.351
+  p0  2.0 SAS: substeps/increment med 6 max 18, refused 0, end a/ab_n 0.351
   p0  5.0 ME : substeps/increment med 3 max 8, refused 0, end a/ab_n 0.337
   p0  5.0 SAS: substeps/increment med 5 max 13, refused 0, end a/ab_n 0.361
   p0 20.0 ME : substeps/increment med 3 max 4, refused 0, end a/ab_n 0.363
   p0 20.0 SAS: substeps/increment med 4 max 7, refused 0, end a/ab_n 0.384
 
 == PROF: OPS_PROFILE_SCOPE split (coarse profiler), 200 replays each
-  ring (b16 row 1): total 197.74 ms over 200 updates
-    sanisand.sasME.update                calls     200  wall   197.74 ms  (100.0 %)
-    sanisand.sasME.substeps              calls     200  wall   191.32 ms  ( 96.8 %)
-    sanisand.sasME.stages                calls   10400  wall    93.95 ms  ( 47.5 %)
-    sanisand.sasME.stateDependent        calls   10400  wall    30.63 ms  ( 15.5 %)
-    sanisand.sasME.alphaCheck            calls    4400  wall    21.98 ms  ( 11.1 %)
-    sanisand.sasME.stageArithmetic       calls   10400  wall    20.98 ms  ( 10.6 %)
-    sanisand.sasME.drift                 calls    4400  wall    19.97 ms  ( 10.1 %)
-    sanisand.sasME.predictor             calls     200  wall     3.04 ms  (  1.5 %)
-    sanisand.sasME.tangent               calls     200  wall     1.76 ms  (  0.9 %)
-  deep (p ~ 200 kPa, on the cone): total 7.30 ms over 200 updates
-    sanisand.sasME.update                calls     200  wall     7.30 ms  (100.0 %)
-    sanisand.sasME.substeps              calls     200  wall     4.81 ms  ( 66.0 %)
-    sanisand.sasME.stages                calls     400  wall     2.30 ms  ( 31.5 %)
-    sanisand.sasME.tangent               calls     200  wall     0.86 ms  ( 11.8 %)
-    sanisand.sasME.drift                 calls     200  wall     0.85 ms  ( 11.6 %)
-    sanisand.sasME.stageArithmetic       calls     400  wall     0.68 ms  (  9.4 %)
-    sanisand.sasME.stateDependent        calls     400  wall     0.65 ms  (  8.9 %)
-    sanisand.sasME.predictor             calls     200  wall     0.52 ms  (  7.1 %)
-    sanisand.sasME.alphaCheck            calls     200  wall     0.27 ms  (  3.7 %)
+  ring (b16 row 1): total 88.15 ms over 200 updates
+    sanisand.sasME.update                calls     200  wall    88.15 ms  (100.0 %)
+    sanisand.sasME.substeps              calls     200  wall    79.20 ms  ( 89.8 %)
+    sanisand.sasME.stages                calls   10400  wall    45.72 ms  ( 51.9 %)
+    sanisand.sasME.stateDependent        calls   10400  wall    13.15 ms  ( 14.9 %)
+    sanisand.sasME.stageArithmetic       calls   10400  wall    13.12 ms  ( 14.9 %)
+    sanisand.sasME.drift                 calls    4400  wall     9.68 ms  ( 11.0 %)
+    sanisand.sasME.predictor             calls     200  wall     6.93 ms  (  7.9 %)
+    sanisand.sasME.alphaCheck            calls    4400  wall     5.70 ms  (  6.5 %)
+    sanisand.sasME.tangent               calls     200  wall     1.03 ms  (  1.2 %)
+  deep (p ~ 200 kPa, on the cone): total 4.93 ms over 200 updates
+    sanisand.sasME.update                calls     200  wall     4.93 ms  (100.0 %)
+    sanisand.sasME.substeps              calls     200  wall     3.29 ms  ( 66.9 %)
+    sanisand.sasME.stages                calls     400  wall     1.51 ms  ( 30.6 %)
+    sanisand.sasME.tangent               calls     200  wall     0.58 ms  ( 11.8 %)
+    sanisand.sasME.drift                 calls     200  wall     0.57 ms  ( 11.5 %)
+    sanisand.sasME.stageArithmetic       calls     400  wall     0.45 ms  (  9.2 %)
+    sanisand.sasME.stateDependent        calls     400  wall     0.41 ms  (  8.4 %)
+    sanisand.sasME.predictor             calls     200  wall     0.31 ms  (  6.3 %)
+    sanisand.sasME.alphaCheck            calls     200  wall     0.22 ms  (  4.6 %)
