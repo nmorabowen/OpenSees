@@ -25,6 +25,7 @@ ROOT = M.ROOT
 SHELL = ROOT / "SRC/element/LadrunoElementShell.h"
 MUT_H = ROOT / "SRC/Ladruno_mutation.h"
 BRICK = ROOT / "SRC/element/ladrunoBrick/LadrunoBrick.cpp"
+ELEM_CPP = ROOT / "SRC/element/Element.cpp"
 
 ROWS = {
     # --- stage 1: Ki cache
@@ -87,6 +88,27 @@ ROWS = {
              "  if (true) {   // MUTATION N3\n    const int nd = nen * ndf;\n")]),
     "N4": ("every DOF takes the x-component of the trial acceleration",
            [(SHELL, "lit", "      a(n * ndf + j) = accel(j);\n", "      a(n * ndf + j) = accel(0);   // MUTATION N4\n")]),
+    # --- C15: vanilla Element::getResponse(444444) evaluation order (GCC Zone-A failure)
+    "C15": ("inertialForce evaluated in the GCC order (getResistingForce FIRST, references kept) -- "
+            "reproduces the Zone-A Ubuntu failure on MSVC",
+            [(ELEM_CPP, "lit",
+              "    Vector inertial(this->getResistingForceIncInertia());\n"
+              "    inertial -= this->getRayleighDampingForces();\n"
+              "    inertial -= this->getResistingForce();\n"
+              "    return eleInfo.setVector(inertial);\n",
+              "    const Vector &r = this->getResistingForce();          // MUTATION C15\n"
+              "    const Vector &d = this->getRayleighDampingForces();\n"
+              "    const Vector &g = this->getResistingForceIncInertia();\n"
+              "    return eleInfo.setVector(g - d - r);\n")]),
+    "C15m": ("inertialForce back to the ORIGINAL one-expression form (MSVC's order) -- the betaK arm "
+             "must catch the tangent re-entry that refills P on the finite/pair paths",
+             [(ELEM_CPP, "lit",
+               "    Vector inertial(this->getResistingForceIncInertia());\n"
+               "    inertial -= this->getRayleighDampingForces();\n"
+               "    inertial -= this->getResistingForce();\n"
+               "    return eleInfo.setVector(inertial);\n",
+               "    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()"
+               "-this->getResistingForce());   // MUTATION C15m\n")]),
     # --- C14: LadrunoBrick20 rebuilds its geometry cache in recvSelf (live restore)
     "C14": ("LadrunoBrick20::recvSelf does not rebuild the geometry cache (the pre-fix shape)",
             [(ROOT / "SRC/element/ladrunoBrick/LadrunoBrick20.cpp", "lit",

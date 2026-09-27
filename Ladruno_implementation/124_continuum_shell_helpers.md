@@ -67,6 +67,7 @@ free helper cannot do the Rayleigh tail. The snapshot + Rayleigh step stays in e
 | C12 | Bezier `recvSelf` ignores a material class change | Tri6:1286, Tet10:1691 | open |
 | C13 | Brick/Brick20: no `getRV` size check; Bezier reads `argv[0]` before an argc guard | Brick:787-789, Brick20:614-616, Tri6:1454, Tet10:1806 | open — the ground-inertia helper keeps the bricks' no-check behaviour (`checkSize=false`) |
 | C14 | **Brick20 singular after a live restore**: `recvSelf` cleared `geomCached` and relied on the `setDomain` that follows a broker-built receive; the live branch of `Domain::recvSelf` calls `recvSelf` + `update()` only | found in WP-124 (C6 probe) | ✅ **fixed** `4849f0c2f` — `test_live_restore_is_usable` (singular before, Brick20 only) |
+| C15 | **vanilla `Element::getResponse` `inertialForce` = 0.0 on GCC** (unspecified call order of three reference-returning accessors in one expression; storage aliased) — six elements, Linux only | WP-124 Zone-A run 36336984894 (Ubuntu): `test_inertia_residual_is_M_a` 6 failed | ✅ **fixed** in vanilla `Element.cpp` (owner-approved) — reproduced on MSVC by forcing the GCC order (row C15) |
 
 ## Shape (proposed)
 

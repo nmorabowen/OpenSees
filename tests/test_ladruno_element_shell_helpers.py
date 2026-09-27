@@ -481,12 +481,17 @@ def test_base_response_xml_is_well_formed(name, tmp_path):
 # 'inertialForce' (= GRFII - damping - resisting force) is the inertia term M a, whose x-sum is
 # rho * V * a0 (row sums of M, exact for lumped and consistent mass). A sign flip, a dropped
 # term or a full M reduced to its diagonal (-cMass Bezier) all break it.
+# C15: the base response used to read GRFII, damping and the resisting force in ONE expression
+# whose call order is unspecified, through references into shared element storage: GCC returned
+# exactly 0.0 on six elements, and with betaK (getRayleighDampingForces re-enters the tangent,
+# refilling P on the finite/EAS/pair paths) MSVC was wrong too -- hence the betaK arm.
 VOLUME_GROUND = dict(VOLUME, **{"BezierTri6-cMass": VOLUME["BezierTri6"],
                                 "BezierTet10-cMass": VOLUME["BezierTet10"]})
 
 
+@pytest.mark.parametrize("betaK", [0.0, 1.0e-3])
 @pytest.mark.parametrize("name", list(GROUND))
-def test_inertia_residual_is_M_a(name):
+def test_inertia_residual_is_M_a(name, betaK):
     _SUPPORTS[0] = False
     try:
         GROUND[name]()
@@ -494,9 +499,11 @@ def test_inertia_residual_is_M_a(name):
         _SUPPORTS[0] = True
     tags = ops.getNodeTags()
     ndf = len(ops.nodeDisp(tags[0]))
+    ops.rayleigh(0.0, betaK, 0.0, 0.0)
     a0 = 1.7
-    for n in tags:
+    for i, n in enumerate(tags):
         ops.setNodeAccel(n, 1, a0, "-commit")
+        ops.setNodeVel(n, 2, 0.1 * (i % 3), "-commit")    # a non-rigid velocity: K v != 0
     inert = ops.eleResponse(1, "inertialForce")
     assert inert, f"{name}: inertialForce records nothing"
     fx = sum(inert[i] for i in range(0, len(inert), ndf))
