@@ -54,22 +54,24 @@ def _src(*parts):
 # structural propagation table
 # ===========================================================================
 def test_R5_ladrunobrick_checks_only_the_sentinel():
-    """CONFIRMED (structural).  Every ``materialPointers[...]->setTrialStrain``
-    call in ``LadrunoBrick.cpp`` is guarded by ``== LADRUNO_MATERIAL_REFUSED``,
-    never by a blanket ``< 0`` or ``!= 0``.  6 call sites: ``updateHypo``'s SSP
-    centroid (single-point) and per-GP loop, and ``formEAStrue``'s condensed
-    (single-point) and full-integration loops (two loops, invoked from
-    ``tang_flag`` 0 and !=0 branches).  A future 7th call site that checks
-    ``< 0`` instead would (correctly) start propagating bare -1 too; this test
-    would need updating, not silently pass.
+    """CONFIRMED (structural), contract UPDATED by Ladruno C3b.  Every
+    ``materialPointers[...]->setTrialStrain`` call in ``LadrunoBrick.cpp`` goes through
+    ``ladrunoBrickMustCut(rc)``, which cuts the step on ``LADRUNO_MATERIAL_REFUSED`` OR a
+    bare ``-1`` -- and on nothing else (still never a blanket ``< 0`` / ``!= 0``, so the
+    ASDConcrete3D advisory codes -10/-1000 keep being accepted, ADR-86b).  6 call sites
+    (SSP centroid, URI physical loop, URI centroid, std/bbar loop, updateHypo, formEAStrue).
+    The name is kept for history; runtime pin: test_ladrunoBrick_bare_failure_cuts_step.py.
     """
     src = _src("SRC", "element", "ladrunoBrick", "LadrunoBrick.cpp")
-    calls = re.findall(r"setTrialStrain\([^)]*\)\s*(?:\n\s*)?==\s*LADRUNO_MATERIAL_REFUSED",
+    calls = re.findall(r"ladrunoBrickMustCut\(lastTrialRc\s*=\s*materialPointers\[\w+\]->setTrialStrain\(",
                         src)
     assert len(calls) == 6, (
-        f"expected exactly 6 sentinel-only setTrialStrain checks in "
+        f"expected exactly 6 ladrunoBrickMustCut(setTrialStrain) checks in "
         f"LadrunoBrick.cpp, found {len(calls)} -- the call-site count "
         f"changed; re-verify R5's host contract before trusting this test.")
+    helper = re.search(r"ladrunoBrickMustCut\(int rc\)\s*\{\s*return\s+rc\s*==\s*"
+                       r"LADRUNO_MATERIAL_REFUSED\s*\|\|\s*rc\s*==\s*-1\s*;", src)
+    assert helper, "ladrunoBrickMustCut must cut on exactly the sentinel or a bare -1"
     # and NONE of them is spelled as a blanket failure test anywhere else
     blanket = re.findall(r"setTrialStrain\([^)]*\)\s*(?:\n\s*)?(?:<\s*0|!=\s*0)(?!\w)",
                           src)
@@ -229,10 +231,9 @@ def test_R5_be_linesearch_exhaustion_silent_at_element_level_on_ladrunobrick():
     by the accident of an unbalanced residual.
 
     wp/94a fixes the material side (all 13 bare-`-1` sites now return the
-    sentinel) and refuses the integrator at the parser.  The host side is
-    deliberately UNCHANGED -- still sentinel-only, still the right contract --
-    which is why the structural pin
-    ``test_R5_ladrunobrick_checks_only_the_sentinel`` above must stay green.
+    sentinel) and refuses the integrator at the parser.  (Ladruno C3b later made
+    the host ALSO cut on a bare -1 -- see the structural pin
+    ``test_R5_ladrunobrick_checks_only_the_sentinel`` above.)
     This test now pins that the deck cannot be built at all, in a CHILD process
     so the parser's own opserr text is captured (native output is invisible to
     capfd on this build -- see ``_run_child``'s docstring).
