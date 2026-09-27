@@ -2,7 +2,7 @@
 gates.  No OpenSees binary needed (numpy + scipy only); see
 Ladruno_implementation/134_sanisand_reference_integrator.md.
 
-Measured wall time: ~40 s on the dev box (the two drained triaxials dominate)."""
+Measured wall time: ~17 s on the dev box (11 passed incl. the cross-check, 16.7 s)."""
 import math
 import os
 import sys

@@ -101,5 +101,5 @@ Validation runners and their outputs are in `Ladruno_files/testbed/sanisand_refe
   `git show` from `origin/wp/127-sanisand-replay-counters`.
 
 Tests:
-- `tests/test_sanisand_reference.py`: pure Python, about 70 s.
+- `tests/test_sanisand_reference.py`: pure Python, about 15 s.
 - `tests/test_sanisand_reference_crosscheck.py`: skipped without the WP-127 pyd.

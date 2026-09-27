@@ -22,6 +22,9 @@ def main():
         esc = [c for c in adm if c[vn]["max_rhoa"] > 1.0]
         esc_moved = [c for c in esc if abs(np.linalg.norm(c[vn]["alpha"]) /
                                            np.linalg.norm(c["raw"]["alpha"]) - 1) > 1e-6]
+        fel = sum(1 for c in d if c[vn]["max_f_el"] > 1e-6)
+        fmax = max(abs(c[vn]["f_end"]) for c in d if c[vn]["status"] == "ok")
+        L.append(f"- **{vn}**: elastic samples with f > 1e-6 kPa: {fel}; max |f| at exit over ok runs: {fmax:.1e} kPa.")
         L.append(f"- **{vn}**: {n} runs; statuses {st}; runs with a plastic sample at "
                  f"(α−α_in):n < −1e-12 (h < 0): **{negh}**; admissible starts {len(adm)}, of which "
                  f"max ρ_α > 1: {len(esc)} (α itself moved in {len(esc_moved)}; the rest are elastic "
