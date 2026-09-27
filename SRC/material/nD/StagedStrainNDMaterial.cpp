@@ -46,9 +46,11 @@
 #include <elementAPI.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 // =========================================================================== //
 //  Factory:  nDMaterial StagedStrain $tag $innerTag <-noInit> <-eps0 e1 e2 …>  //
+//            <-maxStrain $e>  (Ladruno C3b: bare -1 on |eps_rel|_inf > e)        //
 // =========================================================================== //
 void *OPS_StagedStrainNDMaterial(void)
 {
@@ -72,12 +74,24 @@ void *OPS_StagedStrainNDMaterial(void)
   }
   bool   active = true;
   bool   haveEps0 = false;
+  double maxStrain = 0.0;   // Ladruno (C3b): off
   Vector eps0in;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
     if (strcmp(opt, "-noInit") == 0) {
       active = false;
+    } else if (strcmp(opt, "-maxStrain") == 0) {
+      // Ladruno (C3b): a trial-strain guard. |eps - eps0|_inf > $e => setTrialStrain returns the
+      // plain OpenSees failure code -1 and does NOT forward the trial (the inner keeps its last
+      // state), so a host element that honours -1 cuts the step. A divergence guard for materials
+      // with a validity range, and the fork's reproducible bare-(-1) source for host-contract tests.
+      int one = 1;
+      if (OPS_GetDoubleInput(&one, &maxStrain) != 0 || maxStrain <= 0.0) {
+        opserr << "WARNING nDMaterial StagedStrain " << iData[0]
+               << " : -maxStrain needs a value > 0\n";
+        return 0;
+      }
     } else if (strcmp(opt, "-eps0") == 0) {
       int n = OPS_GetNumRemainingInputArgs();   // remaining args = the eps0 components
       if (n < 1) {
@@ -120,6 +134,7 @@ void *OPS_StagedStrainNDMaterial(void)
   StagedStrainNDMaterial *m =
     new StagedStrainNDMaterial(iData[0], inner3D, active, haveEps0 ? &eps0in : 0);
   if (m == 0 || !m->isValid()) { if (m) delete m; return 0; }   // graceful
+  m->setMaxStrain(maxStrain);                                     // Ladruno (C3b)
   return m;
 }
 
@@ -131,7 +146,7 @@ StagedStrainNDMaterial::StagedStrainNDMaterial(int tag, NDMaterial *innerOwned,
                                                bool active_, const Vector *eps0Given)
   : NDMaterial(tag, ND_TAG_StagedStrainNDMaterial),
     theMaterial(innerOwned), active(active_), captured(false), eps0Explicit(false),
-    eps0(), totalStrain()
+    eps0(), totalStrain(), maxStrain(0.0)
 {
   // ADOPT innerOwned (already a concrete typed copy — NO second getCopy). A null
   // innerOwned leaves the object invalid (isValid()==false) so callers fail
@@ -147,7 +162,7 @@ StagedStrainNDMaterial::StagedStrainNDMaterial(int tag, NDMaterial *innerOwned,
 StagedStrainNDMaterial::StagedStrainNDMaterial()
   : NDMaterial(0, ND_TAG_StagedStrainNDMaterial),
     theMaterial(0), active(true), captured(false), eps0Explicit(false),
-    eps0(), totalStrain()
+    eps0(), totalStrain(), maxStrain(0.0)
 {
 }
 
@@ -184,14 +199,25 @@ int StagedStrainNDMaterial::forwardTrial(const Vector &v, const Vector *rate)
   if (totalStrain.Size() != n || eps0.Size() != n) sizeBuffers(n);
   totalStrain = v;
 
-  if (!active)                     // pass-through (-noInit)
+  if (!active) {                   // pass-through (-noInit)
+    if (maxStrain > 0.0) {         // Ladruno (C3b): -maxStrain guard
+      double m = 0.0;
+      for (int i = 0; i < n; i++) if (fabs(v(i)) > m) m = fabs(v(i));
+      if (m > maxStrain) return -1;
+    }
     return rate ? theMaterial->setTrialStrain(v, *rate)
                 : theMaterial->setTrialStrain(v);
+  }
 
   if (!captured) { eps0 = v; captured = true; }   // auto-capture the birth strain
 
   Vector rel(v);                   // local scratch (ε); subtract the birth strain
   rel.addVector(1.0, eps0, -1.0);  // ε_rel = ε − ε0
+  if (maxStrain > 0.0) {           // Ladruno (C3b): -maxStrain guard (inner untouched)
+    double m = 0.0;
+    for (int i = 0; i < n; i++) if (fabs(rel(i)) > m) m = fabs(rel(i));
+    if (m > maxStrain) return -1;
+  }
   return rate ? theMaterial->setTrialStrain(rel, *rate)
               : theMaterial->setTrialStrain(rel);
 }
@@ -269,6 +295,7 @@ NDMaterial *StagedStrainNDMaterial::adoptCopy(NDMaterial *innerCopy)
   StagedStrainNDMaterial *c =
     new StagedStrainNDMaterial(this->getTag(), innerCopy, active, 0);
   if (c == 0 || !c->isValid()) { if (c) delete c; return 0; }
+  c->maxStrain = maxStrain;                         // Ladruno (C3b)
 
   if (captured && eps0.Size() == order) {           // preserve the birth reference
     c->captured     = true;
@@ -327,11 +354,12 @@ int StagedStrainNDMaterial::sendSelf(int cTag, Channel &theChannel)
   dataID(3) = n;                    // ε0 order (may be 0 before the first capture)
   if (theChannel.sendID(dbTag, cTag, dataID) < 0) return -1;
 
-  Vector dataVec(3 + n);            // flags + ε0
+  Vector dataVec(4 + n);            // flags + ε0 + maxStrain (C3b)
   dataVec(0) = active       ? 1.0 : 0.0;
   dataVec(1) = captured     ? 1.0 : 0.0;
   dataVec(2) = eps0Explicit ? 1.0 : 0.0;
   for (int i = 0; i < n; i++) dataVec(3 + i) = eps0(i);
+  dataVec(3 + n) = maxStrain;       // Ladruno (C3b)
   if (theChannel.sendVector(dbTag, cTag, dataVec) < 0) return -2;
 
   if (theMaterial->sendSelf(cTag, theChannel) < 0) return -3;
@@ -357,11 +385,12 @@ int StagedStrainNDMaterial::recvSelf(int cTag, Channel &theChannel,
   }
   theMaterial->setDbTag(dataID(2));
 
-  Vector dataVec(3 + n);
+  Vector dataVec(4 + n);
   if (theChannel.recvVector(dbTag, cTag, dataVec) < 0) return -3;
   active       = (dataVec(0) != 0.0);
   captured     = (dataVec(1) != 0.0);
   eps0Explicit = (dataVec(2) != 0.0);
+  maxStrain    = dataVec(3 + n);    // Ladruno (C3b)
   if (n > 0) { sizeBuffers(n); for (int i = 0; i < n; i++) eps0(i) = dataVec(3 + i); }
 
   if (theMaterial->recvSelf(cTag, theChannel, theBroker) < 0) return -4;
@@ -390,7 +419,9 @@ void StagedStrainNDMaterial::Print(OPS_Stream &s, int flag)
       << this->getTag() << endln;
     s << "\tinner material tag: " << theMaterial->getTag() << endln;
     s << "\tactive: " << (active ? "yes" : "no")
-      << ", eps0 captured: " << (captured ? "yes" : "no") << endln;
+      << ", eps0 captured: " << (captured ? "yes" : "no");
+    if (maxStrain > 0.0) s << ", maxStrain: " << maxStrain;   // Ladruno (C3b)
+    s << endln;
   }
 }
 

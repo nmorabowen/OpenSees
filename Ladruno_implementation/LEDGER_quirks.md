@@ -7646,3 +7646,7 @@ Three things to carry forward:
 - **Bites:** a stiffness/stabilization scaler built on `setResponse("damage")` (the LadrunoQuad / LadrunoBrick Tier-A) sees 0.76 on an ASDConcrete3D point whose secant energy loss `1 − σ·ε/(ε·C0·ε)` is 0.98 (K&R coarse, the element under the load).
 - **Why:** `ASDConcrete3DMaterial::getMaxDamage()/getAvgDamage()` return `HardeningLaw::evaluateAt(x).crackingDamage()` = `d = 1 − y/q`, the cracking (stiffness) part only; the plastic part of the backbone (`dt_plastic`, `dc_plastic`) is not in it.
 - **Workaround:** the fork's Tier-A shadows also take the secant loss at points that report damage > 1 %. Upstream file not changed. 2026-09-26.
+### LadrunoBrick swallowed a bare −1 from `setTrialStrain` (sentinel-only contract) — a failed material state reached the solver as a success (fixed, C3b)
+- **Bites:** a material that fails with the plain OpenSees code −1 (LadrunoRCConcrete's loud crack-band failure, a condensation miss, `StagedStrain -maxStrain`) inside a `LadrunoBrick` returned 0 from `update()`: the step "converged" on the stale state, while the same material inside `LadrunoQuad` or `TenNodeTetrahedron` cut the step.
+- **Why:** ADR-86b made every brick call site test `== LADRUNO_MATERIAL_REFUSED` only, to keep ASDConcrete3D's advisory negative codes (−10 IMPL-EX error control, −1000 eigen) from failing steps; a bare −1 fell through with them.
+- **Fix/status (2026-09-26, Ladruno C3b):** cut on the sentinel OR −1, nothing else. Still NOT a blanket `< 0`. Materials that mean "best state, carry on" must not return −1.

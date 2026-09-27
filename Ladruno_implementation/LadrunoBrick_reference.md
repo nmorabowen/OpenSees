@@ -721,7 +721,15 @@ The post-peak branch is not reachable in any ssp run (as for bbar: the diagonal-
   hourglass damping in the cracked band).
 - `std`/`bbar`/`uri+physical` have no separable `Kstab` → not applicable.
 
-This is automatic and material-driven (the §9 flags only select the pre-C3a variants). The full concrete/softening
+This is automatic and material-driven (the §9 flags only select the pre-C3a variants).
+
+**Material failure codes (Ladruno C3b).** Every `setTrialStrain` call site cuts the step
+(`update()` returns −1, one throttled warning per process budget) on `LADRUNO_MATERIAL_REFUSED`
+**or a bare −1** — the plain OpenSees failure code that `LadrunoQuad`, `TenNodeTetrahedron` and the
+`-geom finite/hypo` paths already honoured (e.g. LadrunoRCConcrete's loud crack-band failure,
+`StagedStrain -maxStrain`). Other negative codes are still accepted: ASDConcrete3D's advisory
+−10 (IMPL-EX error control) and −1000 (eigen) — a blanket `< 0` broke the notched-bend
+mesh-objectivity gates (ADR-86b). The full concrete/softening
 workflow — characteristic-length handshake, mesh objectivity, the
 `hourglassEnergy` monitoring dial, solver recipes — is in
 [[11_brick_asdconcrete_integration]].
