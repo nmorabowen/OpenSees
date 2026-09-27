@@ -96,7 +96,8 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 | G5 | silent failures | `LadrunoConcrete3D` plate view and vanilla `PlateFiberMaterial` return 0 unconverged | §2.1, §2.2 |
 | G6 | through-thickness confinement impossible (σ33 ≡ 0) | boundary-element cores lose CDPM2's confined strength/ductility | §4 P4 |
 | G7 | observability | bar stress/strain/buckling state unreachable inside `PlateRebar` | `PlateRebarMaterial.cpp` (no `setResponse`) |
-| G8 | doc drift | "lch = edge length" is half that under EAS (`LEDGER_quirks.md:1523`, `tests/test_ladrunoRCConcrete_meshobj.py:149` labels); ADR-66:134-136 says in-kernel smeared steel shipped (it did not) | §2.2 |
+| G8 | doc drift | "lch = edge length" is half that under EAS (`LEDGER_quirks.md:1523`, `tests/test_ladrunoRCConcrete_meshobj.py:149` labels); ADR-66:134-136 says in-kernel smeared steel shipped (it did not); the midpoint-rule quirk header (`LEDGER_quirks.md:2616`) says "≈2% at 5 uniform layers" — for n equal layers of one material the bending loss is exactly 1/n² (4 % at 5, 1 % at 10; per layer ∫z²dz = t·z_i² + t³/12), the measured 2.07 % was the G7 mixed stack | §2.2 |
+| G9 | in-plane frame of rebar layers | without `-local`, stock openseespy 3.7.1.x and the fork's build give `ASDShellQ4` in-plane frames 90° apart, so a `PlateRebar` at angle 0 can run the wrong way (apeGmsh live test, 2026-09-27) | §4 P1c |
 
 ## 3. Decisions
 
@@ -135,9 +136,9 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 |---|---|
 | P1a `LadrunoConcrete3D` plate view: tolerance relative to `ft`, damped Newton, return −1 on failure — **delivered by study fix_plan B4**; this program only adds the shell gate | PV20 with `LadrunoConcrete3D` layers: 0 silent failures (every failure is a cut step); a `LadrunoConcrete3D`-in-`ASDShellQ4` Zone-A test (there is none today) |
 | P1b D3b `PlateRebar` response forwarding (vanilla, additive) | `eleResponse(e,'material',gp,'fiber',k,'stress')` still returns the 5-comp plate stress; a new key reaches the bar (`LadrunoRebarBuckling` state, `ASDSteel1D` damage) |
-| P1c Guidance: in shells, `ASDSteel1D` without `-auto_regularization`, `-buckling` with the **tie spacing** | RC guide + `LEDGER_quirks` row |
+| P1c Guidance: in shells, `ASDSteel1D` without `-auto_regularization`, `-buckling` with the **tie spacing**; always pin `ASDShellQ4 -local` when a section has `PlateRebar` layers (G9 — confirm the frame difference in the fork and upstream sources first) | RC guide + `LEDGER_quirks` rows |
 | P1d Doc drift G8 — after #877 merges (it edits ADR-19 and the RC guide) | grep clean |
-| P1e apeGmsh: `PlateFiber`, `PlateFromPlaneStress`, uniaxial-in-`LayeredShell` guard, RC layer builder, `ASDShellQ4 -local` flag (study D2) | in progress in an apeGmsh worktree; `PlateRebar` already merged (apeGmsh #1182) |
+| P1e apeGmsh: `PlateFiber`, `ShellLayer` guards (uniaxial → points to `PlateRebar`), `RCLayeredShell`/`RebarMesh` builder, `ASDShellQ4(no_eas=)` | built 2026-09-27 on apeGmsh branch `feat/layered-shell-rc-primitives` (uncommitted), live 9/9 on the fork and on stock openseespy 3.7.1.2; `PlateRebar`/`PlateFromPlaneStress` (#1182) and `-local`/drilling flags (#1183) were already merged |
 
 ### P2 — Validation baseline (reuse study family 03; add only what measures P3)
 
