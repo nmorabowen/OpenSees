@@ -549,6 +549,9 @@ const Matrix &  LadrunoBrick::getMass(void)
     for (int i = 0; i < 8 && clean; i++)
       if (materialPointers[i]->getRho() != MiRho[i]) clean = false;
     for (int i = 0; i < 8 && clean; i++) {
+      // Ladruno (WP-124 C9): a warm cache can outlive the nodes (setDomain(0) on
+      // element removal); never dereference them -- the LadrunoMassCache rule.
+      if (nodePointers[i] == 0) { clean = false; break; }
       const Vector &crd = nodePointers[i]->getCrds();
       if (crd(0) != MiCrd[3*i] || crd(1) != MiCrd[3*i+1] || crd(2) != MiCrd[3*i+2])
         clean = false;
@@ -561,7 +564,12 @@ const Matrix &  LadrunoBrick::getMass(void)
 
   formInertiaTerms(1);
 
-  if (massCache) {
+  // Ladruno (WP-124 C9): pre-setDomain / node-less -- cannot guard geometry,
+  // stay uncached (the LadrunoMassCache::fill rule).
+  bool haveNodes = true;
+  for (int i = 0; i < 8; i++)
+    if (nodePointers[i] == 0) haveNodes = false;
+  if (massCache && haveNodes) {
     Mi = new Matrix(mass);
     for (int i = 0; i < 8; i++) {
       MiRho[i] = materialPointers[i]->getRho();
