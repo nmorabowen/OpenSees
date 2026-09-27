@@ -10,7 +10,9 @@ What is pinned here:
    the TIMs campaign set in plane strain incl. a huge-increment leg and a
    reversal leg) must reproduce, bit for bit (`float.hex`), the numbers the
    PRE-WP-127 binary produced (`wp127_sanisand_byteid_baseline.json`).
-2. THE CENSUS.  `substepStats` has 17 documented columns; the cumulative ones
+2. THE CENSUS.  `substepStats` has 17 documented ModifiedEuler columns
+   (WP-130 appended 9 CPPM columns, pinned in
+   test_ladruno_sanisand_cppm_newton.py); the cumulative ones
    are monotone, the census closes (every substep attempt ends in exactly one
    outcome), and the counters SURVIVE revertToLastCommit (a failed analyze)
    but are zeroed by revertToStart (`reset`).
@@ -38,10 +40,10 @@ import sanisand_replay as sr  # noqa: E402
 
 pytestmark = [pytest.mark.zone_a]
 
-_NSTATS = 17
+_NSTATS = 26          # WP-127's 17 + WP-130's 9 CPPM columns
 _CUM = slice(0, 13)          # cumulative columns (since revertToStart)
 (UPD, MECALLS, SUB, ACC, REJ, FORCED, CLAMP, REJLOWP, ABANDON, CAP, ENTRY,
- PNRESET, MAXONE, LSUB, LFORCED, LABANDON, LCAP) = range(_NSTATS)
+ PNRESET, MAXONE, LSUB, LFORCED, LABANDON, LCAP) = range(17)
 
 
 def _stats(ele=1, gp=1):

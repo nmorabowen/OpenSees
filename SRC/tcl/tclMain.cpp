@@ -209,6 +209,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • ladrunoThreads — OpenMP element state-determination loop (opt-in)\n"
 "        • LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)\n"
 "        • LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)\n"
+"        • LadrunoSANISAND — -cppmOnFail refuse / -meFallback cppm (WP-130)\n"
 "\n";
     // FEATURES-END
 

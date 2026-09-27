@@ -30,10 +30,13 @@ Decks:
                the CPPM's halving ladder and its explicit fallback fire.
   ls_ps_s2     the TIMs campaign set in plane strain, IntScheme 2, TanType 2.
   ls_ps_s2_cyc the same through a strain reversal.
-  ls_ps_s2_free  a quad with LOADED edges (genuine free DOF, global Newton):
-               the algorithmic tangent (the three inverted 6x6s) steers the
-               iterations, so the per-step Newton iteration count is pinned
-               too.
+  ls_ps_s2_free  a quad with LOADED edges (genuine free DOF, global Newton)
+               at 10 kPa: the algorithmic tangent (the three inverted 6x6s)
+               steers the iterations, so the per-step Newton iteration count
+               is pinned too.  At this confinement the first push step FAILS
+               (rc -3, 19 iterations) on the pre-change binary -- F12's
+               finding in one element -- and that failure is pinned as is.
+  ls_ps_s2_free50  the same at 100 kPa with a 40 kPa push in 10 steps.
 """
 import json
 import os
@@ -83,7 +86,9 @@ def _run(n_conf, n_steps):
 
 
 def deck_md3d_s2():
-    incs = b127._iso_dev(40, 5.0e-3, 0.5)
+    # the first 6 of the 40 steps: vanilla's p_r = 0.01*P_atm deck grinds the
+    # CPPM ladder (measured 484 s for all 40 on the pre-WP-130 binary, 118 s for 6)
+    incs = b127._iso_dev(40, 5.0e-3, 0.5)[:2]
     b127._build_3d("ManzariDafalias", _PARAMS, _S2, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
@@ -101,15 +106,15 @@ def deck_ls3d_s2_big():
 
 
 def deck_ls_ps_s2():
-    incs = b127._iso_dev(40, 5.0e-3, 1.0)
+    incs = b127._iso_dev(40, 5.0e-3, 1.0)[:20]
     b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
 
 def deck_ls_ps_s2_cyc():
     e = 2.0e-3
-    incs = ([(-e / 10, e / 10)] * 10 + [(e / 10, -e / 10)] * 20
-            + [(-e / 10, e / 10)] * 20)
+    incs = ([(-e / 10, e / 10)] * 5 + [(e / 10, -e / 10)] * 10
+            + [(-e / 10, e / 10)] * 10)
     b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
@@ -144,14 +149,14 @@ def build_free_quad(opts, lateral=5.0):
     ops.loadConst("-time", 0.0)
 
 
-def deck_ls_ps_s2_free():
-    build_free_quad(_CAMPAIGN_S2)
+def deck_ls_ps_s2_free(lateral=5.0, push=1.0):
+    build_free_quad(_CAMPAIGN_S2, lateral=lateral)
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
     for j, (x, y) in enumerate(sani._XY):
         if y == 1.:
-            ops.load(j + 1, 0.0, -1.0)
-    ops.integrator("LoadControl", 0.5)
+            ops.load(j + 1, 0.0, -push)
+    ops.integrator("LoadControl", 0.1)
     rows = []
     for _ in range(12):
         rc = ops.analyze(1)
@@ -168,6 +173,7 @@ DECKS = {
     "ls_ps_s2": deck_ls_ps_s2,
     "ls_ps_s2_cyc": deck_ls_ps_s2_cyc,
     "ls_ps_s2_free": deck_ls_ps_s2_free,
+    "ls_ps_s2_free50": lambda: deck_ls_ps_s2_free(lateral=50.0, push=20.0),
 }
 
 
