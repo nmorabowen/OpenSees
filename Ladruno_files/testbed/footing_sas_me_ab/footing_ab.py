@@ -313,7 +313,8 @@ SAS_NAMES = ["updates", "elastic", "substeps", "accepted", "rejectedErr",
              "refStartAlpha", "refStartOther", "refDTmin", "refNonPosH",
              "refLowP", "refDrift", "refAlpha", "refCap",
              "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode",
-             "maxAlphaRatio", "lastAlphaRatio", "lastF"]
+             "maxAlphaRatio", "lastAlphaRatio", "lastF",
+             "entryOverKappa", "rejectedReversal"]   # beb6d8333 appended the last two
 # which census the run reads, and where the columns the step line reports sit.
 # ME (substepStats): substeps, capHits, rejectedErr, forcedAtDTmin, rejectedLowP,
 # forcedClampMc, lastSubsteps, lastCapHit. SAS (sasStats): substeps, refusals,

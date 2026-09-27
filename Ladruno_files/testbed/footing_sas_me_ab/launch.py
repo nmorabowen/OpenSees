@@ -25,7 +25,8 @@ BINS = {
     # folder is being rebuilt); the pyd reports ladrunoBuild cdf43685f, which is
     # SRC-identical to WP-129 head 5c8dcd0e0 (the later commits touch docs only).
     # B_sasme_default was started from the original folder before the snapshot.
-    "B": os.path.join(HERE, "binB_5c8dcd0e0"),
+    "B": os.path.join(HERE, "binB_beb6d8333"),   # WP-129 review-fixed build (verified ladrunoBuild beb6d8333)
+    "B_cdf": os.path.join(HERE, "binB_5c8dcd0e0"),   # pre-review build cdf43685f (provisional)
     "B_orig": r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-a6b3c48d38c9ca3d3\dist\bin",
 }
 

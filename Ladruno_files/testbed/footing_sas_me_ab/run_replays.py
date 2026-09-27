@@ -16,7 +16,8 @@ PY311 = r"C:\Users\nmora\AppData\Local\Programs\Python\Python311\python.exe"
 sys.path.insert(0, HERE)
 BINS = {
     "A": r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\tims-implementation-review-3733c6\dist\bin",
-    "B": os.path.join(HERE, "binB_5c8dcd0e0"),   # snapshot, see launch.py
+    "B": os.path.join(HERE, "binB_beb6d8333"),   # WP-129 review-fixed build (verified ladrunoBuild beb6d8333)
+    "B_cdf": os.path.join(HERE, "binB_5c8dcd0e0"),   # pre-review build cdf43685f (provisional)   # snapshot, see launch.py
 }
 
 
