@@ -6,6 +6,22 @@ Every number below is printed by a committed script in
 `Ladruno_files/testbed/sanisand_ring_trace/` and saved under `out/` (§8 lists the
 commands). Source lines are the WP-127 tree (`e8fb51cdb`) unless stated.
 
+> **Correction (2026-09-27, after WP-134, PR #872).** The independent reference
+> integrator ([[134_sanisand_reference_integrator]], exact Radau integration of the
+> DM04 equations, not a port of the C++) overturns this report's ranking of
+> mechanism **F** below. F (a negative Λ denominator taken as ELASTIC, plus the
+> uncapped step factor) is not merely a compounder: it drives the substep error to
+> **exactly 0**, so no tolerance can catch it; it accounts for **all 25**
+> campaign-ModifiedEuler ring escapes from admissible starts; and it gives 20–65 %
+> stress errors on benign 20–100 kPa states even at TolE 1e-8. This report's
+> method could not see that: `md_port.py` shares the C++ error measure, so it
+> judged F only by switching it off inside the same flawed estimator. WP-134 also
+> found two defects this report does not list: **U9** (ModifiedEuler never
+> re-evaluates K, G inside the increment: 0.6/6/24 % of the stress increment at
+> δ = 1e-5/1e-4/1e-3, invisible to the error test) and **U10** (the loading test
+> uses n:Δσ, not ∂f/∂σ:Δσ). G (trigger) and E (enabler) stand as reported. The
+> WP-129 SAS-ME spec addresses all of them.
+
 ## 0. Answers in one page
 
 1. **Finding B — how α gets ~6× outside the bounding surface.** Reproduced from a
