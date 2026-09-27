@@ -1,0 +1,276 @@
+==== 2026-09-27 13:49:42 leg ctrl_dp38 bin C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\tims-implementation-review-3733c6\dist\bin timeout 7200.0s threads 1
+==== cmd C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe -S -u C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-a4cb25b746ecc9507\Ladruno_files\testbed\footing_sas_me_ab\footing_ab.py --out C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-a4cb25b746ecc9507\Ladruno_files\testbed\footing_sas_me_ab\runs\ctrl_dp38 --mat dp --dp-phi 38 --target 0.15 --wall 7000
+[2026-09-27 13:49:43] [      0.0s] engine C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\tims-implementation-review-3733c6\dist\bin\opensees.pyd
+[2026-09-27 13:49:43] [      0.0s] build 234a7575144215b0fcf4672e747ff1f148bb9a79
+[2026-09-27 13:49:43] [      0.0s] env MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_CBWR=COMPATIBLE
+[2026-09-27 13:49:43] [      0.0s] args {'mat': 'dp', 'scheme': 1, 'extra': '', 'maxsub': 2000, 'dp_phi': 38.0, 'dp_g': 30000.0, 'target': 0.15, 'wall': 7000.0, 'ckpt_every': 25, 'field_every_step': 1, 'deterministic': 0, 'out': 'C:\\Users\\nmora\\Github\\OpenSees_Compile\\OpenSees\\.claude\\worktrees\\agent-a4cb25b746ecc9507\\Ladruno_files\\testbed\\footing_sas_me_ab\\runs\\ctrl_dp38'}
+DruckerPrager nDmaterial - Written: K.Petek, P.Mackenzie-Helnwein, P.Arduino, U.Washington
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING: MaterialStageParameter::setDomain() - no effect with material tag 1
+[2026-09-27 13:49:44] [      1.7s] gravity: base reaction 3973.0500 kN/m vs gamma*A 3973.0500 (rel 2.22e-16); 1-D K0 patch max rel err 1.79e-12
+[2026-09-27 13:49:45] [      2.7s] surface loads: surcharge 160.6500 kN/m (+18.4 footing); base reaction 4152.1000 vs 4152.1000 (rel 4.44e-16)
+[2026-09-27 13:49:45] [      2.7s] material: DruckerPrager 1 70164.60465489139 30000.0 0.0 0.29022560274539155 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+[2026-09-27 13:49:45] [      2.7s] mesh: 2430 elements, 9720 Gauss points, solver Pardiso, applied vertical load 4152.100 kN/m
+WARNING: MaterialStageParameter::setDomain() - no effect with material tag 1
+[2026-09-27 13:49:45] [      2.7s] push: u_y0(ref) = -1.583517e-02 m, NormUnbalance tol 4.1521e-02 kN (1e-5 x applied), ladder (('Newton', 1.0, 25), ('NewtonLineSearch', 1.0, 40), ('KrylovNewton', 10.0, 60))
+[2026-09-27 13:49:45] [      2.7s] q at push start = 12.2667 kPa (dead load / B = 12.2667)
+[2026-09-27 13:49:45] [      2.8s] step     1 s/B 0.000013 q    12.846 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.08s
+[2026-09-27 13:49:45] [      2.9s] step     2 s/B 0.000027 q    13.426 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.0s] step     3 s/B 0.000040 q    14.001 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.1s] step     4 s/B 0.000053 q    14.577 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.10s
+[2026-09-27 13:49:46] [      3.2s] step     5 s/B 0.000067 q    15.154 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.3s] step     6 s/B 0.000080 q    15.730 kPa ds 2.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.4s] step     7 s/B 0.000107 q    16.877 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.5s] step     8 s/B 0.000133 q    18.022 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.6s] step     9 s/B 0.000160 q    19.167 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.09s
+[2026-09-27 13:49:46] [      3.7s] step    10 s/B 0.000187 q    20.303 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.10s
+[2026-09-27 13:49:46] [      3.8s] step    11 s/B 0.000213 q    21.436 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.10s
+[2026-09-27 13:49:46] [      3.9s] step    12 s/B 0.000240 q    22.564 kPa ds 4.000e-05 rung N it   1 fails 0 wall     0.10s
+[2026-09-27 13:49:47] [      4.1s] step    13 s/B 0.000293 q    24.792 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:47] [      4.2s] step    14 s/B 0.000347 q    26.950 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:47] [      4.4s] step    15 s/B 0.000400 q    29.056 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:47] [      4.5s] step    16 s/B 0.000453 q    31.116 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:47] [      4.7s] step    17 s/B 0.000507 q    33.138 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:47] [      4.8s] step    18 s/B 0.000560 q    35.120 kPa ds 8.000e-05 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:47] [      5.0s] step    19 s/B 0.000667 q    38.970 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:48] [      5.1s] step    20 s/B 0.000773 q    42.688 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:48] [      5.2s] step    21 s/B 0.000880 q    46.299 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:48] [      5.4s] step    22 s/B 0.000987 q    49.816 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:48] [      5.5s] step    23 s/B 0.001093 q    53.243 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:48] [      5.7s] step    24 s/B 0.001200 q    56.588 kPa ds 1.600e-04 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:48] [      5.8s] step    25 s/B 0.001413 q    63.053 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.13s
+[2026-09-27 13:49:48] [      5.9s] step    26 s/B 0.001627 q    69.257 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:49] [      6.1s] step    27 s/B 0.001840 q    75.276 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:49] [      6.3s] step    28 s/B 0.002053 q    81.098 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.16s
+[2026-09-27 13:49:49] [      6.4s] step    29 s/B 0.002267 q    86.784 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.15s
+[2026-09-27 13:49:49] [      6.6s] step    30 s/B 0.002480 q    92.340 kPa ds 3.200e-04 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:49] [      6.8s] step    31 s/B 0.002907 q   102.883 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.19s
+[2026-09-27 13:49:49] [      6.9s] step    32 s/B 0.003333 q   112.793 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.19s
+[2026-09-27 13:49:50] [      7.1s] step    33 s/B 0.003760 q   122.119 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.19s
+[2026-09-27 13:49:50] [      7.3s] step    34 s/B 0.004187 q   130.918 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.18s
+[2026-09-27 13:49:50] [      7.5s] step    35 s/B 0.004613 q   139.337 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.19s
+[2026-09-27 13:49:50] [      7.7s] step    36 s/B 0.005040 q   147.545 kPa ds 6.400e-04 rung N it   3 fails 0 wall     0.17s
+[2026-09-27 13:49:50] [      7.9s] step    37 s/B 0.005707 q   160.195 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.18s
+[2026-09-27 13:49:51] [      8.0s] step    38 s/B 0.006373 q   172.497 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:49:51] [      8.2s] step    39 s/B 0.007040 q   184.232 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.17s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.32535 (max: 0.041521, Norm deltaX: 0.00108324)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0273952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:49:53] [     10.9s] step    40 s/B 0.007707 q   198.028 kPa ds 1.000e-03 rung L it  22 fails 0 wall     2.66s
+[2026-09-27 13:49:54] [     11.1s] step    41 s/B 0.008373 q   210.946 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.17s
+[2026-09-27 13:49:54] [     11.2s] step    42 s/B 0.009040 q   223.274 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.17s
+[2026-09-27 13:49:54] [     11.5s] step    43 s/B 0.009707 q   235.037 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.26s
+[2026-09-27 13:49:54] [     11.9s] step    44 s/B 0.010373 q   245.819 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.41s
+[2026-09-27 13:49:55] [     12.3s] step    45 s/B 0.011040 q   255.709 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.36s
+[2026-09-27 13:49:55] [     12.6s] step    46 s/B 0.011707 q   265.297 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.34s
+[2026-09-27 13:49:56] [     13.1s] step    47 s/B 0.012373 q   274.948 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.49s
+[2026-09-27 13:49:56] [     13.5s] step    48 s/B 0.013040 q   284.124 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.37s
+[2026-09-27 13:49:56] [     13.7s] step    49 s/B 0.013707 q   293.187 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.22s
+[2026-09-27 13:49:56] [     14.0s] step    50 s/B 0.014373 q   302.329 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.21s
+[2026-09-27 13:49:57] [     14.2s] step    51 s/B 0.015040 q   311.611 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.21s
+[2026-09-27 13:49:57] [     14.5s] step    52 s/B 0.015707 q   320.895 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.28s
+[2026-09-27 13:49:57] [     15.0s] step    53 s/B 0.016373 q   329.802 kPa ds 1.000e-03 rung N it   7 fails 0 wall     0.49s
+[2026-09-27 13:49:58] [     15.3s] step    54 s/B 0.017040 q   339.109 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.37s
+[2026-09-27 13:49:58] [     15.8s] step    55 s/B 0.017707 q   346.542 kPa ds 1.000e-03 rung N it   7 fails 0 wall     0.46s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.124987 (max: 0.041521, Norm deltaX: 0.000261511)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0433952
+OpenSees > analyze failed, returned: -3 error flag
+NormCep = 4.46316e-22
+NormCep = 9.81295e-22
+NormCep = 7.63591e-22
+NormCep = 4.83332e-22
+NormCep = 5.70651e-22
+NormCep = 1.08981e-21
+NormCep = 6.94263e-22
+NormCep = 1.1139e-21
+NormCep = 5.83266e-22
+NormCep = 5.26552e-22
+DruckerPrager: further NormCep messages suppressed (Ladruno ADR-95)
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 3.44467e+07 (max: 0.041521, Norm deltaX: 2.07383e+07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0433952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:04] [     21.8s] step    56 s/B 0.018373 q   357.858 kPa ds 1.000e-03 rung K it  27 fails 0 wall     5.95s
+[2026-09-27 13:50:04] [     22.0s] step    57 s/B 0.019040 q   368.542 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.24s
+[2026-09-27 13:50:05] [     22.2s] step    58 s/B 0.019707 q   378.889 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.20s
+[2026-09-27 13:50:05] [     22.4s] step    59 s/B 0.020373 q   389.023 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.16s
+[2026-09-27 13:50:05] [     22.5s] step    60 s/B 0.021040 q   398.949 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.14s
+[2026-09-27 13:50:05] [     22.7s] step    61 s/B 0.021707 q   408.703 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.16s
+[2026-09-27 13:50:05] [     22.9s] step    62 s/B 0.022373 q   418.230 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.16s
+[2026-09-27 13:50:06] [     23.1s] step    63 s/B 0.023040 q   427.505 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.22s
+[2026-09-27 13:50:06] [     23.3s] step    64 s/B 0.023707 q   436.570 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.16s
+[2026-09-27 13:50:06] [     23.5s] step    65 s/B 0.024373 q   445.427 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.22s
+[2026-09-27 13:50:06] [     23.7s] step    66 s/B 0.025040 q   454.072 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:50:06] [     23.9s] step    67 s/B 0.025707 q   462.550 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.15s
+[2026-09-27 13:50:07] [     24.1s] step    68 s/B 0.026373 q   470.793 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.27s
+[2026-09-27 13:50:07] [     24.6s] step    69 s/B 0.027040 q   477.667 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.43s
+[2026-09-27 13:50:07] [     25.0s] step    70 s/B 0.027707 q   482.214 kPa ds 1.000e-03 rung N it   6 fails 0 wall     0.38s
+[2026-09-27 13:50:08] [     25.3s] step    71 s/B 0.028373 q   485.985 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.29s
+[2026-09-27 13:50:08] [     25.6s] step    72 s/B 0.029040 q   490.935 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.29s
+[2026-09-27 13:50:08] [     25.8s] step    73 s/B 0.029707 q   497.476 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.20s
+[2026-09-27 13:50:08] [     26.0s] step    74 s/B 0.030373 q   505.219 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.20s
+[2026-09-27 13:50:09] [     26.8s] step    75 s/B 0.031040 q   516.284 kPa ds 1.000e-03 rung N it  13 fails 0 wall     0.77s
+[2026-09-27 13:50:09] [     27.0s] step    76 s/B 0.031707 q   525.878 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.25s
+[2026-09-27 13:50:10] [     27.3s] step    77 s/B 0.032373 q   534.635 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:50:10] [     27.6s] step    78 s/B 0.033040 q   541.560 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.33s
+[2026-09-27 13:50:10] [     28.0s] step    79 s/B 0.033707 q   545.837 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.36s
+[2026-09-27 13:50:11] [     28.2s] step    80 s/B 0.034373 q   549.632 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.28s
+[2026-09-27 13:50:11] [     28.6s] step    81 s/B 0.035040 q   554.163 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.35s
+[2026-09-27 13:50:11] [     28.9s] step    82 s/B 0.035707 q   559.608 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.31s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.09217e+06 (max: 0.041521, Norm deltaX: 3102.05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0703952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 3 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 3 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 2 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 4 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 19978.9 (max: 0.041521, Norm deltaX: 8.50398e+07)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0703952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.542708 (max: 0.41521, Norm deltaX: 0.000373429)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0703952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:20] [     38.0s]   step 83: ladder failed, ds -> 5.0000e-04 m (s/B 0.035707)
+[2026-09-27 13:50:21] [     38.8s] step    83 s/B 0.036040 q   564.590 kPa ds 5.000e-04 rung N it  13 fails 1 wall     9.91s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.327335 (max: 0.041521, Norm deltaX: 0.000171996)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0703952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 3 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 3 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.06463e+07 (max: 0.041521, Norm deltaX: 801473)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0703952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:28] [     45.2s] step    84 s/B 0.036373 q   569.292 kPa ds 5.000e-04 rung K it  16 fails 0 wall     6.30s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 7.65971e+07 (max: 0.041521, Norm deltaX: 6517.61)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0708952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:32] [     49.1s] step    85 s/B 0.036707 q   570.595 kPa ds 5.000e-04 rung L it  25 fails 0 wall     3.97s
+[2026-09-27 13:50:32] [     49.4s] step    86 s/B 0.037040 q   572.559 kPa ds 5.000e-04 rung N it   4 fails 0 wall     0.27s
+[2026-09-27 13:50:32] [     49.8s] step    87 s/B 0.037373 q   575.129 kPa ds 5.000e-04 rung N it   6 fails 0 wall     0.41s
+[2026-09-27 13:50:33] [     50.1s] step    88 s/B 0.037707 q   577.853 kPa ds 5.000e-04 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:50:33] [     50.3s] step    89 s/B 0.038373 q   583.733 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:50:33] [     50.6s] step    90 s/B 0.039040 q   589.132 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.29s
+[2026-09-27 13:50:33] [     50.8s] step    91 s/B 0.039707 q   594.653 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.24s
+[2026-09-27 13:50:34] [     51.1s] step    92 s/B 0.040373 q   600.853 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.26s
+[2026-09-27 13:50:34] [     51.4s] step    93 s/B 0.041040 q   607.591 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.25s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.09667e+07 (max: 0.041521, Norm deltaX: 996.66)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0783952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:37] [     54.3s] step    94 s/B 0.041707 q   616.783 kPa ds 1.000e-03 rung L it  13 fails 0 wall     2.89s
+[2026-09-27 13:50:37] [     54.6s] step    95 s/B 0.042373 q   625.929 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.36s
+[2026-09-27 13:50:37] [     54.9s] step    96 s/B 0.043040 q   634.376 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:50:38] [     55.1s] step    97 s/B 0.043707 q   642.337 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.24s
+[2026-09-27 13:50:38] [     55.4s] step    98 s/B 0.044373 q   649.946 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.24s
+[2026-09-27 13:50:38] [     55.6s] step    99 s/B 0.045040 q   657.299 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.17s
+[2026-09-27 13:50:38] [     55.8s] step   100 s/B 0.045707 q   664.450 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.24s
+[2026-09-27 13:50:39] [     56.0s] step   101 s/B 0.046373 q   671.426 kPa ds 1.000e-03 rung N it   3 fails 0 wall     0.24s
+[2026-09-27 13:50:39] [     56.2s] step   102 s/B 0.047040 q   678.209 kPa ds 1.000e-03 rung N it   2 fails 0 wall     0.17s
+[2026-09-27 13:50:39] [     56.5s] step   103 s/B 0.047707 q   684.837 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.30s
+[2026-09-27 13:50:40] [     57.1s] step   104 s/B 0.048373 q   691.117 kPa ds 1.000e-03 rung N it   8 fails 0 wall     0.58s
+[2026-09-27 13:50:40] [     57.5s] step   105 s/B 0.049040 q   695.576 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.39s
+[2026-09-27 13:50:40] [     58.0s] step   106 s/B 0.049707 q   699.373 kPa ds 1.000e-03 rung N it   6 fails 0 wall     0.46s
+[2026-09-27 13:50:41] [     58.3s] step   107 s/B 0.050373 q   703.544 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.32s
+[2026-09-27 13:50:41] [     58.8s] step   108 s/B 0.051040 q   707.275 kPa ds 1.000e-03 rung N it   6 fails 0 wall     0.51s
+[2026-09-27 13:50:42] [     59.4s] step   109 s/B 0.051707 q   709.047 kPa ds 1.000e-03 rung N it   7 fails 0 wall     0.55s
+[2026-09-27 13:50:42] [     59.8s] step   110 s/B 0.052373 q   710.731 kPa ds 1.000e-03 rung N it   5 fails 0 wall     0.36s
+[2026-09-27 13:50:43] [     60.1s] step   111 s/B 0.053040 q   712.456 kPa ds 1.000e-03 rung N it   4 fails 0 wall     0.34s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.78298e+08 (max: 0.041521, Norm deltaX: 328881)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0963952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 579197 (max: 0.041521, Norm deltaX: 191648)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0963952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.505321 (max: 0.41521, Norm deltaX: 9.28494e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0963952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:50:51] [     69.0s]   step 112: ladder failed, ds -> 5.0000e-04 m (s/B 0.053040)
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.46309e+06 (max: 0.041521, Norm deltaX: 333.761)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0958952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.0808e+09 (max: 0.041521, Norm deltaX: 190527)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0958952
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.838364 (max: 0.41521, Norm deltaX: 0.000566299)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0958952
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:51:00] [     77.3s]   step 112: ladder failed, ds -> 2.5000e-04 m (s/B 0.053040)
+[2026-09-27 13:51:00] [     77.8s] step   112 s/B 0.053207 q   711.106 kPa ds 2.500e-04 rung N it   7 fails 2 wall    17.65s
+[2026-09-27 13:51:01] [     78.5s] step   113 s/B 0.053373 q   710.627 kPa ds 2.500e-04 rung N it  11 fails 0 wall     0.74s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.69668e+07 (max: 0.041521, Norm deltaX: 40720.7)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0961452
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:51:03] [     80.7s] step   114 s/B 0.053540 q   710.530 kPa ds 2.500e-04 rung L it   8 fails 0 wall     2.21s
+[2026-09-27 13:51:03] [     80.9s] step   115 s/B 0.053707 q   709.841 kPa ds 2.500e-04 rung N it   3 fails 0 wall     0.21s
+[2026-09-27 13:51:04] [     81.2s] step   116 s/B 0.053873 q   709.010 kPa ds 2.500e-04 rung N it   3 fails 0 wall     0.21s
+[2026-09-27 13:51:04] [     81.4s] step   117 s/B 0.054040 q   708.390 kPa ds 2.500e-04 rung N it   3 fails 0 wall     0.21s
+[2026-09-27 13:51:04] [     81.6s] step   118 s/B 0.054373 q   708.168 kPa ds 5.000e-04 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:51:04] [     81.9s] step   119 s/B 0.054707 q   708.332 kPa ds 5.000e-04 rung N it   3 fails 0 wall     0.23s
+[2026-09-27 13:51:05] [     82.1s] step   120 s/B 0.055040 q   708.875 kPa ds 5.000e-04 rung N it   2 fails 0 wall     0.20s
+[2026-09-27 13:51:05] [     82.3s] step   121 s/B 0.055373 q   709.666 kPa ds 5.000e-04 rung N it   3 fails 0 wall     0.22s
+[2026-09-27 13:51:05] [     82.5s] step   122 s/B 0.055707 q   710.694 kPa ds 5.000e-04 rung N it   2 fails 0 wall     0.17s
+[2026-09-27 13:51:05] [     82.7s] step   123 s/B 0.056040 q   711.978 kPa ds 5.000e-04 rung N it   3 fails 0 wall     0.23s
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 2.0748 (max: 0.041521, Norm deltaX: 0.000425268)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.100895
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 13:51:08] [     85.3s] step   124 s/B 0.056707 q   715.024 kPa ds 1.000e-03 rung L it  11 fails 0 wall     2.55s
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING PARDISOGenLinSolver: PARDISO perturbed 1 pivot(s) during factorization (mtype 11, threshold 1e-13). The solve is to a PERTURBED matrix — treat a slow or stalling Newton here as a near-singular tangent, not a solver hiccup.
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 3.47869e+07 (max: 0.041521, Norm deltaX: 8.98534e+08)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.101895
+OpenSees > analyze failed, returned: -3 error flag
