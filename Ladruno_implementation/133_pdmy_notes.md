@@ -47,7 +47,7 @@ values and frees the old arrays. PDMY02 always copied them correctly.
 | Omitted flags are byte-identical to the pre-WP-133 engine | Baselines captured from a full build of untouched `origin/ladruno` (`84fedcf13`) before any source edit: `tests/wp133_pdmy03_byteid_baseline.json` (Python, `float.hex` of every stress/strain component per step, three decks incl. user-defined backbone surfaces) and `tests/wp133_pdmy03_tcl_baseline.txt` (Tcl, `%.17g`). Compared after the change. Explicit flags equal to the defaults are identical too. | verified (G1) |
 | The constants reach the brake | moving `cs1` so the path crosses the line changes the response from the crossing step on; higher `cs1` crosses later, higher `cs2`, `cs3` or `ei` earlier | verified (G2) |
 | No cross-material leakage | two materials with different constants in one model reproduce their single runs bitwise, either creation order, and after 25 more PDMY03 materials force the reallocation | verified (G3) |
-| The G3 reallocation gate can see the old leak | mutation build with the vanilla copy loop restored | see PR body |
+| The G3 reallocation gate can see the old leak | mutation build with the vanilla copy loop (`einitx[i] = ei`, ...) restored: both bitwise G3 gates FAIL, the other 12 pass; fix restored and rebuilt: 14/14 | verified (mutation) |
 
 Gate: `tests/test_wp133_pdmy03_cs_params.py` (14 cases, ~45 s).
 
