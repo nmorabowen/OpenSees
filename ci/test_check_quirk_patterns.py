@@ -499,3 +499,79 @@ def test_l3_flags_an_orphaned_pointer(tmp_path):
     })
     out = cq.check_pointers(root, _rel(root))
     assert len(out) == 1 and "renamed heading" in out[0]
+
+# ---------------------------------------------------------------- L7: sequence
+def _l7(tmp_path, body, stamped=False, where="SRC/element/Element.cpp"):
+    src = (STAMP if stamped else "") + body
+    root = _tree(tmp_path, {where: src})
+    used = set()
+    out = cq.check_sequence(root, _rel(root), used)
+    return out + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def _resp(body):
+    return "int Element::getResponse(int responseID, Information &eleInfo)\n{\n" + body + "\n}\n"
+
+
+def test_l7_flags_the_c15_incident_in_a_vanilla_file(tmp_path):
+    """The exact pre-a2004e0a7 line of vanilla Element.cpp (WP-124 C15)."""
+    out = _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444:\n"
+        "    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()"
+        "-this->getResistingForce());\n  default:\n    return -1;\n  }"))
+    assert len(out) == 1 and out[0].startswith("L7 SRC/element/Element.cpp:4:")
+    assert "getResistingForceIncInertia(), getRayleighDampingForces(), getResistingForce()" in out[0]
+
+
+def test_l7_passes_the_c15_fix(tmp_path):
+    assert _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444: {\n"
+        "    Vector inertial(this->getResistingForceIncInertia());\n"
+        "    inertial -= this->getRayleighDampingForces();\n"
+        "    inertial -= this->getResistingForce();\n"
+        "    return eleInfo.setVector(inertial);\n  }\n  default:\n    return -1;\n  }")) == []
+
+
+def test_l7_flags_vector_plus_matrix_times_vector(tmp_path):
+    """Cross-type too: a getMass() that forms the mass can refill the residual storage as a
+    side effect (LadrunoBrick's formInertiaTerms(1) writes resid)."""
+    out = _l7(tmp_path, "const Vector &E::getResistingForceIncInertia(void)\n{\n"
+                        "  res = this->getResistingForce() + this->getMass() * accel;\n  return res;\n}\n")
+    assert len(out) == 1 and "getResistingForce(), getMass()" in out[0]
+
+
+@pytest.mark.parametrize("body", [
+    "  theMatrix->addMatrix(1.0, this->getTangentStiff(), betaK);",                 # one call, args
+    "  foo(this->getMass(), this->getTangentStiff());",                               # separate ARGUMENTS
+    "  theVector->addMatrixVector(0.0, this->getMass(), vel, alphaM);",
+    "  res = this->getMass() * accel;",                                             # one call, arithmetic
+    "  res = this->getResistingForce();\n  res += this->getRayleighDampingForces();", # separate statements
+    "  // res = this->getResistingForce() - this->getRayleighDampingForces();\n  x = 1;",
+    "  opserr << \"getResistingForce() - getMass()\" << endln;",
+    "  K = theEle->getTangentStiff();\n  M = theEle->getMass();\n  A = K - M;",      # owned copies
+])
+def test_l7_passes_non_arithmetic_or_sequenced_uses(tmp_path, body):
+    assert _l7(tmp_path, "void E::f(void)\n{\n" + body + "\n}\n") == []
+
+
+def test_l7_flags_a_pointer_receiver_and_an_other_file(tmp_path):
+    out = _l7(tmp_path, "void FE::g(void)\n{\n  r = myEle->getResistingForceIncInertia() - "
+                        "myEle->getResistingForce();\n}\n", where="SRC/analysis/fe_ele/FE.cpp")
+    assert len(out) == 1 and out[0].startswith("L7 SRC/analysis/fe_ele/FE.cpp:3:")
+
+
+def test_l7_waiver(tmp_path):
+    ok = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok getMass never writes resid in this element\n"
+          "  res = this->getResistingForce() + this->getMass() * a;\n}\n")
+    assert _l7(tmp_path, ok, stamped=True) == []
+    short = ("void E::f(void)\n{\n  res = this->getResistingForce() + this->getMass() * a;"
+             "   // ladruno-lint: sequence-ok ok\n}\n")
+    out = _l7(tmp_path, short, stamped=True)
+    assert len(out) == 1 and "reason too short" in out[0]
+
+
+def test_l7_stale_waiver(tmp_path):
+    stale = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok this used to combine two accessors\n"
+             "  res = this->getResistingForce();\n}\n")
+    out = _l7(tmp_path, stale, stamped=True)
+    assert len(out) == 1 and out[0].startswith("W ") and "stale sequence-ok" in out[0]
