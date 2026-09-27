@@ -4047,6 +4047,8 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
                        // PARDISO's fill/memory/flop counters after every
                        // numeric factorization
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
+    int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
+    int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
     int count = 2;
 
     // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
@@ -4096,6 +4098,33 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 	if (Tcl_GetInt(interp, argv[count+1], &krylovDigits) != TCL_OK)
 	  return TCL_ERROR;
 	count++;
+      } else if (strcmp(argv[count],"-deterministic") == 0) {
+	// Ladruno WP-132 (TIMs F22): MKL CNR on the default AUTO branch; a
+	// branch the MKL_CBWR environment variable already fixed is kept. A
+	// bare flag, consuming no value. Does not override an explicit -cbwr.
+	if (cnrBranch < 0) {
+	  cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+	  cnrKeepEnv = 1;
+	}
+      } else if (strcmp(argv[count],"-cbwr") == 0) {
+	// Ladruno WP-132: an explicit MKL CBWR branch (AUTO, COMPATIBLE, AVX2,
+	// AVX512, ... optionally ",STRICT") — the cross-node recipe when the
+	// nodes' CPUs differ. Implies -deterministic. An unknown name is a
+	// script bug: stop, like a bad -matrixType value would in Tcl.
+	if (count+1 >= argc) {
+	  opserr << "Pardiso Error: -cbwr given with no branch name "
+		 << "(e.g. -cbwr AVX2)\n";
+	  return TCL_ERROR;
+	}
+	cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName(argv[count+1]);
+	cnrKeepEnv = 0;
+	if (cnrBranch < 0) {
+	  opserr << "Pardiso Error: unknown -cbwr branch " << argv[count+1]
+		 << " (use the MKL_CBWR spellings: AUTO, COMPATIBLE, SSE4_2, AVX, "
+		 << "AVX2, AVX512, AVX512_E1, AVX10[,STRICT])\n";
+	  return TCL_ERROR;
+	}
+	count++;
       } else {
 	opserr << "Pardiso Warning: unknown option " << argv[count]
 	       << ", ignored\n";
@@ -4106,6 +4135,14 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
     theSolver->setStats(statsFlag);
     theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
+    // Ladruno WP-132: the user asked for reproducibility; if MKL refuses the
+    // mode (already in use in this process) running on would silently hand
+    // back non-reproducible results, so stop — the warning names the fix.
+    if (cnrBranch >= 0 &&
+        theSolver->setDeterministic(cnrBranch, cnrKeepEnv) < 0) {
+      delete theSolver;
+      return TCL_ERROR;
+    }
     theSOE = new PARDISOGenLinSOE(*theSolver, matType);
   }
 #else
