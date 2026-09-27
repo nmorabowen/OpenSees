@@ -412,10 +412,6 @@ def test_cstpair_stress_plane_strain():
         assert s4[4 * t:4 * t + 3] == s[3 * t:3 * t + 3]
 
 
-C5 = pytest.mark.xfail(strict=True, reason="C5: LadrunoQuad SSP 'material k' edits a dead slot for k > 1")
-
-
-@C5
 @pytest.mark.parametrize("k", [2, 3, 4])
 def test_quad_ssp_material_point_maps_to_the_live_slot(k):
     """C5: under -formulation ssp the only live material is slot 0 (setResponse and
