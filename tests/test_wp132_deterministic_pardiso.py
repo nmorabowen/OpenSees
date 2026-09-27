@@ -32,8 +32,10 @@ a boot .pth.
                                      reproducible run with the mode off is not a
                                      failure of anything)
 
-Measured wall (this box, 16 threads, MKL_NUM_THREADS=8): see the module-level
-N_RUNS note; the slow pair is ~<WALL> s.
+Measured 2026-09-27 (AMD Ryzen AI 7 PRO 350, 16 threads, MKL_NUM_THREADS=8,
+N_RUNS=5, box shared with other builds): mode ON 1 distinct result / 5 runs,
+706 s; mode OFF 5 distinct / 5 runs, 2 distinct curves, max relative spread
+1.5e-16 (1 ULP) in the load factor, 1159 s. The slow pair is ~31 min.
 """
 import json
 import os
@@ -223,6 +225,19 @@ def test_prior_pardiso_solve_does_not_block():
 BIG = dict(mesh=(24, 24, 12), steps=6, du=1.0)
 
 
+def _spread(curves):
+    """Largest relative spread across runs, over every step, of the load
+    factor and of the control displacement: max|x - x_run0| / |x_run0|."""
+    worst = [0.0, 0.0]
+    for c in curves[1:]:
+        for step, ref in zip(c, curves[0]):
+            for q in (0, 1):
+                a, b = float.fromhex(step[q]), float.fromhex(ref[q])
+                if b != 0.0:
+                    worst[q] = max(worst[q], abs(a - b) / abs(b))
+    return worst
+
+
 def _repeat(system_args):
     shas, curves, iters = [], [], []
     for _ in range(N_RUNS):
@@ -247,5 +262,7 @@ def test_mode_off_reported():
     shas, curves, iters = _repeat(["Pardiso"])
     print(f"\n[WP-132] mode OFF: {len(set(shas))} distinct result(s) over "
           f"{N_RUNS} runs at MKL_NUM_THREADS={THREADS}; "
-          f"{len(set(curves))} distinct curve(s); iters {sorted(set(iters))}")
+          f"{len(set(curves))} distinct curve(s); iters {sorted(set(iters))}; "
+          f"max rel. spread vs run 0: load factor {_spread(curves)[0]:.3e}, "
+          f"control disp {_spread(curves)[1]:.3e}")
     # Reported, not asserted: see the module docstring.

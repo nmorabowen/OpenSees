@@ -257,6 +257,10 @@ and nothing else. The rest, as of 2026-09:
 The test is `tests/test_wp132_deterministic_pardiso.py`: a ~22k-DOF J2 push at
 `MKL_NUM_THREADS=8`, run N times with the mode on (must be byte-identical) and
 N times off (the number of distinct results is reported, not asserted).
+Measured 2026-09-27, AMD Ryzen AI 7 PRO 350, 5 runs each: mode on gave 1
+distinct result. Mode off gave 5 distinct displacement fields and 2 distinct
+curves, with a largest relative spread of 1.5e-16 (1 ULP) in the load factor.
+On a smooth hardening model the drift stays in the last bit.
 
 ---
 
