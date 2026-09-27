@@ -83,6 +83,7 @@ namespace Ladruno {
 
 class MassScalingEnergyRegistry {
 public:
+    // ladruno-lint: wipe-ok owner-scoped: every publisher (CentralDifferenceSMS, CentralDifferenceSMSConsistent, ExplicitBathe) calls clear(this)/clearNodal(this) in its destructor, and wipe deletes the integrator, so no entry outlives its model (WP-115).
     static MassScalingEnergyRegistry &instance();
 
     // Publish/replace the active consistent-SMS integrator's per-element node-major

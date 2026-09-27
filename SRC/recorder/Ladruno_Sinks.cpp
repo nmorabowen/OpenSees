@@ -129,6 +129,9 @@ namespace ladruno {
 			schema.components_csv, schema.num_components,
 			schema.dimension, schema.description,
 			(int)schema.result_type, (int)schema.data_type);
+		// WP-126: how a reader combines this result across partition files (§7.1).
+		h5::attribute::write(h_gp_result, "PARTITION_REDUCTION",
+			std::string(src.partitionReduction()));
 
 		// ID dataset [nIds x 1] (same shape as the frozen recorder).
 		const std::vector<int>& ids = src.ids();
@@ -235,6 +238,7 @@ namespace ladruno {
 		m_description = schema.description;
 		m_result_type = (int)schema.result_type;
 		m_data_type = (int)schema.data_type;
+		m_partition_reduction = src.partitionReduction();   // WP-126
 		m_n_comp = (size_t)(schema.num_components < 0 ? 0 : schema.num_components);
 		m_ids = src.ids();
 		m_n_ids = m_ids.size();
@@ -257,6 +261,7 @@ namespace ladruno {
 			m_description = schema.description;
 			m_result_type = (int)schema.result_type;
 			m_data_type = (int)schema.data_type;
+			m_partition_reduction = src.partitionReduction();   // WP-126 (begin() is skipped here)
 		}
 		m_n_comp = (size_t)schema.num_components;
 		if (m_ids.empty()) {
@@ -352,6 +357,10 @@ namespace ladruno {
 			h_family, info.h_group_proplist, m_name, m_display_name,
 			m_components_csv, (int)m_n_comp, m_dimension, m_description,
 			m_result_type, m_data_type);
+		// WP-126: same attribute as the streaming group. In a partitioned run the
+		// recorder refuses to envelope anything but "NONE", so a written envelope is
+		// always "NONE" there; serial files keep the source's own value.
+		h5::attribute::write(h_name, "PARTITION_REDUCTION", m_partition_reduction);
 
 		// ID [nIds x 1], and the four [nIds x nComp] accumulators (schema §7.4).
 		hid_t d_id  = h5::dataset::createAndWrite(h_name, "ID", m_ids, m_n_ids, 1);

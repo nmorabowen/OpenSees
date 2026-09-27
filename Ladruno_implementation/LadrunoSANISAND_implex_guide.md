@@ -320,6 +320,16 @@ generates thousands of refusals. `implexGuards` (ADR-92 P2, §11) is the same ki
 the three P2 events — none of them prints anything per occurrence (they are designed behaviour,
 not warnings), so this response is the only record any of them fired at all.
 
+**"Process-wide" means *within one model*, since WP-104.** `wipe` zeroes every process-wide
+counter above — `implexRefusals` slots 0–3 and 5, all of `implexGuards`, `avgImplexError` and its
+commit-round marker — so a fresh material in a new model reads `[0,0,0,0,0,0]` whatever ran
+before it in the process (before WP-104 it inherited the previous model's totals, measured as
+`[9,0,0,9,0,9]` on a fresh tag by the apeGmsh live test). `reset()` / `revertToStart()` do **not**
+zero them: they rewind the *same* model, and a multi-leg campaign reads its legs as deltas over a
+running total (`LEDGER_quirks`, "read it as DELTAS"). The 10-per-process `opserr` throttles are
+untouched by either. Regression: `tests/test_wp104_implex_refusals_wipe_reset.py` and the
+classic-Tcl twin `tests/tcl/wp104_implex_refusals_wipe.tcl`.
+
 Since WP-86d, `implexError`, `avgImplexError`, `implexDetail` and `implexRefusals` also emit
 `output.tag("ResponseType", ...)` in `setResponse` (the `FSAM`/`ASDConcrete3DMaterial` idiom), so a
 `recorder Element -xml`/`-file` or the fork's own `recorder ladruno` names each column instead of

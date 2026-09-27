@@ -669,7 +669,11 @@ int BezierTet10::addInertiaLoadToUnbalance(const Vector &accel)
         a(3*i + 2) = Raccel(2);
     }
 
-    Q.addMatrixVector(1.0, M, a, 1.0);
+    // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
+    // so the unbalance gains -M·R·a_g). Was `+1.0` until WP-117, which drove
+    // the element mass with -a_g under UniformExcitation. Matches
+    // TenNodeTetrahedron / LadrunoBrick / every other fork element.  // Ladruno
+    Q.addMatrixVector(1.0, M, a, -1.0);
     return 0;
 }
 
@@ -1209,7 +1213,14 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
 
 const Vector &BezierTet10::getResistingForceIncInertia()
 {
-    this->getResistingForce();
+    // SNAPSHOT into a function-local buffer before anything else runs:
+    // getMass() and the betaK Rayleigh re-entry (getTangentStiff) must not be
+    // able to reach the vector being accumulated. Returning `res` also keeps it
+    // distinct from P_return, which getResistingForce() returns. Same operations
+    // in the same order -- ((f - Q) + M*a) + R -- so results are bit-identical
+    // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+    static Vector res(NELD);
+    res = this->getResistingForce();
 
     const Matrix &M = this->getMass();
     bool hasMass = false;
@@ -1224,15 +1235,13 @@ const Vector &BezierTet10::getResistingForceIncInertia()
             a(3*i + 1) = accel(1);
             a(3*i + 2) = accel(2);
         }
-        P_return.addMatrixVector(1.0, M, a, 1.0);
+        res.addMatrixVector(1.0, M, a, 1.0);
     }
 
-    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
-        const Vector &v = this->getRayleighDampingForces();
-        P_return += v;
-    }
+    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+        res += this->getRayleighDampingForces();
 
-    return P_return;
+    return res;
 }
 
 
