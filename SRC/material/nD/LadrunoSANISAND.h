@@ -360,7 +360,7 @@ class LadrunoSANISAND : public ManzariDafalias
     // re-asserts the base seams through applyLadrunoConstants(). `verbose`
     // echoes one line (the deck-level command only).
     void setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
-                               int meFallback, bool verbose);        // Ladruno WP-130
+                               int meFallback, int start, bool verbose);   // Ladruno WP-130
 
     // `implexError` / `avgImplexError`, on the ASDConcrete3DMaterial.cpp
     // :2073-2077 template, plus this material's own per-point detail response.
@@ -484,11 +484,12 @@ class LadrunoSANISAND : public ManzariDafalias
     // Ladruno WP-130 (TIMs F18(c)/(d)): the DECK-LEVEL requests for the CPPM
     // seams (two-name convention again: these are the requests, the base's
     // mLadrunoCPPM* / mLadrunoMEFallback are the seams, applyLadrunoConstants()
-    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off.
+    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off / trial.
     int    mCPPMOnFail;       // 0 explicit (vanilla), 1 refuse
     int    mCPPMHalvings;     // 0..9; base mLadrunoCPPMMaxLevel = this + 1
     int    mCPPMLineSearch;   // 0 off, 1 on
     int    mMEFallback;       // 0 off, 1 cppm
+    int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset

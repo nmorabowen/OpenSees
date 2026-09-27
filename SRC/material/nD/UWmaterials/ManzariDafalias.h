@@ -294,6 +294,12 @@ class ManzariDafalias : public NDMaterial
 	//                        value. 1 = no halving at all.
 	//   mLadrunoCPPMLineSearch 0 = vanilla full Newton step in NewtonIter2; 1 = a
 	//                        backtracking line search on ||R|| (halving, <= 8 cuts).
+	//   mLadrunoCPPMStart    0 = vanilla; 1 = when the local Newton from the elastic
+	//                        trial fails, retry it ONCE (per level) from an explicit
+	//                        50-substep ForwardEuler guess before halving. Vanilla's
+	//                        own `SchemeControl == 1` rung does this but is dead
+	//                        code (the ladder starts at 2) and passes uninitialised
+	//                        K, G to ForwardEuler; this rung passes the CPPM's own.
 	//   mLadrunoMEFallback   0 = vanilla; 1 = when ModifiedEuler hits
 	//                        -maxSubsteps (IntScheme 1), hand THAT increment to
 	//                        BackwardEuler_CPPM (with refusal instead of any
@@ -304,6 +310,7 @@ class ManzariDafalias : public NDMaterial
 	int     mLadrunoCPPMMaxLevel;                                            // Ladruno WP-130
 	int     mLadrunoCPPMLineSearch;                                          // Ladruno WP-130
 	int     mLadrunoMEFallback;                                              // Ladruno WP-130
+	int     mLadrunoCPPMStart;                                               // Ladruno WP-130
 	bool    mLadrunoCPPMRefused;                                             // Ladruno WP-130
 	bool    mLadrunoInMEFallback;                                            // Ladruno WP-130
 	// Ladruno WP-127 (TIMs F20(a)): a per-INSTANCE census of what ModifiedEuler
@@ -342,8 +349,8 @@ class ManzariDafalias : public NDMaterial
 	//   ModifiedEuler call, so an elastic or zero-increment settle pass -- e.g.
 	//   the one Domain::revertToLastCommit pushes through -- does not erase it):
 	//     LAST_SUBSTEPS, LAST_FORCED, LAST_ABANDON, LAST_CAP
-	// Ladruno WP-130 (TIMs F18(c)/(d)) appends nine BackwardEuler_CPPM columns
-	// (17..25). Same rules: per instance, diagnostics only, read by nothing in
+	// Ladruno WP-130 (TIMs F18(c)/(d)) appends eleven BackwardEuler_CPPM columns
+	// (17..27). Same rules: per instance, diagnostics only, read by nothing in
 	// the integrator. Cumulative since revertToStart:
 	//     CPPM_CALLS       top-level BackwardEuler_CPPM calls from integrate()
 	//                      (IntScheme 2 plastic updates + ME->CPPM fallbacks)
@@ -359,7 +366,11 @@ class ManzariDafalias : public NDMaterial
 	//     ME_FALLBACKS     ModifiedEuler hit -maxSubsteps and the increment was
 	//                      handed to the CPPM (-meFallback cppm)
 	//     ME_FALLBACK_OK   ... and the CPPM returned it (the update stands)
-	//   the last update that entered BackwardEuler_CPPM from integrate():
+	//     CPPM_GUESS_TRIES -cppmStart explicit: local Newton restarts from the
+	//                      explicit guess
+	//     CPPM_GUESS_OK    ... that returned a valid state
+	//   the last update whose top-level BackwardEuler_CPPM call left the elastic
+	//   branch (so a zero-increment settle pass does not erase it):
 	//     LAST_CPPM_REFUSED 1 if it refused
 	enum {                                                                   // Ladruno WP-127
 	    LMS_UPDATES = 0, LMS_ME_CALLS, LMS_SUBSTEPS, LMS_ACCEPTED,           // Ladruno WP-127
@@ -370,6 +381,7 @@ class ManzariDafalias : public NDMaterial
 	    LMS_CPPM_CALLS, LMS_CPPM_NEWTON_FAIL, LMS_CPPM_HALVINGS,             // Ladruno WP-130
 	    LMS_CPPM_EXPL_FAIL, LMS_CPPM_EXPL_LOWP, LMS_CPPM_REFUSALS,           // Ladruno WP-130
 	    LMS_ME_FALLBACKS, LMS_ME_FALLBACK_OK, LMS_LAST_CPPM_REFUSED,         // Ladruno WP-130
+	    LMS_CPPM_GUESS_TRIES, LMS_CPPM_GUESS_OK,                             // Ladruno WP-130
 	    LMS_COUNT                                                            // Ladruno WP-127
 	};                                                                       // Ladruno WP-127
 	double  mLadrunoMEStats[LMS_COUNT];                                      // Ladruno WP-127

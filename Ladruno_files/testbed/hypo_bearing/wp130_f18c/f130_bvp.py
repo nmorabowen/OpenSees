@@ -124,7 +124,8 @@ finally:
              "pnResets", "maxSubstepsOneUpdate", "lastSubsteps", "lastForcedAtDTmin",
              "lastAbandonedLowP", "lastCapHit", "cppmCalls", "cppmNewtonFail",
              "cppmHalvings", "cppmExplicitFail", "cppmExplicitLowP", "cppmRefusals",
-             "meFallbacks", "meFallbackOk", "lastCppmRefused"]
+             "meFallbacks", "meFallbackOk", "lastCppmRefused",
+             "cppmGuessTries", "cppmGuessOk"]
     with open(os.path.join(out_dir, "census.json"), "w") as fh:
         json.dump(dict(scheme=scheme, extra=_extra_conv,
                        build=ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "?",

@@ -12,7 +12,7 @@ What is pinned here:
    IntScheme-1 decks are pinned by its own test, unchanged.
 2. THE PARSER refuses every flag combination that would be inert or is not
    qualified (-implex).
-3. THE CENSUS: `substepStats` has 26 columns; at the defaults the vanilla
+3. THE CENSUS: `substepStats` has 28 columns; at the defaults the vanilla
    silent explicit fallback is now COUNTED (F12 5.2/5.3 said it was invisible).
 4. F18(c): with `-cppmOnFail refuse` a trial iterate the CPPM cannot return
    reaches analyze() as a failure (rc < 0) in bounded time, the refusal is
@@ -35,9 +35,9 @@ import wp130_sanisand_byteid as b130
 
 pytestmark = [pytest.mark.zone_a]
 
-_NSTATS = 26
+_NSTATS = 28
 (CPPM_CALLS, CPPM_NFAIL, CPPM_HALV, CPPM_EXPL, CPPM_LOWP, CPPM_REF,
- ME_FB, ME_FB_OK, LAST_CPPM_REF) = range(17, 26)
+ ME_FB, ME_FB_OK, LAST_CPPM_REF, GUESS_TRIES, GUESS_OK) = range(17, 28)
 CAP = 9
 SUB = 2
 

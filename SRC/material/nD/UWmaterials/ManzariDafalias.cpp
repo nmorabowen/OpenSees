@@ -294,6 +294,7 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMStart      = 0;            // Ladruno WP-130
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -391,6 +392,7 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMStart      = 0;            // Ladruno WP-130
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -465,6 +467,7 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMStart      = 0;            // Ladruno WP-130
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -538,6 +541,7 @@ ManzariDafalias ::ManzariDafalias()
     mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
     mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
     mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMStart      = 0;            // Ladruno WP-130
     mLadrunoCPPMRefused    = false;        // Ladruno WP-130
     mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
@@ -1130,7 +1134,6 @@ void ManzariDafalias::integrate()
         // implicit schemes
         if ((mScheme == INT_BackwardEuler)) {                                // Ladruno WP-130: braces
             mLadrunoMEStats[LMS_CPPM_CALLS] += 1.0;                          // Ladruno WP-130
-            mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                    // Ladruno WP-130
             // Ladruno WP-130: vanilla discards this return value (F12 5.3) and
             // still does -- a refusal travels in mLadrunoCPPMRefused, which is
             // only ever set when -cppmOnFail refuse (or the ME fallback) asked.
@@ -1158,7 +1161,6 @@ void ManzariDafalias::integrate()
             if (mLadrunoMEFallback != 0 && mSubstepCapHitInME) {             // Ladruno WP-130
                 mLadrunoMEStats[LMS_ME_FALLBACKS] += 1.0;                    // Ladruno WP-130
                 mLadrunoMEStats[LMS_CPPM_CALLS] += 1.0;                      // Ladruno WP-130
-                mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                // Ladruno WP-130
                 mLadrunoInMEFallback = true;                                 // Ladruno WP-130
                 int rc = BackwardEuler_CPPM(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n,
                     mAlpha_in, mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio,
@@ -2707,6 +2709,8 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
     double p     = one3 * GetTrace(NextStress);
     if (p < m_Pmin) 
     {
+        if (implicitLevel == 1)                                             // Ladruno WP-130: a real
+            mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                   // update, not a settle pass
         double NextDLambda = 0;
         if (debugFlag)
              opserr << "The trial stress is in the negative pressure region!" << endln;
@@ -2769,6 +2773,8 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
         }
 
     } else if (NextF > mTolF) {// elastoplastic response
+        if (implicitLevel == 1)                                             // Ladruno WP-130
+            mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                   // Ladruno WP-130
  
         // Vector n_tr(6);
         // n_tr = GetNormalToYield(NextStress, NextAlpha);
@@ -2809,8 +2815,55 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
         if (mScheme == INT_BackwardEuler || mLadrunoInMEFallback)    // I can add the option for pure Backward Euler here. -- Ladruno WP-130
         {
             // try different approaches and continue until a solution is found
+            bool ladrunoGuessTried = false;                                 // Ladruno WP-130
             while(errFlag != 1)
             {
+                // Ladruno WP-130 (TIMs F18(c), "a better start"): retry the local
+                // Newton ONCE from an explicit guess before anything else. The
+                // elastic trial is a bad start exactly where SANISAND is stiff:
+                // at a fresh reversal or the stage flip alpha_in = alpha, so
+                // GetStateDependent's h is its 1e10 sentinel, the condensed
+                // Jacobian is (near) singular, and vanilla goes straight to the
+                // explicit fallback (errFlag -1) or halves 2^9 times (errFlag 0).
+                // A 50-substep ForwardEuler walk moves alpha off alpha_in in its
+                // first substep (dGamma ~ 1/h there, so dAlpha stays finite) and
+                // lands near the return. Off by default (mLadrunoCPPMStart == 0).
+                if (mLadrunoCPPMStart != 0 && !ladrunoGuessTried) {        // Ladruno WP-130
+                    ladrunoGuessTried = true;                               // Ladruno WP-130
+                    mLadrunoMEStats[LMS_CPPM_GUESS_TRIES] += 1.0;           // Ladruno WP-130
+                    const int nG = 50;                                      // Ladruno WP-130
+                    Vector gInc(NextStrain); gInc -= CurStrain; gInc /= (double)nG;  // Ladruno WP-130
+                    Vector gS(CurStress), gA(CurAlpha), gZ(CurFabric);      // Ladruno WP-130
+                    Vector gStr(CurStrain), gE(CurElasticStrain);           // Ladruno WP-130
+                    Vector nS(6), nA(6), nZ(6), nE(6), nStr(6);             // Ladruno WP-130
+                    Matrix gC(6,6), gCep(6,6), gCepC(6,6);                  // Ladruno WP-130
+                    double gDG = 0.0, dg = 0.0, gVR = 0.0, gG = G, gK = K;  // Ladruno WP-130
+                    bool gOk = true;                                        // Ladruno WP-130
+                    for (int ig = 0; ig < nG && gOk; ig++) {                // Ladruno WP-130
+                        nStr = gStr; nStr += gInc;                          // Ladruno WP-130
+                        ForwardEuler(gS, gStr, gE, gA, gZ, alpha_in, nStr, nE, nS, nA, nZ,
+                                     dg, gVR, gG, gK, gC, gCep, gCepC);     // Ladruno WP-130
+                        gDG += (dg > 0.0) ? dg : 0.0;                       // Ladruno WP-130: FE applies Macauley(dg)
+                        gS = nS; gA = nA; gZ = nZ; gStr = nStr; gE = nE;    // Ladruno WP-130
+                        for (int ic = 0; ic < 6; ic++)                      // Ladruno WP-130
+                            if (!(gS(ic) == gS(ic)) || !(gA(ic) == gA(ic))) gOk = false; // Ladruno WP-130: NaN
+                    }                                                       // Ladruno WP-130
+                    if (gOk) {                                              // Ladruno WP-130
+                        Delta0  = SetManzariComponent(gS, gA, gZ, gDG);     // Ladruno WP-130
+                        errFlag = NewtonIter2(Delta0, InVariants, Delta, aCepConsistent); // Ladruno WP-130
+                        if (errFlag == 1) {                                 // Ladruno WP-130
+                            NextStress.Extract(Delta, 0, 1.0);              // Ladruno WP-130
+                            NextAlpha.Extract(Delta, 6, 1.0);               // Ladruno WP-130
+                            NextFabric.Extract(Delta, 12, 1.0);             // Ladruno WP-130
+                            NextDGamma = Delta(18);                         // Ladruno WP-130
+                            errFlag = Check(TrialStress, NextStress, CurAlpha, NextAlpha); // Ladruno WP-130
+                            if (errFlag == 1) {                             // Ladruno WP-130
+                                mLadrunoMEStats[LMS_CPPM_GUESS_OK] += 1.0;  // Ladruno WP-130
+                                continue;                                   // Ladruno WP-130: loop exits
+                            }                                               // Ladruno WP-130
+                        }                                                   // Ladruno WP-130
+                    }                                                       // Ladruno WP-130
+                }                                                           // Ladruno WP-130
                 if (errFlag == -1) SchemeControl = 3; // do an explicit integration
                 if (errFlag == -2) SchemeControl = 2; // do sub-stepping
 
