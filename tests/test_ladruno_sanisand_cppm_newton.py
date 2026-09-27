@@ -24,6 +24,8 @@ What is pinned here:
 MEASURED WALL TIME: see the WP-130 PR (the byte-identity decks dominate).
 """
 import json
+import math
+import sys
 import time
 
 import pytest
@@ -52,11 +54,41 @@ def _stats(ele=1, gp=1):
 #  1. byte identity against the pre-WP-130 binary
 # ---------------------------------------------------------------------------
 
+def _as_float(v):
+    """Hex-float strings (float.hex) back to floats; anything else unchanged."""
+    if isinstance(v, str) and ("0x" in v or v in ("inf", "-inf", "nan")):
+        return float.fromhex(v)
+    return v
+
+
 def test_scheme2_defaults_are_byte_identical():
     with open(b130.BASELINE) as fh:
         ref = json.load(fh)["decks"]
     got = b130.run_all()
     assert sorted(got) == sorted(ref)
+    if sys.platform != "win32":
+        # The baseline was written by the pre-WP-130 WINDOWS/MSVC binary; GCC/libm
+        # differ in the last bits (WP-127's Zone-A: ~1e-11 relative), so bit
+        # equality is the claim only on win32. Elsewhere: the fork's 1e-6
+        # cross-platform floor (test_adr97_p4_inertness.py convention, as WP-127);
+        # non-float entries (rc, Newton iteration counts) must still match exactly.
+        for name in ref:
+            assert len(got[name]) == len(ref[name]), name
+            scale = max((abs(_as_float(x)) for row in ref[name] for x in row
+                         if isinstance(_as_float(x), float)
+                         and math.isfinite(_as_float(x))), default=1.0)
+            tol = 1e-6 * max(scale, 1.0)
+            for k, (a, b) in enumerate(zip(got[name], ref[name])):
+                assert len(a) == len(b), f"deck {name} row {k}: length"
+                for i, (x, y) in enumerate(zip(a, b)):
+                    fx, fy = _as_float(x), _as_float(y)
+                    if isinstance(fx, float) and isinstance(fy, float):
+                        assert abs(fx - fy) <= tol or (fx != fx and fy != fy), (
+                            f"deck {name} row {k} entry {i}: {fx!r} vs {fy!r} beyond "
+                            f"the 1e-6 cross-platform floor ({tol:.3e}) on {sys.platform}")
+                    else:
+                        assert fx == fy, f"deck {name} row {k} entry {i}: {x!r} vs {y!r}"
+        return
     for name in ref:
         assert len(got[name]) == len(ref[name]), name
         for k, (a, b) in enumerate(zip(got[name], ref[name])):

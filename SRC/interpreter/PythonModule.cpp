@@ -655,7 +655,8 @@ initopensees(void)
 "        • ladrunoThreads — OpenMP element state-determination loop (opt-in)\n"
 "        • LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)\n"
 "        • LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)\n"
-"        • LadrunoSANISAND — -cppmOnFail refuse / -meFallback cppm (WP-130)\n"
+"        • LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)\n"
+"        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);
