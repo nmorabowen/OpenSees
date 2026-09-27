@@ -20,6 +20,8 @@ import pytest
 
 import opensees as ops
 
+pytestmark = [pytest.mark.zone_a]
+
 E, NU, RHO = 1000.0, 0.3, 2.0
 
 QUAD = [(0.0, 0.0), (2.0, 0.0), (2.2, 1.1), (-0.1, 1.0)]
