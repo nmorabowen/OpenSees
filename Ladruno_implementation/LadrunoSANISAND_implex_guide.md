@@ -1077,3 +1077,85 @@ It is **not** a fix for the p = 0 confinement ring (ADR 93, `93_ladruno_sanisand
 it. It requires `-implexControl` (the companion computation this factor is built on) and is
 refused without it. `-implexFactor fixed` (the clock-ratio default, unchanged since before
 P2-9) remains what every deck should reach for unless the situation above applies.
+
+
+## 13. Choosing an IntScheme — and SAS-ME (`IntScheme 129`, WP-129)
+
+The scheme is the 20th positional argument (`IntScheme`, after the 18 model parameters and the
+tag). What each one is, measured against WP-134's independent oracle (`uw_model`: the DM04 rate
+equations with the UW constitutive additions, integrated exactly):
+
+| IntScheme | what | use it? |
+|---|---|---|
+| **1** ModifiedEuler (the fork's default) | explicit Heun, stress-only error at a hardcoded `1e-4` (unless `-honorTolR 1`), moduli frozen at the committed state (U9), a loading stage with a negative denominator read as elastic + uncapped step growth (the "err = 0 path"), force-accept at `dT_min`, a drift correction that can give up with `f > 0` | the calibrated default; know its quirks rows. Ring states: α can leave the bounding surface (WP-128). Benign states: up to 15–100 % stress error on 1e-4 increments against the oracle (WP-129 §13.3) |
+| **2** BackwardEuler_CPPM | implicit, consistent tangent under TanType 2 | accurate per increment; fragile under a global Newton (§9, WP-105; WP-130) |
+| **45** RungeKutta45 | explicit Sloan RK45 | **not a reference**: dT_min 1e-3 hard-coded, Mc-clamp force-accept, no drift correction, and `dAlpha3/dAlpha4` never computed (α weights sum to 301/336) |
+| 3, 5 | RK4 / Forward Euler, no error control | no |
+| 0, 4, 6–9 | MaxEnergy / MaxStrain wrappers | no; IntScheme 4 is even non-deterministic (uninitialised moduli) |
+| **129 SAS-ME** | this section | when the answer at low confinement / after reversals matters more than the cost |
+
+### 13.1 Syntax
+
+```tcl
+nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm $m $h0 $ch $nb \
+    $A0 $nd $z_max $cz $Rho  129 $TanType $JacoType $TolF $TolR \
+    <-errFloor $sigRef> <-alphaBoundTol $kappa> <-alphaProject 0|1> \
+    <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress> \
+    <-maxSubsteps $n> <-Pmin ...> <-Presidual ...> ...
+```
+
+- `TolR` IS the substep tolerance (always honoured; `-honorTolR` is inert and warned). `1e-4` is
+  ModifiedEuler's scale; the default `1e-7` is sized for the CPPM Newton and costs substeps.
+- `-errFloor` σ_ref of the stress error `‖dσ₂−dσ₁‖ / max(2‖σ‖, σ_ref)`; default `P_atm/101`
+  (1 kPa at P_atm 101 — exactly ModifiedEuler's implicit floor, WP-128 §5.1). α and z use the unit
+  reference (`max(2‖α‖, 1)`): the α error is a stress error in units of p. **The floor is not the
+  lever** — at low p the cost is stability-limited (WP-128 §5.3).
+- `-alphaBoundTol κ` (default 0.1): ρ_α = √(3/2)‖α‖ / α^b(θ_α, ψ) with α's OWN Lode angle; a start
+  state with ρ_α > 1 + κ is refused, an accepted substep ending there is rejected (refused at dT_min).
+- `-alphaProject 1`: instead, project α radially onto the bounding surface (the deviatoric stress
+  follows by p·Δα, so f and n are unchanged); counted. OFF by default: it rewrites history.
+- `-sasAlphaIn`: `reseat` (DEFAULT) = the paper's rule — wherever (α − α_in):n < 0 a new loading
+  process starts, α_in := α there; integrate()'s once-per-increment trial test is undone.
+  `bracket` = keep UW's trial test and only use h = 1e10 where (α − α_in):n ≤ 0. `stale` and
+  `-sasErrorVars stress` reproduce ModifiedEuler's defects G and E — attribution only.
+- `-implex` is refused with 129 (not qualified as a companion). `-maxSubsteps` binds (refusal).
+- TanType 1 and 2 both return the continuum tangent at the end state; 0 = Ce at the end state.
+
+### 13.2 What it does, per substep
+
+1. Elastic predictor (Heun on the pressure-dependent moduli); elastic if f_trial ≤ TolF. Otherwise
+   the intersection (the vanilla Pegasus/unloading search), the plastic loading test on the TRUE
+   gradient ∂f/∂σ = n − ⅓(n:α + √(2/3)m)I.
+2. Two Heun stages, each evaluated entirely at its own state (K, G, n, b, d, h, D, B, C — U9).
+   Stage classification from N = ∂f/∂σ : C : dε: N ≤ 0 elastic (α, z unchanged); N > 0, H > 0
+   plastic; N > 0, H ≤ 0 has no plastic solution — REFUSED at stage 1, cut at stage 2.
+3. Error on σ, α, z; accept iff err ≤ TolR; q = clamp(0.9√(TolR/err), 0.1, 1.1), no growth after a
+   rejection.
+4. Drift correction (consistent with σ, α, z; then normal); if neither direction reduces |f| the
+   substep is cut, refused at dT_min — never returned with f > TolF.
+5. ρ_α check (above). α_in re-seat check.
+
+Refusal codes (`sasStats` column `lastRefuseCode`, and the warning text): 1 startOutsideYield,
+2 startAlphaOutsideBounding, 3 startInadmissible (trace / tension / non-finite), 4 errorAtDTmin,
+5 loadingNonPosH, 6 tensionAtDTmin, 7 driftFailed, 8 alphaOutsideAtDTmin, 9 maxSubsteps. A refusal
+leaves the trial on the committed state and returns `LADRUNO_MATERIAL_REFUSED` (element roster:
+LEDGER_quirks "element refusal roster").
+
+### 13.3 Measured (WP-129, `Ladruno_files/testbed/wp129_sasme/`)
+
+- **Oracle, benign** (K0 states 20/50/100 kPa × active/passive/shear × 1e-5/1e-4): SAS-ME at TolR
+  1e-7 within 2e-7 relative of `uw_model`; at TolR 1e-4 within 5e-5. ModifiedEuler (campaign
+  options): 6–15 % on 1e-4 increments, 100 % on the reproducer.
+- **WP-128 reproducer** (σ = 0.0101 I, α = α_in = z = 0, dε_yy = 1e-4): ρ 0.252, η 0.531 in 251
+  substeps (oracle 0.252 / 0.531; ModifiedEuler 5.14 in 1 substep).
+- **Ring** (80 rows × ± iso, ± shear at 1e-6, 1e-5): 624/640 integrated, the 16 of b8 1950/2-3
+  refused `startAlphaOutsideBounding`; max f at exit 1e-7, max ρ_α 0.983 (= the start value); median
+  substeps 16 (ModifiedEuler 4), p95 79 (82), max 520 (1336). Against the oracle: see the PR body.
+- **Reversal chains** (WP-128 vertUnload / extShear from p0 2 kPa at 1e-4): ρ ≤ 0.61 / 0.46
+  (ModifiedEuler 5.2 / 7.1); the increments that drive p to the floor are REFUSED
+  (`errorAtDTmin`, 38 / 39 of 90) where ModifiedEuler resets the stress to p_min·I — use smaller
+  increments there, or accept the global cutback.
+- **Cost**, smooth monotonic chains: 4–6 substeps per 1e-5 increment (ModifiedEuler 1–3); the
+  profile split at a ring state is ~60 % stages (half state-dependent quantities), 10 % drift,
+  6 % α check; at a deep state the tangent and drift are ~11 % each.
+
