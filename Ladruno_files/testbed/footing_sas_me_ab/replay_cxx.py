@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--scheme", type=int, default=1)
     ap.add_argument("--extra", default="")
     ap.add_argument("--maxsub", type=int, default=2000)
+    ap.add_argument("--tolr", type=float, default=1.0e-7)
     a = ap.parse_args()
     extra = []
     for tok in a.extra.split():
@@ -74,7 +75,7 @@ def main():
                 extra.append(tok)
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
-    ops.nDMaterial("LadrunoSANISAND", 1, *SAN, a.scheme, 0, 1, 1.0e-7, 1.0e-7,
+    ops.nDMaterial("LadrunoSANISAND", 1, *SAN, a.scheme, 0, 1, 1.0e-7, a.tolr,
                    "-flipAlphaIn", "init", "-Pmin", 0.0101, "-maxSubsteps", a.maxsub,
                    "-Presidual", 0.0, "-honorTolR", 0, *extra)
     rows = list(csv.DictReader(open(a.csv, newline="")))
@@ -101,6 +102,18 @@ def main():
                  path=int(path), elastic_ratio=er,
                  rho_alpha_in=float(r["rho_alpha"]),
                  rho_alpha_out=rho_alpha(al, e_out, p_out))
+        # WP-129 tail (IntScheme 129 binaries): 129, LSAS_COUNT, sasStats,
+        # ratio before, ratio after, tangentEP(36). Trace is off (0 records).
+        nrec, width = int(res[3]), int(res[4])
+        t = b + 34 + nrec * width
+        if len(res) > t + 1 and int(res[t]) == 129:
+            nsas = int(res[t + 1])
+            sas = res[t + 2:t + 2 + nsas]
+            d["sas"] = sas
+            d["sas_ratio_before"] = res[t + 2 + nsas]
+            d["sas_ratio_after"] = res[t + 3 + nsas]
+            d["sas_last_refuse_code"] = int(sas[27]) if nsas > 27 else None
+            d["sas_substeps"] = int(sas[2])
         if r.get("sigma_next_0") and r["sigma_next_0"] != "nan":
             sn = v("sigma_next")
             ds = [s1 - s0 for s1, s0 in zip(sig, sn)]

@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--extra", default="")
     ap.add_argument("--maxsub", type=int, default=2000)
     ap.add_argument("--oracle", action="store_true")
+    ap.add_argument("--tolr", type=float, default=1.0e-7)
     ap.add_argument("--ref-dir", default=os.environ.get("SANISAND_REF_DIR", ""))
     ap.add_argument("csvs", nargs="+")
     a = ap.parse_args()
@@ -42,7 +43,7 @@ def main():
         oj = os.path.join(od, f"{base}.{label}.json")
         r = subprocess.run([PY312, "-S", os.path.join(HERE, "replay_cxx.py"), "--csv", c,
                             "--out", oj, "--scheme", str(a.scheme), "--extra", a.extra,
-                            "--maxsub", str(a.maxsub)], env=env, capture_output=True,
+                            "--maxsub", str(a.maxsub), "--tolr", str(a.tolr)], env=env, capture_output=True,
                            text=True, timeout=7200)
         last = [l for l in r.stdout.splitlines() if "rows" in l]
         print(f"{base} [{label}]: {last[-1] if last else r.stdout[-500:] + r.stderr[-800:]}",

@@ -156,7 +156,7 @@ def element_table(x, y):
 GP_XI = ((-1, -1), (1, -1), (1, 1), (-1, 1))
 
 
-def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic):
+def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic, tolr=1.0e-7):
     x, y = mesh_coords()
     nx, ny = len(x), len(y)
 
@@ -172,7 +172,7 @@ def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic):
     ops.node(REF, 0.0, 0.0, "-ndf", 3)
 
     if mat == "sanisand":
-        args = ["LadrunoSANISAND", MAT, *SAN, int(scheme), 0, 1, 1.0e-7, 1.0e-7,
+        args = ["LadrunoSANISAND", MAT, *SAN, int(scheme), 0, 1, 1.0e-7, float(tolr),
                 "-flipAlphaIn", "init", "-Pmin", 0.0101,
                 "-maxSubsteps", int(maxsub), "-Presidual", 0.0,
                 "-honorTolR", 0, *extra]
@@ -306,13 +306,35 @@ STAT_NAMES = ["updates", "meCalls", "substeps", "accepted", "rejectedErr",
               "lastCapHit"]
 
 
+SAS_NAMES = ["updates", "elastic", "substeps", "accepted", "rejectedErr",
+             "rejectedLowP", "rejectedNonPosH", "rejectedDrift", "rejectedAlpha",
+             "elasticStages", "driftCorrections", "alphaInReseats", "hBrackets",
+             "alphaProjected", "intersectFail", "refusals", "refStartF",
+             "refStartAlpha", "refStartOther", "refDTmin", "refNonPosH",
+             "refLowP", "refDrift", "refAlpha", "refCap",
+             "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode",
+             "maxAlphaRatio", "lastAlphaRatio", "lastF"]
+# which census the run reads, and where the columns the step line reports sit.
+# ME (substepStats): substeps, capHits, rejectedErr, forcedAtDTmin, rejectedLowP,
+# forcedClampMc, lastSubsteps, lastCapHit. SAS (sasStats): substeps, refusals,
+# rejectedErr, refDTmin, rejectedLowP, refAlpha, lastSubsteps, lastRefuseCode.
+CENSUS = dict(resp="substepStats", names=STAT_NAMES, sub=2, cap=9, rej=4, dtmin=5,
+              lowp=7, clamp=6, last_sub=13, last_cap=16)
+CENSUS_SAS = dict(resp="sasStats", names=SAS_NAMES, sub=2, cap=15, rej=4, dtmin=19,
+                  lowp=5, clamp=23, last_sub=26, last_cap=27)
+SAS_REF_CODES = {16: "startOutsideYield", 17: "startAlphaOutsideBounding",
+                 18: "startInadmissible", 19: "errorAtDTmin", 20: "loadingNonPosH",
+                 21: "tensionAtDTmin(lowP)", 22: "driftFailed",
+                 23: "alphaOutsideAtDTmin", 24: "maxSubsteps"}
+
+
 def read_field(deck, want_stats=True, want_f=False):
     """Every Gauss point's committed state. Arrays of shape (nGP, ...)."""
     tags = deck["tags"]
     n = 4 * len(tags)
     sig = np.zeros((n, 3)); eps = np.zeros((n, 3)); st = np.zeros((n, 26))
     psi = np.full(n, np.nan); fy = np.full(n, np.nan)
-    stats = np.zeros((n, len(STAT_NAMES))) if want_stats else None
+    stats = np.zeros((n, len(CENSUS["names"]))) if want_stats else None
     k = 0
     for tag in tags:
         for gp in (1, 2, 3, 4):
@@ -324,7 +346,7 @@ def read_field(deck, want_stats=True, want_f=False):
                 if want_f:
                     fy[k] = ops.eleResponse(tag, "material", gp, "yieldDistance")[0]
                 if want_stats:
-                    v = ops.eleResponse(tag, "material", gp, "substepStats")
+                    v = ops.eleResponse(tag, "material", gp, CENSUS["resp"])
                     if v:
                         stats[k, :len(v)] = v
             k += 1
@@ -491,6 +513,8 @@ def main(argv=None):
     ap.add_argument("--scheme", type=int, default=1)
     ap.add_argument("--extra", default="", help="extra material tokens, space separated")
     ap.add_argument("--maxsub", type=int, default=2000)
+    ap.add_argument("--tolr", type=float, default=1.0e-7,
+                    help="positional TolR (IS the substep tolerance under IntScheme 129)")
     ap.add_argument("--dp-phi", type=float, default=38.0)
     ap.add_argument("--dp-g", type=float, default=30000.0)
     ap.add_argument("--target", type=float, default=0.15, help="s/B target")
@@ -521,8 +545,11 @@ def main(argv=None):
         except ValueError:
             extra.append(tok)
     san = args.mat == "sanisand"
+    global CENSUS
+    if san and args.scheme == 129:
+        CENSUS = CENSUS_SAS
     deck = build(args.mat, args.scheme, extra, args.maxsub, args.dp_phi, args.dp_g,
-                 bool(args.deterministic))
+                 bool(args.deterministic), args.tolr)
     log(f"material: {deck['matdesc']}")
     log(f"mesh: {len(deck['tags'])} elements, {4*len(deck['tags'])} Gauss points, "
         f"solver {deck['solver']}, applied vertical load {deck['applied']:.3f} kN/m")
@@ -624,10 +651,23 @@ def main(argv=None):
             Dn = derived(Fn)
             dst = Fn["stats"] - prev_stats
             prev_stats = Fn["stats"].copy()
-            sub_pt = dst[:, 2]
-            cen = [int(sub_pt.sum()), int(sub_pt.max()), int(dst[:, 9].sum()),
-                   int(dst[:, 4].sum()), int(dst[:, 5].sum()), int(dst[:, 7].sum()),
-                   int(dst[:, 6].sum())]
+            C = CENSUS
+            sub_pt = dst[:, C["sub"]]
+            cen = [int(sub_pt.sum()), int(sub_pt.max()), int(dst[:, C["cap"]].sum()),
+                   int(dst[:, C["rej"]].sum()), int(dst[:, C["dtmin"]].sum()),
+                   int(dst[:, C["lowp"]].sum()), int(dst[:, C["clamp"]].sum())]
+            if C is CENSUS_SAS and cen[2] > 0:
+                # refusals this step (all attempts, failed ones included: the
+                # census survives revertToLastCommit), by code and by location
+                xy = gp_xy(deck)
+                bycode = {SAS_REF_CODES[i]: int(dst[:, i].sum()) for i in SAS_REF_CODES
+                          if dst[:, i].sum() > 0}
+                ks = np.argsort(-dst[:, C["cap"]])[:6]
+                where = "; ".join(f"ele {xy[k][0]} gp {k%4+1} ({xy[k][1]:+.2f},"
+                                  f"{xy[k][2]:+.2f}) x{int(dst[k, C['cap']])}"
+                                  for k in ks if dst[k, C["cap"]] > 0)
+                log(f"  refusals step {nstep}: {cen[2]} by code {bycode}; "
+                    f"n points {int(np.sum(dst[:, C['cap']] > 0))}; top: {where}")
             minp, maxeta = float(Dn["p"].min()), float(np.nanmax(Dn["eta"]))
             maxrho = float(np.nanmax(Dn["rho"]))
             nrho = int(np.sum(Dn["rho"] > 1.0))
@@ -636,7 +676,7 @@ def main(argv=None):
                 sel = select_worst(Dc, Fc, sub_pt)
                 write_replay(os.path.join(out, "replay", f"replay_step{stc:05d}.csv"),
                              deck, Fc, Dc, Fn, Dn, epsc, sel, stc, sbc, sub_pt,
-                             dst[:, 9], -ds)
+                             dst[:, CENSUS["cap"]], -ds)
             pending = []
             if ck:
                 save_field(os.path.join(out, "ckpt", f"field_step{nstep:05d}.npz"),
@@ -647,7 +687,8 @@ def main(argv=None):
                     + ring_summary(deck, Dn, Fn))
             eps_ppp = Fpp["eps"] if Fpp is not None else None
             Fpp, Dpp, sB_pp = Fprev, Dprev, sB_prev
-            Fprev, Dprev, sub_prev, cap_prev, dt_prev = Fn, Dn, sub_pt, dst[:, 9], -ds
+            Fprev, Dprev, sub_prev, cap_prev, dt_prev = (Fn, Dn, sub_pt,
+                                                         dst[:, CENSUS["cap"]], -ds)
             sB_prev = sB
         wr.writerow([nstep, f"{s:.9e}", f"{sB:.9e}", f"{q:.6f}", f"{ds:.4e}", rung,
                      iters, fails_before, f"{wall_step:.3f}",
@@ -688,9 +729,12 @@ def main(argv=None):
                    Dn, nstep, s_end)
         log("state at the last converged step:\n" + ring_summary(deck, Dn, Fn))
         # dump the census of the last converged step as a CSV (per point)
+        xyc = np.array([(t, gx, gy) for t, gx, gy in gp_xy(deck)])
         np.savetxt(os.path.join(out, "census_last_converged.csv"),
-                   np.column_stack([np.arange(len(Dn["p"])), Fn["stats"]]),
-                   delimiter=",", header="k," + ",".join(STAT_NAMES), comments="",
+                   np.column_stack([np.arange(len(Dn["p"])), xyc, Dn["p"], Dn["rho"],
+                                    Fn["stats"]]),
+                   delimiter=",", header="k,element,gp_x,gp_y,p,rho_alpha,"
+                   + ",".join(CENSUS["names"]), comments="",
                    fmt="%.10g")
         # the last converged PAIR: committed state n-1 + the increment of step n
         if args.field_every_step and Fpp is not None:
@@ -718,8 +762,8 @@ def main(argv=None):
             if got:
                 Fp = read_field(deck, want_stats=True, want_f=True)
                 Dp = derived(Fp)
-                subp = Fp["stats"][:, 13]
-                capp = Fp["stats"][:, 16]
+                subp = Fp["stats"][:, CENSUS["last_sub"]]
+                capp = Fp["stats"][:, CENSUS["last_cap"]]
                 sel = select_worst(Dn, Fn, subp)
                 write_replay(os.path.join(out, "replay", "replay_wall_probe_iter1.csv"),
                              deck, Fn, Dn, Fp, Dp, Fpp["eps"] if Fpp is not None else None,

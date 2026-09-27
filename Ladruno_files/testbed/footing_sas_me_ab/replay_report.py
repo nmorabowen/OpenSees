@@ -50,8 +50,11 @@ def main():
             ds = float("nan")
             if o.get("sigma") and o.get("status") == "ok":
                 ds = nrm([x - y for x, y in zip(d["sigma"], o["sigma"])]) / max(float(r["p_kPa"]), 1e-9)
-            line += [d["rc"], int(d["stats"].get("substeps", 0)),
-                     int(d["stats"].get("capHits", 0)), d["rho_alpha_out"], d["f_after"], ds]
+            if "sas" in d:
+                sub, cap = d["sas_substeps"], d["sas_last_refuse_code"]
+            else:
+                sub, cap = int(d["stats"].get("substeps", 0)), int(d["stats"].get("capHits", 0))
+            line += [d["rc"], sub, cap, d["rho_alpha_out"], d["f_after"], ds]
         table.append(line)
     fmt = lambda x: (f"{x:.4g}" if isinstance(x, float) else str(x))
     print("| " + " | ".join(head) + " |")
