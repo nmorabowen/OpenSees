@@ -34,7 +34,10 @@ apeGmsh reads.
   STKO-readable by design, D2). apeGmsh's discovery glob targets `.ladruno`.
 - **Partitioned runs (D5):** `<stem>.part-<N>.ladruno`, **N 0-indexed and contiguous
   from 0**. This is a hard interop contract — apeGmsh discovers siblings via the regex
-  `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$` and *errors* on a gap.
+  `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$` and *errors* on a gap. When stitching,
+  a node present in several parts is combined per its result's `PARTITION_REDUCTION`
+  (§7.1): kept once for `NONE`, **summed** for `SUM` (e.g. the reaction at a support on
+  a partition interface — each part holds only its own elements' share; WP-126).
 
 ## Design principles
 
@@ -291,6 +294,25 @@ As MPCO, retained: group attrs `DISPLAY_NAME, COMPONENTS, DIMENSION, DESCRIPTION
 TYPE, DATA_TYPE`; `ID[nN×1]`; results stored per the **§7.0 chunked layout** (`DATA
 [T×nN×nComp]` + `STEP`/`TIME` axes). Modes of vibration keep the `STEP_<k>` *group* →
 `MODE_<i>` with `LAMBDA/OMEGA/FREQUENCY/PERIOD`.
+
+**`PARTITION_REDUCTION`** (string attr, added by WP-126, written on every result group —
+`ON_NODES`, `ON_ELEMENTS`, `ON_DOMAIN`, `ON_REGIONS`, and the `ENVELOPES` groups).
+It tells a reader how to combine one id's rows when the id appears in several
+`.part-N` files (a node on a partition interface):
+
+| Value | Meaning | Reader obligation when stitching |
+|---|---|---|
+| `NONE` | consistent: every partition holds the same value (kinematics, element results) | keep any one copy |
+| `SUM` | additive: each partition holds the partial from its own elements (`reactionForce`, `reactionMoment`, `…IncludingInertia`, the Rayleigh variants `RAYLEIGH_FORCE`/`RAYLEIGH_MOMENT`, `unbalancedForce`, `unbalancedMoment`) | **sum** the copies, component-wise |
+| `UNSUPPORTED` | partial per partition and not recoverable by a sum (`energyBalance`: shared-node KE counted in each partition; `RES`/`ERR` derived) | do not present a merged value; warn |
+
+Optional for readers: files written before WP-126 lack it. A reader should then fall back
+to the result name (the `REACTION*` / `RAYLEIGH*` / `UNBALANCED*` groups are `SUM`). In a
+**partitioned** file an `ENVELOPES` group is always `NONE`: the recorder refuses to
+envelope a `SUM`/`UNSUPPORTED` source there, with a warning, because a per-partition
+extreme of a partial cannot be recombined (max(a+b) ≠ max a + max b). Serial files may
+carry a `SUM` envelope (there is only one partition). Validator:
+`ladruno_format._validate_partition_reduction`.
 
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 

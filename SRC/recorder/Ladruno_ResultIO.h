@@ -80,6 +80,22 @@ namespace ladruno {
 		// boundary-node reactions, base shear). Consistent quantities (kinematics,
 		// element results) return false and stream/envelope locally with zero comm.
 		virtual bool requiresPartitionReduction() const { return false; }
+
+		// How a READER must combine this result's rows for an id present in several
+		// partition files (WP-126). Written verbatim to each result group's
+		// PARTITION_REDUCTION attribute (schema §7.1):
+		//   "NONE"        consistent across partitions: any one copy is the value;
+		//   "SUM"         additive: each partition holds the partial from its own
+		//                 elements (e.g. boundary-node reactions); sum the copies;
+		//   "UNSUPPORTED" partial per partition and NOT recoverable by a componentwise
+		//                 sum (e.g. energy: shared-node KE counted twice, RES/ERR
+		//                 derived) -- a reader must not present a merged value.
+		// Also gates -envelope in partitioned runs: anything but "NONE" is refused there,
+		// because a per-partition extreme of a partial cannot be recombined.
+		virtual const char* partitionReduction() const
+		{
+			return requiresPartitionReduction() ? "SUM" : "NONE";
+		}
 	};
 
 	/*
