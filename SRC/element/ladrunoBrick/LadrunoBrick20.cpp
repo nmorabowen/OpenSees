@@ -1517,5 +1517,22 @@ int  LadrunoBrick20::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
     }
   }
 
+  // Ladruno (WP-124 C14): a restore into a LIVE element does NOT go through
+  // setDomain. Domain::recvSelf with an unchanged geometry tag calls recvSelf
+  // then update() on the existing element, so the geometry cache cleared above
+  // stayed empty: cacheUsable() failed, K / resid / M came back zero and even
+  // Newton hit a singular system. Rebuild here what setDomain would: node
+  // pointers (connectivity was re-received), the geometry cache + detJ gate,
+  // and the rho signature. Damping::setDomain is NOT re-run -- it would reset
+  // the damping history just received. A broker-built element has no Domain
+  // yet (getDomain() == 0) and still gets the full setDomain from addElement.
+  Domain *theDomain = this->getDomain();
+  if (theDomain != 0) {
+    for (int i = 0; i < NEN; i++)
+      nodePointers[i] = theDomain->getNode(connectedExternalNodes(i));
+    this->buildGeometryCache();
+    this->refreshMassState();
+  }
+
   return res;
 }

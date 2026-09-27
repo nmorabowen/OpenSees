@@ -50,6 +50,11 @@ ROWS = {
     "G4": ("every DOF takes the x-component of R a_g",
            [(SHELL, "lit", "      ra(a * ndf + j) = Raccel(j);\n",
              "      ra(a * ndf + j) = Raccel(0);   // MUTATION G4\n")]),
+    # --- C14: LadrunoBrick20 rebuilds its geometry cache in recvSelf (live restore)
+    "C14": ("LadrunoBrick20::recvSelf does not rebuild the geometry cache (the pre-fix shape)",
+            [(ROOT / "SRC/element/ladrunoBrick/LadrunoBrick20.cpp", "lit",
+              "    this->buildGeometryCache();\n    this->refreshMassState();\n  }\n\n  return res;\n}\n",
+              "    // MUTATION C14: rebuild dropped\n  }\n\n  return res;\n}\n")]),
     # --- C1 evidence: the ADR-87 CONTINUUM tangent gate in IDENT mode, with and without the fix
     "C1a": ("CONTINUUM=IDENT mutant + the C1 fix REVERTED (std/bbar returns the scratch) -- "
             "the probe must FAIL: the mutation never reaches the caller",

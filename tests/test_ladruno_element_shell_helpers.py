@@ -179,10 +179,9 @@ def test_initial_stiffness_is_formed_once(name):
 
 # C6: restore into a LIVE element (same domain, database restore of a checkpoint).
 # Not CSTPair (Ki != K by design, so iteration counts cannot see a stale Ki).
-LIVE = [pytest.param(n, marks=pytest.mark.xfail(
-            strict=True, reason="C14: LadrunoBrick20 is singular after a live restore "
-                                "(recvSelf clears geomCached, no setDomain follows)"))
-        if n == "LadrunoBrick20" else n for n in ELEMENTS if n != "LadrunoCSTPair"]
+# LadrunoBrick20 also needs C14: before it, the live restore left its geometry cache empty
+# (recvSelf cleared it; no setDomain follows) and the system was singular.
+LIVE = [n for n in ELEMENTS if n != "LadrunoCSTPair"]
 
 
 @pytest.mark.parametrize("name", LIVE)
@@ -219,6 +218,27 @@ def test_live_restore_drops_Ki(name, tmp_path):
     ops.analysis("Static", "-noWarnings")
     assert ops.analyze(1) == 0, f"{name}: stale Ki after a live restore"
     assert ops.testIter() <= 3
+
+
+@pytest.mark.parametrize("name", list(ELEMENTS))
+def test_live_restore_is_usable(name, tmp_path):
+    """C14 oracle, independent of Ki: after a checkpoint restore into the LIVE domain, Newton
+    must land on the answer of a freshly built model at the restored E (LadrunoBrick20 was
+    singular: its geometry cache stayed empty because no setDomain follows a live restore)."""
+    node, load = ELEMENTS[name]()
+    _static(node, load, ("Newton",), iters=20)
+    assert ops.analyze(1) == 0
+    fresh = _all_disp(len(ops.getNodeTags()))
+
+    ELEMENTS[name]()
+    ops.database("File", str(tmp_path / "db"))
+    ops.save(1)
+    assert ops.restore(1) in (0, None)
+    _static(node, load, ("Newton",), iters=20)
+    assert ops.analyze(1) == 0, f"{name}: analysis fails after a live restore"
+    got = _all_disp(len(ops.getNodeTags()))
+    scale = max(abs(x) for x in fresh)
+    assert max(abs(a - b) for a, b in zip(got, fresh)) <= 1.0e-9 * scale
 
 
 # ---- ground-motion inertia (addGroundInertia) -------------------------------------------
