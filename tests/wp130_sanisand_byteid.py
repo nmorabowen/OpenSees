@@ -10,7 +10,21 @@ defaults none of that may move a single computed bit.  WP-127's decks
 this module adds IntScheme-2 decks and returns every committed stress /
 strain / state / tangent as `float.hex` strings.
 
-The pinned reference `wp130_sanisand_byteid_baseline.json` beside this file
+TWO baselines (WP-130 owner decision: `-cppmTangent fixed` is the
+LadrunoSANISAND default, the vanilla CPPM TanType-2 tangent has the WRONG SIGN --
+LEDGER_quirks "IntScheme 2's TanType-2 tangent is MINUS", FD evidence in
+Ladruno_files/testbed/hypo_bearing/wp130_f18c/q_tangent_fd.txt):
+
+  * `wp130_sanisand_byteid_baseline.json` -- PRE-WP-130 binary; reproduced bit
+    for bit with run_all(("-cppmTangent", "vanilla")) (the opt-out) and, for
+    the vanilla ManzariDafalias deck, with no option at all.
+  * `wp130_sanisand_byteid_fixed_baseline.json` -- the WP-130 default, written
+    by the WP-130 build (a regression pin, not an independent reference). On
+    the ZERO-free-DOF decks it differs from the pre-WP-130 baseline ONLY in
+    the tangent entries (the stresses do not see the tangent); the free-DOF
+    decks change throughout (the tangent steers the global Newton).
+
+The pre-WP-130 reference `wp130_sanisand_byteid_baseline.json` beside this file
 was captured with the PRE-WP-130 binary (source tree 234a75751 = WP-127's tip
 minus a tests-only commit, i.e. no SRC difference from e8fb51cdb) by
 
@@ -51,6 +65,10 @@ BASELINE = os.path.join(_HERE, "wp130_sanisand_byteid_baseline.json")
 
 _PARAMS = list(sani._PARAMS)
 _S2 = (2, 2, 1, 1.0e-7, 1.0e-7)
+# Appended to every LadrunoSANISAND command (set by run_all). WP-130 owner
+# decision: `-cppmTangent fixed` is the LadrunoSANISAND DEFAULT, so the
+# PRE-WP-130 baseline is reproduced only with ("-cppmTangent", "vanilla").
+LS_EXTRA = ()
 _CAMPAIGN_S2 = (2, 2, 1, 1.0e-7, 1.0e-7,
                 "-Presidual", 0.0, "-Pmin", 0.0101, "-maxSubsteps", 20000,
                 "-flipAlphaIn", "init")
@@ -95,19 +113,19 @@ def deck_md3d_s2():
 
 def deck_ls3d_s2():
     incs = b127._iso_dev(40, 5.0e-3, 0.5)
-    b127._build_3d("LadrunoSANISAND", _PARAMS, _S2, 10, 3.0e-6, incs)
+    b127._build_3d("LadrunoSANISAND", _PARAMS, _S2 + LS_EXTRA, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
 
 def deck_ls3d_s2_big():
     incs = b127._iso_dev(4, 0.2, 0.5)
-    b127._build_3d("LadrunoSANISAND", _PARAMS, _S2, 10, 3.0e-6, incs)
+    b127._build_3d("LadrunoSANISAND", _PARAMS, _S2 + LS_EXTRA, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
 
 def deck_ls_ps_s2():
     incs = b127._iso_dev(40, 5.0e-3, 1.0)[:20]
-    b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2, 10, 3.0e-6, incs)
+    b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2 + LS_EXTRA, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
 
@@ -115,7 +133,7 @@ def deck_ls_ps_s2_cyc():
     e = 2.0e-3
     incs = ([(-e / 10, e / 10)] * 5 + [(e / 10, -e / 10)] * 10
             + [(-e / 10, e / 10)] * 10)
-    b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2, 10, 3.0e-6, incs)
+    b127._build_ps(b127._CAMPAIGN, _CAMPAIGN_S2 + LS_EXTRA, 10, 3.0e-6, incs)
     return _run(10, len(incs))
 
 
@@ -150,7 +168,7 @@ def build_free_quad(opts, lateral=5.0):
 
 
 def deck_ls_ps_s2_free(lateral=5.0, push=1.0):
-    build_free_quad(_CAMPAIGN_S2, lateral=lateral)
+    build_free_quad(_CAMPAIGN_S2 + LS_EXTRA, lateral=lateral)
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
     for j, (x, y) in enumerate(sani._XY):
@@ -177,14 +195,24 @@ DECKS = {
 }
 
 
-def run_all():
-    return {name: fn() for name, fn in DECKS.items()}
+def run_all(ls_extra=()):
+    """Every deck; `ls_extra` is appended to every LadrunoSANISAND command
+    (the vanilla ManzariDafalias deck ignores it)."""
+    global LS_EXTRA
+    LS_EXTRA = tuple(ls_extra)
+    try:
+        return {name: fn() for name, fn in DECKS.items()}
+    finally:
+        LS_EXTRA = ()
 
+
+FIXED_BASELINE = os.path.join(_HERE, "wp130_sanisand_byteid_fixed_baseline.json")
 
 if __name__ == "__main__":
-    res = run_all()
+    fixed = "--fixed" in sys.argv
+    res = run_all(() if fixed else ("-cppmTangent", "vanilla"))
     if "--write" in sys.argv:
-        with open(BASELINE, "w") as fh:
+        with open(FIXED_BASELINE if fixed else BASELINE, "w") as fh:
             json.dump({"build": ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "?",
                        "decks": res}, fh, indent=0)
         print("wrote", BASELINE)

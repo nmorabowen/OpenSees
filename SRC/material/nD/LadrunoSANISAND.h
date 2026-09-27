@@ -485,13 +485,14 @@ class LadrunoSANISAND : public ManzariDafalias
     // Ladruno WP-130 (TIMs F18(c)/(d)): the DECK-LEVEL requests for the CPPM
     // seams (two-name convention again: these are the requests, the base's
     // mLadrunoCPPM* / mLadrunoMEFallback are the seams, applyLadrunoConstants()
-    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off / trial.
+    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off / trial, and TANGENT FIXED (1): the one
+    // WP-130 default that is NOT vanilla (owner decision; the vanilla sign is wrong).
     int    mCPPMOnFail;       // 0 explicit (vanilla), 1 refuse
     int    mCPPMHalvings;     // 0..9; base mLadrunoCPPMMaxLevel = this + 1
     int    mCPPMLineSearch;   // 0 off, 1 on
     int    mMEFallback;       // 0 off, 1 cppm
     int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
-    int    mCPPMTangentFix;   // 0 vanilla (sign-flipped algorithmic tangent), 1 fixed
+    int    mCPPMTangentFix;   // 1 fixed (DEFAULT, owner decision WP-130), 0 vanilla (sign-flipped)
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset

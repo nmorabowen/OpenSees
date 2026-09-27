@@ -61,39 +61,79 @@ def _as_float(v):
     return v
 
 
-def test_scheme2_defaults_are_byte_identical():
+def _compare(got, ref, what):
+    """Exact on win32 (the baselines' platform); elsewhere the fork's 1e-6
+    cross-platform floor on floats (test_adr97_p4_inertness.py convention, as
+    WP-127: GCC/libm differ from MSVC in the last bits), non-float entries
+    (rc, Newton iteration counts) still exact."""
+    assert sorted(got) == sorted(ref), what
+    for name in ref:
+        assert len(got[name]) == len(ref[name]), (what, name)
+        if sys.platform == "win32":
+            for k, (a, b) in enumerate(zip(got[name], ref[name])):
+                assert a == b, f"{what}: deck {name} row {k}: first differing entry " \
+                    f"{next(i for i, (x, y) in enumerate(zip(a, b)) if x != y)}"
+            continue
+        scale = max((abs(_as_float(x)) for row in ref[name] for x in row
+                     if isinstance(_as_float(x), float)
+                     and math.isfinite(_as_float(x))), default=1.0)
+        tol = 1e-6 * max(scale, 1.0)
+        for k, (a, b) in enumerate(zip(got[name], ref[name])):
+            assert len(a) == len(b), f"{what}: deck {name} row {k}: length"
+            for i, (x, y) in enumerate(zip(a, b)):
+                fx, fy = _as_float(x), _as_float(y)
+                if isinstance(fx, float) and isinstance(fy, float):
+                    assert abs(fx - fy) <= tol or (fx != fx and fy != fy), (
+                        f"{what}: deck {name} row {k} entry {i}: {fx!r} vs {fy!r} beyond "
+                        f"the 1e-6 cross-platform floor ({tol:.3e}) on {sys.platform}")
+                else:
+                    assert fx == fy, f"{what}: deck {name} row {k} entry {i}: {x!r} vs {y!r}"
+
+
+def test_optout_reproduces_the_pre_wp130_binary():
+    """`-cppmTangent vanilla` (and no option at all on vanilla ManzariDafalias)
+    reproduces the PRE-WP-130 binary on every IntScheme-2 deck: the seams, the
+    stack-local LU, the de-static NewtonIter and the census move nothing."""
     with open(b130.BASELINE) as fh:
         ref = json.load(fh)["decks"]
+    _compare(b130.run_all(("-cppmTangent", "vanilla")), ref, "opt-out vs pre-WP-130")
+
+
+def test_default_fixed_tangent_regression_pin():
+    """RE-BASELINED DELIBERATELY (owner decision, WP-130): `-cppmTangent fixed`
+    is the LadrunoSANISAND default, because the vanilla CPPM TanType-2 tangent
+    is MINUS the derivative of its own return map (NewtonSol `Cep = -1.0 *
+    CSigma`; finite difference ||-T - D_fd||/||D_fd|| = 1.24e-3 against
+    ||T - D_fd||/||D_fd|| = 2.0 -- LEDGER_quirks "IntScheme 2's TanType-2
+    tangent is MINUS", Ladruno_files/testbed/hypo_bearing/wp130_f18c/
+    q_tangent_fd.txt, and the two FD tests below). So the LadrunoSANISAND
+    IntScheme-2 + TanType-2 decks change. This pins the new default against
+    `wp130_sanisand_byteid_fixed_baseline.json` (written by the WP-130 build)
+    and checks the change is EXACTLY the tangent sign: vanilla ManzariDafalias
+    is untouched, and on every zero-free-DOF deck the stress / strain / state
+    entries equal the pre-WP-130 baseline and only the tangent entries flip
+    sign. (The free-DOF decks change throughout: the tangent steers Newton.)"""
+    with open(b130.FIXED_BASELINE) as fh:
+        ref_fixed = json.load(fh)["decks"]
+    with open(b130.BASELINE) as fh:
+        ref_pre = json.load(fh)["decks"]
     got = b130.run_all()
-    assert sorted(got) == sorted(ref)
+    _compare(got, ref_fixed, "default vs fixed baseline")
     if sys.platform != "win32":
-        # The baseline was written by the pre-WP-130 WINDOWS/MSVC binary; GCC/libm
-        # differ in the last bits (WP-127's Zone-A: ~1e-11 relative), so bit
-        # equality is the claim only on win32. Elsewhere: the fork's 1e-6
-        # cross-platform floor (test_adr97_p4_inertness.py convention, as WP-127);
-        # non-float entries (rc, Newton iteration counts) must still match exactly.
-        for name in ref:
-            assert len(got[name]) == len(ref[name]), name
-            scale = max((abs(_as_float(x)) for row in ref[name] for x in row
-                         if isinstance(_as_float(x), float)
-                         and math.isfinite(_as_float(x))), default=1.0)
-            tol = 1e-6 * max(scale, 1.0)
-            for k, (a, b) in enumerate(zip(got[name], ref[name])):
-                assert len(a) == len(b), f"deck {name} row {k}: length"
-                for i, (x, y) in enumerate(zip(a, b)):
-                    fx, fy = _as_float(x), _as_float(y)
-                    if isinstance(fx, float) and isinstance(fy, float):
-                        assert abs(fx - fy) <= tol or (fx != fx and fy != fy), (
-                            f"deck {name} row {k} entry {i}: {fx!r} vs {fy!r} beyond "
-                            f"the 1e-6 cross-platform floor ({tol:.3e}) on {sys.platform}")
-                    else:
-                        assert fx == fy, f"deck {name} row {k} entry {i}: {x!r} vs {y!r}"
         return
-    for name in ref:
-        assert len(got[name]) == len(ref[name]), name
-        for k, (a, b) in enumerate(zip(got[name], ref[name])):
-            assert a == b, f"deck {name} row {k}: first differing entry " \
-                f"{next(i for i, (x, y) in enumerate(zip(a, b)) if x != y)}"
+    assert got["md3d_s2"] == ref_pre["md3d_s2"]
+    ntan = {"ls3d_s2": 36, "ls3d_s2_big": 36, "ls_ps_s2": 9, "ls_ps_s2_cyc": 9}
+    for name, n in ntan.items():
+        changed = 0
+        for a, b in zip(got[name], ref_pre[name]):
+            assert a[:-n] == b[:-n], (name, "a non-tangent entry moved")
+            ta = [_as_float(x) for x in a[-n:]]
+            tb = [_as_float(x) for x in b[-n:]]
+            if ta != tb:
+                changed += 1
+                for x, y in zip(ta, tb):
+                    assert x == -y, (name, "not a pure sign flip", x, y)
+        assert changed > 0, (name, "no row changed: is the default really fixed?")
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +189,14 @@ def test_parser_accepts(opts):
 #  3. the census makes vanilla's silent explicit fallback visible
 # ---------------------------------------------------------------------------
 
-def _free_push(extra, lateral=50.0, push=20.0):
+def _free_push(extra, lateral=50.0, push=20.0, tangent="vanilla"):
     """The byte-id free quad (100 kPa, loaded edges) under IntScheme 2 +
-    `extra`, one push step of 0.1*push kPa.  Returns (rc, wall s, census)."""
-    b130.build_free_quad(b130._CAMPAIGN_S2 + tuple(extra), lateral=lateral)
+    `extra`, one push step of 0.1*push kPa.  Returns (rc, wall s, census).
+    `tangent` defaults to the VANILLA (sign-flipped) CPPM tangent on purpose:
+    it is what produces F12's off-path trial iterates, i.e. the scenario the
+    refusal machinery exists for. The LadrunoSANISAND default is `fixed`."""
+    b130.build_free_quad(b130._CAMPAIGN_S2 + ("-cppmTangent", tangent) + tuple(extra),
+                         lateral=lateral)
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
     for j, (x, y) in enumerate(sani._XY):
@@ -176,6 +220,13 @@ def test_default_counts_the_silent_explicit_fallback():
     assert s[CPPM_NFAIL] > 0 and s[CPPM_HALV] > 0
     assert s[CPPM_EXPL] > 0, s          # the silent fallback, now counted
     assert s[CPPM_REF] == 0 and s[LAST_CPPM_REF] == 0
+
+
+def test_fixed_tangent_carries_the_same_push():
+    """The same deck and step with the LadrunoSANISAND DEFAULT tangent (fixed
+    sign) and vanilla control flow otherwise: the global Newton converges."""
+    rc, wall, s = _free_push((), tangent="fixed")
+    assert rc == 0, (rc, s)
 
 
 # ---------------------------------------------------------------------------
@@ -328,16 +379,133 @@ def _fd_tangent(extra, h=1.0e-8):
 
 
 def test_vanilla_cppm_tangent_has_the_wrong_sign():
-    """Pins the vanilla defect (default kept for byte identity): the TanType-2
-    tangent IntScheme 2 hands the element is MINUS the derivative of its own
-    return map. Measured: ||-T - D_fd||/||D_fd|| = 1.24e-3 (one iterate stale),
-    ||T - D_fd||/||D_fd|| = 2.0."""
-    e_plus, e_minus, rep = _fd_tangent(())
+    """Pins the vanilla defect, reachable only through the opt-out: the
+    TanType-2 tangent IntScheme 2 hands the element is MINUS the derivative of
+    its own return map. Measured: ||-T - D_fd||/||D_fd|| = 1.24e-3 (one
+    iterate stale), ||T - D_fd||/||D_fd|| = 2.0."""
+    e_plus, e_minus, rep = _fd_tangent(("-cppmTangent", "vanilla"))
     assert rep < 1e-9
     assert e_minus < 1e-2 and e_plus > 1.9, (e_plus, e_minus)
 
 
-def test_cppm_tangent_fixed_is_the_algorithmic_tangent():
-    e_plus, e_minus, rep = _fd_tangent(("-cppmTangent", "fixed"))
+def test_cppm_tangent_default_is_the_algorithmic_tangent():
+    """The LadrunoSANISAND DEFAULT (owner decision) is the fixed sign."""
+    e_plus, e_minus, rep = _fd_tangent(())
     assert rep < 1e-9
     assert e_plus < 1e-2 and e_minus > 1.9, (e_plus, e_minus)
+
+
+def _ps_final(extra, s1=0.0, s2=0.0):
+    """Zero-free-DOF plane-strain quad (campaign set, IntScheme 2, TanType 2,
+    p ~ 131 kPa), 6 steps of 2e-3; the LAST increment's lateral / axial
+    displacement increments are perturbed by s1 / s2 (strain units:
+    d eps11 = -s1, d eps22 = -s2 on the unit square). Returns the element's
+    final (tension-positive) stress and 3x3 tangent."""
+    opts = (2, 2, 1, 1e-7, 1e-7, "-Presidual", 0.0, "-Pmin", 0.0101,
+            "-flipAlphaIn", "init") + tuple(extra)
+    incs = list(b127._iso_dev(6, 1.2e-2, 1.0))
+    dl, da = incs[-1]
+    incs[-1] = (dl + s1, da + s2)
+    b127._build_ps(b127._CAMPAIGN, opts, 10, 3.0e-4, incs)
+    ops.updateMaterialStage("-material", 1, "-stage", 0)
+    for _ in range(10):
+        assert ops.analyze(1) == 0
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    for _ in incs:
+        assert ops.analyze(1) == 0
+    return (list(ops.eleResponse(1, "material", 1, "stress")),
+            list(ops.eleResponse(1, "material", 1, "tangent")))
+
+
+def _fd_tangent_ps(extra, h=1.0e-8):
+    """The same check through the PLANE-STRAIN wrapper (open item 5). sigma_33
+    is not exposed by the wrapper's `stress`, so the replay cannot be seeded;
+    instead the whole deterministic run is repeated with the last increment
+    perturbed, which differentiates the SAME return map from the SAME committed
+    state. Compares the 2x2 normal block (e11, e22) of the element's 3x3
+    `tangent` with the FD. Returns (e_plus, e_minus)."""
+    sig0, tan0 = _ps_final(extra)
+    T = [[tan0[3 * i + j] for j in range(2)] for i in range(2)]
+    D = [[0.0, 0.0], [0.0, 0.0]]
+    for j in range(2):
+        sp = _ps_final(extra, *((h, 0.0) if j == 0 else (0.0, h)))[0]
+        sm = _ps_final(extra, *((-h, 0.0) if j == 0 else (0.0, -h)))[0]
+        for i in range(2):
+            D[i][j] = (sp[i] - sm[i]) / (-2.0 * h)     # d eps_jj = -s_j
+    nD = math.sqrt(sum(x * x for r in D for x in r))
+    e_plus = math.sqrt(sum((T[i][j] - D[i][j]) ** 2 for i in range(2) for j in range(2))) / nD
+    e_minus = math.sqrt(sum((T[i][j] + D[i][j]) ** 2 for i in range(2) for j in range(2))) / nD
+    return e_plus, e_minus
+
+
+def test_planestrain_wrapper_tangent_sign():
+    """Open item 5 closed by measurement: the plane-strain wrapper hands out
+    the same object -- vanilla sign flipped, default fixed."""
+    ep_v, em_v = _fd_tangent_ps(("-cppmTangent", "vanilla"))
+    ep_f, em_f = _fd_tangent_ps(())
+    assert em_v < 1e-2 and ep_v > 1.9, (ep_v, em_v)
+    assert ep_f < 1e-2 and em_f > 1.9, (ep_f, em_f)
+
+
+# ---------------------------------------------------------------------------
+#  7. a DISCARDING element: the CPPM refusal must not commit (WP-99 channel)
+# ---------------------------------------------------------------------------
+
+def test_cppm_refusal_under_a_discarding_element_does_not_commit():
+    """SSPquad DISCARDS the material's setTrialStrain return code, so the
+    trial-time refusal is invisible to it and Newton can 'converge' on a
+    refused (unintegrated) state. LadrunoSANISAND::commitState's plain path
+    now declares the CPPM refusal to Domain::commit() (WP-99's channel) and
+    latches: analyze < 0, and the committed strain does not move."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for j, (x, y) in enumerate(sani._XY):
+        ops.node(j + 1, x, y)
+    # the VANILLA tangent: it produces off-path iterates, i.e. refusals (see
+    # _free_push); the commit-path check itself does not depend on it
+    ops.nDMaterial("LadrunoSANISAND", 1, *b127._CAMPAIGN, *b130._CAMPAIGN_S2,
+                   "-cppmTangent", "vanilla", "-cppmOnFail", "refuse", "-cppmHalvings", 0)
+    ops.element("SSPquad", 1, 1, 2, 3, 4, 1, "PlaneStrain", 1.0)
+    for j, (x, y) in enumerate(sani._XY):
+        ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for j, (x, y) in enumerate(sani._XY):
+        ops.load(j + 1, -50.0 if x == 1. else 0.0, -50.0 if y == 1. else 0.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-10, 30, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    ops.updateMaterialStage("-material", 1, "-stage", 0)
+    for _ in range(10):
+        assert ops.analyze(1) == 0
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    ops.loadConst("-time", 0.0)
+    ops.timeSeries("Linear", 2)
+    ops.pattern("Plain", 2, 2)
+    for j, (x, y) in enumerate(sani._XY):
+        if y == 1.:
+            ops.load(j + 1, 0.0, -20.0)
+    ops.integrator("LoadControl", 0.1)
+    rcs, refused = [], False
+    for _ in range(5):
+        eps_before = list(ops.eleResponse(1, "material", 1, "strain"))
+        rc = ops.analyze(1)
+        rcs.append(rc)
+        if _stats()[CPPM_REF] > 0:
+            refused = True
+        if rc < 0:
+            break
+    assert refused, ("the deck never produced a CPPM refusal", rcs)
+    assert rcs[-1] < 0, rcs
+    # it was the COMMIT that refused (the per-instance commit latch, slot 4 of
+    # `implexRefusals`, is set only by a commit-time refusal; -implex is off)
+    assert list(ops.eleResponse(1, "material", 1, "implexRefusals"))[4] == 1.0
+    # the refused step committed nothing: the material strain is the last
+    # committed one, and further steps are refused too (latch), no drift
+    assert list(ops.eleResponse(1, "material", 1, "strain")) == eps_before
+    assert ops.analyze(1) < 0
+    assert list(ops.eleResponse(1, "material", 1, "strain")) == eps_before

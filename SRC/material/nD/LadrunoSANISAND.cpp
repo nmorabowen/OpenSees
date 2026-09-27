@@ -79,9 +79,10 @@
 //  -cppmHalvings n (0..9, vanilla 9) bounds the recursive half-increment ladder
 //  tried first (0 = refuse at once); -cppmLineSearch on backtracks the local
 //  Newton on ||R||; -cppmStart explicit retries a failed local Newton once
-//  from a 50-substep ForwardEuler guess before halving; -cppmTangent fixed
-//  hands the element +d sigma/d eps (vanilla's TanType-2 tangent under the CPPM
-//  has the wrong sign). -meFallback cppm (IntScheme 1 + -maxSubsteps > 0): when
+//  from a 50-substep ForwardEuler guess before halving; -cppmTangent fixed (the
+//  DEFAULT, owner decision) hands the element +d sigma/d eps under TanType 2 --
+//  vanilla ManzariDafalias hands out its NEGATIVE; `-cppmTangent vanilla`
+//  reproduces that, for reproduction only. -meFallback cppm (IntScheme 1 + -maxSubsteps > 0): when
 //  ModifiedEuler hits the cap, the same increment goes to the CPPM, which
 //  refuses rather than integrate explicitly; the update is refused only if both
 //  fail. All default to vanilla (byte-identical); none is qualified with -implex.
@@ -255,7 +256,9 @@ OPS_LadrunoSANISAND(void)
     int    cppmLineSearch = 0;      // 0 = off (vanilla full Newton step)
     int    meFallback    = 0;       // 0 = off, 1 = cppm
     int    cppmStart     = 0;       // 0 = trial (vanilla), 1 = explicit guess
-    int    cppmTangent   = 0;       // 0 = vanilla (sign-flipped), 1 = fixed
+    int    cppmTangent   = 1;       // 1 = fixed, the DEFAULT (owner decision, WP-130);
+                                    // 0 = vanilla (sign-flipped), explicit opt-out
+    bool   sawCppmTangent = false;  // given explicitly (only then validated)
     bool   sawCPPMToken  = false;   // any of the four given explicitly
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
@@ -513,15 +516,17 @@ OPS_LadrunoSANISAND(void)
                               " refuse returns LADRUNO_MATERIAL_REFUSED instead, so the"
                               " element forwards it and the global step is cut." << endln;
             } else if (isTan) {                                                        // -cppmTangent
+                sawCppmTangent = true;
                 if (strcmp(modeTok, "fixed") == 0)        cppmTangent = 1;
                 else if (strcmp(modeTok, "vanilla") == 0) cppmTangent = 0;
                 else ok = false;
                 if (!ok)
                     opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                            << ": -cppmTangent wants vanilla|fixed, got '" << modeTok
-                           << "'. vanilla (the DEFAULT) hands the element the CPPM's"
-                              " algorithmic tangent with the WRONG SIGN (TanType 2);"
-                              " fixed hands out +d sigma/d eps (WP-130)." << endln;
+                           << "'. fixed (the DEFAULT since WP-130) hands the element the"
+                              " CPPM's algorithmic tangent +d sigma/d eps under TanType 2;"
+                              " vanilla reproduces ManzariDafalias' WRONG SIGN (opt-out,"
+                              " for reproduction only)." << endln;
             } else if (isStart) {                                                      // -cppmStart
                 if (strcmp(modeTok, "explicit") == 0)   cppmStart = 1;
                 else if (strcmp(modeTok, "trial") == 0) cppmStart = 0;
@@ -967,7 +972,7 @@ OPS_LadrunoSANISAND(void)
     if (sawCPPMToken) {
         const int schemeReq = (int)oData[0];
         const bool cppmTouched = (cppmOnFail != 0 || cppmHalvings != 9 || cppmLineSearch != 0 ||
-                                  cppmStart != 0 || cppmTangent != 0);
+                                  cppmStart != 0 || sawCppmTangent);
         if (implexOpt.enabled && (cppmTouched || meFallback != 0)) {
             opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                    << ": -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart / -cppmTangent / -meFallback are"
@@ -991,7 +996,7 @@ OPS_LadrunoSANISAND(void)
                       " cppm the CPPM always refuses rather than integrate explicitly.)" << endln;
             return 0;
         }
-        if ((cppmHalvings != 9 || cppmLineSearch != 0 || cppmStart != 0 || cppmTangent != 0) &&
+        if ((cppmHalvings != 9 || cppmLineSearch != 0 || cppmStart != 0 || sawCppmTangent) &&
             schemeReq != INT_LSANISAND_BackwardEuler && meFallback == 0) {
             opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                    << ": -cppmHalvings / -cppmLineSearch / -cppmStart / -cppmTangent act on BackwardEuler_CPPM, which"
@@ -1064,7 +1069,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
-    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(0), // Ladruno WP-130
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1097,7 +1102,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
-    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(0), // Ladruno WP-130
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1124,7 +1129,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
-    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(0), // Ladruno WP-130
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1146,7 +1151,7 @@ LadrunoSANISAND::LadrunoSANISAND()
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
-    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(0), // Ladruno WP-130
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1314,7 +1319,7 @@ LadrunoSANISAND::setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
            << " (up to " << (1 << mCPPMHalvings) << " half-increments before that)"
            << ", -cppmLineSearch " << (mCPPMLineSearch ? "on" : "off")
            << ", -cppmStart " << (mCPPMStart ? "explicit" : "trial")
-           << ", -cppmTangent " << (mCPPMTangentFix ? "fixed" : "vanilla (sign-flipped under TanType 2)")
+           << ", -cppmTangent " << (mCPPMTangentFix ? "fixed (default)" : "vanilla (opt-out: sign-flipped under TanType 2)")
            << ", -meFallback " << (mMEFallback ? "cppm (a ModifiedEuler -maxSubsteps hit is"
                                                  " retried by the CPPM; refused only if both fail)"
                                                : "off")
@@ -1528,6 +1533,13 @@ LadrunoSANISAND::echoLadrunoConstants(void)
            << ((int)mTangType == 0 ? "ELASTIC mCe -- Newton degrades to modified Newton"
               : ((int)mTangType == 1 ? "continuum mCep" : "consistent mCep_Consistent (unsymmetric)"))
            << ")";
+    // Ladruno WP-130: the one place the CPPM tangent sign reaches an element.
+    if ((int)mTangType == 2 && (int)mScheme == INT_LSANISAND_BackwardEuler)
+        opserr << (mCPPMTangentFix
+                     ? " [IntScheme 2: CPPM tangent sign FIXED (WP-130 default; ManzariDafalias"
+                       " hands out its negative -- -cppmTangent vanilla reproduces that)]"
+                     : " [IntScheme 2: -cppmTangent vanilla -- the CPPM tangent is handed out"
+                       " with ManzariDafalias' WRONG SIGN (negative definite); reproduction only]");
 
     // Ladruno (ADR-86b): the substep-count cap. Say the NUMBER and say what
     // happens when it fires -- "0" alone reads like "no substeps".
@@ -4334,6 +4346,24 @@ LadrunoSANISAND::commitState(void)
     // mImplexTrialDone is false with -implex off AND on stage 0, so gravity and
     // the LoadControl 0.0 hold take the base path verbatim.
     if (!mImplexTrialDone) {
+        // Ladruno WP-130 (WP-129 adversarial review, WP-99's channel): a CPPM
+        // refusal (-cppmOnFail refuse, or an ME->CPPM fallback that failed too)
+        // on the update being committed. A FORWARDING element never gets here
+        // with it set (the refused iterate failed the step); a DISCARDING one
+        // (SSPquad, stdBrick, BbarBrick, SSPbrick, BrickUP, LadrunoSolidShell)
+        // does, and would commit the refused -- unintegrated -- trial state.
+        // Same treatment as the -implex companion's refusal: restore the trial,
+        // DECLARE to Domain::commit() (element-independent abort), latch, and
+        // return the sentinel. WP-129 adds the ME cap flag to this same check;
+        // whichever merges second ORs the two conditions.
+        if (mLadrunoCPPMRefused) {                                          // Ladruno WP-130
+            ladrunoNoteCommitRefusal();                                     // Ladruno WP-130
+            mImplexCommitRefusedLatch = true;                               // Ladruno WP-130
+            this->ladrunoRestoreTrialFromCommitted();                       // Ladruno WP-130
+            mEpsilon = mEpsilon_n;                                          // Ladruno WP-130
+            return LADRUNO_MATERIAL_REFUSED;                                // Ladruno WP-130
+        }                                                                   // Ladruno WP-130
+
         // Ladruno ADR-92 P2-5b: mDEpsNormCommit is read by
         // ladrunoGuardReversalNoise()'s relative threshold with -implex OFF
         // exactly as with it ON (the guard is not an -implex option -- see
