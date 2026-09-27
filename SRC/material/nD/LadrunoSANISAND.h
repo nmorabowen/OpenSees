@@ -410,6 +410,12 @@ class LadrunoSANISAND : public ManzariDafalias
     void setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose = true);  // Ladruno WP-129
     // Ladruno WP-129 (TIMs F20(c)): the `tangentEP` response's operator.
     Matrix ladrunoTangentEP(void);                                                  // Ladruno WP-129
+    // Ladruno WP-129: SAS-ME with the paper alpha_in rule decides alpha_in
+    // itself; the P2-5 guard (and its hold-skip census) does not apply.
+    bool ladrunoSasPaperRule(void) const {                                          // Ladruno WP-129
+        return mLadrunoSas.allowed && (int)mScheme == LADRUNO_INT_SAS_ME
+               && mLadrunoSas.opt.alphaInMode == 0;
+    }
 
   protected:
 

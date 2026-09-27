@@ -51,6 +51,8 @@
 
 #include <string.h>
 #include <math.h>
+#include <cmath>                          // Ladruno WP-129: std::isfinite
+#include <cstdio>                         // Ladruno WP-129: snprintf
 #include <vector>                         // Ladruno WP-127: replay output
 #include <string>                         // Ladruno WP-127
 #include <limits>                         // Ladruno WP-127
@@ -242,6 +244,7 @@ OPS_LadrunoSANISAND(void)
     bool sawImplexToken = false;                                                // Ladruno (ADR-92)
     LadrunoSasOptions sasOpt;                                                   // Ladruno WP-129
     bool sawSasToken = false;                                                   // Ladruno WP-129
+    bool sawReversalToken = false;                                              // Ladruno WP-129
 
     int numData = 1;
     if (OPS_GetIntInput(&numData, &tag) != 0) {
@@ -414,6 +417,7 @@ OPS_LadrunoSANISAND(void)
         // with it on.
         else if (strcmp(argTok, "-reversalTol") == 0 || strcmp(argTok, "-reversaltol") == 0) {
             seenFlag = true;
+            sawReversalToken = true;   // Ladruno WP-129
             numData  = 1;
             if (OPS_GetDoubleInput(&numData, &reversalTol) != 0) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
@@ -433,6 +437,7 @@ OPS_LadrunoSANISAND(void)
         // this is the RELATIVE half of the same guard, not an IMPL-EX option.
         else if (strcmp(argTok, "-reversalRel") == 0 || strcmp(argTok, "-reversalrel") == 0) {
             seenFlag = true;
+            sawReversalToken = true;   // Ladruno WP-129
             numData  = 1;
             if (OPS_GetDoubleInput(&numData, &reversalRel) != 0) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
@@ -790,7 +795,7 @@ OPS_LadrunoSANISAND(void)
                        << " wants one value" << endln;
                 return 0;
             }
-            if (isFloor ? !(v > 0.0) : !(v >= 0.0)) {
+            if (!std::isfinite(v) || (isFloor ? !(v > 0.0) : !(v >= 0.0))) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
                        << (isFloor ? " must be > 0 (sigma_ref of SAS-ME's stress error, in this"
                                      " deck's stress units; omit it for P_atm/101 = 1 kPa)"
@@ -917,6 +922,23 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno WP-129 (review #871, item 9): mScheme is an unsigned char, so an
+    // out-of-range IntScheme would wrap silently (385 -> 129).
+    if (!(oData[0] >= 0.0 && oData[0] <= 255.0) || oData[0] != (double)(int)oData[0]) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": IntScheme "
+               << oData[0] << " is not an integer in [0, 255]" << endln;
+        return 0;
+    }
+    // Ladruno WP-129 (review item 5): under SAS-ME's paper alpha_in rule the P2-5
+    // reversal-noise guard does not run, so -reversalTol/-reversalRel would be
+    // read by nothing: refused, on the fork's "a flag nothing reads" rule.
+    if (sawReversalToken && (int)oData[0] == LADRUNO_INT_SAS_ME && sasOpt.alphaInMode == 0) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -reversalTol / -reversalRel are INERT under IntScheme 129 with"
+                  " -sasAlphaIn reseat (the paper's alpha_in rule decides alpha_in inside"
+                  " the increment and the P2-5 guard does not run). Refused." << endln;
+        return 0;
+    }
     // Ladruno WP-129: the SAS-ME options are read by IntScheme 129 only.
     if (sawSasToken && (int)oData[0] != LADRUNO_INT_SAS_ME) {
         opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
@@ -1419,6 +1441,11 @@ LadrunoSANISAND::echoLadrunoConstants(void)
     // Ladruno (ADR-86 PR-3): the honoured ModifiedEuler substep error tolerance.
     // Named as a NUMBER, not as a flag state -- "honorTolR = 1" tells the reader
     // what was asked for, "TolE = 1e-06" tells them what the integrator ran.
+    if ((int)mScheme == LADRUNO_INT_SAS_ME)                          // Ladruno WP-129
+        opserr << ", honorTolR = " << mHonorTolR
+               << " (INERT: IntScheme 129 = SAS-ME uses TolR = " << mTolR
+               << " as its substep tolerance)";
+    else
     opserr << ", honorTolR = " << mHonorTolR
            << " (ModifiedEuler substep TolE = "
            << (mHonorTolR ? mTolR : 1.0e-4)
@@ -2732,11 +2759,13 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         if (ladrunoCommitLatchWarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": REFUSING every further update (" << LADRUNO_MATERIAL_REFUSED
-                   << "). The -implex companion hit the -maxSubsteps cap at a"
-                      " commitState; that commit was aborted by Domain::commit()"
-                      " and this integration point has committed nothing since."
-                      " Re-run with -implexControl, which refuses BEFORE the step"
-                      " converges and is therefore recoverable, or raise"
+                   << "). A commit at this point was REFUSED -- the -implex"
+                      " companion hit the -maxSubsteps cap, or (WP-129) a refused"
+                      " update (SAS-ME / the ModifiedEuler cap) reached commitState"
+                      " under an element that discards the material's return code;"
+                      " that commit was aborted by Domain::commit() and this"
+                      " integration point has committed nothing since. Use an"
+                      " element that forwards the code, -implexControl, or raise"
                       " -maxSubsteps. (Post-latch refusals are counted in the"
                       " `latched` slot of the `implexRefusals` response, NOT in"
                       " its total -- they fire once per Newton iteration.)"
@@ -2788,8 +2817,7 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         // alpha_in itself (onset / (alpha - alpha_in):n = 0) and ignores
         // integrate()'s trial-based reset, so the P2-5 noise guard -- which
         // exists to undo THAT reset -- must not overwrite its answer.
-        if (!(mLadrunoSas.allowed && (int)mScheme == LADRUNO_INT_SAS_ME
-              && mLadrunoSas.opt.alphaInMode == 0))
+        if (!this->ladrunoSasPaperRule())
             this->ladrunoGuardReversalNoise();   // Ladruno ADR-92 P2-5
         return this->ladrunoUpdateStatus();
     }
@@ -3992,7 +4020,7 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // LadrunoMaterialStatus.h), which aborts the commit for every element type,
     // forwarder or discarder. `-implexControl` remains the way to refuse such a
     // step BEFORE it converges, which is the only RECOVERABLE refusal.
-    const bool companionFailed = mSubstepCapHitInME;   // Ladruno ADR-92 fix
+    const bool companionFailed = mSubstepCapHitInME || mLadrunoSas.refused;   // Ladruno ADR-92 fix; WP-129
     if (companionFailed) {
         LadrunoImplexGlobals::instance().noteRefusalCompanion();
         static int ladrunoImplexCompanionWarnCount = 0;   // Ladruno ADR-92 fix
@@ -4244,6 +4272,39 @@ LadrunoSANISAND::commitState(void)
     // mImplexTrialDone is false with -implex off AND on stage 0, so gravity and
     // the LoadControl 0.0 hold take the base path verbatim.
     if (!mImplexTrialDone) {
+        // Ladruno WP-129 (review #871, item 1): a TRIAL that was refused -- the
+        // SAS-ME refusal, or the ModifiedEuler -maxSubsteps cap -- must never be
+        // committed. Under an element that FORWARDS setTrialStrain's code the
+        // step fails before commit and this is unreachable; under one that
+        // DISCARDS it (SSPquad, stdBrick, ... -- LEDGER_quirks "element refusal
+        // roster") the analysis converged on a state the material said it could
+        // not produce, and ManzariDafalias::commitState() used to advance
+        // mEpsilon_n while mSigma_n/mEpsilonE_n stayed put: the increment was
+        // lost for good (measured on SSPquad: 9 "converged" steps, strain to
+        // +4e-3, stress frozen). The WP-99 channel aborts the commit for every
+        // element type (Domain::commit() reads the counter) and latches.
+        // Closes the same pre-existing hole for the ModifiedEuler cap.
+        // Numerically inert elsewhere: neither flag is ever true on a
+        // converged commit under a forwarding element.
+        if (mLadrunoSas.refused || mSubstepCapHitInME) {           // Ladruno WP-129
+            if (!mLadrunoSas.commitRefusalWarned) {
+                mLadrunoSas.commitRefusalWarned = true;
+                opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                       << ": a REFUSED update (" << (mLadrunoSas.refused
+                          ? "SAS-ME" : "ModifiedEuler -maxSubsteps cap")
+                       << ") reached commitState -- the host element discarded the"
+                          " material's return code. The commit is ABORTED ("
+                       << LADRUNO_MATERIAL_REFUSED << ") and this point LATCHES:"
+                          " use an element that forwards the code (quad, LadrunoQuad,"
+                          " the u-p family, ...) so the step is cut instead."
+                       << endln;
+            }
+            ladrunoNoteCommitRefusal();
+            mImplexCommitRefusedLatch = true;
+            this->ladrunoRestoreTrialFromCommitted();
+            mEpsilon = mEpsilon_n;
+            return LADRUNO_MATERIAL_REFUSED;
+        }
         // Ladruno ADR-92 P2-5b: mDEpsNormCommit is read by
         // ladrunoGuardReversalNoise()'s relative threshold with -implex OFF
         // exactly as with it ON (the guard is not an -implex option -- see
@@ -4265,7 +4326,7 @@ LadrunoSANISAND::commitState(void)
             dEpsCommit.addVector(1.0, mEpsilon_n, -1.0);
             mDEpsNormCommit = this->GetNorm_Cov(dEpsCommit);
         }
-        else {
+        else if (!this->ladrunoSasPaperRule()) {   // Ladruno WP-129: no P2-5 guard ran
             // Ladruno ADR-92 P2-5c: this commit's own reversal test was
             // skipped by ladrunoGuardReversalNoise() (called from
             // ladrunoTrialUpdate() above, on the SAME ops_Dt == 0.0 predicate).
@@ -4489,6 +4550,25 @@ LadrunoSANISAND::setParameter(const char **argv, int argc, Parameter &param)
 int
 LadrunoSANISAND::updateParameter(int parameterID, Information &info)
 {
+    // Ladruno WP-129 (review #871, items 6/9): the base's id 2 is
+    // `IntegrationScheme`, written straight into an unsigned char. Refuse a value
+    // outside [0, 255] (385 would silently become 129) and SAS-ME under -implex
+    // (the parser refuses that pair; this is the runtime back door).
+    if (parameterID == 2) {
+        const double v = info.theDouble;
+        if (!(v >= 0.0 && v <= 255.0) || v != (double)(int)v) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": IntegrationScheme " << v << " is not an integer in [0, 255];"
+                      " refused." << endln;
+            return -1;
+        }
+        if ((int)v == LADRUNO_INT_SAS_ME && mImplexOpt.enabled) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": IntegrationScheme 129 (SAS-ME) is not a qualified -implex"
+                      " companion; refused (the parser refuses the same pair)." << endln;
+            return -1;
+        }
+    }
     // Read-only diagnostics: a `parameter` object bound to them exists so a deck
     // can RECORD them; writing one would falsify the accumulator it reports.
     if (parameterID == LadrunoSanisandImplexErrorParamID ||
@@ -4840,6 +4920,16 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     // Ladruno WP-129 (TIMs F20(c)): 6x6, internal (compression-positive) Voigt,
     // which is also the element convention for a tangent (both signs flip).
     if (argc > 0 && (strcmp(argv[0], "tangentEP") == 0 || strcmp(argv[0], "TangentEP") == 0)) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        for (int i = 0; i < 6; i++)
+            for (int j = 0; j < 6; j++) {
+                char nm[32];
+                snprintf(nm, sizeof(nm), "tangentEP_%d%d", i + 1, j + 1);
+                output.tag("ResponseType", nm);
+            }
+        output.endTag();
         Matrix probe(6, 6);
         return new MaterialResponse(this, LadrunoSanisandTangentEPResponseID, probe);
     }
@@ -5087,6 +5177,21 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     // deck's scheme even reaches the site that reads it -- a record that says
     // "honorTolR = 1" while the scheme never calls ModifiedEuler is a record that
     // overstates what happened.
+    if ((int)mScheme == LADRUNO_INT_SAS_ME) {                        // Ladruno WP-129
+        const LadrunoSasOptions &o = mLadrunoSas.opt;
+        s << "             IntScheme 129 = SAS-ME (WP-129): substep error on stress"
+          << (o.errorVars == 0 ? ", alpha and fabric" : " ONLY (attribution switch)")
+          << " <= TolR = " << mTolR << ", sigma_ref = "
+          << (o.errFloor < 0.0 ? m_P_atm / 101.0 : o.errFloor)
+          << ", alpha_in " << (o.alphaInMode == 0 ? "reseat (paper rule)"
+                               : o.alphaInMode == 1 ? "bracket" : "STALE (attribution)")
+          << ", rho_alpha bound 1 + " << o.alphaBoundTol
+          << (o.alphaProject ? " (projected)" : " (reject / refuse)")
+          << "; refusals so far " << mLadrunoSas.stats[LSAS_REFUSALS]
+          << " (sasStats); -honorTolR and the ModifiedEuler TolE below are INERT"
+          << (o.alphaInMode == 0 ? "; -reversalTol/-reversalRel are INERT (no P2-5 guard"
+                                   " under the paper rule)" : "") << endln;
+    }
     s << "             ModifiedEuler substep TolE = " << (mHonorTolR ? mTolR : 1.0e-4)
       << (mHonorTolR ? "  (this deck's TolR, via the ManzariDafalias mHonorTolRInME seam)"
                      : "  (vanilla's hardcoded 1e-4; -honorTolR 1 selects TolR instead)") << endln;

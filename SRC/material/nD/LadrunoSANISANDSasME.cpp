@@ -104,7 +104,6 @@
 #include <profiler/ProfilerMacros.h>
 #include <OPS_Globals.h>
 
-#include <atomic>
 #include <cfloat>
 #include <climits>
 #include <cmath>
@@ -762,18 +761,21 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         if (paperRule)
             mAlpha_in = mAlpha_in_n;
         mDGamma = 0.0;
+        mVoidRatio = eN;          // the refused trial carries nothing forward
         GetElasticModuli(mSigma_n, eN, K, G);
         mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
-        // PROCESS-WIDE warning budget (every Gauss point is an instance)
-        static std::atomic<int> ladrunoSasWarnCount(0);   // Ladruno WP-129 (diagnostic budget)
-        if (ladrunoSasWarnCount.load() < 10) {
+        // "last" columns describe no valid end state after a refusal
+        st[LSAS_LAST_RATIO_B] = std::numeric_limits<double>::quiet_NaN();
+        st[LSAS_LAST_F] = std::numeric_limits<double>::quiet_NaN();
+        // PER-INSTANCE warn-once (review #871 item 2: no process-wide state,
+        // nothing to reset on wipe); every refusal is counted in sasStats.
+        if (!mLadrunoSas.warned) {
+            mLadrunoSas.warned = true;
             opserr << "WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag " << this->getTag()
                    << ": update REFUSED (" << refuseName(code) << ", code " << code
                    << "); the trial is left on the committed state and the step must be cut."
-                   << " Per-point counts: the `sasStats` response." << endln;
-            if (ladrunoSasWarnCount.fetch_add(1) + 1 == 10)
-                opserr << "WARNING LadrunoSANISAND SAS-ME: further refusal warnings suppressed"
-                          " (budget 10 per process)." << endln;
+                   << " Once per integration point; every refusal is counted in `sasStats`."
+                   << endln;
         }
         return;
     }

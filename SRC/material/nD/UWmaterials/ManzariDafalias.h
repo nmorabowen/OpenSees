@@ -112,7 +112,9 @@ struct LadrunoSasState {                                                    // L
     LadrunoSasOptions opt;
     double stats[LSAS_COUNT];   // Ladruno WP-129: per instance, since revertToStart; survives revertToLastCommit
     bool   refused;             // Ladruno WP-129: the LAST update was refused (reset at every integrate())
-    LadrunoSasState() : allowed(false), refused(false) {
+    bool   warned;              // Ladruno WP-129: per-instance warn-once for a refused update
+    bool   commitRefusalWarned; // Ladruno WP-129: per-instance warn-once for a refused commit
+    LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false) {   // Ladruno WP-129
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
