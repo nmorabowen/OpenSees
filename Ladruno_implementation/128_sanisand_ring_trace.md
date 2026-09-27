@@ -516,9 +516,18 @@ On the ring the tail behaves the same way: the max goes 1428 → 1336 from TolE
 On the ring @1e-6 set, compare the C++ ME 1e-8 reference (ref A) with an α+z-aware
 port at 1e-8 (ref B):
 
-REFCHECK_TABLE
+| comparison (313 cases, 7 excluded because a reference forced/refused) | median kPa | p95 kPa | max kPa |
+|---|---|---|---|
+| \|ref A − ref B\| | 5.6e-10 | 6.1e-3 | 7.0e-2 |
+| \|today − ref A\| (what §5.2 reports) | 5.6e-5 | 5.1e-3 | 7.0e-2 |
+| \|today − ref B\| | 1.1e-4 | 1.3e-2 | 7.8e-2 |
 
-The ring errors in §5.2 therefore **understate** the true integration error: they
+On most states the two references agree to round-off. On the tail (p95) the α-blind
+reference sits 6e-3 kPa from the α-aware one, and today's error against the α-aware
+reference is about 2× (median) to 2.6× (p95) what §5.2 reports.
+
+The ring errors in §5.2 therefore **understate** the true integration error, by
+about 2–3× on the 1e-6 set: they
 measure ME against a tighter ME that makes the same α-blind acceptances. The
 constant-p numbers are unaffected. There h is finite and both stages are plastic,
 so the stress error does couple to α.

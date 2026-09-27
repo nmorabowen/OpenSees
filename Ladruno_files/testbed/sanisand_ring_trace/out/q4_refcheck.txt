@@ -1,0 +1,4 @@
+|ref A (C++ ME 1e-8) - ref B (alpha+z-aware 1e-8)|   kPa  median 5.58e-10  p95 6.10e-03  max 7.03e-02
+|today - ref A|                                      kPa  median 5.63e-05  p95 5.05e-03  max 6.97e-02
+|today - ref B|                                      kPa  median 1.12e-04  p95 1.32e-02  max 7.82e-02
+cases 313 (excluded 7: either reference forced/refused)
