@@ -68,7 +68,20 @@
 //        <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>                  \
 //        <-implexFactor fixed|control>                                          \
 //        <-reversalTol $tol> <-reversalRel $ratio> <-flipAlphaIn init|vanilla>
+//        <-cppmOnFail explicit|refuse> <-cppmHalvings $n> <-cppmLineSearch on|off>
+//        <-meFallback cppm|off>
 //        (-flipAlphaIn default: init, since WP-112)
+//
+//  Ladruno WP-130 (TIMs F18(c)/(d)): BackwardEuler_CPPM (IntScheme 2) under a
+//  global Newton. -cppmOnFail refuse makes a local Newton that cannot return
+//  the increment REFUSE the update (LADRUNO_MATERIAL_REFUSED, so the element
+//  cuts the step) instead of vanilla's silent explicit integration;
+//  -cppmHalvings n (0..9, vanilla 9) bounds the recursive half-increment ladder
+//  tried first (0 = refuse at once); -cppmLineSearch on backtracks the local
+//  Newton on ||R||. -meFallback cppm (IntScheme 1 + -maxSubsteps > 0): when
+//  ModifiedEuler hits the cap, the same increment goes to the CPPM, which
+//  refuses rather than integrate explicitly; the update is refused only if both
+//  fail. All default to vanilla (byte-identical); none is qualified with -implex.
 //
 //  Ladruno ADR-92 P2-9: -implexFactor picks HOW f is chosen. `fixed` (the
 //  DEFAULT) is the clock ratio alpha*dt_{n+1}/dt_n and reaches no new
@@ -190,6 +203,8 @@ OPS_LadrunoSANISAND(void)
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
+               << " <-cppmOnFail explicit|refuse> <-cppmHalvings 0..9>"          // Ladruno WP-130
+               << " <-cppmLineSearch on|off> <-meFallback cppm|off>"             // Ladruno WP-130
                << endln;
         return 0;
     }
@@ -228,6 +243,13 @@ OPS_LadrunoSANISAND(void)
                                //          (opt-in; the P2-7c default). Matches
                                //          LadrunoSANISAND::FLIP_ALPHA_IN_*, which is
                                //          `protected` and therefore not nameable here.
+    // Ladruno WP-130 (TIMs F18(c)/(d)): every default reproduces vanilla's
+    // BackwardEuler_CPPM control flow, so an existing deck is byte-identical.
+    int    cppmOnFail    = 0;       // 0 = explicit (vanilla), 1 = refuse
+    int    cppmHalvings  = 9;       // vanilla: mMaxSubStep 10 -> up to 9 halvings
+    int    cppmLineSearch = 0;      // 0 = off (vanilla full Newton step)
+    int    meFallback    = 0;       // 0 = off, 1 = cppm
+    bool   sawCPPMToken  = false;   // any of the four given explicitly
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
     // makes an existing SANISAND deck byte-identical.
@@ -451,6 +473,67 @@ OPS_LadrunoSANISAND(void)
         // sets mAlpha_in := mAlpha_n deterministically at the elastic->plastic
         // stage flip; `vanilla` (opt-in) leaves the base's own
         // loading-reversal sign test alone.
+        // Ladruno WP-130 (TIMs F18(c)/(d)): BackwardEuler_CPPM under a global
+        // Newton, and the ModifiedEuler -> CPPM per-point fallback. Validated
+        // against IntScheme / -maxSubsteps / -implex after the loop.
+        else if (strcmp(argTok, "-cppmOnFail") == 0 || strcmp(argTok, "-cppmonfail") == 0 ||
+                 strcmp(argTok, "-cppmLineSearch") == 0 || strcmp(argTok, "-cppmlinesearch") == 0 ||
+                 strcmp(argTok, "-meFallback") == 0 || strcmp(argTok, "-mefallback") == 0) {
+            seenFlag = true;
+            sawCPPMToken = true;
+            const char *rawMode = OPS_GetString();
+            char modeTok[32];
+            int  mc = 0;
+            while (rawMode != 0 && mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+            bool ok = true;
+            const bool isOnFail = (strcmp(argTok, "-cppmOnFail") == 0 || strcmp(argTok, "-cppmonfail") == 0);
+            const bool isLS     = (strcmp(argTok, "-cppmLineSearch") == 0 || strcmp(argTok, "-cppmlinesearch") == 0);
+            if (isOnFail) {                                                            // -cppmOnFail
+                if (strcmp(modeTok, "explicit") == 0)     cppmOnFail = 0;
+                else if (strcmp(modeTok, "refuse") == 0)  cppmOnFail = 1;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmOnFail wants explicit|refuse, got '" << modeTok
+                           << "'. explicit (the DEFAULT, vanilla) integrates an increment"
+                              " the CPPM's local Newton cannot return EXPLICITLY, after up"
+                              " to 2^(cppmHalvings) recursive halvings, and reports success;"
+                              " refuse returns LADRUNO_MATERIAL_REFUSED instead, so the"
+                              " element forwards it and the global step is cut." << endln;
+            } else if (isLS) {                                                         // -cppmLineSearch
+                if (strcmp(modeTok, "on") == 0)       cppmLineSearch = 1;
+                else if (strcmp(modeTok, "off") == 0) cppmLineSearch = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmLineSearch wants on|off, got '" << modeTok << "'" << endln;
+            } else {                                                                   // -meFallback
+                if (strcmp(modeTok, "cppm") == 0)     meFallback = 1;
+                else if (strcmp(modeTok, "off") == 0) meFallback = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -meFallback wants cppm|off, got '" << modeTok
+                           << "'. cppm hands an increment on which ModifiedEuler hit"
+                              " -maxSubsteps to BackwardEuler_CPPM and refuses only if"
+                              " that fails too (TIMs F10b(b))." << endln;
+            }
+            if (!ok)
+                return 0;
+        }
+        else if (strcmp(argTok, "-cppmHalvings") == 0 || strcmp(argTok, "-cppmhalvings") == 0) {
+            seenFlag = true;
+            sawCPPMToken = true;
+            numData  = 1;
+            if (OPS_GetIntInput(&numData, &cppmHalvings) != 0 || cppmHalvings < 0 || cppmHalvings > 9) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -cppmHalvings wants an integer in 0..9 (9 = vanilla: up to"
+                          " 2^9 = 512 recursive half-increments, each a 19-unknown Newton;"
+                          " 0 = no halving, the local Newton gets ONE try)" << endln;
+                return 0;
+            }
+        }
         else if (strcmp(argTok, "-flipAlphaIn") == 0 || strcmp(argTok, "-flipalphain") == 0) {
             seenFlag = true;
             const char *rawMode = OPS_GetString();
@@ -796,7 +879,9 @@ OPS_LadrunoSANISAND(void)
                        << " -implexFloor / -implexGuard / -implexTrialGuard /"       // Ladruno ADR-92 P2-6
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
                        << " -reversalTol / -reversalRel /"
-                       << " -flipAlphaIn" << endln;                                  // Ladruno ADR-92 P2-7c
+                       << " -flipAlphaIn /"                                          // Ladruno ADR-92 P2-7c
+                       << " -cppmOnFail / -cppmHalvings / -cppmLineSearch / -meFallback" // Ladruno WP-130
+                       << endln;
                 return 0;
             }
             nPos++;
@@ -843,6 +928,45 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno WP-130 (TIMs F18(c)/(d)): a flag that would do nothing is REFUSED
+    // (ADR 86's rule), and the -implex combinations are refused as unqualified:
+    // the IMPL-EX companion reads mSubstepCapHitInME, not the CPPM refusal.
+    if (sawCPPMToken) {
+        const int schemeReq = (int)oData[0];
+        const bool cppmTouched = (cppmOnFail != 0 || cppmHalvings != 9 || cppmLineSearch != 0);
+        if (implexOpt.enabled && (cppmTouched || meFallback != 0)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmOnFail / -cppmHalvings / -cppmLineSearch / -meFallback are"
+                      " NOT qualified with -implex (WP-130): the IMPL-EX companion and its"
+                      " refusal ledger read the ModifiedEuler cap flag, not a CPPM refusal."
+                      " Drop -implex or these flags." << endln;
+            return 0;
+        }
+        if (meFallback != 0 && (schemeReq != INT_LSANISAND_ModifiedEuler || maxSubsteps <= 0)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -meFallback cppm needs IntScheme 1 (ModifiedEuler) AND -maxSubsteps > 0"
+                      " (got IntScheme " << schemeReq << ", -maxSubsteps " << maxSubsteps
+                   << "): the fallback fires exactly when ModifiedEuler hits that cap, so"
+                      " without both it can never fire." << endln;
+            return 0;
+        }
+        if (cppmOnFail != 0 && schemeReq != INT_LSANISAND_BackwardEuler) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmOnFail refuse needs IntScheme 2 (BackwardEuler_CPPM); on"
+                      " IntScheme " << schemeReq << " it would do nothing. (Inside -meFallback"
+                      " cppm the CPPM always refuses rather than integrate explicitly.)" << endln;
+            return 0;
+        }
+        if ((cppmHalvings != 9 || cppmLineSearch != 0) &&
+            schemeReq != INT_LSANISAND_BackwardEuler && meFallback == 0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmHalvings / -cppmLineSearch act on BackwardEuler_CPPM, which"
+                      " IntScheme " << schemeReq << " reaches only through -meFallback cppm."
+                      " Use IntScheme 2, or add -meFallback cppm." << endln;
+            return 0;
+        }
+    }
+
     NDMaterial *theMaterial =
         new LadrunoSANISAND(tag, ND_TAG_LadrunoSANISAND,
                             dData[0],  dData[1],  dData[2],  dData[3],  dData[4],  dData[5],
@@ -873,6 +997,13 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno WP-130: validated above; applied after construction on the same
+    // rule as the IMPL-EX set (not a constructor argument, so the wrappers'
+    // signatures do not move). Echoed once, here, per deck command.
+    if (sawCPPMToken)
+        ((LadrunoSANISAND *)theMaterial)->setLadrunoCPPMOptions(cppmOnFail, cppmHalvings,
+                                                                cppmLineSearch, meFallback, true);
+
     return theMaterial;
 }
 
@@ -898,6 +1029,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0),             // Ladruno WP-130
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -930,6 +1062,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0),             // Ladruno WP-130
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -956,6 +1089,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0),             // Ladruno WP-130
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -977,6 +1111,7 @@ LadrunoSANISAND::LadrunoSANISAND()
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0),             // Ladruno WP-130
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1107,6 +1242,41 @@ LadrunoSANISAND::applyLadrunoConstants(void)
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
     mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
+    // Ladruno WP-130: the CPPM seams. At the defaults (0, 9, 0, 0) these are
+    // exactly the values every ManzariDafalias constructor sets (0, 10, 0, 0).
+    mLadrunoCPPMOnFail     = mCPPMOnFail;
+    mLadrunoCPPMMaxLevel   = mCPPMHalvings + 1;
+    mLadrunoCPPMLineSearch = mCPPMLineSearch;
+    mLadrunoMEFallback     = mMEFallback;
+}
+
+// Ladruno WP-130 (TIMs F18(c)/(d)). The parser has already refused every
+// combination that would be inert or unqualified; this clamps only what a
+// clone or a wire could smuggle in (same rule as sanitiseLadrunoInputs).
+void
+LadrunoSANISAND::setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
+                                       int meFallback, bool verbose)
+{
+    mCPPMOnFail     = (onFail != 0) ? 1 : 0;
+    mCPPMHalvings   = (halvings < 0) ? 0 : ((halvings > 9) ? 9 : halvings);
+    mCPPMLineSearch = (lineSearch != 0) ? 1 : 0;
+    mMEFallback     = (meFallback != 0) ? 1 : 0;
+    this->applyLadrunoConstants();
+
+    if (!verbose || this->getClassTag() != ND_TAG_LadrunoSANISAND)
+        return;
+    opserr << "LadrunoSANISAND tag " << this->getTag()
+           << " (WP-130): -cppmOnFail " << (mCPPMOnFail ? "refuse" : "explicit")
+           << (mCPPMOnFail ? " (a CPPM increment the local Newton cannot return REFUSES"
+                             " the update -> LADRUNO_MATERIAL_REFUSED -> the step is cut)"
+                           : " (vanilla: silent explicit integration after the ladder)")
+           << ", -cppmHalvings " << mCPPMHalvings
+           << " (up to " << (1 << mCPPMHalvings) << " half-increments before that)"
+           << ", -cppmLineSearch " << (mCPPMLineSearch ? "on" : "off")
+           << ", -meFallback " << (mMEFallback ? "cppm (a ModifiedEuler -maxSubsteps hit is"
+                                                 " retried by the CPPM; refused only if both fail)"
+                                               : "off")
+           << endln;
 }
 
 // Ladruno (ADR-93 II.1): re-derive the INITIAL elastic operator with the floor in
@@ -1544,6 +1714,10 @@ LadrunoSANISAND::getCopy(const char *type)
         // the floor OFF while the deck-level prototype echoed it ON. That is the
         // ADR-86 section 3 defect, in a new variable.
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->mCPPMOnFail      = mCPPMOnFail;                                      // Ladruno WP-130
+        clone->mCPPMHalvings    = mCPPMHalvings;                                    // Ladruno WP-130
+        clone->mCPPMLineSearch  = mCPPMLineSearch;                                  // Ladruno WP-130
+        clone->mMEFallback      = mMEFallback;                                      // Ladruno WP-130
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
@@ -1571,6 +1745,10 @@ LadrunoSANISAND::getCopy(const char *type)
         // the floor OFF while the deck-level prototype echoed it ON. That is the
         // ADR-86 section 3 defect, in a new variable.
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->mCPPMOnFail      = mCPPMOnFail;                                      // Ladruno WP-130
+        clone->mCPPMHalvings    = mCPPMHalvings;                                    // Ladruno WP-130
+        clone->mCPPMLineSearch  = mCPPMLineSearch;                                  // Ladruno WP-130
+        clone->mMEFallback      = mMEFallback;                                      // Ladruno WP-130
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
@@ -1688,10 +1866,14 @@ LadrunoSANISAND::getCopy(const char *type)
 //
 //  Ladruno WP-127 widened it once more, 35 -> 35 + LMS_COUNT (= 52):
 //
-//      data(35..51) = mLadrunoMEStats[0..16], the per-instance ModifiedEuler
+//      data(35..35+LMS_COUNT-1) = mLadrunoMEStats[], the per-instance ModifiedEuler
 //                      census behind the `substepStats` response (cumulative,
 //                      so it crosses for the reason mImplexCommitRefusedLatch
 //                      does: a received instance must not forget its history).
+//
+//  Ladruno WP-130 appended nine census columns (LMS_COUNT 17 -> 26) and four
+//  slots after them, data(35+LMS_COUNT .. +3) = mCPPMOnFail, mCPPMHalvings,
+//  mCPPMLineSearch, mMEFallback: 65 in all.
 //
 //  mImplexCtlFPending (P2-9) is NOT sent: it is the per-step arm for the f*
 //  computation, transient and reconstructible from mImplexStepArmed, on the
@@ -1743,7 +1925,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
+    static Vector ladrunoData(35 + LMS_COUNT + 4);                                    // Ladruno WP-127: 35 -> 52; WP-130: + 9 census + 4 = 65
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1810,6 +1992,14 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     for (int i = 0; i < LMS_COUNT; i++)
         ladrunoData(35 + i) = mLadrunoMEStats[i];
 
+    // Ladruno WP-130: the four CPPM requests, after the census. Deck options,
+    // so they cross for the reason mMaxSubsteps does (a received instance must
+    // run the integrator the sender ran).
+    ladrunoData(35 + LMS_COUNT + 0) = (double)mCPPMOnFail;                  // Ladruno WP-130
+    ladrunoData(35 + LMS_COUNT + 1) = (double)mCPPMHalvings;                // Ladruno WP-130
+    ladrunoData(35 + LMS_COUNT + 2) = (double)mCPPMLineSearch;              // Ladruno WP-130
+    ladrunoData(35 + LMS_COUNT + 3) = (double)mMEFallback;                  // Ladruno WP-130
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1829,7 +2019,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
+    static Vector ladrunoData(35 + LMS_COUNT + 4);                                    // Ladruno WP-127: 35 -> 52; WP-130: + 9 census + 4 = 65
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1847,6 +2037,10 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
                                         // restored first so a future divergence is visible
     mHonorTolR      = (int)ladrunoData(3);
     mMaxSubsteps    = (int)ladrunoData(4);   // Ladruno (ADR-86b)
+    mCPPMOnFail     = (int)ladrunoData(35 + LMS_COUNT + 0);   // Ladruno WP-130 (applied by the
+    mCPPMHalvings   = (int)ladrunoData(35 + LMS_COUNT + 1);   // Ladruno WP-130  applyLadrunoConstants
+    mCPPMLineSearch = (int)ladrunoData(35 + LMS_COUNT + 2);   // Ladruno WP-130  call further down)
+    mMEFallback     = (int)ladrunoData(35 + LMS_COUNT + 3);   // Ladruno WP-130
 
     // Ladruno (ADR-92 P1). setLadrunoImplexOptions() is used rather than a raw
     // assignment so a restored material passes the SAME D3 scheme checks the
@@ -4473,7 +4667,11 @@ LadrunoSANISAND::updateParameter(int parameterID, Information &info)
 int
 LadrunoSANISAND::ladrunoUpdateStatus(void) const
 {
-    return mSubstepCapHitInME ? LADRUNO_MATERIAL_REFUSED : 0;
+    // Ladruno WP-130 (TIMs F18(c)/(d)): a CPPM refusal (-cppmOnFail refuse, or a
+    // failed ME->CPPM fallback) is the same statement -- this increment was not
+    // integrated -- and takes the same code, so the element forwards it and the
+    // global step is cut. Both flags are reset at the top of integrate().
+    return (mSubstepCapHitInME || mLadrunoCPPMRefused) ? LADRUNO_MATERIAL_REFUSED : 0;   // Ladruno WP-130
 }
 
 // Ladruno (ADR-86b): "substeps" / "substepsME" -- what the last update cost.
@@ -4645,7 +4843,13 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "substepStats_capHits", "substepStats_entryPminClamps",
             "substepStats_pnResets", "substepStats_maxSubstepsOneUpdate",
             "substepStats_lastSubsteps", "substepStats_lastForcedAtDTmin",
-            "substepStats_lastAbandonedLowP", "substepStats_lastCapHit"};
+            "substepStats_lastAbandonedLowP", "substepStats_lastCapHit",
+            // Ladruno WP-130 (columns 17..25): BackwardEuler_CPPM + ME fallback
+            "substepStats_cppmCalls", "substepStats_cppmNewtonFail",
+            "substepStats_cppmHalvings", "substepStats_cppmExplicitFail",
+            "substepStats_cppmExplicitLowP", "substepStats_cppmRefusals",
+            "substepStats_meFallbacks", "substepStats_meFallbackOk",
+            "substepStats_lastCppmRefused"};
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -4830,6 +5034,15 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
       << mLadrunoMEStats[LMS_FORCED_DTMIN] << " force-accepted at dT_min, "
       << mLadrunoMEStats[LMS_ABANDON_LOWP] << " abandoned at low p, "
       << mLadrunoMEStats[LMS_CAP_HITS] << " cap hit(s)" << endln;
+    s << "  CPPM (WP-130): -cppmOnFail " << (mCPPMOnFail ? "refuse" : "explicit")      // Ladruno WP-130
+      << ", -cppmHalvings " << mCPPMHalvings
+      << ", -cppmLineSearch " << (mCPPMLineSearch ? "on" : "off")
+      << ", -meFallback " << (mMEFallback ? "cppm" : "off")
+      << "; since revertToStart: " << mLadrunoMEStats[LMS_CPPM_CALLS] << " call(s), "
+      << mLadrunoMEStats[LMS_CPPM_EXPL_FAIL] << " silent explicit fallback(s), "
+      << mLadrunoMEStats[LMS_CPPM_REFUSALS] << " refusal(s), "
+      << mLadrunoMEStats[LMS_ME_FALLBACK_OK] << "/" << mLadrunoMEStats[LMS_ME_FALLBACKS]
+      << " ME->CPPM fallback(s) returned" << endln;
     // Ladruno (ADR-86b): the same inertness note the -honorTolR block below carries.
     // Both flags drive seams read at EXACTLY ONE site, inside ModifiedEuler(), so on
     // a scheme that never routes there the cap is stored, echoed, wired -- and does

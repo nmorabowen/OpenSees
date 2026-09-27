@@ -32,6 +32,7 @@
 #include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
 #include <atomic>                  // Ladruno WP-107: the two ModifiedEuler warn budgets
 #include <limits>                  // Ladruno WP-127: quiet_NaN for the substep trace
+#include <cstdlib>                 // Ladruno WP-130: abs() in ladrunoInvertLocal
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <algorithm>
@@ -55,6 +56,47 @@
 // to miss this class's 1..8 and LadrunoSANISAND's 33086..33096; it is a response
 // id, not a class tag, and nothing may derive one from it.
 constexpr int LadrunoManzariTangentResponseID = 33110;          // Ladruno WP-110 (F15)
+
+// Ladruno WP-130 (TIMs F18(c); WP-131 inventory D6): a re-entrant Matrix::Invert
+// for NewtonSol's three small inverses. Matrix::Invert runs DGETRF/DGETRI on the
+// process-wide Matrix::matrixWork / intWork scratch (Matrix.cpp), which another
+// instance -- or anything inverting a larger matrix, which REALLOCATES it -- may
+// be using at the same time. This is the same LAPACK pair, on the same copied
+// column-major data, with the pivot and work arrays on the STACK. lwork is 400,
+// Matrix.cpp's MATRIX_WORK_AREA, i.e. the value vanilla passes unless something
+// grew the shared area; for n = 6 LAPACK's DGETRI takes its unblocked path for
+// any lwork >= n, so the result is bit-identical to Matrix::Invert (pinned by
+// tests/wp130_sanisand_byteid.py). Returns what Matrix::Invert returns.
+#ifdef _WIN32
+extern "C" int  DGETRF(int *M, int *N, double *A, int *LDA, int *iPiv, int *INFO);           // Ladruno WP-130
+extern "C" int  DGETRI(int *N, double *A, int *LDA, int *iPiv, double *Work, int *WORKL, int *INFO); // Ladruno WP-130
+#else
+extern "C" int dgetrf_(int *M, int *N, double *A, int *LDA, int *iPiv, int *INFO);           // Ladruno WP-130
+extern "C" int dgetri_(int *N, double *A, int *LDA, int *iPiv, double *Work, int *WORKL, int *INFO); // Ladruno WP-130
+#endif
+static int ladrunoInvertLocal(const Matrix &A, Matrix &Ainv)               // Ladruno WP-130
+{
+    int n = A.noRows();
+    if (n <= 0 || n > 20 || A.noCols() != n || Ainv.noRows() != n || Ainv.noCols() != n)
+        return A.Invert(Ainv);          // outside the stack scratch: vanilla route
+    Ainv = A;
+    double work[400];
+    int    ipiv[20];
+    int    ldA = n, lwork = 400, info = 0;
+    double *Aptr = &Ainv(0, 0);
+#ifdef _WIN32
+    DGETRF(&n, &n, Aptr, &ldA, ipiv, &info);
+    if (info != 0)
+        return -abs(info);
+    DGETRI(&n, Aptr, &ldA, ipiv, work, &lwork, &info);
+#else
+    dgetrf_(&n, &n, Aptr, &ldA, ipiv, &info);
+    if (info != 0)
+        return -abs(info);
+    dgetri_(&n, Aptr, &ldA, ipiv, work, &lwork, &info);
+#endif
+    return -abs(info);
+}
 
 const double        ManzariDafalias::one3            = 1.0/3.0 ;
 const double        ManzariDafalias::two3            = 2.0/3.0;
@@ -248,6 +290,12 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
     ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
+    mLadrunoCPPMOnFail     = 0;            // Ladruno WP-130: vanilla control flow
+    mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
+    mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
+    mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMRefused    = false;        // Ladruno WP-130
+    mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
     initialize();
 }
@@ -339,6 +387,12 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
     ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
+    mLadrunoCPPMOnFail     = 0;            // Ladruno WP-130: vanilla control flow
+    mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
+    mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
+    mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMRefused    = false;        // Ladruno WP-130
+    mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
     initialize();
 }
@@ -407,6 +461,12 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
     ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
+    mLadrunoCPPMOnFail     = 0;            // Ladruno WP-130: vanilla control flow
+    mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
+    mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
+    mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMRefused    = false;        // Ladruno WP-130
+    mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
     this->initialize();
 }
@@ -474,6 +534,12 @@ ManzariDafalias ::ManzariDafalias()
     mSubstepsTakenInME = 0;
     mSubstepCapHitInME = false;
     ladrunoResetMEStats();                 // Ladruno WP-127: the per-instance census
+    mLadrunoCPPMOnFail     = 0;            // Ladruno WP-130: vanilla control flow
+    mLadrunoCPPMMaxLevel   = 10;           // Ladruno WP-130: vanilla's mMaxSubStep
+    mLadrunoCPPMLineSearch = 0;            // Ladruno WP-130
+    mLadrunoMEFallback     = 0;            // Ladruno WP-130
+    mLadrunoCPPMRefused    = false;        // Ladruno WP-130
+    mLadrunoInMEFallback   = false;        // Ladruno WP-130
 
     this->initialize();
 }
@@ -1035,6 +1101,7 @@ void ManzariDafalias::integrate()
     mLadrunoMEEnteredThisUpdate = false;                            // Ladruno WP-127
     mLadrunoLastPath = -1;                                          // Ladruno WP-127
     mLadrunoLastElasticRatio = std::numeric_limits<double>::quiet_NaN(); // Ladruno WP-127
+    mLadrunoCPPMRefused = false;                                    // Ladruno WP-130
 
     // update alpha_in in case of unloading
 	// I assume full elastic step and check if the new stress direction is "dramatically" 
@@ -1061,15 +1128,51 @@ void ManzariDafalias::integrate()
     // ElastoPlastic response
     else {  
         // implicit schemes
-        if ((mScheme == INT_BackwardEuler))
+        if ((mScheme == INT_BackwardEuler)) {                                // Ladruno WP-130: braces
+            mLadrunoMEStats[LMS_CPPM_CALLS] += 1.0;                          // Ladruno WP-130
+            mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                    // Ladruno WP-130
+            // Ladruno WP-130: vanilla discards this return value (F12 5.3) and
+            // still does -- a refusal travels in mLadrunoCPPMRefused, which is
+            // only ever set when -cppmOnFail refuse (or the ME fallback) asked.
             BackwardEuler_CPPM(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,
                 mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio, mG, 
                 mK, mCe, mCep, mCep_Consistent);
+            if (mLadrunoCPPMRefused)                                         // Ladruno WP-130
+                mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 1.0;                // Ladruno WP-130
+        }                                                                    // Ladruno WP-130
         // explicit schemes
-        else
+        else {                                                               // Ladruno WP-130: braces
             explicit_integrator(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,
                 mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio, mG, 
                 mK, mCe, mCep, mCep_Consistent);
+            // Ladruno WP-130 (TIMs F18(d) = F10b(b)): the per-point fallback.
+            // ModifiedEuler hit -maxSubsteps on THIS increment: instead of
+            // refusing outright, hand the same increment (same committed state,
+            // same alpha_in) to BackwardEuler_CPPM. Inside the fallback the CPPM
+            // may halve (up to mLadrunoCPPMMaxLevel) but NEVER integrates
+            // explicitly -- that would re-enter the ModifiedEuler that just
+            // failed -- so it either returns the increment or refuses. On success
+            // the cap flag is cleared and the update stands; on failure it stays
+            // set and the update is refused exactly as without the fallback.
+            // Off by default (mLadrunoMEFallback == 0): not one extra operation.
+            if (mLadrunoMEFallback != 0 && mSubstepCapHitInME) {             // Ladruno WP-130
+                mLadrunoMEStats[LMS_ME_FALLBACKS] += 1.0;                    // Ladruno WP-130
+                mLadrunoMEStats[LMS_CPPM_CALLS] += 1.0;                      // Ladruno WP-130
+                mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 0.0;                // Ladruno WP-130
+                mLadrunoInMEFallback = true;                                 // Ladruno WP-130
+                int rc = BackwardEuler_CPPM(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n,
+                    mAlpha_in, mEpsilon, mEpsilonE, mSigma, mAlpha, mFabric, mDGamma, mVoidRatio,
+                    mG, mK, mCe, mCep, mCep_Consistent);                     // Ladruno WP-130
+                mLadrunoInMEFallback = false;                                // Ladruno WP-130
+                if (rc == 1 && !mLadrunoCPPMRefused) {                       // Ladruno WP-130
+                    mSubstepCapHitInME = false;                              // Ladruno WP-130
+                    mLadrunoMEStats[LMS_ME_FALLBACK_OK] += 1.0;              // Ladruno WP-130
+                } else {                                                     // Ladruno WP-130
+                    mLadrunoCPPMRefused = true;                              // Ladruno WP-130
+                    mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 1.0;            // Ladruno WP-130
+                }                                                            // Ladruno WP-130
+            }                                                                // Ladruno WP-130
+        }                                                                    // Ladruno WP-130
     }
 }
 
@@ -2553,13 +2656,19 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
         Vector& NextElasticStrain, Vector& NextStress, Vector& NextAlpha, Vector& NextFabric,
         double& NextDGamma,    double& NextVoidRatio,  double& G, double& K, Matrix& Ce, Matrix& Cep, Matrix& Cep_Consistent, int implicitLevel) 
 {
-    int errFlag = 1, SchemeControl = 2, mMaxSubStep = 10;
+    // Ladruno WP-130: the halving cap is a seam (vanilla literal 10 -> the member,
+    // 10 in every constructor), so at the default the compare below is unchanged.
+    int errFlag = 1, SchemeControl = 2, mMaxSubStep = mLadrunoCPPMMaxLevel; // Ladruno WP-130
     // errFalg 1 : newton converged and results are fine
     //         0 : newton did not converge in MaxIter number of iterations
     //        -1 : the jacobian is singular or system cannot be solved
     //        -2 : converged stress has p < 0
     //        -3 : max number of sub-stepping reached
     //        -4 : (n:n_tr) < 0
+    //        -5 : Ladruno WP-130 -- REFUSED (mLadrunoCPPMRefused is set); only
+    //             under -cppmOnFail refuse or inside the ME->CPPM fallback
+    // Ladruno WP-130: refuse instead of integrating explicitly? Vanilla never does.
+    const bool ladrunoRefuse = (mLadrunoCPPMOnFail != 0) || mLadrunoInMEFallback; // Ladruno WP-130
 
     // check if max number of substepping is reached
     if (implicitLevel > mMaxSubStep){
@@ -2567,6 +2676,8 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
               opserr << "ManzariDafalias (Tag: " << this->getTag() << "): SubStepping did not converge in " << mMaxSubStep << " substeps." << endln;
         return -3;
     }
+    if (implicitLevel > 1)                                                  // Ladruno WP-130
+        mLadrunoMEStats[LMS_CPPM_HALVINGS] += 1.0;                          // Ladruno WP-130
 
     Vector TrialStress(6);
     Matrix aC(6,6), aCep(6,6), aCepConsistent(6,6);
@@ -2640,7 +2751,17 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
         } else {
             if (debugFlag) 
                 opserr << "ManzariDafalias (Tag: " << this->getTag() << "): Explicit integration" << endln;
-            
+            // Ladruno WP-130: inside the ME->CPPM fallback this explicit call
+            // would re-enter the ModifiedEuler that just hit its cap, so the
+            // fallback refuses here. Under -cppmOnFail refuse alone (IntScheme 2)
+            // this branch is NOT a failure -- it is the designed low-p route,
+            // vanilla keeps it, and ModifiedEuler's own -maxSubsteps still guards it.
+            if (mLadrunoInMEFallback) {                                     // Ladruno WP-130
+                mLadrunoCPPMRefused = true;                                 // Ladruno WP-130
+                mLadrunoMEStats[LMS_CPPM_REFUSALS] += 1.0;                  // Ladruno WP-130
+                return -5;                                                  // Ladruno WP-130
+            }                                                               // Ladruno WP-130
+            mLadrunoMEStats[LMS_CPPM_EXPL_LOWP] += 1.0;                     // Ladruno WP-130
             explicit_integrator(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, 
                         NextElasticStrain, NextStress, NextAlpha, NextFabric, NextDGamma, NextVoidRatio, 
                         G, K, aC, aCep, aCepConsistent);
@@ -2678,8 +2799,14 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
             errFlag = Check(TrialStress, NextStress, CurAlpha, NextAlpha);
         }
 
+        if (errFlag != 1)                                                   // Ladruno WP-130
+            mLadrunoMEStats[LMS_CPPM_NEWTON_FAIL] += 1.0;                   // Ladruno WP-130
+
         // try the considerations to get an acceptable solution
-        if (mScheme == INT_BackwardEuler)    // I can add the option for pure Backward Euler here.
+        // Ladruno WP-130: the ladder also runs inside the ME->CPPM fallback,
+        // where mScheme is 1 and vanilla would have skipped it (and returned an
+        // unconverged state with errFlag != 1).
+        if (mScheme == INT_BackwardEuler || mLadrunoInMEFallback)    // I can add the option for pure Backward Euler here. -- Ladruno WP-130
         {
             // try different approaches and continue until a solution is found
             while(errFlag != 1)
@@ -2752,6 +2879,8 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
                     errFlag = BackwardEuler_CPPM(cStress, cStrain, cEStrain, cAlpha, cFabric, cAlpha_in, nStrain,
                                 nEStrain, nStress, nAlpha, nFabric, nDGamma, nVoidRatio, 
                                 nG, nK,nCe, nCep, nCepC, implicitLevel);
+                    if (errFlag == -5)                                      // Ladruno WP-130: a half refused,
+                        return -5;                                          // so the whole increment is refused
                     // check if maximum number of substepping levels is reached
                     if (errFlag == -3){
                         // do explicit integration over this strain increment
@@ -2766,6 +2895,8 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
                     errFlag = BackwardEuler_CPPM(cStress, cStrain, cEStrain, cAlpha, cFabric, cAlpha_in, nStrain, 
                         nEStrain, nStress, nAlpha, nFabric, nDGamma, nVoidRatio, nG, nK,nCe, nCep, 
                         nCepC, implicitLevel);
+                    if (errFlag == -5)                                      // Ladruno WP-130
+                        return -5;                                          // Ladruno WP-130
                     // check if maximum number of substepping levels is reached
                     if (errFlag == -3){
                         // do explicit integration over this strain increment
@@ -2793,7 +2924,20 @@ int ManzariDafalias::BackwardEuler_CPPM(const Vector& CurStress, const Vector& C
                 else {
                     if (debugFlag) 
                         opserr << "ManzariDafalias (Tag: " << this->getTag() << "): Explicit integration" << endln;
-                    
+                    // Ladruno WP-130 (TIMs F18(c)): this is where a failed local
+                    // Newton ends up -- after (by default) up to 2^9 recursive
+                    // halvings -- and vanilla integrates the increment explicitly
+                    // and reports success (F12 5.2/5.3). With -cppmOnFail refuse
+                    // (or inside the ME->CPPM fallback) it REFUSES instead: the
+                    // flag reaches the element as LADRUNO_MATERIAL_REFUSED and
+                    // the global step is cut. A recursive child returns -5 and
+                    // its parent propagates it (above), so nothing is integrated.
+                    if (ladrunoRefuse) {                                    // Ladruno WP-130
+                        mLadrunoCPPMRefused = true;                         // Ladruno WP-130
+                        mLadrunoMEStats[LMS_CPPM_REFUSALS] += 1.0;          // Ladruno WP-130
+                        return -5;                                          // Ladruno WP-130
+                    }                                                       // Ladruno WP-130
+                    mLadrunoMEStats[LMS_CPPM_EXPL_FAIL] += 1.0;             // Ladruno WP-130
                     explicit_integrator(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain, 
                                 NextElasticStrain, NextStress, NextAlpha, NextFabric, NextDGamma, NextVoidRatio, 
                                 G, K, aC, aCep, aCepConsistent);
@@ -3133,13 +3277,18 @@ ManzariDafalias::NewtonIter(const Vector& xo, const Vector& inVar, Vector& x, Ma
     bool jacoFlag = true;
     Matrix (ManzariDafalias::*jacoFunc)(const Vector&, const Vector&);
     // Declare variables to be used
-    static Vector sol(ResSize);
-    static Vector R(ResSize), R2(ResSize);
-    static Vector dX(ResSize);
-    static Vector norms(ResSize+1);
-	static Vector aux;
-    static Matrix jaco(ResSize,ResSize);
-    static Matrix jInv(ResSize,ResSize);
+    // Ladruno WP-130 (TIMs F18(c)/F19): these were function-scope STATICS shared
+    // by every instance (and sized by whichever call ran first). NewtonIter has
+    // no caller in SRC/ today (IntScheme 2 runs NewtonIter2 -> NewtonSol), so
+    // this is hygiene, not a live fix -- the live shared state on IntScheme 2
+    // was NewtonSol's Matrix::Invert scratch (see ladrunoInvertLocal).
+    Vector sol(ResSize);                                                    // Ladruno WP-130: was static
+    Vector R(ResSize), R2(ResSize);                                         // Ladruno WP-130: was static
+    Vector dX(ResSize);                                                     // Ladruno WP-130: was static
+    Vector norms(ResSize+1);                                                // Ladruno WP-130: was static
+	Vector aux;                                                             // Ladruno WP-130: was static
+    Matrix jaco(ResSize,ResSize);                                           // Ladruno WP-130: was static
+    Matrix jInv(ResSize,ResSize);                                           // Ladruno WP-130: was static
     double normR1, alpha;
     double aNormR1, aNormR2;
 
@@ -3321,10 +3470,44 @@ ManzariDafalias::NewtonIter2(const Vector& xo, const Vector& inVar, Vector& sol,
         //    }
         //}
 
+		// Ladruno WP-130 (TIMs F18(c)): an opt-in backtracking line search on
+		// ||R||, the same merit the convergence test above reads. Vanilla left
+		// one commented out (above); this one is simpler on purpose: halve the
+		// step while the residual norm does not decrease, at most 8 cuts; if
+		// no cut decreases it, take the FULL step (what vanilla takes), so the
+		// search only ever shortens a step that it has shown to help.
+		// Off by default: the `else` is vanilla's four lines.
+		if (mLadrunoCPPMLineSearch != 0) {                                  // Ladruno WP-130
+			double step = 1.0;                                              // Ladruno WP-130
+			bool found = false;                                             // Ladruno WP-130
+			Vector trial(sol);                                              // Ladruno WP-130
+			for (int ls = 0; ls <= 8; ls++) {                               // Ladruno WP-130
+				trial = sol;                                                // Ladruno WP-130
+				trial.addVector(1.0, del, step);                            // Ladruno WP-130
+				res2 = NewtonRes(trial, inVar);                             // Ladruno WP-130
+				aNormR2 = res2.Norm();                                      // Ladruno WP-130
+				if ((aNormR2 < aNormR1 || aNormR2 < tolR_loc) &&            // Ladruno WP-130
+				    aNormR2 == aNormR2) {                                   // Ladruno WP-130: never accept a NaN
+					found = true;                                           // Ladruno WP-130
+					break;                                                  // Ladruno WP-130
+				}                                                           // Ladruno WP-130
+				step *= 0.5;                                                // Ladruno WP-130
+			}                                                               // Ladruno WP-130
+			if (!found) {                                                   // Ladruno WP-130
+				trial = sol;                                                // Ladruno WP-130
+				trial += del;                                               // Ladruno WP-130
+				res2 = NewtonRes(trial, inVar);                             // Ladruno WP-130
+				aNormR2 = res2.Norm();                                      // Ladruno WP-130
+			}                                                               // Ladruno WP-130
+			sol = trial;                                                    // Ladruno WP-130
+			res = res2;                                                     // Ladruno WP-130
+			aNormR1 = aNormR2;                                              // Ladruno WP-130
+		} else {                                                            // Ladruno WP-130
 		sol += del;
 		res.Zero();
 		res = NewtonRes(sol, inVar);
 		aNormR1 = res.Norm();
+		}                                                                   // Ladruno WP-130
     }
     
     return errFlag;
@@ -3625,14 +3808,14 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
     J42        = ToCovariant(dfOverdAlpha);
 
     
-    if (J22.Invert(J22_1) != 0)
+    if (ladrunoInvertLocal(J22, J22_1) != 0)            // Ladruno WP-130: was J22.Invert(J22_1)
     {
         if (debugFlag) opserr << "ManzariDafalias (Tag: " << this->getTag() << "): Singular Matrix in Newton iterations - CAlpha!" << endln;
         //J22_1 = mIImix;
         return -1;
     }
 
-    if (J33.Invert(J33_1) != 0)
+    if (ladrunoInvertLocal(J33, J33_1) != 0)            // Ladruno WP-130: was J33.Invert(J33_1)
     {
         if (debugFlag) opserr << "ManzariDafalias (Tag: " << this->getTag() << "): Singular Matrix in Newton iterations - CFabric!" << endln;
         //J33_1 = mIImix;
@@ -3658,7 +3841,7 @@ ManzariDafalias::NewtonSol(const Vector &xo, const Vector &inVar, Vector& del, M
     
 
     DSigma        = aC * DSigma;
-    if (DSigma.Invert(CSigma) != 0) 
+    if (ladrunoInvertLocal(DSigma, CSigma) != 0)        // Ladruno WP-130: was DSigma.Invert(CSigma)
     {
         if (debugFlag) 
 			opserr << "ManzariDafalias (Tag: " << this->getTag() << "): Singular Matrix in Newton iterations - Cep!" << endln;
