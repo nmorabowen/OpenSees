@@ -76,7 +76,27 @@ TRACE_CODES = {
     5: "rejectLowPEnd",      # p < p_r at the end of the substep: dT cut
     6: "abandonLowP",        # p < p_r at dT == dT_min: RETURNS with T < 1
     7: "capHit",             # -maxSubsteps fired: update refused
+    # WP-129: SAS-ME (IntScheme 129) only
+    8: "rejectNonPosH",      # stage 2 loading with H <= 0: dT cut
+    9: "rejectDrift",        # drift correction could not reach TolF: dT cut
+    10: "rejectAlpha",       # alpha/alpha^b > 1 + kappa after the substep: dT cut
+    11: "refused",           # the update was REFUSED here (code: sas LAST_REFUSE_CODE)
+    12: "acceptProjected",   # accepted after -alphaProject 1 projected alpha
 }
+# WP-129: the `sasStats` columns (and the appended replay tail)
+SAS_NAMES = [
+    "updates", "elastic", "substeps", "accepted", "rejectedErr", "rejectedLowP",
+    "rejectedNonPosH", "rejectedDrift", "rejectedAlpha", "elasticStages",
+    "driftCorrections", "alphaInReseats", "hBrackets", "alphaProjected",
+    "intersectFail", "refusals", "refStartF", "refStartAlpha", "refStartOther",
+    "refDTmin", "refNonPosH", "refLowP", "refDrift", "refAlpha", "refCap",
+    "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode", "maxAlphaRatio",
+    "lastAlphaRatio", "lastF",
+]
+SAS_REFUSE_CODES = {0: "none", 1: "startOutsideYield", 2: "startAlphaOutsideBounding",
+                    3: "startInadmissible", 4: "errorAtDTmin", 5: "loadingNonPosH",
+                    6: "tensionAtDTmin", 7: "driftFailed", 8: "alphaOutsideAtDTmin",
+                    9: "maxSubsteps"}
 PATH_CODES = {
     -1: "notExplicit", 0: "elastic", 1: "startOutsideYield",
     2: "elasticToPlastic", 3: "plastic", 4: "unloadThenPlastic",
@@ -132,7 +152,20 @@ def replay(ops, tag, sigma, alpha, alpha_in, z, e, dstrain, convention,
         recs.append(dict(T=r[0], dT=r[1], err=r[2], code=int(r[3]),
                          outcome=TRACE_CODES.get(int(r[3]), "?"),
                          atDTmin=bool(r[4])))
-    return dict(rc=int(rc), stats=stats, trace=recs,
+    i += n_rec * width
+    # WP-129 tail (absent on a pre-WP-129 build)
+    sas, ratio_before, ratio_after, tangent_ep = None, None, None, None
+    if len(out) > i + 1 and int(out[i]) == 129:
+        n_sas = int(out[i + 1])
+        i += 2
+        sas = dict(zip(SAS_NAMES, out[i:i + n_sas]))
+        i += n_sas
+        ratio_before, ratio_after = out[i], out[i + 1]
+        i += 2
+        tangent_ep = [out[i + 6 * r:i + 6 * r + 6] for r in range(6)]
+    return dict(rc=int(rc), stats=stats, trace=recs, sas=sas,
+                alpha_ratio_before=ratio_before, alpha_ratio_after=ratio_after,
+                tangent_ep=tangent_ep,
                 trace_dropped=int(dropped),
                 sigma=st[0:6], alpha=st[6:12], alpha_in=st[12:18], z=st[18:24],
                 e=st[24], p=st[25], q=st[26], f_before=st[27], f_after=st[28],
