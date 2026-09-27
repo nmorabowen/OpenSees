@@ -33,6 +33,11 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       you deliberately make it process-wide. A latch set in place must be copied by `getCopy`,
       and a loud failure must not latch. Quirks: "getCopy must PROPAGATE the latch".
 
+- [ ] Vanilla materials that keep per-material data in static `...x[matN]` arrays (PDMY/PIMY
+      family): a new field needs the constructor store, the `matCount%20` copy loop AND the
+      `recvSelf` reallocation, plus a test that creates >20 materials after the one under test.
+      Quirks: "hard-coded its critical-state line".
+
 ## Return map, tangent, substepping
 
 - [ ] A non-converged return map must FAIL (return < 0), never commit `f > 0` as success, and
