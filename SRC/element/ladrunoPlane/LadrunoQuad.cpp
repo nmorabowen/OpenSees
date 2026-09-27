@@ -1643,7 +1643,7 @@ int LadrunoQuad::setParameter(const char **argv, int argc, Parameter &param)
   // Ladruno (WP-124 C5): under SSP only slot 0 is live (setResponse and
   // LadrunoBrick already map every k there); 'material 2|3|4' edited a dead
   // slot and silently did nothing.
-  if (strstr(argv[0], "material") != 0)
+  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
     return LadrunoShell::forwardToMaterialPoint(theMaterial, 4, this->isSinglePoint(),
                                                 argv, argc, param);
 

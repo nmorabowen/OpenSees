@@ -827,7 +827,7 @@ int LadrunoCST::setParameter(const char **argv, int argc, Parameter &param)
     return -1;
   if (strcmp(argv[0], "pressure") == 0)
     return param.addObject(2, this);
-  if (strstr(argv[0], "material") != 0)
+  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
     return LadrunoShell::forwardToMaterialPoint(theMaterial, 1, false, argv, argc, param);
   return LadrunoShell::forwardToMaterials(theMaterial, numgp, argv, argc, param);
 }

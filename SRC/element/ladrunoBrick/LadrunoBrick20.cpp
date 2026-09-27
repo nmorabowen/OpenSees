@@ -1268,7 +1268,7 @@ LadrunoBrick20::setParameter(const char **argv, int argc, Parameter &param)
   }
 
   // specific material point
-  if (strstr(argv[0], "material") != 0)
+  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
     return LadrunoShell::forwardToMaterialPoint(materialPointers, this->nGP(), false,
                                                 argv, argc, param);
 

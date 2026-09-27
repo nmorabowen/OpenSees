@@ -4234,7 +4234,8 @@ LadrunoBrick::setParameter(const char **argv, int argc, Parameter &param)
   }
 
   // specific material point
-  if (strstr(argv[0], "material") != 0)   // single-point: every k -> live slot 0
+  // single-point: every k -> live slot 0; Ladruno (WP-124 C10): not materialState
+  if (LadrunoShell::isMaterialPointToken(argv[0]))
     return LadrunoShell::forwardToMaterialPoint(materialPointers, 8, this->isSinglePoint(),
                                                 argv, argc, param);
 

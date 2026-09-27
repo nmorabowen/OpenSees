@@ -432,9 +432,7 @@ def test_quad_ssp_material_point_maps_to_the_live_slot(k):
     assert kth == one, f"'material {k} E' ratio {kth!r} != 'material 1 E' ratio {one!r}"
 
 
-C10 = pytest.mark.xfail(strict=True, reason="C10: 'materialState' is swallowed by the 'material' branch")
-STATE = [n if n.startswith("Bezier") else pytest.param(n, marks=C10)
-         for n in ELEMENTS if n != "LadrunoCSTPair"]
+STATE = [n for n in ELEMENTS if n != "LadrunoCSTPair"]   # C10 fixed
 
 
 @pytest.mark.parametrize("name", STATE)

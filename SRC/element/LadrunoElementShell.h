@@ -57,6 +57,7 @@
 #include <Response.h>
 #include <OPS_Stream.h>
 #include <stdlib.h>
+#include <string.h>
 
 namespace LadrunoShell {
 
@@ -143,6 +144,16 @@ inline int forwardToMaterialPoint(NDMaterial **mats, int nPoints, bool singlePoi
   if (pointNum > 0 && pointNum <= nPoints)
     return mats[singlePoint ? 0 : pointNum - 1]->setParameter(&argv[2], argc - 2, param);
   return -1;
+}
+
+// Is argv[0] a Gauss-point address ('material k <args>')? NOT 'materialState':
+// that is the UW staged-analysis switch (DruckerPrager, PM4Sand, ... elastic ->
+// plastic), a forall broadcast. A bare strstr(argv[0], "material") swallowed it
+// (argc < 3 -> -1), so 'setParameter ... materialState' never reached the
+// materials (WP-124 C10; Bezier and upstream SixNodeTri exclude it).
+inline bool isMaterialPointToken(const char *token)
+{
+  return strstr(token, "material") != 0 && strcmp(token, "materialState") != 0;
 }
 
 // ---- response finalise (setResponse) ---------------------------------------
