@@ -85,7 +85,34 @@ void* OPS_PressureDependMultiYield03()
                    "Atmospheric pressure (=101)", "cohesi (=1.73)"};
 
     int argc = OPS_GetNumRemainingInputArgs() + 2;
-    if (argc < (3 + numParam)) {  
+
+    // Ladruno WP-133: optional critical-state flags AFTER all positional
+    // arguments: -ei $e0 -cs1 $v -cs2 $v -cs3 $v (defaults 0.6 0.9 0.02 0.7).
+    // Peek the tokens: the first recognised flag ends the positional list,
+    // so the positional parsing below sees an argc without the flag tail.
+    double csEi = 0.6, csCs1 = 0.9, csCs2 = 0.02, csCs3 = 0.7;
+    int wp133Tail = 0;
+    {
+        const int nRem = OPS_GetNumRemainingInputArgs();
+        int nRead = 0, firstFlag = -1;
+        for (int k = 0; k < nRem; k++) {
+            char buf[64];
+            const char* s = OPS_GetStringFromAll(buf, (int)sizeof(buf));
+            nRead++;
+            if (s != 0 && (strcmp(s, "-ei") == 0 || strcmp(s, "-cs1") == 0 ||
+                           strcmp(s, "-cs2") == 0 || strcmp(s, "-cs3") == 0)) {
+                firstFlag = k;
+                break;
+            }
+        }
+        OPS_ResetCurrentInputArg(-nRead);
+        if (firstFlag >= 0) {
+            wp133Tail = nRem - firstFlag;
+            argc = firstFlag + 2;
+        }
+    }
+
+    if (argc < (3 + numParam)) {
       // 3 refers to "nDMaterial PressureDependMultiYield03  $tag"
         opserr << "WARNING insufficient arguments\n";
         opserr << "Want: nDMaterial PressureDependMultiYield03 tag? " << arg[0];
@@ -166,6 +193,34 @@ void* OPS_PressureDependMultiYield03()
         }
     }
 
+    // Ladruno WP-133: parse the flag tail found by the peek above. The
+    // positional loops must have stopped exactly at the first flag.
+    if (wp133Tail > 0) {
+        if (OPS_GetNumRemainingInputArgs() != wp133Tail) {
+            opserr << "WARNING nDMaterial PressureDependMultiYield03 " << tag
+                   << ": the positional arguments do not end where the -ei/-cs1/-cs2/-cs3 options begin"
+                   << " (check the user-defined yield-surface count)\n";
+            if (gredu != 0) { delete[] gredu; gredu = 0; }
+            return 0;
+        }
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            char buf[64];
+            const char* s = OPS_GetStringFromAll(buf, (int)sizeof(buf));
+            double* dst = 0;
+            if (s != 0 && strcmp(s, "-ei") == 0) dst = &csEi;
+            else if (s != 0 && strcmp(s, "-cs1") == 0) dst = &csCs1;
+            else if (s != 0 && strcmp(s, "-cs2") == 0) dst = &csCs2;
+            else if (s != 0 && strcmp(s, "-cs3") == 0) dst = &csCs3;
+            if (dst == 0 || OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetDoubleInput(&numdata, dst) < 0) {
+                opserr << "WARNING nDMaterial PressureDependMultiYield03 " << tag
+                       << ": bad option '" << (s ? s : "") << "'; want -ei $e0 -cs1 $v -cs2 $v -cs3 $v\n";
+                if (gredu != 0) { delete[] gredu; gredu = 0; }
+                return 0;
+            }
+        }
+    }
+
     PressureDependMultiYield03* temp =
         new PressureDependMultiYield03(tag,
                                        param[0], param[1], param[2],
@@ -176,7 +231,8 @@ void* OPS_PressureDependMultiYield03()
                                        param[15], param[16], param[17],
                                        param[18], gredu,
                                        param[19], param[20], param[21],
-                                       param[22]);
+                                       param[22],
+                                       csEi, csCs1, csCs2, csCs3); // Ladruno WP-133
 
     if (gredu != 0) {
         delete[] gredu;
@@ -205,7 +261,8 @@ PressureDependMultiYield03::PressureDependMultiYield03 (int tag, int nd,
 						    double * gredu,
 					        double liquefactionParam1,
 						    double liquefactionParam2,
-						    double atm, double cohesi)
+						    double atm, double cohesi,
+						    double ei, double cs1, double cs2, double cs3) // Ladruno WP-133
  : NDMaterial(tag,ND_TAG_PressureDependMultiYield03), currentStress(),
    trialStress(), updatedTrialStress(), currentStrain(), strainRate(),
    PPZPivot(), PPZCenter(), PPZPivotCommitted(), PPZCenterCommitted(),
@@ -274,10 +331,12 @@ PressureDependMultiYield03::PressureDependMultiYield03 (int tag, int nd,
    exit(-1);
   }
 
-  double ei = 0.6;
-  double cs1 = 0.9;
-  double cs2 = 0.02;
-  double cs3 = 0.7;
+  // Ladruno WP-133: ei, cs1, cs2, cs3 are now constructor arguments
+  // (defaults 0.6, 0.9, 0.02, 0.7 -- the values formerly hard-coded here).
+  //double ei = 0.6;
+  //double cs1 = 0.9;
+  //double cs2 = 0.02;
+  //double cs3 = 0.7;
   double hv = 0.0;
   double pv = 1.0;
 
@@ -309,7 +368,15 @@ PressureDependMultiYield03::PressureDependMultiYield03 (int tag, int nd,
      double * temp23 = liquefyParam1x;
      double * temp24 = liquefyParam2x;
 	 double * temp25 = stressRatioPTx;
-	 
+	 // Ladruno WP-133: keep the old critical-state arrays so the copy below
+	 // preserves each existing material's own values (it used to overwrite
+	 // them with THIS material's constants -- harmless only while they were
+	 // hard-coded and therefore equal for every material).
+	 double * tempEi = einitx;
+	 double * tempCs1 = volLimit1x;
+	 double * tempCs2 = volLimit2x;
+	 double * tempCs3 = volLimit3x;
+
      loadStagex = new int[matCount+20];
      ndmx = new int[matCount+20];
      rhox = new double[matCount+20];
@@ -378,11 +445,11 @@ PressureDependMultiYield03::PressureDependMultiYield03 (int tag, int nd,
 
          stressRatioPTx[i] = temp25[i];
 
-		 einitx[i] = ei;    //default initial void ratio
-		 volLimit1x[i] = cs1;
-		 volLimit2x[i] = cs2;
-		 volLimit3x[i] = cs3;
-		 
+		 einitx[i] = tempEi[i];    // Ladruno WP-133: was `= ei` (leaked across materials)
+		 volLimit1x[i] = tempCs1[i]; // Ladruno WP-133: was `= cs1`
+		 volLimit2x[i] = tempCs2[i]; // Ladruno WP-133: was `= cs2`
+		 volLimit3x[i] = tempCs3[i]; // Ladruno WP-133: was `= cs3`
+
 		 Hvx[i] = hv;
 		 Pvx[i] = pv;
      }
@@ -395,7 +462,8 @@ PressureDependMultiYield03::PressureDependMultiYield03 (int tag, int nd,
 		 delete [] temp15; delete [] temp16;
 	     delete [] temp17; delete [] temp18; delete [] temp19; delete [] temp20;
 	     delete [] temp21; delete [] temp22; delete [] temp23; delete [] temp24;
-         delete [] temp25; 
+         delete [] temp25;
+         delete [] tempEi; delete [] tempCs1; delete [] tempCs2; delete [] tempCs3; // Ladruno WP-133
      }
   }
 

@@ -1,0 +1,158 @@
+{
+ "chain|vertUnload|today": {
+  "max": 5.1822537273956195,
+  "n_out": 6,
+  "substeps": 115351,
+  "forced": 0,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "chain|vertUnload|+a": {
+  "max": 0.47492967095745925,
+  "n_out": 0,
+  "substeps": 798314,
+  "forced": 0,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "chain|vertUnload|+a+z": {
+  "max": 0.47492967095745925,
+  "n_out": 0,
+  "substeps": 798314,
+  "forced": 0,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "chain|vertUnload|+a+z,refuse": {
+  "max": 0.47492967095745925,
+  "n_out": 0,
+  "substeps": 798314,
+  "forced": 0,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "chain|extShear|today": {
+  "max": 7.0135305255137235,
+  "n_out": 20,
+  "substeps": 140885,
+  "forced": 2,
+  "refused": 0,
+  "f_pos": 3
+ },
+ "chain|extShear|+a": {
+  "max": 0.5093657628167858,
+  "n_out": 0,
+  "substeps": 863217,
+  "forced": 0,
+  "refused": 18,
+  "f_pos": 0
+ },
+ "chain|extShear|+a+z": {
+  "max": 0.5093657628167858,
+  "n_out": 0,
+  "substeps": 863217,
+  "forced": 0,
+  "refused": 18,
+  "f_pos": 0
+ },
+ "chain|extShear|+a+z,refuse": {
+  "max": 0.5093657628167858,
+  "n_out": 0,
+  "substeps": 863217,
+  "forced": 0,
+  "refused": 18,
+  "f_pos": 0
+ },
+ "constp|2.0|today": {
+  "sub_med": 51,
+  "sub_max": 52,
+  "dmax": 0.0,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|2.0|+a": {
+  "sub_med": 51,
+  "sub_max": 52,
+  "dmax": 0.0002037143669606165,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|2.0|+a+z": {
+  "sub_med": 51,
+  "sub_max": 52,
+  "dmax": 0.0002037143669606165,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|2.0|+a+z,refuse": {
+  "sub_med": 51,
+  "sub_max": 52,
+  "dmax": 0.0002037143669606165,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|20.0|today": {
+  "sub_med": 18.0,
+  "sub_max": 20,
+  "dmax": 0.0,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|20.0|+a": {
+  "sub_med": 18.0,
+  "sub_max": 23,
+  "dmax": 0.2670928324012061,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|20.0|+a+z": {
+  "sub_med": 18.0,
+  "sub_max": 23,
+  "dmax": 0.2670928324012061,
+  "forced": 0,
+  "refused": 0
+ },
+ "constp|20.0|+a+z,refuse": {
+  "sub_med": 18.0,
+  "sub_max": 23,
+  "dmax": 0.2670928324012061,
+  "forced": 0,
+  "refused": 0
+ },
+ "ring|today": {
+  "sub_med": 4.0,
+  "sub_p95": 81,
+  "sub_max": 1336,
+  "in_to_out": 10,
+  "forced": 2,
+  "refused": 0,
+  "f_pos": 5
+ },
+ "ring|+a": {
+  "sub_med": 15.0,
+  "sub_p95": 120,
+  "sub_max": 1369,
+  "in_to_out": 1,
+  "forced": 5,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "ring|+a+z": {
+  "sub_med": 15.0,
+  "sub_p95": 120,
+  "sub_max": 1369,
+  "in_to_out": 1,
+  "forced": 5,
+  "refused": 0,
+  "f_pos": 0
+ },
+ "ring|+a+z,refuse": {
+  "sub_med": 15.0,
+  "sub_p95": 120,
+  "sub_max": 1369,
+  "in_to_out": 1,
+  "forced": 5,
+  "refused": 5,
+  "f_pos": 0
+ }
+}

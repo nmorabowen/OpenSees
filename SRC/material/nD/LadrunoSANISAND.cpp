@@ -51,6 +51,9 @@
 
 #include <string.h>
 #include <math.h>
+#include <vector>                         // Ladruno WP-127: replay output
+#include <string>                         // Ladruno WP-127
+#include <limits>                         // Ladruno WP-127
 
 // ===========================================================================
 //  OPS parser
@@ -1472,6 +1475,12 @@ LadrunoSANISAND::revertToStart(void)
         mImplexCommitRefusedLatch = false;   // Ladruno WP-99 (F7)
     }
 
+    // Ladruno WP-127 (F20a): the per-instance ModifiedEuler census counts
+    // "since revertToStart" -- in both branches, because an initial-state
+    // analysis that keeps its state still starts a new count here. NOT reset by
+    // revertToLastCommit (a failed step's cost must survive for the post-mortem).
+    this->ladrunoResetMEStats();          // Ladruno WP-127
+
     return 0;
 }
 
@@ -1537,6 +1546,8 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
+        for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
+            clone->mLadrunoMEStats[i] = mLadrunoMEStats[i];                         // Ladruno WP-127
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1562,6 +1573,8 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
+        for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
+            clone->mLadrunoMEStats[i] = mLadrunoMEStats[i];                         // Ladruno WP-127
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1673,6 +1686,13 @@ LadrunoSANISAND::getCopy(const char *type)
 //                      the invalid answers the latch exists to stop -- silently,
 //                      and only on that rank.
 //
+//  Ladruno WP-127 widened it once more, 35 -> 35 + LMS_COUNT (= 52):
+//
+//      data(35..51) = mLadrunoMEStats[0..16], the per-instance ModifiedEuler
+//                      census behind the `substepStats` response (cumulative,
+//                      so it crosses for the reason mImplexCommitRefusedLatch
+//                      does: a received instance must not forget its history).
+//
 //  mImplexCtlFPending (P2-9) is NOT sent: it is the per-step arm for the f*
 //  computation, transient and reconstructible from mImplexStepArmed, on the
 //  same rule as mImplexStepArmed and mPrimed themselves.
@@ -1723,7 +1743,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
+    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1783,6 +1803,13 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // through applyLadrunoConstants(), which is the only writer.
     ladrunoData(34) = mPreElasticInput;
 
+    // Ladruno WP-127 (F20a): the ModifiedEuler census, data(35 .. 35+LMS_COUNT-1).
+    // Diagnostic, but CUMULATIVE per instance: a restored or MP-received material
+    // that restarted it from zero would report a post-mortem that silently omits
+    // everything before the transfer.
+    for (int i = 0; i < LMS_COUNT; i++)
+        ladrunoData(35 + i) = mLadrunoMEStats[i];
+
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
         opserr << "WARNING: LadrunoSANISAND::sendSelf - failed to send Ladruno constants"
@@ -1802,7 +1829,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35);                                                    // Ladruno (ADR-93 II.1)
+    static Vector ladrunoData(35 + LMS_COUNT);                                        // Ladruno WP-127: 35 -> 52
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -1813,6 +1840,8 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 
     mPresidualInput = ladrunoData(0);
     mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
+    for (int i = 0; i < LMS_COUNT; i++)                        // Ladruno WP-127
+        mLadrunoMEStats[i] = ladrunoData(35 + i);              // Ladruno WP-127
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -4488,6 +4517,9 @@ constexpr int LadrunoSanisandYieldDistanceResponseID = 33095;   // Ladruno (TIMs
 // prints anything per occurrence (they are the designed behaviour of
 // P2-1/2/3/5/5c/6, not warnings), so this response is the ONLY record that
 // they fired.
+// Ladruno WP-127 (TIMs F20a): `substepStats`, the per-instance ModifiedEuler
+// census. Same band, same rule.
+constexpr int LadrunoSanisandSubstepStatsResponseID    = 33097;   // Ladruno WP-127
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -4600,6 +4632,29 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static Vector probe4g(7);   // Ladruno ADR-92 P2-9
         return new MaterialResponse(this, LadrunoSanisandImplexGuardsResponseID, probe4g);
     }
+    // Ladruno WP-127 (TIMs F20a): the per-instance ModifiedEuler census. EVERY
+    // column is PER INTEGRATION POINT (this material instance); none is
+    // process-wide. Layout and meaning: ManzariDafalias.h, LMS_*; guide sec. 6.2.
+    if (argc > 0 && (strcmp(argv[0], "substepStats") == 0 ||
+                     strcmp(argv[0], "SubstepStats") == 0)) {
+        static const char *names[LMS_COUNT] = {
+            "substepStats_updates", "substepStats_meCalls", "substepStats_substeps",
+            "substepStats_accepted", "substepStats_rejectedErr",
+            "substepStats_forcedAtDTmin", "substepStats_forcedClampMc",
+            "substepStats_rejectedLowP", "substepStats_abandonedLowP",
+            "substepStats_capHits", "substepStats_entryPminClamps",
+            "substepStats_pnResets", "substepStats_maxSubstepsOneUpdate",
+            "substepStats_lastSubsteps", "substepStats_lastForcedAtDTmin",
+            "substepStats_lastAbandonedLowP", "substepStats_lastCapHit"};
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        for (int i = 0; i < LMS_COUNT; i++)
+            output.tag("ResponseType", names[i]);
+        output.endTag();
+        Vector probe(LMS_COUNT);
+        return new MaterialResponse(this, LadrunoSanisandSubstepStatsResponseID, probe);
+    }
     return ManzariDafalias::setResponse(argv, argc, output);
 }
 
@@ -4698,6 +4753,13 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out1(0) = this->GetF(mSigma_n, mAlpha_n);
         return matInformation.setVector(out1);
     }
+    // Ladruno WP-127 (TIMs F20a)
+    if (responseID == LadrunoSanisandSubstepStatsResponseID) {
+        Vector out(LMS_COUNT);
+        for (int i = 0; i < LMS_COUNT; i++)
+            out(i) = mLadrunoMEStats[i];
+        return matInformation.setVector(out);
+    }
     return ManzariDafalias::getResponse(responseID, matInformation);
 }
 
@@ -4763,6 +4825,11 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
                               " force-accepting; the committed state is left untouched)") << endln;
     s << "             last update: " << mSubstepsTakenInME << " ModifiedEuler substep(s)"
       << (mSubstepCapHitInME ? ", CAP HIT (that update did not integrate)" : "") << endln;
+    s << "             since revertToStart (WP-127 `substepStats`): "              // Ladruno WP-127
+      << mLadrunoMEStats[LMS_SUBSTEPS] << " substep(s), "
+      << mLadrunoMEStats[LMS_FORCED_DTMIN] << " force-accepted at dT_min, "
+      << mLadrunoMEStats[LMS_ABANDON_LOWP] << " abandoned at low p, "
+      << mLadrunoMEStats[LMS_CAP_HITS] << " cap hit(s)" << endln;
     // Ladruno (ADR-86b): the same inertness note the -honorTolR block below carries.
     // Both flags drive seams read at EXACTLY ONE site, inside ModifiedEuler(), so on
     // a scheme that never routes there the cap is stored, echoed, wired -- and does
@@ -4911,4 +4978,306 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
     s << "             repair. This class does not change its shape. Half-suppression sits" << endln;
     s << "             at p = 7.6349/7.2713 = 1.050 kPa, within 4% of vanilla's p_residual" << endln;
     s << "             of 1.01 kPa -- see ADR 86 section 7.2.1 and the PR-3 tripwire memo." << endln;
+}
+// ===========================================================================
+//  Ladruno WP-127 (TIMs F20a / F21): the ModifiedEuler census response and
+//  the material-point state replay.
+// ===========================================================================
+
+// Called on a PRIVATE working copy (LadrunoSANISAND3D / PlaneStrain) that the
+// command below made with getCopy(type) and deletes afterwards. See the
+// header declaration for the full contract.
+int
+LadrunoSANISAND::ladrunoReplayRun(const LadrunoReplayRequest &q,
+                                  std::vector<double> &out)   // Ladruno WP-127
+{
+    if (mImplexOpt.enabled) {
+        opserr << "WARNING ladrunoSANISANDReplay: material " << this->getTag()
+               << " was defined with -implex; the replay drives the IMPLICIT update"
+                  " (ModifiedEuler and friends) only. Define the replay material"
+                  " without -implex." << endln;
+        return -1;
+    }
+
+    const double sgn = q.compressionPositive ? 1.0 : -1.0;
+    Vector sig(6), a(6), ain(6), z(6), de(6);
+    for (int i = 0; i < 6; i++) {
+        sig(i) = sgn * q.sigma[i];     // internal mSigma is COMPRESSION-positive
+        a(i)   = q.alpha[i];           // ratios: no sign flip in either convention
+        ain(i) = q.alphaIn[i];
+        z(i)   = q.fabric[i];
+        de(i)  = sgn * q.dStrain[i];   // internal mEpsilon is compression-positive
+    }
+
+    // Deviatoric projection of the three traceless tensors. The model keeps
+    // tr(alpha) = tr(alpha_in) = tr(z) = 0 by construction, so a nonzero trace
+    // in a dumped state is either print round-off or a real defect; both are
+    // reported (the pre-projection traces go into the output block), and the
+    // loud line fires only above round-off.
+    double tr0[3];
+    Vector *tens[3] = {&a, &ain, &z};
+    const char *names[3] = {"alpha", "alpha_in", "fabric z"};
+    for (int k = 0; k < 3; k++) {
+        Vector &v = *tens[k];
+        const double t = v(0) + v(1) + v(2);
+        tr0[k] = t;
+        const double scale = (this->GetNorm_Contr(v) > m_m) ? this->GetNorm_Contr(v) : m_m;
+        if (fabs(t) > 1.0e-6 * scale)
+            opserr << "WARNING ladrunoSANISANDReplay: tr(" << names[k] << ") = " << t
+                   << " (norm " << this->GetNorm_Contr(v) << "); projected to its"
+                      " deviatoric part before loading." << endln;
+        v(0) -= t / 3.0; v(1) -= t / 3.0; v(2) -= t / 3.0;
+    }
+
+    // Committed strain carrying ONLY the void ratio: e = e_init - (1+e_init) tr(eps),
+    // split in-plane so that the plane-strain wrapper (which pins eps_zz = 0)
+    // sees exactly the same committed strain as the 3D one.
+    const double vol = (m_e_init - q.e) / (1.0 + m_e_init);
+    Vector epsN(6);
+    epsN(0) = 0.5 * vol;
+    epsN(1) = 0.5 * vol;
+
+    // The stage flag is a STATIC shared by every ManzariDafalias instance, and
+    // the P2-5c hold rule reads the global ops_Dt: both are set for this call
+    // and restored before returning, so nothing outlives the command.
+    const char unsigned savedStage = mElastFlag;
+    const double savedDt = ops_Dt;
+    mElastFlag = 1;
+    ops_Dt = q.dt;
+
+    mSigma_n = sig;       mSigma = sig;
+    mAlpha_n = a;         mAlpha = a;
+    mAlpha_in_n = ain;    mAlpha_in = ain;
+    mFabric_n = z;        mFabric = z;
+    mEpsilon_n = epsN;    mEpsilon = epsN;
+    mEpsilonE_n = epsN;   mEpsilonE = epsN;   // bookkeeping only: no stress update reads it
+    mDGamma_n = 0.0;      mDGamma = 0.0;
+    // The BASE commit, not this class's override (no IMPL-EX / priming side
+    // effects): it re-derives mVoidRatio from the committed strain and mK, mG
+    // exactly as a converged analysis step leaves them for the next one.
+    ManzariDafalias::commitState();
+    mCe = this->GetStiffness(mK, mG);
+    mCep = mCe;
+    mCep_Consistent = mCe;
+    mFlipSeen = true;                       // the flip happened long ago: do not re-run it
+    mPrimed = q.primed;
+    mDEpsNormCommit = q.prevIncrNorm;
+    mImplexCommitRefusedLatch = false;
+    this->ladrunoResetMEStats();
+
+    const double fBefore = this->GetF(mSigma_n, mAlpha_n);
+
+    LadrunoMESubstepTrace trace;
+    trace.capRecords = q.traceCap;
+    mLadrunoTrace.p = (q.traceCap > 0) ? &trace : 0;
+
+    Vector epsTot(6);
+    epsTot = epsN;
+    epsTot += de;
+    int rc;
+    if (q.planeStrain) {
+        Vector e3(3);
+        e3(0) = -epsTot(0);
+        e3(1) = -epsTot(1);
+        e3(2) = -epsTot(3);
+        rc = this->setTrialStrain(e3);
+    } else {
+        Vector e6(6);
+        e6 = epsTot;
+        e6 *= -1.0;
+        rc = this->setTrialStrain(e6);
+    }
+
+    mLadrunoTrace.p = 0;
+    mElastFlag = savedStage;
+    ops_Dt = savedDt;
+
+    const int nRec = (int)(trace.rec.size() / LADRUNO_ME_TRACE_WIDTH);
+    out.clear();
+    out.reserve(6 + LMS_COUNT + 34 + trace.rec.size());
+    out.push_back(1.0);                        // format version
+    out.push_back((double)rc);
+    out.push_back((double)LMS_COUNT);
+    out.push_back((double)nRec);
+    out.push_back((double)LADRUNO_ME_TRACE_WIDTH);
+    out.push_back(trace.dropped);
+    for (int i = 0; i < LMS_COUNT; i++)
+        out.push_back(mLadrunoMEStats[i]);
+    for (int i = 0; i < 6; i++) out.push_back(sgn * mSigma(i));
+    for (int i = 0; i < 6; i++) out.push_back(mAlpha(i));
+    for (int i = 0; i < 6; i++) out.push_back(mAlpha_in(i));
+    for (int i = 0; i < 6; i++) out.push_back(mFabric(i));
+    out.push_back(mVoidRatio);
+    const double pOut = this->GetTrace(mSigma) / 3.0;
+    out.push_back(pOut);
+    out.push_back(sqrt(1.5) * this->GetNorm_Contr(this->GetDevPart(mSigma)));
+    out.push_back(fBefore);
+    out.push_back(this->GetF(mSigma, mAlpha));
+    out.push_back((double)mLadrunoLastPath);
+    out.push_back(mLadrunoLastElasticRatio);
+    out.push_back(tr0[0]);
+    out.push_back(tr0[1]);
+    out.push_back(tr0[2]);
+    out.insert(out.end(), trace.rec.begin(), trace.rec.end());
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+//  Ladruno WP-127 (TIMs F21): the `ladrunoSANISANDReplay` command.
+//
+//    ladrunoSANISANDReplay $matTag -convention compressionPositive|tensionPositive
+//        -sigma s1..s6 -alpha a1..a6 -alphaIn ai1..ai6 -fabric z1..z6
+//        -voidRatio $e -dStrain d1..d6
+//        <-type 3D|PlaneStrain> <-trace $maxRecords> <-dt $dt>
+//        <-primed 0|1> <-prevIncrNorm $norm>
+//
+//  Operates on a PRIVATE getCopy($type) of the nDMaterial prototype $matTag,
+//  so no element, domain or analysis is involved and nothing the call does
+//  survives it. Returns ONE flat list (format version 1):
+//
+//    [0] 1 (format)  [1] setTrialStrain return  [2] nStats (17)
+//    [3] nRecords    [4] record width (5)        [5] records dropped (cap)
+//    [6 .. 6+nStats)       the `substepStats` census of this one update
+//    next 34               sigma(6, request convention), alpha(6), alpha_in(6),
+//                          z(6), e, p (compression-positive), q, f before,
+//                          f after, path code, elastic ratio, tr(alpha),
+//                          tr(alpha_in), tr(z) as GIVEN (before projection)
+//    then nRecords x 5     T, dT, err, outcome code, at-dT_min (0/1)
+//
+//  Ladruno_scripts/sanisand_replay.py is the Python reader; the guide
+//  (LadrunoSANISAND_implex_guide.md section 6.3) documents every code.
+// ---------------------------------------------------------------------------
+int
+OPS_LadrunoSANISANDReplay(void)   // Ladruno WP-127
+{
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING want: ladrunoSANISANDReplay matTag -convention"
+                  " compressionPositive|tensionPositive -sigma 6 -alpha 6 -alphaIn 6"
+                  " -fabric 6 -voidRatio e -dStrain 6 <-type 3D|PlaneStrain>"
+                  " <-trace maxRecords> <-dt dt> <-primed 0|1> <-prevIncrNorm norm>" << endln;
+        return -1;
+    }
+    int tag = 0, numData = 1;
+    if (OPS_GetIntInput(&numData, &tag) != 0) {
+        opserr << "WARNING ladrunoSANISANDReplay: invalid material tag" << endln;
+        return -1;
+    }
+
+    LadrunoReplayRequest q;
+    bool haveConv = false, haveSig = false, haveA = false, haveAin = false,
+         haveZ = false, haveE = false, haveDe = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        // Copied: the interpreter's string buffer may be reused by the next
+        // OPS_Get* call, and `flag` is read again after reading its value.
+        const std::string flagStr = OPS_GetString();
+        const char *flag = flagStr.c_str();
+        double *dst = 0;
+        bool *seen = 0;
+        if (strcmp(flag, "-convention") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) { opserr << "WARNING ladrunoSANISANDReplay: -convention needs a value" << endln; return -1; }
+            const char *c = OPS_GetString();
+            if (strcmp(c, "compressionPositive") == 0 || strcmp(c, "internal") == 0)
+                q.compressionPositive = true;
+            else if (strcmp(c, "tensionPositive") == 0 || strcmp(c, "opensees") == 0)
+                q.compressionPositive = false;
+            else {
+                opserr << "WARNING ladrunoSANISANDReplay: -convention " << c
+                       << " unknown (compressionPositive|tensionPositive)" << endln;
+                return -1;
+            }
+            haveConv = true;
+            continue;
+        } else if (strcmp(flag, "-type") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) { opserr << "WARNING ladrunoSANISANDReplay: -type needs a value" << endln; return -1; }
+            const char *t = OPS_GetString();
+            if (strcmp(t, "3D") == 0 || strcmp(t, "ThreeDimensional") == 0)
+                q.planeStrain = false;
+            else if (strcmp(t, "PlaneStrain") == 0 || strcmp(t, "PlaneStrain2D") == 0)
+                q.planeStrain = true;
+            else {
+                opserr << "WARNING ladrunoSANISANDReplay: -type " << t << " unknown (3D|PlaneStrain)" << endln;
+                return -1;
+            }
+            continue;
+        } else if (strcmp(flag, "-trace") == 0 || strcmp(flag, "-primed") == 0) {
+            int iv = 0;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetIntInput(&numData, &iv) != 0) {
+                opserr << "WARNING ladrunoSANISANDReplay: " << flag << " needs an integer" << endln;
+                return -1;
+            }
+            if (flag[1] == 't') {
+                if (iv < 0) { opserr << "WARNING ladrunoSANISANDReplay: -trace must be >= 0" << endln; return -1; }
+                q.traceCap = iv;
+            } else {
+                q.primed = (iv != 0);
+            }
+            continue;
+        } else if (strcmp(flag, "-dt") == 0 || strcmp(flag, "-prevIncrNorm") == 0 ||
+                   strcmp(flag, "-voidRatio") == 0) {
+            double v = 0.0;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&numData, &v) != 0) {
+                opserr << "WARNING ladrunoSANISANDReplay: " << flag << " needs a number" << endln;
+                return -1;
+            }
+            if (strcmp(flag, "-dt") == 0) q.dt = v;
+            else if (strcmp(flag, "-prevIncrNorm") == 0) q.prevIncrNorm = v;
+            else { q.e = v; haveE = true; }
+            continue;
+        } else if (strcmp(flag, "-sigma") == 0)   { dst = q.sigma;   seen = &haveSig; }
+        else if (strcmp(flag, "-alpha") == 0)     { dst = q.alpha;   seen = &haveA; }
+        else if (strcmp(flag, "-alphaIn") == 0)   { dst = q.alphaIn; seen = &haveAin; }
+        else if (strcmp(flag, "-fabric") == 0)    { dst = q.fabric;  seen = &haveZ; }
+        else if (strcmp(flag, "-dStrain") == 0)   { dst = q.dStrain; seen = &haveDe; }
+        else {
+            opserr << "WARNING ladrunoSANISANDReplay: unknown option " << flag << endln;
+            return -1;
+        }
+        int six = 6;
+        if (OPS_GetNumRemainingInputArgs() < 6 || OPS_GetDoubleInput(&six, dst) != 0) {
+            opserr << "WARNING ladrunoSANISANDReplay: " << flag << " needs 6 numbers" << endln;
+            return -1;
+        }
+        *seen = true;
+    }
+    if (!haveConv) {
+        opserr << "WARNING ladrunoSANISANDReplay: -convention is REQUIRED (no default,"
+                  " on purpose: internal mSigma is compression-positive, the element"
+                  " stress is tension-positive, and a dump can be either)" << endln;
+        return -1;
+    }
+    if (!(haveSig && haveA && haveAin && haveZ && haveE && haveDe)) {
+        opserr << "WARNING ladrunoSANISANDReplay: need all of -sigma -alpha -alphaIn"
+                  " -fabric -voidRatio -dStrain" << endln;
+        return -1;
+    }
+    if (q.planeStrain && (q.dStrain[2] != 0.0 || q.dStrain[4] != 0.0 || q.dStrain[5] != 0.0)) {
+        opserr << "WARNING ladrunoSANISANDReplay: -type PlaneStrain needs dStrain zz, yz,"
+                  " zx == 0 (the wrapper pins them)" << endln;
+        return -1;
+    }
+
+    NDMaterial *proto = OPS_getNDMaterial(tag);
+    if (proto == 0 || dynamic_cast<LadrunoSANISAND *>(proto) == 0) {
+        opserr << "WARNING ladrunoSANISANDReplay: nDMaterial " << tag
+               << " does not exist or is not a LadrunoSANISAND" << endln;
+        return -1;
+    }
+    NDMaterial *copy = proto->getCopy(q.planeStrain ? "PlaneStrain" : "ThreeDimensional");
+    LadrunoSANISAND *work = dynamic_cast<LadrunoSANISAND *>(copy);
+    if (work == 0) {
+        opserr << "WARNING ladrunoSANISANDReplay: getCopy failed" << endln;
+        delete copy;
+        return -1;
+    }
+    std::vector<double> out;
+    const int res = work->ladrunoReplayRun(q, out);
+    delete copy;
+    if (res != 0)
+        return -1;
+    int n = (int)out.size();
+    if (OPS_SetDoubleOutput(&n, out.data(), false) < 0) {
+        opserr << "WARNING ladrunoSANISANDReplay: failed to set the output list" << endln;
+        return -1;
+    }
+    return 0;
 }

@@ -189,6 +189,79 @@ runs.** Use a tolerance (1e-12 relative is ample) for threaded runs. Do not
 "fix" a flaky golden-file test by widening it blindly — check the thread count
 first.
 
+#### The deterministic mode — `-deterministic` / `-cbwr` (WP-132, TIMs F22)
+
+On a path-dependent nonlinear deck the last bit does not stay last: TIMs saw a
+bearing "wall" move 30 % in s/B between two identical runs on two nodes (§1.6
+of their 2026-09-25 intake). When two runs must agree bit for bit, ask for
+MKL's Conditional Numerical Reproducibility (CNR):
+
+```tcl
+system Pardiso -deterministic              ;# CNR on the AUTO branch
+system Pardiso -cbwr AVX2                  ;# explicit branch; implies -deterministic
+```
+```python
+ops.system('Pardiso', '-deterministic')
+ops.system('Pardiso', '-cbwr', 'COMPATIBLE')
+```
+
+It does two things. It calls `mkl_cbwr_set` when the `system` command runs, and
+it sets PARDISO's `iparm(34)` to the MKL thread count at every symbolic phase.
+The first solve prints what MKL reports is actually in force:
+
+```
+PARDISO deterministic mode: MKL CNR branch AUTO, iparm(34)=8 thread(s), CNR ACTIVE
+```
+
+On an Intel CPU, where MKL reports the branch AUTO resolved to, it is shown as
+`AUTO (-> AVX2)`.
+
+- **Same machine, same thread count:** `-deterministic` is enough.
+- **Across nodes whose CPUs differ** (the §1.6 case): AUTO chooses a code path
+  per CPU, so two nodes can still disagree. Pin one branch that every node
+  can run. **`-cbwr COMPATIBLE` is the portable choice**: it runs on any x86
+  CPU, at some speed cost. The instruction-set branches (`SSE4_2`, `AVX`,
+  `AVX2`, `AVX512`, `AVX10`) are for Intel CPUs only. On an AMD Ryzen every one
+  of them was refused (rc -3), and only `AUTO` and `COMPATIBLE` worked, so use
+  `-cbwr AVX2` only when every node is an Intel CPU with AVX2. `,STRICT`
+  (`-cbwr COMPATIBLE,STRICT`) makes MKL stricter about the branch. The thread
+  count must match too.
+- **The mode is process-wide and sticky.** It stays on for every later model
+  in the same interpreter, and this command has no way to turn it off. MKL
+  refuses to set it (`MKL_CBWR_ERR_MODE_CHANGE_FAILURE`) once its BLAS/LAPACK
+  dispatch has started in the process. Measured: an `eigen` solve before
+  `system Pardiso -deterministic` triggers the refusal. An earlier PARDISO solve
+  does not. If you see that warning, set the environment variable before the
+  process starts:
+  `set MKL_CBWR=AUTO` (or the branch). A bare `-deterministic` keeps a branch
+  already fixed by `MKL_CBWR`, so the launcher line stays in charge. Tcl stops
+  on a refused mode. Python warns and continues, and the first-solve notice
+  then says `CNR NOT ACTIVE`.
+- **Only the serial targets have it.** `system Pardiso` exists only in
+  `OpenSees.exe` and the sequential `opensees.pyd`. The MPI targets use MUMPS,
+  and CNR does not cover MUMPS or MPI reductions.
+- Without the flag nothing changes: no `mkl_cbwr_*` call is made, and
+  `iparm(34)` stays 0.
+
+**What else is order-dependent on the implicit static path.** CNR covers MKL,
+and nothing else. The rest, as of 2026-09:
+
+| Source | Status |
+|---|---|
+| `ladrunoThreads` element loop (WP-107, `Domain.cpp` `Domain::update`) | Reduces only an **integer** return code (`reduction(+:sum)`). Every element writes its own state, so the result does not depend on the thread order. Measured bit-identical at 1/2/4/8 threads on the allowlisted elements ([[107_ladruno_openmp_element_loop]] §5.1). |
+| SANISAND / `ManzariDafalias` in that loop | Refused (serial) — static work arrays, and `IntScheme 1` segfaulted under threads (doc 107 §5.1). When TIMs F19 / WP-131 makes it threadable, its per-instance state has to be re-checked against this list. |
+| SANISAND `-implex` counters (`implexRefusals`, `avgImplexError`) | Process-wide accumulators ([[LadrunoSANISAND_implex_guide]]). Serial today, so they are reproducible. F19/WP-131 must keep that true once the loop is threaded. |
+| PFEM `#pragma omp` loops (`Mesh.cpp`, `BackgroundMesh.cpp`, `PFEMUnifiedSolver.cpp`) | Compiled out: `/openmp` is deliberately NOT on those libraries (CMakeLists WP-107 note). |
+| MUMPS (`system Mumps`, the MP targets), MPI reductions | Not covered by `-deterministic`. Partitioned sums depend on the partition and the rank count. |
+
+The test is `tests/test_wp132_deterministic_pardiso.py`: a ~22k-DOF J2 push at
+`MKL_NUM_THREADS=8`, run N times with the mode on (must be byte-identical) and
+N times off (the number of distinct results is reported, not asserted).
+Measured 2026-09-27, AMD Ryzen AI 7 PRO 350, 5 runs each: mode on gave 1
+distinct result. Mode off gave 5 distinct displacement fields and 2 distinct
+curves, with a largest relative spread of 1.5e-16 (1 ULP) in the load factor.
+On a smooth hardening model the drift stays in the last bit.
+
 ---
 
 ## 6. Verifying it actually engaged
