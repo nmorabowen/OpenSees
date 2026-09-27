@@ -43,6 +43,16 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A non-converged return map must FAIL (return < 0), never commit `f > 0` as success, and
       the refusal must reach `analyze`: several vanilla elements swallow it. Quirks:
       "`Backward_Euler` ACCEPTS a non-converged return map", "swallow the material's refusal".
+- [ ] The work of one `setTrialStrain` must be BOUNDED, and hitting the bound must REFUSE
+      (return < 0), never grind on and never force-accept. Newton, line-search and Krylov trial
+      iterates can be far off the solution path (|Δu| ~ 1e4 has been observed), so any cost that
+      scales with |Δε| (substep counts, recursive halvings, local-Newton restarts) needs a cap,
+      and exceeding it refuses so the global step is cut. Three incidents, one rule: PDMY
+      `setSubStrainRate` asked for ~1e9 substeps per point, a silent hang (WP-135, #874);
+      SANISAND `BackwardEuler_CPPM` recursed up to 2^9 halvings, 12–134 s per failing step
+      (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
+      (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
+      and assert the call returns < 0 within a wall-clock bound.
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
