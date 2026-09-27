@@ -10,3 +10,111 @@ LadrunoSANISAND tag 1: -flipAlphaIn init (flip: alpha_in := alpha (init, the DEF
 LadrunoSANISAND tag 1: IntScheme 129 = SAS-ME (WP-129): substep error on stress, alpha and fabric <= TolR = 0.0001 (always honoured; ~1e-4 is ModifiedEuler's scale), sigma_ref = 1 (default P_atm/101 = 1 kPa at P_atm 101), alpha_in reseat (DEFAULT), alpha/alpha^b bound 1 + 0.1 (outside: reject, refuse at dT_min); TanType 1 and 2 both return the continuum tangent at the end state. Refusals reach the element as -33086; census: the `sasStats` response.
 WARNING analysis Static - no Integrator specified, 
  StaticIntegrator default will be used
+[2026-09-27 15:02:32] [      3.4s] gravity: base reaction 3973.0500 kN/m vs gamma*A 3973.0500 (rel 3.33e-16); 1-D K0 patch max rel err 2.53e-12
+[2026-09-27 15:02:37] [      8.4s] surface loads: surcharge 160.6500 kN/m (+18.4 footing); base reaction 4152.1000 vs 4152.1000 (rel 2.22e-16)
+[2026-09-27 15:02:37] [      8.4s] material: LadrunoSANISAND 1 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 129 0 1 1e-07 0.0001 -flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000 -Presidual 0.0 -honorTolR 0
+[2026-09-27 15:02:37] [      8.4s] mesh: 2430 elements, 9720 Gauss points, solver Pardiso, applied vertical load 4152.100 kN/m
+[2026-09-27 15:02:38] [      9.0s] at the flip (stage 0 end): max eta/Mc = 0.7688, min p' = 5.3949 kPa, max |f_read - f_recomputed| = 1.440e-12
+[2026-09-27 15:02:39] [      9.8s] push: u_y0(ref) = -5.822596e-03 m, NormUnbalance tol 4.1521e-02 kN (1e-5 x applied), ladder (('Newton', 1.0, 25), ('NewtonLineSearch', 1.0, 40), ('KrylovNewton', 10.0, 60))
+[2026-09-27 15:02:39] [      9.8s] q at push start = 12.2667 kPa (dead load / B = 12.2667)
+[2026-09-27 15:02:44] [     15.1s] step     1 s/B 0.000013 q    12.999 kPa ds 2.000e-05 rung N it   2 fails 0 wall     2.74s | sub 17224 maxpt 52 cap 0 rejErr 3138 dtmin 0 | p'min 5.392 eta_max 1.060 rho_max 0.516 n>1 0
+[2026-09-27 15:02:47] [     18.2s] step     2 s/B 0.000027 q    13.700 kPa ds 2.000e-05 rung N it   2 fails 0 wall     1.54s | sub 27786 maxpt 41 cap 0 rejErr 4904 dtmin 0 | p'min 5.390 eta_max 1.089 rho_max 0.531 n>1 0
+[2026-09-27 15:02:52] [     23.3s] step     3 s/B 0.000040 q    14.383 kPa ds 2.000e-05 rung N it   2 fails 0 wall     4.08s | sub 27264 maxpt 42 cap 0 rejErr 6428 dtmin 0 | p'min 5.388 eta_max 1.112 rho_max 0.543 n>1 0
+[2026-09-27 15:02:55] [     26.3s] step     4 s/B 0.000053 q    15.028 kPa ds 2.000e-05 rung N it   3 fails 0 wall     1.56s | sub 41932 maxpt 70 cap 0 rejErr 11118 dtmin 0 | p'min 5.386 eta_max 1.135 rho_max 0.555 n>1 0
+[2026-09-27 15:02:59] [     30.4s] step     5 s/B 0.000067 q    15.669 kPa ds 2.000e-05 rung N it   3 fails 0 wall     1.56s | sub 42398 maxpt 65 cap 0 rejErr 10744 dtmin 0 | p'min 5.385 eta_max 1.153 rho_max 0.564 n>1 0
+[2026-09-27 15:03:04] [     34.7s] step     6 s/B 0.000080 q    16.296 kPa ds 2.000e-05 rung N it   3 fails 0 wall     3.46s | sub 38866 maxpt 66 cap 0 rejErr 8566 dtmin 0 | p'min 5.384 eta_max 1.169 rho_max 0.573 n>1 0
+[2026-09-27 15:03:07] [     38.0s] step     7 s/B 0.000107 q    17.510 kPa ds 4.000e-05 rung N it   4 fails 0 wall     2.98s | sub 97770 maxpt 165 cap 0 rejErr 22898 dtmin 0 | p'min 5.382 eta_max 1.198 rho_max 0.588 n>1 0
+[2026-09-27 15:03:11] [     41.9s] step     8 s/B 0.000133 q    18.669 kPa ds 4.000e-05 rung N it   5 fails 0 wall     1.77s | sub 119114 maxpt 216 cap 0 rejErr 26754 dtmin 0 | p'min 5.382 eta_max 1.225 rho_max 0.602 n>1 0
+[2026-09-27 15:03:18] [     48.9s] step     9 s/B 0.000160 q    19.807 kPa ds 4.000e-05 rung N it   5 fails 0 wall     5.72s | sub 114258 maxpt 206 cap 0 rejErr 22770 dtmin 0 | p'min 5.382 eta_max 1.247 rho_max 0.614 n>1 0
+[2026-09-27 15:03:21] [     51.8s] step    10 s/B 0.000187 q    20.918 kPa ds 4.000e-05 rung N it   5 fails 0 wall     2.60s | sub 112410 maxpt 200 cap 0 rejErr 21538 dtmin 0 | p'min 5.383 eta_max 1.267 rho_max 0.624 n>1 0
+[2026-09-27 15:03:23] [     54.3s] step    11 s/B 0.000213 q    21.987 kPa ds 4.000e-05 rung N it   6 fails 0 wall     2.22s | sub 133794 maxpt 254 cap 0 rejErr 24636 dtmin 0 | p'min 5.384 eta_max 1.286 rho_max 0.635 n>1 0
+[2026-09-27 15:03:26] [     57.3s] step    12 s/B 0.000240 q    23.048 kPa ds 4.000e-05 rung N it   6 fails 0 wall     2.46s | sub 134694 maxpt 243 cap 0 rejErr 23960 dtmin 0 | p'min 5.385 eta_max 1.302 rho_max 0.643 n>1 0
+[2026-09-27 15:03:32] [     63.1s] step    13 s/B 0.000293 q    25.112 kPa ds 8.000e-05 rung N it   8 fails 0 wall     5.17s | sub 341718 maxpt 618 cap 0 rejErr 66476 dtmin 0 | p'min 5.389 eta_max 1.331 rho_max 0.659 n>1 0
+[2026-09-27 15:03:37] [     67.8s] step    14 s/B 0.000347 q    27.107 kPa ds 8.000e-05 rung N it   9 fails 0 wall     4.36s | sub 381808 maxpt 695 cap 0 rejErr 71320 dtmin 0 | p'min 5.394 eta_max 1.357 rho_max 0.673 n>1 0
+[2026-09-27 15:03:42] [     73.1s] step    15 s/B 0.000400 q    29.050 kPa ds 8.000e-05 rung N it  10 fails 0 wall     5.07s | sub 426428 maxpt 753 cap 0 rejErr 78474 dtmin 0 | p'min 5.400 eta_max 1.380 rho_max 0.686 n>1 0
+[2026-09-27 15:03:49] [     79.6s] step    16 s/B 0.000453 q    30.960 kPa ds 8.000e-05 rung N it  10 fails 0 wall     6.21s | sub 428558 maxpt 733 cap 0 rejErr 79466 dtmin 0 | p'min 5.406 eta_max 1.401 rho_max 0.696 n>1 0
+[2026-09-27 15:03:54] [     85.3s] step    17 s/B 0.000507 q    32.824 kPa ds 8.000e-05 rung N it  11 fails 0 wall     5.34s | sub 472058 maxpt 799 cap 0 rejErr 86068 dtmin 0 | p'min 5.397 eta_max 1.419 rho_max 0.707 n>1 0
+[2026-09-27 15:04:00] [     91.1s] step    18 s/B 0.000560 q    34.664 kPa ds 8.000e-05 rung N it  11 fails 0 wall     5.52s | sub 472360 maxpt 768 cap 0 rejErr 86148 dtmin 0 | p'min 5.382 eta_max 1.436 rho_max 0.716 n>1 0
+[2026-09-27 15:04:19] [    109.7s] step    19 s/B 0.000667 q    38.241 kPa ds 1.600e-04 rung N it  17 fails 0 wall    18.32s | sub 1363962 maxpt 2375 cap 0 rejErr 204410 dtmin 0 | p'min 5.353 eta_max 1.466 rho_max 0.732 n>1 0
+[2026-09-27 15:04:40] [    130.8s] step    20 s/B 0.000773 q    41.741 kPa ds 1.600e-04 rung N it  18 fails 0 wall    20.80s | sub 1453700 maxpt 2407 cap 0 rejErr 215184 dtmin 0 | p'min 5.323 eta_max 1.491 rho_max 0.746 n>1 0
+[2026-09-27 15:04:56] [    146.9s] step    21 s/B 0.000880 q    45.167 kPa ds 1.600e-04 rung N it  19 fails 0 wall    15.72s | sub 1539734 maxpt 2453 cap 0 rejErr 228400 dtmin 0 | p'min 5.293 eta_max 1.513 rho_max 0.758 n>1 0
+[2026-09-27 15:05:14] [    164.8s] step    22 s/B 0.000987 q    48.529 kPa ds 1.600e-04 rung N it  20 fails 0 wall    17.60s | sub 1627920 maxpt 2479 cap 0 rejErr 243104 dtmin 0 | p'min 5.264 eta_max 1.532 rho_max 0.769 n>1 0
+[2026-09-27 15:05:33] [    184.3s] step    23 s/B 0.001093 q    51.838 kPa ds 1.600e-04 rung N it  21 fails 0 wall    18.96s | sub 1715854 maxpt 2521 cap 0 rejErr 258274 dtmin 0 | p'min 5.232 eta_max 1.550 rho_max 0.779 n>1 0
+[2026-09-27 15:05:56] [    207.1s] step    24 s/B 0.001200 q    55.100 kPa ds 1.600e-04 rung N it  22 fails 0 wall    21.59s | sub 1806558 maxpt 2554 cap 0 rejErr 272432 dtmin 0 | p'min 5.198 eta_max 1.565 rho_max 0.788 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0672047 (max: 0.041521, Norm deltaX: 5.49501e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0079426
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:07:06] [    276.9s]   checkpoint step 25 s/B 0.001413: max|f_read - f_rec| = 5.622e-13
+    rho_a  0.8034 eta   1.593 p'   22.725 ele 1950 gp 4 x +0.790 y -0.040
+    rho_a  0.8034 eta   1.593 p'   22.725 ele 1842 gp 3 x -0.790 y -0.040
+    rho_a  0.7647 eta   1.527 p'   19.276 ele 1949 gp 4 x +0.790 y -0.227
+    rho_a  0.7647 eta   1.527 p'   19.276 ele 1841 gp 3 x -0.790 y -0.227
+    rho_a  0.7351 eta   1.469 p'   20.843 ele 1950 gp 1 x +0.790 y -0.148
+    rho_a  0.7351 eta   1.469 p'   20.843 ele 1842 gp 2 x -0.790 y -0.148
+    rho_a  0.7258 eta   1.456 p'   18.727 ele 1949 gp 3 x +0.898 y -0.227
+    rho_a  0.7258 eta   1.456 p'   18.727 ele 1841 gp 4 x -0.898 y -0.227
+    rho_a  0.7258 eta   1.455 p'   18.362 ele 1949 gp 1 x +0.790 y -0.335
+    rho_a  0.7258 eta   1.455 p'   18.362 ele 1841 gp 2 x -0.790 y -0.335
+    lowest p':
+    p'   5.1353 eta   0.934 rho_a  0.4465 ele 1782 gp 2 x -1.727 y -0.148
+    p'   5.1353 eta   0.934 rho_a  0.4465 ele 2010 gp 1 x +1.727 y -0.148
+    p'   5.1386 eta   0.952 rho_a  0.4556 ele 2010 gp 2 x +1.835 y -0.148
+    p'   5.1386 eta   0.952 rho_a  0.4556 ele 1782 gp 1 x -1.835 y -0.148
+    p'   5.1542 eta   0.963 rho_a  0.4609 ele 1758 gp 1 x -2.210 y -0.148
+[2026-09-27 15:07:06] [    276.9s] step    25 s/B 0.001413 q    61.529 kPa ds 3.200e-04 rung L it  15 fails 0 wall    69.01s | sub 6684436 maxpt 9449 cap 0 rejErr 696800 dtmin 0 | p'min 5.135 eta_max 1.593 rho_max 0.803 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0721156 (max: 0.041521, Norm deltaX: 6.34816e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0082626
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:08:13] [    344.3s] step    26 s/B 0.001627 q    67.792 kPa ds 3.200e-04 rung L it  16 fails 0 wall    67.17s | sub 6931658 maxpt 9398 cap 0 rejErr 714124 dtmin 0 | p'min 5.073 eta_max 1.615 rho_max 0.816 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0786796 (max: 0.041521, Norm deltaX: 7.29466e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0085826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:09:58] [    449.5s] step    27 s/B 0.001840 q    73.958 kPa ds 3.200e-04 rung L it  17 fails 0 wall   103.79s | sub 7082816 maxpt 9433 cap 0 rejErr 747816 dtmin 0 | p'min 5.017 eta_max 1.635 rho_max 0.828 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0847553 (max: 0.041521, Norm deltaX: 8.22002e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0089026
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:12:47] [    617.6s] step    28 s/B 0.002053 q    79.984 kPa ds 3.200e-04 rung L it  18 fails 0 wall   167.70s | sub 7432054 maxpt 9675 cap 0 rejErr 802296 dtmin 0 | p'min 4.963 eta_max 1.652 rho_max 0.838 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0874527 (max: 0.041521, Norm deltaX: 9.00874e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0092226
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:13:58] [    689.3s] step    29 s/B 0.002267 q    86.020 kPa ds 3.200e-04 rung L it  19 fails 0 wall    71.46s | sub 7592748 maxpt 9740 cap 0 rejErr 828710 dtmin 0 | p'min 4.914 eta_max 1.667 rho_max 0.847 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.0926493 (max: 0.041521, Norm deltaX: 9.8769e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0095426
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:15:05] [    756.1s] step    30 s/B 0.002480 q    92.026 kPa ds 3.200e-04 rung L it  19 fails 0 wall    66.51s | sub 7790542 maxpt 9751 cap 0 rejErr 872036 dtmin 0 | p'min 4.870 eta_max 1.680 rho_max 0.855 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.182328 (max: 0.041521, Norm deltaX: 2.27009e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0101826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:18:16] [    947.1s] step    31 s/B 0.002907 q   103.676 kPa ds 6.400e-04 rung L it  26 fails 0 wall   190.54s | sub 17812276 maxpt 22770 cap 0 rejErr 1348560 dtmin 0 | p'min 4.785 eta_max 1.702 rho_max 0.869 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.192304 (max: 0.041521, Norm deltaX: 2.55966e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0108226
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:21:25] [   1135.5s] step    32 s/B 0.003333 q   115.246 kPa ds 6.400e-04 rung L it  29 fails 0 wall   188.11s | sub 18653774 maxpt 23028 cap 0 rejErr 1395768 dtmin 0 | p'min 4.710 eta_max 1.721 rho_max 0.880 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.19882 (max: 0.041521, Norm deltaX: 2.83027e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114626
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:24:09] [   1300.2s] step    33 s/B 0.003760 q   126.739 kPa ds 6.400e-04 rung L it  29 fails 0 wall   164.51s | sub 18924840 maxpt 22554 cap 0 rejErr 1423720 dtmin 0 | p'min 4.645 eta_max 1.736 rho_max 0.890 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.208415 (max: 0.041521, Norm deltaX: 3.0925e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121026
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 15:27:19] [   1489.6s] step    34 s/B 0.004187 q   138.012 kPa ds 6.400e-04 rung L it  33 fails 0 wall   189.15s | sub 20419316 maxpt 23493 cap 0 rejErr 1541154 dtmin 0 | p'min 4.584 eta_max 1.749 rho_max 0.899 n>1 0

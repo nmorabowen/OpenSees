@@ -21,7 +21,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PY = r"C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe"
 BINS = {
     "A": r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\tims-implementation-review-3733c6\dist\bin",
-    "B": r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-a6b3c48d38c9ca3d3\dist\bin",
+    # snapshot of agent-a6b3c48d38c9ca3d3\dist\bin taken 2026-09-27 15:10 (that
+    # folder is being rebuilt); the pyd reports ladrunoBuild cdf43685f, which is
+    # SRC-identical to WP-129 head 5c8dcd0e0 (the later commits touch docs only).
+    # B_sasme_default was started from the original folder before the snapshot.
+    "B": os.path.join(HERE, "binB_5c8dcd0e0"),
+    "B_orig": r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-a6b3c48d38c9ca3d3\dist\bin",
 }
 
 
