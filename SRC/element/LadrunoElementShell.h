@@ -156,6 +156,31 @@ inline bool isMaterialPointToken(const char *token)
   return strstr(token, "material") != 0 && strcmp(token, "materialState") != 0;
 }
 
+// ---- inertia term of the residual (getResistingForceIncInertia) -------------
+// f += M a with a = the nodal TRIAL accelerations, gathered into the caller's
+// scratch (size nen*ndf). diagOnly: f(i) += M(i,i) a(i) (lumped; plane four);
+// else f += M a (full M; Bezier). The massless predicate, the snapshot of the
+// shared static residual and the Rayleigh tail stay in the element: the tail
+// needs Element's protected members, and the snapshot must come BEFORE
+// getRayleighDampingForces() (LEDGER_quirks "MUST snapshot the shared static").
+// LadrunoBrick/Brick20 do NOT use this: they integrate inertia per Gauss point
+// and subtract the load after Rayleigh (V3), not bit-identical to M a.
+inline void addNodalInertia(Vector &f, const Matrix &M, Node **nodes, int nen, int ndf,
+                            bool diagOnly, Vector &a)
+{
+  for (int n = 0; n < nen; n++) {
+    const Vector &accel = nodes[n]->getTrialAccel();
+    for (int j = 0; j < ndf; j++)
+      a(n * ndf + j) = accel(j);
+  }
+  if (diagOnly) {
+    const int nd = nen * ndf;
+    for (int i = 0; i < nd; i++)
+      f(i) += M(i, i) * a(i);
+  } else
+    f.addMatrixVector(1.0, M, a, 1.0);
+}
+
 // ---- response finalise (setResponse) ---------------------------------------
 // Close the element's ElementOutput tag FIRST, then fall back to the base
 // vocabulary (globalForce, dampingForce, dynamicForce, inertialForce):

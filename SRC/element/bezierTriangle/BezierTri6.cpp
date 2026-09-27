@@ -836,13 +836,8 @@ const Vector &BezierTri6::getResistingForceIncInertia()
         if (M(i, i) != 0.0) hasMass = true;
 
     if (hasMass) {
-        static Vector a(NELD);
-        for (int i = 0; i < NEN; i++) {
-            const Vector &accel = theNodes[i]->getTrialAccel();
-            a(2*i)     = accel(0);
-            a(2*i + 1) = accel(1);
-        }
-        res.addMatrixVector(1.0, M, a, 1.0);
+        static Vector a(NELD);   // Ladruno (WP-124 stage 5)
+        LadrunoShell::addNodalInertia(res, M, theNodes, NEN, NDOF, false, a);
     }
 
     // ─── Add Rayleigh damping if present ──────────────────────

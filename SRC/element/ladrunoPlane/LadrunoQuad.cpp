@@ -1104,13 +1104,6 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
     return P;
   }
 
-  static double a[8];
-  for (int n = 0; n < 4; n++) {
-    const Vector &accel = theNodes[n]->getTrialAccel();
-    a[2 * n]     = accel(0);
-    a[2 * n + 1] = accel(1);
-  }
-
   this->getResistingForce();
   // Ladruno (ADR-77 G2 ext): consume the RETURNED matrix. The old idiom
   // called getMass() for its side effect of filling the class-static K and
@@ -1119,8 +1112,8 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   // side-effect contract is dead. Caught by
   // test_dynamic_rayleigh_preserves_inertia[quad/lst].
   const Matrix &Mq = this->getMass();
-  for (int i = 0; i < 8; i++)
-    P(i) += Mq(i, i) * a[i];
+  static Vector a(8);   // Ladruno (WP-124 stage 5): LadrunoShell::addNodalInertia
+  LadrunoShell::addNodalInertia(P, Mq, theNodes, 4, 2, true, a);
 
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)

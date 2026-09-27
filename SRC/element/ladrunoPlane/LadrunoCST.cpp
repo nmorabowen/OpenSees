@@ -582,18 +582,12 @@ const Vector &LadrunoCST::getResistingForceIncInertia(void)
     return P;
   }
 
-  static double a[6];
-  for (int n = 0; n < numnodes; n++) {
-    const Vector &accel = theNodes[n]->getTrialAccel();
-    a[2 * n]     = accel(0);
-    a[2 * n + 1] = accel(1);
-  }
   this->getResistingForce();
-  // Ladruno (ADR-77 review wave): same bare-getMass side-effect idiom as
-  // addInertiaLoadToUnbalance above -- see the warning there before caching.
-  this->getMass();
-  for (int i = 0; i < 6; i++)
-    P(i) += K(i, i) * a[i];
+  // Ladruno (WP-124 stage 5): consume getMass()'s RETURN (it is K, so the
+  // bytes are the same) -- retires the last bare side-effect call site.
+  const Matrix &Mq = this->getMass();
+  static Vector a(6);   // Ladruno (WP-124 stage 5): LadrunoShell::addNodalInertia
+  LadrunoShell::addNodalInertia(P, Mq, theNodes, numnodes, 2, true, a);
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     res += this->getRayleighDampingForces();

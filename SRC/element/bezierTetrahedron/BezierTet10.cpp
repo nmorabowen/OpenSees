@@ -1210,14 +1210,8 @@ const Vector &BezierTet10::getResistingForceIncInertia()
         if (M(i, i) != 0.0) hasMass = true;
 
     if (hasMass) {
-        static Vector a(NELD);
-        for (int i = 0; i < NEN; i++) {
-            const Vector &accel = theNodes[i]->getTrialAccel();
-            a(3*i)     = accel(0);
-            a(3*i + 1) = accel(1);
-            a(3*i + 2) = accel(2);
-        }
-        res.addMatrixVector(1.0, M, a, 1.0);
+        static Vector a(NELD);   // Ladruno (WP-124 stage 5)
+        LadrunoShell::addNodalInertia(res, M, theNodes, NEN, NDOF, false, a);
     }
 
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
