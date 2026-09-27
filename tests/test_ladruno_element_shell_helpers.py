@@ -453,3 +453,52 @@ def test_material_state_reaches_the_materials(name, capfd, monkeypatch):
     ops.parameter(1, "element", 1, "materialState")
     err = capfd.readouterr().err
     assert "no objects were able to identify" not in err, f"{name}: materialState unclaimed"
+
+
+@pytest.mark.parametrize("name", list(ELEMENTS))
+def test_base_response_xml_is_well_formed(name, tmp_path):
+    """finishResponse must close the element's ElementOutput BEFORE Element::setResponse opens
+    its own (LEDGER_quirks). eleResponse cannot see it (no XML is written); an XML recorder
+    on a base token can: the file must parse and declare one column per force component.
+    (The base block DOES appear inside the element's in the header -- XmlFileStream defers
+    closing the element-level tag until the data is written; that is its normal shape.)"""
+    import xml.etree.ElementTree as ET
+    node, load = ELEMENTS[name]()
+    ncomp = len(ops.eleResponse(1, "force"))
+    path = str(tmp_path / "rec.xml")
+    ops.recorder("Element", "-xml", path, "-ele", 1, "globalForce")
+    _static(node, load, ("Newton",), iters=20)
+    assert ops.analyze(1) == 0
+    ops.wipe()                                        # closes the recorder file
+    root = ET.parse(path).getroot()                   # raises on an unbalanced tag
+    cols = [rt.text for rt in root.iter("ResponseType")]
+    assert cols == [f"P{i + 1}" for i in range(ncomp)], f"{name}: header columns {cols}"
+
+# ---- inertia term of the residual (addNodalInertia) -------------------------------------
+# Uniform trial acceleration a0 on every node of an unsupported element: the base
+# 'inertialForce' (= GRFII - damping - resisting force) is the inertia term M a, whose x-sum is
+# rho * V * a0 (row sums of M, exact for lumped and consistent mass). A sign flip, a dropped
+# term or a full M reduced to its diagonal (-cMass Bezier) all break it.
+VOLUME_GROUND = dict(VOLUME, **{"BezierTri6-cMass": VOLUME["BezierTri6"],
+                                "BezierTet10-cMass": VOLUME["BezierTet10"]})
+
+
+@pytest.mark.parametrize("name", list(GROUND))
+def test_inertia_residual_is_M_a(name):
+    _SUPPORTS[0] = False
+    try:
+        GROUND[name]()
+    finally:
+        _SUPPORTS[0] = True
+    tags = ops.getNodeTags()
+    ndf = len(ops.nodeDisp(tags[0]))
+    a0 = 1.7
+    for n in tags:
+        ops.setNodeAccel(n, 1, a0, "-commit")
+    inert = ops.eleResponse(1, "inertialForce")
+    assert inert, f"{name}: inertialForce records nothing"
+    fx = sum(inert[i] for i in range(0, len(inert), ndf))
+    fy = sum(inert[i] for i in range(1, len(inert), ndf))
+    want = RHO * VOLUME_GROUND[name] * a0
+    assert abs(fx - want) <= 1.0e-9 * want, f"{name}: sum inertia_x {fx!r}, want {want!r}"
+    assert abs(fy) <= 1.0e-9 * want, f"{name}: sum inertia_y {fy!r}, want 0"
