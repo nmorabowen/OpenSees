@@ -811,6 +811,24 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             } else {
                 const double f0 = GetF(S, A);
                 Vector nY = GetNormalToYield(S, A);
+                // Paper alpha_in rule at the increment START (review numerics
+                // item 4) with WP-134's convention exactly: a start is ON the
+                // surface unless f0 < -1e-8 of the cone radius sqrt(2/3) m p, and
+                // on the surface (alpha - alpha_in):n < 0 re-seats alpha_in before
+                // the mode is chosen. A start further inside is interior (the
+                // onset, if any, is at the far side, decided there). Measured: this
+                // is what separates b16 5496 (re-seat) from b16 5471 / b8 1961
+                // (no re-seat) on the ring, all within 4e-8 of the cone radius.
+                if (paperRule) {
+                    const double pS = one3 * GetTrace(S) + m_Presidual;
+                    if (f0 >= -1.0e-8 * root23 * m_m * pS) {
+                        Vector t0(A); t0 -= ain;
+                        if (DoubleDot2_2_Contr(t0, nY) < 0.0) {
+                            ain = A;
+                            st[LSAS_ALPHA_IN_RESEATS] += 1.0;
+                        }
+                    }
+                }
                 // U10: the loading test on the TRUE gradient
                 Vector Q(mI1);
                 Q *= (-one3 * (DoubleDot2_2_Contr(nY, A) + root23 * m_m));
@@ -825,21 +843,6 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                            > (-sqrt(mTolF))) {
                     a = 0.0;
                     mLadrunoLastPath = 3;
-                    // Paper alpha_in rule at the increment START (review numerics
-                    // item 4, = WP-134's decide() at t = 0): a loading process that
-                    // starts HERE, on the surface, with (alpha - alpha_in):n < 0
-                    // re-seats alpha_in. Only on this plastic-from-the-start path:
-                    // an unload-then-reload increment's onset is at the far side
-                    // (checked there), and the oracle -- whose on-surface tolerance
-                    // is 1e-8 of the cone radius, far below TolF -- treats such a
-                    // start as inside.
-                    if (paperRule) {
-                        Vector t0(A); t0 -= ain;
-                        if (DoubleDot2_2_Contr(t0, nY) < 0.0) {
-                            ain = A;
-                            st[LSAS_ALPHA_IN_RESEATS] += 1.0;
-                        }
-                    }
                 } else {
                     // unload then reload: find the first sampled point inside,
                     // then the first one back outside, and Pegasus between them

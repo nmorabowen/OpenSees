@@ -82,7 +82,22 @@ def test_existing_schemes_byte_identical():
     import wp129_sanisand_byteid as B
     with open(B.BASELINE) as fh:
         ref = json.load(fh)["decks"]
-    cur = B.run_all()
+    # In a CHILD interpreter: the decks build IntScheme 3/5 materials, and the
+    # base's once-per-PROCESS "no error control" warning latch would otherwise
+    # be spent before test_manzari_safety_pack looks for it.
+    import subprocess
+    import tempfile
+    out = os.path.join(tempfile.mkdtemp(), "cur.json")
+    r = subprocess.run([sys.executable, "-S", "-c",
+                        "import sys, json; sys.path[:0] = [p for p in __import__('os').environ.get('PYTHONPATH', '').split(__import__('os').pathsep) if p]; "
+                        "import os; [os.add_dll_directory(p) for p in sys.path if os.path.exists(os.path.join(p, 'opensees.pyd'))]; "
+                        "sys.path.insert(0, %r); import wp129_sanisand_byteid as B; "
+                        "json.dump(B.run_all(), open(%r, 'w'))" % (_HERE, out)],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=1200)
+    assert r.returncode == 0, r.stderr[-2000:]
+    with open(out) as fh:
+        cur = json.load(fh)
     assert set(cur) == set(ref)
     bad = []
     for name in ref:
