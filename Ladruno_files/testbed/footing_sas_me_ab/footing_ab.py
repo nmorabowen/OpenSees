@@ -607,6 +607,12 @@ def main(argv=None):
         s_now = uy0 - ops.getTime()
         if s_now >= smax - 1e-12:
             break
+        # a running leg's wall cap can be RAISED (never lowered below elapsed)
+        # by writing seconds into <out>/WALL_OVERRIDE
+        try:
+            args.wall = max(args.wall, float(open(os.path.join(out, "WALL_OVERRIDE")).read()))
+        except (OSError, ValueError):
+            pass
         if time.time() - T0 > args.wall:
             mode = "WALL"
             break
