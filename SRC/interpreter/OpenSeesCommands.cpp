@@ -4924,6 +4924,8 @@ void* OPS_PARDISOGenLinSolver() {
                           // PARDISO's fill/memory/flop counters after every
                           // numeric factorization (see setStats() in the header)
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
+    int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
+    int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
 
     // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
     // bare flags (-symmetric/-spd/-stats/-pardisoStats) take no value, so a
@@ -4975,6 +4977,36 @@ void* OPS_PARDISOGenLinSolver() {
                 krylovDigits = 0;
                 continue;
             }
+        } else if (strcmp(opt, "-deterministic") == 0) {
+            // Ladruno WP-132 (TIMs F22): MKL CNR on the AUTO branch; a branch
+            // the MKL_CBWR environment variable already fixed is kept. Bare
+            // flag. Does not override an explicit -cbwr.
+            if (cnrBranch < 0) {
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+                cnrKeepEnv = 1;
+            }
+        } else if (strcmp(opt, "-cbwr") == 0) {
+            // Ladruno WP-132: explicit MKL CBWR branch (MKL_CBWR spellings,
+            // optionally ",STRICT"); implies -deterministic. Same "degrade,
+            // never return 0" rule as -matrixType: an unknown name falls back
+            // to AUTO (still reproducible on ONE machine) with a warning.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING system Pardiso - -cbwr given with no branch "
+                          "name; using AUTO\n";
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+                cnrKeepEnv = 0;
+                continue;
+            }
+            const char *name = OPS_GetString();
+            cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName(name);
+            cnrKeepEnv = 0;
+            if (cnrBranch < 0) {
+                opserr << "WARNING system Pardiso - unknown -cbwr branch " << name
+                       << " (use the MKL_CBWR spellings: AUTO, COMPATIBLE, "
+                          "SSE4_2, AVX, AVX2, AVX512, AVX512_E1, AVX10[,STRICT]); "
+                          "using AUTO\n";
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+            }
         } else {
             opserr << "WARNING system Pardiso - unknown option " << opt
                    << ", ignored\n";
@@ -4991,6 +5023,11 @@ void* OPS_PARDISOGenLinSolver() {
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
     theSolver->setStats(statsFlag);
     theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
+    // Ladruno WP-132: a refused CNR mode has already warned (with the
+    // MKL_CBWR relaunch fix); degrade rather than return 0 — the solver still
+    // runs, and its first-solve notice repeats "CNR NOT ACTIVE" in the log.
+    if (cnrBranch >= 0)
+        theSolver->setDeterministic(cnrBranch, cnrKeepEnv);
     PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
     return thePardisoSOE;
 #else

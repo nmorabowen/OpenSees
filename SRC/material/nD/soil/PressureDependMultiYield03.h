@@ -47,7 +47,13 @@ public:
 		 double liquefactionParam1 = 1. ,
 		 double liquefactionParam2 = 0. ,
 		 double atm = 101.,
-		 double cohesi = 1.73);
+		 double cohesi = 1.73,
+		 // Ladruno WP-133: critical-state constants, previously hard-coded
+		 // in the constructor body. Defaults are the old values.
+		 double ei = 0.6,
+		 double cs1 = 0.9,
+		 double cs2 = 0.02,
+		 double cs3 = 0.7);
 
 
      // Default constructor
