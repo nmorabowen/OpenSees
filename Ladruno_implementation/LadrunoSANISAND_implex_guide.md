@@ -1141,6 +1141,14 @@ Refusal codes (`sasStats` column `lastRefuseCode`, and the warning text): 1 star
 leaves the trial on the committed state and returns `LADRUNO_MATERIAL_REFUSED` (element roster:
 LEDGER_quirks "element refusal roster").
 
+**Discarding elements** (SSPquad, stdBrick, BbarBrick, the SSP/brick u-p variants, LadrunoSolidShell,
+...: the roster) drop that code, so their Newton "converges" on the refused state. WP-129 (review of
+#871) makes the COMMIT refuse instead: `commitState` sees the refused update, declares it to
+`Domain::commit()` (the WP-99 channel), the analysis step fails, and the point latches (cleared by
+`revertToStart`). The same now holds for the ModifiedEuler `-maxSubsteps` cap, which used to commit
+the strain without the stress. Use a forwarding element (quad, LadrunoQuad/CST/LST, LadrunoBrick,
+the u-p family) to get a recoverable, cuttable refusal.
+
 ### 13.3 Measured (WP-129, `Ladruno_files/testbed/wp129_sasme/`)
 
 - **Oracle, benign** (K0 states 20/50/100 kPa × active/passive/shear × 1e-5/1e-4): SAS-ME at TolR

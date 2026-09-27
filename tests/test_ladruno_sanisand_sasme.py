@@ -364,3 +364,162 @@ def test_tangentEP_matches_finite_difference(protos):
         an = [sum(Cep[i][j] * dd[j] for j in range(6)) for i in range(6)]
         worst = max(worst, W.norm([a - b for a, b in zip(fd, an)]) / W.norm(an))
     assert worst < 1e-4, worst
+
+
+# ------------------------------------------------ review of #871 (round 1)
+_REVIEW_OPTS = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0, "-Pmin", 0.0101)
+
+
+def _discard_deck(eletype):
+    """The reviewer's p1_discard.py: confine, flip, then unload into tension so
+    SAS-ME refuses; `eletype` DISCARDS (SSPquad, stdBrick) or forwards (quad)."""
+    ops.wipe()
+    if eletype == "stdBrick":
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        xy = [(0., 0.), (1., 0.), (1., 1.), (0., 1.)]
+        for k in range(2):
+            for j, (x, y) in enumerate(xy):
+                ops.node(4 * k + j + 1, x, y, float(k))
+        ops.nDMaterial("LadrunoSANISAND", 1, *W.P, *_REVIEW_OPTS)
+        ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+        for k in range(2):
+            for j, (x, y) in enumerate(xy):
+                ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0, 1 if k == 0 else 0)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for k in range(2):
+            for j, (x, y) in enumerate(xy):
+                n = 4 * k + j + 1
+                if x == 1.:
+                    ops.sp(n, 1, -1.0e-3)
+                if y == 1.:
+                    ops.sp(n, 2, -1.0e-3)
+                if k == 1:
+                    ops.sp(n, 3, -2.0e-3)
+    else:
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        xy = [(0., 0.), (1., 0.), (1., 1.), (0., 1.)]
+        for j, (x, y) in enumerate(xy):
+            ops.node(j + 1, x, y)
+        ops.nDMaterial("LadrunoSANISAND", 1, *W.P, *_REVIEW_OPTS)
+        if eletype == "quad":
+            ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+        else:
+            ops.element("SSPquad", 1, 1, 2, 3, 4, 1, "PlaneStrain", 1.0)
+        for j, (x, y) in enumerate(xy):
+            ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for j, (x, y) in enumerate(xy):
+            if x == 1.:
+                ops.sp(j + 1, 1, -1.0e-3)
+            if y == 1.:
+                ops.sp(j + 1, 2, -2.0e-3)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 20, 0); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.25); ops.analysis("Static")
+    for _ in range(4):
+        assert ops.analyze(1) == 0
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    ops.integrator("LoadControl", -0.25)
+    rows = []
+    for _ in range(12):
+        rc = ops.analyze(1)
+        rows.append((rc, list(ops.eleResponse(1, "material", 1, "strain")),
+                     list(ops.eleResponse(1, "material", 1, "stress"))))
+    s = dict(zip(sr.SAS_NAMES, ops.eleResponse(1, "material", 1, "sasStats")))
+    return rows, s
+
+
+@pytest.mark.parametrize("eletype", ["SSPquad", "stdBrick", "quad"])
+def test_refusal_under_discarding_element_is_not_committed(eletype):
+    """Review #871 item 1: before the fix SSPquad returned analyze() == 0 for 9
+    steps after the first refusal with the strain climbing at frozen stress.
+    Now the first step that meets a refusal fails (discarders: the WP-99 commit
+    abort; forwarders: the trial return), and no later step commits a strain the
+    material did not integrate."""
+    rows, s = _discard_deck(eletype)
+    first = next((k for k, r in enumerate(rows) if r[0] < 0), None)
+    assert first is not None, [r[0] for r in rows]
+    assert s["refusals"] >= 1
+    ok_before = [r for r in rows[:first] if r[0] == 0]
+    # nothing after the first refusal is reported converged
+    assert all(r[0] < 0 for r in rows[first:]), [r[0] for r in rows]
+    if ok_before:
+        eps_last = ok_before[-1][1]
+        # the strain the material reports never moves past its last good commit
+        for r in rows[first:]:
+            assert max(abs(a - b) for a, b in zip(r[1], eps_last)) < 1e-12, (r[1], eps_last)
+    _define_all()
+
+
+def test_refusal_warning_is_per_instance(capfd):
+    """Review item 2: no process-wide warning budget. Every fresh instance (a
+    replay's private copy) warns once, however many refused before it."""
+    _define_all()
+    r = next(x for x in sr.read_ring_csv(sr.RING_CSVS[0]) if x["element"] == 1950 and x["gp"] == 3)
+    capfd.readouterr()
+    for _ in range(12):
+        W.step(ops, W.TAG_SAS, r, [0, 0, 0, 1e-5, 0, 0])
+    err = capfd.readouterr().err
+    assert err.count("update REFUSED") == 12, err[-500:]
+
+
+def test_refused_update_state_diagnostics(protos):
+    """Review item 7: after a refusal the `last` columns are NaN (no valid end
+    state) and the void ratio is the committed one."""
+    r = next(x for x in sr.read_ring_csv(sr.RING_CSVS[0]) if x["element"] == 1950 and x["gp"] == 3)
+    new, o = W.step(ops, W.TAG_SAS, r, [1e-5, 1e-5, 0, 0, 0, 0])
+    assert o["rc"] != 0
+    assert math.isnan(o["sas"]["lastF"]) and math.isnan(o["sas"]["lastAlphaRatio"])
+    assert abs(o["e"] - r["e"]) < 1e-12
+
+
+def test_parser_and_runtime_refusals(capfd):
+    """Review items 5, 6, 9."""
+    ops.wipe()
+    for bad in ((385, 0, 1, 1e-7, 1e-4),
+                (129, 0, 1, 1e-7, 1e-4, "-errFloor", float("inf")),
+                (129, 0, 1, 1e-7, 1e-4, "-reversalTol", 1e-8),
+                (129, 0, 1, 1e-7, 1e-4, "-reversalRel", 0.1)):
+        with pytest.raises(Exception):
+            ops.nDMaterial("LadrunoSANISAND", 1, *W.P, *bad)
+    # -reversal* are live under the bracket rule (the P2-5 guard runs there)
+    ops.nDMaterial("LadrunoSANISAND", 1, *W.P, 129, 0, 1, 1e-7, 1e-4,
+                   "-sasAlphaIn", "bracket", "-reversalTol", 1e-8)
+    ops.wipe()
+    capfd.readouterr()
+    ops.nDMaterial("LadrunoSANISAND", 1, *W.P, 129, 0, 1, 1e-7, 1e-4, "-honorTolR", 1)
+    assert "INERT: IntScheme 129" in capfd.readouterr().err
+    # runtime IntegrationScheme: out of range, and 129 under -implex
+    for opts, newv in (((1, 0, 1, 1e-7, 1e-4), 385.0),
+                       ((1, 0, 1, 1e-7, 1e-4, "-maxSubsteps", 1000, "-implex"), 129.0)):
+        _quad_deck(opts)
+        ops.integrator("LoadControl", 0.01)
+        ops.analysis("Static")
+        ops.parameter(1, "element", 1, "IntegrationScheme", 1)
+        ops.updateParameter(1, newv)
+        ops.updateMaterialStage("-material", 1, "-stage", 1)
+        for _ in range(3):
+            ops.analyze(1)
+        s = dict(zip(sr.SAS_NAMES, ops.eleResponse(1, "material", 1, "sasStats")))
+        assert s["updates"] == 0, (opts, newv, s)   # SAS-ME never ran
+    _define_all()
+
+
+def test_no_hold_skip_census_under_sas(capfd):
+    """Review item 5: under SAS-ME's paper alpha_in rule no P2-5 reversal test
+    is skipped on a hold, so implexGuards[5] must not count one."""
+    _quad_deck(W.sas_opts(1e-4)[:5])
+    ops.integrator("LoadControl", 0.01)
+    ops.analysis("Static")
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    for _ in range(3):
+        ops.analyze(1)
+    g0 = ops.eleResponse(1, "material", 1, "implexGuards")[5]
+    ops.integrator("LoadControl", 0.0)
+    for _ in range(3):
+        ops.analyze(1)
+    assert ops.eleResponse(1, "material", 1, "implexGuards")[5] == g0
+    _define_all()
+
