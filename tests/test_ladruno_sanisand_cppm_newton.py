@@ -731,6 +731,9 @@ def test_wire_round_trip_both_blocks_after_the_129_merge():
     advance(4)
     saved = {e: dict(stats=g(e, "substepStats"), opts=g(1, "cppmOptions") if e == 1 else None,
                      sas=g(2, "sasStats") if e == 2 else None) for e in (1, 2)}
+    sas_opts_saved = g(2, "sasOptions")
+    assert sas_opts_saved[0] == 3.0 and sas_opts_saved[1] == 0.2 and sas_opts_saved[3] == 1.0, \
+        sas_opts_saved                     # errFloor, alphaBoundTol, alphaInMode = bracket
     db = os.path.join(tempfile.mkdtemp(prefix="wp130_db2_"), "db")
     ops.database("File", db)
     ops.save(1)
@@ -740,9 +743,11 @@ def test_wire_round_trip_both_blocks_after_the_129_merge():
     # skeleton with every option at its DEFAULT, then restore
     _two_cube_model(cppm_def, sas_def)
     assert g(1, "cppmOptions")[:6] == [0.0, 9.0, 0.0, 0.0, 0.0, 1.0]
+    assert g(2, "sasOptions") != sas_opts_saved          # the skeleton really is default
     ops.database("File", db)
     ops.restore(1)
     assert g(1, "cppmOptions") == saved[1]["opts"]
+    assert g(2, "sasOptions") == sas_opts_saved          # review L3: SAS options by VALUE
     for e in (1, 2):
         got = g(e, "substepStats")
         assert got[1:] == saved[e]["stats"][1:] or all(

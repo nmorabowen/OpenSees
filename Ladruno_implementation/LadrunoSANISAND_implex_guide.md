@@ -751,8 +751,12 @@ parser refuses the combination). A flag that could not act on the deck is refuse
   found that way is ONE backward-Euler step over an increment on which the ladder would have
   halved, so it is less accurate. The acceptance gate (dGamma >= 0, p > 0, and agreement with the
   explicit walk to 2 %) rejects most of the bad ones, but on the review's 300-increment oracle set
-  the gated guess still doubled the error on 74 of 171 increments (median 0.021 vs 0.007 relative,
-  worst 0.40 vs 0.09). Use it only where speed is worth that.
+  the gated guess's error is more than twice the default ladder's on 105 of the 171 increments
+  where a guess was accepted (74 if the excess must also exceed 0.01 absolute); median relative
+  error 0.021 vs 0.007; the worst oracle-converged increment is 0.54 with the guess vs 0.51
+  without; the largest single-increment degradation is 0.09 -> 0.40 (confirmation review round 2
+  recounted these from `wp130_f18c/review_r1/p2_guess_vs_oracle_after_gate.txt`). Use it only where
+  speed is worth that.
 - **`-cppmLineSearch on`**: backtracking (halving, at most 8 cuts) on the residual norm the local
   convergence test reads; a full step is taken if no cut helps.
 - **`-meFallback cppm`** (IntScheme 1, F10b(b)): when ModifiedEuler hits `-maxSubsteps`, the SAME
@@ -1179,7 +1183,7 @@ equations with the UW constitutive additions, integrated exactly):
 | IntScheme | what | use it? |
 |---|---|---|
 | **1** ModifiedEuler (the fork's default) | explicit Heun, stress-only error at a hardcoded `1e-4` (unless `-honorTolR 1`), moduli frozen at the committed state (U9), a loading stage with a negative denominator read as elastic + uncapped step growth (the "err = 0 path"), force-accept at `dT_min`, a drift correction that can give up with `f > 0` | the calibrated default; know its quirks rows. Ring states: α can leave the bounding surface (WP-128). Benign states: up to 15–100 % stress error on 1e-4 increments against the oracle (WP-129 §13.3) |
-| **2** BackwardEuler_CPPM | implicit, consistent tangent under TanType 2 | accurate per increment; fragile under a global Newton (§9, WP-105; WP-130) |
+| **2** BackwardEuler_CPPM | implicit; under TanType 2 a SIGN-FIXED (WP-130 `-cppmTangent fixed`, the LadrunoSANISAND default) but NOT fully consistent tangent -- one local iterate stale, no void-ratio term, the second half's tangent after a halving (§9) | accurate per increment; under a global Newton use §9's recipe (WP-105; WP-130) |
 | **45** RungeKutta45 | explicit Sloan RK45 | **not a reference**: dT_min 1e-3 hard-coded, Mc-clamp force-accept, no drift correction, and `dAlpha3/dAlpha4` never computed (α weights sum to 301/336) |
 | 3, 5 | RK4 / Forward Euler, no error control | no |
 | 0, 4, 6–9 | MaxEnergy / MaxStrain wrappers | no; IntScheme 4 is even non-deterministic (uninitialised moduli) |

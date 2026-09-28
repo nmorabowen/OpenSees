@@ -5087,6 +5087,9 @@ constexpr int LadrunoSanisandTangentEPResponseID       = 33099;   // Ladruno WP-
 // Ladruno WP-130 (review r1): `cppmOptions`, the options this INSTANCE runs
 // (so a wire/database round trip is checkable). 33098/33099 are WP-129's.
 constexpr int LadrunoSanisandCppmOptionsResponseID     = 33100;   // Ladruno WP-130
+// Ladruno WP-130 (confirmation review L3): `sasOptions`, WP-129's SAS-ME option
+// set of THIS instance, so a wire/database round trip can be value-checked.
+constexpr int LadrunoSanisandSasOptionsResponseID      = 33101;   // Ladruno WP-130
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -5246,6 +5249,13 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         Vector probe7(7);
         return new MaterialResponse(this, LadrunoSanisandCppmOptionsResponseID, probe7);
     }
+    // Ladruno WP-130 (review L3): WP-129's SAS-ME options of THIS instance, in
+    // wire order: errFloor, alphaBoundTol, alphaProject, alphaInMode, errorVars,
+    // alphaEntryTol.
+    if (argc > 0 && strcmp(argv[0], "sasOptions") == 0) {
+        Vector probe6(6);
+        return new MaterialResponse(this, LadrunoSanisandSasOptionsResponseID, probe6);
+    }
     // Ladruno WP-129: the SAS-ME census. EVERY column is PER INTEGRATION POINT,
     // cumulative since revertToStart except the LAST_* ones; survives
     // revertToLastCommit. Layout: ManzariDafalias.h, LSAS_*; guide "choosing an IntScheme".
@@ -5398,6 +5408,16 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         return matInformation.setVector(out1);
     }
     // Ladruno WP-130 (review r1)
+    if (responseID == LadrunoSanisandSasOptionsResponseID) {       // Ladruno WP-130 (review L3)
+        Vector out(6);
+        out(0) = mLadrunoSas.opt.errFloor;
+        out(1) = mLadrunoSas.opt.alphaBoundTol;
+        out(2) = (double)mLadrunoSas.opt.alphaProject;
+        out(3) = (double)mLadrunoSas.opt.alphaInMode;
+        out(4) = (double)mLadrunoSas.opt.errorVars;
+        out(5) = mLadrunoSas.opt.alphaEntryTol;
+        return matInformation.setVector(out);
+    }
     if (responseID == LadrunoSanisandCppmOptionsResponseID) {
         Vector out(7);
         out(0) = (double)mCPPMOnFail;
