@@ -638,8 +638,9 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   Grenoble using stereophotogrammetry. *IJNAMG* 28, 279–321.
 - Pietruszczak, S. & Mróz, Z. (1981). Finite element analysis of deformation of strain-softening materials. *IJNME* 17,
   327–334.
-- Siddiquee, M. S. A. et al. (1999). FEM simulation of scale effect in
-  bearing capacity of strip footing on sand. *Soils Found.* 39(4), 91–109.
+- Siddiquee, M. S. A. et al. (1999). Numerical simulation of bearing capacity characteristics of strip footing on
+  sand. *Soils Found.* 39(4), 93ff. doi:10.3208/sandf.39.4_93. (The title was corrected against Crossref on
+  2026-09-28.)
 - Bolton, M. D. (1986). The strength and dilatancy of sands. *Géotechnique* 36(1), 65–78.
 - Vesić, A. S. (1973). Analysis of ultimate loads of shallow foundations. *JSMFD* 99(SM1), 45–73.
 - Perkins, S. W. & Madson, C. R. (2000). Bearing capacity of shallow foundations on sand: a relative density
