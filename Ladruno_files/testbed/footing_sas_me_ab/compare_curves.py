@@ -36,6 +36,7 @@ def main():
     rq = [float(r["q_kPa"]) for r in R]
     smax = min(rs[-1], float(L[-1]["s_over_B"]))
     worst = (0.0, 0.0, 0.0)
+    worst_rel = (0.0, 0.0, 0.0)
     nbad = 0
     for r in L:
         s, q = float(r["s_over_B"]), float(r["q_kPa"])
@@ -53,8 +54,24 @@ def main():
             nbad += 1
         if abs(d) > abs(worst[1]):
             worst = (s, d, d / qr)
-    print(f"{a.leg} vs {a.ref}: common s/B <= {smax:.5f}; worst dq {worst[1]:+.3f} kPa "
-          f"({100*worst[2]:+.3f} %) at s/B {worst[0]:.5f}; points beyond {a.tol_kpa} kPa: {nbad}")
+        if abs(d / qr) > abs(worst_rel[2]):
+            worst_rel = (s, d, d / qr)
+    print(f"{a.leg} vs {a.ref}: common s/B <= {smax:.5f}; worst |dq| {worst[1]:+.3f} kPa "
+          f"({100*worst[2]:+.3f} %) at s/B {worst[0]:.5f}; worst relative "
+          f"{100*worst_rel[2]:+.3f} % ({worst_rel[1]:+.3f} kPa) at s/B {worst_rel[0]:.6f}; "
+          f"points beyond {a.tol_kpa} kPa: {nbad}")
+    # relative band by s/B range
+    for lo, hi in ((0, 0.001), (0.001, 0.005), (0.005, 1.0)):
+        rel = []
+        for r in L:
+            s, q = float(r["s_over_B"]), float(r["q_kPa"])
+            if not (lo <= s < hi) or s > smax:
+                continue
+            j = next(i for i, x in enumerate(rs) if x >= s - 1e-15)
+            qr = rq[0] if j == 0 else rq[j - 1] + (s - rs[j - 1]) / (rs[j] - rs[j - 1]) * (rq[j] - rq[j - 1])
+            rel.append(abs(q - qr) / qr)
+        if rel:
+            print(f"  s/B in [{lo}, {min(hi, smax):.4f}): max |dq|/q = {100*max(rel):.3f} % over {len(rel)} points")
     for lab, rows in ((a.ref, R), (a.leg, L)):
         print(f"  {lab:22s} to s/B {smax:.5f}: push wall {cum(rows, 'wall_step_s', smax)/3600:.2f} h, "
               f"substeps {cum(rows, 'sub_step_total', smax):.3e}, iterations "
