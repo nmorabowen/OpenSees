@@ -115,6 +115,9 @@ brake was intended by the model's authors.
   iterate follows, and `setSubStrainRate` sizes the substep count as `|Δε|/1e-5` with no cap, so the
   material takes millions of substeps. G3's two-element gate stops before the crossing for this
   reason.
+  **Diagnosed and fixed in WP-135 (#874):** the hypothesis holds (Newton iterate 56 returns
+  |du| = 6.9e4, ~1e9 substeps per Gauss point), but it is not specific to two elements or to the
+  brake; see the WP-135 `LEDGER_quirks` entry.
 - `pAtm` is a static member of PDMY01/02/03: the last material created sets it for all (quirk row).
 - PDMY03's per-material arrays and `matCount` are process-wide and never reset on `wipe` (vanilla;
   outside this WP).
