@@ -28,7 +28,7 @@ pending; anything preliminary (a result from work still in progress) is labelled
 |---|---|
 | Fork | Ladruno / OpenSees, branch `ladruno` |
 | Merged so far | #863 (WP-127), #864 (WP-132), #865 (WP-131 step 1), #866 (WP-133), #869 (WP-128), #870 (WP-136), #871 (WP-129), #872 (WP-134), #874 (WP-135, PDMY hang), #876 (WP-132 guide follow-up), #885 (WP-144/145 plans), #888 (WP-131 re-verify), #846 (WP-109, OpenMP on gcc) |
-| Still open | #868 (WP-130, CPPM under Newton), #878 (WP-138, footing A/B), #892 (WP-150, the wall's mechanism and the regularization memo) |
+| Still open | #868 (WP-130, CPPM under Newton), #878 (WP-138, footing A/B), #892 (WP-150, the wall's mechanism and the regularization memo), #893 (WP-151, R1: the opt-in fix of the re-seat singularity) |
 | Plan and findings A–D | `Ladruno_implementation/127_tims_2d_requests_plan.md` |
 
 Every line of §2 of your intake was checked against the source before any work started
@@ -73,7 +73,8 @@ the "abrupt switch at 0.5 kPa" in the error norm is a continuous 1 kPa floor (§
    at most 0.64 % from s/B 0.001 to 0.0174, and a spurious upturn near the `ModifiedEuler` wall (§4.4).
 8. **Still pending:** CPPM under a global Newton, with a sign fix to its tangent (WP-130, #868); threading
    SANISAND (F19 step 2); **R1**, an opt-in model-level fix of the wall that the owner approved
-   (preliminary oracle results, no PR yet); the mesh study with R1 on (R2); the final sensitivity ladders.
+   (WP-151, draft #893); the footing runs with R1 on and with c = 0.80, and the mesh study with R1 on (R2),
+   all running. The sensitivity ladders are final (§4.7): no material switch removes the wall.
 9. **Yours to decide** (§5): the p′-floor rule, `D_factor`, the mesh set, what "limit load" means for a
    dense dilatant sand, the calibration (D7), the Lode parameter c ≥ 7/9 (D8) and whether to use R1
    (D9); and the data we need from you (§5.1).
@@ -577,7 +578,7 @@ and restart files written by an older build will not load (the wire vector grew)
 5. **The 30 % run-to-run shift is a signal about the deck, not the solver** (F22). Deterministic mode
    will make the two runs agree; it will not tell you which is right.
 6. **The `-Presidual` 1.01 / 5.05 kPa comparison of your §1.4 was made with the defective integrator.**
-   Re-measured under SAS-ME (§4.7, interim): no residual pressure from 0.5 to 20 kPa removes the wall,
+   Re-measured under SAS-ME (§4.7): no residual pressure from 0.5 to 20 kPa removes the wall,
    0.5 kPa brings it earlier, and larger values reach further only through an apparent cohesion. So it
    does not justify a floor (D1).
 7. **PDMY under `SSPquad`**: a refused trial is discarded by the host (WP-135 bounds the time, not the
@@ -781,38 +782,58 @@ singular set is **{a = 0, b:n ≤ 0}**, and `loadingNonPosH` is the SAS-ME refus
 - **No integrator knob lifts it** (§4.4), and **no boundary-value regularizer** can lift an unbounded
   negative modulus at a point. Any cure is a change to the model (R1, §5).
 
-**Preliminary, material-point oracle (R1 work, in progress; recorded in #892 §1.4).** The exact rate
+**How the equations reach it (WP-151 memo §2.2 on #893).** The exact rate
 equations reach this set through a **Zeno accumulation of re-seats on the b:n → 0⁺ side**: after a
 re-seat, h = ∞ makes α slide along b; with b nearly perpendicular to n that slide rotates n, a turns
 negative and the next re-seat follows. At E_B's refuser 1880/1 the re-seat intervals run 1.7e-2,
 1.5e-3, 5.6e-5, 2.4e-6, … and accumulate at a finite time where a = 0 and b:n = 1.9e-8 > 0.
 **`loadingNonPosH` is only the b:n < 0 exit of that sequence.**
 
-### 4.7 Sensitivity ladders — interim, 16:20 on 2026-09-28
+**What makes the wall states singular: the non-convex extension side** (WP-151 memo §2.5; #892 §2.3).
+All three wall refusers have n on the extension side (cos 3θ −1.00 / −0.36 / −0.88), while the
+non-elliptic band points of §4.8 sit on the compression side (0.09 % / 0.14 % of them extension-side at
+the E_B / E_B16 walls): the wall and the bands are separate phenomena. With c = 0.71 < 7/9 the Lode
+interpolation is concave on the extension side (§4.9). Driven at c = 0.80, the same five committed wall
+states fail **0 of 320** exact trials against **102 of 320** at c = 0.71. These are c = 0.71 states
+driven at c = 0.80: a sensitivity test, not a c = 0.80 footing run. That run is under way (§6).
 
-Each leg is E_B with one knob changed (the S1 → S4 ablation is cumulative). Several legs were still
-running at the snapshot, and the S and A0/h0 legs shared nodes, so no wall clock is quoted (#878 §11,
-interim).
+**Two routes out of the wall; the choice is yours (D8, D9).**
+1. **R1** (WP-151, #893): an opt-in model-level fix at any c, no recalibration (§5, D9).
+2. **A calibration with c ≥ 0.78**: at c = 0.80 the extension strength M_e = c·M_c rises 13 %; it also
+   removes the extension ill-conditioning of §4.9.
 
-| ladder | leg | status at 16:20 | s/B reached | first NonPosH at s/B |
+**Published precedent.** Chen, Ghorbani, Zhang & Kodikara (2022), *Comput. Geotech.* 152, 105008: their
+SANISAND04 plane-strain footing aborts when (α−α_in):n suddenly drops to 0, and it gets worse with finer
+steps and a tighter tolerance (#892 memo).
+
+### 4.7 Sensitivity ladders — final
+
+Each leg is E_B with one knob changed (the S1 → S4 ablation is cumulative); all legs ran to their end
+(#878 §11, records under `Ladruno_files/testbed/footing_sas_me_ab/ladders_final/`). The S and A0/h0
+legs shared nodes, so no wall clock is quoted.
+
+| ladder | leg | first NonPosH at s/B | wall (FLOOR) at s/B | q at the wall (kPa) |
 |---|---|---|---|---|
-| reference | E_B (Presidual 0, e 0.6944, A0 0.05, h0 1.3) | FLOOR | 0.0508 | 0.0363 |
-| Presidual | 0.5 / 1 / 2 / 5 / 10 / 20 kPa | FLOOR / running ×5 | 0.0303 / 0.0400 / 0.0427 / 0.0519 / 0.0590 / 0.0711 | **0.0182** / 0.0333 / 0.0346 / 0.0416 / 0.0373 / 0.0535 |
-| e_init | 0.65 / 0.75 / 0.80 / 0.85 | running / FLOOR / running / FLOOR | 0.0435 / 0.0431 / 0.0567 / 0.0442 | 0.0395 / 0.0349 / 0.0525 / 0.0414 |
-| ablation | S1 z_max = 0 → S2 + n_b = 0 → S3 + n_d = 0 → **S4 + A0 = 0.001** | running | 0.0368 / 0.0348 / 0.0362 / 0.0374 | 0.0355 / 0.0269 / 0.0347 (1 event) / **none** |
-| A0 | 0.02 / 0.10 | FLOOR | 0.0315 / 0.0361 | 0.0237 / 0.0310 |
-| h0 | × 3 (3.9) | FLOOR | 0.0188 | **0.0091** |
+| reference | E_B (Presidual 0, e 0.6944, A0 0.05, h0 1.3) | 0.0363 | 0.0508 | 966.7 |
+| Presidual | 0.5 / 1 / 2 / 5 / 10 / 20 kPa | **0.0182** / 0.0333 / 0.0346 / 0.0416 / 0.0373 / 0.0535 | 0.0303 / 0.0421 / 0.0434 / 0.0676 / 0.0856 / 0.0964 | 683 / 870 / 901 / 1 286 / 1 602 / 1 979 |
+| e_init | 0.65 / 0.75 / 0.80 / 0.85 | 0.0395 / 0.0349 / 0.0525 / 0.0414 | 0.0457 / 0.0431 / 0.0574 / 0.0442 | 1 456 / 500 / 341 / 181 |
+| ablation | S1 z_max = 0 → S2 + n_b = 0 → S3 + n_d = 0 → S4 + A0 = 0.001 | 0.0355 / 0.0269 / 0.0347 / **0.0426** | 0.0374 / 0.0623 / 0.0601 / 0.0499 | 790 / 419 / 385 / 353 |
+| A0 | 0.02 / 0.10 | 0.0237 / 0.0310 | 0.0315 / 0.0361 | 678 / 835 |
+| h0 | × 3 (3.9) | **0.0091** | 0.0188 | 770 |
 
-- **Only killing the dilatancy clears `loadingNonPosH`.** S4 (A0 = 0.001) has no NonPosH event to s/B
-  0.0374, past E_B's onset. It is not cheap: a median of 2.4e7 substeps per step over its last 20 steps
-  (max 9.4e7), against 7.3e6 for E_B, with maxSubsteps refusals. S1–S4 also carry only about a third of
-  E_B's load at the same s/B (#892 §1.4).
+- **Every leg walls on `loadingNonPosH`: no material switch removes it.** The ablation strips fabric,
+  the peak, the critical-state dilatancy surface and finally dilatancy itself; dilatancy off (S4) only
+  **delays** the onset (0.0363 → 0.0426). S2–S4 also carry about 40 % of E_B's load at the same s/B (q at
+  s/B 0.03: 292 / 277 / 278 kPa against 673). An interim snapshot of 16:20, taken before S4 reached its
+  onset, had suggested that only killing the dilatancy clears the refusal; that reading is withdrawn
+  (#892 memo §1.4 at `2a82e2046`).
 - **Presidual 0.5–20 kPa never clears it**, and the onset is **non-monotonic**: 0.5 kPa brings it
-  *earlier* (0.0182) than Presidual 0. A larger Presidual walls later only by stiffening the response
-  (q at s/B 0.03 rises from 675 to 835 kPa between 0.5 and 20 kPa): an apparent cohesion, not a cure.
+  *earlier* (0.0182) than Presidual 0. A larger Presidual walls later (up to 0.0964) only by stiffening
+  the response (1 979 kPa at the wall for 20 kPa): an apparent cohesion, not a cure.
 - **e_init 0.65–0.85 never clears it.** A0 is non-monotonic (onset 0.0237 / 0.0363 / 0.0310 at A0
-  0.02 / 0.05 / 0.10). **h0 × 3 brings the onset down to 0.0091**: α reaches the bounding surface sooner.
-- A non-monotonic onset is what a singular event looks like, not a smooth limit (#892 §1.4).
+  0.02 / 0.05 / 0.10). **h0 × 3 brings the onset down to 0.0091.**
+- **What no leg changed is the Lode ratio c** (§4.6, §4.9). Every leg keeps c = 0.71 < 7/9. The footing
+  test of that reading (c = 0.80, R1 off) is running.
 
 **Your §1.4 `-Presidual` comparison (caution 6), re-measured under SAS-ME.** Your conclusion holds in
 the sense that matters: no residual pressure from 0.5 to 20 kPa removes the refusal. It does move where
@@ -847,7 +868,8 @@ dependence of the wall itself is not settled (R2, §6).
 
 With **c = 0.71 < 7/9**, DM04's Lode interpolation g(θ) is **non-convex at the extension meridian**.
 
-- **What we saw** (preliminary, material-point oracle, R1 work in progress; #878 §13, #892 §4). In
+- **What we saw** (WP-151 memo §6.3 on #893, harness and results committed under
+  `Ladruno_files/testbed/sanisand_reseat_r1/`). In
   undrained cyclic triaxial (CTXu) at e 0.6944, CSR 0.2, a perturbation of 1e-9 (round-off level) decides
   between **5 % double amplitude at N = 8** and **no 5 % DA by N = 20**, and it does so identically with
   and without the R1 fix: it is a bifurcation of DM04's own axisymmetric extension path. At **c = 0.80**
@@ -925,10 +947,11 @@ These are recommendations. Nobody outside the calibration and the project can ma
 | D5 | **Re-running campaign curves** | re-run under SAS-ME the ones that feed a reported number, starting with anything read from ring points or near the `ModifiedEuler` wall | §3.1; §4.2 (+6.4 % spurious stiffening near the ME wall) |
 | D6 | **The reference load for `NormUnbalance`** | name the vector | it decides whether the integrator's per-point error sits under your Newton tolerance (F18(a)) |
 | D7 | **The calibration (T5)** | confirm the campaign SANISAND set against your lab data before any footing curve is used: φ′_peak, strain at peak, dilatancy | it has the strength of a very dense sand but dilates ~20–23× (triaxial) / ~8–14× (plane strain) less than stress–dilatancy requires and peaks at 4–16 % strain (§4 caveat; #892 §10). If your data agree with the set, the physics check moves to your data; if not, recalibration comes first |
-| D8 | **Lode parameter c** | keep c ≥ 7/9 (≈ 0.78), or treat extension paths as ill-conditioned | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9) |
+| D8 | **Lode parameter c** | keep c ≥ 7/9 (≈ 0.78), or treat extension paths as ill-conditioned | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9); it is also what makes the footing's wall states singular, so c ≥ 0.78 is one of the two routes out of the wall (§4.6; c = 0.80 raises M_e by 13 %) |
 | D9 | **R1, a model-level opt-in fix of the wall** | yours to use or not; built as an opt-in `LadrunoSANISAND` variant, **default OFF**, vanilla `ManzariDafalias` behaviour unchanged (owner approved) | see below |
 
-**D9 in detail: R1** (preliminary; #892 §1.4 and §4; #878 §13). Two **coupled** flags:
+**D9 in detail: R1** (WP-151 memo on draft #893; flags `-sasHFloor c_A -sasReseatHyst c_rev [-sasSoftCap κ]`,
+IntScheme 129 only, all default OFF and byte-identical). Two **coupled** flags:
 
 - **a floor on h everywhere**: h = b0 / max(a, c_A·√(2/3)·m), with c_A ≈ 1 (the yield cone's α-space
   radius, 4.1e-3 at m = 0.005), used in the α update too;
@@ -939,7 +962,8 @@ pair fails **0 of 320** where DM04 fails **102 of 320**, and **each flag alone f
 a weaker floor, c_A = ¼, with the hysteresis 90). In element tests at c_A = 1, monotonic q moves by at
 most **2.7e-4·q_max** and drained cycles are unchanged to 4 digits. The CTXu difference that was open is
 DM04's own extension bifurcation (§4.9), identical with and without R1. R1 is a constitutive change: it
-changes the model you calibrated, which is why the decision is yours. It is not in a PR yet.
+changes the model you calibrated, which is why the decision is yours. It is implemented as an opt-in
+(draft #893; not merged without the owner); its footing runs on our copy of your deck are under way.
 
 **Regularization, if it is needed after R1.** Whether it is needed is decided by measurement: the
 spread of B/4, B/8 and B/16 (R2) against the scatter of comparable physical footing tests, following
@@ -968,8 +992,9 @@ any width a regularized mesh returns would be a numerical length, not the sand's
 
 | item | what | where |
 |---|---|---|
-| CPPM under Newton + tangent sign | merge, then qualify on the strip | #868 (WP-130): open draft, not merged; its branch must first be brought up to date with `ladruno` |
-| Footing A/B | the Esmeralda arms are final; the sensitivity ladders are an interim snapshot and will be refreshed | #878 (WP-138), draft |
+| CPPM under Newton + tangent sign | merge, then qualify on the strip | #868 (WP-130): draft; up to date with `ladruno`; its first Linux CI run exposed platform-fragile tests (round-off-selected CPPM paths at low p), redesigned; full CI pending |
+| Footing A/B | the Esmeralda arms and the sensitivity ladders are final | #878 (WP-138), draft |
+| R1 and c = 0.80 on the footing | E_B and E_B16 × {floor + hysteresis, floor, hysteresis, + cap}; c = 0.80 with R1 off; R2 (B/4, B/8 sheared 15°, B/8 jittered) with R1 on | Esmeralda, running; R1 = #893 (WP-151), draft |
 | The decision procedure | **R1 → T5 → R2 → T6 → decisions** (below) | #892 (WP-150 memo §9.1), draft |
 | F19 step 2 | the deferred message buffer, the counters, stack scratch; allowlist `IntScheme 1`, then 2 and 129; identity and speed-up at 1/2/4/8 threads on a deck that prints | after #868 |
 | PDMY hang | refuse a wild trial instead of ~1e9 substeps | **MERGED**, #874 (WP-135) |
@@ -1066,11 +1091,15 @@ p′-floor or a surcharge is established practice even for the rigorous models, 
 - `133_pdmy_notes.md` — WP-133, #866
 - `136_flip_test_drift.md` — WP-136, #870
 - `138_footing_sas_me_ab.md` — WP-138, #878 (draft; on `origin/wp/138-footing-sas-me-ab` at
-  `762be8332`): §0 verdict, §5.1 curves, §5.3 replays, §8 Esmeralda arms, §9 B/16, §10 diagnosis,
-  §11 ladders (interim), §12 default, §13 follow-ups; run records under
+  `1f22e2bad`): §0 verdict, §5.1 curves, §5.3 replays, §8 Esmeralda arms, §9 B/16, §10 diagnosis,
+  §11 ladders (final), §12 default, §13 follow-ups; run records under
   `Ladruno_files/testbed/footing_sas_me_ab/`
+- `151_sanisand_reseat_singularity.md` — WP-151, #893 (draft; on
+  `origin/wp/151-sanisand-reseat-singularity` at `6e9330a3d`, build `bd93c558d`): §2.2 the Zeno
+  re-seat accumulation, §2.5 the non-convex extension side and the c = 0.80 wall-fan test, §5 the fan,
+  §6.1–6.2 calibrated behaviour, §6.3 the CTXu gate, §8 recommendation, §9 the flags and C++ gates
 - `150_sanisand_regularization_memo.md` — WP-150, #892 (draft; on
-  `origin/wp/150-sanisand-regularization-memo` at `00198f278`; the T5 figures as of `e14703ca7`): §1.4
+  `origin/wp/150-sanisand-regularization-memo` at `2a82e2046`, §1.4 corrected with the final ladders; the T5 figures as of `e14703ca7`): §1.4
   mechanism and the R1 oracle box, §2 localization, §3 options, §4 staged recommendation, §8 test plan
   and the R2 mesh-perturbation patch, §9.1 decision procedure, §10 T5, §11 T6 capacity bands
 - `_sand_model_survey_2026-09-27.md`, `_sanisand_external_survey_2026-09-27.md`,
@@ -1110,3 +1139,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 |---|---|
 | 2026-09-28 | First issue. F18(a), (b), (e), F20, F21, F22 (mode), F23(a), (b) answered from merged work; F18(c), (d), F19 step 2, the F22 guide paragraph and the WP-138 footing A/B pending; placeholders in §4. |
 | 2026-09-28 | Second issue. §4 final from the WP-138 Esmeralda arms (#878 at `762be8332`): the wall table, the verdict (SAS-ME moves the wall from s/B 0.0292 to 0.0508 and does not remove it; no peak; constitutive), accuracy and cost, the replay figures reconciled, the mechanism (#892), the interim sensitivity ladders (16:20) with caution 6 re-measured, B/16 and non-associated localization, the calibration caveat (#892 §10), Lode convexity c ≥ 7/9, the classical capacity bands (#892 §11 at `00198f278`), the integrator recommendation; placeholders removed. §5: D1 and D3 revised, D7–D9 added (calibration, c, R1), the regularization route and §5.1 "What we need from you". §6: the WP-150 decision procedure, T6 targets, the SAS-ME + IMPL-EX status, #874 and #876 merged, TolR 1e-3 and TanType 1 off the performance list. §0, §2 scope note, §3 cautions 1, 4, 6 and the E_B configuration line (TolR 1e-4, not 1e-7) updated to match. |
+| 2026-09-28 | Third issue. §4.7 ladders FINAL (#878 at `1f22e2bad`): every leg walls on `loadingNonPosH`; dilatancy off only delays the onset (0.0363 → 0.0426), so the interim "only killing the dilatancy clears it" is withdrawn. §4.6: the wall states need the non-convex extension side (c = 0.71 < 7/9; c = 0.80 takes the wall fan 102/320 → 0/320, WP-151 §2.5), the wall and the bands are separate phenomena, two routes out (R1 or c ≥ 0.78), and the Chen et al. (2022) precedent. R1 and the CTXu finding now cite the WP-151 memo (#893) instead of "preliminary". D8 and the roadmap updated; the R1, c = 0.80 and R2 footing runs are running. |
