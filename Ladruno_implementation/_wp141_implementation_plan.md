@@ -122,7 +122,10 @@ lines, which h(n) cannot fix), then re-rank P3a/P3b below P3c/P3d and record why
   - square L×L, structured n×n `ASDShellQ4` (EAS on and `-noeas`), plain `LadrunoRCConcrete -autoRegularization`, membrane only;
   - periodic `equationConstraint` pairs to a macro node; macro uniaxial stress along θ with tan θ ∈ {0, ¼, ½, 1} (angles compatible with square periodicity);
   - one 5 %-thinner element seeds the crack.
-  - **Oracle:** `W_diss / (t · L / cos θ) = Gf`. Gate after P3: ±10 % at all angles. The baseline is recorded, not gated.
+  - **Oracle:** `W_diss / (t · ℓ_c) = Gf`, with ℓ_c = L·√(p²+q²) for tanθ = p/q in lowest terms.
+    The periodic crack is a closed line of direction (−p, q) on the torus: L at 0°, L√2 at 45°, L√5
+    at tanθ = ½, L√17 at tanθ = ¼. It equals L/cosθ only at 0° and 45° (corrected 2026-09-27).
+  - Gate after P3: ±10 % at all angles. The baseline is recorded, not gated.
   - The damaged-element map must follow θ; if the band locks to mesh lines, the test reports locking instead of passing.
   - Smoke first: θ = 0 must reproduce the existing Bažant-bar result (`test_ladrunoRCConcrete_meshobj.py`).
 - O2d (T3) Wrong-instant guard: a non-proportional pre-crack path rotates the principal axis by 30°
