@@ -115,6 +115,49 @@ Re-ranking:
   with drilling energy measured. The periodic cell stays as the locking detector.
 - **P3c/P3d move ahead of P3b.** G-B and G-C already show the size of their errors (G-C: +117 % at ε_y).
 
+**P2e outcome (2026-09-28, study try `work/claude/wp141-p2e-eas-drilling` @ 352dc4d, 71 runs).**
+
+*EAS length factor.* EAS localizes into one Gauss-point column only through a bifurcation. That needs
+the two node lines bounding the band to be free to stretch differently, as near a free edge (strips,
+wide strips, notched beam). There h/2 is right (1.01–1.14). In constrained kinematics — the fork's 1-D
+Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns soften and h is right; h/2 gives
+1.85–1.97.
+- One constraint (`--tie-y`) moves the same mesh from 1.01 to 1.97.
+- Strain gradients do not select a column; drilling plays no part.
+- `LadrunoRCConcrete` and `ASDConcrete3D` agree within 0.01.
+- ⇒ **Under EAS no fixed factor is right; `-noeas` + lch = h is deterministic (0.99–1.04).**
+
+*Drilling.*
+- PV20 4×4 with `-noeas`: the field stays uniform and irrotational, drilling energy ≡ 0, and all three
+  drilling variants are identical (τ_max 4.276 vs test 4.26).
+- Under EAS the drilling setting changes only the post-peak response (τ at γ = 0.02: 2.64 default /
+  2.00 stab / 1.61 NL).
+- On the 45° cell, `-drillingNL` releases the crack. It is a cumulative per-GP drilling damage, clipped
+  at 0.999 and applied one step late (`ASDShellQ4.cpp:2046-2073`), which leaves θz nearly free — a
+  conditioning risk.
+- `-drillingStab 1.0` still stores 0.75·Gf·t·ℓ_c.
+- G-A's "3.25 diffuse" did not reproduce.
+
+*Re-ranking (proposed, owner to confirm):*
+- **R1 (cheap, now):**
+  - quirk rows + guide: crack-band RC on `ASDShellQ4` ⇒ `-noeas`, and `-drillingNL` where localized
+    inclined cracks form;
+  - `tests/test_ladrunoRCConcrete_meshobj.py` gates the ABSOLUTE energy under `-noeas`; its u_y = 0
+    chain is exactly the 2× configuration;
+  - apeGmsh warns when a crack-band layer section meets EAS.
+- **R2 (gate before R1 becomes guidance):** the in-plane bending cost of `-noeas` — a cantilever wall
+  with n = 1/2/4/8 elements across, EAS vs `-noeas` vs Timoshenko closed form. apeGmsh measured
+  0.74× tip displacement for one element.
+- **P3a/P3b parked.** The factor problem is solved by `-noeas` with no seam, and directional h(n) fixes
+  neither mesh locking nor the 3-element 45° staircase. Revisit only with unstructured-mesh evidence.
+  D3a stays decided but unbuilt.
+- **P3c/P3d next**, after #877.
+- **New P3f (research):** a drilling law that follows the section's current secant stiffness instead
+  of NL damage. This is vanilla `ASDShellQ4` — owner decision; an upstream suggestion is the
+  alternative.
+- **Upstream report** to the `ASDShellQ4` authors with the P2e evidence (evidence, not a patch).
+  Owner approval before posting.
+
 ## 4. Oracle catalogue
 
 **O1 — directional length seam (P3a)**
