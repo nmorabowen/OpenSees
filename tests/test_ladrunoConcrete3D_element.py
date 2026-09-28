@@ -976,7 +976,14 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
     lch = 50.0
     implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
     explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
-    assert len(implicit_fixed) < 60, (
+    # NOTE (WP concrete3d-hang-diagnosis #877 follow-up): this used to assert < 60 steps. Before the honest
+    # return code + the rescue chain, the LOCAL return map failed at the very first softening state and fell
+    # silently to the elastic trial, so fixed-step implicit died after a handful of steps for the wrong
+    # reason (a hidden material fallback). With the local map now integrating there, the stall is the real
+    # global one: plain DisplacementControl stops at the snap-back limit point after 73 of the 300 steps
+    # (measured). The Tier-3 claim -- fixed-step implicit does NOT get through the ramp, explicit does --
+    # is unchanged, so the bound is "well short of the 300 requested steps" rather than the old number.
+    assert len(implicit_fixed) < 150, (
         f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (

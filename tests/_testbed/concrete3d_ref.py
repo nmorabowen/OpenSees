@@ -298,10 +298,29 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # Hardening qh1/qh2 + ductility measure x(sigma) = the NEXT P1 increment (this slice gives the
 # PEAK-STRENGTH envelope, which is the failure surface and the headline confined-triaxial gate).
 # ===========================================================================
+# Sub-incrementation mode the gates below build their materials with ("det" = the deterministic DEFAULT, "adaptive" =
+# the direct-then-halving path). The two OOFEM-referenced gates (run_flow_potential_gate F2, run_compression_drive_gate G1)
+# pin the DIRECT backward-Euler value of a far-outside increment (OOFEM's own one-step con2dpm2 -2.5448 MPa, and the
+# step-converged 10-sub values), which is by definition what a single direct return gives; the deterministic default
+# deliberately subdivides such increments (n = ceil(f_trial/0.3) pieces) and lands elsewhere (-2.25 at one sub-step,
+# +1.1 % at ten), so those gates run in "adaptive" mode (direct where it converges) -- see _pin_adaptive().
+_DEFAULT_SUBINCR_MODE = "det"
+
+
+class _pin_adaptive:
+    def __enter__(self):
+        global _DEFAULT_SUBINCR_MODE
+        self._old, _DEFAULT_SUBINCR_MODE = _DEFAULT_SUBINCR_MODE, "adaptive"
+
+    def __exit__(self, *a):
+        global _DEFAULT_SUBINCR_MODE
+        _DEFAULT_SUBINCR_MODE = self._old
+
+
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
                   qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
                   ct_temper="none", tension_law="exp", eps_fc=0.0, flow_potential="legacy",
-                  max_subincr=0, compression_drive="legacy", tc_temper="none"):
+                  max_subincr=0, compression_drive="legacy", tc_temper="none", subincr_mode=None):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -318,7 +337,8 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
                 qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper,
                 tension_law=tension_law, eps_fc=eps_fc, flow_potential=flow_potential,
-                max_subincr=max_subincr, compression_drive=compression_drive, tc_temper=tc_temper)
+                max_subincr=max_subincr, compression_drive=compression_drive, tc_temper=tc_temper,
+                subincr_mode=(subincr_mode or _DEFAULT_SUBINCR_MODE))
 
 
 # ---------------------------------------------------------------------------
@@ -895,7 +915,21 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
         return u, True, False
 
-    if cdpm2_flow:                            # globalized first; plain scheme (+ vertex + clamped retry) as fallback
+    if cdpm2_flow and xi_tr > 0.0:
+        # TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (#877 follow-up, defect 2 cost). Measured
+        # on the first-crack step (virgin sigma_xx = 2 MPa, kappa_p < 1): the globalized Newton burns 660-900
+        # residual evaluations failing (its line search bottoms out where the hardening system is locally
+        # indefinite, m0*RR > 1) and the plain Newton then converges in ~25 iterations to the SAME state, so
+        # the plain scheme goes first here and newtonGlob (option A) is the rescue. If the plain scheme aborted on
+        # an axis overshoot (apex) and the rescue does not converge either, keep the apex verdict so the vertex
+        # test below still runs, exactly as when the plain scheme ran second.
+        u, converged, apex = _newton(False)
+        if not converged:
+            plain_apex = apex
+            u, converged, apex = _newton_glob()
+            if not converged and not apex:
+                apex = plain_apex
+    elif cdpm2_flow:                          # compressive / mixed: globalized first; plain scheme (+ vertex + clamped retry) as fallback
         u, converged, apex = _newton_glob()
         if not converged and not apex:
             u, converged, apex = _newton(False)
@@ -1241,9 +1275,26 @@ def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
     _return_map_tensor_1 calls (successes + failures) in this loop; once exhausted, return the honest
     failure (the direct-return fallback) so the caller's status != 0 cuts the step, exactly like any
     other non-convergence. Default 64 keeps the worst case at 64 * 100 Newton iterations -- bounded and
-    fast -- instead of up to 2048 * 100."""
-    out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
+    fast -- instead of up to 2048 * 100.
+
+    SUB-INCREMENTATION MODE (WP concrete3d-hang-diagnosis #877 follow-up): with max_subincr > 0 the DEFAULT is
+    the DETERMINISTIC path (mp["subincr_mode"] = "det", see _return_map_tensor_det): the piece count is a
+    function of the trial overshoot only, so one (state, increment) always takes the same path -- measured on
+    the study's 562 random plastic-trial states the "direct, then halving on failure" path below is
+    discontinuous under a 1e-11 strain perturbation in 12.8 % of states (worst jump ratio 1e8) because the
+    direct and the sub-incremented returns land on different roots. mp["subincr_mode"] = "adaptive" keeps
+    the path described above (opt-in, so old numbers stay reproducible)."""
     nmax = int(mp.get("max_subincr", 0))
+    if nmax > 0 and hardening and mp.get("subincr_mode", "det") != "adaptive":
+        return _return_map_tensor_det(sig_n, deps, mp, kp_n)
+    return _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, hardening)
+
+
+def _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, hardening=True):
+    """ADAPTIVE sub-incrementation (subincr_mode = "adaptive", and the deterministic mode's last resort): the
+    direct return first; on failure halving/doubling down to 2^-max_subincr, bounded by max_sub_attempts."""
+    nmax = int(mp.get("max_subincr", 0))
+    out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
     if out[3] or nmax <= 0 or not hardening:
         return out
     max_attempts = int(mp.get("max_sub_attempts", 64))
@@ -1266,6 +1317,49 @@ def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
             if frac < floor:
                 return out                     # honest failure: the direct-return fallback (elastic predictor)
     return s, k, True, True
+
+
+def _trial_overshoot(sig_n, deps, mp, kp_n):
+    """Dimensionless yield-function value f_tr of the elastic trial (the same f_tr return_map_hardening tests)."""
+    sig_tr = elastic_pred_tensor(sig_n, deps, mp)
+    w, _V = np.linalg.eigh(voigt_to_mat(sig_tr))
+    xi, rho, th = invariants(np.array([w[0], w[1], w[2], 0.0, 0.0, 0.0]))[:3]
+    return _yf_inv_hard(xi, rho, lode_r(th, mp["e"]), kp_n, mp)
+
+
+def _return_map_tensor_det(sig_n, deps, mp, kp_n):
+    """DETERMINISTIC sub-incrementation (hardening map): n = clamp(ceil(f_tr / c), 1, nmax_pieces) equal pieces,
+    each a direct return, chained from the committed state; ALWAYS applied (no 'try direct first'), so a given
+    (state, increment) always takes the same path. If a piece fails, the whole chain is redone with 2n and then
+    4n pieces (a deterministic ladder: each regime is a continuous function of the increment; the only branch is
+    the level, which changes only where a level fails). Refuse (honest failure = the direct-return fallback)
+    only after the ladder. The total work is structurally bounded by n + 2n + 4n <= 7 * nmax_pieces direct
+    returns. c = mp["subincr_c"] (0.3), nmax_pieces = mp["subincr_max_pieces"] (64). n = 1 (f_tr <= c, incl.
+    elastic trials) is one direct return, byte-identical to the direct map."""
+    c = float(mp.get("subincr_c", 0.3))
+    nmax_pieces = int(mp.get("subincr_max_pieces", 64))
+    deps = np.asarray(deps, float)
+    f_tr = _trial_overshoot(sig_n, deps, mp, kp_n)
+    n = 1 if f_tr <= 0.0 else int(min(nmax_pieces, max(1, np.ceil(f_tr / c))))
+    if n == 1:
+        r = _return_map_tensor_1(sig_n, deps, mp, kp_n, True)
+        if r[3]:
+            return r
+    for level in ((n, 2 * n, 4 * n) if n > 1 else (2, 4)):
+        s, k, ok = np.array(sig_n, float).copy(), kp_n, True
+        for _ in range(level):
+            s, k, _pl, cv = _return_map_tensor_1(s, deps / level, mp, k, True)
+            if not cv:
+                ok = False
+                break
+        if ok:
+            return s, k, True, True
+    if mp.get("subincr_rescue", True):
+        # ladder exhausted: last resort = the ADAPTIVE path (bounded by max_sub_attempts), then the honest failure.
+        # Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
+        # alternative is a step cut; the map can only be discontinuous THERE.
+        return _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, True)
+    return _return_map_tensor_1(sig_n, deps, mp, kp_n, True)   # honest failure: the direct-return fallback
 
 
 def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True):
@@ -4167,7 +4261,7 @@ def _uniaxial_stress_step(st, exx, mp, Gf, Gc, lch, As):
     return ev(m)
 
 
-def run_flow_potential_gate(verbose=True, fuzz_n=1500):
+def _run_flow_potential_gate_impl(verbose=True, fuzz_n=1500):
     """B1 — the FULL CDPM2 plastic potential (Eq.22-29) replacing the v1 always-dilatant flow.
       F1 the analytic gradient (dg/dsigV, dg/drho) and its Hessian rows == central FD of the potential value
          (grad < 1e-6, Hessian < 1e-4 relative) at cap / pre-peak / post-peak / tension / deep-compression states;
@@ -4278,7 +4372,7 @@ def run_flow_potential_gate(verbose=True, fuzz_n=1500):
     return res
 
 
-def run_compression_drive_gate(verbose=True):
+def _run_compression_drive_gate_impl(verbose=True):
     """B2 — CDPM2 compressive damage drive (Grassl 2013 Eq.47-49/53/55; OOFEM computeDamage).
       G1 OOFEM con2dpm2 (SI, eps_fc 1e-4, CDPM2 flow, 10 sub-steps): step 5 == the independent OOFEM
          transcription (-1.3222) to 0.5 % (the legacy drive gives -1.3482).
@@ -4407,6 +4501,16 @@ def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
               + f"  spread={res['D3_total_spread']:.2f}*Gf  [CDPM2 damage-only regularization]")
         print(f"  => P2 GATE {'PASS' if ok else 'FAIL'}")
     return res
+
+
+def run_flow_potential_gate(*a, **k):
+    with _pin_adaptive():
+        return _run_flow_potential_gate_impl(*a, **k)
+
+
+def run_compression_drive_gate(*a, **k):
+    with _pin_adaptive():
+        return _run_compression_drive_gate_impl(*a, **k)
 
 
 if __name__ == "__main__":

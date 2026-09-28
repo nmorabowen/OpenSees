@@ -147,6 +147,16 @@ struct Params {
     // fails, so nothing is logged and the step is never cut). Independent of maxSubIncr; only matters when
     // maxSubIncr > 0. Default 64 bounds the worst case to 64 * 100 Newton iterations per call.
     int    maxSubAttempts = 64;
+    // Sub-incrementation MODE (only when maxSubIncr > 0, hardening map). 0 = DETERMINISTIC (DEFAULT, WP
+    // concrete3d-hang-diagnosis #877 follow-up): the piece count n = clamp(ceil(f_trial / subIncrC), 1,
+    // subIncrMaxPieces) is a function of the trial overshoot only and is ALWAYS applied, with a deterministic
+    // ladder n -> 2n -> 4n on a piece failure; refuse only after the ladder. 1 = ADAPTIVE: the direct return first,
+    // then halving/doubling on failure (bounded by maxSubAttempts) -- the pre-follow-up path, opt-in so old numbers
+    // stay reproducible (nDMaterial -subIncr adaptive).
+    int    subIncrMode = 0;
+    double subIncrC = 0.3;
+    int    subIncrMaxPieces = 64;
+    int    subIncrRescue = 1;   // deterministic mode only: after the ladder fails, try the ADAPTIVE path (bounded by maxSubAttempts) before refusing
     // Compressive damage drive (B2, WP concrete3d-damage-drive). 0 = legacy fork drive ((1-wc)(-sig_min) = fc exp(..),
     // histories from the onset only; the kernel/oracle default). 1 = CDPM2 Eq.47-49/53/55 (OOFEM computeDamage /
     // computeDamageParamCompression): eqc += alpha_c d(eps_tilde), kappa_dc = max eqc, kdc2 from the start, kdc1 with
@@ -1053,7 +1063,17 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // a rescue, and only then to the honest failure. Measured on the plain legacy Newton alone: 10-13 % of
     // ordinary tension-dominated first-cracking increments (expansive lateral strain, what an FE Newton
     // iterate produces) failed the return map and silently fell to the elastic trial.
-    if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
+    if (cdpm2Flow && xi_tr > 0.0) {
+        // TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (mirror of the oracle). Measured at the
+        // first-crack step (virgin sigma_xx = 2 MPa, kappa_p < 1): newtonGlob burns 660-900 residual evaluations
+        // failing (line search bottoms out where the hardening system is locally indefinite) and the plain Newton
+        // then converges in ~25 iterations to the SAME state; newtonGlob (option A) is the rescue. If the plain
+        // scheme aborted on an axis overshoot (apex) and the rescue does not converge either, keep the apex
+        // verdict so the vertex test below still runs.
+        newton(false);
+        if (!converged) { const bool plainApex = apex; newtonGlob(); if (!converged && !apex) apex = plainApex; }
+    }
+    else if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
     else { newton(false); if (!converged && !apex) newtonGlob(); }
     const bool overshot = apex;
 
@@ -2108,6 +2128,67 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
                             bool doTangent);
 
+inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                                   bool doTangent, int* subInfo);
+
+// Dimensionless yield-function value f_tr of the ELASTIC TRIAL (the same f_tr returnMapHardening tests).
+inline double trialOvershoot(const Params& mp, const double sig_n[6], const double deps[6], double kp_n)
+{
+    double sig_tr[6]; elasticPredTensor(sig_n, deps, mp, sig_tr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+    double sv[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}, xi, rho, th;
+    invariants(sv, xi, rho, th);
+    return yfInvHard(xi, rho, lodeR(th, mp.e), kp_n, mp);
+}
+
+// DETERMINISTIC sub-incrementation (mirror of the oracle _return_map_tensor_det): n = clamp(ceil(f_tr/c), 1, nmax)
+// equal pieces, each a direct return, chained from the committed state, ALWAYS applied -- one (state, increment)
+// always takes the same path. A piece failure redoes the whole chain with 2n and then 4n pieces; the honest failure
+// (the direct-return fallback, status != 0) only after that. Structurally bounded: n + 2n + 4n <= 7 nmax direct
+// returns. n = 1 (f_tr <= c, incl. elastic trials) is one direct return, byte-identical to the direct map.
+// subInfo: 0 = direct, L >= 2 = the ladder level (piece count) that succeeded, -1 = final failure.
+inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                              double sig_new[6], double& kp_new, double Dtan6[6][6], bool doTangent, int* subInfo)
+{
+    const double c = (mp.subIncrC > 0.0) ? mp.subIncrC : 0.3;
+    const int nmaxP = (mp.subIncrMaxPieces > 0) ? mp.subIncrMaxPieces : 64;
+    const double fTr = trialOvershoot(mp, sig_n, deps, kp_n);
+    int n = 1;
+    if (fTr > 0.0) { const double q = std::ceil(fTr / c); n = (q >= (double)nmaxP) ? nmaxP : (q < 1.0 ? 1 : (int)q); }
+    if (n == 1) {
+        const int st = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
+        if (st == 0) { if (subInfo) *subInfo = 0; return 0; }
+    }
+    const int levels[3] = { n, 2 * n, 4 * n };
+    for (int li = (n == 1 ? 1 : 0); li < 3; ++li) {
+        const int L = levels[li];
+        double s[6], k = kp_n, sn[6], kn, Dt[6][6];
+        for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
+        bool ok = true;
+        for (int p = 0; p < L && ok; ++p) {
+            double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] / L;
+            if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (p == L - 1)) != 0) ok = false;
+            else { for (int i = 0; i < 6; ++i) s[i] = sn[i]; k = kn; }
+        }
+        if (ok) {
+            for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
+            kp_new = k;
+            if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dt[i][j];
+            if (subInfo) *subInfo = L;
+            return 0;
+        }
+    }
+    // ladder exhausted: last resort = the ADAPTIVE path (direct, then halving; bounded by maxSubAttempts), then the
+    // honest failure. Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
+    // alternative is a step cut; the map can only be discontinuous THERE, not everywhere as with adaptive-only.
+    if (mp.subIncrRescue)
+        return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, subInfo);
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
+    if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+    return st0;
+}
+
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
 // sub-increments integrated in sequence from the committed state (doubling back, to at most 2x the size that
@@ -2129,6 +2210,17 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
                            bool doTangent, int* subInfo)
 {
     // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
+    if (mp.maxSubIncr > 0 && hardening && mp.subIncrMode == 0)
+        return returnMapTensorDet(mp, sig_n, deps, kp_n, sig_new, kp_new, Dtan6, doTangent, subInfo);
+    return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, subInfo);
+}
+
+// ADAPTIVE sub-incrementation (subIncrMode = 1, and the deterministic mode's last resort): direct return first, on
+// failure halving/doubling down to 2^-maxSubIncr, bounded by maxSubAttempts. See the comments above.
+inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                                   bool doTangent, int* subInfo)
+{
     const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
     if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
     if (st0 == 0 || mp.maxSubIncr <= 0 || !hardening) return st0;

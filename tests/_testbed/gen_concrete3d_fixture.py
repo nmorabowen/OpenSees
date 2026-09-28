@@ -418,6 +418,13 @@ def main(out=None):
     add_pathf(mp_c, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, "cdpm2_hydro_tens")
     add_pathf(mp_c, [[-4.0e-4, 1.5e-4, 0.5e-4, 1.0e-4, 0, 0]] * 12, "cdpm2_offaxis_shear")
     add_pathf(mp_cs, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep")
+    # #877 follow-up: the default sub-incrementation is DETERMINISTIC (every plastic-trial path above with
+    # max_subincr > 0 is regenerated under it); this block keeps the ADAPTIVE path (-subIncr adaptive) pinned on the
+    # big step (direct fails -> halving). (A first-crack ramp is NOT pinned: the adaptive path is discontinuous
+    # there by construction -- that is why it is no longer the default -- so C++ and oracle may take different
+    # branches within round-off of the same increment.)
+    mp_ca = dict(mp_cs); mp_ca["subincr_mode"] = "adaptive"
+    add_pathf(mp_ca, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep_adaptive")
     # OOFEM con2dpm2 at ONE sub-step per 5e-4 step (SI units, the coordinator's C++ -3.22 MPa regression): the
     # far-outside uniaxial trial that the plain Newton failed sporadically on (=> sub-increment fallback =>
     # discontinuous map). Pins the globalized Newton + sub-incrementation on exactly this path.
@@ -427,7 +434,8 @@ def main(out=None):
     add_pathf(mp_oo, dlo, "cdpm2_con2dpm2_1substep")
     lines.append(f"NPATHF {len(pathfs)}")
     for label, mp, dl, rows in pathfs:
-        lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} {len(dl)}")
+        lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} "
+                     f"{1 if mp.get('subincr_mode', 'det') == 'adaptive' else 0} {len(dl)}")
         for deps, (sig, kp) in zip(dl, rows):
             lines.append(f"{_fmt(deps)}  {_fmt(sig)}  {repr(float(kp))}")
     tanfs = []

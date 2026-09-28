@@ -33,6 +33,7 @@
 // 1/3) — PlaneStrain only.
 
 #include <LadrunoQuad.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno WP-99: commit-refusal counter
 #include <LadrunoFiniteStrain2DKernel.h>   // Ladruno (ADR 70): shared 2D finite-strain kernel
 #include <FiniteStrainND2DMaterial.h>      // Ladruno (ADR 70): setTrialF(F) seam
 #include <Node.h>
@@ -733,8 +734,14 @@ int LadrunoQuad::commitState(void)
     alphaCommit = alpha;
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->commitState();
-  if (formulation == Formulation::SSP)
-    this->commitHgShadows();   // Ladruno (C1): probe only, never fails the commit
+  if (formulation == Formulation::SSP) {
+    // Ladruno (C1): probe only, never fails the commit. The shadow Gauss-point material COPIES run their own
+    // decoupled setTrialStrain/commitState cycle; a refusal in a throwaway probe must not fail the element's REAL
+    // commit (measured: K&R coarse aborted at 0.6 mm on a probe refusal with every real point healthy). See
+    // LadrunoProbeCommitScope in LadrunoMaterialStatus.h -- same guard as LadrunoBrick::commitState().
+    LadrunoProbeCommitScope probeScope;
+    this->commitHgShadows();
+  }
   return retVal;
 }
 

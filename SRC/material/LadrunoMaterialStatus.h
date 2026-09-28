@@ -119,8 +119,33 @@ inline int &ladrunoCommitRefusalCounter(void)
     return nCommitRefusals;
 }
 
+// PROBE SCOPE (WP concrete3d-hang-diagnosis #877 follow-up). Some elements own THROWAWAY material copies
+// (LadrunoBrick / LadrunoQuad hourglass-shadow probes) and commit them through the same commitState() path
+// as their real integration points. A refusal in such a probe says nothing about the element's real state and
+// must never fail the real commit. An element wraps every probe commit in a LadrunoProbeCommitScope; while one
+// is alive ladrunoNoteCommitRefusal() is a no-op. (Nested-safe, unlike snapshot/restore of the counter, and
+// it cannot drop a real refusal declared earlier in the same commit.) tests/test_ladruno_probe_commit_guard.py
+// fails if an element calls commitHgShadows() without opening the scope.
+inline int &ladrunoProbeScopeDepth(void)
+{
+    static int nDepth = 0;
+    return nDepth;
+}
+
+struct LadrunoProbeCommitScope {
+    LadrunoProbeCommitScope() { ++ladrunoProbeScopeDepth(); }
+    ~LadrunoProbeCommitScope() { --ladrunoProbeScopeDepth(); }
+  private:
+    LadrunoProbeCommitScope(const LadrunoProbeCommitScope &);
+    LadrunoProbeCommitScope &operator=(const LadrunoProbeCommitScope &);
+};
+
 // Called by a material whose commitState() could not integrate the step.
-inline void ladrunoNoteCommitRefusal(void) { ++ladrunoCommitRefusalCounter(); }
+inline void ladrunoNoteCommitRefusal(void)
+{
+    if (ladrunoProbeScopeDepth() == 0)
+        ++ladrunoCommitRefusalCounter();
+}
 
 // How many integration points refused the commit now being assembled.
 inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter(); }
