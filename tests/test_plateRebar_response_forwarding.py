@@ -84,6 +84,7 @@ MATS = {
     ]),
     'ASDSteel1D': (_asdsteel, FWD_COMMON + [
         (('PLE',), ('PLE',)),
+        (('Damage',), ('Damage',)),
         (('material', 'PLE'), ('PLE',)),
     ]),
 }
@@ -304,18 +305,30 @@ def test_base_plate_stress_is_unchanged(histories):
     assert nstep == len(STATES[1:]) * NSUB
 
 
-def test_unknown_key_and_bare_prefix_return_nothing():
+def test_reachability_and_null_keys():
     ops.wipe()
     ops.model('basic', '-ndm', 3, '-ndf', 6)
     for n, (x, y) in NODES.items():
         ops.node(n, x, y, 0.0)
     _j2(11)
+    ops.uniaxialMaterial('LadrunoRebarBuckling', 12, 11, '-lsr', 8.0, '-fy', 400.0, '-E', E_S)
     ops.nDMaterial('ElasticIsotropic', 1, E_C, NU_C)
     ops.nDMaterial('PlateRebar', 20, 11, 0.0)
-    ops.section('LayeredShell', 10, 3, 1, T_C, 20, T_S, 1, T_C)
+    ops.nDMaterial('PlateRebar', 40, 12, 90.0)
+    ops.section('LayeredShell', 10, 3, 1, T_C, 20, T_S, 40, T_S)
     ops.element('ASDShellQ4', 1, 1, 2, 3, 4, 10)
-    pre = (1, 'section', '1', 'fiber', '2')
-    assert list(ops.eleResponse(*pre, 'noSuchResponseKey')) == []
-    assert list(ops.eleResponse(*pre, 'material')) == []
+    for head in ('section', 'material'):          # ASDShellQ4 takes either keyword
+        pre = (1, head, '1', 'fiber', '2')
+        assert len(ops.eleResponse(*pre, 'stress')) == 5
+        assert len(ops.eleResponse(*pre, 'strain')) == 5
+        assert len(ops.eleResponse(*pre, 'material', 'stress')) == 1
+        assert len(ops.eleResponse(*pre, 'plasticStrain')) == 1
+        assert list(ops.eleResponse(*pre, 'noSuchResponseKey')) == []
+        assert list(ops.eleResponse(*pre, 'material')) == []
+        assert list(ops.eleResponse(*pre, 'material', 'noSuchResponseKey')) == []
+    # a wrapper as the bar: LadrunoRebarBuckling's own state, and a key it forwards to its J2
+    pre = (1, 'section', '1', 'fiber', '3')
     assert len(ops.eleResponse(*pre, 'stress')) == 5
-    assert len(ops.eleResponse(*pre, 'material', 'stress')) == 1
+    assert len(ops.eleResponse(*pre, 'buckling')) == 1
+    assert len(ops.eleResponse(*pre, 'material', 'reduction')) == 1
+    assert len(ops.eleResponse(*pre, 'plasticStrain')) == 1
