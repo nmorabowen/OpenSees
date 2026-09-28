@@ -1,7 +1,7 @@
 ---
 title: "Why the Ring Walls — the fork's reply to the TIMs 2D-model requests F18–F23"
 project: Ladruno
-status: living draft (updated as the pending results land; see the revision log at the end)
+status: living draft (second issue, 2026-09-28; updated as the pending results land; see the revision log at the end)
 date: 2026-09-28
 audience: TIMs project team (2D-model act)
 answers: _tims_2d_model_requests_2026-09-25.md (F18–F23)
@@ -22,15 +22,13 @@ This is written for the people who run the strip-footing deck. It answers every 
 says what shipped and how to use it, and keeps apart four things: what is **shipped** (merged on
 `ladruno`), what is **measured** (a number with a committed script behind it), what is **pending**
 (an open PR or a run still going), and what is **your decision**. Anything pending is marked as
-pending. Placeholders for results that have not landed yet look like this:
-
-> **[PENDING — name of the result, where it will come from]**
+pending; anything preliminary (a result from work still in progress) is labelled so where it is used.
 
 | | |
 |---|---|
 | Fork | Ladruno / OpenSees, branch `ladruno` |
-| Merged so far | #863 (WP-127), #864 (WP-132), #865 (WP-131 step 1), #866 (WP-133), #869 (WP-128), #870 (WP-136), #871 (WP-129), #872 (WP-134), #885 (WP-144/145 plans), #846 (WP-109, OpenMP on gcc) |
-| Still open | #868 (WP-130, CPPM under Newton), #874 (WP-135, PDMY hang), #876 (WP-132 guide follow-up), #878 (WP-138, footing A/B) |
+| Merged so far | #863 (WP-127), #864 (WP-132), #865 (WP-131 step 1), #866 (WP-133), #869 (WP-128), #870 (WP-136), #871 (WP-129), #872 (WP-134), #874 (WP-135, PDMY hang), #876 (WP-132 guide follow-up), #885 (WP-144/145 plans), #888 (WP-131 re-verify), #846 (WP-109, OpenMP on gcc) |
+| Still open | #868 (WP-130, CPPM under Newton), #878 (WP-138, footing A/B), #892 (WP-150, the wall's mechanism and the regularization memo) |
 | Plan and findings A–D | `Ladruno_implementation/127_tims_2d_requests_plan.md` |
 
 Every line of §2 of your intake was checked against the source before any work started
@@ -42,31 +40,43 @@ the "abrupt switch at 0.5 kPa" in the error norm is a continuous 1 kPa floor (§
 
 ## 0. The short version
 
-1. **The wall is an integration failure, not a model failure and not your deck.** `ModifiedEuler`
-   (IntScheme 1) has a set of discrete defects that, together, let the back-stress α leave the
-   bounding surface in one accepted substep and then commit states the model cannot reach. We traced
-   it (WP-128, #869) and confirmed it with an independent integrator written from the paper
-   (WP-134, #872): **from admissible ring starts the exact equations never escape (0 escapes);
-   `ModifiedEuler` as you run it escapes 25 times on the same starts.** The mechanism is in §2.
-2. **Your b8 worst point (element 1950, Gauss point 3) cannot be integrated by anything.** Its α is
+1. **Your deck walls twice, for two different reasons.** `ModifiedEuler` (IntScheme 1) walls first
+   because of a set of discrete integration defects: they let the back-stress α leave the bounding
+   surface in one accepted substep and then commit states the model cannot reach (§2; WP-128 #869,
+   WP-134 #872). On our copy of your deck it floors at **s/B 0.0292**, inside your own band, after
+   committing ρ_α up to 13.09 and a spurious +6.4 % stiffening. SAS-ME removes that wall and reaches
+   **s/B 0.0508**, where it stops on a **constitutive** singularity of DM04 (the plastic modulus at an
+   α_in re-seat), not an integration defect. There is **no peak and no plateau**: q is 966.7 kPa and
+   still rising (§4; WP-138 #878, WP-150 #892).
+2. **Read the calibration caveat before any footing curve (§4).** The campaign SANISAND set has the
+   strength of a very dense sand but dilates ~20–23× (triaxial) / ~8–14× (plane strain) less than
+   stress–dilatancy requires, and peaks at 4–16 % strain. Each FE curve is consistent with the classical
+   capacity of its own friction angle (§4.10); which one is physical depends on your sand's φ′. We ask
+   you to confirm the calibration against your lab data (D7, §5.1).
+3. **Your b8 worst point (element 1950, Gauss point 3) cannot be integrated by anything.** Its α is
    6–7× outside the bounding surface. It is not a hard point; it is an inadmissible state that an
    earlier bad increment produced. The right answer is to refuse it, and the new integrator does.
-3. **The error floor you asked for in F18(a) is the wrong fix.** Today's norm already has a 1 kPa
+4. **The error floor you asked for in F18(a) is the wrong fix.** Today's norm already has a 1 kPa
    floor, and at a few kPa the substep count is set by stability, not accuracy. The flag exists
    (`-errFloor`, in SAS-ME), but it will not buy what you hoped.
-4. **What shipped:** a new integrator, **SAS-ME (`IntScheme 129`)**, that reproduces the paper
+5. **What shipped:** a new integrator, **SAS-ME (`IntScheme 129`)**, that reproduces the paper
    equations to 2e-7 relative and refuses what it cannot integrate (WP-129, #871); per-point
    post-mortem counters and a material-point replay command (WP-127, #863); a deterministic PARDISO
-   mode (WP-132, #864); PDMY03's critical-state constants as flags, plus a verdict on the PDMY
-   "dilation brake" (WP-133, #866).
-5. **A caution about results you already have.** Every `ModifiedEuler` SANISAND result carries an
+   mode and its guide paragraph (WP-132, #864, #876); PDMY03's critical-state constants as flags, plus a
+   verdict on the PDMY "dilation brake" (WP-133, #866); the PDMY substep cap (WP-135, #874).
+6. **Our integrator recommendation** (yours and the owner's to decide): `IntScheme 129`, TanType 0,
+   TolR 1e-4, `-maxSubsteps 2000`, with the step policy of our runs (§4.11). TolR 1e-3 and TanType 1
+   were measured and rejected. It is about the integrator only.
+7. **A caution about results you already have.** Every `ModifiedEuler` SANISAND result carries an
    integration error of **6–15 % of the stress increment on 1e-4 strain increments**, measured on
-   benign 20–100 kPa states (WP-129). On your footing that has so far moved the load–settlement curve
-   by less than about 0.6 % past s/B 0.002, but by up to 5.5 % in the first steps (§4, interim).
-6. **Still pending:** CPPM under a global Newton, with a sign fix to its tangent (WP-130, #868);
-   threading SANISAND (F19 step 2); the full footing A/B and its verdict (WP-138, #878).
-7. **Yours to decide** (§5): the p'-floor rule, the low-p dilatancy sigmoid (`D_factor`), the mesh pair,
-   and what "limit load" means for a dense dilatant sand.
+   benign 20–100 kPa states (WP-129). On the footing curve that shows up as 5.5 % on the first step,
+   at most 0.64 % from s/B 0.001 to 0.0174, and a spurious upturn near the `ModifiedEuler` wall (§4.4).
+8. **Still pending:** CPPM under a global Newton, with a sign fix to its tangent (WP-130, #868); threading
+   SANISAND (F19 step 2); **R1**, an opt-in model-level fix of the wall that the owner approved
+   (preliminary oracle results, no PR yet); the mesh study with R1 on (R2); the final sensitivity ladders.
+9. **Yours to decide** (§5): the p′-floor rule, `D_factor`, the mesh set, what "limit load" means for a
+   dense dilatant sand, the calibration (D7), the Lode parameter c ≥ 7/9 (D8) and whether to use R1
+   (D9); and the data we need from you (§5.1).
 
 ---
 
@@ -193,7 +203,7 @@ capped updates returned by CPPM, stress within 1.3 % of the uncapped integration
 fails the update is refused and nothing is integrated explicitly.
 
 On your footing, though, this lever is small: the cost is **not concentrated in the ring** (§4: the
-ring holds about 6–8 % of the substeps), so a per-point fallback would recover under 10 % of the
+ring holds about 5–8 % of the substeps), so a per-point fallback would recover under 10 % of the
 material time. It also inherits `ModifiedEuler`'s defects for every point it does not rescue. It is
 not ported to SAS-ME yet (§6).
 
@@ -393,8 +403,8 @@ flip-determinism deck, the first push step has **no reachable equilibrium under 
 `-deterministic` for regression tests, for reproducing a failure, and for comparing nodes; do not use
 it to settle a result.
 
-**Status.** Mode SHIPPED (#864). The "repeatable is not reliable" guide paragraph is **PENDING**
-(#876). Measured on Windows (AMD); not yet run on Esmeralda.
+**Status.** Mode SHIPPED (#864). The "repeatable is not reliable" guide paragraph SHIPPED (#876).
+Measured on Windows (AMD); not yet run on Esmeralda.
 
 **Evidence.** `75c_pardiso_solver_recipe.md` Trap 7, "The deterministic mode"; quirks rows WP-132 (CNR
 process-wide and sticky; `mkl_cbwr_set` returning -8; `-cbwr AVX2` refused on AMD; `iparm` zeroed at
@@ -433,26 +443,31 @@ your candidates with a retuned line failing the saturation gate as well. The rou
 model whose dilatancy vanishes at critical state by construction (SANISAND's D ∝ M^d(ψ) − η, PM4Sand).
 Your ten-candidate and strip numbers were not re-run.
 
-A related defect found in WP-133 and fixed in the pending WP-135: a wild Newton iterate makes PDMY's
+A related defect found in WP-133 and fixed in WP-135 (#874, merged): a wild Newton iterate makes PDMY's
 substep count `|Δε|/1e-5` explode to about 1e9 per call, which is why a two-element model "hung" in
 `analyze`. With the fix PDMY refuses such a trial in milliseconds. Under `SSPquad` (a host that
 discards the refusal) the call is bounded but the step can still be accepted.
 
-**Status.** Note SHIPPED (#866). Hang fix **PENDING** (#874).
+**Status.** Note SHIPPED (#866). Hang fix SHIPPED (#874).
 
 **Evidence.** `133_pdmy_notes.md` (b); quirks row "PDMY's 'dilation brake' `isCriticalState()` fires
-only on the increment that CROSSES the critical-state line"; PR #874.
+only on the increment that CROSSES the critical-state line"; PR #874; `tests/test_wp135_pdmy_substep_cap.py`.
 
 ---
 
-## 2. What actually walls the deck
+## 2. What walls the deck under `ModifiedEuler`
+
+> **Scope, since the footing A/B landed (§4).** This section explains the `ModifiedEuler` wall: s/B
+> 0.0292 on our copy of your deck, inside your own 0.026–0.041. SAS-ME removes it and stops later, at
+> s/B 0.0508, on a different, constitutive cause (§4.6).
 
 ### 2.1 The ring, briefly
 
 Just outside the footing edge, the top row of Gauss points sits at p' of a few kPa with η on the
 bounding surface. There SANISAND's plastic modulus scales with p and its elastic moduli with √p, so the
 rate equations are stiff, and an explicit scheme takes substeps sized by stability, not accuracy. That
-part is physics and would cost time under any explicit integrator. It is not what stops the run.
+part is physics and would cost time under any explicit integrator. It is not what stops a
+`ModifiedEuler` run.
 
 ### 2.2 What stops it: a chain of discrete defects in `ModifiedEuler`
 
@@ -520,9 +535,10 @@ nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm
 - Use a **forwarding** element. `LadrunoQuad` (your element) forwards the refusal, so your step
   controller cuts the step.
 
-The configuration we ran on our copy of your deck (WP-138) was
-`129 0 1 1e-7 1e-7 -flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000 -Presidual 0`, on
-`LadrunoQuad -bbar` at B/8. That is a measured configuration, not yet a recommendation: see §4.
+The configuration we ran on our copy of your deck (WP-138, arm E_B) was
+`129 0 1 1e-7 1e-4 -flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000 -Presidual 0 -honorTolR 0`, on
+`LadrunoQuad -bbar` at B/8 (TolF 1e-7, TolR 1e-4). It is also our integrator recommendation for the
+campaign (§4.11).
 
 **Behaviour change you should know about.** Since #871, `LadrunoSANISAND::commitState` refuses to
 commit a trial whose last update was refused, and this includes a **`ModifiedEuler` `-maxSubsteps` cap
@@ -539,9 +555,11 @@ and restart files written by an older build will not load (the wire vector grew)
    6–15 % of the stress increment on 1e-4 strain increments at benign 20–100 kPa states, 20–65 % on the
    err = 0 path, and U9 alone at 0.6 / 6 / 24 % for δ = 1e-5 / 1e-4 / 1e-3, none of it visible to the
    error test or shrinking with TolR. This includes your campaign curves. How much it moves a
-   load–settlement curve depends on the deck; on your footing it is small past s/B 0.002 and up to
-   5.5 % in the first steps (§4, interim). Treat any `ModifiedEuler` ring-point state, and any quantity
-   read from ring points, as unreliable.
+   load–settlement curve depends on the deck; on your footing it is 5.5 % on the first step, at most
+   0.64 % from s/B 0.001 to 0.0174, and then a **spurious upturn** as the `ModifiedEuler` wall
+   approaches (+6.4 % over SAS-ME at s/B 0.0292, from committed states up to ρ_α 13.09; §4.2). Treat any
+   `ModifiedEuler` ring-point state, any quantity read from ring points, and any `ModifiedEuler` curve
+   near its wall, as unreliable.
 2. **The explicit lane's failure dumps contain inadmissible states.** The b8 1950/2–3 rows are not a
    hard point of the material; they are the product of the defects in §2. Do not calibrate or test
    anything against them except a refusal.
@@ -551,84 +569,346 @@ and restart files written by an older build will not load (the wire vector grew)
    `TanType 1` and `2` are the continuum tangent. Under CPPM, the vanilla `TanType 2` had the wrong sign
    (fixed by default in #868, pending).
 4. **Committed steps on the relaxed rung.** Your ladder's last rung (`KrylovNewton` at 10× the
-   tolerance) is not a small print item on this deck. On our copy, 47 of 79 committed `ModifiedEuler`
-   steps and 26 of 61 SAS-ME steps were committed there, and a `TanType 1` run committed almost every
-   step there once the cap started refusing off-path iterates. That acceptance alone moved the curve by
-   about 1–2 % in our interim runs. Report the rung of every committed step, and the share committed at
-   the relaxed tolerance.
+   tolerance) is not a small print item on this deck. On our copy, the share of the settlement accepted
+   on that rung is 88.5 % (`ModifiedEuler`), 90.9 % (SAS-ME), 92.9 % (SAS-ME at TolR 1e-3) and 81.7 %
+   (SAS-ME at B/16) (§4.4). What that acceptance does to q has not been isolated by any of our arms.
+   Report the rung of every committed step, and the share of the settlement committed at the relaxed
+   tolerance.
 5. **The 30 % run-to-run shift is a signal about the deck, not the solver** (F22). Deterministic mode
    will make the two runs agree; it will not tell you which is right.
 6. **The `-Presidual` 1.01 / 5.05 kPa comparison of your §1.4 was made with the defective integrator.**
-   Its conclusion ("does not move the wall") should be re-measured under SAS-ME before it is used to
-   justify a floor (§5).
+   Re-measured under SAS-ME (§4.7, interim): no residual pressure from 0.5 to 20 kPa removes the wall,
+   0.5 kPa brings it earlier, and larger values reach further only through an apparent cohesion. So it
+   does not justify a floor (D1).
 7. **PDMY under `SSPquad`**: a refused trial is discarded by the host (WP-135 bounds the time, not the
    acceptance). Prefer a forwarding element (`quad`, `LadrunoQuad`, the u-p family) for any deck that
    depends on a material refusal.
 
 ---
 
-## 4. The footing A/B (WP-138) — INTERIM
+## 4. The footing A/B (WP-138)
 
-> **Status: interim. PR #878 is a draft and the runs are not finished. Numbers below come from the
-> committed run records on `origin/wp/138-footing-sas-me-ab`
-> (`Ladruno_files/testbed/footing_sas_me_ab/runs/`) and will be replaced by the WP-138 report
-> `138_footing_sas_me_ab.md` when it lands.**
+> **CALIBRATION CAVEAT — read this before any curve in this section.**
+>
+> The WP-150 element tests (#892, memo §10, commit `e14703ca7`) ran the campaign SANISAND set on the
+> exact WP-134 oracle, in drained triaxial and plane-strain compression at p0 = 10 / 50 / 150 / 500 kPa:
+>
+> - **The strength is that of a very dense sand.** Plane-strain φ′_peak falls from 60.1° to 44.9° as
+>   p0 rises from 10 to 500 kPa.
+> - **The dilatancy is not.** It dilates **~20–23× less in triaxial** than stress–dilatancy (Bolton 1986)
+>   requires for that strength (φ′_cs 33.0° from Mc), and **~8–14× less in plane strain**. The
+>   plane-strain figure uses an *estimated* plane-strain critical-state angle (≈ 39.5°), because the set
+>   does not reach critical state by 25 % strain.
+> - **It peaks late:** at 4–16 % axial strain, where DM04's own lab-calibrated Toyoura set at the same
+>   density peaks at 1–5 %. A0 = 0.05 is 14× below Toyoura's value.
+> - **The ring dilates even less.** UW's `D_factor` never fires in these tests (p′ ≥ 10 kPa throughout);
+>   at the ring (p′ ≈ 3–5 kPa) it cuts the dilatancy further.
+>
+> So **none of the footing curves here is called physical** until you confirm the calibration against
+> your lab data. That covers SANISAND (966.7 kPa at s/B 0.0508, still rising), the fork's
+> `DruckerPrager` control (38°, ψ = 0; max 824.2 kPa) and your own `PressureDependMultiYield` control
+> (PDMY01, 33° cone; limit point 417.6 kPa at s/B 0.116, your intake §1.1). Our request, in one
+> sentence:
+>
+> *"The campaign SANISAND set reproduces the strength of a very dense sand but dilates ~20–23×
+> (triaxial) / ~8–14× (plane strain) less than stress–dilatancy (Bolton 1986) requires, and peaks at
+> 4–16 % strain (a lab-calibrated DM04 set at the same density peaks at 1–5 %). Please confirm the
+> calibration against your lab data (φ′_peak, strain at peak, dilatancy) before the footing curves are
+> used."*
+>
+> Everything below is about why the integration stops and what it costs. It says nothing about where a
+> correctly calibrated footing would peak. §4.10 puts each curve against the classical capacity of its
+> own friction angle.
 
-**Setup.** The fork's own copy of your deck, built from the §1 spec of your intake (nothing in the
-Workbench was run): plane-strain strip, `LadrunoQuad -bbar`, B/8, `system Pardiso`, `NormUnbalance`
-1e-5, Newton → NewtonLineSearch → KrylovNewton (tol × 10), MKL 1 thread with `MKL_CBWR=COMPATIBLE`.
-Arm A: `ModifiedEuler` (`IntScheme 1`, TanType 0). Arm B: SAS-ME (`IntScheme 129`, TanType 0, TolR 1e-7,
-build `beb6d8333`). A `DruckerPrager` 38° control reached s/B 0.15 in 249 s, as on your side.
+Source for this section, unless stated: the WP-138 report `138_footing_sas_me_ab.md` (#878, draft,
+at `762be8332`), with the mechanism, the localization analysis and the capacity bands from the WP-150 memo
+`150_sanisand_regularization_memo.md` (#892, draft; §10 at `e14703ca7`, §11 at `00198f278`).
 
-**Where the runs are.**
+### 4.1 Setup
 
-| arm | reached | how it ended | committed steps (rung N / NLS / K×10) |
+The fork's own copy of your deck, built from the §1 spec of your intake. Nothing in your Workbench was
+run or edited. Plane-strain strip, B = 1.5 m, full width; `LadrunoQuad -bbar`; B/8 (2 430 elements,
+9 720 Gauss points); `system Pardiso`; `NormUnbalance` 1e-5 × the applied vertical load (0.0415 kN);
+Newton (25) → NewtonLineSearch (40) → KrylovNewton (60, tolerance × 10); ds from 2e-5 m, doubled after
+6 good steps up to 1e-3 m, halved on a failed ladder, **FLOOR** when ds < 2e-7 m. Where your spec was
+silent we filled the gap and said so (mesh grading reconstructed from your `ring_points_b8.csv`,
+γ′ = 9.81 kN/m³, a rough guided footing, F10's step controller): #878 §1, gaps G1–G6.
+
+**The arms that count** ran on Esmeralda, build `ladruno` **`7936ed6e0`**, each alone on its node with
+MKL and OpenMP at 1 thread, so their wall clocks compare (#878 §8). All use the material line of your
+intake with `-flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000 -Presidual 0`:
+
+- **E_A**: `ModifiedEuler` (`IntScheme 1`), TanType 0.
+- **E_B**: SAS-ME (`IntScheme 129`), TanType 0, TolR 1e-4. The reference SAS-ME arm.
+- **E_D**: E_B with TolR 1e-3.
+- **E_C2**: E_B with TanType 1, `-maxSubsteps 20000`, KrylovNewton at 1× the tolerance.
+- **E_B16**: E_B on a **B/16** mesh (9 720 elements, 38 880 Gauss points).
+- **Control**: UW `DruckerPrager` 38°, ψ = 0, on the same deck (a local run).
+
+The earlier local legs (A and B, to s/B 0.0174) are kept for the early-curve comparison and the replay
+study (§4.4, §4.5). E_B
+reproduced the local B leg to 1e-5 kPa through step 40 (#878 §4).
+
+### 4.2 Where each arm stops
+
+| arm | integrator | s/B at FLOOR | q (kPa) | first `loadingNonPosH` at s/B | refusals (converged-step census) | push wall (h) |
+|---|---|---|---|---|---|---|
+| E_A | `ModifiedEuler` | **0.0292** | 701.8 | — (no refusal path) | 542 cap hits, 3 943 forced at dT_min | 2.90 |
+| E_B | SAS-ME, TolR 1e-4 | **0.0508** | 966.7 | **0.0363** | NonPosH 232, maxSubsteps 209, errorAtDTmin 1 | 4.32 |
+| E_D | SAS-ME, TolR 1e-3 | 0.0410 | 808.3 | 0.0334 | maxSubsteps 13 316, errorAtDTmin 190, NonPosH 173 | 4.67 |
+| E_C2 | SAS-ME, TanType 1 | 0.0114 | 317.0 | 0.0064 | errorAtDTmin 175 011, maxSubsteps 40 683, NonPosH 409 | 12.35 |
+| E_B16 | SAS-ME, B/16 | 0.0135 | 352.8 | 0.0135 | maxSubsteps 115, NonPosH 11 | 3.75 |
+| control | `DruckerPrager` 38°, ψ = 0 | 0.15 (target reached) | 752.0 (max 824.2) | — | — | 0.07 |
+
+(#878 §0 and §8. The census sums the per-step refusal lines of the converged steps; the final ladder at
+the floor is not in it.)
+
+**Every SANISAND arm stops on the step floor.** The SAS-ME arms reach it on `loadingNonPosH` refusals.
+**E_A cannot refuse**: `ModifiedEuler` has no refusal path, so it floors through cap hits and
+acceptances forced at dT_min (542 and 3 943 over the run), and it **commits** what it cannot
+integrate. Over s/B 0.026–0.0293 it forced 3 786 acceptances and the committed ρ_α reached **13.09**;
+SAS-ME over the same window stays at ρ_α ≤ 1.004 with no forced acceptance. The ModifiedEuler curve
+bends up there, to **+6.4 %** over E_B at the same s/B, and that stiffening is spurious (#878 §8.4).
+E_A's wall sits inside your own `ModifiedEuler` band (s/B 0.026–0.041), so our copy reproduces your
+wall. Read your `ModifiedEuler` curves near their wall with this in mind.
+
+### 4.3 The verdict
+
+**SAS-ME moves the wall from s/B 0.0292 to 0.0508, but it does not remove it.** There is **no peak and
+no plateau** on this deck: at the wall q = 966.7 kPa and still rising (q_max = q_end; the slope over the
+last 0.005 s/B is 0.24× the initial slope). The first `loadingNonPosH` refusal comes at s/B 0.0363, and
+from there the refusals accumulate until they end the run (#878 §0, §8.1, §8.3).
+
+**The cause is constitutive, not integration.** No integrator setting lifts it (TolR 1e-3 walls earlier,
+TanType 1 much earlier, §4.4), the independent oracle stops at the same kind of state, and the
+refusing points are pre-peak (ρ_α < 1). §4.6 gives the mechanism. This revises the first issue of this
+report, which called the wall an integration failure: that is true of the `ModifiedEuler` wall
+(0.0292; §2), not of the one SAS-ME reaches.
+
+### 4.4 Accuracy and cost
+
+**Per-increment accuracy** (replays of real increments against the oracle, §4.5; #878 §5.3). SAS-ME
+sits at **0.6–2e-4·p′** at every checkpoint: that is its TolR 1e-4 error control. `ModifiedEuler`'s
+error depends on the state: it is **about 20× worse only at the onset of ring plasticity** (s/B ≈ 0.001),
+and **at parity from s/B ≈ 0.01**, apart from isolated low-p outliers (2e-3·p′, a point taken in one
+substep). It is not a blanket accuracy factor.
+
+**The load–settlement curves**, `ModifiedEuler` against SAS-ME on the local legs (#878 §5.1):
+
+| s/B range | max \|q_B − q_A\| / q_A |
+|---|---|
+| 0–0.001 (the worst is the first step, s/B 1.3e-5) | 5.5 % |
+| 0.001–0.005 | 0.64 % |
+| 0.005–0.0174 | 0.51 % |
+
+Past s/B 0.016 the Esmeralda pair separates, to 6.1 % over 0.016–0.029, as E_A turns up (§4.2).
+
+**Wall clock and substeps per 0.01 s/B** (#878 §8.2; hours / 1e9 substeps, partial intervals prorated):
+
+| arm | 0–0.01 | 0.01–0.02 | 0.02–0.03 | 0.03–0.04 | 0.04–0.05 | whole run, h per 0.01 s/B |
+|---|---|---|---|---|---|---|
+| E_A (`ModifiedEuler`) | 0.58 / 0.48 | 1.14 / 0.94 | 1.24 / 1.01 | — | — | 0.99 |
+| E_B (SAS-ME) | 0.40 / 0.49 | 0.82 / 1.02 | 0.93 / 1.09 | 1.02 / 1.14 | 1.05 / 1.14 | 0.85 |
+| E_D (TolR 1e-3) | 0.47 / 0.44 | 0.99 / 0.97 | 0.98 / 0.96 | 1.43 / 1.39 | 7.82 / 7.88 (to 0.041) | 1.14 |
+| E_C2 (TanType 1) | 5.12 / 5.05 | 50.0 / 56.6 (to 0.0114) | — | — | — | 10.77 |
+| E_B16 (B/16) | 2.46 / 2.71 | 3.65 / 4.16 (to 0.0135) | — | — | — | 2.77 |
+
+SAS-ME takes about the same substeps per unit settlement as `ModifiedEuler` and is **1.3–1.45× cheaper
+in wall clock** per unit s/B. E_B's cost is flat at about 1 h per 0.01 s/B from s/B 0.01 to its wall, so
+the 0.0508 wall is not a budget stop.
+
+**Where the cost is.** The ring (p′ < 10 kPa) holds 5–8 % of all substeps and the 100 costliest points
+7–9 % (#878 §6). The cost is spread over the whole plastic zone, so a per-point fallback for the worst
+points (F18(d)) would recover under 10 %. The multiplier is the global iteration count × every point's
+update.
+
+**Most of the settlement is accepted on the relaxed rung.** The KrylovNewton rung accepts at 10× the
+test tolerance (0.415 kN against 0.0415 kN). The share of the settlement accepted there is **88.5 %**
+(E_A), **90.9 %** (E_B), **92.9 %** (E_D) and **81.7 %** (E_B16) (#878 §8.2). The effect of that
+acceptance on q is **not isolated by any arm**; E_C2 changed the Krylov tolerance together with two
+other settings.
+
+**TolR 1e-3 is not a lever (E_D).** It walls **earlier**, at s/B 0.0410 against 0.0508. It costs the
+same as E_B per unit s/B up to s/B 0.038 and then rises to 4.6× E_B's (0.038–0.041); it has 13 316 maxSubsteps
+refusals against 209. Its q runs **−3.7 %** (median) below E_B over s/B 0.02–0.041 (range −4.3 % to
+−1.9 %), and −1.4 % (median) over 0.001–0.02. No saving, an earlier wall: keep TolR 1e-4 (#878 §8.5).
+
+**TanType 1 is not viable here (E_C2).** Global iterations per step fall (median 11 → 4 → 2), but the
+accepted step collapses with them (median ds 1.25e-6 m past s/B 0.01, where E_B runs at 1e-3 m). E_C2
+floors at **s/B 0.0114** after 12.35 h, 13× E_B's cost per unit s/B, while its curve stays within
+1.45 % of E_B. The consistent tangent buys a step-size collapse, not settlement (#878 §8.6). This
+supersedes the stopped local TanType 1 arm of the first issue.
+
+### 4.5 The replay figures, reconciled
+
+The first issue quoted two pairs of figures for the per-increment error on the footing's real
+increments and asked which increments each covers. Both are right, for different increments (#878
+§5.3). Each row is a Gauss point's committed state plus the strain increment it actually received in
+the next converged step, replayed through `ModifiedEuler`, SAS-ME and the WP-134 oracle (Radau, rtol
+1e-10); the error is ‖σ − σ_oracle‖ / p′ at the start of the increment.
+
+| committed state (local A run) | increment | points | ME median | SAS-ME median |
+|---|---|---|---|---|
+| step 25, s/B 0.00141 (onset of ring plasticity) | step 26, ds 3.2e-4 m | 44 | **1.16e-3** | **5.74e-5** |
+| step 50, s/B 0.0125 | step 51, ds 1.25e-4 m | 46 | 6.37e-5 | 6.28e-5 |
+| step 75, s/B 0.0165 | step 76, ds 5.0e-4 m | 43 | 9.42e-5 | 1.85e-4 |
+| step 78, s/B 0.0172 (last converged pair) | step 79, ds 2.5e-4 m | 44 | **6.85e-5** (max 1.98e-3) | **9.99e-5** |
+
+- "ModifiedEuler 1.2e-3·p′ vs SAS-ME 6e-5·p′" is the **step 25 → 26** set.
+- "≈ 7e-5 vs ≈ 1e-4" is the **step 78 → 79** set; there the `ModifiedEuler` median is the lower one, its
+  maximum is not.
+- Both are **medians over ~44 selected worst points** (highest ρ_α, lowest p′, most substeps), not over
+  the 9 720 points of the mesh, and **both cover s/B ≤ 0.0174**. No replay exists at the Esmeralda walls.
+- No real increment up to s/B 0.017 was refused by either integrator, and the oracle integrated all of
+  them.
+
+### 4.6 Why the wall: the mechanism
+
+DM04's plastic modulus has a singularity at an α_in re-seat (#892 memo §1.4; #878 §10):
+
+```
+a = (α − α_in):n,   h = b0 / a,   Kp = ⅔·p·h·(b:n)
+```
+
+At a re-seat α_in := α, so a = 0 and h is infinite (capped at 1e10 in the code). If b:n > 0 the
+modulus is large and positive; if b:n ≤ 0 it goes to −∞ and the increment has no solution. The
+singular set is **{a = 0, b:n ≤ 0}**, and `loadingNonPosH` is the SAS-ME refusal that names it.
+
+- **The refusing points are pre-peak** (ρ_α 0.93–0.96, dense, ψ ≈ −0.1, inside the bounding surface) and
+  they chatter: E_B makes 10.1 million re-seats (#892 §1.3).
+- **It is in the continuum equations, not in SAS-ME.** The WP-134 exact oracle stopped on the same 0/0 at
+  your ring point 1950/3 (#872; #892 §1.4).
+- **No integrator knob lifts it** (§4.4), and **no boundary-value regularizer** can lift an unbounded
+  negative modulus at a point. Any cure is a change to the model (R1, §5).
+
+**Preliminary, material-point oracle (R1 work, in progress; recorded in #892 §1.4).** The exact rate
+equations reach this set through a **Zeno accumulation of re-seats on the b:n → 0⁺ side**: after a
+re-seat, h = ∞ makes α slide along b; with b nearly perpendicular to n that slide rotates n, a turns
+negative and the next re-seat follows. At E_B's refuser 1880/1 the re-seat intervals run 1.7e-2,
+1.5e-3, 5.6e-5, 2.4e-6, … and accumulate at a finite time where a = 0 and b:n = 1.9e-8 > 0.
+**`loadingNonPosH` is only the b:n < 0 exit of that sequence.**
+
+### 4.7 Sensitivity ladders — interim, 16:20 on 2026-09-28
+
+Each leg is E_B with one knob changed (the S1 → S4 ablation is cumulative). Several legs were still
+running at the snapshot, and the S and A0/h0 legs shared nodes, so no wall clock is quoted (#878 §11,
+interim).
+
+| ladder | leg | status at 16:20 | s/B reached | first NonPosH at s/B |
+|---|---|---|---|---|
+| reference | E_B (Presidual 0, e 0.6944, A0 0.05, h0 1.3) | FLOOR | 0.0508 | 0.0363 |
+| Presidual | 0.5 / 1 / 2 / 5 / 10 / 20 kPa | FLOOR / running ×5 | 0.0303 / 0.0400 / 0.0427 / 0.0519 / 0.0590 / 0.0711 | **0.0182** / 0.0333 / 0.0346 / 0.0416 / 0.0373 / 0.0535 |
+| e_init | 0.65 / 0.75 / 0.80 / 0.85 | running / FLOOR / running / FLOOR | 0.0435 / 0.0431 / 0.0567 / 0.0442 | 0.0395 / 0.0349 / 0.0525 / 0.0414 |
+| ablation | S1 z_max = 0 → S2 + n_b = 0 → S3 + n_d = 0 → **S4 + A0 = 0.001** | running | 0.0368 / 0.0348 / 0.0362 / 0.0374 | 0.0355 / 0.0269 / 0.0347 (1 event) / **none** |
+| A0 | 0.02 / 0.10 | FLOOR | 0.0315 / 0.0361 | 0.0237 / 0.0310 |
+| h0 | × 3 (3.9) | FLOOR | 0.0188 | **0.0091** |
+
+- **Only killing the dilatancy clears `loadingNonPosH`.** S4 (A0 = 0.001) has no NonPosH event to s/B
+  0.0374, past E_B's onset. It is not cheap: a median of 2.4e7 substeps per step over its last 20 steps
+  (max 9.4e7), against 7.3e6 for E_B, with maxSubsteps refusals. S1–S4 also carry only about a third of
+  E_B's load at the same s/B (#892 §1.4).
+- **Presidual 0.5–20 kPa never clears it**, and the onset is **non-monotonic**: 0.5 kPa brings it
+  *earlier* (0.0182) than Presidual 0. A larger Presidual walls later only by stiffening the response
+  (q at s/B 0.03 rises from 675 to 835 kPa between 0.5 and 20 kPa): an apparent cohesion, not a cure.
+- **e_init 0.65–0.85 never clears it.** A0 is non-monotonic (onset 0.0237 / 0.0363 / 0.0310 at A0
+  0.02 / 0.05 / 0.10). **h0 × 3 brings the onset down to 0.0091**: α reaches the bounding surface sooner.
+- A non-monotonic onset is what a singular event looks like, not a smooth limit (#892 §1.4).
+
+**Your §1.4 `-Presidual` comparison (caution 6), re-measured under SAS-ME.** Your conclusion holds in
+the sense that matters: no residual pressure from 0.5 to 20 kPa removes the refusal. It does move where
+the run stops, in both directions: 0.5 kPa floors earlier (s/B 0.0303 against 0.0508), and the larger
+values reach further only by adding strength that is not in the sand. Do not use `-Presidual` to push
+past the wall (D1).
+
+### 4.8 Mesh: B/16
+
+E_B16 floors at s/B 0.0135, earlier than B/8 (#878 §9). Up to there, B/16 runs softer than B/8 from
+s/B 0.010:
+
+| s/B | 0.002 | 0.005 | 0.008 | 0.010 | 0.012 | 0.013 | 0.0135 |
+|---|---|---|---|---|---|---|---|
+| q_B16 / q_B8 − 1 | −0.58 % | −0.14 % | −0.91 % | −3.89 % | −4.95 % | −4.84 % | −3.57 % |
+
+**The band is one element wide on both meshes** (full width at half maximum of the incremental shear
+strain 1.00–1.11 element sizes), it halves with the element and it follows the mesh lines.
+
+**What it is: non-associated localization that begins while the material is still hardening** (#892
+§2.1, Rudnicki & Rice 1975). A plane-strain acoustic-tensor scan of the continuum tangent finds
+det ≤ 0 at **16.8 % of the Gauss points at s/B 0.011 on B/8** (9.1 % at s/B 0.0096 on B/16, 16.9 % at
+its wall), where H/2G ≈ 1.05–1.07. The same states with associated flow are **elliptic everywhere**; only 17
+of 9 720 points are post-peak even at s/B 0.0508. The cause is the flow rule: friction of 45–60° against
+dilation of 1–2° (§4 caveat), so the bands are partly a product of the calibration.
+
+**It is not ψ-softening**, so a nonlocal ψ̄ (void-ratio averaging) or a crack band would not treat it.
+The wall (§4.6) is a separate matter: the floor refusers are pre-peak on both meshes, and the mesh
+dependence of the wall itself is not settled (R2, §6).
+
+### 4.9 A second calibration item: Lode convexity (c ≥ 7/9)
+
+With **c = 0.71 < 7/9**, DM04's Lode interpolation g(θ) is **non-convex at the extension meridian**.
+
+- **What we saw** (preliminary, material-point oracle, R1 work in progress; #878 §13, #892 §4). In
+  undrained cyclic triaxial (CTXu) at e 0.6944, CSR 0.2, a perturbation of 1e-9 (round-off level) decides
+  between **5 % double amplitude at N = 8** and **no 5 % DA by N = 20**, and it does so identically with
+  and without the R1 fix: it is a bifurcation of DM04's own axisymmetric extension path. At **c = 0.80**
+  the path stays axisymmetric and both give N = 16.
+- **Why.** With g = 2c / [(1+c) − (1−c)·cos 3θ], at the extension meridian (θ = 60°): g = c, g′ = 0 and
+  g″ = 4.5·c·(1−c). Convexity of the polar curve r(θ) needs r² + 2r′² − r·r″ ≥ 0, which at r′ = 0 is
+  r ≥ r″, i.e. c ≥ 4.5·c·(1−c), i.e. **c ≥ 7/9 ≈ 0.778**.
+- **Recommendation.** Keep **c ≥ 0.78**, or treat axisymmetric-extension tests, and extension zones in
+  a boundary-value problem, as ill-conditioned under the present set (D8).
+
+### 4.10 The three curves against classical bearing capacity
+
+A check on the FE, not on the physics (#892 memo §11, commit `00198f278`). The classical rough-strip
+capacity of **this** deck (γ′ 9.81 kN/m³, B 1.5 m, surcharge 7.65 kPa) is q_u = ½·γ′·B·N_γ + q·N_q,
+with Martin's (2005) exact N_γ by characteristics (as reproduced by Han et al. 2016, Table 2) at 30°,
+35°, 40° and 45°, log-interpolated only between those angles, and the exact N_q:
+
+| φ′ | 30° | 33° | 35° | 38° | 40° | 42° | 45° |
+|---|---|---|---|---|---|---|---|
+| q_u (kPa) | 250 | 381 | 509 | 812 | 1 121 | 1 595 | 2 753 |
+| source | Martin | interp. | Martin | interp. | Martin | interp. | Martin |
+
+Each FE control sits on its own cone:
+
+| control | FE result | classical q_u for its own φ′ | reading |
 |---|---|---|---|
-| A, `ModifiedEuler` | s/B 0.0174, q 441.6 kPa | the 36 000 s wall-clock cap, **not** the step floor (the machine paused about 2.75 h inside that budget) | 79 (23 / 9 / 47) |
-| B, SAS-ME | s/B 0.0142, q 379.8 kPa at the last committed record | running / not concluded | 61 (24 / 11 / 26) |
+| your PDMY01, 33° | 417.6 kPa at s/B 0.116 | 381 kPa | +10 % |
+| our `DruckerPrager`, 38°, ψ = 0 | a plateau of ~700–820 kPa over s/B 0.06–0.15 | 812 kPa | at or below the associated value, as expected for ψ < φ |
+| SANISAND, campaign set | 967 kPa at s/B 0.05, still rising | its own element φ′_ps,peak at the footing's p′ ≈ 50–150 kPa is 51–55° (T5), so q_u ≥ 2 753 kPa | about ⅓ of its classical capacity mobilized, which is what the late element peak (4–16 %) predicts |
 
-**No wall yet** on either arm.
+**The three FE curves are each consistent with their own constitutive strength** (PDMY01 33° ≈ 381 kPa
+classical, DP 38° ≈ 812 kPa, SANISAND's own 51–55° ⇒ ≥ 2.75 MPa). **The physical capacity follows from
+your sand's φ′**, and those inputs are owed (§5.1). With your lab φ′, the physical band is
+[q_u(φ′_cs,ps), q_u(φ′_ps,peak at the footing's mean p′)]: the operative angle lies between the
+critical-state and the peak angle because of progressive failure and stress level (Lau & Bolton 2011;
+Perkins & Madson 2000; Loukidis & Salgado 2011). "Which curve is physical" is the same question as
+"what is your sand's operative φ′".
 
-**Load–settlement agreement** (same settlement, matched steps):
+### 4.11 The integrator recommendation (the owner and you decide)
 
-| s/B | 1.3e-5 | 1e-4 | 5e-4 | 1e-3 | 2e-3 | 0.0038–0.0046 | 0.005–0.0139 | 0.0140–0.0142 |
-|---|---|---|---|---|---|---|---|---|
-| \|q_A − q_B\| / q_A | 5.5 % | 3.6 % | 1.4 % | 0.72 % | 0.22 % | ≈ 0.59 % | ≤ 0.31 % | 0.37–0.43 % |
+**`IntScheme 129` (SAS-ME), TanType 0, TolR 1e-4, `-maxSubsteps 2000`, on the step policy these runs
+used** (#878 §12):
 
-SAS-ME carries less load in the first steps (ModifiedEuler's per-increment error is largest there,
-relative to the load). Past s/B 0.002 the two curves agree to about 0.6 %.
+```tcl
+nDMaterial LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100 2.0 \
+    129 0 1 1e-7 1e-4 -flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000 -Presidual 0 -honorTolR 0
+```
 
-**Where the cost is.** Over SAS-ME steps 25–50, the ring points hold **7.7 % of all substeps** (3.1 %
-by the stricter criterion), and the 100 costliest points 6.8 %. The cost is spread over the whole
-plastic zone, not concentrated in the ring. So a per-point fallback (F18(d)) would recover less than
-10 % of the material time, and the levers that matter are the ones that act everywhere: fewer global
-iterations, and a cheaper substep (§6).
+Step policy: ds0 = 2e-5 m, × 2 after 6 good steps up to 1e-3 m, ÷ 2 on a failed ladder, floor at
+ds < 2e-7 m; Newton (25) → NewtonLineSearch (40) → KrylovNewton (60, tolerance × 10); `NormUnbalance`
+1e-5 × the applied vertical load; 1 MKL thread with `MKL_CBWR=COMPATIBLE`, or `system Pardiso
+-deterministic` on current builds.
 
-**Replays at `ModifiedEuler`'s last converged step**, the 44 worst points (highest ρ and the low-p
-ones), each replayed on its real next increment against the oracle: both integrators land at about
-1e-4 of p' from the oracle (medians: `ModifiedEuler` ≈ 7e-5, SAS-ME ≈ 1e-4), except one low-p point that
-`ModifiedEuler` took in a single substep, 2.0e-3 of p' off (SAS-ME 22 substeps, 9e-7).
+Why: it reaches 1.74× the settlement of `ModifiedEuler` at 1.3–1.45× lower cost per unit s/B; its
+per-increment error is controlled; and it refuses a state it cannot integrate where `ModifiedEuler`
+commits ρ_α 13 and a spurious +6.4 %. Rejected: TolR 1e-3 (earlier wall, no saving) and TanType 1
+(step collapse, 13× cost).
 
-> **[PENDING — WP-138 final: reconcile the replay statistics.** The orchestrator's summary quotes
-> "ModifiedEuler 1.2e-3·p' vs SAS-ME 6e-5·p'" on the footing's real increments; the committed
-> wall-pair table gives the medians above. Which set of increments that figure covers will be stated
-> when the WP-138 report lands.**]**
-
-**TanType 1 under SAS-ME (arm C, stopped).** It cut the global iterations early (step 22: 3 iterations
-and 0.25 M substeps against 20 and 1.66 M under TanType 0). But with the 2000-substep cap, off-path
-Newton iterates get refused (up to 782 cap hits per step from s/B 0.0016 on), and from then on almost
-every step was committed on the KrylovNewton rung at 10× the tolerance; that acceptance cost about 1–2 %
-in the curve (C against A: +1.7 % at s/B 0.0021, +1.0 % at 0.0033). The run was killed externally at
-s/B 0.0040, and its restart was stopped by an owner re-plan. So TanType 1 is **not yet** the
-free 5–7× lever an early-step comparison suggests.
-
-> **[PENDING — WP-138 final verdict: does SAS-ME reach a wall, a peak or a plateau on this deck, and
-> where; the q–s curves to the end of both arms; wall-clock per unit s/B.]**
->
-> **[PENDING — the default decision: whether the fork recommends `IntScheme 129` as the default for
-> the TIMs campaign, with which TanType, TolR, `-maxSubsteps` and step-size policy.]**
->
-> **[PENDING — B/16, if WP-138 runs it.]**
+**This is a recommendation about the integrator only.** It says nothing about the calibration (the
+caveat at the top of this section), and it does not buy a capacity: the wall stays at s/B 0.0508 on this
+deck, and about 90 % of the settlement is accepted on the relaxed KrylovNewton rung.
 
 ---
 
@@ -638,43 +918,114 @@ These are recommendations. Nobody outside the calibration and the project can ma
 
 | # | decision | our recommendation | why |
 |---|---|---|---|
-| D1 | **The p'-floor rule** | (a) `-Pmin` ≤ 0.5 kPa; (b) `-Presidual 0` (at most 1 kPa if used, and then declared as a regularisation, not physics); (c) report the limit load at floor F and at F/2, and accept the floor if the load moves by less than about 2 %; (d) report the number of Gauss points at the floor at the limit state | precedent: PM4Sand and numgeo floor p at 0.5 kPa; HySand's authors needed a 10 kPa surcharge in their own 3D FE. An apparent cohesion p_r·tan φ times N_c ≈ 30–75 means 1 kPa of p_r can move a ~650 kPa load by 3–8 % |
-| D2 | **`D_factor`, the UW low-p dilatancy sigmoid** | decide it explicitly; do not inherit it | it is not in Dafalias & Manzari (2004); it acts below p < 0.05·P_atm = 5.05 kPa, i.e. across most of the ring; with `-Presidual 0` it can suppress dilatancy by up to ~900× (the 86 report §6). **There is no deck flag to switch it off today**; if you want the on/off comparison, ask and we add one |
-| D3 | **Mesh pair** | run and report B/8 and B/16 | ψ-softening localises; treat any post-peak plateau as mesh-dependent unless regularised. The earlier regularization report (the 90 report) showed the matched-settlement load converges without a regulariser |
-| D4 | **The definition of "limit load" for a dense dilatant sand** | say which you mean: the peak, a plateau, or q at a fixed s/B (your ADR 65 D6) before the runs, not after | a dense sand under SANISAND may peak and soften, and the softening branch is mesh-dependent; the fixed-s/B criterion is the one that converged in the 90 report |
-| D5 | **Re-running campaign curves** | re-run under SAS-ME the ones that feed a reported number, starting with anything read from ring points | §3.1 |
+| D1 | **The p′-floor rule** | (a) `-Pmin` ≤ 0.5 kPa; (b) `-Presidual 0` (at most 1 kPa if used, and then declared as a regularisation, not physics); (c) report the limit load at floor F and at F/2, and accept the floor if the load moves by less than about 2 %; (d) report the number of Gauss points at the floor at the limit state. **Do not use `-Presidual` to get past the wall** | **re-measured under SAS-ME (§4.7): Presidual 0.5–20 kPa never removes the `loadingNonPosH` wall**; its onset is non-monotonic (0.5 kPa walls *earlier*), and larger values reach further only through an apparent cohesion (q at s/B 0.03: 675 → 835 kPa from 0.5 to 20 kPa). Precedent for a small floor: PM4Sand and numgeo floor p at 0.5 kPa; an apparent cohesion p_r·tan φ times N_c ≈ 30–75 means 1 kPa of p_r can move a ~650 kPa load by 3–8 % |
+| D2 | **`D_factor`, the UW low-p dilatancy sigmoid** | decide it explicitly; do not inherit it | it is not in Dafalias & Manzari (2004); it acts below p < 0.05·P_atm = 5.05 kPa, i.e. across most of the ring; with `-Presidual 0` it can suppress dilatancy by up to ~900× (the 86 report §6), on a set that already dilates ~8–23× too little (§4 caveat). **There is no deck flag to switch it off today**; if you want the on/off comparison, ask and we add one |
+| D3 | **Mesh** | run and report B/4, B/8, B/16, a B/8 sheared 15° and a B/8 jittered 0.1, with R1 on (R2), before calling any q–s mesh-converged | B/16 runs 4–5 % softer than B/8 from s/B 0.010 and the bands are one element wide and follow the mesh lines (§4.8). The cause is **non-associated localization that starts in the hardening regime**, not ψ-softening, so a nonlocal ψ̄ or a crack band would not treat it |
+| D4 | **The definition of "limit load" for a dense dilatant sand** | say which you mean: the peak, a plateau, or q at a fixed s/B (your ADR 65 D6) before the runs, not after | no SANISAND arm shows a peak or a plateau to s/B 0.0508, and the present set peaks at 4–16 % strain in an element test (§4 caveat), so a peak, if one exists, needs large settlement; the fixed-s/B criterion is the one that converged in the 90 report |
+| D5 | **Re-running campaign curves** | re-run under SAS-ME the ones that feed a reported number, starting with anything read from ring points or near the `ModifiedEuler` wall | §3.1; §4.2 (+6.4 % spurious stiffening near the ME wall) |
 | D6 | **The reference load for `NormUnbalance`** | name the vector | it decides whether the integrator's per-point error sits under your Newton tolerance (F18(a)) |
+| D7 | **The calibration (T5)** | confirm the campaign SANISAND set against your lab data before any footing curve is used: φ′_peak, strain at peak, dilatancy | it has the strength of a very dense sand but dilates ~20–23× (triaxial) / ~8–14× (plane strain) less than stress–dilatancy requires and peaks at 4–16 % strain (§4 caveat; #892 §10). If your data agree with the set, the physics check moves to your data; if not, recalibration comes first |
+| D8 | **Lode parameter c** | keep c ≥ 7/9 (≈ 0.78), or treat extension paths as ill-conditioned | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9) |
+| D9 | **R1, a model-level opt-in fix of the wall** | yours to use or not; built as an opt-in `LadrunoSANISAND` variant, **default OFF**, vanilla `ManzariDafalias` behaviour unchanged (owner approved) | see below |
+
+**D9 in detail: R1** (preliminary; #892 §1.4 and §4; #878 §13). Two **coupled** flags:
+
+- **a floor on h everywhere**: h = b0 / max(a, c_A·√(2/3)·m), with c_A ≈ 1 (the yield cone's α-space
+  radius, 4.1e-3 at m = 0.005), used in the α update too;
+- **a hysteretic re-seat**: α_in := α only when a < −c_rev·√(2/3)·m (c_rev ∈ {½, 1, 2} all pass).
+
+On the material-point oracle, 320 exact increments from 5 real refuser states (E_B, E_D, E_B16), the
+pair fails **0 of 320** where DM04 fails **102 of 320**, and **each flag alone fails** (the floor alone 97;
+a weaker floor, c_A = ¼, with the hysteresis 90). In element tests at c_A = 1, monotonic q moves by at
+most **2.7e-4·q_max** and drained cycles are unchanged to 4 digits. The CTXu difference that was open is
+DM04's own extension bifurcation (§4.9), identical with and without R1. R1 is a constitutive change: it
+changes the model you calibrated, which is why the decision is yours. It is not in a PR yet.
+
+**Regularization, if it is needed after R1.** Whether it is needed is decided by measurement: the
+spread of B/4, B/8 and B/16 (R2) against the scatter of comparable physical footing tests, following
+the owner's rule, *"physics and real-world behaviour is the judge"* (#892 §9). If it is needed, the
+candidate is **Perzyna-type viscoplasticity inside `LadrunoSANISAND`**, not a Duvaut–Lions wrapper: a
+Duvaut–Lions update needs the inviscid solution for the same increment, which is exactly the
+computation that refuses (#892 §3, §4 R3). A **shear-band width is likely not a meaningful deliverable**
+here: the physical band is ~20·d50 ≈ 4–10 mm for d50 0.2–0.5 mm, against elements of 94–188 mm, so
+any width a regularized mesh returns would be a numerical length, not the sand's (#892 §9.1 step 5).
+
+### 5.1 What we need from you
+
+1. **The sand**: d50 and the grading, e_max / e_min, and the target relative density D_r.
+2. **Lab data**: drained triaxial and plane-strain tests (φ′_peak, the strain at peak, the dilatancy),
+   and any undrained cyclic CSR–N target.
+3. **The footing test you treat as the reference.**
+4. **The exact PDMY01 33° parameter set** behind your 417.6 kPa control. The fork holds only its own
+   WP-133 PDMY03 stand-in (φ 40°), which has no peak in drained plane strain and is not a physical
+   reference (#892 §10).
 
 ---
 
 ## 6. Roadmap
 
-**Near term (the pending items above).**
+**Near term.**
 
 | item | what | where |
 |---|---|---|
-| CPPM under Newton + tangent sign | merge, then qualify on the strip | #868 (WP-130) |
-| Footing A/B verdict | finish both arms; the default decision; B/16 | #878 (WP-138) |
+| CPPM under Newton + tangent sign | merge, then qualify on the strip | #868 (WP-130): open draft, not merged; its branch must first be brought up to date with `ladruno` |
+| Footing A/B | the Esmeralda arms are final; the sensitivity ladders are an interim snapshot and will be refreshed | #878 (WP-138), draft |
+| The decision procedure | **R1 → T5 → R2 → T6 → decisions** (below) | #892 (WP-150 memo §9.1), draft |
 | F19 step 2 | the deferred message buffer, the counters, stack scratch; allowlist `IntScheme 1`, then 2 and 129; identity and speed-up at 1/2/4/8 threads on a deck that prints | after #868 |
-| PDMY hang | refuse a wild trial instead of ~1e9 substeps | #874 (WP-135) |
-| Guide paragraph | "repeatable is not reliable" | #876 |
-| SAS-ME follow-ups from its confirmation review | a 64-sample unload-then-reload locator can miss a very short elastic excursion (up to 5.5e-4 on 5 ring cases); the ψ-driven dead end is relocated to ~30 MPa, not removed; positional TolF/TolR are not range-checked | follow-up WP |
+| PDMY hang | refuse a wild trial instead of ~1e9 substeps | **MERGED**, #874 (WP-135) |
+| Guide paragraph | "repeatable is not reliable" | **MERGED**, #876 |
+| Refusal-aware line search | treat a material refusal as "backtrack", not "rung failed" (119 LineSearch failures on a refusal in E_B) | follow-up WP (#878 §13) |
+| SAS-ME follow-ups | its maxSubsteps refusals on the surface ring (209 in E_B) and the re-seat chatter; from its confirmation review: a 64-sample unload-then-reload locator can miss a very short elastic excursion (up to 5.5e-4 on 5 ring cases), the ψ-driven dead end is relocated to ~30 MPa, not removed, positional TolF/TolR are not range-checked | follow-up WP |
+
+**SAS-ME under IMPL-EX: conditional, not qualified.** SAS-ME under the IMPL-EX companion (opt-in
+`-implexAllowScheme129`) is **conditional and not yet qualified**. The tangent identity holds, and IMPL-EX
+reduces SAS-ME's substep count; its remaining cost is substeps per companion return at tight TolR. But
+SAS-ME refuses more often on adversarial states, the IMPL-EX companion has no global Newton to absorb a
+refusal, the qualification gates have not been run for `IntScheme 129`, and there is no softening leg.
+It stays opt-in; an earlier "no saving" reading is superseded. The opt-in comes from a study still in
+progress and is not on `ladruno`: there, `-implex` is still refused with `IntScheme 129` (§2.3).
+
+**The decision procedure** (WP-150 memo §9.1; each step ends in a number and settles the decisions
+after it):
+
+1. **R1**, oracle first: the coupled floor + hysteresis on the WP-134 oracle, then the C++, then E_B and
+   E_B16 past their walls.
+2. **T5**, the material against the sand's physics: element tests at p′ ≈ 10–500 kPa in plane strain and
+   triaxial, checked against Bolton (1986) and **your lab data** (D7). The footing cannot be more right
+   than its element.
+3. **R2**, the footing mesh study with R1 on: B/4, B/8, B/16, plus a B/8 mesh sheared 15° and a B/8
+   jittered 0.1, to s/B 0.15. The deck patch is on #892 (`--mesh b4`, `--mesh-perturb shear:15`,
+   `--mesh-perturb jitter:0.1`; the default path is byte-identical). R2 is ready to launch once R1 has a
+   commit.
+4. **T6**, the footing against real footings, against Perkins & Madson (2000), Loukidis & Salgado
+   (2011), Lau & Bolton (2011), Vesić (1973) and the De Beer / Tatsuoka scale effect (#892 §11):
+   - capacity: the band [q_u(φ′_cs,ps), q_u(φ′_ps,peak)] from your lab φ′ (§4.10);
+   - settlement: dense sand in general shear develops the full mechanism at s/B ≈ 6–8 % (the JGGE
+     closure, doi:10.1061/JGGEFK.GTENG-12726); where no clear peak forms, Vesić's rule takes q at
+     s/B = 10 %;
+   - failure mode: a wedge plus a radial shear zone reaching the surface, against the present straight
+     vertical bands, judged first on the sheared-mesh leg;
+   - band thickness: 10–20·d50 is sub-grid here, so a shear-band width is expected **not** to be a
+     deliverable.
+   The tolerance (the scatter of comparable footing tests) has **not** been extracted yet; no number is
+   claimed for it.
+5. **Decisions**: band width by scale (20·d50 against the element size), the tolerance by the scatter of
+   comparable footing tests, R3 (Perzyna in SANISAND) only if the R2 spread exceeds it.
 
 **Performance.** Material cost is (global iterations) × (cost per point per iteration), everywhere in
 the plastic zone: every OpenSees iteration re-integrates the whole increment from the committed state.
 So the levers, in the order we would pull them:
 
-1. **Fewer global iterations**: a step-size policy that targets a few iterations per step, and the
-   continuum tangent where it holds (§4: TanType 1 is not yet qualified on the deck).
+1. **Fewer global iterations**: a step-size policy that targets a few iterations per step. The
+   consistent tangent is **not** that lever on this deck (TanType 1 collapses the step, §4.4).
 2. **Threading** once F19 step 2 lands: bounded near 3.9× at 8 threads by your own 85.6 % share
    (inference).
-3. **TolR 1e-4 → 1e-3 as a declared sensitivity**, not a silent default: SAS-ME at 1e-4 is already two
-   orders of magnitude inside its accuracy headroom (5e-5 against the oracle), and accuracy-limited
-   substeps scale roughly as TolR^−½. It does little in the stability-limited ring.
-4. **An allocation-free kernel**: SAS-ME builds dozens of heap vectors per substep; a fixed-size stack
+3. **An allocation-free kernel**: SAS-ME builds dozens of heap vectors per substep; a fixed-size stack
    kernel is typically several times faster for 6-vector arithmetic. Unmeasured; it must be
    benchmarked before a number is quoted, and it is also a precondition for threads to scale.
-5. **A stiff-point fallback** SAS-ME → CPPM: a smaller lever on this deck than it first looked (§4).
+4. **A stiff-point fallback** SAS-ME → CPPM: a smaller lever on this deck than it first looked (§4.4).
+
+**TolR 1e-3 is off the list**: on the footing it gave no saving and an earlier wall (§4.4).
 
 GPU or SIMD batching and surrogate models are **not** levers for this problem: the per-point work is
 wildly unbalanced (tens to 10⁵ substeps per point per step), and a validation study must not trade the
@@ -682,12 +1033,14 @@ full-order answer for speed.
 
 **Longer term: a model that is consistent by construction.** DM04 SANISAND has no energy function for
 α, so non-negative dissipation is not guaranteed, and the α_in memory and the h ∝ 1/((α − α_in):n)
-singularity are exactly where the bugs lived. Two classes are planned (tags reserved, no code yet):
+singularity are exactly where the bugs, and now the wall, live. Two classes are planned (tags reserved,
+no code yet):
 
 - **WP-144 `LadrunoNORSAND`** — NorSand in the Borja & Andrade (2006) form, with DM04's power-law
-  critical-state line (so ψ stays bounded as p' → 0) and a Lode-angle dependence for plane strain;
+  critical-state line (so ψ stays bounded as p′ → 0) and a Lode-angle dependence for plane strain;
   hyperelastic, implicit, closed-form tangent, proven non-negative dissipation. About 5–6
-  engineer-weeks. Start condition: after WP-138 shows what SAS-ME/CPPM reaches on your deck.
+  engineer-weeks. **This is the route if T5/T6 show that the model, not the calibration or the mesh, is
+  the problem** (#892 §9.1 step 7).
 - **WP-145 `LadrunoHySAND`** — the 2026 hyperplastic multisurface sand model: the most rigorous
   thermodynamics and the best cyclic behaviour, the least evidence and no public code; a research
   build of about 10–14 weeks, for the later cyclic SSI work.
@@ -695,7 +1048,7 @@ singularity are exactly where the bugs lived. Two classes are planned (tags rese
 One expectation to set now: **no dilatant sand model is truly variational.** Non-associated
 dilatancy gives a non-symmetric tangent and no incremental minimum principle. "Thermodynamically
 admissible, robust implicit return, consistent tangent" is achievable; "variational" is not. And a
-p'-floor or a surcharge is established practice even for the rigorous models, so D1 does not go away.
+p′-floor or a surcharge is established practice even for the rigorous models, so D1 does not go away.
 
 ---
 
@@ -709,9 +1062,17 @@ p'-floor or a surcharge is established practice even for the rigorous models, so
 **Evidence documents**
 - `128_sanisand_ring_trace.md` — WP-128, #869 (with its 2026-09-27 correction note after WP-134)
 - `134_sanisand_reference_integrator.md` — WP-134, #872 (the oracle; U1–U10)
-- `131_sanisand_threaded_inventory.md` — WP-131 step 1, #865
+- `131_sanisand_threaded_inventory.md` — WP-131 step 1, #865; E9 re-verified after WP-129, #888
 - `133_pdmy_notes.md` — WP-133, #866
 - `136_flip_test_drift.md` — WP-136, #870
+- `138_footing_sas_me_ab.md` — WP-138, #878 (draft; on `origin/wp/138-footing-sas-me-ab` at
+  `762be8332`): §0 verdict, §5.1 curves, §5.3 replays, §8 Esmeralda arms, §9 B/16, §10 diagnosis,
+  §11 ladders (interim), §12 default, §13 follow-ups; run records under
+  `Ladruno_files/testbed/footing_sas_me_ab/`
+- `150_sanisand_regularization_memo.md` — WP-150, #892 (draft; on
+  `origin/wp/150-sanisand-regularization-memo` at `00198f278`; the T5 figures as of `e14703ca7`): §1.4
+  mechanism and the R1 oracle box, §2 localization, §3 options, §4 staged recommendation, §8 test plan
+  and the R2 mesh-perturbation patch, §9.1 decision procedure, §10 T5, §11 T6 capacity bands
 - `_sand_model_survey_2026-09-27.md`, `_sanisand_external_survey_2026-09-27.md`,
   `144_ladruno_norsand_plan.md`, `145_ladruno_hysand_plan.md` — #885
 
@@ -729,8 +1090,14 @@ PDMY03 constants and reallocation; the PDMY crossing detector; static `pAtm`; a 
 discarding element was committed. `LEDGER_implementations.md` rows WP-127, WP-129, WP-132, WP-133,
 WP-134.
 
-**PRs.** Merged: #863, #864, #865, #866, #869, #870, #871, #872, #884 (Windows-only CI gap), #885, #846.
-Open: #868, #874, #876, #878.
+**PRs.** Merged: #846, #863, #864, #865, #866, #869, #870, #871, #872, #874, #876, #884 (Windows-only
+CI gap), #885, #888. Open (drafts): #868 (WP-130), #878 (WP-138), #892 (WP-150), and this report, #887.
+
+**Literature cited in §4–§6.** Dafalias & Manzari (2004), *J. Eng. Mech.* 130(6); Bolton (1986),
+*Géotechnique* 36(1); Rudnicki & Rice (1975), *JMPS* 23; Vesić (1973), *JSMFD* 99(SM1); Perkins &
+Madson (2000), *JGGE* 126(6); Loukidis & Salgado (2011), *Géotechnique* 61(2); Lau & Bolton (2011),
+*Géotechnique* 61(8); Tatsuoka et al. (1991), ASCE GSP 27; Martin (2005), *Proc. 11th IACMAG*; Han et
+al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 
 **Earlier replies to the TIMs team.** `86_ladruno_sanisand_tims_report.md` (the hidden cohesion),
 `90_ladruno_regularization_tims_report.md` (regularization, `-maxSubsteps`).
@@ -742,3 +1109,4 @@ Open: #868, #874, #876, #878.
 | date | change |
 |---|---|
 | 2026-09-28 | First issue. F18(a), (b), (e), F20, F21, F22 (mode), F23(a), (b) answered from merged work; F18(c), (d), F19 step 2, the F22 guide paragraph and the WP-138 footing A/B pending; placeholders in §4. |
+| 2026-09-28 | Second issue. §4 final from the WP-138 Esmeralda arms (#878 at `762be8332`): the wall table, the verdict (SAS-ME moves the wall from s/B 0.0292 to 0.0508 and does not remove it; no peak; constitutive), accuracy and cost, the replay figures reconciled, the mechanism (#892), the interim sensitivity ladders (16:20) with caution 6 re-measured, B/16 and non-associated localization, the calibration caveat (#892 §10), Lode convexity c ≥ 7/9, the classical capacity bands (#892 §11 at `00198f278`), the integrator recommendation; placeholders removed. §5: D1 and D3 revised, D7–D9 added (calibration, c, R1), the regularization route and §5.1 "What we need from you". §6: the WP-150 decision procedure, T6 targets, the SAS-ME + IMPL-EX status, #874 and #876 merged, TolR 1e-3 and TanType 1 off the performance list. §0, §2 scope note, §3 cautions 1, 4, 6 and the E_B configuration line (TolR 1e-4, not 1e-7) updated to match. |
