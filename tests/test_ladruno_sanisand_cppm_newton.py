@@ -67,6 +67,7 @@ def _compare(got, ref, what):
     WP-127: GCC/libm differ from MSVC in the last bits), non-float entries
     (rc, Newton iteration counts) still exact."""
     assert sorted(got) == sorted(ref), what
+    # ci-coverage: partial -- runs everywhere at the 1e-6 cross-platform floor; bit equality to the MSVC baselines (and the sign-only tangent check below) is Windows-only (local-only until a Windows CI job exists, WP-143)
     for name in ref:
         assert len(got[name]) == len(ref[name]), (what, name)
         if sys.platform == "win32":
