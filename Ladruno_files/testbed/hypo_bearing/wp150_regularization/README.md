@@ -52,3 +52,15 @@ The parameter set is hard-coded in `h_decomp.py`. Pass `NAME=value` after the fi
   element by element. It is largest where the geostatic stress is smallest (near the top of the fine band).
 - The **default path is byte-identical** to the unpatched deck: b8, 3 steps, steps.csv field-for-field apart from wall
   time.
+
+## GATE 0: the DM04 Toyoura reference sand (memo §12)
+
+| script | what | output |
+|---|---|---|
+| `gate0_toyoura_oracle.py` | DM04 Figs. 5–9 test matrix (17 triaxial tests) on the exact oracle, `paper` and `uw_model` options | `out_gate0_oracle.json` (not committed; ~20 s) + stdout |
+| `gate0_cxx_driver.py <bin> <site> <spec> <out>` | the C++ LadrunoSANISAND (SAS-ME) through a mixed-control `ladrunoSANISANDReplay` loop (TXu / TXd / PSd), variants e.g. R1 off/on; run with `python -S` | `out_gate0_cxx.json`, `out_t5_cxx_*.json` (not committed) |
+| `gate0_compare.py <oracle.json> <cxx.json>` | max \|Δq\|/q_max, C++ vs oracle and R1 on vs off | `out_gate0_compare.md` |
+| `gate0_overlay.py <dafalias2004.pdf> <json> <sets> <outdir>` | overlays on DM04's own figure panels, from the reader's copy (gridline-calibrated axes). The images are NOT committed (copyright) | PNGs in `<outdir>` |
+
+The specs are `gate0_cxx_spec.json` and `t5_cxx_spec_toyoura_e0.643.json`. The large JSON outputs are regenerable and
+kept out of git.
