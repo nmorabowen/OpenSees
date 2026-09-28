@@ -194,6 +194,14 @@ the Lode parameter changed alone (`fan_c080.py`, DM04, exact oracle, the SAME co
   up [I; the measurement is the evidence].
 - **Caveat.** These are c = 0.71 states, driven at c = 0.80. A c = 0.80 footing would follow a different
   history and could meet other states. This measures sensitivity, not the outcome of a c = 0.80 BVP.
+- **Footing-scale corroboration (WP-138 ladders, final, orchestrator 2026-09-28).** Every ablation and ladder
+  leg still ends on the `loadingNonPosH` floor. None of them changes c.
+  - The ablations: S1 no fabric, S2 no peak, S3 critical-state dilatancy, S4 dilatancy off (A0 = 0.001).
+  - The ladders: A0 0.02/0.10, h0 ×3, P_residual 0.5–20 kPa, e_init 0.65–0.85.
+  - First onsets fall between s/B 0.009 (h0 ×3) and 0.054. Dilatancy off only delays the onset, from 0.036 to
+    0.043; the leg still walls at 0.050.
+  - So the wall is not a dilatancy effect. It follows the ingredient §2.5 isolates, which only the R1 legs and
+    the c = 0.80 leg (`C080_EB_off`, running) change.
 - **Two routes out.**
   1. R1 (§8) removes the singular set at any c, with no recalibration.
   2. A calibration with c ≥ 0.78 (convex; c = 0.80 raises the extension strength M_e = c·M_c by 13 %) removes it at these states.
