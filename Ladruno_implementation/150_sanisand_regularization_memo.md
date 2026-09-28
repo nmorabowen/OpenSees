@@ -440,14 +440,23 @@ D_r ≈ 0.83 with e_max 0.977 and e_min 0.597. That matches the D_r the campaign
 
 | set | test | p0 kPa | φ′_peak ° | ε_a at peak | peak dilatancy | reached critical state by 25 %? | Bolton (1986) check |
 |---|---|---|---|---|---|---|---|
-| campaign (e0 0.6944) | PS | 10 / 50 / 150 / 500 | 60.1 / 55.0 / 50.7 / 44.9 | 4.4 / 7.2 / 10.2 / 15.5 % | ψ_max 1.9 / 1.6 / 1.3 / 0.8° | **no** (ψ_end −0.09…−0.04) | stress–dilatancy missed by ~3–20× |
-| campaign | TX | 10 / 50 / 150 / 500 | 48.6 / 45.8 / 43.1 / 39.1 | 4.1 / 7.3 / 10.7 / 16.6 % | (−dε_v/dε₁)max 0.067 / 0.058 / 0.048 / 0.031 | no | Δφ 15.6 / 12.8 / 10.1 / 6.1° vs 10·(−dε_v/dε₁)max ≤ 0.7°. Strength alone implies D_r 0.80–0.88 |
+| campaign (e0 0.6944) | PS | 10 / 50 / 150 / 500 | 60.1 / 55.0 / 50.7 / 44.9 | 4.4 / 7.2 / 10.2 / 15.5 % | ψ_max 1.9 / 1.6 / 1.3 / 0.8° | **no** (ψ_end −0.09…−0.04) | with φ′_cs,ps ≈ 39.5° (est.¹) the peak needs ψ_max ≈ 7–26°; it has 0.8–1.9°: **~8–14× short** |
+| campaign | TX | 10 / 50 / 150 / 500 | 48.6 / 45.8 / 43.1 / 39.1 | 4.1 / 7.3 / 10.7 / 16.6 % | (−dε_v/dε₁)max 0.067 / 0.058 / 0.048 / 0.031 | no | Δφ 15.6 / 12.8 / 10.1 / 6.1° vs 10·(−dε_v/dε₁)max ≤ 0.7°: **~20–23× short**. Strength alone implies D_r 0.80–0.88 |
 | Toyoura DM04 (e0 0.66) | PS | same | 51.1 / 49.2 / 47.0 / 43.2 | 1.1 / 2.0 / 3.0 / 4.8 % | ψ_max 23.4 / 21.5 / 19.0 / 14.0° | nearly (ψ_end ≈ −0.03) | Δφ = 0.5–0.7 × (0.8·ψ_max) |
 | Toyoura DM04 | TX | same | 40.5 / 39.6 / 38.5 / 36.4 | 1.0 / 1.8 / 2.9 / 4.7 % | 1.10 / 1.00 / 0.88 / 0.64 | nearly | Δφ 9.3 vs 11.0° … 5.3 vs 6.4°: within ~17 % |
 
+¹ Estimated φ′_cs,ps: the campaign set does not reach critical state by 25 % strain. So φ′_cs,ps = 33.0° (triaxial, from Mc) + 6.5°, which is the plane-strain vs triaxial critical-state offset the Toyoura run shows (37.7° vs 31.2°). The earlier "~3–20×" compared against φ′ at 25 % strain, which is not critical state, and is withdrawn.
+
+**Scope notes.**
+- `uw_model` includes UW's D_factor low-p dilatancy sigmoid (active below p′ < 0.05·P_atm = 5.05 kPa). It never fires in T5, because p′ ≥ 10 kPa throughout. At the ring (p′ ≈ 3–5 kPa) the deck dilates even less, so the p0 = 10 kPa row is an upper bound on the ring's dilatancy.
+- **The PDMY control is unusable as a physical reference.** The fork's WP-133 PDMY03 stand-in (φ 40°, PT 26°; not TIMs' PDMY01 33°, which the fork does not hold) has no peak in drained plane strain. At p0 = 100 kPa, σ₁ reaches 5 677 kPa against σ₃ = 100 kPa by 5 % strain, and it fails to converge at p0 = 150 (`t5_pdmy_control.py`, `out_t5_pdmy03_standin.md`). This is WP-133's never-saturating dilatancy: σ_zz climbs under the plane-strain constraint.
+- DP 38° with ψ = 0 is analytic: φ′_ps ≡ 38°, zero dilation, no peak.
+
 **Reading.**
 - The campaign set's strength is that of a very dense sand. Its peak comes 3–4× too late in strain against Toyoura at the same D_r.
-- It dilates ~15–25× less than such a sand must, by stress–dilatancy (Rowe; Bolton): the triaxial Δφ needs (−dε_v/dε₁)max ≈ 0.6–1.6; the model gives 0.03–0.07.
+- It dilates far less than such a sand must, by stress–dilatancy (Rowe; Bolton):
+  - triaxial: Δφ needs (−dε_v/dε₁)max ≈ 0.6–1.6; the model gives 0.03–0.07, **~20–23× short**, with φ′_cs from Mc directly;
+  - plane strain: **~8–14× short**, using the estimated φ′_cs,ps.¹
 - A0 = 0.05 is 14× below DM04's Toyoura value. The high strength comes from nb = 3.5 through M_b = M·e^(−n_b·ψ),
   almost decoupled from volume change.
 - Three consequences for the footing:

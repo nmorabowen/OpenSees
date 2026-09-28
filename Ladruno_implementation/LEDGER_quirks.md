@@ -7878,10 +7878,10 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - Include a mesh-orientation variant in any convergence study.
 - **Workaround/status:** ⚠️ measured and documented (WP-150 memo §2); R2/R3 are PROPOSED. *2026-09-28.*
 
-### The TIMs campaign SANISAND set is strong but barely dilates: plane-strain φ′_peak 45–60°, ψ_max ≤ 2°, peak at 4–16 % strain — stress–dilatancy missed ~20× (WP-150 T5)
+### The TIMs campaign SANISAND set is strong but barely dilates: plane-strain φ′_peak 45–60°, ψ_max ≤ 2°, peak at 4–16 % strain — stress–dilatancy missed ~20–23× (triaxial), ~8–14× (plane strain, estimated φ′_cs) (WP-150 T5)
 - **Bites:** the campaign set (G0 264.32, e_init 0.6944, Mc 1.3309, c 0.71, λc 0.027, e0 0.83, ξ 0.45, h0 1.3, ch 0.968, nb 3.5, A0 0.05, nd 5.75, zmax 12.5, cz 1100) was integrated exactly on the WP-134 oracle, in drained plane-strain and triaxial compression at p0 10–500 kPa.
   - Its peak strength is that of a very dense sand: triaxial 39–49°, and Bolton's 3·I_R implies D_r 0.80–0.88.
-  - But the peak dilation angle is only 0.8–1.9° (plane strain), and (−dε_v/dε₁)max is 0.03–0.07 (triaxial). Bolton needs about 20× more.
+  - But the peak dilation angle is only 0.8–1.9° (plane strain), and (−dε_v/dε₁)max is 0.03–0.07 (triaxial). Bolton needs ~20–23× more in triaxial, and ~8–14× more in plane strain with an estimated φ′_cs,ps ≈ 39.5°.
   - The peak comes at 4–16 % axial strain, and critical state is not reached by 25 %.
   - DM04's lab-calibrated Toyoura set at the same D_r (e0 0.66) peaks at 1–5 % with ψ_max 14–23° and meets stress–dilatancy within ~17 % (triaxial).
   - Causes: A0 = 0.05 (14× below Toyoura's 0.704) decouples strength (nb = 3.5) from volume change, and h0 = 1.3 delays the peak.
